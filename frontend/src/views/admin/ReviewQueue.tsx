@@ -561,12 +561,14 @@ const promoteNote = (r: LearningEntry) =>
     ? `Promote publishes this rule to the namespace's knowledge for ${r.agent}, for every user; reads under agent * and knowledge.search also find it.`
     : "Promote publishes this rule to the namespace's knowledge for every agent and every user.";
 
-// A bot's rule is backed by distinct users, its sessions beside them; every other
-// candidate by its supporters. A server a release behind sends no supporter_sessions,
-// so its rows show the stored supporter count.
+// A bot's rule is backed by distinct users, its sessions and writers beside them
+// (one token can send many user_ids); every other candidate by its supporters. A
+// server a release behind sends no supporter_sessions, so its rows show the stored
+// supporter count.
 function supportLabel(r: LearningEntry): string {
   if (isAgentRule(r) && r.supporter_sessions !== undefined) {
-    return `${plural(r.supporter_count, "user")}, ${plural(r.supporter_sessions, "session")}`;
+    const support = `${plural(r.supporter_count, "user")}, ${plural(r.supporter_sessions, "session")}`;
+    return r.supporter_writers === undefined ? support : `${support}, ${plural(r.supporter_writers, "writer")}`;
   }
   return plural(r.supporter_count, "supporter");
 }

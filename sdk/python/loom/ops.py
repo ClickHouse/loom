@@ -10022,6 +10022,7 @@ class LearningEntry(TypedDict, total=False):
     proposed_value: Required[Any]
     supporter_count: Required[int]
     supporter_sessions: NotRequired[int]
+    supporter_writers: NotRequired[int]
     confidence_avg: Required[float]
     supporters: Required[list[str]]
     rationale: Required[str]

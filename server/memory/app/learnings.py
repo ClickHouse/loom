@@ -53,6 +53,7 @@ async def handle_learnings_list(
                 proposed_value=proposed_value,
                 supporter_count=int(r["supporter_count"]),
                 supporter_sessions=int(r.get("supporter_sessions") or 0),
+                supporter_writers=int(r.get("supporter_writers") or 0),
                 confidence_avg=float(r["confidence_avg"]),
                 supporters=list(r["supporters"]),
                 rationale=r["rationale"],
@@ -73,7 +74,7 @@ async def _assistant_turn_support(
 ) -> dict[str, dict[str, Any]]:
     """The support of each `assistant_turn` row, counted from
     loom.learnings_supporters: the headline count is distinct users, with the
-    distinct sessions beside it, the six-part supporter entries, and the earliest
+    distinct sessions and writers beside it, the six-part supporter entries, and the earliest
     remaining supporter's quotes as the rationale (the candidate row holds none)."""
     by_id = {
         str(r["candidate_id"]): r
@@ -91,6 +92,7 @@ async def _assistant_turn_support(
         out[cid] = {
             "supporter_count": int(s["users"]),
             "supporter_sessions": int(s["sessions"]),
+            "supporter_writers": int(s["writers"]),
             "rationale": assistant_rules.rationale(str(s["asked"]), str(s["said"])),
             "confidence_avg": float(s["confidence"]),
             "supporters": [f"{prefix}/{u}/{sid}/{row['memory_key']}" for _, u, sid in s["pairs"]],

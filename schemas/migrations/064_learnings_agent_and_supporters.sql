@@ -11,7 +11,9 @@ ALTER TABLE loom.learnings_queue
 
 -- One row per (candidate, end user, session) that stated an `assistant_turn`
 -- candidate's rule, with the agent it was said to (the candidate's `agent`, so a row
--- read on its own names its bot) and that user's own bounded quotes: `asked` (the
+-- read on its own names its bot), the principal that wrote the row (`actor`, so a
+-- reviewer can tell many user_ids sent by one token from many writers) and that user's
+-- own bounded quotes: `asked` (the
 -- user turn before the rule) and `said` (the cited span, else the assistant turn,
 -- else the rule itself). A user's words live only on that user's rows: a user
 -- erasure deletes them (erasure.store.steps_ledgers), and a candidate left with no
@@ -25,6 +27,7 @@ CREATE TABLE IF NOT EXISTS loom.learnings_supporters
     `candidate_id` UUID,
     `user_id` String,
     `session_id` String,
+    `actor` LowCardinality(String) DEFAULT '',
     `confidence` Float32,
     `asked` String,
     `said` String,

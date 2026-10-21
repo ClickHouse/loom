@@ -1853,6 +1853,7 @@ CREATE TABLE IF NOT EXISTS loom.learnings_supporters
     `candidate_id` UUID,
     `user_id` String,
     `session_id` String,
+    `actor` LowCardinality(String) DEFAULT '',
     `confidence` Float32,
     `asked` String,
     `said` String,

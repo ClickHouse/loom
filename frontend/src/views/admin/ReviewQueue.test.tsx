@@ -645,7 +645,7 @@ describe("ReviewQueue", () => {
     await waitFor(() => expect(listLearnings).toHaveBeenCalledTimes(2), WAIT);
   });
 
-  it("shows a bot's rule with its agent, its users and sessions, and what promoting it does", async () => {
+  it("shows a bot's rule with its agent, its users, sessions and writers, and what promoting it does", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listLearnings).mockResolvedValue({
       rows: [
@@ -655,6 +655,7 @@ describe("ReviewQueue", () => {
           agent: "support-bot",
           supporter_count: 2,
           supporter_sessions: 3,
+          supporter_writers: 1,
         },
         // Filed with no agent ("-"): it applies namespace-wide, and says so.
         { ...learning("assistant_rule_any"), source_kind: "assistant_turn", agent: "-", supporter_count: 1 },
@@ -666,7 +667,7 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Learnings/ }, WAIT));
     await screen.findByText("assistant_rule_refunds", {}, WAIT);
-    expect(screen.getByText(/2 users, 3 sessions/)).toBeTruthy();
+    expect(screen.getByText(/2 users, 3 sessions, 1 writer/)).toBeTruthy();
     expect(screen.getAllByText(/A bot's rule about itself/)).toHaveLength(3);
     expect(screen.getByText(/agent support-bot/)).toBeTruthy();
     expect(screen.getAllByText(/1 supporter ·/)).toHaveLength(2);

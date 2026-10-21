@@ -31,6 +31,9 @@ class _LearningEntry(BaseModel):
     # `assistant_turn` only (0 otherwise): distinct (user, session) pairs that
     # stated the rule.
     supporter_sessions: int = 0
+    # `assistant_turn` only (0 otherwise): distinct principals that wrote its
+    # supporter rows. One token can send many user_ids.
+    supporter_writers: int = 0
     confidence_avg: float
     supporters: list[str]
     rationale: str

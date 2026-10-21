@@ -166,6 +166,9 @@ export interface LearningEntry {
   // `assistant_turn` rows: distinct sessions that stated the rule. Absent from a
   // server a release behind.
   supporter_sessions?: number;
+  // `assistant_turn` rows: distinct principals that wrote the supporter rows; one
+  // token can send many user_ids. Absent from a server a release behind.
+  supporter_writers?: number;
   confidence_avg: number;
   supporters: string[];
   rationale: string;

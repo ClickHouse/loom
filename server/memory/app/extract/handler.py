@@ -768,8 +768,7 @@ __all__ = [
 
 def _extract_request_pins(input: Any) -> dict[str, Any]:
     """The per-call A/B pins the pipeline state carries: the coverage sweep and the
-    extractor's response cache (None = the namespace's or the deployment's setting),
-    and the session's served keys and tool values for the echo filters."""
+    extractor's response cache; None = the namespace's or the deployment's setting."""
     return {
         "coverage_sweep": getattr(input, "coverage_sweep", None),
         "llm_cache": getattr(input, "llm_cache", None),

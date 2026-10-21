@@ -19,6 +19,7 @@ from server.core.datetimes import naive_utc_now
 from server.memory.app import blacklist_guard
 from server.memory.app.drops import record_drop
 from server.memory.app.pipeline_state import WorkflowState
+from server.memory.app.provenance import writer_actor
 from server.memory.domain import assistant_rules
 from server.memory.domain.extracted_facts import judged_confidence
 from server.memory.domain.sensitivity import reads_high
@@ -106,6 +107,8 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
                 "candidate_id": cid,
                 "user_id": state.user_id,
                 "session_id": state.session_id,
+                # The request's token, or in a replay the enqueuer stamped on it.
+                "actor": writer_actor(),
                 "confidence": judged_confidence(fact),
                 "asked": asked,
                 "said": said,

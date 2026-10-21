@@ -201,7 +201,9 @@ own behaviour in a conversation becomes an `assistant_turn` candidate for that a
 row holds the rule and no user's words. Each session that states the rule adds a row to
 `loom.learnings_supporters` with that user's own quotes. When the candidate is listed,
 `supporter_count` is the distinct end users, `supporter_sessions` the distinct
-sessions, and the `rationale` the earliest remaining supporter's quotes. Support never
+sessions, `supporter_writers` the distinct principals that wrote those rows (a token
+not pinned to one user can send any `user_id`, so many users from one writer is one
+source), and the `rationale` the earliest remaining supporter's quotes. Support never
 promotes it; promoting it publishes the rule to the namespace's knowledge, tagged
 `agent:<agent>`. `context.pack` with `include_knowledge`, `memory.stack`, `loom_search`
 and `memory.ask` serve it to that agent's reads for every user and leave it out of other

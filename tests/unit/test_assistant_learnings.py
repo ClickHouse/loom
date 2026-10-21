@@ -18,6 +18,7 @@ from server.memory.app.extract.prompts import _extraction_base_prompt
 from server.memory.app.pipeline_state import WorkflowState
 from server.memory.domain import assistant_rules
 from server.memory.domain.extraction_prompts import AGENT_LEARNINGS_ANCHOR
+from server.memory.domain.provenance import pipeline_actor
 from server.memory.store import learnings as learnings_repo
 from server.settings import settings
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
@@ -387,6 +388,7 @@ async def test_a_restated_rule_keeps_its_first_wording(
                 "candidate_id": _cid(),
                 "users": 2,
                 "sessions": 2,
+                "writers": 1,
                 "confidence": 0.9,
                 "pairs": _PAIRS,
                 "asked": "",
@@ -559,6 +561,15 @@ async def test_a_rule_files_for_the_resolved_agent_and_nothing_without_one(queue
 
 
 @pytest.mark.asyncio
+async def test_a_supporter_row_names_the_principal_that_wrote_it(queue: _Queue) -> None:
+    # One writer sending two user_ids: the rows say both came from it.
+    with pipeline_actor("user:svc"):
+        await _file(_state("alice", "s1"))
+        await _file(_state("bob", "s2"))
+    assert [r["actor"] for r in queue.supporters.values()] == ["user:svc", "user:svc"]
+
+
+@pytest.mark.asyncio
 async def test_a_rule_citing_only_a_user_turn_is_never_filed(
     queue: _Queue, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -685,12 +696,35 @@ async def test_the_asked_quote_comes_from_the_sessions_earlier_turns(queue: _Que
         # A clause after a comma that leaves out its subject.
         "I called twice, never got my refund over $500.",
         "I paid last week, don't see my refund over $500 yet.",
+        # A request for the opposite of the rule the assistant then states.
+        "Never escalate my refund over $500 to a human.",
+        "Do not escalate my refund over $500 to a human.",
     ],
 )
 async def test_a_rule_after_a_users_turn_on_its_topic_is_filed(queue: _Queue, asked: str) -> None:
     messages = [{"role": "user", "content": asked}, {"role": "assistant", "content": _RULE}]
     assert await _file(_state("alice", "s1", messages=messages)) == 1
     assert list(queue.rows) == [_cid()]
+
+
+_ESCALATES = "The assistant always escalates any refund over $500 to a human."
+_NEVER_ESCALATES = "The assistant never escalates any refund over $500 to a human."
+
+
+@pytest.mark.parametrize(
+    ("asked", "value", "agreed"),
+    [
+        ("Always escalate my refund over $500 to a human.", _ESCALATES, True),
+        ("Never escalate my refund over $500 to a human.", _NEVER_ESCALATES, True),
+        ("Never escalate my refund over $500 to a human.", _ESCALATES, False),
+        ("Always escalate my refund over $500 to a human.", _NEVER_ESCALATES, False),
+    ],
+)
+def test_a_request_is_agreed_only_when_it_asks_what_the_rule_says(
+    asked: str, value: str, agreed: bool
+) -> None:
+    messages = [{"role": "user", "content": asked}, {"role": "assistant", "content": _RULE}]
+    assert assistant_rules.user_requested(_rule_fact(value=value), messages, [1]) is agreed
 
 
 # Built at runtime so the secret scanner does not read it as a leaked key.
@@ -1031,6 +1065,7 @@ async def test_the_list_counts_a_rules_users_and_sessions(monkeypatch: pytest.Mo
                 "candidate_id": _cid(),
                 "users": 2,
                 "sessions": 3,
+                "writers": 1,
                 "confidence": 0.9,
                 "pairs": _PAIRS,
                 "asked": "Can you refund my $800 order?",
@@ -1044,7 +1079,7 @@ async def test_the_list_counts_a_rules_users_and_sessions(monkeypatch: pytest.Mo
 
     assert asked == [[_cid()]]  # only the assistant_turn rows are counted
     rule, other = out.rows
-    assert (rule.supporter_count, rule.supporter_sessions) == (2, 3)
+    assert (rule.supporter_count, rule.supporter_sessions, rule.supporter_writers) == (2, 3, 1)
     # The earliest remaining supporter's quotes; the candidate row holds none.
     assert rule.rationale == f'User: "Can you refund my $800 order?"\nAssistant: "{_RULE}"'
     assert rule.confidence_avg == 0.9
@@ -1183,6 +1218,7 @@ async def test_promoting_a_rule_publishes_it_where_every_users_reads_find_it(
                 "candidate_id": _cid(),
                 "users": 2,
                 "sessions": 3,
+                "writers": 1,
                 "confidence": 0.9,
                 "pairs": _PAIRS,
                 "asked": "",
@@ -1735,9 +1771,11 @@ async def test_supporter_stats_count_a_session_once_and_quote_one_supporter() ->
     and the quotes are one supporter's pair, never alice's question with bob's quote."""
 
     def row(user: str, session: str, conf: float, asked: str, said: str, at: str) -> str:
+        # One token wrote every row, whatever user_id it sent.
         return (
             "INSERT INTO loom.learnings_supporters VALUES ('o', 'ns', 'support-bot', "
-            f"'{_SUPPORTED}', '{user}', '{session}', {conf}, '{asked}', '{said}', '{at}')"
+            f"'{_SUPPORTED}', '{user}', '{session}', 'user:svc', {conf}, '{asked}', '{said}',"
+            f" '{at}')"
         )
 
     class _LocalCH:
@@ -1756,7 +1794,7 @@ async def test_supporter_stats_count_a_session_once_and_quote_one_supporter() ->
             )
 
     (got,) = await learnings_repo.supporter_stats("o", "ns", [_SUPPORTED], ch=_LocalCH())
-    assert (int(got["users"]), int(got["sessions"])) == (2, 2)
+    assert (int(got["users"]), int(got["sessions"]), int(got["writers"])) == (2, 2, 1)
     assert got["confidence"] == pytest.approx(0.75)
     assert [(u, sid) for _, u, sid in got["pairs"]] == [("alice", "s1"), ("bob", "s2")]
     assert (got["asked"], got["said"]) == ("alice asked", "alice quoted")

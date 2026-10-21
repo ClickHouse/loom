@@ -92,7 +92,10 @@ before its first cited assistant turn, in `messages` or the earlier `last_messag
 opens an imperative with "always", "never", "don't" or "do not" (first in the sentence, after "please", after "can", "could",
 "would" or "will" you, or after "want" or "need" you to), or opens a clause after a
 comma or semicolon with "always" ("From now on, always ..."), and the words after it
-share at least two of the rule's content words and at least half of them. A question
+share at least two of the rule's content words and at least half of them, and the
+request asks for the behaviour to happen or not as the rule says: a request with
+"never", "don't" or "do not" matches a rule with "never" or "not", except that "only"
+and "anything but" read as positive ("Don't answer me in anything but French"). A question
 asks for a behaviour only when it opens with "can", "could", "would" or "will" you
 and its requested words name the user as the one it is done to ("me" or "us"):
 "Could you always answer me in French?". The drop is counted in `loom.memory_drops` (stage
@@ -100,7 +103,9 @@ and its requested words name the user as the one it is done to ("me" or "us"):
 over $500", "You never told me you escalate refunds over $500", "I called twice, never
 got my refund over $500"), a question about the policy ("Do you always escalate refunds
 over $500?", "Will you always escalate my refund over $500?") or a request on its topic
-("Please refund my order") asks for no behaviour, so the rule is filed. The filter
+("Please refund my order") asks for no behaviour, and a request for the opposite ("Never
+escalate my refund over $500 to a human" before "I always escalate any refund over $500
+to a human") is not agreed to, so the rule is filed. The filter
 reads English requests only; in other languages only the prompt clause keeps an agreed
 request from being filed.
 

@@ -142,6 +142,7 @@ SUPPORTER_COLUMNS = (
     "candidate_id",
     "user_id",
     "session_id",
+    "actor",
     "confidence",
     "asked",
     "said",
@@ -200,7 +201,9 @@ async def supporter_stats(
     *,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Per candidate: distinct users, distinct sessions, the mean confidence, the
+    """Per candidate: distinct users, distinct sessions, distinct writers (the
+    principals that wrote the rows: one token can send many user_ids), the mean
+    confidence, the
     first `_SUPPORTER_PAIRS` (user_id, session_id) pairs by time and the earliest
     remaining supporter's quotes.
 
@@ -213,6 +216,7 @@ async def supporter_stats(
         SELECT candidate_id,
                uniqExact(user_id) AS users,
                count() AS sessions,
+               uniqExact(a) AS writers,
                avg(c) AS confidence,
                groupArraySorted({_SUPPORTER_PAIRS})((t, user_id, session_id)) AS pairs,
                argMin(q, (t, user_id, session_id)) AS quotes,
@@ -222,6 +226,7 @@ async def supporter_stats(
             SELECT candidate_id, user_id, session_id,
                    min(created_at) AS t,
                    argMin((asked, said), created_at) AS q,
+                   argMin(actor, created_at) AS a,
                    argMin(confidence, created_at) AS c
             FROM loom.learnings_supporters
             WHERE org = {{org:String}} AND namespace = {{ns:String}}

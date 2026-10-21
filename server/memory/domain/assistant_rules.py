@@ -109,6 +109,8 @@ _POLITE = {"can", "could", "would", "will"}  # not a setting: a word list
 _ME = {"me", "us"}  # not a setting: a word list
 # Words that ask for a behaviour before "you to" ("I want you to always ...").
 _WANTS = {"want", "need"}  # not a setting: a word list
+# Words that make a request or a rule ask for a behaviour not to happen.
+_NEGATIONS = {"never", "don't", "dont", "doesn't", "not", "won't"}  # not a setting: a word list
 # Words a rule and a request share without naming the same behaviour.
 _COMMON = set(
     "a an the to in on of for and or with me my i you your user user's assistant always"
@@ -139,7 +141,7 @@ def _opens_imperative(words: list[str], i: int) -> bool:
 
 
 def _requested_words(sentence: str) -> list[str]:
-    """The words after the ask word that opens an imperative in `sentence`, or none.
+    """The words of `sentence` from the ask word that opens an imperative, or none.
     A clause after a comma or semicolon opens one only with "always" ("From now on,
     always ..."): one that opens with never or don't usually leaves out its subject
     ("I called twice, never got my refund"). A question asks for a behaviour only
@@ -156,15 +158,24 @@ def _requested_words(sentence: str) -> list[str]:
 
 
 def _imperative_words(sentence: str, words: list[str]) -> list[str]:
-    """The words after the ask word that opens an imperative in `sentence`, or none."""
+    """The words of `sentence` from the ask word that opens an imperative, or none."""
     for i, word in enumerate(words):
         if word in _ASKS and _opens_imperative(words, i):
-            return words[i + 1 :]
+            return words[i:]
     for match in re.finditer(r"[,;]\s", sentence):
         clause = _words(sentence[match.end() :])
         if clause[:1] == ["always"]:
-            return clause[1:]
+            return clause
     return []
+
+
+def _negative(words: list[str]) -> bool:
+    """Whether `words` ask for a behaviour not to happen ("never escalate ...").
+    "only" and "anything but" ask for the one behaviour they name ("Don't answer me
+    in anything but French"), so they read as positive."""
+    if "only" in words or "anything but" in " ".join(words):
+        return False
+    return bool(_NEGATIONS & set(words))
 
 
 def user_requested(fact: dict[str, Any], messages: list[dict[str, Any]], cited: list[int]) -> bool:
@@ -172,13 +183,20 @@ def user_requested(fact: dict[str, Any], messages: list[dict[str, Any]], cited: 
     (the session's earlier turns, then the request's) asks for the behaviour the
     rule states (an agreed request is the user's preference): a sentence whose
     requested words share at least two of the rule's words, and at least half of
-    them. It reads English requests only; in other languages only the extraction
-    prompt keeps an agreed request from being filed."""
+    them, and that asks for it to happen or not as the rule says. A request for
+    the opposite ("Never escalate my refund" before "I always escalate any refund")
+    is not agreed to, so its rule is filed. It reads English requests only; in
+    other languages only the extraction prompt keeps an agreed request from being
+    filed."""
     asked = _user_turn_before(messages, cited[0])
-    rule = _stems(_words(str(fact.get("value") or "")))
+    rule_words = _words(str(fact.get("value") or ""))
+    rule = _stems(rule_words)
     for sentence in re.findall(r"[^.!?\n]+[.!?]*", asked):
-        shared = rule & _stems(_requested_words(sentence.strip()))
-        if len(shared) >= 2 and 2 * len(shared) >= len(rule):
+        requested = _requested_words(sentence.strip())
+        shared = rule & _stems(requested[1:])
+        if len(shared) < 2 or 2 * len(shared) < len(rule):
+            continue
+        if _negative(requested) == _negative(rule_words):
             return True
     return False
 

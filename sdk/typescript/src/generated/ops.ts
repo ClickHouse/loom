@@ -3509,6 +3509,7 @@ export interface LearningEntry {
   proposed_value: unknown;
   supporter_count: number;
   supporter_sessions?: number;
+  supporter_writers?: number;
   confidence_avg: number;
   supporters: string[];
   rationale: string;
