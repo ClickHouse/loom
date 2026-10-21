@@ -83,7 +83,8 @@ class MemoryImportEvidenceInput(BaseModel):
     agent: str
     user_id: str = "-"
     # Chunks to re-embed and insert (≤256); empty-content or session-less ones are skipped,
-    # and one whose text reads as a credential is inserted without a vector.
+    # one that reads as a credential is inserted without a vector, and a key cut between
+    # two calls' chunks is not found.
     chunks: list[EvidenceChunk] = Field(default_factory=list, max_length=256)
     # Session digests to re-embed and insert (≤256); empty summaries are skipped, and one
     # whose text reads as a credential is inserted without a vector.

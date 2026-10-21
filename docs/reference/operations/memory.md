@@ -963,7 +963,7 @@ Write exported evidence chunks and digests into a namespace, re-embedded here an
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
-| `chunks` | `list[EvidenceChunk]` | *(computed)* | Chunks to re-embed and insert (≤256); empty-content or session-less ones are skipped, and one whose text reads as a credential is inserted without a vector. |
+| `chunks` | `list[EvidenceChunk]` | *(computed)* | Chunks to re-embed and insert (≤256); empty-content or session-less ones are skipped, one that reads as a credential is inserted without a vector, and a key cut between two calls' chunks is not found. |
 | `digests` | `list[EvidenceDigest]` | *(computed)* | Session digests to re-embed and insert (≤256); empty summaries are skipped, and one whose text reads as a credential is inserted without a vector. |
 | `source_trace` | `str` | `'okf-import'` | Stamped into memory_chunks.source_url when the chunk carries none. |
 

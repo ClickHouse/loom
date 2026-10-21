@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 # splits mid-thought. 100-char overlap so a boundary-straddling date/entity
 # appears in both neighbors.
 _CHUNK_SIZE = 800
-_CHUNK_OVERLAP = 100
+CHUNK_OVERLAP = 100
 _MIN_CHUNK_SIZE = 20  # drop chunks shorter than this (mostly noise)
 # Fallback when the setting is unreadable; the cap itself is
 # `settings.memory_chunks_max_per_call`. 64 chunks is ~50K chars, which a
@@ -182,7 +182,7 @@ def chunk_text_with_ranges(
         last_end = end
         if end >= n:
             break
-        start = max(start + 1, end - _CHUNK_OVERLAP)
+        start = max(start + 1, end - CHUNK_OVERLAP)
     # The loop only stops short of the end when the chunk cap is hit; the
     # tail past the last chunk's end is what nobody will ever be able to find.
     return chunks, ranges, max(0, n - last_end)

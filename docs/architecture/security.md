@@ -719,7 +719,11 @@ it. Chunks overlap and can be cut through a key, so the conversation and long-va
 writers check the whole text once and also hold every chunk whose character range
 overlaps a credential: a chunk that holds only a key's head or tail does not read as one
 on its own. `memory.import_evidence` checks each session's imported chunks the same way, joined in
-`chunk_index` order with the overlap each chunk repeats from the one before it dropped. `memory.get` on a `chunk:` key leaves out a neighbour with no vector, as it
+`chunk_index` order with the overlap each chunk repeats from the one before it dropped. The
+check reads one call's chunks only (at most 256), so a key cut at the boundary between the
+last chunk of one call and the first chunk of the next reads as a credential in neither, and
+both chunks are embedded; an importer that sends a session's chunks in one call, or splits
+them where no key is cut, avoids it. `memory.get` on a `chunk:` key leaves out a neighbour with no vector, as it
 leaves out one that reads as a credential, and audits a key read of either. This holds for
 a chunk of a long `memory.set` value whatever its row's label; a `low` row stays findable
 through its own embedding. A session digest whose text reads as a
@@ -733,8 +737,8 @@ sent to the summarizer. A summary that reads as a credential anyway is refused (
 "summary-reads-as-credential"`) and tombstones nothing; the window stays the same while
 its turns are live, so a retry most likely gets the same refusal.
 A provider rebuild stages a chunk, digest or turn embedding that reads as a credential,
-or that was stored without a vector (such as a chunk holding only part of a key), without
-a vector, and its verification reads the text of every row left empty whose source held a
+or a chunk stored without a vector (one may hold only part of a key), without a vector; a
+digest or turn embedding stored without one (a failed embed) is embedded, and its verification reads the text of every row left empty whose source held a
 vector and accepts those that read as a credential. `loom reembed` keeps a conversation turn that reads as
 a credential on its old model, which search does not read, until `--delete-old` removes it
 (a memory row's vector follows its sensitivity label). `loom reembed --in-database` runs

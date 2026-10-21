@@ -28,7 +28,7 @@ from server.memory.api.models_evidence_transfer import (
     MemoryImportEvidenceInput,
     MemoryImportEvidenceOutput,
 )
-from server.memory.app.chunk_projection import _CHUNK_OVERLAP
+from server.memory.app.chunk_projection import CHUNK_OVERLAP
 from server.memory.app.credential_passages import embed_plain
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.okf_evidence import evidence_is_high, evidence_keys
@@ -297,9 +297,11 @@ async def _refused(
 
 def _overlap(previous: str, chunk: str) -> int:
     """The length of the longest start of `chunk` that ends `previous`: the characters a
-    chunk repeats from the one before it (`_CHUNK_OVERLAP`, less the whitespace a chunk
-    is trimmed of)."""
-    for size in range(min(len(previous), len(chunk), 2 * _CHUNK_OVERLAP), 0, -1):
+    chunk repeats from the one before it (`CHUNK_OVERLAP`, less the whitespace a chunk
+    is trimmed of). The chunker repeats at most `CHUNK_OVERLAP` characters; the search
+    stops at twice that, a margin that still keeps the scan short and leaves a longer
+    repeated run as new text."""
+    for size in range(min(len(previous), len(chunk), 2 * CHUNK_OVERLAP), 0, -1):
         if previous.endswith(chunk[:size]):
             return size
     return 0
