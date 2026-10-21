@@ -151,6 +151,20 @@ def test_an_empty_header_is_left_out_and_a_value_is_encoded_only_where_it_must(
     }
 
 
+def test_a_value_is_trimmed_and_left_out_when_nothing_but_space_remains(
+    directory, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        settings,
+        "inference_identity_headers_json",
+        '{"X-Actor": "{email} via loom", "X-Pad": "  {email}  ", "X-Agent": "{agent}"}',
+    )
+    _as(AGENT)  # an agent has no address: a header value never starts with a space
+    assert _sent() == {"X-Actor": "via loom", "X-Agent": "agent-7"}
+    _as("sso-alice", service=False, namespace="ns")
+    assert _sent() == {"X-Actor": "alice@example.com via loom", "X-Pad": "alice@example.com"}
+
+
 def test_without_identity_headers_nothing_is_sent_or_read(directory, monkeypatch) -> None:
     monkeypatch.setattr(settings, "inference_identity_headers_json", "")
     _as(AGENT)

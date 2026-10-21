@@ -107,8 +107,8 @@ async def render(a: Attribution) -> tuple[tuple[str, str], ...]:
     """The identity headers of a call made for `a`, in their configured order. The
     headers that name the agent (`{agent}`, `{tenant}`) go together or not at all:
     when any placeholder of theirs renders empty, none of them is sent, since a
-    gateway takes a tenant and an agent as one identity. Any other header whose
-    template renders empty is left out."""
+    gateway takes a tenant and an agent as one identity. Each value is trimmed, and
+    any other header whose value is then empty is left out."""
     templates = settings.identity_headers()
     if not templates:
         return ()
@@ -119,7 +119,9 @@ async def render(a: Attribution) -> tuple[tuple[str, str], ...]:
     for name, template in templates:
         if _names(template) & _AGENT and not whole:
             continue
-        value = IDENTITY_PLACEHOLDER.sub(lambda m: values[m.group(1)], template)
+        # Trimmed: a header value carries no leading or trailing whitespace, which a
+        # placeholder rendering empty beside the template's text leaves.
+        value = IDENTITY_PLACEHOLDER.sub(lambda m: values[m.group(1)], template).strip()
         if value:
             out.append((name, value))
     return tuple(out)
