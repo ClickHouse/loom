@@ -394,7 +394,7 @@ Periodic consolidation pass — merges fragmented memories about the same subjec
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `consolidated` | `list[MemoryConsolidateResult]` | One entry per cluster merged (or that would be, under `dry_run`). |
-| `examined` | `int` | Eligible rows read: live, unpinned, unlocked, embedded, older than `min_age_seconds`, and neither labelled high nor reading as a credential (never sent to the merge model). |
+| `examined` | `int` | Eligible rows read: live, unpinned, unlocked, embedded, older than `min_age_seconds`, and neither labelled nor reading as `high` (never sent to the merge model). |
 | `clusters_found` | `int` | Clusters of two or more rows found. |
 | `clusters_failed` | `int` | Clusters whose merge LLM call failed or returned an unparseable / incomplete JSON object. |
 | `clusters_refused_lossy` | `int` | Of the failed clusters, those the merge guard refused because the merged text lost a date, quantity, identifier, name or negation one source carried; the sources stay as they were. |
@@ -685,7 +685,7 @@ The raw chunks and session digests behind a namespace's memories, as portable ro
 | `session_id` | `str` | `''` | optional: one session only |
 | `limit` | `int` | `500` | Rows per page (1–2000); `has_more` says whether another page follows. |
 | `cursor` | `str` | `''` | opaque keyset cursor from a previous page |
-| `include_high` | `bool` | `False` | Also export the chunks and digests behind a 'high' row, or whose text reads as a credential. |
+| `include_high` | `bool` | `False` | Also export the chunks and digests behind a 'high' row, or whose text holds a high shape (a credential, card number, SSN or stated PIN). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

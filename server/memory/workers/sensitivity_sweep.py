@@ -100,12 +100,12 @@ def cursor_text(key: dict[str, Any] | None, *, past: bool = False) -> str:
     long to name would have the next pass read the same pages again."""
     if not key:
         return "[]"
-    text = json.dumps([str(key[col]) for col in CURSOR_KEY])
+    text = json.dumps([str(key[col]) for col in CURSOR_KEY], ensure_ascii=False)
     if not past and len(text) <= pass_context.MAX_CURSOR:
         return text
     for column in reversed(CURSOR_KEY):
         skipped = past_key(key, column)
-        text = json.dumps([str(skipped[col]) for col in CURSOR_KEY])
+        text = json.dumps([str(skipped[col]) for col in CURSOR_KEY], ensure_ascii=False)
         if len(text) <= pass_context.MAX_CURSOR:
             return text
     return "[]"

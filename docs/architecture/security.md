@@ -812,8 +812,9 @@ extractor's input, the existing memories an extraction prompt shows, the rows
 facts when written, listed by `memory.digests` or read by the outcome judge. The
 `sensitivity_sweep` worker (on, daily) labels the rows from paths that skip the detector:
 a new version per row and, for `high`, tombstoned embedding rows and entity vectors. Until
-the sweep labels it, an unlabelled row that holds a credential is embedded like any other,
-so search serves it, and `memory.ask` and the conflict judge can send it to their models.
+the sweep labels it, an unlabelled row that holds a high shape (a credential, card
+number, SSN or stated PIN) is embedded like any other, so search serves it, and
+`memory.ask` and the conflict judge can send it to their models.
 The worker reads only the trailing window and the shapes in
 `LOOM_SENSITIVITY_SWEEP_SHAPES` (`credential` and `email` by default); the historical
 backlog and the shapes the worker leaves out (by default IBAN-only rows, shape `other`,

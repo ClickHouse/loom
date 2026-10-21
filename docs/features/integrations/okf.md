@@ -51,14 +51,14 @@ and the CLI reports them rather than hiding them.
 **Provenance travels.** The `loom:` block carries the row's provenance tier so a round
 trip cannot turn an inference into a first-hand fact.
 
-| Flag                   | Effect                                                                                                                                                                                                                                                                                                                                                     |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--include-high`       | also export `sensitivity: high` rows, the raw chunks and digests linked to them, and raw text that reads as a credential (the server audits each released item); `memory.bulk_get` does not serve a `high` row past its retention window, so it is named and left out. Off by default: a mirror repository is a wider audience than the namespace's grants |
-| `--no-evidence`        | concepts only; skip the raw chunks (`evidence/`) and session digests (`digests/`) the bundle carries by default                                                                                                                                                                                                                                            |
-| `--no-links`           | skip the typed edges (shared-entity links are still written)                                                                                                                                                                                                                                                                                               |
-| `--include-tombstoned` | also export soft-deleted rows, as `status: deprecated`; one the list does not carry in full (a value past the preview, or a `high` row under `--include-high`) is named and left out                                                                                                                                                                       |
-| `--limit N`            | at most N most-recent rows (smoke runs)                                                                                                                                                                                                                                                                                                                    |
-| `--title`, `--dry-run` | the root index title; plan without writing                                                                                                                                                                                                                                                                                                                 |
+| Flag                   | Effect                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--include-high`       | also export `sensitivity: high` rows, the raw chunks and digests linked to them, and raw text that holds a high shape (a credential, card number, SSN or stated PIN; the server audits each released item); `memory.bulk_get` does not serve a `high` row past its retention window, so it is named and left out. Off by default: a mirror repository is a wider audience than the namespace's grants |
+| `--no-evidence`        | concepts only; skip the raw chunks (`evidence/`) and session digests (`digests/`) the bundle carries by default                                                                                                                                                                                                                                                                                       |
+| `--no-links`           | skip the typed edges (shared-entity links are still written)                                                                                                                                                                                                                                                                                                                                          |
+| `--include-tombstoned` | also export soft-deleted rows, as `status: deprecated`; one the list does not carry in full (a value past the preview, or a `high` row under `--include-high`) is named and left out                                                                                                                                                                                                                  |
+| `--limit N`            | at most N most-recent rows (smoke runs)                                                                                                                                                                                                                                                                                                                                                               |
+| `--title`, `--dry-run` | the root index title; plan without writing                                                                                                                                                                                                                                                                                                                                                            |
 
 ## Lint
 
@@ -190,10 +190,10 @@ uv run --project .okf-lint-loom --frozen --python 3.12 loom okf-lint <OKF_ROOT> 
 - **High-sensitivity rows stay home** unless you pass `--include-high`: a row is high by
   its `sensitivity` field or its `sensitivity:high` tag. A row whose sensitivity the export
   could not read, or read as a level it does not know, stays home too. So do the raw chunks
-  and session digests linked to such a row, and any whose text holds a credential shape (raw
-  text has no sensitivity column, so the detector `memory.set` runs decides, whatever
-  `LOOM_MEMORY_SENSITIVITY_AUTODETECT` says). The lint warns
-  when a high row travelled.
+  and session digests linked to such a row, and any whose text holds a high shape (a
+  credential, card number, SSN or stated PIN; raw text has no sensitivity column, so the
+  detector `memory.set` runs decides, whatever `LOOM_MEMORY_SENSITIVITY_AUTODETECT`
+  says). The lint warns when a high row travelled.
 
 ## Related
 

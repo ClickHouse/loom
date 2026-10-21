@@ -764,6 +764,9 @@ def test_the_cursor_keeps_the_agent_or_names_the_place_past_it() -> None:
     past_namespace = start | {"namespace": "n\x01", "agent": "", "memory_key": ""}
     assert cursor_text(long_agent) == '["o", "n\\u0001", ""]'
     assert cursor_key(cursor_text(long_agent, past=True)) == past_namespace
+    # a non-ASCII agent name is measured in the characters the store keeps
+    cjk_agent = key | {"agent": "代" * 200, "memory_key": "k"}
+    assert cursor_key(cursor_text(cjk_agent)) == start | {"agent": "代" * 200, "memory_key": ""}
     assert cursor_text(None) == "[]" and cursor_key("[]") is None and cursor_key("") is None
     # a cursor that is not this worker's three-column form reads as none
     assert cursor_key(json.dumps(["o", "n", "a", "u", "s", "k"])) is None
