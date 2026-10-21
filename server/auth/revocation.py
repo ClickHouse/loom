@@ -269,7 +269,7 @@ async def revoke(
     revoked_by: str = "",
     issued_before: datetime | None = None,
 ) -> dict[str, Any]:
-    """Revoke every token whose `jti` OR `sub` equals `token_id` and refresh
+    """Revoke every token whose `jti` OR `sub` equals `token_id` and update
     this process's snapshot so `is_revoked` answers True at once.
 
     `verify_token` checks both claims against the one `jti` column: pass a
@@ -294,7 +294,7 @@ async def revoke(
         reason=reason,
         revoked_by=revoked_by,
         issued_before=issued_before,
-        reread=True,
+        reread=False,
     )
 
 
@@ -344,9 +344,9 @@ async def _write(
         "version": await _next_version(key),
     }
     await get_client().insert("loom.revoked_tokens", [row])
+    remember_row(row)
     if reread:  # a caller writing several re-reads once, after them
         await refresh()
-    _apply_locally(key, _cutoff_seconds(issued_before), row["version"])
     return row
 
 
@@ -383,6 +383,7 @@ async def record_cutoff(
     async with subject_change(subject):
         current = await stored(CUTOFF_PREFIX + subject)
         if current is not None and as_aware_utc(current["issued_before"]) >= issued_before:
+            remember_row(current)
             return current, True
         now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
         cutoff = issued_before.astimezone(UTC).replace(tzinfo=None)
@@ -397,11 +398,7 @@ async def record_cutoff(
             "version": version,
         }
         await get_client().insert("loom.revoked_tokens", [row])
-        await refresh()  # as `revoke` does; the fold below covers a re-read that missed it
-        global _cut_off
-        seconds = _cutoff_seconds(cutoff) or 0
-        _cut_off = {**_cut_off, subject: max(_cut_off.get(subject, 0), seconds)}
-        _remember("cut_off", subject, seconds, version)
+        remember_row(row)
         return row, False
 
 
@@ -410,22 +407,6 @@ async def _next_version(jti: str) -> int:
     from server.core.versions import next_version
 
     return await next_version(get_client(), "loom.revoked_tokens", {"jti": jti})
-
-
-async def has_outright_row(jti: str) -> bool:
-    """Whether loom.revoked_tokens itself revokes `jti` outright: what a cutoff
-    written under that key replaces (an owed session revocation it does not)."""
-    from server.core.ch import get_client, own_write_reads
-
-    with own_write_reads():
-        row = await get_client().query_one(
-            """
-            SELECT 1 AS x FROM loom.revoked_tokens FINAL
-            WHERE jti = {j:String} AND expires_at > now() AND issued_before IS NULL
-            """,
-            params={"j": jti},
-        )
-    return row is not None
 
 
 def never_lapses(row: dict[str, Any]) -> bool:
@@ -445,7 +426,7 @@ async def stored(key: str) -> dict[str, Any] | None:
     with own_write_reads():
         row = await get_client().query_one(
             """
-            SELECT jti, revoked_at, expires_at, reason, revoked_by, issued_before
+            SELECT jti, revoked_at, expires_at, reason, revoked_by, issued_before, version
             FROM loom.revoked_tokens FINAL
             WHERE jti = {j:String} AND expires_at > now()
             """,
@@ -460,9 +441,24 @@ def revoked_here(jti: str) -> None:
     _apply_locally(jti, None)
 
 
+def remember_row(row: dict[str, Any]) -> None:
+    """Apply a committed or retained row without advancing the full snapshot's age."""
+    global _cut_off
+
+    key = str(row["jti"])
+    cutoff = _cutoff_seconds(row["issued_before"])
+    version = int(row["version"])
+    if key.startswith(CUTOFF_PREFIX):
+        subject = key.removeprefix(CUTOFF_PREFIX)
+        _cut_off = {**_cut_off, subject: max(_cut_off.get(subject, 0), cutoff or 0)}
+        _remember("cut_off", subject, cutoff, version)
+    else:
+        _apply_locally(key, cutoff, version)
+
+
 def _apply_locally(key: str, cutoff: int | None, version: int | None = None) -> None:
     """Fold a revocation this process just wrote into its snapshot. The
-    re-read in `revoke` can fail, or land on a replica the insert has not
+    periodic re-read can fail, or land on a replica the insert has not
     reached; either way the old snapshot would keep admitting the token
     here until the next refresh. The written row is the newest for its key,
     so here it replaces any earlier state of that key (a refresh lays it back

@@ -125,6 +125,7 @@ async def record(
             and current["issued_before"] is None
             and revocation.never_lapses(current)
         ):
+            revocation.remember_row(current)
             return current, True
         return await revocation.revoke(subject, reason=reason, revoked_by=by), False
 

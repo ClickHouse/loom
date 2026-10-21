@@ -278,21 +278,47 @@ def _parse_expires_at(value: str | None) -> Any:
     return dt
 
 
-async def _warn_about_a_narrowing(subject: str) -> None:
-    """Say what a cutoff on `subject`'s own row replaces, and what it leaves."""
+def _revocation_floor(current: dict[str, Any]) -> Any:
+    from server.auth import revocation
+    from server.core.datetimes import as_aware_utc, to_naive_utc
+
+    return to_naive_utc(
+        current["issued_before"]
+        or revocation.past_every_token_before(as_aware_utc(current["revoked_at"]))
+    )
+
+
+async def _revise_revocation(
+    subject: str, *, expires_at: Any, issued_before: Any, reason: str, by: str
+) -> dict[str, Any] | None:
+    """Keep previously retired tokens dead when changing a revocation."""
     from server.auth import revocation
 
-    if await revocation.has_outright_row(subject):
-        print(
-            f"  ! {subject!r} is revoked outright; this replaces that, and its tokens "
-            "issued after the cutoff work again",
-            file=sys.stderr,
-        )
-    scim_row = (await revocation.scim_revocations([subject])).get(subject)
-    if scim_row is not None and scim_row["issued_before"] is None:
-        print(
-            f"  ! SCIM also revokes {subject!r} outright, which this leaves: --scim gives it back",
-            file=sys.stderr,
+    async with revocation.subject_change(subject):
+        current = await revocation.stored(subject)
+        if current is not None and revocation.never_lapses(current):
+            if expires_at is not None or (
+                issued_before is not None and issued_before < _revocation_floor(current)
+            ):
+                print(
+                    "  ✗ a permanent revocation cannot expire or restore previously retired tokens",
+                    file=sys.stderr,
+                )
+                return None
+        if issued_before is not None:
+            scim_row = (await revocation.scim_revocations([subject])).get(subject)
+            if scim_row is not None and scim_row["issued_before"] is None:
+                print(
+                    f"  ! SCIM also revokes {subject!r} outright, which this leaves: "
+                    "--scim gives it back",
+                    file=sys.stderr,
+                )
+        return await revocation.revoke(
+            subject,
+            expires_at=expires_at,
+            issued_before=issued_before,
+            reason=reason,
+            revoked_by=by,
         )
 
 
@@ -303,7 +329,6 @@ async def _scim_give_back(
     before `issued_before`. The row written, or None and the exit code."""
     from server.auth import revocation, scim
     from server.core import leases
-    from server.core.datetimes import as_aware_utc, to_naive_utc
 
     try:  # SCIM's own lease on the subject: never amid its lift of it
         async with scim.subject_leases([subject]):
@@ -311,14 +336,7 @@ async def _scim_give_back(
             if current is None:
                 print(f"  ✗ SCIM has not revoked {subject!r}", file=sys.stderr)
                 return None, 1
-            # Earlier would revive tokens SCIM has listed revoked and whose
-            # names are free: a token made under one would hide a live one.
-            # Past every token issued before an outright revocation, on any
-            # replica: its own second, and a clock ahead of the one that wrote it.
-            floor = to_naive_utc(
-                current["issued_before"]
-                or revocation.past_every_token_before(as_aware_utc(current["revoked_at"]))
-            )
+            floor = _revocation_floor(current)
             if issued_before < floor:
                 print(
                     f"  ✗ --issued-before must be at or after {floor.isoformat()}Z: "
@@ -411,15 +429,15 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
             row, kept = done.row, done.kept
             counts = {"sessions": done.sessions, "tokens": done.tokens}
         else:
-            if issued_before is not None:
-                await _warn_about_a_narrowing(token_id)
-            row = await revocation.revoke(
+            row = await _revise_revocation(
                 token_id,
                 expires_at=expires_at,
                 reason=args.reason or "",
-                revoked_by=by,
+                by=by,
                 issued_before=issued_before,
             )
+            if row is None:
+                return 2
         if not for_good:
             await subject_revocation.audit_revocation(
                 row, token_id=token_id, kind=kind, by=by, org=org, scim=args.scim

@@ -694,3 +694,84 @@ def test_recording_a_later_alias_failure_still_audits_earlier_revocations(store,
         )
     assert set(store.revoked()) == {"lee@example.com"}
     assert [row["subject"]["token_id"] for row in store.audits] == ["lee@example.com"]
+
+
+@pytest.mark.parametrize("cutoff", [False, True])
+def test_a_committed_revocation_is_audited_without_waiting_for_refresh(store, monkeypatch, cutoff):
+    from contextlib import asynccontextmanager
+
+    from server.auth import subject_revocation
+    from server.core import leases
+
+    holding = leases.holding
+
+    @asynccontextmanager
+    async def brief_claim(name, **kwargs):
+        async with holding(name, ttl_s=0.05, wait_s=0) as held:
+            yield held
+
+    async def blocked_refresh():
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(leases, "holding", brief_claim)
+    monkeypatch.setattr(revocation, "refresh", blocked_refresh)
+    at = datetime.now(UTC) - timedelta(hours=1) if cutoff else None
+    asyncio.run(subject_revocation.revoke_in_org("acme", "lee", by="admin", at=at))
+    assert len(store.revocations) == 1
+    assert [row["subject"]["token_id"] for row in store.audits] == ["lee"]
+
+
+@pytest.mark.parametrize("cutoff", [False, True])
+def test_retaining_a_revocation_updates_the_local_snapshot(store, monkeypatch, cutoff):
+    from server.auth import subject_revocation
+
+    at = datetime.now(UTC) - timedelta(hours=1) if cutoff else None
+    asyncio.run(subject_revocation.record("lee", by="other-replica", at=at))
+    monkeypatch.setattr(revocation, "_revoked_jtis", set())
+    monkeypatch.setattr(revocation, "_revoked_before", {})
+    monkeypatch.setattr(revocation, "_cut_off", {})
+    monkeypatch.setattr(revocation, "_recent", [])
+    done = asyncio.run(subject_revocation.revoke_in_org("acme", "lee", by="admin", at=at))
+    assert done[0][1].kept
+    assert revocation.is_revoked(
+        "lee", issued_at=int((datetime.now(UTC) - timedelta(days=1)).timestamp())
+    )
+
+
+@pytest.mark.parametrize("claim_flag", ["--subject", "--jti"])
+@pytest.mark.parametrize("narrowing", ["cutoff", "expiry"])
+def test_the_cli_cannot_restore_tokens_whose_names_were_freed(store, capsys, claim_flag, narrowing):
+    from server.auth.jwt import _check_not_revoked
+
+    now = datetime.now(UTC).replace(microsecond=0)
+    issued = now - timedelta(hours=1)
+    store.tokens.append(_token("laptop", "lee", created_at=issued.replace(tzinfo=None)))
+    asyncio.run(revocation.refresh())
+    assert cli.main(["revoke-token", "--subject", "lee"]) == 0
+    capsys.readouterr()
+    before = dict(store.revoked()["lee"])
+    option = (
+        ["--issued-before", (now - timedelta(hours=2)).isoformat()]
+        if narrowing == "cutoff"
+        else ["--expires-at", (now + timedelta(days=1)).isoformat()]
+    )
+    rc = cli.main(["revoke-token", claim_flag, "lee", *option])
+    assert store.heads()["laptop"]["revoked_at"] is not None
+    with pytest.raises(TokenError, match="revoked"):
+        _check_not_revoked(
+            {"sub": "sa:laptop-abc123", "creator": "lee", "iat": int(issued.timestamp())}
+        )
+    assert rc == 2
+    assert store.revoked()["lee"] == before
+
+
+def test_the_cli_allows_new_tokens_after_a_safe_cutoff(store, capsys):
+    from server.cli.access import _revocation_floor
+    from server.core.datetimes import as_aware_utc
+
+    assert cli.main(["revoke-token", "--subject", "lee"]) == 0
+    capsys.readouterr()
+    floor = as_aware_utc(_revocation_floor(store.revoked()["lee"]))
+    assert cli.main(["revoke-token", "--subject", "lee", "--issued-before", floor.isoformat()]) == 0
+    assert revocation.is_revoked("lee", issued_at=int(floor.timestamp()) - 1)
+    assert not revocation.is_revoked("lee", issued_at=int(floor.timestamp()))
