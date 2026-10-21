@@ -853,7 +853,7 @@ def embedding_insert_settings(vector: list[float]) -> dict[str, Any]:
     width = codes_state.stored_width(table, "embedding")
     if width == int(settings.embedding_dim) and len(vector) in (0, width):
         return batched_insert_settings()
-    return COMMITTED_INSERT_SETTINGS
+    return dict(COMMITTED_INSERT_SETTINGS)
 
 
 async def tombstone_thread(

@@ -11,8 +11,7 @@ from typing import Any
 
 from server.settings import settings
 
-# Insert settings that commit the rows before the insert returns. Shared: callers
-# pass it on and never change it.
+# Insert settings that commit the rows before the insert returns.
 COMMITTED_INSERT_SETTINGS: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
 
 # A waited async insert on the server profile's own flush timeouts.
@@ -28,12 +27,12 @@ def batched_insert_settings(
     `ch_batched_insert_background_wait_max_ms`. With `ch_batched_inserts` off, the
     committed settings, or, for a site that `async_when_off` marks (a site that is a
     waited async insert whether or not batching is on), a waited async insert on the
-    server profile's timeouts. Callers pass the result on and never change it. Why it
-    is safe: docs/architecture/clickhouse.md#batched-inserts."""
+    server profile's timeouts. Each call returns a new dict. Why it is safe:
+    docs/architecture/clickhouse.md#batched-inserts."""
     if not settings.ch_batched_inserts:
         if async_when_off:
-            return _PROFILE_ASYNC_INSERT_SETTINGS
-        return COMMITTED_INSERT_SETTINGS
+            return dict(_PROFILE_ASYNC_INSERT_SETTINGS)
+        return dict(COMMITTED_INSERT_SETTINGS)
     if background:
         wait_max = int(settings.ch_batched_insert_background_wait_max_ms)
     else:

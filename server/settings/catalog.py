@@ -459,11 +459,11 @@ class AuthSettings(BaseModel):
     # token names the namespace AND who holds a live direct grant. False: every
     # read is refused while ingest continues.
     restricted_serve: bool = True
-    # Write the `namespace.restricted_access` audit row (waited for) every
-    # admitted read of a restricted namespace writes before answering (inline). True
-    # by default: a row written beside the request is lost when the process is killed
-    # before it lands. False trades that row for the awaited insert's latency (its
-    # round trip, up to `ch_batched_insert_wait_max_ms` of batching, and the part write).
+    # Write the `namespace.restricted_access` audit row of each admitted read of a
+    # restricted namespace, and wait for it, before answering. True by default: a row
+    # written beside the request is lost when the process is killed before it lands.
+    # False trades that row for the awaited insert's latency (its round trip, up to
+    # `ch_batched_insert_wait_max_ms` of batching, and the part write).
     restricted_audit_inline: bool = True
     # Comma-separated origin list. "*" allows all (acceptable when
     # auth_required=True). Empty disables CORS entirely.

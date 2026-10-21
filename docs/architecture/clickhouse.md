@@ -159,9 +159,9 @@ the write-mark bump and process-start mark) are sent committed, one part each; t
 ledger flushes (`auth_attempts`, the carry-acknowledgement, write-mark and usage-event
 flushes, the policy witness's rows, `memory_projection_failures`, the graph Undo markers
 and the waited entity-graph inserts) are waited async inserts on the server profile's
-own timeouts; fire-and-forget inserts are unchanged. Turn it off on a deployment with little traffic where latency
-matters more than parts: with writes too sparse to share a part, each insert still waits
-`ch_batched_insert_wait_min_ms`.
+own timeouts; fire-and-forget inserts are unchanged. Turn it off on a deployment with
+little traffic where latency matters more than parts: with writes too sparse to share a
+part, each insert still waits `ch_batched_insert_wait_min_ms`.
 
 These tables stay committed:
 

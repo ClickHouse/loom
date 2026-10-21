@@ -59,7 +59,9 @@ def _msg_row() -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_append_omits_ts_when_none() -> None:
+@pytest.mark.parametrize("switch", [True, False])
+async def test_append_omits_ts_when_none(monkeypatch: pytest.MonkeyPatch, switch: bool) -> None:
+    monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     ch = StubCH()
     msg = MessageInsert(
         org="clickhouse",
@@ -71,9 +73,10 @@ async def test_append_omits_ts_when_none() -> None:
         content="hi",
     )
     await append(msg, ch=ch)
-    _, rows, settings = ch.insert_calls[0]
+    _, rows, sent = ch.insert_calls[0]
     assert "ts" not in rows[0]  # CH defaults to now()
-    assert settings == batched_insert_settings()
+    # With batching off, an append no identity names is committed.
+    assert sent == (batched_insert_settings() if switch else COMMITTED)
 
 
 @pytest.mark.asyncio

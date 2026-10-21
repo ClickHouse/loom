@@ -214,19 +214,23 @@ def test_tables_that_fail_a_whole_flush_stay_committed(rel_path: str, table: str
         )
 
 
-def test_graph_projections_may_stay_async() -> None:
+@pytest.mark.parametrize("switch", [True, False])
+def test_graph_projections_may_stay_async(monkeypatch: pytest.MonkeyPatch, switch: bool) -> None:
     """The counter-case, so the rule above reads as a decision and not a blanket
     ban: the entity graph is opt-in on read (`search_mode=graph`) and eventual
     there is fine, so those inserts intentionally stay async."""
     from server.memory.app.projections import graph_insert_settings
 
+    monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     for table in ("entity_edges", "entity_triples"):
         for wait in (False, True):
             assert graph_insert_settings(table, wait=wait, dedup_token="")["async_insert"] == 1
-        # A waited graph insert uses the same live wait bounds as every batched insert.
-        assert graph_insert_settings(table, wait=True, dedup_token="") == batched_insert_settings(
-            async_when_off=True
+        # A waited graph insert uses the same live wait bounds as every batched insert,
+        # and with batching off is a waited async insert on the server profile's timeouts.
+        expected = (
+            batched_insert_settings() if switch else {"async_insert": 1, "wait_for_async_insert": 1}
         )
+        assert graph_insert_settings(table, wait=True, dedup_token="") == expected
     # The projection repair's replay is the one synchronous, token-deduplicated form.
     assert graph_insert_settings("entity_edges", wait=False, dedup_token="t")["async_insert"] == 0
 
