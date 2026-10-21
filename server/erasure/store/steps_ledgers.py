@@ -228,6 +228,15 @@ async def delete_memory_drops_by_namespace(
     )
 
 
+async def delete_namespace_guides_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """Every revision of the namespace's guide: text its writers wrote about it."""
+    return await delete_scoped(
+        "loom.namespace_guides", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
 async def delete_delete_version_checks_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
