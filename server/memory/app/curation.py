@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -56,7 +57,7 @@ from server.memory.api.models_temporal import (
 )
 from server.memory.app import webhooks
 from server.memory.app.provenance import writer_actor
-from server.memory.domain.sensitivity import value_reads_high
+from server.memory.domain.sensitivity import listed_text, value_reads_high
 from server.memory.domain.temporal_sql import status_predicate
 from server.memory.domain.webhook_events import memory_change
 from server.memory.store.history import HistoryTarget
@@ -143,27 +144,32 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
         params,
     )
     page = rows[: int(input.limit)]
+    # Checking every digest's text is CPU work; it runs off the event loop.
     return MemoryDigestsOutput(
-        rows=[
-            _DigestRow(
-                session_id=str(r.get("session_id") or ""),
-                summary_text=str(r.get("summary_text") or ""),
-                # a digest an earlier build wrote may still hold a credential as a key fact
-                key_facts=[str(k) for k in (r.get("key_facts") or []) if not value_reads_high(k)],
-                derived_from=[str(k) for k in (r.get("derived_from") or [])],
-                valid_at=r.get("valid_at"),
-                created_at=r.get("created_at"),
-                version=int(r.get("version") or 0),
-            )
-            for r in page
-        ],
+        rows=await asyncio.to_thread(_digest_rows, page),
         truncated=len(rows) > len(page),
     )
 
 
+def _digest_rows(page: list[dict[str, Any]]) -> list[_DigestRow]:
+    return [
+        _DigestRow(
+            session_id=str(r.get("session_id") or ""),
+            summary_text=listed_text(r.get("summary_text")),
+            # a digest an earlier build wrote may still hold a credential as a key fact
+            key_facts=[str(k) for k in (r.get("key_facts") or []) if not value_reads_high(k)],
+            derived_from=[str(k) for k in (r.get("derived_from") or [])],
+            valid_at=r.get("valid_at"),
+            created_at=r.get("created_at"),
+            version=int(r.get("version") or 0),
+        )
+        for r in page
+    ]
+
+
 def _headline(text: Any, limit: int = 160) -> str:
     """The first sentence or line of a digest, clipped."""
-    t = " ".join(str(text or "").split())
+    t = " ".join(listed_text(text).split())
     for sep in (". ", "; ", " — "):
         i = t.find(sep)
         if 0 < i < limit:
@@ -205,12 +211,17 @@ async def handle_memory_outline(input: MemoryOutlineInput) -> MemoryOutlineOutpu
             base,
         )
         sessions_total = int((total or [{}])[0].get("c") or 0)
-        for r in digests[: int(input.sessions_limit)]:
+        page = digests[: int(input.sessions_limit)]
+        # Checking every digest's text is CPU work; it runs off the event loop.
+        headlines = await asyncio.to_thread(
+            lambda: [_headline(r.get("summary_text")) for r in page]
+        )
+        for r, headline in zip(page, headlines, strict=True):
             sessions.append(
                 _OutlineSession(
                     session_id=str(r.get("session_id") or ""),
                     date=_day(r.get("d")),
-                    headline=_headline(r.get("summary_text")),
+                    headline=headline,
                     key_facts=int(r.get("kf") or 0),
                     rows=int(r.get("df") or 0),
                 )

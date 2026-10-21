@@ -188,18 +188,18 @@ the write.
 `memory.set_from_messages` runs a step pipeline over a `WorkflowState`
 (`memory/app/pipeline.py`, `DEFAULT_PIPELINE`) and writes through the bulk path:
 
-| Step                              | What it does                                                                |
-| --------------------------------- | --------------------------------------------------------------------------- |
-| `loom.fetch_namespace_categories` | Loads the namespace's tag taxonomy.                                         |
-| `loom.fetch_existing_memories`    | Shows the extractor the nearest stored memories so it does not repeat them. |
-| `loom.llm_extract`                | The extraction call; long transcripts are split and merged.                 |
-| `loom.drop_recall_echoes`         | Drops facts that restate memories the session was served (`recalled_keys`). |
-| `loom.drop_session_echoes`        | Drops facts that restate what the session's own Loom calls wrote or read.   |
-| `loom.drop_activity_narration`    | Drops narration of tool activity with no durable outcome.                   |
-| `loom.drop_non_durable`           | Coding sessions: drops status snapshots, housekeeping and plans.            |
-| `loom.verify_durable`             | Coding sessions: a verifier pass over the rest. Fails open.                 |
-| `loom.hash_dedup`                 | Drops facts whose canonical hash is already stored.                         |
-| `loom.bulk_write`                 | Writes through `memory.bulk_set`.                                           |
+| Step                              | What it does                                                                            |
+| --------------------------------- | --------------------------------------------------------------------------------------- |
+| `loom.fetch_namespace_categories` | Loads the namespace's tag taxonomy.                                                     |
+| `loom.fetch_existing_memories`    | Shows the extractor the nearest stored memories so it does not repeat them.             |
+| `loom.llm_extract`                | The extraction call; long transcripts are split and merged.                             |
+| `loom.drop_recall_echoes`         | Drops facts that restate memories the session was served (`recalled_keys`).             |
+| `loom.drop_session_echoes`        | Drops facts that restate what the session's own Loom calls wrote or read.               |
+| `loom.drop_activity_narration`    | Drops narration of tool activity with no durable outcome.                               |
+| `loom.drop_non_durable`           | Coding sessions: drops status snapshots, housekeeping and plans.                        |
+| `loom.verify_durable`             | Coding sessions: a verifier pass over the rest. Fails open.                             |
+| `loom.hash_dedup`                 | Drops facts whose canonical hash is already stored.                                     |
+| `loom.bulk_write`                 | Files bot rules to the learnings queue, then writes the rest through `memory.bulk_set`. |
 
 A request may reorder or skip steps, or name steps an operator registered
 (`register_step`); see the [extraction pipeline guide](../guides/extraction-pipeline.md).
@@ -494,6 +494,20 @@ namespace or user, and hold vectors, never text. It is a derived cache, so delet
 than the scope costs only cache misses. The table is step-only (`idempotency.delete`), not
 counted: any search in the org refills it before the census could run. Each replica's
 process tier expires within `LOOM_EMBEDDING_CACHE_TTL_S`.
+
+A bot's rule (`about="agent"`) is never written as a memory: `loom.bulk_write` files it
+to `loom.learnings_queue` as a candidate and adds a row with the user's quotes to
+`loom.learnings_supporters`. A supporter row carries the identity tuple, its `agent` the
+bot the rule was said to, so it names that bot without its candidate. A user erasure's
+`learnings_queue.delete` step deletes the user's supporter rows, then each
+`assistant_turn` candidate left with no supporter. A pending one is deleted. A decided
+one keeps its decision on a new version with the rule blanked, so a rejected rule never
+comes back as pending. Both deletes are bounded to the rows the step read, so a review
+or a supporter that lands meanwhile survives, and the census reopens the step for
+whatever still holds the rule. A candidate carries no `user_id`, and once a user's
+supporter rows are gone nothing ties an unsupported candidate to that user, so the
+census counts every unsupported candidate that still holds its rule in the org,
+whichever erasure left it.
 
 ## Audit rows
 

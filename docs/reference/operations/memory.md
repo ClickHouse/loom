@@ -100,7 +100,7 @@ Ask a question and get a grounded answer synthesized from the caller's recalled 
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `agent` | `str` | `'*'` | Read ALL agents in the accessible namespaces by default (membership is the read boundary; agent is authorship metadata), matching memory.search. |
+| `agent` | `str` | `'*'` | Read ALL agents in the accessible namespaces by default (membership is the read boundary; agent is authorship metadata), matching memory.search, and serve every bot's promoted rules. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
@@ -685,7 +685,7 @@ The raw chunks and session digests behind a namespace's memories, as portable ro
 | `session_id` | `str` | `''` | optional: one session only; "" or "-" = every session |
 | `limit` | `int` | `500` | Rows per page (1–2000); `has_more` says whether another page follows. |
 | `cursor` | `str` | `''` | opaque keyset cursor from a previous page |
-| `include_high` | `bool` | `False` | Also export the chunks and digests behind a 'high' row, or whose text holds a high shape (a credential, card number, SSN or stated PIN). |
+| `include_high` | `bool` | `False` | Also export the chunks and digests behind a 'high' row or whose text holds a high shape (a credential, card number, SSN or stated PIN), and the chunks stored without a vector (one may hold part of a key). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -963,17 +963,17 @@ Write exported evidence chunks and digests into a namespace, re-embedded here an
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
-| `chunks` | `list[EvidenceChunk]` | *(computed)* | Chunks to re-embed and insert (≤256); empty-content or session-less ones are skipped. |
-| `digests` | `list[EvidenceDigest]` | *(computed)* | Session digests to re-embed and insert (≤256); empty summaries are skipped. |
+| `chunks` | `list[EvidenceChunk]` | *(computed)* | Chunks to re-embed and insert (≤256); empty-content or session-less ones are skipped, one that reads as a credential is inserted without a vector, and a key cut between two calls' chunks is not found. |
+| `digests` | `list[EvidenceDigest]` | *(computed)* | Session digests to re-embed and insert (≤256); empty summaries are skipped, and one whose text reads as a credential is inserted without a vector. |
 | `source_trace` | `str` | `'okf-import'` | Stamped into memory_chunks.source_url when the chunk carries none. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `chunks_written` | `int` | Rows inserted into `loom.memory_chunks`. |
+| `chunks_written` | `int` | Rows inserted into `loom.memory_chunks`, those written without a vector included. |
 | `links_written` | `int` | Chunk-to-memory-key provenance links inserted from the chunks' `memory_keys`. |
 | `digests_written` | `int` | Rows inserted into `loom.session_summaries`. |
 | `embedding_model` | `str` | The server embedder the imported rows were re-embedded with. |
-| `embedding_dim` | `int` | Vector length of the written embeddings; 0 when nothing was embedded. |
+| `embedding_dim` | `int` | Vector length of the written embeddings; 0 when nothing was embedded (every item read as a credential, or none was written). |
 | `edited` | `list[str]` | Chunks whose body did not hash to the content_sha256 they arrived with. |
 | `skipped` | `int` | Items not written: empty, unembeddable, or refused by a blacklist pattern (Refuse). |
 
@@ -2020,6 +2020,7 @@ Run LLM extraction on `messages` and write the extracted facts.
 | `last_messages` | `list[_Message]` | *(computed)* | Prior turns from the SAME session not being extracted this call — lets the extractor resolve pronouns/follow-ups/cross-turn references without re-extracting earlier facts. |
 | `extraction_instructions` | `str` | `''` | Per-request extraction-prompt suffix for workload-specific tuning. |
 | `coverage_sweep` | `bool \| None` | `None` | The coverage sweep (turn- and sentence-level second reading) per call — None = the namespace, then the density gates. |
+| `agent_learnings` | `bool \| None` | `None` | None follows memory_extract_agent_learnings (default off); false skips filing the assistant's rules for this call, and true while the setting is off is named in ignored_args. |
 | `pipeline_steps` | `list[dict[str, Any]]` | *(computed)* | Per-call workflow override. |
 | `valid_at` | `datetime \| None` | `None` | Fallback valid_at for facts the extractor didn't anchor itself. |
 | `defer` | `bool` | `False` | Capture now, extract later. |
@@ -2038,6 +2039,8 @@ Run LLM extraction on `messages` and write the extracted facts.
 | `forget_requests` | `int` | Requests to forget read from the user's own sentences; with `forgotten` it says how many found a row to retire. |
 | `about_other` | `int` | Rows written as another person's (`about:other`), whether the extractor said so or the sentence's subject did. |
 | `premise_facts` | `int` | The user's facts read from the assistant's premises ("since you enjoy X…"), added to the batch. |
+| `learning_candidates` | `int` | Rules the assistant stated about itself that wrote to the learnings queue: a new candidate or this session's support of one (a session restating a rule it already backs counts 0). |
+| `ignored_args` | `list[str]` | Request fields the server did not apply: unknown keys, and `agent_learnings=true` while the deployment setting memory_extract_agent_learnings is off. |
 | `segmenter` | `str` | Which planner cut them: whole \| size. |
 | `cached_tokens_in` | `int` | Subset of tokens_in the provider served from its prompt cache (billed at a discount). |
 | `ontology_warnings` | `list[str]` | Extracted entity types / relation verbs outside the namespace's ontology (loom.namespace_ontology). |

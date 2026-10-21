@@ -22,7 +22,7 @@ Log one chat turn (role + content) to the active thread.
 | `thread_id` | `str` | required | The thread to append to; it need not have been created first. |
 | `msg_id` | `str` | `''` | optional; server derives a content hash when omitted |
 | `role` | `Literal['user', 'assistant', 'system', 'tool']` | required | Who spoke: `user`, `assistant`, `system` or `tool`. |
-| `content` | `str` | required | The message text, stored verbatim; a user or assistant turn is also embedded for `conversation.search`. |
+| `content` | `str` | required | The message text, stored verbatim; a user or assistant turn is also embedded for `conversation.search`, unless its text reads as a credential. |
 | `reasoning` | `str` | `''` | The model's reasoning for this turn, stored beside `content`; empty = none. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
@@ -58,7 +58,7 @@ Summarize old turns into one embedded system turn and tombstone the originals.
 | `summary_msg_id` | `str` | Id of the synthetic `system` summary message; empty when not compacted. |
 | `tokens_in` | `int` | Prompt tokens the summarizer LLM call used; 0 when no call was made. |
 | `tokens_out` | `int` | Completion tokens of the summary; 0 when no call was made. |
-| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, or embed-failed (retry once the embedder answers). |
+| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, embed-failed (retry once the embedder answers), summary-reads-as-credential (do not retry: the same window gets the same summary). |
 
 ## `conversation.create`
 
@@ -125,7 +125,7 @@ Fetch one thread by id: thread metadata + optional messages.
 | `found` | `bool` | False when the thread has neither a thread row nor any live message. |
 | `thread_id` | `str` | Echo of the input `thread_id`. |
 | `title` | `str` | Title from `conversation.create` or `update`; empty when none was set. |
-| `metadata` | `dict[str, Any]` | Thread metadata JSON; `{}` when none was set. |
+| `metadata` | `dict[str, Any]` | Thread metadata JSON; `{}` when none was set, apart from the titler's `title_refused` mark. |
 | `run_id` | `str` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `user_id` | `str` | The end user the row belongs to; `'-'` for none. |
 | `agent` | `str` | The thread's owner (the agent of its thread row); for a thread built by appends only, the latest writer among the messages read, so empty without `include_messages`. |
@@ -200,7 +200,7 @@ Save one chat message a user picked for search, whether or not the namespace rec
 | `conversation_id` | `str` |  |
 | `message_id` | `str` |  |
 | `indexed` | `bool` | True when the turn is saved and has a vector the saved search ranks: a new write, a re-save (finishing what an interrupted save left behind), and a transcript turn that is now flagged saved. |
-| `reason` | `Literal['', 'duplicate', 'owner_mismatch', 'deleted', 'unsupported_role', 'embed_failed']` | "duplicate": already saved, nothing changed. "owner_mismatch": the stored turn belongs to another user. "deleted": the stored turn was tombstoned. "unsupported_role": the stored turn is a system or tool turn, which is not embedded.… |
+| `reason` | `Literal['', 'duplicate', 'owner_mismatch', 'deleted', 'unsupported_role', 'embed_failed', 'reads_as_credential']` | "duplicate": already saved, nothing changed. "owner_mismatch": the stored turn belongs to another user. "deleted": the stored turn was tombstoned. "unsupported_role": the stored turn is a system or tool turn, which is not embedded.… |
 | `ts` | `datetime` | The stored turn's timestamp; the time of the refusal when one is refused. |
 
 ## `conversation.saved_status`

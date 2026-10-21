@@ -7,7 +7,8 @@ store an empty outcome. This module names such keys so the transports can say so
 
 - ``ignored_args``: the top-level keys the op's model has no field (or alias)
   for, minus the keys the transport itself reads (consumer, traffic class,
-  explain, the idempotency key);
+  explain, the idempotency key), plus the fields the op itself reports it did
+  not apply (its result's ``ignored_args``), listed first;
 - ``did_you_mean``: for each, the closest field name when one is close.
 
 An op that changes state (any op that is not ``Operation.read_only``: WRITER
@@ -180,7 +181,15 @@ def attach(result: Any, block: dict[str, Any]) -> Any:
     is returned as is."""
     if not block or not isinstance(result, dict):
         return result
-    return {**result, **block}
+    merged = _merged(result.get("ignored_args") or [], block["ignored_args"])
+    return {**result, **block, "ignored_args": merged}
+
+
+def _merged(own: list[Any], unknown: list[str]) -> list[str]:
+    """The fields an op did not apply itself, then the unknown keys it has no field
+    for, each named once."""
+    names = [str(k) for k in own]
+    return [*names, *(k for k in unknown if k not in names)]
 
 
 class ArgumentRefused:
@@ -231,6 +240,12 @@ def response_body(op: Any, args: Any, result: Any) -> Any:
     return attach(body, block)
 
 
-def header_value(op: Any, args: Any) -> str:
-    """`X-Loom-Ignored-Args` for an HTTP answer ("" when none)."""
-    return ",".join(unknown_args(op.input_model, args))
+def header_value(op: Any, args: Any, result: Any) -> str:
+    """`X-Loom-Ignored-Args` for an HTTP answer ("" when none): the fields the op
+    itself did not apply (its result's `ignored_args`), then the unknown keys."""
+    own = (
+        result.get("ignored_args")
+        if isinstance(result, dict)
+        else getattr(result, "ignored_args", None)
+    )
+    return ",".join(_merged(own or [], unknown_args(op.input_model, args)))

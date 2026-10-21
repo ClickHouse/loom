@@ -107,8 +107,18 @@ async def test_memory_get_resolves_a_memory_set_chunk_id(monkeypatch: pytest.Mon
 
     ch = _CH(
         [
-            {"chunk_index": 0, "content": "first passage", "parent_memory_key": "lesson_0c5d"},
-            {"chunk_index": 1, "content": "second passage", "parent_memory_key": "lesson_0c5d"},
+            {
+                "chunk_index": 0,
+                "content": "first passage",
+                "parent_memory_key": "lesson_0c5d",
+                "embedding_dim": 2,
+            },
+            {
+                "chunk_index": 1,
+                "content": "second passage",
+                "parent_memory_key": "lesson_0c5d",
+                "embedding_dim": 2,
+            },
         ]
     )
     monkeypatch.setattr(M, "get_client", lambda: ch)

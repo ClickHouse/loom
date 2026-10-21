@@ -10,7 +10,7 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `learnings.list`
 
-List candidate learnings (memories the auto-promote worker flagged as worth promoting to shared).
+List learnings candidates by status (pending by default, promoted, rejected).
 
 `POST /v1/learnings.list` · MCP `loom_learnings_list` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -36,7 +36,7 @@ Per-namespace approve-ratio rollup of the learnings queue.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str \| None` | `None` | None = org-wide rollup |
-| `source_kind` | `str \| None` | `'conversation_seeder'` | Only candidates from this producer; the default counts the conversation seeder, None counts every producer. |
+| `source_kind` | `str \| None` | `'conversation_seeder'` | Only candidates from this producer; None counts every producer. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -55,14 +55,14 @@ Approve or reject a pending learning.
 | `candidate_id` | `str` | required | The queued candidate to decide; one unknown in `namespace` answers 404. |
 | `decision` | `Literal['promote', 'reject']` | required | `promote` writes it to `destination` and marks it promoted; `reject` only marks it rejected. |
 | `reason` | `str` | `''` | Why; stored as `decision_reason` and carried into the promoted row's provenance. |
-| `destination` | `Literal['memory', 'knowledge', 'both']` | `'memory'` | On 'promote': 'memory' → loom.shared, 'knowledge' → knowledge.upsert, 'both' → both in sequence. |
+| `destination` | `Literal['memory', 'knowledge', 'both'] \| None` | `None` | Where a promotion lands: 'memory' (loom.shared for a supporters candidate, else a memory row), 'knowledge' (knowledge.upsert) or 'both'; unset is 'knowledge' for an assistant_turn rule and 'memory' otherwise. |
 | `approver` | `str` | `'learnings-reviewer'` | Captured into the audit subject + shared.promoted_by. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `candidate_id` | `str` | The candidate, echoed. |
 | `new_status` | `Literal['pending', 'promoted', 'rejected']` | The status the candidate holds after this call. |
-| `promoted_to_shared` | `bool` | True when this call wrote the memory destination: `loom.shared` for a supporters candidate, a namespace memory row for a seeder one. |
+| `promoted_to_shared` | `bool` | True when this call wrote memory: `loom.shared` for a supporters candidate, a namespace row for a seeder, the agent's `user_id` '-' row for a bot's rule. |
 | `promoted_to_knowledge` | `bool` | True when this call upserted the candidate as a knowledge document. |
 | `knowledge_source_uri` | `str` | source_uri the knowledge doc was upserted under (for later knowledge.delete). |
 | `decided_at` | `datetime` | When this call ran (UTC), also on a repeat that changed nothing. |

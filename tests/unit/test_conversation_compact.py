@@ -13,6 +13,7 @@ import pytest
 from server.knowledge.api.models_conversations import ConversationCompactInput
 from server.knowledge.app import conversations as ch_mod
 from server.llm.client import LLMResult
+from tests.unit._fake_credentials import OPENAI_KEY
 from tests.unit.ch_fake import ConversationsCH
 
 
@@ -24,6 +25,22 @@ def _saved_write_leases(monkeypatch):
 
 
 T0 = datetime(2026, 9, 1, 12, 0, 0)
+
+
+def _turn(
+    i: int, *, secret: bool = False, saved: bool = False, run_id: str = "-"
+) -> dict[str, Any]:
+    """Transcript row `m{i}`, `i` seconds after T0; `secret` puts `OPENAI_KEY` in its text."""
+    return {
+        "msg_id": f"m{i}",
+        "role": "user",
+        "content": f"my key is {OPENAI_KEY}" if secret else f"turn {i}",
+        "ts": T0 + timedelta(seconds=i),
+        "metadata": "{}",
+        "user_id": "alice",
+        "run_id": run_id,
+        "is_saved": saved,
+    }
 
 
 _EMBEDDING_FIELDS = (
@@ -695,6 +712,83 @@ def test_a_summary_inside_the_window_is_replaced_but_not_counted(
         assert out.reason == "below-min-to-compact" and llm.prompts == []
 
 
+def test_a_summary_that_reads_as_a_credential_compacts_nothing(monkeypatch) -> None:
+    """A summary that repeats a key pasted in one turn would have no vector, so search
+    would lose the window for good: nothing is written and no turn is tombstoned."""
+    import server.core.ch
+    import server.llm.client
+
+    class _KeyLLM(_FakeLLM):
+        async def complete(self, **kw: Any) -> LLMResult:
+            self.prompts.append(kw["user"])
+            return LLMResult(
+                text=f"The user shared {OPENAI_KEY} and planned the week.",
+                tokens_in=1,
+                tokens_out=2,
+                provider="fake",
+                model="fake",
+            )
+
+    class _NoEmbedder:
+        model_name = "fake"
+        dim = 3
+
+        async def embed(self, text):
+            raise AssertionError("a credential summary must not reach the embedder")
+
+    rows = [_turn(i, secret=i == 2, run_id="run-1") for i in range(6)]
+    fake = ConversationsCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _KeyLLM())
+    monkeypatch.setattr(ch_mod, "get_embedder", lambda: _NoEmbedder())
+
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=2
+            )
+        )
+    )
+    assert (out.compacted, out.reason) == (False, "summary-reads-as-credential")
+    assert fake.inserted == [] and fake.embedded == [] and fake.executed == []
+
+
+def test_a_credential_turn_is_left_out_of_the_window_and_stays_live(monkeypatch) -> None:
+    """The summarizer never sees a turn that reads as a credential, even one that echoes
+    its input; the turn stays live, and the rest of the window compacts."""
+    import server.core.ch
+    import server.llm.client
+
+    class _EchoLLM(_FakeLLM):
+        async def complete(self, **kw: Any) -> LLMResult:
+            self.prompts.append(kw["user"])
+            return LLMResult(
+                text=kw["user"][:200], tokens_in=1, tokens_out=2, provider="fake", model="fake"
+            )
+
+    rows = [_turn(i, secret=i == 1, run_id="run-1") for i in range(6)]
+    fake = ConversationsCH(rows)
+    llm = _EchoLLM()
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
+
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=2
+            )
+        )
+    )
+    assert out.compacted is True and out.messages_summarized == 4
+    assert all(OPENAI_KEY not in prompt for prompt in llm.prompts)
+    [summary] = fake.inserted
+    assert '"compacted_from": ["m0", "m2", "m3", "m4"]' in summary["metadata"]
+    tombstoned = [
+        params["ids"] for sql, params in fake.executed if "ALTER TABLE loom.conversations\n" in sql
+    ]
+    assert tombstoned == [["m0", "m2", "m3", "m4"]]
+
+
 def test_compact_never_summarizes_or_tombstones_a_saved_turn(monkeypatch) -> None:
     """A message the user saved for search keeps its row: compaction folds the
     turns around it and leaves it verbatim."""
@@ -731,3 +825,90 @@ def test_compact_never_summarizes_or_tombstones_a_saved_turn(monkeypatch) -> Non
     import json
 
     assert "m1" not in json.loads(summary["metadata"])["compacted_from"]
+
+
+def test_a_saved_and_a_credential_turn_both_stay_live(monkeypatch) -> None:
+    """Both filters hold together: the saved turn and the credential turn are left out of
+    the window, never sent to the summarizer and never tombstoned."""
+    import server.core.ch
+    import server.llm.client
+
+    rows = [_turn(i, secret=i == 2, saved=i == 1) for i in range(7)]
+    fake = ConversationsCH(rows)
+    llm = _FakeLLM()
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
+
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=2
+            )
+        )
+    )
+    assert out.compacted is True and out.messages_summarized == 4
+    assert all(OPENAI_KEY not in prompt and "turn 1" not in prompt for prompt in llm.prompts)
+    tombstoned = [
+        params["ids"] for sql, params in fake.executed if "ALTER TABLE loom.conversations\n" in sql
+    ]
+    assert tombstoned == [["m0", "m3", "m4", "m5"]]
+
+
+@pytest.mark.parametrize("held", ["saved", "credential"])
+def test_a_window_of_only_held_turns_has_nothing_to_compact(monkeypatch, held) -> None:
+    """Every turn before the recent ones is saved, or reads as a credential: none can be
+    summarised, so nothing is (not `already-compacted`: there is no summary)."""
+    import server.core.ch
+    import server.llm.client
+
+    rows = [
+        _turn(i, secret=held == "credential" and i < 4, saved=held == "saved" and i < 4)
+        for i in range(5)
+    ]
+    fake = ConversationsCH(rows)
+    llm = _FakeLLM()
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=2
+            )
+        )
+    )
+    assert (out.compacted, out.reason) == (False, "nothing-to-compact")
+    assert llm.prompts == [] and fake.inserted == [] and fake.executed == []
+
+
+def test_long_turns_compact_and_the_check_stops_past_the_window(monkeypatch) -> None:
+    """Turns longer than a third of the window still compact at the default
+    min_to_compact: the credential check runs until the window is full and enough new
+    turns are counted, and never reaches a turn past that cut."""
+    import server.core.ch
+    import server.llm.client
+
+    rows = [
+        {**_turn(i), "role": "assistant", "content": f"turn {i} " + "x" * 6990} for i in range(6)
+    ]
+    rows += [_turn(6, secret=True), _turn(7)]
+    fake = ConversationsCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _FakeLLM())
+    checked: list[str] = []
+    reads_high = ch_mod.reads_high
+
+    def recording_reads_high(text: str) -> bool:
+        checked.append(text)
+        return reads_high(text)
+
+    monkeypatch.setattr(ch_mod, "reads_high", recording_reads_high)
+
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1
+            )
+        )
+    )
+    assert out.compacted is True and out.messages_summarized == 2
+    assert all(OPENAI_KEY not in text for text in checked)

@@ -22,6 +22,7 @@ from server.memory.api.models_procedure import ProcedureMatchInput
 from server.memory.api.models_profile import ProfileRenderInput
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.api.models_working_memory import WorkingMemoryRenderInput
+from server.memory.app.agent_rules import request_rule_agent, served_hits
 from server.memory.domain.context_layout import (
     _BLOCK_LABELS,
     _DEFAULT_SECTION_ORDER,
@@ -689,16 +690,25 @@ async def _pack_knowledge(st: _PackState) -> None:
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput
     from server.knowledge.app.knowledge_search import handle_knowledge_search
 
-    out = await handle_knowledge_search(
-        KnowledgeSearchInput(
-            org=input.org,
-            namespace=input.namespace,
-            query=input.query,
-            top_k=input.top_k,
-            namespace_scope="all_mine",
+    agent = request_rule_agent(input.agent)
+
+    async def search(top_k: int) -> list[Any]:
+        out = await handle_knowledge_search(
+            KnowledgeSearchInput(
+                org=input.org,
+                namespace=input.namespace,
+                query=input.query,
+                top_k=top_k,
+                namespace_scope="all_mine",
+            )
         )
+        return list(out.results)
+
+    # Another bot's promoted rule is not a rule about this agent.
+    results = await served_hits(
+        await search(input.top_k), search, lambda h: h.tags, agent, input.top_k
     )
-    if out.results:
+    if results:
         evidence = [
             EvidenceItem(
                 # Cite the section, not just the document, when the chunk
@@ -712,7 +722,7 @@ async def _pack_knowledge(st: _PackState) -> None:
                 group=h.source_uri,
                 score=float(getattr(h, "score", 0.0) or 0.0),
             )
-            for h in out.results
+            for h in results
         ]
         packed = pack_evidence(
             evidence,

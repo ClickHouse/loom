@@ -193,7 +193,7 @@ describe("an entity on a memory opens in place", () => {
     expect(relatedFacts).toHaveBeenCalledWith({ org: "dev", namespace: "ns" }, "rate limiting", { top_k: 5 });
     // The footer link is a Click UI icon, not a glyph, and points at the walk.
     const graph = within(pop).getByRole("link", { name: "Open in Graph" });
-    expect(graph).toHaveAttribute("href", "/graph?seed=rate+limiting");
+    expect(graph).toHaveAttribute("href", "/graph?namespace=ns&seed=rate+limiting");
     expect(graph.textContent).not.toContain("→");
     await waitFor(() => expect(document.activeElement).toBe(within(pop).getByRole("button", { name: "api/quota" })));
   });
@@ -282,7 +282,7 @@ describe("an entity on a memory opens in place", () => {
     await userEvent.click(within(pop).getByRole("link", { name: "Open in Graph" }));
     spy.mockRestore();
     expect(history.length).toBe(before + 1);
-    expect(location.pathname + location.search).toBe("/graph?seed=rate+limiting");
+    expect(location.pathname + location.search).toBe("/graph?namespace=ns&seed=rate+limiting");
     expect(useStore.getState().view).toBe("graph");
     expect(readBackLabel(history.state)).toBe("memory api/rate-limit");
     expect(readPlace(leaving.state)).toMatchObject({
@@ -308,7 +308,7 @@ describe("an entity on a memory opens in place", () => {
     await user.click(chip("rate limiting"));
     await user.keyboard("{/Control}");
     expect(screen.queryByRole("dialog", { name: "Entity rate limiting" })).toBeNull();
-    expect(chip("rate limiting")).toHaveAttribute("href", "/graph?seed=rate+limiting");
+    expect(chip("rate limiting")).toHaveAttribute("href", "/graph?namespace=ns&seed=rate+limiting");
   });
 });
 
@@ -344,10 +344,10 @@ describe("the drawer's provenance and source conversation", () => {
     expect(screen.getByText("the public API allows 100 requests a minute")).toBeInTheDocument();
     expect(useStore.getState().view).toBe("memories");
     const link = within(replay).getByRole("link", { name: "Open in Conversations" });
-    expect(link).toHaveAttribute("href", "/conversations?thread=t-42");
+    expect(link).toHaveAttribute("href", "/conversations?namespace=ns&thread=t-42");
     await userEvent.click(link);
     expect(useStore.getState().view).toBe("sessions");
-    expect(location.pathname + location.search).toBe("/conversations?thread=t-42");
+    expect(location.pathname + location.search).toBe("/conversations?namespace=ns&thread=t-42");
   });
 });
 

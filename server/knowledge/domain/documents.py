@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import re
 
+# The most hits one knowledge.search returns; readers that widen a search stay within it.
+MAX_SEARCH_TOP_K = 100  # not a setting: a wire bound on knowledge.search
+
 
 def text_download_filename(title: str, source_uri: str) -> str:
     """The file name a text-only document downloads under: a slug of the title, else of the

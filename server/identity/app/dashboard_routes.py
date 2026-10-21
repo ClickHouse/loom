@@ -3,7 +3,8 @@
 `GET /` and every page path (`/memories`, `/admin/review_queue`, ...) answer
 `index.html` with the boot snippet; `/assets/*` serves the built Vite bundle
 and `/favicon.svg` the tab icon. Only the first path segments of the app's
-views (`PAGE_SEGMENTS`) are pages; any other path keeps the router's 404.
+views (`PAGE_SEGMENTS`) are pages, and `/me`, where a sign-in lands; any other
+path keeps the router's 404.
 """
 
 from __future__ import annotations
@@ -87,15 +88,36 @@ async def dashboard_page(request: Request) -> Response:
     chooses the first view from the token's namespaces, so a server redirect
     to /setup would make every visit an explicit Setup deep link.
     """
-    from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse
-
-    from server.auth.bearer import bearer_token
-    from server.auth.jwt import TokenError
+    from starlette.responses import RedirectResponse
 
     # Federated-deployment escape hatch: send page loads to an aggregator.
     # Auth-disabled mode skips this — the solo user IS the audience there.
     if settings.dashboard_redirect_url and settings.auth_actually_required():
         return RedirectResponse(url=settings.dashboard_redirect_url, status_code=302)
+    return await _page(request)
+
+
+async def signed_in_page(request: Request) -> Response:
+    """`/me`, where a sign-in lands with its token in the URL fragment: the
+    page itself, never the aggregator redirect, which the browser would follow
+    carrying the fragment to another origin. The app reads the token, then
+    picks its first view as at the root."""
+    return await _page(request)
+
+
+async def _not_a_page(request: Request) -> Response:
+    """`/me/`: not the landing page, and no redirect to it either."""
+    from starlette.responses import JSONResponse
+
+    return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+
+async def _page(request: Request) -> Response:
+    """index.html with the boot snippet."""
+    from starlette.responses import HTMLResponse, PlainTextResponse
+
+    from server.auth.bearer import bearer_token
+    from server.auth.jwt import TokenError
 
     try:
         has_bearer = bearer_token(request.headers.get("Authorization")) is not None
@@ -184,7 +206,7 @@ def attach(app: Any) -> None:
     """Mount the dashboard: the bundle, the tab icon and a page route for `/`
     and each view segment (with any deeper path)."""
     app.mount("/assets", _BundleAssets(), name="dashboard_assets")
-    pages = [_get("/", dashboard_page)]
+    pages = [_get("/", dashboard_page), _get("/me", signed_in_page), _get("/me/", _not_a_page)]
     for segment in sorted(PAGE_SEGMENTS):
         pages += [
             _get(f"/{segment}", dashboard_page),
@@ -198,4 +220,4 @@ def attach(app: Any) -> None:
     )
 
 
-__all__ = ["PAGE_SEGMENTS", "attach", "dashboard_csp", "dashboard_page"]
+__all__ = ["PAGE_SEGMENTS", "attach", "dashboard_csp", "dashboard_page", "signed_in_page"]

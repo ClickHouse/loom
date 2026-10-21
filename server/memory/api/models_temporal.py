@@ -27,7 +27,9 @@ class MemoryDigestsInput(_Identity):
 
 class _DigestRow(BaseModel):
     session_id: str
+    # Empty when the digest reads as a credential.
     summary_text: str
+    # Key facts that read as a credential are left out.
     key_facts: list[str] = Field(default_factory=list)
     # memory keys the digest compressed (its lineage)
     derived_from: list[str] = Field(default_factory=list)
@@ -60,6 +62,7 @@ class MemoryOutlineInput(_Identity):
 class _OutlineSession(BaseModel):
     session_id: str
     date: str = ""
+    # Empty when the digest reads as a credential.
     headline: str = ""
     key_facts: int = 0
     rows: int = 0

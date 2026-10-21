@@ -262,7 +262,7 @@ def test_a_provider_rebuild_batch_makes_one_call_per_org(metered, monkeypatch) -
     monkeypatch.setattr(
         batch,
         "_inputs",
-        lambda table, rows, source: (
+        lambda table, rows, source, held: (
             [r["text"] for r in rows],
             [(i, "embedding") for i in range(len(rows))],
         ),
@@ -1125,7 +1125,7 @@ def test_an_extraction_queue_replay_names_the_rows_org(metered, monkeypatch, cap
 
     seen: list[str] = []
 
-    async def handler(inp: Any) -> Any:
+    async def handler(inp: Any, **_kw: Any) -> Any:
         await _model_call(seen)
         return MemorySetFromMessagesOutput()
 

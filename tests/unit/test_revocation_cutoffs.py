@@ -15,6 +15,13 @@ from server.auth import revocation
 from tests.unit.revocation_fakes import revocation_read
 
 
+@pytest.fixture(autouse=True)
+def _claims(monkeypatch) -> None:
+    from tests.unit.claims_fake import memory_claims
+
+    memory_claims(monkeypatch)
+
+
 class _Table:
     """loom.revoked_tokens: the newest row of each jti wins, as under FINAL."""
 
@@ -152,7 +159,7 @@ def test_the_list_shows_an_operator_cutoff_and_scims_without_the_nul(capsys, mon
     from server.cli.access import _print_revocations
 
     class _Rows:
-        async def query_all(self, sql: str) -> list[dict[str, Any]]:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
             return [
                 {"jti": revocation.CUTOFF_PREFIX + "sa:bot", "issued_before": "2026-10-16"},
                 {"jti": revocation.SCIM_PREFIX + "lee", "issued_before": None},

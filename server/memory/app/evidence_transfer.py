@@ -10,6 +10,7 @@ own writers (`write_memory_chunks`, `_insert_session_summary`)."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -29,8 +30,10 @@ from server.memory.api.models_evidence_transfer import (
     MemoryImportEvidenceInput,
     MemoryImportEvidenceOutput,
 )
+from server.memory.app.credential_passages import embed_plain
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.okf_evidence import evidence_is_high, evidence_keys
+from server.memory.domain.sensitivity import split_credentials
 from server.observability import audit as _audit
 
 log = logging.getLogger(__name__)
@@ -176,7 +179,7 @@ async def handle_memory_export_evidence(
     rows = await ch.query_all(
         f"""
         SELECT session_id, chunk_index, content_sha256, content, agent, user_id,
-               parent_memory_key, line_start, line_end, created_at, source_url
+               parent_memory_key, line_start, line_end, created_at, source_url, embedding_dim
         FROM loom.memory_chunks FINAL
         WHERE {" AND ".join(where)}
         ORDER BY session_id ASC, chunk_index ASC
@@ -212,24 +215,31 @@ async def handle_memory_export_evidence(
         for r in rows
     ]
     next_cursor = _encode_cursor(chunks[-1].session_id, chunks[-1].chunk_index) if has_more else ""
-    kept = await _without_high(input, chunks)
+    # A chunk stored without a vector holds a credential, or the head or tail of one cut at
+    # a chunk boundary, which its own text does not show.
+    kept = await _without_high(input, chunks, [int(r.get("embedding_dim") or 0) == 0 for r in rows])
     return MemoryExportEvidenceOutput(
         chunks=kept, has_more=has_more, next_cursor=next_cursor, held_high=len(chunks) - len(kept)
     )
 
 
-async def _without_high(input: MemoryExportEvidenceInput, items: list[Any]) -> list[Any]:
+async def _without_high(
+    input: MemoryExportEvidenceInput, items: list[Any], stored_held: list[bool] | None = None
+) -> list[Any]:
     """`items` without those `okf_evidence.evidence_is_high` holds home, given which of the
-    keys they are linked to were ever 'high'. With `include_high` they all go, and each one
-    that would have been held is audited as a key read of a 'high' row is."""
+    keys they are linked to were ever 'high', or that `stored_held` marks (a chunk stored
+    without a vector). With `include_high` they all go, and each one that would have been
+    held is audited as a key read of a 'high' row is."""
     if not items:
         return items
     import server.memory.store as memory_repo
 
     linked = [k for item in items for k in evidence_keys(item) if k]
     high = await memory_repo.high_keys(input.org, input.namespace, linked)
+    marked = stored_held or [False] * len(items)
+    held = [h or evidence_is_high(item, high) for item, h in zip(items, marked, strict=True)]
     if not input.include_high:
-        return [item for item in items if not evidence_is_high(item, high)]
+        return [item for item, h in zip(items, held, strict=True) if not h]
     await _audit.emit_many(
         "memory.sensitive_read",
         org=input.org,
@@ -242,8 +252,8 @@ async def _without_high(input: MemoryExportEvidenceInput, items: list[Any]) -> l
                 **({"chunk_index": item.chunk_index} if input.kind == "chunks" else {}),
                 "memory_keys": [k for k in evidence_keys(item) if k],
             }
-            for item in items
-            if evidence_is_high(item, high)
+            for item, h in zip(items, held, strict=True)
+            if h
         ],
     )
     return items
@@ -307,17 +317,34 @@ async def handle_memory_import_evidence(
     out.skipped += len(input.chunks) - len(chunks)
     importer_user = _importer_user(input)
     if chunks:
-        vectors = await _embed_all(embedder, [c.content for c in chunks])
+        # A chunk or digest that reads as a credential, or a chunk holding part of a key cut
+        # at its boundary with the next, is written without a vector.
+        embedded = await embed_plain(
+            [c.content for c in chunks],
+            lambda texts: _embed_all(embedder, texts),
+            held=await asyncio.to_thread(
+                split_credentials, [(c.session_id, c.chunk_index, c.content) for c in chunks]
+            ),
+        )
+        held = sum(1 for e in embedded if e.held)
+        if held:
+            log.info(
+                "memory.import_evidence: %d chunks written without a vector for %s/%s",
+                held,
+                input.org,
+                input.namespace,
+            )
         rows: list[dict[str, Any]] = []
         link_specs: list[tuple[str, int, str, int, int, list[str]]] = []
-        for c, vec in zip(chunks, vectors, strict=True):
-            if not vec:
+        for c, e in zip(chunks, embedded, strict=True):
+            if not e.written:
                 out.skipped += 1
                 continue
             sha = hashlib.sha256(c.content.encode("utf-8")).hexdigest()
             if c.content_sha256 and c.content_sha256 != sha:
                 out.edited.append(f"{c.session_id}:{c.chunk_index}")
-            out.embedding_dim = len(vec)
+            if e.vector:
+                out.embedding_dim = len(e.vector)
             rows.append(
                 {
                     "org": input.org,
@@ -328,9 +355,9 @@ async def handle_memory_import_evidence(
                     "chunk_index": int(c.chunk_index),
                     "content_sha256": sha,
                     "content": c.content,
-                    "embedding": vec,
+                    "embedding": e.vector,
                     "embedding_model": embedder.model_name,
-                    "embedding_dim": len(vec),
+                    "embedding_dim": len(e.vector),
                     "parent_memory_key": c.parent_memory_key
                     or (c.memory_keys[0] if c.memory_keys else ""),
                     "line_start": int(c.line_start or 0),
@@ -377,13 +404,16 @@ async def handle_memory_import_evidence(
     ]
     out.skipped += len(input.digests) - len(digests)
     if digests:
-        vectors = await _embed_all(embedder, [d.summary_text for d in digests])
+        embedded = await embed_plain(
+            [d.summary_text for d in digests], lambda texts: _embed_all(embedder, texts)
+        )
         drows: list[dict[str, Any]] = []
-        for d, vec in zip(digests, vectors, strict=True):
-            if not vec:
+        for d, e in zip(digests, embedded, strict=True):
+            if not e.written:
                 out.skipped += 1
                 continue
-            out.embedding_dim = len(vec)
+            if e.vector:
+                out.embedding_dim = len(e.vector)
             drows.append(
                 build_session_summary_row(
                     org=input.org,
@@ -393,9 +423,9 @@ async def handle_memory_import_evidence(
                     session_id=d.session_id,
                     run_id=str(getattr(input, "run_id", "") or "-"),
                     summary_text=d.summary_text,
-                    summary_embedding=vec,
+                    summary_embedding=e.vector,
                     embedding_model=embedder.model_name,
-                    embedding_dim=len(vec),
+                    embedding_dim=len(e.vector),
                     key_facts=list(d.key_facts or []),
                     derived_from=list(d.derived_from or []),
                     valid_at=parse_iso_dt(d.valid_at) if d.valid_at else None,

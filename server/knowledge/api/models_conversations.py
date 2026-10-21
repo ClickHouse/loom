@@ -51,7 +51,7 @@ class ConversationAppendInput(BaseModel):
     # Who spoke: `user`, `assistant`, `system` or `tool`.
     role: ConversationRole
     # The message text, stored verbatim; a user or assistant turn is also embedded for
-    # `conversation.search`.
+    # `conversation.search`, unless its text reads as a credential.
     content: str
     # The model's reasoning for this turn, stored beside `content`; empty = none.
     reasoning: str = ""
@@ -115,9 +115,16 @@ class ConversationSaveMessageOutput(BaseModel):
     # turn belongs to another user. "deleted": the stored turn was tombstoned.
     # "unsupported_role": the stored turn is a system or tool turn, which is not
     # embedded. "embed_failed": the turn is saved but its embed failed; saving it
-    # again retries the embed.
+    # again retries the embed. "reads_as_credential": the turn's text reads as a
+    # credential, which is never embedded, so it is not indexed.
     reason: Literal[
-        "", "duplicate", "owner_mismatch", "deleted", "unsupported_role", "embed_failed"
+        "",
+        "duplicate",
+        "owner_mismatch",
+        "deleted",
+        "unsupported_role",
+        "embed_failed",
+        "reads_as_credential",
     ] = ""
     # The stored turn's timestamp; the time of the refusal when one is refused.
     ts: datetime
@@ -272,7 +279,8 @@ class ConversationGetOutput(BaseModel):
     thread_id: str
     # Title from `conversation.create` or `update`; empty when none was set.
     title: str = ""
-    # Thread metadata JSON; `{}` when none was set.
+    # Thread metadata JSON; `{}` when none was set, apart from the titler's
+    # `title_refused` mark.
     metadata: dict[str, Any] = Field(default_factory=dict)
     run_id: str = "-"
     user_id: str = "-"
@@ -321,9 +329,11 @@ class ConversationSearchInput(BaseModel):
     """Rank conversation messages by embedding similarity to `query`.
 
     `thread_id`, `run_id` and `role` each narrow the hits, and they combine. User and
-    assistant turns and compaction summaries are embedded; when the embedder is
-    unavailable a substring match stands in, newest first, and it also matches the
-    other system turns and tool turns."""
+    assistant turns and compaction summaries are embedded, unless their text reads as a
+    credential; when the embedder is unavailable a substring match stands in, newest
+    first, and it also matches the other system turns and tool turns. No path returns
+    text that reads as a credential: the vector path checks the text its embedding was
+    built from, and the substring fallback checks the whole turn."""
 
     org: str
     namespace: str
@@ -395,6 +405,8 @@ class _SavedMessageHit(ProjectedRow):
     conversation_id: str
     message_id: str
     role: Literal["user", "assistant"]
+    # A window of the message: its opening, or the text around the first matched term
+    # in a keyword hit; empty in the saved list when it reads as a credential.
     content_excerpt: str
     ts: datetime
 
@@ -474,8 +486,10 @@ class ConversationThreadSummary(ProjectedRow):
     first_seen: datetime
     last_seen: datetime
     last_role: str
+    # The last turn's first 240 characters; empty when it reads as a credential.
     last_content_excerpt: str
-    title: str = ""  # from conversation.create, if set; "" otherwise
+    # Empty when untitled or when the title reads as a credential.
+    title: str = ""
 
 
 class ConversationThreadsOutput(BaseModel):
@@ -491,7 +505,8 @@ class ConversationCompactInput(BaseModel):
     agent of the thread still holds live with the same text, as a turn search indexes
     (user, assistant or a summary).
     The summary carries metadata.compacted_from=[msg_ids]; when its embed fails,
-    no summary is written and no turn is tombstoned (`reason="embed-failed"`).
+    no summary is written and no turn is tombstoned (`reason="embed-failed"`), and the
+    same holds for a summary that reads as a credential (`reason="summary-reads-as-credential"`).
 
     Idempotent: re-running on an already-summarized window is a no-op.
     """
@@ -522,5 +537,6 @@ class ConversationCompactOutput(BaseModel):
     # Completion tokens of the summary; 0 when no call was made.
     tokens_out: int = 0
     # Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted,
-    # summarizer-empty, or embed-failed (retry once the embedder answers).
+    # summarizer-empty, embed-failed (retry once the embedder answers),
+    # summary-reads-as-credential (do not retry: the same window gets the same summary).
     reason: str = ""
