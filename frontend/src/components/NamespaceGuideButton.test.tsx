@@ -127,4 +127,26 @@ describe("NamespaceGuideButton", () => {
     expect(await screen.findByText(/No guide yet\. Agents that write here/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Write the guide" })).toBeNull();
   });
+
+  it("offers no editor while the caller's role is unknown", async () => {
+    vi.mocked(api.getNamespaceGuide).mockResolvedValue(NONE);
+    vi.mocked(useNamespaceRole).mockReturnValue(null);
+    render(<NamespaceGuideButton identity={identity} />);
+    await waitFor(() => expect(guideButton()).toHaveAccessibleDescription("No guide yet"));
+    fireEvent.click(guideButton());
+    expect(await screen.findByText(/No guide yet\. Agents that write here/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Guide (Markdown)")).toBeNull();
+  });
+
+  it("keeps the outline unsaved when only whitespace was added", async () => {
+    vi.mocked(api.getNamespaceGuide).mockResolvedValue(NONE);
+    render(<NamespaceGuideButton identity={identity} />);
+    await waitFor(() => expect(guideButton()).toHaveAccessibleDescription(/^No guide yet: write/));
+    fireEvent.click(guideButton());
+    const editor = await screen.findByLabelText("Guide (Markdown)");
+    await userEvent.type(editor, "{Enter}{Enter}  ");
+    expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("aria-disabled", "true");
+    await userEvent.type(editor, "Keys: acct/{{}id}/plan");
+    expect(screen.getByRole("button", { name: "Save" })).not.toHaveAttribute("aria-disabled");
+  });
 });

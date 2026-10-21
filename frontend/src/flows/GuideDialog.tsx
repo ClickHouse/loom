@@ -76,8 +76,11 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
     setEditing(true);
   }
 
+  // The outline as given, give or take whitespace, is not a guide yet.
+  const untouched = content.trim() === STARTER.trim();
+
   const save = async () => {
-    if (!base || content === STARTER) return;
+    if (!base || untouched) return;
     setBusy(true);
     try {
       // A summary left as the saved one is not sent, so the server keeps whatever
@@ -192,7 +195,7 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
             </Button>
             {/* The outline is questions to answer: saved as it is, every agent session would
                 start with it. */}
-            <Unavailable reason={content === STARTER ? "Fill in the outline first" : null}>
+            <Unavailable reason={untouched ? "Fill in the outline first" : null}>
               <Button type="primary" htmlType="submit" loading={busy} disabled={busy}>
                 Save
               </Button>

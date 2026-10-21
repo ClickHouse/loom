@@ -5,7 +5,7 @@ import { GuideDialog } from "../flows/GuideDialog";
 import { IconButton } from "./IconButton";
 import { useAbortableEffect } from "../lib/hooks";
 import { isPersonalCollection } from "../lib/namespace";
-import { canWrite, useNamespaceRole } from "../lib/namespaceRole";
+import { useNamespaceRole } from "../lib/namespaceRole";
 import { Tip } from "./ui";
 
 /**
@@ -24,8 +24,9 @@ export function NamespaceGuideButton({
   compact?: boolean;
 }) {
   const role = useNamespaceRole(identity.namespace);
-  // An end user's personal collection takes no guide (the server refuses the save).
-  const writer = canWrite(role) && !isPersonalCollection(identity.namespace);
+  // A known writer only: the role decides which screen the guide opens on, and an end
+  // user's personal collection takes no guide (the server refuses the save).
+  const writer = (role === "writer" || role === "admin") && !isPersonalCollection(identity.namespace);
   const describedBy = useId();
   const [guide, setGuide] = useState<NamespaceGuide | null>(null);
   const [open, setOpen] = useState(false);
@@ -50,13 +51,7 @@ export function NamespaceGuideButton({
     [identity.org, identity.namespace, reads],
   );
 
-  const about = guide?.found
-    ? `Revision ${guide.revision}${guide.summary ? `: ${guide.summary}` : ""}`
-    : guide
-      ? writer
-        ? "No guide yet: write how this namespace is laid out, for agents and people"
-        : "No guide yet"
-      : "How this namespace is laid out, for agents and people";
+  const about = describeGuide(guide, writer);
 
   return (
     <>
@@ -98,4 +93,13 @@ export function NamespaceGuideButton({
       )}
     </>
   );
+}
+
+/** What the button says the guide is: before the read answers, then its revision and
+ *  summary, or that there is none (with what to do about it, to a writer). */
+function describeGuide(guide: NamespaceGuide | null, writer: boolean): string {
+  if (guide === null) return "How this namespace is laid out, for agents and people";
+  if (guide.found) return `Revision ${guide.revision}${guide.summary ? `: ${guide.summary}` : ""}`;
+  if (writer) return "No guide yet: write how this namespace is laid out, for agents and people";
+  return "No guide yet";
 }
