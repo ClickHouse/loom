@@ -111,9 +111,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 - **Fix:** the query or worker that dominates. A Loom far from its ClickHouse (a WAN)
   needs `LOOM_LATENCY_BUDGET_MULTIPLIER` near 20 so its latency budgets do not fire on
   every call. For `OVERLOADED` under a sustained write rate: a waited batched insert
-  holds its pooled connection for the wait, and a measured run of one process at 200
-  writes a second once ended with 212 `OVERLOADED` at `LOOM_CH_POOL_MAXSIZE=64`. At that
-  rate raise `LOOM_CH_POOL_MAXSIZE` (a restart) or switch batching off with
+  holds its pooled connection for the wait: one process taking 200 writes a second
+  (`bench/write_rate.py --target client`) refused 3,367 of 12,000 writes with `OVERLOADED`
+  at `LOOM_CH_POOL_MAXSIZE=20` and none at 40. At that rate raise `LOOM_CH_POOL_MAXSIZE` (a restart) or switch batching off with
   `loom settings set ch_batched_inserts false` (`LOOM_CH_BATCHED_INSERTS=false` at
   startup); lowering the insert waits live with
   `loom settings set ch_batched_insert_wait_max_ms <ms>` (and

@@ -75,8 +75,9 @@ checkout.
    statements. R_request is the batched inserts a second that requests wait on: about 2
    per `conversation.append` and up to 4 per memory write. R_background is the
    background flushes a second (usage events, write marks, webhook attempts). Treat the
-   result as a floor: the measured need was more than 3 times it, because a waiting
-   insert also holds its connection through the flush. Raise `LOOM_CH_POOL_MAXSIZE` to
+   result as a floor: a waiting insert also holds its connection through the flush, and
+   a process at 200 writes a second refused writes with a pool at the bound (20) and
+   none at twice it. Raise `LOOM_CH_POOL_MAXSIZE` to
    several times the bound, or start the process with `LOOM_CH_BATCHED_INSERTS=false`
    ([batched inserts](../architecture/clickhouse.md#batched-inserts)). After the
    rollout, watch `loom.ch.pool.in_use`, `loom.ch.pool.waiters` and
