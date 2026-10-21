@@ -1780,7 +1780,6 @@ class MemoryClient:
             payload["reason"] = reason
         if relations:
             payload["relations"] = [list(f) for f in relations]
-        # The revision belongs to the run: the one named, else the active run_scope's.
         run_id = run_id or current_run_id()
         if run_id:
             payload["run_id"] = run_id
