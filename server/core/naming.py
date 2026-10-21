@@ -1,4 +1,5 @@
-"""Shared namespace-name validation.
+"""Shared namespace-name validation, and `named()`: how an identity filter reads
+the "-" sentinel the SDKs stamp.
 
 One rule set for every place that accepts a namespace name — the
 `LOOM_DEFAULT_NAMESPACE` setting, `namespace.register`, and the SPA's

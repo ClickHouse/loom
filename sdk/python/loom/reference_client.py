@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from loom.errors import LoomError
+from loom.run import RECALL_READ_PATHS
 from loom.transport import Transport, consumer_label
 
 # Traffic classes `namespace.register` accepts as `traffic_class`.
@@ -265,7 +266,8 @@ class ReferenceClient:
                 ident["user_id"] = self.user_id
             if self.session_id is not None:
                 ident["session_id"] = self.session_id
-            if self.run_id and op.startswith("memory."):
+            # A body run_id on a read filters it to the run's own rows: writes only.
+            if self.run_id and op.startswith("memory.") and f"/v1/{op}" not in RECALL_READ_PATHS:
                 ident["run_id"] = self.run_id
         return ident
 
@@ -570,9 +572,9 @@ class ReferenceClient:
         return await self.call("code.outcome", body, required=("recorded",))
 
     async def run_begin(self, goal: str, **fields: Any) -> CallResult:
-        """Open a run: every memory call until `run_complete`
-        carries its `run_id`, so the ledger joins what was read to what the
-        run then did."""
+        """Open a run: every memory write until `run_complete` carries its
+        `run_id`, so the ledger joins what the run wrote to what it did. Reads
+        carry no run_id: on a read it filters to the run's own rows."""
         r = await self.call("run.begin", {"goal": goal, **fields}, required=("run_id",))
         if r.ok:
             self.run_id = str(r.data["run_id"])

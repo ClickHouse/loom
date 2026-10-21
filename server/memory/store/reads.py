@@ -15,6 +15,7 @@ from server.identity.domain.read_scope import ReadFilters, scope_and, scope_wher
 from server.memory.domain.delete_marks import DELETE_VERSION_TRACE
 from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 from server.memory.domain.temporal_sql import as_of_predicate
+from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
 from server.memory.store.sql import (
     _IDENTITY_KEY_TUPLE,
@@ -766,6 +767,8 @@ async def list_by_namespace(
     include_duplicates: bool = True,
     include_superseded: bool = True,
     include_proposed: bool = True,
+    exclude_transcripts: bool = False,
+    exclude_memory_types: Sequence[str] = (),
 ) -> list[MemoryRow]:
     """List active memories under (org, namespace, agent, user, session).
 
@@ -778,6 +781,8 @@ async def list_by_namespace(
       - contains:    case-insensitive substring of the value or the key — the
                      keyword filter a browse page's search box applies; a
                      'high' row matches by its key only
+      - exclude_transcripts: no trajectory transcript rows (`TRANSCRIPT_ROW_SQL`)
+      - exclude_memory_types: none of these types
 
     Ordering:
       - "created_at_desc" (default) — recent-first feed shape
@@ -834,6 +839,11 @@ async def list_by_namespace(
     if contains:
         where.append(CONTAINS_PREDICATE)
         params["contains"] = contains
+    if exclude_transcripts:
+        where.append("NOT " + TRANSCRIPT_ROW_SQL)
+    if exclude_memory_types:
+        where.append("memory_type NOT IN {xmt:Array(String)}")
+        params["xmt"] = list(exclude_memory_types)
     if as_of is not None:
         where.append(as_of_predicate("valid_time"))
         params["as_of"] = as_of

@@ -16,7 +16,7 @@ from typing import Any
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import NotFoundError
-from server.core.naming import named
+from server.core.naming import SENTINEL, named
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.api.models_decision import (
     ChainNodeRow,
@@ -225,7 +225,7 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
                         explanation=f"{src} {rel} the decision {payload['outcome'][:120]!r}",
                         evidence=evidence,
                         confidence=float(input.confidence) if input.confidence > 0 else 1.0,
-                        run_id=named(input.run_id) or "-",
+                        run_id=named(input.run_id) or SENTINEL,
                     )
                 )
                 edges += 1

@@ -321,18 +321,25 @@ async def test_outcome_and_code_outcome_default_source_to_the_consumer() -> None
     assert t.payloads("code.outcome")[2]["reason"] == "abstained"
 
 
-async def test_run_scope_threads_run_id_into_memory_calls() -> None:
+async def test_an_open_run_stamps_writes_and_leaves_reads_unfiltered() -> None:
+    """A body run_id on a read filters it to the run's own rows, so only writes carry it."""
     c, t = client(
         {
             "run.begin": {"run_id": "r1", "status": "active", "started_at": "x"},
+            "memory.set": {"version": 1},
             "memory.search": {"results": []},
+            "memory.ask": {"answer": "", "abstained": True},
             "run.complete": {"run_id": "r1", "status": "completed"},
         }
     )
     await c.run_begin("fix CI")
     assert c.run_id == "r1"
+    await c.set("k1", "v")
     await c.search("q")
-    assert t.payloads("memory.search")[0]["run_id"] == "r1"
+    await c.ask("q")
+    assert t.payloads("memory.set")[0]["run_id"] == "r1"
+    assert "run_id" not in t.payloads("memory.search")[0]
+    assert "run_id" not in t.payloads("memory.ask")[0]
     r = await c.run_complete(memories_used=["k1"], outcome="positive")
     assert r.ok and c.run_id is None
     p = t.payloads("run.complete")[0]

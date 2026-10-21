@@ -366,22 +366,23 @@ async def _pack_startup_recall(st: _PackState) -> None:
         session_id=named(input.session_id) or "*",
     )
     k = input.top_k
+    # Transcripts leave in the statement, before the limit: every session's tool calls
+    # would otherwise fill the window. Across sessions the recall also leaves out what an
+    # unfiltered memory.search does (session replays, profiles, reflections).
+    from server.memory.domain.memory_types import excluded_from_unfiltered_search
+
+    shape: dict[str, Any] = {
+        "exclude_high_sensitivity": True,
+        "exclude_transcripts": True,
+        "exclude_memory_types": (
+            excluded_from_unfiltered_search() if ident.session_id == "*" else []
+        ),
+        "order_by": "created_at_desc",
+        "scope": request_scope(),
+    }
     try:
-        pinned = await memory_repo.list_by_namespace(
-            ident,
-            exclude_high_sensitivity=True,
-            pinned_only=True,
-            order_by="created_at_desc",
-            limit=k,
-            scope=request_scope(),
-        )
-        recent = await memory_repo.list_by_namespace(
-            ident,
-            exclude_high_sensitivity=True,
-            order_by="created_at_desc",
-            limit=k * 2,
-            scope=request_scope(),
-        )
+        pinned = await memory_repo.list_by_namespace(ident, pinned_only=True, limit=k, **shape)
+        recent = await memory_repo.list_by_namespace(ident, limit=k * 2, **shape)
     except Exception as e:  # noqa: BLE001 — recall is best-effort
         log.warning("context.pack startup recall failed: %s", e)
         return
