@@ -337,7 +337,7 @@ async def test_a_private_key_cut_into_many_chunks_stays_without_a_vector_on_ever
     target, monkeypatch
 ):
     from server.memory.app.chunk_projection import chunk_text_with_ranges
-    from server.memory.domain.sensitivity import split_credentials
+    from server.memory.domain.sensitivity import joined_overlaps_high
 
     # A 4096-bit RSA key's size in PEM form: 51 lines of 64 base64 characters.
     lines = [(f"Rt{n:02d}" + "Mq5Lp8Cd") * 5 + f"Rt{n:02d}" for n in range(51)]
@@ -347,7 +347,7 @@ async def test_a_private_key_cut_into_many_chunks_stays_without_a_vector_on_ever
     text = "plain words here " * 50 + block + " more plain words" * 50
     chunks, _, _ = chunk_text_with_ranges(text, max_chunks=64)
     contents = [c for c, _, _ in chunks]
-    held = split_credentials([("s", i, c) for i, c in enumerate(contents)])
+    held = joined_overlaps_high([("s", i, c) for i, c in enumerate(contents)])
     covers = [i for i, hit in enumerate(held) if hit]
     assert len([i for i in covers if not any(m in contents[i] for m in ("BEGIN", "END"))]) >= 2
     # Stored as the write path leaves them: every chunk the key covers without a vector.
@@ -377,13 +377,13 @@ async def test_a_long_session_of_plain_chunks_without_vectors_is_read_once_per_p
     ]
     asked = _stored_chunks(monkeypatch, rows)
     passes = []
-    split = provider_rebuild_batch.split_credentials
+    original = provider_rebuild_batch.joined_overlaps_high
 
     def counted(chunks):
         passes.append(len(chunks))
-        return split(chunks)
+        return original(chunks)
 
-    monkeypatch.setattr(provider_rebuild_batch, "split_credentials", counted)
+    monkeypatch.setattr(provider_rebuild_batch, "joined_overlaps_high", counted)
     result = (await rebuild_batch("memory_chunks", rows[100:164], target)).rows
     assert len(asked) == 1 and len(passes) == 1
     assert [r["embedding_dim"] for r in result] == [2] * 64

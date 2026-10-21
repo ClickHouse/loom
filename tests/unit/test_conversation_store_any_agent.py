@@ -248,7 +248,7 @@ async def test_a_read_across_agents_orders_two_turns_that_tie_on_time_and_id() -
 
 @pytest.mark.asyncio
 async def test_a_thread_list_that_asks_no_count_reads_no_count() -> None:
-    # The keyed read still runs, for the last turn the listing checks for a credential,
+    # The keyed read still runs, for the last turn the listing checks for a high shape,
     # but selects no count: the page keeps the window's.
     ch = StubCH(
         [

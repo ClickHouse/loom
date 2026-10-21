@@ -17,7 +17,7 @@ from server.core.repo_base import _default_client
 from server.core.vectors.search_settings import vector_search_settings
 from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.knowledge.domain.conversations import ConversationRole
-from server.memory.domain.sensitivity import HELD_MARGIN, without_credentials
+from server.memory.domain.sensitivity import HELD_MARGIN, without_high
 
 
 class _CHClient(Protocol):
@@ -127,10 +127,10 @@ async def vector_search(
         """,
         params=params,
     )
-    # The whole embedded text is read so the credential check covers all of it. A turn that
-    # reads as a credential gets no embedding row; this holds back a row an earlier build
+    # The whole embedded text is read so the sensitivity check covers all of it. A turn that
+    # reads as high gets no embedding row; this holds back a row an earlier build
     # wrote for one.
-    rows = await asyncio.to_thread(without_credentials, rows, lambda r: str(r["embedded_text"]))
+    rows = await asyncio.to_thread(without_high, rows, lambda r: str(r["embedded_text"]))
     excerpt_chars = int(settings.conversation_search_excerpt_chars)
     hits = [
         ConversationHit(

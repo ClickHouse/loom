@@ -46,7 +46,7 @@ FROM loom.memory FINAL
 WHERE org = {{org:String}} AND namespace = {{ns:String}}
   AND tombstoned_at IS NULL
   AND (expires_at IS NULL OR expires_at > now())
-  -- a credential is reachable by its key only, never pushed into an edit prompt
+  -- a high row is reachable by its key only, never pushed into an edit prompt
   AND sensitivity != 'high'
   AND status IN {{statuses:Array(String)}}
   AND (length({{tags:Array(String)}}) = 0 OR hasAny(tags, {{tags:Array(String)}}))

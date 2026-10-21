@@ -88,6 +88,28 @@ async function withServer(status, fn) {
   }
 }
 
+/** A server that records each request's url and JSON body and answers 500. */
+async function withCapturingServer(fn) {
+  const bodies = [];
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      bodies.push({ url: req.url, body: raw ? JSON.parse(raw) : null });
+      res.statusCode = 500;
+      res.end("{}");
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    await fn(`http://127.0.0.1:${server.address().port}`);
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+  return bodies;
+}
+
 const HOOK_NAMES = [
   "loom-code-shunt.mjs",
   "loom-file-context.mjs",
@@ -321,30 +343,83 @@ test("shunt: a tracker search reaches tracker.duplicate_check redacted", async (
   const dir = checkout();
   const tmp = freshTmp();
   seedIndexed(dir, tmp);
-  const bodies = [];
-  const server = http.createServer((req, res) => {
-    let raw = "";
-    req.on("data", (c) => (raw += c));
-    req.on("end", () => {
-      bodies.push({ url: req.url, body: raw ? JSON.parse(raw) : null });
-      res.statusCode = 500;
-      res.end("{}");
-    });
-  });
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  try {
-    const url = `http://127.0.0.1:${server.address().port}`;
+  const bodies = await withCapturingServer(async (url) => {
     const command = 'gh issue list --search "login fails password=hunter2"';
     await run(
       "loom-code-shunt.mjs",
       { tool_name: "Bash", tool_input: { command }, cwd: dir, session_id: "s" },
       { tmp, url },
     );
-  } finally {
-    server.closeAllConnections();
-    server.close();
-  }
+  });
   const check = bodies.find((b) => b.url === "/v1/tracker.duplicate_check");
   assert.ok(check, JSON.stringify(bodies.map((b) => b.url)));
   assert.equal(check.body.title, "login fails password=[redacted]");
+});
+
+test("blast radius and test gate: only the diff's paths and hunk headers reach the server", async () => {
+  const { dir, tmp, transcript } = dirtySession();
+  fs.appendFileSync(path.join(dir, "src/a.cpp"), 'const char* api_key = "s3cr3t-value";\n');
+  // a second change three lines above the first: two hunks unless they are merged
+  const src = path.join(dir, "src/a.cpp");
+  fs.writeFileSync(
+    src,
+    fs.readFileSync(src, "utf8").replace("int f397() { return 397; }", "int f397() { return -397; }"),
+  );
+  // A user's diff settings (colour, an external tool, a textconv filter, other
+  // path prefixes) must not change what is sent. Each one, left on, changes or
+  // empties the +++ path or the @@ header asserted below.
+  const external = path.join(tmp, "ext-diff.sh");
+  fs.writeFileSync(external, "#!/bin/sh\necho external-diff-output\n", { mode: 0o755 });
+  const textconv = path.join(tmp, "textconv.sh");
+  fs.writeFileSync(textconv, "#!/bin/sh\necho decrypted-by-textconv\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, ".gitattributes"), "*.cpp diff=conv\n");
+  for (const [key, value] of [
+    ["color.diff", "always"],
+    ["diff.external", external],
+    ["diff.conv.textconv", textconv],
+    ["diff.mnemonicPrefix", "true"],
+    ["diff.noprefix", "true"],
+    ["diff.interHunkContext", "10"],
+  ]) {
+    execFileSync("git", ["config", key, value], { cwd: dir });
+  }
+  const bodies = await withCapturingServer(async (url) => {
+    const edit = {
+      tool_name: "Edit",
+      tool_input: { file_path: path.join(dir, "src/a.cpp") },
+      cwd: dir,
+      session_id: "s",
+    };
+    await run("loom-blast-radius.mjs", edit, { tmp, url });
+    await run("loom-test-gate.mjs", { cwd: dir, session_id: "s", transcript_path: transcript }, { tmp, url });
+  });
+  for (const op of ["/v1/code.impact", "/v1/code.test_gate"]) {
+    const sent = bodies.find((b) => b.url === op);
+    assert.ok(sent, `${op} not called: ${JSON.stringify(bodies.map((b) => b.url))}`);
+    assert.ok(!sent.body.diff.includes("s3cr3t-value"), op);
+    assert.ok(!sent.body.diff.includes("decrypted-by-textconv"), op);
+    assert.ok(!sent.body.diff.includes("int g()"), `${op} sends no changed line`);
+    assert.match(sent.body.diff, /^\+\+\+ b\/src\/a\.cpp$/m, `${op} keeps the path`);
+    assert.match(sent.body.diff, /^@@ .*\+\d+/m, `${op} keeps the hunk header`);
+    assert.equal(sent.body.diff.match(/^@@ /gm).length, 2, `${op} keeps the two hunks apart`);
+  }
+});
+
+test("blast radius: a change with no path or range for the server sends nothing", async () => {
+  const { dir, tmp } = dirtySession();
+  execFileSync("git", ["checkout", "-q", "--", "src/a.cpp"], { cwd: dir });
+  fs.chmodSync(path.join(dir, "src/a.cpp"), 0o755);
+  const bodies = await withCapturingServer(async (url) => {
+    const edit = {
+      tool_name: "Edit",
+      tool_input: { file_path: path.join(dir, "src/a.cpp") },
+      cwd: dir,
+      session_id: "s",
+    };
+    await run("loom-blast-radius.mjs", edit, { tmp, url });
+  });
+  assert.deepEqual(
+    bodies.map((b) => b.url).filter((u) => u === "/v1/code.impact"),
+    [],
+  );
 });

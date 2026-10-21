@@ -47,7 +47,7 @@ def test_a_pinned_token_reads_only_its_users_saved_messages(control_plane_url: s
             {
                 "org": org,
                 "namespace": ns,
-                "agent": "librechat",
+                "agent": "chat-bot",
                 "conversation_id": f"c-{user}",
                 "message_id": f"m-{user}",
                 "role": "assistant",
@@ -58,7 +58,7 @@ def test_a_pinned_token_reads_only_its_users_saved_messages(control_plane_url: s
         assert r.status_code == 200 and r.json()["indexed"] is True, r.text
 
     pinned = _mint(org, ns, read_scope="own_user", read_user_id="u-2")
-    search = {"org": org, "namespace": ns, "agent": "librechat", "query": _CONTENT}
+    search = {"org": org, "namespace": ns, "agent": "chat-bot", "query": _CONTENT}
 
     r = _post(
         control_plane_url,
@@ -86,7 +86,7 @@ def test_a_pinned_token_reads_only_its_users_saved_messages(control_plane_url: s
         {
             "org": org,
             "namespace": ns,
-            "agent": "librechat",
+            "agent": "chat-bot",
             "conversation_id": "c-u1",
             "message_id": "m-other",
             "role": "user",
@@ -107,6 +107,6 @@ def test_a_pinned_token_still_cannot_search_whole_transcripts(control_plane_url:
         control_plane_url,
         pinned,
         "conversation.search",
-        {"org": org, "namespace": ns, "agent": "librechat", "query": _CONTENT},
+        {"org": org, "namespace": ns, "agent": "chat-bot", "query": _CONTENT},
     )
     assert r.status_code == 403, r.text

@@ -24,7 +24,7 @@ from typing import Any
 
 from server.llm import customer
 from server.memory.app.model_attribution import attribution_for, memory_writers
-from server.memory.domain.sensitivity import without_credentials
+from server.memory.domain.sensitivity import without_high
 from server.settings import settings
 
 # (text-source column, vector column) per table, plus an optional secondary
@@ -304,10 +304,10 @@ async def reembed_table(
             break
         page = [_without_key(r) for r in rows]
         if table == "conversation_embeddings":
-            # A turn whose text reads as a credential is never sent to the embedder: it stays
+            # A turn whose text reads as high is never sent to the embedder: it stays
             # on the old model, which search does not read, until --delete-old removes it. A
             # memory row's vector follows its own sensitivity label instead.
-            page = without_credentials(page, lambda r: str(r.get(cfg["text"]) or ""))
+            page = without_high(page, lambda r: str(r.get(cfg["text"]) or ""))
         held += len(rows) - len(page)
         left = await _rewrite_page(ch, embedder, table, page, key_only)
         written += len(page) - sum(left.values())
@@ -319,12 +319,12 @@ async def reembed_table(
                 "left for later"
             )
         after = [str(x) for x in rows[-1]["_k"]]
-        progress = f"{written}/{total}" + (f" ({held} held as credentials)" if held else "")
+        progress = f"{written}/{total}" + (f" ({held} held as high)" if held else "")
         log(f"  {table}: {progress}  resume: {encode_resume(table, after)}")
         if len(rows) < batch:
             break
     if held:
-        log(f"  {table}: {held} rows whose text reads as a credential kept on the old model")
+        log(f"  {table}: {held} rows whose text reads as high kept on the old model")
     return written
 
 
