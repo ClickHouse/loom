@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
+from loom.errors import LoomError
+
 if TYPE_CHECKING:
     from loom.agent import Agent
 
@@ -55,18 +57,32 @@ class GrantsClient:
             },
         )
 
-    async def list(self, *, limit: int = 100) -> list[dict[str, Any]]:
-        """Live grants on this namespace (revoked ones filtered out)."""
-        result = await self._agent.transport.post(
-            "/v1/grants.list",
-            {
-                "org": self._agent.org,
-                "namespace": self._agent.namespace,
-                "limit": limit,
-            },
-        )
-        rows: list[dict[str, Any]] = result.get("rows", [])
-        return rows
+    async def list(self, *, limit: int = 100, max_pages: int = 100) -> list[dict[str, Any]]:
+        """Every live grant on this namespace, one row per person (revoked ones
+        filtered out), read `limit` people a page by following `next_cursor`.
+
+        Raises `LoomError` rather than return a list it cannot show is whole:
+        past `max_pages` pages, and when the server does not page grants.list
+        (an answer without `truncated`, or one that names `cursor` in
+        `ignored_args`). `agent.client.grants.list` reads one page.
+        """
+        body: dict[str, Any] = {
+            "org": self._agent.org,
+            "namespace": self._agent.namespace,
+            "limit": limit,
+        }
+        rows: list[dict[str, Any]] = []
+        for _ in range(max_pages):
+            page = await self._agent.transport.post("/v1/grants.list", body)
+            if "truncated" not in page or "cursor" in (page.get("ignored_args") or ()):
+                raise LoomError("this server does not page grants.list; its list may be partial")
+            rows.extend(page.get("rows", []))
+            if not page["truncated"]:
+                return rows
+            if not page.get("next_cursor"):
+                raise LoomError("grants.list said more grants follow but gave no next_cursor")
+            body = {**body, "cursor": page["next_cursor"]}
+        raise LoomError(f"grants.list has more than {max_pages} pages of {limit}; raise max_pages")
 
     async def revoke(self, subject: str) -> dict[str, Any]:
         """Revoke `subject`'s grant on this namespace. Idempotent: returns

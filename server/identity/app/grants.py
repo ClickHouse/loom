@@ -11,6 +11,7 @@ from typing import Any
 
 from server.auth.grant_claims import admins_change, grant_change, group_change
 from server.core import grant_cache
+from server.core.cursors import decode_bound_cursor, encode_bound_cursor
 from server.core.errors import GrantBusyError, ValidationError
 from server.identity.api.models_grants import (
     GrantsApproveInput,
@@ -274,38 +275,34 @@ async def _write_grant(
 
 
 async def handle_grants_list(input: GrantsListInput) -> GrantsListOutput:
-    """Live grants on one namespace — active and pending, revoked excluded."""
-
-    rows = await grants_repo.list_active(
-        input.org,
-        input.namespace,
-        limit=input.limit,
+    """Live grants on one namespace — active and pending, revoked excluded —
+    one row per person, newest first, a page at a time. The page is cut after
+    each person's spellings are folded, so `truncated` is exact; the cursor
+    is the last person's (granted_at, subject), bound to this namespace."""
+    scope = ("grants.list", input.org, input.namespace)
+    after = decode_bound_cursor(input.cursor, scope) if input.cursor else None
+    people = await grants_repo.people_page(
+        input.org, input.namespace, after=after, limit=input.limit + 1
     )
-    # One person is one row: a login handle and its email fold onto the first row seen, the
-    # other spelling named in `also`.
-    from server.auth.aliases import fold_by_alias, subject_aliases
-
-    aliases_of = {}
-    for r in rows:
-        subj = str(r.get("subject") or "")
-        if subj and subj not in aliases_of:
-            aliases_of[subj] = await subject_aliases(input.org, subj)
-    rows = fold_by_alias([dict(r) for r in rows], aliases_of)
+    page, truncated = people[: input.limit], len(people) > input.limit
     entries = [
         _GrantEntry(
-            subject=r["subject"],
-            also=list(r.get("also") or []),
-            role=r["role"],
-            status=r.get("status") or "active",
-            pending_role=r.get("pending_role") or None,
-            pending_since=r.get("pending_since"),
-            granted_at=r["granted_at"],
-            granted_by=r["granted_by"],
+            subject=p.subject,
+            also=list(p.also),
+            role=p.role,
+            status=p.status,
+            pending_role=p.pending_role,
+            pending_since=p.pending_since,
+            granted_at=p.granted_at,
+            granted_by=p.granted_by,
         )
-        for r in rows
+        for p in page
     ]
     project_rows(entries, _GrantEntry, input.fields, always=frozenset({"subject"}))
-    return GrantsListOutput(rows=entries)
+    next_cursor = None
+    if truncated:
+        next_cursor = encode_bound_cursor(scope, page[-1].granted_at, page[-1].subject)
+    return GrantsListOutput(rows=entries, next_cursor=next_cursor, truncated=truncated)
 
 
 async def handle_grants_pending_for_me(

@@ -854,6 +854,14 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
         )
 
 
+async def _grants_repo(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The grants `collection.create` reads to find another holder of the name;
+    `grants.list` reads through its handler."""
+    from server.identity.store import grants as grants_repo
+
+    await grants_repo.list_active(ORG, NS, ch=ch)
+
+
 def cases() -> list[Case]:
     out = [
         Case(
@@ -884,6 +892,7 @@ def cases() -> list[Case]:
         )
     )
     out.append(Case("profiles", "server.memory.store.profile_sources", _profiles, {}))
+    out.append(Case("grants_repo", "server.identity.store.grants", _grants_repo, {}))
     out.append(
         Case(
             "memory_list_score",

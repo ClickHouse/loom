@@ -1,6 +1,8 @@
 """Run a statement the server issues on clickhouse-local against the production table
 definitions in schemas/schema.sql, for the unit tests that check real SQL. Tests that use
-it skip when the `clickhouse` binary is not installed (`CLICKHOUSE` is None)."""
+it skip when the `clickhouse` binary is not installed (`CLICKHOUSE` is None). The session
+reads and writes `DateTime` in UTC, as the server pins it (`server/core/ch.py`), whatever
+the host's zone."""
 
 from __future__ import annotations
 
@@ -40,7 +42,14 @@ def run(
     kept = ["--path", str(path)] if path else []
     # The script goes on stdin: a test that keeps vector rows outgrows one argument's limit.
     out = subprocess.run(
-        [CLICKHOUSE or "clickhouse", "local", "--multiquery", *kept, *binds],
+        [
+            CLICKHOUSE or "clickhouse",
+            "local",
+            "--multiquery",
+            "--session_timezone=UTC",
+            *kept,
+            *binds,
+        ],
         input=script + " FORMAT JSONEachRow",
         capture_output=True,
         text=True,

@@ -156,3 +156,49 @@ async def test_list_returns_active_grants_only(
         subjects = {g["subject"] for g in rows}
         assert "active@x" in subjects
         assert "toRevoke@x" not in subjects
+
+
+@pytest.mark.asyncio
+async def test_list_pages_through_every_grant(
+    control_plane_url,
+    mint_test_token,
+) -> None:
+    """grants.list walks a namespace a page at a time: every grant comes back
+    once, the last page says so, and a cursor is refused on another namespace."""
+    from loom import Agent
+    from loom.errors import ValidationError
+
+    org = f"grants-{uuid.uuid4().hex[:6]}"
+    ns, other = f"ns-{uuid.uuid4().hex[:6]}", f"ns-{uuid.uuid4().hex[:6]}"
+    admin_tok = mint_test_token(org=org, namespaces=[ns, other], roles=["admin"], subject="admin@x")
+
+    async with Agent(
+        org=org,
+        namespace=ns,
+        agent="adm",
+        base_url=control_plane_url,
+        api_key=admin_tok,
+    ) as adm:
+        members = [f"member{i}@x" for i in range(5)]
+        for subject in members:
+            await adm.grants.create(subject, "viewer", granted_by="admin@x")
+        whole = await adm.call("grants.list")
+        expected = {row["subject"] for row in whole["rows"]}
+        assert set(members) <= expected and whole["truncated"] is False
+
+        seen: list[str] = []
+        pages: list[dict] = []
+        cursor = None
+        while len(pages) < 10:
+            page = await adm.call("grants.list", limit=2, cursor=cursor)
+            pages.append(page)
+            seen += [row["subject"] for row in page["rows"]]
+            if not page["truncated"]:
+                break
+            cursor = page["next_cursor"]
+        assert sorted(seen) == sorted(expected)
+        assert [p["truncated"] for p in pages] == [True] * (len(pages) - 1) + [False]
+        assert pages[-1]["next_cursor"] is None
+
+        with pytest.raises(ValidationError):
+            await adm.call("grants.list", namespace=other, cursor=pages[0]["next_cursor"])

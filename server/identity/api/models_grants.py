@@ -61,8 +61,12 @@ class GrantsCreateOutput(BaseModel):
 class GrantsListInput(BaseModel):
     org: str
     namespace: str
-    # At most this many grants, newest first; 1 to 500.
+    # Rows per page, one per person, newest grant first; 1 to 500.
     limit: int = Field(default=100, ge=1, le=500)
+    # The `next_cursor` of the previous page; unset for the first. A cursor
+    # reads back only on the namespace it was issued for: another one's, or
+    # an edited one, is a 422. 1,024 characters hold a subject of about 700.
+    cursor: str | None = Field(default=None, max_length=1024)
     # The output fields the caller reads (a whitelist
     # resolved against the row model; an unknown name is a 422); unset, every
     # field. Every list operation is projectable.
@@ -90,6 +94,10 @@ class GrantsListOutput(BaseModel):
     # Live grants on the namespace, active and pending (revoked ones excluded), newest
     # first; one row per person, their other spellings in `also`.
     rows: list[_GrantEntry]
+    # Pass as `cursor` for the next page; None when this page is the last.
+    next_cursor: str | None = None
+    # True when more people follow this page (`next_cursor` is set).
+    truncated: bool = False
 
 
 class GrantsPendingForMeInput(BaseModel):

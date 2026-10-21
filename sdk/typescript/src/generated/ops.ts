@@ -2970,6 +2970,7 @@ export interface GrantsListInput {
   org: string;
   namespace: string;
   limit?: number;
+  cursor?: string | null;
   fields?: string[] | null;
 }
 
@@ -2986,6 +2987,8 @@ export interface GrantEntry {
 
 export interface GrantsListOutput {
   rows: GrantEntry[];
+  next_cursor?: string | null;
+  truncated?: boolean;
 }
 
 export interface GrantsPendingForMeInput {

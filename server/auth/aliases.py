@@ -15,7 +15,9 @@ subject gives its `owner_email`. Only rows a person signed up (a non-empty
 `contact_email`) take part; the pair is the person's own login identity —
 `self_signup` refuses a second account for an email already used — so a
 grant under either spelling is a grant to that person and nobody else.
-Service-account subjects (`sa:` prefix) and wildcards have no aliases.
+Service-account subjects (`sa:` prefix) and wildcards have no aliases. The
+gate's grant map (`server.core.grant_cache`) and the `grants.list` fold
+(`server.identity.store.grants`) read the same tie in SQL.
 
 Reads are cached per (org, subject) for `grant_cache_ttl_seconds`, the bound
 other processes see a grant change within: the auth context, the login
@@ -147,34 +149,4 @@ async def canonical_subject(org: str, subject: str, *, ch: object | None = None)
     return subject
 
 
-def fold_by_alias(
-    rows: list[dict[str, Any]],
-    aliases_of: dict[str, list[str]],
-) -> list[dict[str, Any]]:
-    """Grant rows folded so one person is one row: rows whose subjects alias
-    one another collapse onto the first (the highest role wins, the other
-    spellings ride in `also`); pure, for the Readers list."""
-    from server.auth.authz import grant_rank
-
-    groups: list[dict[str, Any]] = []
-    seen: dict[str, dict[str, Any]] = {}
-    for r in rows:
-        subject = str(r.get("subject") or "")
-        names = {subject.lower(), *(a.lower() for a in aliases_of.get(subject, []))}
-        target = next((seen[n] for n in names if n in seen), None)
-        if target is None:
-            target = dict(r)
-            target["also"] = []
-            groups.append(target)
-        else:
-            if grant_rank(str(r.get("role"))) > grant_rank(str(target.get("role"))):
-                target["role"] = r.get("role")
-            head = str(target.get("subject") or "").lower()
-            if subject.lower() != head and subject not in target["also"]:
-                target["also"].append(subject)
-        for n in names:
-            seen[n] = target
-    return groups
-
-
-__all__ = ["canonical_subject", "fold_by_alias", "invalidate", "subject_aliases"]
+__all__ = ["canonical_subject", "invalidate", "subject_aliases"]

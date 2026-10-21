@@ -15,6 +15,8 @@ from typing import Any, Literal, cast
 
 # The roles a grant row holds (the wire's GrantRoleStr).
 GrantRole = Literal["viewer", "writer", "admin"]
+# A live row's status (the wire's GrantStatusStr).
+GrantStatus = Literal["active", "pending"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +38,36 @@ class GrantState:
             status=str(row.get("status") or ""),
             pending_role=row.get("pending_role") or None,
             pending_since=row.get("pending_since"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class GrantPerson:
+    """One person's live grants on one namespace, folded: the fields of the
+    newest row, the highest role any of the person's spellings holds, and
+    the other spellings that hold a row, newest first."""
+
+    subject: str
+    role: GrantRole
+    status: GrantStatus
+    pending_role: GrantRole | None
+    pending_since: datetime | None
+    granted_at: datetime
+    granted_by: str
+    also: tuple[str, ...]
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> GrantPerson:
+        return cls(
+            subject=str(row["subject"]),
+            role=cast(GrantRole, str(row["role"])),
+            # '' reads as active.
+            status=cast(GrantStatus, str(row.get("status") or "active")),
+            pending_role=row.get("pending_role") or None,
+            pending_since=row.get("pending_since"),
+            granted_at=row["granted_at"],
+            granted_by=str(row.get("granted_by") or ""),
+            also=tuple(str(s) for s in row.get("also") or ()),
         )
 
 
@@ -66,4 +98,4 @@ class PendingGrant:
         )
 
 
-__all__ = ["GrantRole", "GrantState", "PendingGrant"]
+__all__ = ["GrantPerson", "GrantRole", "GrantState", "GrantStatus", "PendingGrant"]
