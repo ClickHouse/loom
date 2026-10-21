@@ -554,13 +554,12 @@ const sourceLabel = (r: LearningEntry) => SOURCE_LABEL[r.source_kind || "memory_
 const agentLabel = (r: LearningEntry) =>
   r.agent && r.agent !== "-" ? `agent ${r.agent}` : "every agent in this namespace";
 
-// Which agents a promoted rule reaches: a named bot's context packs, stacks, searches
-// and answers serve it, and so does a read for agent `*`; a read that names another
-// agent does not. knowledge.search is not filtered by agent.
+// What promoting does: a named bot's reads serve the rule, and so do reads under
+// agent * and knowledge.search, which are not filtered by agent.
 const promoteNote = (r: LearningEntry) =>
   r.agent && r.agent !== "-"
-    ? `Promote publishes this rule to this namespace's knowledge, tagged for ${r.agent}: ${r.agent}'s context packs, stacks, searches and answers serve it for every user, and other agents' reads that name their agent do not; a namespace-wide read (agent \`*\`, memory.ask's default) and knowledge.search find it for anyone who can read the namespace.`
-    : "Promote publishes this rule to this namespace's knowledge for every agent: every agent's reads find it for every user.";
+    ? `Promote publishes this rule to the namespace's knowledge for ${r.agent}, for every user; reads under agent * and knowledge.search also find it.`
+    : "Promote publishes this rule to the namespace's knowledge for every agent and every user.";
 
 // A bot's rule is backed by distinct users, its sessions beside them; every other
 // candidate by its supporters. A server a release behind sends no supporter_sessions,

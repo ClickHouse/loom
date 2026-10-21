@@ -672,13 +672,13 @@ describe("ReviewQueue", () => {
     expect(screen.getAllByText(/1 supporter ·/)).toHaveLength(2);
     expect(screen.getAllByText(/every agent in this namespace/)).toHaveLength(1);
     // The rows that name an agent ("-" included) say which agents Promote reaches; the old one does not.
-    expect(screen.getAllByText(/Promote publishes this rule to this namespace's knowledge/)).toHaveLength(2);
+    expect(screen.getAllByText(/Promote publishes this rule to the namespace's knowledge/)).toHaveLength(2);
     expect(
       screen.getByText(
-        /tagged for support-bot: support-bot's context packs, stacks, searches and answers serve it for every user, and other agents' reads that name their agent do not; a namespace-wide read \(agent `\*`, memory\.ask's default\) and knowledge\.search find it for anyone/,
+        "Promote publishes this rule to the namespace's knowledge for support-bot, for every user; reads under agent * and knowledge.search also find it.",
       ),
     ).toBeTruthy();
-    expect(screen.getByText(/knowledge for every agent: every agent's reads find it/)).toBeTruthy();
+    expect(screen.getByText(/knowledge for every agent and every user\./)).toBeTruthy();
   });
 
   it("says a bot rule's text went with a user erasure and its decision stands", async () => {
