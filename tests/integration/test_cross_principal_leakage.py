@@ -667,6 +667,8 @@ def seed(control_plane_url: str, mint_test_token) -> _Seed:
     )
     assert r.status_code == 200, r.text
     # The same canary saved for search: the saved-message plane is its own read.
+    # It names the launch code's project so the walk's query, the memory canary's
+    # text, matches it lexically too.
     s.saved_conversation_id = s.thread_id
     s.saved_message_id = f"saved-{uuid.uuid4().hex[:8]}"
     r = _post(
@@ -680,7 +682,7 @@ def seed(control_plane_url: str, mint_test_token) -> _Seed:
             "conversation_id": s.saved_conversation_id,
             "message_id": s.saved_message_id,
             "role": "assistant",
-            "content": f"The saved rotation passphrase is {n_cv}.",
+            "content": f"The saved rotation passphrase for the launch code of {s.entity} is {n_cv}.",
             "user_id": _SAVED_USER,
         },
     )
@@ -1380,20 +1382,32 @@ def test_positive_control_tenant_a_finds_its_saved_canary(control_plane_url, see
     assert r.status_code == 200 and seed.leaked(r.text), r.text[:300]
 
 
-def test_positive_control_tenant_a_reads_its_saved_status_with_the_walks_body(
-    control_plane_url, seed, tokens
+@pytest.mark.parametrize(
+    "op_name",
+    [
+        "conversation.list_saved_messages",
+        "conversation.search_saved_messages",
+        "conversation.saved_status",
+    ],
+)
+def test_positive_control_tenant_a_reads_its_saved_canary_with_the_walks_body(
+    control_plane_url, seed, tokens, op_name
 ) -> None:
-    """The namespace-A walk's saved_status probe names the saved canary, so
-    tenant B's empty answer is a refusal, not a miss."""
+    """The namespace-A walk's named-user body finds the saved canary, so tenant
+    B's empty answer to it is a refusal, not a miss."""
     from server.operations.registry import ALL_OPERATIONS
 
-    op = next(o for o in ALL_OPERATIONS if o.name == "conversation.saved_status")
+    op = next(o for o in ALL_OPERATIONS if o.name == op_name)
     payload = _synth_payload(op.input_model, seed=seed, namespace=seed.ns_a)
     assert payload is not None
-    body = {**payload, "user_id": _SAVED_USER}
-    r = _post(control_plane_url, tokens["a_writer"], op.name, body)
+    body = _probe_bodies(payload, _SAVED_USER)[1]
+    r = _post(control_plane_url, tokens["a_writer"], op_name, body)
     assert r.status_code == 200, r.text
-    assert r.json()["saved"] == [seed.saved_message_id], r.text
+    if op_name == "conversation.saved_status":
+        # The answer is the saved ids, which carry no nonce.
+        assert r.json()["saved"] == [seed.saved_message_id], r.text
+    else:
+        assert seed.leaked(r.text), f"{op_name} misses the saved canary: the walk is vacuous"
 
 
 def test_saved_message_search_from_own_namespace_with_the_canary_text_finds_nothing(

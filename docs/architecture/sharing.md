@@ -312,9 +312,8 @@ One text serves agents and people, so there is no second copy to drift.
   (`chat/<conversation>/<message>` through `knowledge.upsert`). It needs no op of its
   own, but it serves only a chat that signs end-user tokens, so a chat that records its
   conversations would need the conversation ops anyway: two ways to save one message. A
-  document gets no role or credential check, and a client finds a conversation's saved
-  state by listing a URI prefix. Saved messages are conversation rows in both cases
-  instead.
+  document gets no role or sensitivity check, and a client finds a conversation's saved
+  state by listing a URI prefix. A saved message is a conversation row in both setups.
 - **One namespace per tenant with row-level ACLs.** Every read filters rows one by one and
   prunes nothing, and a move or a revoke rewrites every affected chunk row.
 - **An ACL key in the sort order.** A request's readable set is a union over its
