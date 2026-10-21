@@ -176,7 +176,11 @@ def _outcome(row: Mapping[str, Any], delivery: signed.Delivery) -> dict[str, Any
         status = "dead"
     else:
         status = "pending"
-        wait = backoff_seconds(attempts, settings.memory_webhook_max_backoff_seconds)
+        wait = backoff_seconds(
+            attempts,
+            settings.memory_webhook_backoff_steps(),
+            settings.memory_webhook_max_backoff_seconds,
+        )
         next_at = naive_utc_now() + timedelta(seconds=wait)
     return _attempt_row(
         str(row["event_id"]),

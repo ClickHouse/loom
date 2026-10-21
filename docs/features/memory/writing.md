@@ -274,7 +274,7 @@ the table.
 | `memory.revised`    | a new value, type, tags, expiry, confidence, `valid_at` or `valid_to` of a live key: `memory.set`, `memory.bulk_set`, `memory.update`, `memory.update_by_id`, `namespace.rollback`, the source of `memory.move` with `keep_redirect`, an expiry that demotes or anonymizes, a completed run's retention (`demote` or `expire`), the sensitivity sweep's new label                                 |
 | `memory.tombstoned` | `memory.delete`, `memory.delete_version`, `memory.clear` (one per row it clears), `conflicts.resolve` and `memory.dedup_resolve` for the side they tombstone, `blacklist.add` and `blacklist.sweep` for each live row the sweep tombstones, `namespace.rollback` back to a tombstone or removing a key born later, the source of `memory.move` without `keep_redirect`, an expiry that tombstones |
 | `memory.restored`   | `memory.restore`, or `namespace.rollback` reviving a key that is tombstoned now                                                                                                                                                                                                                                                                                                                   |
-| `memory.redacted`   | `memory.redact` scrubs a historical version                                                                                                                                                                                                                                                                                                                                                       |
+| `memory.redacted`   | `memory.redact` scrubs a historical version, and once for each profile key with versions built from that memory, naming its newest scrubbed version                                                                                                                                                                                                                                               |
 | `memory.erased`     | an erasure saga completes (`erasure.request`, `collection.delete`, `code.repo.remove`)                                                                                                                                                                                                                                                                                                            |
 
 Ops that write through `memory.set` (procedures, profiles, learnings, decisions) send its
@@ -380,9 +380,9 @@ it checked and follows no redirect.
 `loom.memory_webhook_outbox` and makes no network call; the `memory_webhook_deliver`
 worker sends it. Any 2xx within 10 s (`LOOM_MEMORY_WEBHOOK_ACK_TIMEOUT_SECONDS`)
 acknowledges it; the 10 s cover the name lookup, the connection and the status line, and
-the answer's body is never read. Anything else is retried after 5 s, 30 s, 2 min, 10 min,
-30 min and then hourly (`LOOM_MEMORY_WEBHOOK_MAX_BACKOFF_SECONDS`, which also caps the
-earlier waits), until
+the answer's body is never read. Anything else is retried after 5 s, 30 s, 2 min, 10 min
+and 30 min (`LOOM_MEMORY_WEBHOOK_BACKOFF_STEPS_SECONDS`) and then hourly
+(`LOOM_MEMORY_WEBHOOK_MAX_BACKOFF_SECONDS`, which also caps the earlier waits), until
 `LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS` attempts (60 by default, about 2.3 days of retries)
 mark it `dead`, and any event a receiver has not taken 2.75 days after it happened is
 marked `dead` with "not delivered in time". `actor` is the principal that
@@ -439,7 +439,8 @@ sweep, the `delete_version` check).
   `memory.tombstoned` event carries the version it tombstoned; on a tie,
   `memory.tombstoned` comes after `memory.written` or `memory.revised`. A
   `memory.redacted` event's `version` names the historical version it scrubbed, not a
-  new head, so it does not move the key's order. A repeat shares its
+  new head, so it does not move the key's order; for a profile key scrubbed with the
+  memory it built from, that version can be the head, so read the key back. A repeat shares its
   `webhook-id`: a retry, two overlapping passes, and the same version of a memory
   announced twice to the same webhook (a `delete_version` check that runs again) all
   carry one id, so drop an id you have seen.

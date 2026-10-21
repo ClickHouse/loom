@@ -24,18 +24,12 @@ EventType = Literal[
 ]
 EVENT_TYPES: tuple[EventType, ...] = get_args(EventType)
 
-# The wait before the next try after the n-th failed attempt: 5 s, 30 s, 2 min,
-# 10 min, 30 min, then the ceiling (memory_webhook_max_backoff_seconds) for every
-# failure after that.
-# not a setting: the retry curve's shape; the ceiling it levels off at is a setting
-BACKOFF_SECONDS: tuple[int, ...] = (5, 30, 120, 600, 1800)
 
-
-def backoff_seconds(attempts: int, ceiling: float) -> float:
+def backoff_seconds(attempts: int, steps: tuple[float, ...], ceiling: float) -> float:
     """Seconds until the next try after `attempts` failed attempts (at least 1):
-    the schedule's step, never more than `ceiling`, and `ceiling` once past it."""
+    the n-th of `steps`, never more than `ceiling`, and `ceiling` once past them."""
     n = max(attempts, 1)
-    step = BACKOFF_SECONDS[n - 1] if n <= len(BACKOFF_SECONDS) else ceiling
+    step = steps[n - 1] if n <= len(steps) else ceiling
     return min(step, ceiling)
 
 

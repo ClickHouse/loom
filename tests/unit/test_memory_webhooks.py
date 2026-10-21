@@ -1391,8 +1391,11 @@ async def test_a_receiver_that_is_always_down_has_every_event_dead_before_the_tt
 
 
 def test_the_backoff_levels_off_at_its_ceiling() -> None:
-    assert [backoff_seconds(n, 3600) for n in (0, 1, 5, 6, 60)] == [5, 5, 1800, 3600, 3600]
-    assert [backoff_seconds(n, 60) for n in (1, 3, 9)] == [5, 60, 60]
+    steps = settings.memory_webhook_backoff_steps()
+    assert steps == (5, 30, 120, 600, 1800)
+    assert [backoff_seconds(n, steps, 3600) for n in (0, 1, 5, 6, 60)] == [5, 5, 1800, 3600, 3600]
+    assert [backoff_seconds(n, steps, 60) for n in (1, 3, 9)] == [5, 60, 60]
+    assert [backoff_seconds(n, (), 60) for n in (1, 2)] == [60, 60]
 
 
 @pytest.mark.asyncio
@@ -1441,13 +1444,16 @@ async def test_an_error_in_one_webhooks_turn_stops_every_post_and_keeps_the_fini
 ) -> None:
     _two_webhooks(fake, b_events=3)
     seen: list[str] = []
+    b_second_out = asyncio.Event()
+    never = asyncio.Event()
 
     async def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request.headers["host"])
         if request.headers["host"] == "a.example":
-            await asyncio.sleep(0.05)
-        elif len([h for h in seen if h == "b.example"]) > 1:
-            await asyncio.sleep(0.1)  # b's second POST is out when a's turn fails
+            await b_second_out.wait()  # b's second POST is out when a's turn fails
+        elif seen.count("b.example") > 1:
+            b_second_out.set()
+            await never.wait()
         return httpx.Response(204)
 
     real = worker._note_post
@@ -1460,29 +1466,39 @@ async def test_an_error_in_one_webhooks_turn_stops_every_post_and_keeps_the_fini
     monkeypatch.setattr(worker, "_note_post", broken)
     with pytest.raises(ExceptionGroup):
         await _pass(handler)
-    sent = list(seen)
-    await asyncio.sleep(0.3)  # past b's second POST and long enough for a third
-    assert seen == sent  # nothing went out after the pass returned
+    # The pass returns only once the task group has ended b's turn, so b's third POST
+    # never goes out.
+    assert sorted(seen) == ["a.example", "b.example", "b.example"]
     assert fake.last("b-0")["status"] == "delivered"  # finished, so recorded
     assert {fake.last(e)["status"] for e in ("a-1", "b-1", "b-2")} == {"leased"}
 
 
 @pytest.mark.asyncio
 async def test_a_pass_cancelled_from_outside_still_records_what_it_sent(
-    fake: FakeStore,
+    fake: FakeStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _two_webhooks(fake)
     b_is_out = asyncio.Event()
+    a_answered = asyncio.Event()
+    never = asyncio.Event()
+    real = worker._note_post
+
+    def note(webhook_id: str, ok: bool) -> None:
+        real(webhook_id, ok)
+        if webhook_id == "wh-a":
+            a_answered.set()  # a-1's outcome is recorded right after this, in the same step
+
+    monkeypatch.setattr(worker, "_note_post", note)
 
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.headers["host"] == "b.example":
             b_is_out.set()
-            await asyncio.sleep(5)
+            await never.wait()
         return httpx.Response(204)
 
     task = asyncio.create_task(_pass(handler))
-    await asyncio.wait_for(b_is_out.wait(), 2)
-    await asyncio.sleep(0.05)  # a-1's answer is in; b-0's is not
+    await asyncio.wait_for(asyncio.gather(b_is_out.wait(), a_answered.wait()), 5)
+    # a-1's answer is in; b-0's is not
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -1504,10 +1520,11 @@ async def test_a_pass_cut_at_its_budget_still_records_what_it_sent(
         _outbox_row(webhook_id="wh-slow", namespace="slow", event_id="slow-1"),
     ]
     fake.history = {(KEY[0], ns, *KEY[2:]) for ns in ("fast", "slow")}
+    never = asyncio.Event()
 
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.headers["host"] == "slow.example":
-            await asyncio.sleep(5)
+            await never.wait()  # only the budget ends this POST
         return httpx.Response(204)
 
     result = await _pass(handler)
@@ -1527,13 +1544,15 @@ async def test_the_post_budget_counts_from_the_start_of_the_pass(
     read_due = fake.due_events
 
     async def slow_due_events(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        await asyncio.sleep(0.25)
+        await asyncio.sleep(0.4)  # longer than the whole budget
         return await read_due(*args, **kwargs)
 
     monkeypatch.setattr(fake, "due_events", slow_due_events)
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        await asyncio.sleep(0.2)  # inside a budget of its own, not inside what is left
+        # Well inside a budget of its own, so only a budget counted from the start of
+        # the pass cuts it.
+        await asyncio.sleep(0.1)
         return httpx.Response(204)
 
     result = await _pass(handler)
@@ -1916,9 +1935,12 @@ def test_the_worker_is_registered_on_its_settings() -> None:
         ("memory_webhook_ack_timeout_seconds", 0),
         ("memory_webhook_max_backoff_seconds", 0),
         ("memory_webhook_removal_window_leases", 0),
+        ("memory_webhook_backoff_steps_seconds", "5,0,120"),
+        ("memory_webhook_backoff_steps_seconds", "5,-30"),
+        ("memory_webhook_backoff_steps_seconds", "5,soon"),
     ],
 )
-def test_a_memory_webhook_setting_below_its_floor_is_refused(field: str, value: float) -> None:
+def test_a_memory_webhook_setting_below_its_floor_is_refused(field: str, value: object) -> None:
     from server.settings.catalog import MemoryWebhookSettings
 
     with pytest.raises(PydanticValidationError):

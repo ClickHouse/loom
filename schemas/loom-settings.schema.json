@@ -4289,6 +4289,11 @@
           "type": "boolean",
           "description": "True lets a memory webhook use plain http (a local receiver in development); false: https only."
         },
+        "memory_webhook_backoff_steps_seconds": {
+          "default": "5,30,120,600,1800",
+          "type": "string",
+          "description": "Comma-separated seconds a failed memory webhook event waits before its next try, one step per failed attempt in order; past the last step it waits memory_webhook_max_backoff_seconds. Every step is over 0."
+        },
         "memory_webhook_cooldown_seconds": {
           "default": 60,
           "minimum": 1,
@@ -4352,7 +4357,7 @@
           "default": 3600.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds a failed memory webhook event waits at most before its next try: the retries back off 5 s, 30 s, 2 min, 10 min and 30 min, then wait this long, never longer."
+          "description": "Seconds a failed memory webhook event waits at most before its next try: every step of memory_webhook_backoff_steps_seconds is capped at it, and the retries after the last step wait this long."
         },
         "memory_webhook_max_cooldown_seconds": {
           "default": 3600,

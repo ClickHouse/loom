@@ -3146,6 +3146,24 @@ class MemorySearchSettings(BaseModel):
 # ===== MemoryWebhook ==========================================================
 
 
+def parse_backoff_steps(raw: str) -> tuple[float, ...]:
+    """`memory_webhook_backoff_steps_seconds` as seconds, in order; ValueError when a
+    step is not a number over 0."""
+    steps = tuple(float(step) for step in raw.split(",") if step.strip())
+    if not all(step > 0 for step in steps):
+        raise ValueError("every memory webhook backoff step must be over 0 seconds")
+    return steps
+
+
+def _backoff_steps(raw: str) -> str:
+    parse_backoff_steps(raw)
+    return raw
+
+
+# Startup and the settings file refuse an unusable backoff schedule.
+BackoffSteps = AfterValidator(_backoff_steps)
+
+
 class MemoryWebhookSettings(BaseModel):
     """Memory webhooks: their delivery worker and the URLs they may reach."""
 
@@ -3179,8 +3197,13 @@ class MemoryWebhookSettings(BaseModel):
     # Seconds a memory webhook receiver has to answer a POST (the name lookup, the connection
     # and the status line) before it counts as failed; also the registration's lookup limit.
     memory_webhook_ack_timeout_seconds: Annotated[float, LIVE] = Field(default=10.0, gt=0)
-    # Seconds a failed memory webhook event waits at most before its next try: the retries
-    # back off 5 s, 30 s, 2 min, 10 min and 30 min, then wait this long, never longer.
+    # Comma-separated seconds a failed memory webhook event waits before its next try, one
+    # step per failed attempt in order; past the last step it waits
+    # memory_webhook_max_backoff_seconds. Every step is over 0.
+    memory_webhook_backoff_steps_seconds: Annotated[str, LIVE, BackoffSteps] = "5,30,120,600,1800"
+    # Seconds a failed memory webhook event waits at most before its next try: every
+    # step of memory_webhook_backoff_steps_seconds is capped at it, and the retries
+    # after the last step wait this long.
     memory_webhook_max_backoff_seconds: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
     # POSTs per memory webhook event before it is marked dead; the 2.75-day delivery
     # deadline marks it dead sooner whatever this is.
@@ -3218,6 +3241,9 @@ class MemoryWebhookSettings(BaseModel):
                 "LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS"
             )
         return self
+
+    def memory_webhook_backoff_steps(self) -> tuple[float, ...]:
+        return parse_backoff_steps(self.memory_webhook_backoff_steps_seconds)
 
     def memory_webhook_private_host_set(self) -> frozenset[str]:
         return frozenset(
