@@ -30,6 +30,7 @@ import json
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
@@ -163,8 +164,8 @@ class SweepCandidate:
 class SweepReport:
     scanned: int = 0  # candidate rows the coarse filter returned
     candidates: list[SweepCandidate] = field(default_factory=list)
-    # Whether the scan stopped before reading every key it meant to (pages or `limit` ran
-    # out), or the candidates were cut to `limit`.
+    # Whether the scan stopped before reading every key it meant to (pages, `limit` or
+    # `seconds` ran out), or the candidates were cut to `limit`.
     truncated: bool = False
     # The sort key the next pass starts after: the last key read, or the last candidate's
     # when the candidates were cut to the limit. None when the scan read from the first key
@@ -219,6 +220,7 @@ async def scan(
     only_shapes: Iterable[str] | None = None,
     start_after: dict[str, Any] | None = None,
     skip_noisy_agents: bool = False,
+    seconds: float | None = None,
     ch: _CHClient | None = None,
 ) -> SweepReport:
     """Live unlabelled rows the detector would label, exactly as the write
@@ -228,10 +230,10 @@ async def scan(
     operator can apply the others first.
 
     Reads pages of `page_size` keys in the table's sort key order, then the current version
-    of each, until `limit` candidates are found, the rows run out or `pages` pages are read
-    (`None`: no page cap), starting after the sort key `start_after` (the first key when
-    None). `skip_noisy_agents` is the scheduled pass's paging; its rules are in
-    docs/architecture/security.md, "Sensitivity"."""
+    of each, until `limit` candidates are found, the rows run out, `pages` pages are read
+    (`None`: no page cap) or `seconds` have passed (`None`: no time cap), starting after the
+    sort key `start_after` (the first key when None). `skip_noisy_agents` is the scheduled
+    pass's paging; its rules are in docs/architecture/security.md, "Sensitivity"."""
     ch = ch or _default_client()
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
     report = SweepReport()
@@ -253,6 +255,7 @@ async def scan(
         limit=limit,
         pages=pages,
         report=report,
+        stop_at=None if seconds is None else monotonic() + seconds,
     )
     start = dict(start_after or {})
     first = await _read_range(run, after=start, skip=skip_noisy_agents)
@@ -294,15 +297,18 @@ class _Run:
     limit: int
     pages: int | None
     report: SweepReport
+    # The `monotonic()` time the scan reads no more pages after; None for no time cap.
+    stop_at: float | None = None
     pages_read: int = 0
     # The last key read in each agent the scan moved past, kept for this scan only: the
     # stored cursor names no user or memory key.
     skipped: list[dict[str, Any]] = field(default_factory=list)
 
     def more_wanted(self) -> bool:
-        """Pages are left and fewer than `limit` candidates were found."""
+        """Pages and time are left and fewer than `limit` candidates were found."""
         pages_left = self.pages is None or self.pages_read < self.pages
-        return pages_left and len(self.report.candidates) < self.limit
+        time_left = self.stop_at is None or monotonic() < self.stop_at
+        return pages_left and time_left and len(self.report.candidates) < self.limit
 
 
 @dataclass

@@ -2857,16 +2857,12 @@ settings:
   # sensitivity_sweep_max_rows_per_pass: 500
 
   # Pages one sensitivity sweep pass reads at most, each of
-  # `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000). At the default page size the
-  # cap keeps a pass's pages inside its pass deadline (900 s at the default interval);
-  # with larger pages or a shorter interval, lower it. A pass cancelled before it stores
-  # its cursor reads the same pages again on every later pass. [live]
+  # `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000). [live]
   # sensitivity_sweep_pages_per_pass: 10
 
   # Shapes the sensitivity sweep applies (comma-separated: credential, email, phone,
-  # other). Every high row is `credential`; an IBAN-only row is `other`. `phone` (a
-  # ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking,
-  # so it is left to the operator's `--only-shape phone`. [restart]
+  # other); every high row is `credential`, and `phone` is left to `--only-shape phone`.
+  # [restart]
   # sensitivity_sweep_shapes: "credential,email"
 
   # Tag rows mentioning a protected attribute or common proxy with `attribute:<class>`

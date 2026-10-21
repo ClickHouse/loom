@@ -1030,8 +1030,8 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_SENSITIVITY_SWEEP_INTERVAL_SECONDS` | `int` | `86400` |  | Seconds between sensitivity sweep passes. |
 | `LOOM_SENSITIVITY_SWEEP_WINDOW_DAYS` | `int` | `2` |  | Days back the sensitivity sweep re-labels rows created in. |
 | `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` | `int` | `500` |  | Rows one sensitivity sweep pass re-labels, and the keys per page it reads (at least 1). |
-| `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` | `int` | `10` | live | Pages one sensitivity sweep pass reads at most, each of `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000). At the default page size the cap keeps a pass's pages inside its pass deadline (900 s at the default interval); with larger pages or a shorter interval, lower it. A pass cancelled before it stores its cursor reads the same pages again on every later pass. |
-| `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` |  | Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other). Every high row is `credential`; an IBAN-only row is `other`. `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`. |
+| `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` | `int` | `10` | live | Pages one sensitivity sweep pass reads at most, each of `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000). |
+| `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` |  | Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other); every high row is `credential`, and `phone` is left to `--only-shape phone`. |
 | `LOOM_MEMORY_ATTRIBUTE_TAGGING` | `bool` | `True` |  | Tag rows mentioning a protected attribute or common proxy with `attribute:<class>` at write time (gender, religion, health, age, family, income, ethnicity, sexuality, politics). A label, never a gate; the profile fold leaves such rows out. |
 
 ### Code-linked memories

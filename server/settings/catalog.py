@@ -2373,17 +2373,10 @@ class MemorySettings(BaseModel):
     # (at least 1).
     sensitivity_sweep_max_rows_per_pass: int = Field(default=500, ge=1)
     # Pages one sensitivity sweep pass reads at most, each of
-    # `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000). At the default page
-    # size the cap keeps a pass's pages inside its pass deadline (900 s at the
-    # default interval); with larger pages or a shorter interval, lower it. A pass
-    # cancelled before it stores its cursor reads the same pages again on every
-    # later pass.
+    # `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000).
     sensitivity_sweep_pages_per_pass: Annotated[int, LIVE] = Field(default=10, ge=1, le=1000)
     # Shapes the sensitivity sweep applies (comma-separated: credential, email, phone,
-    # other). Every high row is `credential`; an IBAN-only row is `other`.
-    # `phone` (a ten-digit run) mostly matches ids, and a `medium` label
-    # demotes the row in ranking, so it is left to the operator's
-    # `--only-shape phone`.
+    # other); every high row is `credential`, and `phone` is left to `--only-shape phone`.
     sensitivity_sweep_shapes: str = "credential,email"
     # Tag rows mentioning a protected attribute or common proxy with
     # `attribute:<class>` at write time (gender, religion, health, age, family,

@@ -827,8 +827,11 @@ it is set again with `sensitivity: "high"`.
 A worker pass is bounded:
 
 - It reads its window in the table's sort key order, in pages of
-  `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` keys, until that many candidates are found or
-  `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` pages are read.
+  `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` keys, until that many candidates are found,
+  `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` pages are read, or half the pass deadline (450 s
+  at the default daily interval) has passed. A pass cut by that time applies what it found,
+  stores its cursor and reports `truncated`, so the next pass starts where it stopped even
+  when the pages cost more than the deadline allows.
 - It starts at the agent the pass before stopped in. When it reaches the window's last row
   with pages left, it goes on from the first key up to where it started, so the rows that
   sort before its cursor are read in the same pass rather than left to age out of the
@@ -847,8 +850,9 @@ A worker pass is bounded:
   merge. So a row that fails every time, or a run of such versions, is read again when the
   sweep comes back round to it. A pass whose last page was an ordinary one, even one that
   crossed into the next agent, leaves its cursor at the agent it stopped in, and failures
-  in an earlier agent leave the cursor where the pass stopped. A cursor past an agent that
-  does not fit in 512 characters is past its namespace or org instead. The cursor, in
+  in an earlier agent leave the cursor where the pass stopped. A cursor that names an agent
+  too long for its 512 characters, at or past it, is past its namespace (or org) instead, so
+  that agent's remaining rows wait until the sweep comes back round. The cursor, in
   `loom.worker_status`, holds the org, namespace and agent only, so it names no user or
   memory key that would outlive an erasure.
 - Its ClickHouse filter selects only the shapes in `LOOM_SENSITIVITY_SWEEP_SHAPES`

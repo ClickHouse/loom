@@ -389,6 +389,13 @@ def test_the_replica_bound_retry_count_has_a_ceiling() -> None:
         coerce(Settings, "ch_replica_bound_retries", 6)
 
 
+def test_the_sensitivity_sweep_pages_per_pass_have_a_ceiling() -> None:
+    """The reference promises 1 to 1000 pages per pass."""
+    assert coerce(Settings, "sensitivity_sweep_pages_per_pass", 1000) == 1000
+    with pytest.raises(ValidationError):
+        coerce(Settings, "sensitivity_sweep_pages_per_pass", 1001)
+
+
 def test_zero_retries_of_an_empty_block_read_still_means_none() -> None:
     assert coerce(Settings, "memory_retrieval_empty_block_retries", 0) == 0
     assert coerce(Settings, "memory_retrieval_empty_block_retry_sleep_s", 0) == 0

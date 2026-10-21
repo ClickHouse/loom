@@ -457,6 +457,43 @@ async def test_a_pass_pages_past_selected_rows_it_leaves_unlabelled(monkeypatch)
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_pass_whose_time_runs_out_applies_what_it_found_and_stores_its_cursor(
+    monkeypatch,
+) -> None:
+    # Two PIN rows in agent `a` with selected-but-unlabelled rows between them, then a PIN
+    # row in agent `b`. The pass's time runs out after its first page: it stops paging,
+    # applies the PIN row it found, says it was truncated and stores its cursor. Given the
+    # time, the same pass labels all three.
+    from server.workers import pass_context
+
+    rows = [
+        _Row("o", "n", "-", _uuid(1), "a_pin", "badge PIN is 4471", 60),
+        _Row("o", "n", "-", _uuid(2), "b_spin", {"spin": "4471"}, 60),
+        _Row("o", "n", "-", _uuid(3), "c_spin", {"spin": "4471"}, 60),
+        _Row("o", "n", "-", _uuid(4), "d_pin", "door PIN is 5582", 60),
+        _Row("o", "n", "-", _uuid(5), "e_pin", "gate PIN is 6693", 60, agent="b"),
+    ]
+    ch = _local_memory(rows)
+    # The clock reads 0 when the scan starts and before its first page, then far past the
+    # pass's time.
+    ticks = iter([0.0, 0.0])
+    monkeypatch.setattr(sweep, "monotonic", lambda: next(ticks, 1e9))
+    ctx = pass_context.begin("sensitivity_sweep", resume_cursor="")
+    try:
+        applied, out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=3, pages=10)
+    finally:
+        pass_context.clear()
+    assert [c.memory_key for c in applied] == ["a_pin"]
+    assert out["truncated"] and out["relabelled"] == 1
+    assert json.loads(ctx.cursor) == ["o", "n", "a"]
+
+    monkeypatch.setattr(sweep, "monotonic", lambda: 0.0)
+    applied, out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=3, pages=10)
+    assert [c.memory_key for c in applied] == ["a_pin", "d_pin", "e_pin"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_one_pass_crosses_several_agents_it_finds_nothing_to_label_in(monkeypatch) -> None:
     # Agents `a` and `b` each hold more than a page of selected-but-unlabelled rows, ahead
     # of a PIN row in agent `c`. One pass reads a page of each, moves past both and labels
