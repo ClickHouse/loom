@@ -172,6 +172,8 @@ SCAN_DIRS = (
     "skills",
     "examples",
     ".github",
+    ".claude-plugin",
+    ".agents/plugins",
 )
 ROOT_FILES = (
     "README.md",
@@ -184,6 +186,8 @@ ROOT_FILES = (
     "pyproject.toml",
     "redeploy.sh",
     ".env.example",
+    "server.json",
+    "context7.json",
 )
 SCAN_SUFFIXES = {
     ".py",

@@ -225,3 +225,58 @@ def test_both_plugins_ship_one_version() -> None:
         ).read_text()
     )["version"]
     assert codex == claude
+
+
+def test_listing_icons_are_files_the_plugins_ship() -> None:
+    """The directory listings read these paths; one that does not exist ships a listing
+    with no icon."""
+    claude = json.loads((CLAUDE / ".claude-plugin" / "plugin.json").read_text())
+    skill = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
+    interface = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())["interface"]
+    assert (CLAUDE / claude["icon"]).is_file()
+    assert (ROOT / skill["icon"]).is_file()
+    assert (CODEX / interface["logo"]).is_file()
+    assert (CODEX / interface["composerIcon"]).is_file()
+
+
+def test_codex_default_prompts_fit_the_directory() -> None:
+    """Codex shows at most three default prompts of at most 128 characters each."""
+    prompts = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())["interface"][
+        "defaultPrompt"
+    ]
+    assert isinstance(prompts, list)
+    assert 1 <= len(prompts) <= 3
+    assert all(len(p) <= 128 for p in prompts)
+
+
+def test_both_plugins_link_the_data_handling_section() -> None:
+    """The privacy link of both listings is an absolute URL, which the doc-link check does
+    not follow; renaming the section would leave both listings pointing at nothing."""
+    claude = json.loads((CLAUDE / ".claude-plugin" / "plugin.json").read_text())
+    codex = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())
+    url = claude["privacyPolicyUrl"]
+    assert url == codex["interface"]["privacyPolicyURL"]
+    page, _, anchor = url.removeprefix("https://github.com/ClickHouse/loom/blob/main/").partition(
+        "#"
+    )
+    assert anchor == "data-handling" and "\n## Data handling\n" in (ROOT / page).read_text()
+
+
+def test_listing_links_into_the_repository_resolve() -> None:
+    """The registry listing and both plugin manifests publish absolute links into this
+    repository, which the doc-link check does not follow; a renamed file breaks them."""
+    text = "".join(
+        (ROOT / f).read_text()
+        for f in (
+            "server.json",
+            "integrations/claude-code-plugin/.claude-plugin/plugin.json",
+            "integrations/codex-plugin/.codex-plugin/plugin.json",
+        )
+    )
+    links = re.findall(
+        r"https://(?:github\.com/ClickHouse/loom/blob/main|raw\.githubusercontent\.com/ClickHouse/loom/main)/([^\"#]+)",
+        text,
+    )
+    assert links
+    for path in links:
+        assert (ROOT / path).is_file(), path

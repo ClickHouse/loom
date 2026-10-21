@@ -3,19 +3,39 @@
   "owner": {
     "name": "Loom"
   },
-  "description": "Loom \u2014 memory, knowledge, and observability for AI agents.",
+  "description": "Loom: shared long-term memory and code intelligence for AI coding agents, self-hosted on ClickHouse.",
   "plugins": [
     {
       "name": "loom",
       "source": "./integrations/claude-code-plugin",
-      "description": "Loom for Claude Code: the MCP memory and code tools, lifecycle hooks that capture the session with no model call, the code shunt, and the loom skills.",
-      "license": "Apache-2.0"
+      "description": "Shared long-term memory and code intelligence for Claude Code: MCP tools to save and recall decisions across sessions, hooks that capture each session with no model call, and a code index that answers structure questions without whole-file reads.",
+      "license": "Apache-2.0",
+      "category": "memory",
+      "tags": ["agent-memory", "long-term-memory", "code-intelligence", "code-search", "mcp", "clickhouse"],
+      "relevance": {
+        "topic": "Loom",
+        "signals": {
+          "cli": ["loom"],
+          "filesRead": ["**/loom.yaml", "**/loom.example.yaml", "**/.loom/config.json"],
+          "manifestDeps": [
+            {
+              "file": "[/\\\\](pyproject\\.toml|requirements[^/\\\\]*\\.txt)$",
+              "pattern": "clickhouse[-_.]loom"
+            },
+            {
+              "file": "[/\\\\]package\\.json$",
+              "pattern": "\"@clickhouse/loom\"\\s*:"
+            }
+          ]
+        }
+      }
     },
     {
       "name": "loom-code-skill",
       "source": "./",
-      "description": "The loom and loom-code Agent Skills: how an agent uses Loom, and code.* before reading files. Skills only, no hooks.",
-      "license": "Apache-2.0"
+      "description": "Code search and code intelligence for repositories in a Loom code index (the loom-code Agent Skill: code.* first, then read only that), and the loom Agent Skill: how an agent uses Loom. Skills only, no hooks.",
+      "license": "Apache-2.0",
+      "category": "code-intelligence"
     }
   ]
 }
