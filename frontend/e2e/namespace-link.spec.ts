@@ -7,12 +7,12 @@ import { installApi, NAMESPACE } from "./fixtures";
 // the picker in the header; Continue opens the page on the namespace the picker shows.
 
 const JOINED = {
-  namespace: "t-acme-shared",
+  namespace: "group-a-shared",
   role: "writer",
   status: "active",
   visibility: "private",
   kind: "memory",
-  description: "Acme",
+  description: "Workspace A",
   joined_at: "2026-01-02T00:00:00Z",
   is_new: false,
 };
@@ -31,8 +31,8 @@ for (const width of [1400, 375]) {
   test(`a link to a namespace the account cannot read says so, axe-clean at ${width} px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await installApi(page);
-    await page.goto("/memories?namespace=t-other-shared");
-    await expect(page.getByRole("heading", { level: 1, name: "No access to t-other-shared" })).toBeVisible();
+    await page.goto("/memories?namespace=group-b-shared");
+    await expect(page.getByRole("heading", { level: 1, name: "No access to group-b-shared" })).toBeVisible();
     await expect(page.getByRole("button", { name: `Namespace: ${NAMESPACE}` })).toBeVisible();
     expect(await violations(page)).toEqual([]);
   });
@@ -40,8 +40,8 @@ for (const width of [1400, 375]) {
 
 test("Continue opens the page on the namespace the picker shows, with the focus on its heading", async ({ page }) => {
   await installApi(page);
-  await page.goto("/memories?namespace=t-other-shared");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.goto("/memories?namespace=group-b-shared");
+  await page.getByRole("button", { name: `Continue in ${NAMESPACE}` }).click();
   await expect(page.locator("main h1").first()).toHaveText("Memories");
   await expect(page.locator("main h1").first()).toBeFocused();
   await expect(page).toHaveURL(new RegExp(`/memories\\?namespace=${NAMESPACE}$`));

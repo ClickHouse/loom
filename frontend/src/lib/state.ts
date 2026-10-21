@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Identity, MyNamespaceEntry, WhoAmI } from "../api";
 import { hasToken, isAuthDisabled, isProxyMode } from "../api";
+import { NAMESPACE_NAME } from "./namespace";
 import { patchEntry, readPlace, rememberPlace, type Place } from "./place";
 
 export type View =
@@ -127,10 +128,11 @@ function addressFor(namespace: string, drop: readonly string[] = []): string {
   return `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`;
 }
 
-/** The namespace a link names (`?namespace=`), or null; `*` is never a namespace. */
+/** The namespace a link names (`?namespace=`), or null when the value is no namespace name
+ *  (`*`, a sentence): the page never prints text a link made up. */
 export function linkedNamespace(): string | null {
   const ns = urlParam(NAMESPACE_KEY);
-  return ns && ns !== "*" ? ns : null;
+  return ns && NAMESPACE_NAME.test(ns) ? ns : null;
 }
 
 /** How a navigation goes. `query`: the keys the destination opens on (`{ seed }` for a
@@ -215,12 +217,12 @@ function linkedAgent(key: string): string {
 // The URL keys that name an object of one namespace: a switch drops them.
 const SWITCH_CLEARS = ["memory", "thread", "doc", "task"];
 
-/** The namespace the current history entry was made in, when the app made it (a link
- *  opened from outside carries none). */
+/** The namespace the current history entry was made in: the app's stamp, else the one its
+ *  address names (the entry a link opened, which boot rewrites and never stamps). */
 function entryNamespace(): string | null {
   const s: unknown = typeof history === "undefined" ? null : history.state;
   const ns = s && typeof s === "object" ? (s as Record<string, unknown>).loomNamespace : null;
-  return typeof ns === "string" ? ns : null;
+  return typeof ns === "string" ? ns : urlParam(NAMESPACE_KEY);
 }
 
 /** Whether what the current entry names belongs to `namespace`: an entry made in another
@@ -228,6 +230,16 @@ function entryNamespace(): string | null {
 function entryHere(namespace: string | null): boolean {
   const ns = entryNamespace();
   return ns === null || ns === namespace;
+}
+
+/** Back and Forward never switch namespace: the address names the page's, and nothing an
+ *  entry made in another names. A move inside one view (the Graph's walks) calls it too. */
+export function addressPageNamespace(): void {
+  const want = addressFor(
+    pageNamespace(),
+    entryHere(useStore.getState().identity?.namespace ?? null) ? [] : SWITCH_CLEARS,
+  );
+  if (want !== window.location.pathname + window.location.search + window.location.hash) patchEntry({}, want);
 }
 
 /** What the URL opens on view `v`: the memory, document or thread its query names. */
@@ -427,8 +439,9 @@ export const useStore = create<AppState>((set, get) => ({
   },
   bootView: (view) => {
     pushView(view, {}, false);
-    // What a link names belongs to its namespace: none of it opens on another.
-    const here = !get().deniedNamespace && entryHere(get().identity?.namespace ?? null);
+    // What a link names belongs to its namespace: none of it opens on another, so nothing
+    // opens under a link's unreadable namespace (the address still names that one).
+    const here = entryHere(get().identity?.namespace ?? null);
     set({ view, ...(here ? openedByUrl(view) : { inspectedMemoryKey: null, inspectedAgent: "" }) });
   },
   arriveFromHistory: (view, place) => {
@@ -442,14 +455,15 @@ export const useStore = create<AppState>((set, get) => ({
       inspectedMemoryKey: inspected ?? opened.inspectedMemoryKey ?? null,
       inspectedAgent: inspected ? (place?.inspectedAgent ?? "") : (opened.inspectedAgent ?? ""),
     });
-    // Back does not switch namespace: the address names the page's, and nothing of the
-    // namespace the entry was made in.
-    const want = addressFor(pageNamespace(), here ? [] : SWITCH_CLEARS);
-    if (want !== window.location.pathname + window.location.search + window.location.hash) patchEntry({}, want);
+    addressPageNamespace();
   },
   namespacePickerOpen: false,
   openNamespacePicker: (namespacePickerOpen) => set({ namespacePickerOpen }),
   inspect: (inspectedMemoryKey, opts) => {
+    const { identity, deniedNamespace } = get();
+    // A memory opens in the namespace the page reads (the palette searches that one): a
+    // link's unreadable namespace is left first, as Continue leaves it.
+    if (inspectedMemoryKey && deniedNamespace && identity) get().setIdentity(identity);
     const agent = opts?.agent || "";
     set({ inspectedMemoryKey, inspectedAgent: agent });
     // On Memories the open memory is the page's URL (`?memory=`), with the agent it was

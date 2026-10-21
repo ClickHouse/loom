@@ -16,6 +16,7 @@ vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   setSavedNamespace: vi.fn(),
 }));
+import { setSavedNamespace } from "../api";
 
 const ns: TrackerSourceNamespace = {
   namespace: "tracker-clickhouse",
@@ -32,6 +33,8 @@ const ns: TrackerSourceNamespace = {
 describe("opening a tracker source", () => {
   beforeEach(() => {
     toast.mockReset();
+    vi.mocked(setSavedNamespace).mockClear();
+    localStorage.clear();
     history.replaceState(null, "", "/repositories?repo=loom");
     useStore.setState({ identity: { org: "dev", namespace: "code-loom", agent: "loom-ui" }, view: "code" });
   });
@@ -65,5 +68,36 @@ describe("opening a tracker source", () => {
     expect(toast).toHaveBeenLastCalledWith("Switched back to code-loom", "info");
     // Said once: the entry no longer asks for it, so a later switch made here survives a reload.
     expect((history.state as Record<string, unknown>).loomNamespaceLeft).toBeUndefined();
+  });
+
+  it("Back saves again the pick Open replaced, never a namespace a link opened for the tab", async () => {
+    const backFromBoard = async () => {
+      const first = renderHook(() => useRecordActions("dev", async () => {}));
+      act(() => first.result.current.open(ns));
+      first.unmount();
+      await act(async () => {
+        history.back();
+        await new Promise((r) => window.addEventListener("popstate", r, { once: true }));
+      });
+      renderHook(() => useRecordActions("dev", async () => {}));
+    };
+    // The tab is on a namespace a link opened; the saved pick is another one.
+    localStorage.setItem("loom_namespace_v1", "personal-me");
+    await backFromBoard();
+    expect(useStore.getState().identity?.namespace).toBe("code-loom");
+    expect(vi.mocked(setSavedNamespace).mock.calls.map(([saved]) => saved)).toEqual([
+      "tracker-clickhouse",
+      "personal-me",
+    ]);
+    // The tab is on the saved pick: Back saves it again, as it always has.
+    vi.mocked(setSavedNamespace).mockClear();
+    history.replaceState(null, "", "/repositories?repo=loom");
+    useStore.setState({ identity: { org: "dev", namespace: "code-loom", agent: "loom-ui" }, view: "code" });
+    localStorage.setItem("loom_namespace_v1", "code-loom");
+    await backFromBoard();
+    expect(vi.mocked(setSavedNamespace).mock.calls.map(([saved]) => saved)).toEqual([
+      "tracker-clickhouse",
+      "code-loom",
+    ]);
   });
 });

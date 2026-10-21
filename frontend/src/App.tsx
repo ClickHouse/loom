@@ -28,7 +28,7 @@ import { claimsFromToken, provisionalNamespace, rememberKinds, sameIdentity, tak
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
 import { MemoryScopeMissing } from "./components/MemoryScopeMissing";
-import { useStore, pathnameView, linkedNamespace } from "./lib/state";
+import { useStore, pathnameView, linkedNamespace, addressPageNamespace } from "./lib/state";
 import { arriveAt, readPlace, restorePlace } from "./lib/place";
 import { useKeyboard } from "./lib/hooks";
 import { NetworkProgress } from "./components/NetworkProgress";
@@ -175,7 +175,8 @@ export default function App() {
 
   // Browser back/forward: the view from the URL, then the place the entry remembers — the
   // scroll of <main>, the memory in the drawer, the focused element. A move inside one
-  // view (the Graph's walks) restores only what the entry remembers.
+  // view (the Graph's walks) restores only what the entry remembers, and its address names
+  // the page's namespace after a switch made since.
   useEffect(() => {
     if (!authed) return;
     const sync = (e: PopStateEvent) => {
@@ -183,7 +184,7 @@ export default function App() {
       if (!v) return;
       const changed = v !== useStore.getState().view;
       const place = readPlace(e.state);
-      if (!changed && !place) return;
+      if (!changed && !place) return addressPageNamespace();
       arriveFromHistory(v, place);
       restorePlace(place, changed);
     };

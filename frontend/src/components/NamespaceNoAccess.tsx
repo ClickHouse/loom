@@ -1,3 +1,4 @@
+import { Button } from "@clickhouse/click-ui/Button";
 import { Link } from "@clickhouse/click-ui/Link";
 import { arriveAt } from "../lib/place";
 import { useStore } from "../lib/state";
@@ -10,7 +11,9 @@ import { PageHeader } from "./ui";
  * Nothing of that namespace is read, and the namespace under the page (the one a visit
  * without the link opens, named in the header's picker) is never shown as if it were the
  * one the link asked for. Continue, a pick or any navigation leaves the page; Continue
- * hands the focus to the view's heading, as a navigation does.
+ * hands the focus to the view's heading, as a navigation does. Its name says where it
+ * continues; its label stays one word, since a namespace name can be longer than a phone's
+ * width and Click UI's button does not wrap.
  */
 export function NamespaceNoAccess({ namespace }: { namespace: string }) {
   const identity = useStore((s) => s.identity);
@@ -30,18 +33,23 @@ export function NamespaceNoAccess({ namespace }: { namespace: string }) {
         icon={pending ? "clock" : "lock"}
         title={pending ? "Your request to join is waiting for approval" : "Your account cannot read this namespace"}
         description={current ? `${why} Until then you can keep working in ${current}.` : why}
-        action={
-          identity && current
-            ? {
-                label: "Continue",
-                onClick: () => {
-                  setIdentity(identity);
-                  arriveAt();
-                },
-              }
-            : { label: "Browse and join spaces", onClick: () => setView("browse") }
-        }
-      />
+        action={identity && current ? undefined : { label: "Browse and join spaces", onClick: () => setView("browse") }}
+      >
+        {identity && current && (
+          <Button
+            type="primary"
+            htmlType="button"
+            className="mt-6"
+            aria-label={`Continue in ${current}`}
+            onClick={() => {
+              setIdentity(identity);
+              arriveAt();
+            }}
+          >
+            Continue
+          </Button>
+        )}
+      </EmptyState>
       <p className="text-center text-sm text-text-muted">
         Or pick another namespace from the{" "}
         <Link component="button" type="button" onClick={() => openNamespacePicker(true)}>

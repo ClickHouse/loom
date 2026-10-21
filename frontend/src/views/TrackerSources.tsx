@@ -23,7 +23,7 @@ import { useStore } from "../lib/state";
 import { patchEntry } from "../lib/place";
 import { useAbortableEffect } from "../lib/hooks";
 import { humanizeError } from "../lib/format";
-import { listTrackerSources, listMine, setSavedNamespace } from "../api";
+import { getSavedNamespace, listTrackerSources, listMine, setSavedNamespace } from "../api";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { joinTarget, withdrawTarget, leaveTarget, type JoinTarget } from "../lib/joinActions";
 import {
@@ -140,14 +140,16 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
   const [busy, setBusy] = useState<string | null>(null);
   // Back from a tracker's Patterns board: the entry Open left names the namespace it was
   // in (the switch made on it rewrote its address), and arriving on it switches back, once.
+  // The pick Open replaced is saved again, so a namespace a link opened for the tab never is.
   useEffect(() => {
-    const left = (history.state as Record<string, unknown> | null)?.loomNamespaceLeft;
+    const state = history.state as Record<string, unknown> | null;
+    const left = state?.loomNamespaceLeft;
     if (typeof left !== "string") return;
-    patchEntry({ loomNamespaceLeft: undefined });
+    patchEntry({ loomNamespaceLeft: undefined, loomSavedLeft: undefined });
     const now = useStore.getState().identity;
     if (!now || now.namespace === left) return;
     setIdentity({ ...now, namespace: left });
-    setSavedNamespace(left);
+    if (typeof state?.loomSavedLeft === "string") setSavedNamespace(state.loomSavedLeft);
     toast(`Switched back to ${left}`, "info");
   }, []);
   const target = (ns: TrackerSourceNamespace): JoinTarget => ({
@@ -211,7 +213,7 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
    *  namespace switch is said in a toast, so the side effect of the jump is never silent. */
   const open = (ns: TrackerSourceNamespace) => {
     if (!identity) return;
-    patchEntry({ loomNamespaceLeft: identity.namespace });
+    patchEntry({ loomNamespaceLeft: identity.namespace, loomSavedLeft: getSavedNamespace() });
     setIdentity({ ...identity, namespace: ns.namespace });
     setSavedNamespace(ns.namespace);
     navigate("graph", { query: { mode: "patterns" }, back: "Repositories" });

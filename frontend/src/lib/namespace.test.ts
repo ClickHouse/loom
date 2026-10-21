@@ -284,13 +284,14 @@ describe("canReadNamespace: whether a link's namespace may open", () => {
   it("is false for a namespace the account only asked for, or holds nothing on", () => {
     const mine = [entry("asked", { status: "pending", pending_role: null })];
     expect(canReadNamespace("asked", ["team"], mine)).toBe(false);
-    expect(canReadNamespace("t-other-shared", ["team"], mine)).toBe(false);
+    expect(canReadNamespace("group-b-shared", ["team"], mine)).toBe(false);
     // `*` in the claims is no namespace the picker lists.
-    expect(canReadNamespace("t-other-shared", [WILDCARD_NAMESPACE], mine)).toBe(false);
+    expect(canReadNamespace("group-b-shared", [WILDCARD_NAMESPACE], mine)).toBe(false);
   });
 
-  it("refuses nothing when the rows are unknown (list_mine failed): the server answers the reads", () => {
-    expect(canReadNamespace("t-other-shared", ["team"], null)).toBe(true);
+  it("counts only the claims when the rows are unknown (list_mine failed)", () => {
+    expect(canReadNamespace("group-b-shared", ["team"], null)).toBe(false);
+    expect(canReadNamespace("team", ["team"], null)).toBe(true);
   });
 });
 

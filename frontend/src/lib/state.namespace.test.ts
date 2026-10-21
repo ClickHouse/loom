@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The address names the namespace a page shows (`?namespace=`, first): a navigation, a
 // switch and boot write it, and a link opens on it. A link to a namespace the account
-// cannot read keeps naming it while the page says so, and opens nothing it names. On the
-// bare root `?view=` names the page by id or by path, and `?memory=` opens Memories.
+// cannot read keeps naming it while the page says so, and opens nothing it names. Back and
+// Forward never switch namespace, and an entry made in another one opens nothing it names.
+// On the bare root `?view=` names the page by id or by path, and `?memory=` opens Memories.
 
 const { authOff } = vi.hoisted(() => ({ authOff: { value: false } }));
 vi.mock("../api", async (importOriginal) => ({
@@ -11,7 +12,8 @@ vi.mock("../api", async (importOriginal) => ({
   isAuthDisabled: () => authOff.value,
 }));
 
-import { linkedNamespace, navigationHref, pathnameView, useStore } from "./state";
+import { readPlace } from "./place";
+import { addressPageNamespace, linkedNamespace, navigationHref, pathnameView, useStore } from "./state";
 
 const team = { org: "dev", namespace: "team", agent: "loom-ui" };
 
@@ -20,14 +22,32 @@ function at(url: string, state: unknown = null): void {
 }
 const address = () => location.pathname + location.search;
 
+/** Back one entry, then what App's popstate handler does for a view change. */
+async function back(view: Parameters<ReturnType<typeof useStore.getState>["arriveFromHistory"]>[0]) {
+  await new Promise((resolve) => {
+    window.addEventListener("popstate", resolve, { once: true });
+    history.back();
+  });
+  useStore.getState().arriveFromHistory(view, readPlace(history.state));
+}
+
 describe("reading a link", () => {
-  it("takes ?namespace= as the link's namespace; none when it is absent, empty or `*`", () => {
-    at("/memories?namespace=t-1-shared");
-    expect(linkedNamespace()).toBe("t-1-shared");
-    for (const url of ["/memories", "/memories?namespace=", "/memories?namespace=*"]) {
+  it("takes ?namespace= as the link's namespace; none when it is absent or empty", () => {
+    at("/memories?namespace=group-a-shared");
+    expect(linkedNamespace()).toBe("group-a-shared");
+    for (const url of ["/memories", "/memories?namespace="]) {
       at(url);
       expect(linkedNamespace(), url).toBeNull();
     }
+  });
+
+  it("takes no value that is not a namespace name: `*`, a sentence, capitals, one too long", () => {
+    for (const value of ["*", "Your account is locked, call support", "Team", "-team", "team/notes", "a".repeat(129)]) {
+      at(`/memories?namespace=${encodeURIComponent(value)}`);
+      expect(linkedNamespace(), value).toBeNull();
+    }
+    at(`/memories?namespace=${"a".repeat(128)}`);
+    expect(linkedNamespace()).toBe("a".repeat(128));
   });
 
   it("names the page on the bare root by view id or by path; a path wins", () => {
@@ -106,21 +126,42 @@ describe("writing the address", () => {
     expect(address()).toBe("/conversations?namespace=team&thread=t-2");
     expect(useStore.getState().pendingConversationThread).toEqual({ threadId: "t-2" });
   });
+
+  it("a move inside one view made before a switch names the page's namespace, keeping the view's keys", () => {
+    // A Graph walk's entry carries no stamp of the app's; its address names the old namespace.
+    at("/graph?namespace=old&seed=alpha", { graphSeed: "alpha" });
+    addressPageNamespace();
+    expect(address()).toBe("/graph?namespace=team&seed=alpha");
+    expect(history.state).toMatchObject({ graphSeed: "alpha" });
+  });
+
+  it("Back onto a link's entry after a switch opens nothing of the link's namespace", async () => {
+    useStore.setState({ identity: null });
+    at("/memories?namespace=group-a-shared&memory=k");
+    useStore.getState().bootIdentity({ ...team, namespace: "group-a-shared" });
+    useStore.getState().bootView("memories");
+    expect(useStore.getState().inspectedMemoryKey).toBe("k");
+    useStore.getState().navigate("recall");
+    useStore.getState().setIdentity(team);
+    await back("memories");
+    expect(useStore.getState().inspectedMemoryKey).toBeNull();
+    expect(address()).toBe("/memories?namespace=team");
+  });
 });
 
 describe("a link to a namespace the account cannot read", () => {
   beforeEach(() => {
     authOff.value = false;
     useStore.setState({ identity: null, deniedNamespace: null, view: "setup", inspectedMemoryKey: null });
-    at("/memories?namespace=t-x-shared&memory=k");
-    useStore.getState().bootIdentity(team, "t-x-shared");
+    at("/memories?namespace=group-b-shared&memory=k");
+    useStore.getState().bootIdentity(team, "group-b-shared");
     useStore.getState().bootView("memories");
   });
 
   it("keeps naming that namespace, and opens nothing the link names on the one under it", () => {
-    expect(address()).toBe("/memories?namespace=t-x-shared&memory=k");
+    expect(address()).toBe("/memories?namespace=group-b-shared&memory=k");
     expect(useStore.getState()).toMatchObject({
-      deniedNamespace: "t-x-shared",
+      deniedNamespace: "group-b-shared",
       identity: team,
       inspectedMemoryKey: null,
     });
@@ -138,5 +179,18 @@ describe("a link to a namespace the account cannot read", () => {
     expect(useStore.getState().deniedNamespace).toBeNull();
     expect(address()).toBe("/memories?namespace=team");
     expect(history.length).toBe(before);
+  });
+
+  it("Back onto its page after leaving opens nothing the link named, in the namespace the page reads", async () => {
+    useStore.getState().navigate("recall");
+    await back("memories");
+    expect(useStore.getState()).toMatchObject({ deniedNamespace: null, inspectedMemoryKey: null });
+    expect(address()).toBe("/memories?namespace=team");
+  });
+
+  it("a memory opened from the palette leaves it first: the address and the read name one namespace", () => {
+    useStore.getState().inspect("team-key", { agent: "bot" });
+    expect(useStore.getState()).toMatchObject({ deniedNamespace: null, inspectedMemoryKey: "team-key" });
+    expect(address()).toBe("/memories?namespace=team&memory=team-key");
   });
 });

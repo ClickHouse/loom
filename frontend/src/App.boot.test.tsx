@@ -282,7 +282,7 @@ describe("boot order", () => {
 describe("a link's namespace", () => {
   const JOINED = { ...MINE[0], namespace: "joined", role: "writer" };
   let calls: { path: string; body: Record<string, unknown> | null }[];
-  function serve(rows: unknown[]) {
+  function serve(rows: unknown[] | "failing") {
     calls = [];
     vi.stubGlobal(
       "fetch",
@@ -295,7 +295,8 @@ describe("a link's namespace", () => {
         calls.push({ path, body: typeof init?.body === "string" ? JSON.parse(init.body) : null });
         if (path === "whoami")
           return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
-        if (path === "namespace.list_mine") return json({ ...GENERIC, rows });
+        if (path === "namespace.list_mine")
+          return rows === "failing" ? new Response("{}", { status: 500 }) : json({ ...GENERIC, rows });
         return json(GENERIC);
       }),
     );
@@ -342,25 +343,25 @@ describe("a link's namespace", () => {
   });
 
   it("says it has no access to one the account cannot read, reads nothing there, and saves nothing", async () => {
-    window.history.replaceState(null, "", "/memories?namespace=t-other-shared&memory=k");
+    window.history.replaceState(null, "", "/memories?namespace=group-b-shared&memory=k");
     serve(MINE);
     render(<App />);
-    await until(() => screen.queryByRole("heading", { level: 1, name: "No access to t-other-shared" }) !== null);
+    await until(() => screen.queryByRole("heading", { level: 1, name: "No access to group-b-shared" }) !== null);
     expect(useStore.getState()).toMatchObject({
       identity: { namespace: NS },
-      deniedNamespace: "t-other-shared",
+      deniedNamespace: "group-b-shared",
       inspectedMemoryKey: null,
     });
-    expect(address()).toBe("/memories?namespace=t-other-shared&memory=k");
+    expect(address()).toBe("/memories?namespace=group-b-shared&memory=k");
     // The picker is there, on the namespace under the page.
     expect(screen.getByRole("button", { name: `Namespace: ${NS}` })).toBeInTheDocument();
-    expect(calls.some((c) => c.body?.namespace === "t-other-shared")).toBe(false);
+    expect(calls.some((c) => c.body?.namespace === "group-b-shared")).toBe(false);
     expect(calls.some((c) => c.path.startsWith("memory."))).toBe(false);
     expect(localStorage.getItem("loom_namespace_v1")).toBe(NS);
     expect(savedDefault()).toBe(false);
     // Continue: the page the link asked for, on the namespace the picker shows.
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      fireEvent.click(screen.getByRole("button", { name: `Continue in ${NS}` }));
     });
     await until(() => calls.some((c) => c.path === "memory.list"));
     expect(screen.queryByRole("heading", { name: /No access/ })).toBeNull();
@@ -369,10 +370,10 @@ describe("a link's namespace", () => {
   });
 
   it("says when the account's request to join it is still waiting", async () => {
-    window.history.replaceState(null, "", "/memories?namespace=t-asked-shared");
-    serve([...MINE, { ...MINE[0], namespace: "t-asked-shared", role: "writer", status: "pending" }]);
+    window.history.replaceState(null, "", "/memories?namespace=group-c-shared");
+    serve([...MINE, { ...MINE[0], namespace: "group-c-shared", role: "writer", status: "pending" }]);
     render(<App />);
-    await until(() => screen.queryByRole("heading", { level: 1, name: "No access to t-asked-shared" }) !== null);
+    await until(() => screen.queryByRole("heading", { level: 1, name: "No access to group-c-shared" }) !== null);
     expect(
       screen.getByRole("heading", { level: 2, name: "Your request to join is waiting for approval" }),
     ).toBeTruthy();
@@ -385,6 +386,31 @@ describe("a link's namespace", () => {
     await until(() => calls.some((c) => c.path === "memory.list"));
     expect(useStore.getState().view).toBe("memories");
     expect(address()).toBe(`/memories?namespace=${NS}`);
+  });
+
+  it("opens no namespace the claims lack when the membership read fails: the page says it has no access", async () => {
+    window.history.replaceState(null, "", "/memories?namespace=joined&memory=k");
+    serve("failing");
+    render(<App />);
+    await until(() => screen.queryByRole("heading", { level: 1, name: "No access to joined" }) !== null);
+    expect(useStore.getState()).toMatchObject({ identity: { namespace: NS }, deniedNamespace: "joined" });
+    expect(calls.some((c) => c.body?.namespace === "joined")).toBe(false);
+    expect(calls.some((c) => c.path.startsWith("memory."))).toBe(false);
+  });
+
+  it("a move inside one view after a switch brings the address back to the page's namespace", async () => {
+    window.history.replaceState(null, "", `/memories?namespace=${NS}`);
+    serve(MINE);
+    render(<App />);
+    await until(() => calls.some((c) => c.path === "memory.list"));
+    // An entry of the same page made in another namespace, with no stamp of the app's (as the
+    // Graph pushes its walks), and Back onto it.
+    window.history.pushState(null, "", "/memories?namespace=other&memory=k");
+    await act(async () => {
+      window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+    });
+    expect(address()).toBe(`/memories?namespace=${NS}`);
+    expect(useStore.getState().identity?.namespace).toBe(NS);
   });
 
   it("a deep link survives the sign-in redirect: the token comes back to the root, the page opens", async () => {

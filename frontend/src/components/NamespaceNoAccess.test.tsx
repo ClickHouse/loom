@@ -11,7 +11,7 @@ import { NamespaceNoAccess } from "./NamespaceNoAccess";
 
 const team = { org: "dev", namespace: "team", agent: "loom-ui" };
 const pending: MyNamespaceEntry = {
-  namespace: "t-x-shared",
+  namespace: "group-b-shared",
   role: "writer",
   status: "pending",
   pending_role: null,
@@ -23,10 +23,10 @@ const pending: MyNamespaceEntry = {
 
 describe("NamespaceNoAccess", () => {
   beforeEach(() => {
-    history.replaceState(null, "", "/memories?namespace=t-x-shared&memory=k");
+    history.replaceState(null, "", "/memories?namespace=group-b-shared&memory=k");
     useStore.setState({
       identity: team,
-      deniedNamespace: "t-x-shared",
+      deniedNamespace: "group-b-shared",
       myNamespaces: [],
       view: "memories",
       namespacePickerOpen: false,
@@ -35,34 +35,37 @@ describe("NamespaceNoAccess", () => {
   afterEach(() => cleanup());
 
   it("names the namespace and the namespace the page is on, and passes axe", async () => {
-    const { container } = render(<NamespaceNoAccess namespace="t-x-shared" />);
-    expect(screen.getByRole("heading", { level: 1, name: "No access to t-x-shared" })).toBeInTheDocument();
+    const { container } = render(<NamespaceNoAccess namespace="group-b-shared" />);
+    expect(screen.getByRole("heading", { level: 1, name: "No access to group-b-shared" })).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { level: 2, name: "Your account cannot read this namespace" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/Until then you can keep working in team\.$/)).toBeInTheDocument();
-    expect(document.title).toBe("No access to t-x-shared · Loom");
+    expect(document.title).toBe("No access to group-b-shared · Loom");
     expect(await axeViolations(container)).toEqual([]);
   });
 
   it("Continue leaves it for the namespace under it, in place, and drops what the link named", async () => {
-    render(<NamespaceNoAccess namespace="t-x-shared" />);
+    render(<NamespaceNoAccess namespace="group-b-shared" />);
     const before = history.length;
-    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    const proceed = screen.getByRole("button", { name: "Continue in team" });
+    // The label stays one word; the name says where it continues.
+    expect(proceed).toHaveTextContent(/^Continue$/);
+    await userEvent.click(proceed);
     expect(useStore.getState()).toMatchObject({ deniedNamespace: null, identity: team, view: "memories" });
     expect(location.pathname + location.search).toBe("/memories?namespace=team");
     expect(history.length).toBe(before);
   });
 
   it("opens the namespace picker from its link", async () => {
-    render(<NamespaceNoAccess namespace="t-x-shared" />);
+    render(<NamespaceNoAccess namespace="group-b-shared" />);
     await userEvent.click(screen.getByRole("button", { name: "namespace menu" }));
     expect(useStore.getState().namespacePickerOpen).toBe(true);
   });
 
   it("says when a request to join it is waiting", () => {
     useStore.setState({ myNamespaces: [pending] });
-    render(<NamespaceNoAccess namespace="t-x-shared" />);
+    render(<NamespaceNoAccess namespace="group-b-shared" />);
     expect(
       screen.getByRole("heading", { level: 2, name: "Your request to join is waiting for approval" }),
     ).toBeInTheDocument();
@@ -70,8 +73,8 @@ describe("NamespaceNoAccess", () => {
 
   it("with no namespace to fall back on, offers Spaces instead of Continue", async () => {
     useStore.setState({ identity: { ...team, namespace: "" } });
-    render(<NamespaceNoAccess namespace="t-x-shared" />);
-    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+    render(<NamespaceNoAccess namespace="group-b-shared" />);
+    expect(screen.queryByRole("button", { name: /^Continue/ })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Browse and join spaces" }));
     expect(useStore.getState()).toMatchObject({ view: "browse", deniedNamespace: null });
   });
