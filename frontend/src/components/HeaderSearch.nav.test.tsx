@@ -65,16 +65,16 @@ describe("HeaderSearch namespace switch", () => {
     await user.type(screen.getByRole("combobox", { name: "Search Loom" }), "alerts");
     await user.click(await screen.findByRole("option", { name: /team-alerts/ }));
     await waitFor(() => expect(useStore.getState().identity?.namespace).toBe("team-alerts"));
-    expect(location.pathname + location.search).toBe("/library?view=grid");
+    expect(location.pathname + location.search).toBe("/library?namespace=team-alerts&view=grid");
     expect(history.state).toMatchObject({ loomPlace: { scrollTop: 40 } });
   });
 
   it("drops ?task= on Tasks, ?thread= on Conversations and ?memory= on Memories", async () => {
     const user = userEvent.setup();
     for (const [url, want] of [
-      ["/tasks?inbox=bot&task=t-1", "/tasks?inbox=bot"],
-      ["/conversations?thread=th-1", "/conversations"],
-      ["/memories?memory=a%2Fb", "/memories"],
+      ["/tasks?inbox=bot&task=t-1", "/tasks?namespace=team-alerts&inbox=bot"],
+      ["/conversations?thread=th-1", "/conversations?namespace=team-alerts"],
+      ["/memories?memory=a%2Fb", "/memories?namespace=team-alerts"],
     ]) {
       history.replaceState(null, "", url);
       useStore.setState({ identity: { org: "dev", namespace: "team", agent: "dashboard" } });

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from server.memory.app.extract.turns import _format_messages
 from server.memory.domain.extraction_prompts import (
+    _AGENT_LEARNINGS_PROMPT_BLOCK,
     _EXTRACTION_SYSTEM_PROMPT,
     _STRUCTURED_ANSWER_PROMPT_BLOCK,
     compact_extraction_prompt,
@@ -24,7 +25,7 @@ def _use_compact_prompt(messages: list[dict[str, object]]) -> bool:
     return sum(len(str(m.get("content", "") or "")) for m in messages) <= limit
 
 
-def _extraction_base_prompt(compact: bool) -> str:
+def _extraction_base_prompt(compact: bool, *, agent_learnings: bool = False) -> str:
     """The extraction system prompt before the preamble: the full or the
     compact examples, plus the flag-gated blocks."""
     base_prompt = (
@@ -37,6 +38,9 @@ def _extraction_base_prompt(compact: bool) -> str:
     # input holds no long answer to capture.
     if settings.memory_capture_structured_answers and not compact:
         base_prompt = base_prompt + "\n\n" + _STRUCTURED_ANSWER_PROMPT_BLOCK
+    # A standing rule is one short sentence, so a compact input gets the block too.
+    if agent_learnings:
+        base_prompt = base_prompt + "\n\n" + _AGENT_LEARNINGS_PROMPT_BLOCK
     return base_prompt
 
 

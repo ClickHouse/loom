@@ -205,6 +205,6 @@ describe("Library keeps the open document in its URL", () => {
     render(<Documents />);
     await settle();
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(location.search).toBe("");
+    expect(location.search).toBe("?namespace=team");
   });
 });

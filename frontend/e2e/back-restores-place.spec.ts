@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { installApi } from "./fixtures";
+import { installApi, NAMESPACE } from "./fixtures";
 import { violations } from "./axe";
 
 // Reading something keeps you where you are, and Back puts you back. A memory's
@@ -119,7 +119,7 @@ for (const width of [1400, 375]) {
       expect(left).toBeGreaterThan(600);
       await drawer.getByRole("link", { name: `Entity ${ENTITY}` }).click();
       await pop.getByRole("link", { name: "Open in Graph" }).click();
-      await expect(page).toHaveURL(/\/graph\?seed=rate\+limiting$/);
+      await expect(page).toHaveURL(new RegExp(`/graph\\?namespace=${NAMESPACE}&seed=rate\\+limiting$`));
       const back = page.getByRole("button", { name: `Back to memory ${key}` });
       await expect(back).toBeVisible();
       await expect(page.getByRole("heading", { level: 1, name: "Graph" })).toBeFocused();
@@ -128,7 +128,7 @@ for (const width of [1400, 375]) {
 
       // Back: the list where it was, the drawer on that memory, the focus on the chip.
       await back.click();
-      await expect(page).toHaveURL(new RegExp(`/memories\\?memory=${encodeURIComponent(key)}$`));
+      await expect(page).toHaveURL(new RegExp(`/memories\\?namespace=${NAMESPACE}&memory=${encodeURIComponent(key)}$`));
       await expect(page.getByRole("dialog", { name: key })).toBeVisible();
       await expect(page.getByRole("link", { name: `Entity ${ENTITY}` })).toBeFocused();
       await expect.poll(() => mainScroll(page)).toBe(left);
@@ -168,7 +168,7 @@ test("a g-jump focuses the new page's h1 and says where it went", async ({ page 
   await page.locator("main#main").focus();
   await page.keyboard.press("g");
   await page.keyboard.press("l");
-  await expect(page).toHaveURL(/\/library$/);
+  await expect(page).toHaveURL(new RegExp(`/library\\?namespace=${NAMESPACE}$`));
   await expect(page.getByRole("heading", { level: 1, name: "Library" })).toBeFocused();
   await expect(page.locator("#loom-nav-status")).toHaveText("Library");
   await expect(page).toHaveTitle("Library · Loom");
@@ -186,7 +186,7 @@ test("Back after a g-jump focuses the Library row that had the focus", async ({ 
   await open.focus();
   await page.keyboard.press("g");
   await page.keyboard.press("m");
-  await expect(page).toHaveURL(/\/memories$/);
+  await expect(page).toHaveURL(new RegExp(`/memories\\?namespace=${NAMESPACE}$`));
   await page.goBack();
   await expect(page.locator("[data-doc-row]").nth(2).locator("[data-row-open]")).toBeFocused();
 });

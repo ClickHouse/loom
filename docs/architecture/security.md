@@ -124,6 +124,14 @@ subject under their org, `<org>/user:<id>`
 per org. Each process loads a snapshot at boot and refreshes it on its own loop every
 `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s).
 
+Operator cutoffs only advance. Every cutoff writer holds the same subject lease while
+reading and writing the cutoff. Revoking an account records every directory spelling
+before token-list housekeeping, so a busy token name cannot leave its login subject active.
+Token lists mark only permanent revocations; temporary suspensions leave their rows intact.
+Historical cutoffs require every server to run this build: older cutoff writers do not
+share the subject lease. During a rolling upgrade, use outright revocation or a cutoff
+at the current time; wait until the rollout completes before submitting a past cutoff.
+
 - Until the first load succeeds, every token gets 503 `AUTH_UNAVAILABLE`.
 - After that, a ClickHouse outage keeps the last good snapshot for at most
   `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (600 s, and it must be larger than the refresh

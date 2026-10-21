@@ -545,6 +545,16 @@ row is kept for ten years. Revoking a service account from the dashboard
 (`/v1/me/service_accounts.revoke`) revokes its subject the same way, along with the grants
 the token held.
 
+A `--subject` revocation with neither `--issued-before` nor `--expires-at` is for good: it
+also marks revoked, in their token lists, the service accounts and MCP tokens the subject
+made, directly or through its tokens, so their names come free, and it reports how many of
+those tokens and of the subject's sign-in sessions it ends. Run again, it writes nothing and
+says the subject is already revoked: the first revocation's reason and author stay. A
+platform admin does the same from anywhere with `POST /v1/admin/revoke_subject`
+([Deprovisioning without SCIM](../operations/sso.md#deprovisioning-without-scim)), and reads
+the revocations with `GET /v1/admin/revocations`, narrowed to one subject with
+`?subject=<subject>`.
+
 Every process that verifies tokens keeps its own copy of the set, loaded at start-up and
 refreshed every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (default 30 s), so a revocation
 reaches every replica within that window. Until a process has loaded the set once it

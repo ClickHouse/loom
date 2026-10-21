@@ -3508,10 +3508,13 @@ export interface LearningEntry {
   memory_type: string;
   proposed_value: unknown;
   supporter_count: number;
+  supporter_sessions?: number;
+  supporter_writers?: number;
   confidence_avg: number;
   supporters: string[];
   rationale: string;
   source_kind?: string;
+  agent?: string;
   status: "pending" | "promoted" | "rejected";
   proposed_at: string; // date-time
   decided_at?: string | null;
@@ -3547,7 +3550,7 @@ export interface LearningsReviewInput {
   candidate_id: string;
   decision: "promote" | "reject";
   reason?: string;
-  destination?: "memory" | "knowledge" | "both";
+  destination?: "memory" | "knowledge" | "both" | null;
   approver?: string;
 }
 
@@ -5826,6 +5829,7 @@ export interface MemorySetFromMessagesInput {
   last_messages?: Message[];
   extraction_instructions?: string;
   coverage_sweep?: boolean | null;
+  agent_learnings?: boolean | null;
   pipeline_steps?: Array<Record<string, unknown>>;
   valid_at?: string | null;
   defer?: boolean;
@@ -5844,6 +5848,8 @@ export interface MemorySetFromMessagesOutput {
   forget_requests?: number;
   about_other?: number;
   premise_facts?: number;
+  learning_candidates?: number;
+  ignored_args?: string[];
   segmenter?: string;
   cached_tokens_in?: number;
   ontology_warnings?: string[];

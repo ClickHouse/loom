@@ -100,7 +100,7 @@ Ask a question and get a grounded answer synthesized from the caller's recalled 
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `agent` | `str` | `'*'` | Read ALL agents in the accessible namespaces by default (membership is the read boundary; agent is authorship metadata), matching memory.search. |
+| `agent` | `str` | `'*'` | Read ALL agents in the accessible namespaces by default (membership is the read boundary; agent is authorship metadata), matching memory.search, and serve every bot's promoted rules. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
@@ -2020,6 +2020,7 @@ Run LLM extraction on `messages` and write the extracted facts.
 | `last_messages` | `list[_Message]` | *(computed)* | Prior turns from the SAME session not being extracted this call — lets the extractor resolve pronouns/follow-ups/cross-turn references without re-extracting earlier facts. |
 | `extraction_instructions` | `str` | `''` | Per-request extraction-prompt suffix for workload-specific tuning. |
 | `coverage_sweep` | `bool \| None` | `None` | The coverage sweep (turn- and sentence-level second reading) per call — None = the namespace, then the density gates. |
+| `agent_learnings` | `bool \| None` | `None` | None follows memory_extract_agent_learnings (default off); false skips filing the assistant's rules for this call, and true while the setting is off is named in ignored_args. |
 | `pipeline_steps` | `list[dict[str, Any]]` | *(computed)* | Per-call workflow override. |
 | `valid_at` | `datetime \| None` | `None` | Fallback valid_at for facts the extractor didn't anchor itself. |
 | `defer` | `bool` | `False` | Capture now, extract later. |
@@ -2038,6 +2039,8 @@ Run LLM extraction on `messages` and write the extracted facts.
 | `forget_requests` | `int` | Requests to forget read from the user's own sentences; with `forgotten` it says how many found a row to retire. |
 | `about_other` | `int` | Rows written as another person's (`about:other`), whether the extractor said so or the sentence's subject did. |
 | `premise_facts` | `int` | The user's facts read from the assistant's premises ("since you enjoy X…"), added to the batch. |
+| `learning_candidates` | `int` | Rules the assistant stated about itself that wrote to the learnings queue: a new candidate or this session's support of one (a session restating a rule it already backs counts 0). |
+| `ignored_args` | `list[str]` | Request fields the server did not apply: unknown keys, and `agent_learnings=true` while the deployment setting memory_extract_agent_learnings is off. |
 | `segmenter` | `str` | Which planner cut them: whole \| size. |
 | `cached_tokens_in` | `int` | Subset of tokens_in the provider served from its prompt cache (billed at a discount). |
 | `ontology_warnings` | `list[str]` | Extracted entity types / relation verbs outside the namespace's ontology (loom.namespace_ontology). |

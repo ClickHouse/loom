@@ -46,7 +46,7 @@ test("bare / with a code+QA-only token lands on Repositories, picker on the code
   const calls = await installApi(page, CODE_TRACKER_ONLY);
   const errors = collectErrors(page);
   await page.goto("/");
-  await expect(page).toHaveURL(/\/repositories$/);
+  await expect(page).toHaveURL(new RegExp(`/repositories\\?namespace=${CODE_NS}$`));
   await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toHaveCount(0);
   const picker = page.getByRole("button", { name: `Namespace: ${CODE_NS}` });
@@ -73,7 +73,7 @@ test("bare / with a code+QA-only token lands on Repositories, picker on the code
 test("bare / honours a saved QA pick: Repositories with the picker on it", async ({ page }) => {
   const calls = await installApi(page, { ...CODE_TRACKER_ONLY, savedNamespace: TRACKER_PUBLIC_NS });
   await page.goto("/");
-  await expect(page).toHaveURL(/\/repositories$/);
+  await expect(page).toHaveURL(new RegExp(`/repositories\\?namespace=${TRACKER_PUBLIC_NS}$`));
   await expect(page.getByRole("button", { name: `Namespace: ${TRACKER_PUBLIC_NS}` })).toBeVisible();
   expect(calls.memory).toEqual([]);
 });
@@ -82,7 +82,7 @@ test("a deep link into Patterns mode with a code+QA-only token stays on the grap
   const calls = await installApi(page, { ...CODE_TRACKER_ONLY, trackerBound: true });
   const errors = collectErrors(page);
   await page.goto("/graph?mode=patterns");
-  await expect(page).toHaveURL(/\/graph\?mode=patterns$/);
+  await expect(page).toHaveURL(new RegExp(`/graph\\?namespace=${CODE_NS}&mode=patterns$`));
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: `Namespace: ${CODE_NS}` })).toBeVisible();
   await expect(page.getByRole("grid")).toBeVisible();
@@ -97,7 +97,7 @@ test("a deep link into Patterns mode with a code+QA-only token stays on the grap
 test("/repositories with a memory-only token stays on Repositories", async ({ page }) => {
   await installApi(page);
   await page.goto("/repositories");
-  await expect(page).toHaveURL(/\/repositories$/);
+  await expect(page).toHaveURL(new RegExp(`/repositories\\?namespace=${NAMESPACE}$`));
   await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: `Namespace: ${NAMESPACE}` })).toBeVisible();
 });
@@ -132,7 +132,7 @@ test("a memory view on a picked code namespace names the kind and offers Reposit
   // The ScopeBadge names the namespace with its kind.
   await expect(page.locator("#main").getByText(CODE_NS, { exact: true }).locator("..")).toContainText("code");
   await page.getByRole("button", { name: "Open repositories" }).click();
-  await expect(page).toHaveURL(/\/repositories$/);
+  await expect(page).toHaveURL(new RegExp(`/repositories\\?namespace=${CODE_NS}$`));
   await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
   expect(calls.memory).toEqual([]);
 });

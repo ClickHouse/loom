@@ -1061,6 +1061,11 @@ def test_a_rule_must_come_from_the_persons_words() -> None:
 _CARD = "My card number is 4111 1111 1111 1111."
 
 
+def _stored_content(row: dict[str, Any]) -> str:
+    """Version timestamps can contain the card's digits by chance."""
+    return json.dumps({k: v for k, v in row.items() if k != "version"}, default=str)
+
+
 def _policy(text: str) -> None:
     """This process's copy of the extraction policies: `text` for IDENT's org."""
     policies_read_now({(IDENT["org"], ""): text})
@@ -1103,7 +1108,7 @@ def test_under_a_policy_a_save_whose_every_call_fails_is_refused(
         "c1",
         1,
     )
-    assert "4111" not in json.dumps(stored, default=str)
+    assert "4111" not in _stored_content(stored)
     assert llm.calls and "OPERATOR EXTRACTION POLICY" in llm.calls[0][0]
 
 
@@ -1154,7 +1159,7 @@ def test_under_a_policy_an_org_switched_off_mid_save_keeps_the_windows_revised(
     assert out.stats.windows == 2
     stored = mem._newest()["k"]
     assert json.loads(stored["sections"])["status"] == "merged"
-    assert "4111" not in json.dumps(stored, default=str)
+    assert "4111" not in _stored_content(stored)
     assert "4111" not in out.rendered
 
 
@@ -1184,7 +1189,7 @@ def test_under_a_policy_a_revised_brief_takes_no_summary_from_the_events(mem, mo
     out = _save(brief_key="k", events=[E(kind="summary", text=_CARD)], event_cursor="c2")
     assert out.changed is True
     stored = mem._newest()["k"]
-    assert "4111" not in json.dumps(stored, default=str)
+    assert "4111" not in _stored_content(stored)
     assert "4111" not in out.rendered
 
 
@@ -1227,7 +1232,7 @@ def test_under_a_policy_a_failed_window_is_skipped_and_the_next_one_revises(
     assert out.stats.windows == 2
     stored = mem._newest()["k"]
     assert json.loads(stored["sections"])["status"] == "merged"
-    assert "4111" not in json.dumps(stored, default=str)
+    assert "4111" not in _stored_content(stored)
     assert "4111" not in out.rendered
 
 
@@ -1252,7 +1257,7 @@ def test_under_a_policy_agent_sections_with_events_and_no_model_overlay_the_brie
     stored = mem._newest()["k"]
     sections = json.loads(stored["sections"])
     assert (sections["goal"], sections["status"]) == ("Ship the login fix", "handed over")
-    assert "4111" not in json.dumps(stored, default=str)
+    assert "4111" not in _stored_content(stored)
     assert "src/billing/cards.py" not in json.dumps(stored, default=str)
 
 
@@ -1278,5 +1283,5 @@ def test_under_a_policy_agent_sections_with_events_whose_every_call_fails_overla
     stored = mem._newest()["k"]
     sections = json.loads(stored["sections"])
     assert (sections["goal"], sections["status"]) == ("Ship the login fix", "handed over")
-    assert "4111" not in json.dumps(stored, default=str)
+    assert "4111" not in _stored_content(stored)
     assert "src/billing/cards.py" not in json.dumps(stored, default=str)

@@ -37,7 +37,7 @@ Sign-in depends on the deployment's identity mode:
 | Auth on, password accounts                                                    | **Sign in** with an email or namespace and a password; the server mints the token and the page stores it without showing it.    |
 | Auth on, `LOOM_SELF_SIGNUP=open`                                              | A **Sign up** tab creates an account on a fresh namespace.                                                                      |
 | Auth on, `LOOM_OAUTH_LOGIN_PROVIDER=oidc`                                     | One **Sign in with SSO** button to the identity provider ([single sign-on](../operations/sso.md)); no password or sign-up form. |
-| A token minted with `loom mint-token`                                         | Open `<server>/#token=<jwt>`. The page stores the token and scrubs it from the URL. A `?token=` query is ignored and removed.   |
+| A token minted with `loom mint-token`                                         | Open `<server>/me#token=<jwt>`. The page stores the token and scrubs it from the URL. A `?token=` query is ignored and removed. |
 | Behind a reverse proxy that adds `Authorization`                              | The page sends no token of its own; the proxy's header authenticates every call.                                                |
 
 `loom init --agent NAME` signs an agent up on its own and prints a one-time code a person
@@ -67,6 +67,39 @@ Two views are reached from elsewhere rather than the rail: **Spaces** (`/spaces`
 public namespaces to browse and join, opened from the namespace picker) and **Graph**
 (`/graph`, the entity graph explorer, opened from an entity; see
 [entity graph](entity-graph.md)).
+
+### A page's address and its namespace
+
+A page's URL names the namespace it shows, first in its query
+(`/memories?namespace=team-notes&memory=api%2Frate-limit`), so a reload or a shared link
+shows the same namespace.
+
+- **A link's namespace** opens in that tab when the account can read it: a namespace its
+  token claims, or one it holds an active grant on. It is never saved as the picked
+  namespace.
+- **A namespace the account cannot read**, a pending request included, opens a page that
+  says so, with the namespace picker in the header and a way to continue in the default
+  namespace. Nothing of the link's namespace is read.
+- **A URL without `?namespace=`** opens the default namespace: the saved pick while the
+  account can still reach it, else a namespace it administers (its personal namespace
+  first, then its oldest admin grant), else its first claimed memory namespace. A token
+  that reaches only code indexes and tracker records opens the first of those on the
+  pages that need no memory namespace; a memory page then opens on none and says so.
+- **When the membership read fails**, a link to the saved pick still opens, since the server
+  answers its reads, and any other link opens a page that says its access could not be
+  checked, with Retry and a way to continue in the default namespace. A URL without
+  `?namespace=` then opens the saved pick only when the token claims it, else its first
+  claimed namespace.
+- **Back and Forward** never switch namespace: an entry made in another namespace opens
+  nothing it names, and the address names the page's namespace. The one exception is Back
+  from a tracker's Patterns board, which returns to the namespace its Open left.
+- **On the bare root**, `?view=` names the page by view id or path (`/?view=memories`,
+  `/?view=admin/health`) and `?memory=<key>` opens that memory on Memories.
+- **A single sign-on** started on a page returns to it, within ten minutes.
+- **The namespace picker** shows each namespace's description, and folds code indexes,
+  tracker records and every three or more memory namespaces whose names share a prefix
+  into groups of their own. A uuid in a name counts as one part, so names built as
+  `<kind>-<owner uuid>-<id>` fold per owner.
 
 ### The admin drawer
 
@@ -107,9 +140,14 @@ routes serve the dashboard; they are not an integration surface.
 
 - Dashboard pages answer 503 until `frontend/dist/index.html` exists.
 - In auth-off mode there is no namespace switcher: the page serves
-  `LOOM_DEFAULT_NAMESPACE` only, and never persists a different pick.
+  `LOOM_DEFAULT_NAMESPACE` only, never persists a different pick, and ignores a URL's
+  `?namespace=`.
 - Choosing a namespace in the picker also saves it server-side as the person's default,
-  so MCP clients pick up the same namespace on their next call.
+  so MCP clients pick up the same namespace on their next call. A link's namespace is
+  never saved.
+- A token whose namespaces claim is `*` reads namespaces the picker does not list; a link
+  to one of those opens the page that says the account has no access.
+- The rail's links carry no namespace: one opened in a new tab shows the saved pick.
 - Admin badges poll only for a confirmed admin of a memory namespace; a code or tracker
   namespace has no conflicts or budget to count.
 
