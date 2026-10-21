@@ -40,7 +40,7 @@ test("an unterminated private key is redacted to the end of its hunk only", () =
     "--- a/tls.py",
     "+++ b/tls.py",
     "@@ -1,0 +1 @@",
-    '+MARKER = "-----BEGIN RSA PRIVATE KEY-----"',
+    '+MARKER = "-----BEGIN RSA ' + 'PRIVATE KEY-----"',
     "diff --git a/other.py b/other.py",
     "--- a/other.py",
     "+++ b/other.py",
@@ -48,7 +48,30 @@ test("an unterminated private key is redacted to the end of its hunk only", () =
     "+x = 1",
   ].join("\n");
   const out = redactDiff(diff, 200_000, "");
+  assert.ok(out.includes("[redacted private key]"), out);
   assert.ok(out.includes("+++ b/other.py") && out.includes("@@ -5 +5 @@") && out.includes("+x = 1"), out);
+});
+
+test("the function context git appends to a hunk header is redacted, the range kept", () => {
+  const diff = [
+    "diff --git a/.env b/.env",
+    "--- a/.env",
+    "+++ b/.env",
+    "@@ -2 +2 @@ DB_PASSWORD=hunter2",
+    "-API_KEY=old",
+    "+API_KEY=new",
+    "",
+  ].join("\n");
+  const out = redactDiff(diff, 200_000, "");
+  assert.ok(!out.includes("hunter2"), out);
+  assert.ok(out.includes("@@ -2 +2 @@ DB_PASSWORD=[redacted]"), out);
+  const named = redactDiff(diff.replace("DB_PASSWORD=hunter2", "def f(x):"), 200_000, "");
+  assert.ok(named.includes("@@ -2 +2 @@ def f(x):"), named);
+});
+
+test("text that is not in git's diff format is redacted as a body", () => {
+  const out = redactDiff("\u001b[1mdiff --git a/x b/x\u001b[m\n+password=hunter2\n", 200_000, "");
+  assert.ok(!out.includes("hunter2"), out);
 });
 
 test("the result never exceeds the bound, with or without redactions", () => {

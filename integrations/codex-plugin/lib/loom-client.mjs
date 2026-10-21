@@ -754,28 +754,43 @@ export function redactHead(text, max, token = resolveToken()) {
   return redactSecrets(s, token);
 }
 
-/** `redactSecrets` over a unified diff's hunk bodies, cut to `max` chars. The
- *  file header lines (`diff --git` up to the first `@@`) and every `@@` line are
- *  copied as they are: they hold the paths and ranges the server parses, and a
+// A hunk header: its ranges, then the function context git appends to it.
+const HUNK_HEADER_RE = /^(@@+ [^@]*@@+)(.*)$/;
+
+/** `redactSecrets` over a unified diff, cut to `max` chars. The file header
+ *  lines (`diff --git` up to the first hunk) and each hunk header's ranges are
+ *  kept as they are: they hold the paths and ranges the server parses, and a
  *  pattern that runs past a line end (a value after `KEY=`, an unterminated
- *  private key) would otherwise swallow them. Each body is redacted on its own,
- *  so a match never reaches past its hunk. */
+ *  private key) would otherwise swallow them. The function context after a
+ *  hunk header's ranges, and each hunk body on its own, are redacted, so a
+ *  match never reaches past its hunk. Text before the first `diff --git` is
+ *  redacted as a body. Reading stops once `max` chars are built. */
 export function redactDiff(diff, max, token = resolveToken()) {
   const out = [];
+  let built = 0;
   let body = [];
-  let inHunk = false;
+  let bodyChars = 0;
+  let inHunk = true;
+  const emit = (text) => {
+    out.push(text);
+    built += text.length + 1;
+  };
   const flush = () => {
-    if (body.length) out.push(redactSecrets(body.join("\n"), token));
+    if (body.length) emit(redactHead(body.join("\n"), max, token));
     body = [];
+    bodyChars = 0;
   };
   for (const line of String(diff ?? "").split("\n")) {
+    if (built + bodyChars >= max + REDACT_MARGIN) break;
     if (line.startsWith("diff --git ")) inHunk = false;
-    if (!inHunk || line.startsWith("@@")) {
+    const hunk = HUNK_HEADER_RE.exec(line);
+    if (hunk || !inHunk) {
       flush();
-      out.push(line);
-      if (line.startsWith("@@")) inHunk = true;
+      emit(hunk ? hunk[1] + redactSecrets(hunk[2], token) : line);
+      if (hunk) inHunk = true;
     } else {
       body.push(line);
+      bodyChars += line.length + 1;
     }
   }
   flush();

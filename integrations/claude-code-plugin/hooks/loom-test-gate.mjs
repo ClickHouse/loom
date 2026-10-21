@@ -116,7 +116,10 @@ async function main() {
     return;
   }
 
-  const diff = git(["diff", "--unified=0", "HEAD", "--", ...changed], root, { timeoutMs: 2000, raw: true });
+  const diff = git(["diff", "--no-ext-diff", "--no-color", "--unified=0", "HEAD", "--", ...changed], root, {
+    timeoutMs: 2000,
+    raw: true,
+  });
   // A comment- or whitespace-only change owes no test.
   if (commentOnlyDiff(diff)) {
     scheduleExit(0);
