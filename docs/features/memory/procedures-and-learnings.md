@@ -207,8 +207,9 @@ promotes it; promoting it publishes the rule to the namespace's knowledge, tagge
 and `memory.ask` serve it to that agent's reads for every user and leave it out of other
 agents' reads. A namespace-wide read (agent `*`, the `memory.ask` default) is served
 every bot's rules, and a read under no agent (`-`) is served no rule promoted for a
-named bot; a rule for every agent is still served. A token bound to one end user acts
-as the agent it names, never the body's `agent`. A token Loom mints with a
+named bot; a rule for every agent is still served. A token pinned to one end user
+(`read_user_id`) acts as the agent it names, never the body's `agent`; any other token,
+an `own_user` token without a pin included, acts as the body's `agent`. A token Loom mints with a
 `read_user_id` pin names no agent, so it files no bot's rule and is served no rule
 promoted for a named bot. `knowledge.search` is not filtered by agent: any agent that
 can read the namespace finds it there.

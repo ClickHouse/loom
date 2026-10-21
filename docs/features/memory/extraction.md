@@ -124,7 +124,9 @@ request's `(org, namespace, agent)`:
   `destination="memory"` writes the agent's memory row instead (`user_id` `-`,
   `source_trace` `learning:<candidate_id>`), which namespace-wide reads find and a read
   bounded to one user does not.
-- A token bound to one end user files for the agent it names, never the body's `agent`.
+- A token pinned to one end user (`read_user_id`) files for the agent it names, never the
+  body's `agent`; any other token, an `own_user` token without a pin included, files for
+  the body's `agent`.
   An end-user token names the agent its issuer signed (its `agent` claim). A token Loom
   mints names no agent, so one pinned with `--read-user-id` files no bot's rule. Its
   reads are served that agent's rules the same way, and no rule promoted for a named

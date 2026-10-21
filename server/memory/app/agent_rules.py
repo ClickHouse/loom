@@ -15,12 +15,12 @@ log = logging.getLogger(__name__)
 
 def request_rule_agent(body_agent: str) -> str:
     """The agent the request in flight files a bot's rule for and is served that
-    bot's promoted rules as. A token bound to one end user acts as the agent its
-    issuer signed, and as none ('': nothing is filed, and no rule promoted for a
-    named bot is served; a rule for every agent still is) when it names none,
-    never as the body's. A token Loom mints names no agent, so one
-    with a `read_user_id` pin acts as none. Any other caller acts as the body's
-    agent."""
+    bot's promoted rules as. A token pinned to one end user (`read_user_id`) acts
+    as the agent its issuer signed, and as none ('': nothing is filed, and no rule
+    promoted for a named bot is served; a rule for every agent still is) when it
+    names none, never as the body's. A token Loom mints names no agent, so one
+    with a `read_user_id` pin acts as none. Any other caller, an `own_user` token
+    without a pin included, acts as the body's agent."""
     # Lazy: server.auth.context pulls in authz → operations → handlers, and
     # the handlers import this module at load time.
     from server.auth.context import current_auth

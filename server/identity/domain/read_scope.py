@@ -393,7 +393,8 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "memory.bulk_set": "a write",
     "memory.set_from_messages": (
         "a write: the facts it extracted from the caller's messages; a bot rule it "
-        "files is a learnings candidate for the token's own agent, never a memory"
+        "files is a learnings candidate, never a memory: for the token's signed agent "
+        "when the token is pinned to one user (`read_user_id`), else for the body's agent"
     ),
     "memory.delete": "a write",
     "memory.touch": "a write",

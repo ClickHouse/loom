@@ -596,7 +596,7 @@ def _agent_learnings_on(state: WorkflowState) -> bool:
     the op turned them on (`state.agent_learnings`, settled once from the deployment
     setting and the request). A coding session's assistant narrates its work, so a
     coding capture never is; nor is a request with no agent to file for (a token
-    bound to one end user that names no agent), or with no assistant turn to read a
+    pinned to one end user that names no agent), or with no assistant turn to read a
     rule from (a user-only call, an observation replay)."""
     if _is_coding_capture(state) or not state.rule_agent:
         return False
