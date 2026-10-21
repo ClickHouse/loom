@@ -18,8 +18,9 @@ from server.operations.base import MCP_HIDDEN
 
 
 class ContextPackInput(_Identity):
-    # The user the pack reads for; "-" reads every user in the memories section, and
-    # the rows filed under no user in the stack and working-memory sections.
+    # The user the pack reads for; "-" reads every user in the memories, profile,
+    # procedures and runs sections, and the rows filed under no user in the stack and
+    # working-memory sections.
     user_id: str = Field(default=SENTINEL)
     # The session the pack reads for; "-" reads every session in the memories section,
     # and the rows filed under no session in the stack and working-memory sections.
