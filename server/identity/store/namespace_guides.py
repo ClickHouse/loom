@@ -55,7 +55,7 @@ async def history(
         "SELECT revision, summary, note, updated_by, updated_at, length(content) AS chars "
         "FROM loom.namespace_guides "
         "WHERE org = {org:String} AND namespace = {ns:String} "
-        "ORDER BY revision DESC LIMIT 1 BY revision LIMIT {lim:UInt32}",
+        "ORDER BY revision DESC LIMIT {lim:UInt32}",
         params={"org": org, "ns": namespace, "lim": limit},
     )
     return rows
