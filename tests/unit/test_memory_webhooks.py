@@ -392,7 +392,7 @@ async def test_memory_set_announces_a_change_and_never_a_restatement(
 
     live = _memory_row("k", tags=["tea"]) if existing else None
     row = {"memory_key": "k", "version": 42, "tags": ["tea"], "expires_at": None}
-    row |= {"memory_type": "episodic", "confidence": 0.8, "valid_at": None}
+    row |= {"memory_type": "episodic", "confidence": 0.8, "valid_at": None, "valid_to": None}
     w = SimpleNamespace(had_existing_row=existing, restated=restated, memory_row=row, existing=live)
     await _announce_set(w)  # type: ignore[arg-type]
     assert announced == ([[(event, row)]] if event else [])
@@ -406,6 +406,7 @@ async def test_memory_set_announces_a_change_and_never_a_restatement(
         {"expires_at": datetime.now(UTC) + timedelta(seconds=60)},
         {"confidence": 0.5},
         {"valid_at": NOW},
+        {"valid_to": NOW},
         {"memory_type": "semantic"},
     ],
 )
@@ -415,7 +416,8 @@ async def test_memory_set_of_the_same_value_with_new_fields_is_revised(
     from server.memory.app.set_commit import _announce_set
 
     row = {"memory_key": "k", "version": 42, "tags": ["tea"], "expires_at": None}
-    row |= {"memory_type": "episodic", "confidence": 0.8, "valid_at": None, **change}
+    row |= {"memory_type": "episodic", "confidence": 0.8, "valid_at": None, "valid_to": None}
+    row |= change
     live = _memory_row("k", tags=["tea"])
     w = SimpleNamespace(had_existing_row=True, restated=True, memory_row=row, existing=live)
     await _announce_set(w)  # type: ignore[arg-type]
@@ -942,12 +944,15 @@ async def test_events_of_a_removed_webhook_are_dead_in_one_batch_without_a_send(
 @pytest.mark.asyncio
 async def test_an_event_whose_memory_was_erased_is_never_sent(fake: FakeStore) -> None:
     """An older build's erasure leaves the outbox row but not the key's history."""
+    await _pass(lambda r: httpx.Response(503))
     fake.history = set()
     seen: list[httpx.Request] = []
-    await _pass(lambda r: seen.append(r) or httpx.Response(204))
+    await _pass(lambda r: seen.append(r) or httpx.Response(204), now=NOW + timedelta(seconds=6))
     assert seen == []
-    assert fake.last()["status"] == "dead"
-    assert fake.last()["last_error"] == "the memory was erased"
+    dead = fake.last()
+    assert dead["status"] == "dead" and dead["last_error"] == "the memory was erased"
+    # The receiver's answer to the attempts before the erasure stays.
+    assert dead["attempts"] == 1 and dead["last_status"] == 503
 
 
 @pytest.mark.asyncio

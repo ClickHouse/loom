@@ -242,6 +242,7 @@ async def _skip_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
             str(row["event_id"]),
             status="dead",
             attempts=int(row["attempts"]),
+            last_status=int(row["last_status"]),
             last_error="the memory was erased",
         )
     return None

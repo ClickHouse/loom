@@ -256,8 +256,8 @@ def _whole_seconds(dt: datetime | None) -> datetime | None:
 
 
 def _only_reinforces(w: _SetWrite) -> bool:
-    """The same value said again with the same type, tags, expiry, confidence and
-    valid_at: the new version only reinforces the live row. The live row reads back at its
+    """The same value said again with the same type, tags, expiry, confidence, valid_at
+    and valid_to: the new version only reinforces the live row. The live row reads back at its
     columns' precision (Float32 confidence, whole-second DateTime), so each field is
     compared at that precision."""
     if not w.restated:
@@ -269,12 +269,13 @@ def _only_reinforces(w: _SetWrite) -> bool:
         and _whole_seconds(row.get("expires_at")) == _whole_seconds(existing.expires_at)
         and math.isclose(float(row.get("confidence") or 0.0), existing.confidence, rel_tol=1e-6)
         and _whole_seconds(row.get("valid_at")) == _whole_seconds(existing.valid_at)
+        and _whole_seconds(row.get("valid_to")) == _whole_seconds(existing.valid_to)
     )
 
 
 async def _announce_set(w: _SetWrite) -> None:
     """The row just inserted, to the namespace's webhooks: a new key is written, a new
-    value, type, tags, expiry, confidence or valid_at of one is revised, and the same row
+    value, type, tags, expiry, confidence, valid_at or valid_to of one is revised, and the same row
     said again (a reinforcement) is no change to announce. A proposal is not served, so
     it is announced when `memory.proposal_decide` accepts it. Called once the row is in,
     even when the rest of the write fails, so the event is not lost: a retry of the same
