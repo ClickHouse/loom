@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import binascii
 import functools
 import hashlib
 import hmac
@@ -46,7 +45,8 @@ def read_secret(org: str, ref: str, env: Mapping[str, str] | None = None) -> byt
     """The signing key `ref` names in `env`, the process environment when None
     (surrounding whitespace, such as a trailing newline, dropped), or None when
     the name is not one of `org`'s own, the variable is unset, or its `whsec_`
-    value is empty or not base64: an empty key signs what anyone can sign.
+    value is empty or not base64, or the value is not UTF-8: an empty key signs
+    what anyone can sign.
     Each delivery worker says once which secret it cannot use."""
     if env is None:
         env = os.environ  # each secret is a variable a registration names, not a setting
@@ -55,7 +55,7 @@ def read_secret(org: str, ref: str, env: Mapping[str, str] | None = None) -> byt
         return None
     try:
         key = secret_bytes(raw)
-    except binascii.Error:
+    except ValueError:  # not base64, a non-ASCII `whsec_` value, or bytes that are not UTF-8
         key = b""
     return key or None
 

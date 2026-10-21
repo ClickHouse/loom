@@ -1246,11 +1246,18 @@ async def test_an_unset_secret_is_warned_about_once(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "whsec_not*base64!",
+        "whsec_abc\u2026",  # a typographic ellipsis pasted into the value
+        "abc\udcff",  # an environment byte that is not UTF-8
+    ],
+)
 async def test_a_malformed_secret_is_not_usable_and_is_not_logged(
-    fake: FakeStore, caplog: pytest.LogCaptureFixture
+    fake: FakeStore, caplog: pytest.LogCaptureFixture, bad: str
 ) -> None:
     caplog.set_level(logging.WARNING)
-    bad = "whsec_not*base64!"
     assert signed.read_secret("acme", REF, {REF: bad}) is None
     # A trailing newline (a secret file read into the variable) is not part of the key.
     assert signed.read_secret("acme", REF, {REF: SECRET + "\n"}) == base64.b64decode(
