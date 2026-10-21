@@ -17,22 +17,26 @@ Codex build runs the same scripts; see [codex.md](codex.md).
 ## Data handling
 
 This section covers the Claude Code plugin and the Codex plugin, which run the same
-scripts. The plugin sends data only to the Loom server it is configured with. Nothing goes
-to the plugin's authors or to any other service. The plugin sends:
+scripts. The hooks and the plugin's scripts send data only to the Loom server the plugin
+is configured with; the two skills named at the end of this section are the exceptions.
+The plugin sends:
 
 - whatever the agent passes to a Loom MCP tool: memories it saves, search and code
   queries;
 - the repository's identity: the owner and name of each git remote, to find its code
-  index; the branch; and the checkout's directory name and a hash of the repository,
-  which tag every row the hooks write;
+  index; the branch and `HEAD` commit, with each session brief; and the checkout's
+  directory name, the working subdirectory and a hash of the repository, which tag every
+  row the hooks write;
 - prompts, to fetch recalled memories and code pointers for them;
 - each tool call's input, output or error (`observe.record`), and the paths of files read
-  or edited, for the code shunt, file rules and blast radius, with the search command a
-  redirected `gh` call carried;
+  or edited, for the code shunt, file rules and blast radius; a symbol name taken from a
+  redirected grep pattern (`code.symbol`); and the search query of a `gh` issue search the
+  tracker shunt answers (`tracker.duplicate_check`);
 - chat turns (`conversation.append`), which the server stores only when the namespace has
   conversation logging on;
 - the session's last turns (up to 200), to `memory.set_from_messages`, which keeps them as
-  source evidence for the facts it extracts whatever the logging setting is
+  source evidence for the facts it extracts whatever the logging setting is, with up to
+  80,000 characters of the session's Loom tool arguments and results
   (`LOOM_SESSION_MEMORY=off` stops it);
 - a run record (the first prompt as its goal, the last reply), a working-memory note
   (goal, git status, files edited, last reply), a session brief and token usage;
@@ -42,7 +46,9 @@ to the plugin's authors or to any other service. The plugin sends:
   (up to 200,000 characters), to `code.test_gate` (`LOOM_TEST_GATE=off` stops it);
 - with no credential, at the first session, your OS user name and host name, to request a
   self-signup token (refused unless the server allows self-signup; `LOOM_AUTO_SIGNUP=off`
-  stops it).
+  stops it);
+- in agent mode, the workload's identity token and `LOOM_CLIENT_ID`, to the server's
+  `/oauth/token`, in exchange for a Loom token.
 
 [What the hooks do](#what-the-hooks-do) lists the hooks behind these requests. A
 client-side redaction removes common credential shapes from the prompts, tool calls, turns,
@@ -53,8 +59,11 @@ sent without it.
 The server keeps this in its own ClickHouse database. It passes text to an LLM or embedding
 provider only if its operator configured one ([models and keys](../../getting-started/models-and-keys.md)).
 Deleting data is covered in [retention and erasure](../memory/retention-and-erasure.md).
-The `loom-status` skill can install Node.js from NodeSource or the system package manager
-(apk, Homebrew), and runs that installer only after you agree.
+Two skills reach other services, each only when you ask for it. The `loom-status` skill
+can install Node.js from NodeSource or the system package manager (apk, Homebrew), and
+runs that installer only after you agree. The `improve-loom-for-my-repo` skill searches
+the ClickHouse/loom GitHub issues for each finding it reports and, after you approve,
+files its report there.
 
 ## Requirements
 

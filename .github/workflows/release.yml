@@ -637,6 +637,9 @@ jobs:
     needs: [version, github-release]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    environment:
+      name: mcp-registry
+      url: https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ClickHouse/loom
     permissions:
       contents: read
       id-token: write # registry login for the io.github.ClickHouse namespace (OIDC)

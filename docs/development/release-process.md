@@ -145,7 +145,7 @@ A re-run after a partial publish is safe: each publish job skips what already ex
 
 **Why publish the verified files.** A job that rebuilt its own artifact could ship unchecked bytes. Publishing what `verify` passed means the GitHub Release and the registries carry the same bytes.
 
-**Why the server is not on PyPI.** The server is deployed against ClickHouse, not imported as a library; it ships as the image. The root `pyproject.toml` is marked `Private :: Do Not Upload`, and PyPI carries only the SDK. The registry jobs need PyPI and npm trusted publishers registered for this repository (the `pypi` and `npm` GitHub environments).
+**Why the server is not on PyPI.** The server is deployed against ClickHouse, not imported as a library; it ships as the image. The root `pyproject.toml` is marked `Private :: Do Not Upload`, and PyPI carries only the SDK. The registry jobs need PyPI and npm trusted publishers registered for this repository (the `pypi` and `npm` GitHub environments). The `mcp-registry` job runs in the `mcp-registry` environment, which takes the same protection rules; its login needs no secret.
 
 **Why SDK publishing is manual.** A registry publish cannot be undone: PyPI never accepts
 a version twice. Publishing SDKs only on dispatch lets the release files be checked first.

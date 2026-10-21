@@ -233,8 +233,10 @@ def test_listing_fields_name_files_the_plugins_ship() -> None:
     claude = json.loads((CLAUDE / ".claude-plugin" / "plugin.json").read_text())
     codex = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())
     assert (CLAUDE / claude["icon"]).is_file()
+    skill = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
+    assert (ROOT / skill["icon"]).is_file()
     face = codex["interface"]
     assert (CODEX / face["logo"]).is_file() and (CODEX / face["composerIcon"]).is_file()
-    assert 1 <= len(face["defaultPrompt"]) <= 3
+    assert isinstance(face["defaultPrompt"], list) and 1 <= len(face["defaultPrompt"]) <= 3
     assert all(len(p) <= 128 for p in face["defaultPrompt"])
     assert claude["privacyPolicyUrl"] == face["privacyPolicyURL"]
