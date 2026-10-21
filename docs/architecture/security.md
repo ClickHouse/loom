@@ -695,7 +695,9 @@ The `high` shapes:
   `pin is 2024/01/15`, `pin is 1234abc`) is not a PIN.
 
 An IBAN counts when its country code is in the ISO 13616 registry, its length is that
-country's and it passes the mod-97 check, and a question naming an IBAN
+country's and it passes the mod-97 check. The card check skips an IBAN's digits, whose
+printed groups can read as a card number that passes Luhn (`DE24 4005 0150 0000 0005 00`),
+so an IBAN is `medium`. A question naming an IBAN
 or a bank account (number) counts as contact intent, so ranking does not demote the row
 that answers it.
 
@@ -832,8 +834,12 @@ credential-word alternative selects only an assignment, as the detector labels o
 or `=` and eight characters of a value, so prose that names the word (`I forgot my
 password`, `cd $(pwd)`) is not selected. A selected row the detector leaves unlabelled is
 selected again on every pass, and paging past it keeps a run of them from hiding a later row
-that is high. A row behind more than that many pages of such rows waits for the operator's
-`loom sensitivity-sweep --apply`, which pages through its whole scope until `--limit`
+that is high. A pass starts after the last key the pass before read (the worker's cursor in
+`loom.worker_status`), and the pass after one that reads the window's last row starts again
+at its first key, so a later pass reaches a row behind more than a pass's pages of such
+rows. The filter's `PIN` and `PIN code` alternatives take a 3-5 digit value, as the
+detector does, so a postal code (`PIN: 560001`) is not selected. The operator's
+`loom sensitivity-sweep --apply` pages through its whole scope until `--limit`
 candidates are found. The sweep reads unlabelled rows only: a row already labelled `medium`
 that also holds a `high` shape stays `medium` until it is set again with `sensitivity:
 "high"`.

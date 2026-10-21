@@ -58,11 +58,15 @@ from server.memory.store.sensitivity_sweep_sql import SORT_KEY, keys_sql, scan_s
 _JSON_BOUNDARY = r"(?:\b|_|\\[bfnrt]|\\u[0-9a-fA-F]{4})"
 _JSON_SPACE = r"(?:[\s\v]|\\[fnrt]|\\u000[bB])"
 _PIN_FOR, _PIN_VALUE_AFTER = pin_grammar(_JSON_SPACE)
+# `pin` and `pin code` take a 3-5 digit value, as the detector reads them, so a postal code
+# (`PIN: 560001`, `PIN code 560001`) is not selected; every other label takes 3-8.
+_POSTCODE_LIKE_PIN_VALUE = r"[0-9]{3,5}(?:[^0-9]|$)"
 _COARSE_PIN = (
-    rf"(?i:{_JSON_BOUNDARY}(?:{POSTCODE_LIKE_PIN_LABEL}|{PIN_LABEL})"
-    rf"{_PIN_FOR}{_PIN_VALUE_AFTER}[0-9]{{3}}"
-    rf"|{_JSON_BOUNDARY}(?:{PIN_CODE_LABEL}|{PIN_LABEL})"
-    rf"{_JSON_SPACE}+[0-9]{{3}})"
+    rf"(?i:{_JSON_BOUNDARY}{PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}[0-9]{{3}}"
+    rf"|{_JSON_BOUNDARY}{PIN_LABEL}{_JSON_SPACE}+[0-9]{{3}}"
+    rf"|{_JSON_BOUNDARY}{POSTCODE_LIKE_PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}"
+    rf"{_POSTCODE_LIKE_PIN_VALUE}"
+    rf"|{_JSON_BOUNDARY}{PIN_CODE_LABEL}{_JSON_SPACE}+{_POSTCODE_LIKE_PIN_VALUE})"
 )
 
 # What separates a key's words, in JSON text: non-alphanumerics and escapes, up to the
@@ -153,6 +157,10 @@ class SweepReport:
     scanned: int = 0  # candidate rows the coarse filter returned
     candidates: list[SweepCandidate] = field(default_factory=list)
     truncated: bool = False
+    # The sort key the next pass starts after: the last key read, or the last candidate's
+    # when the candidates were cut to the limit. None when the scan reached the last row,
+    # so the next pass starts again at the first.
+    resume_after: dict[str, Any] | None = None
 
     @property
     def by_level(self) -> Counter[str]:
@@ -195,6 +203,7 @@ async def scan(
     limit: int = 20000,
     pages: int | None,
     only_shapes: Iterable[str] | None = None,
+    start_after: dict[str, Any] | None = None,
     ch: _CHClient | None = None,
 ) -> SweepReport:
     """Live unlabelled rows the detector would label, exactly as the write
@@ -205,9 +214,11 @@ async def scan(
 
     Reads pages of `limit` keys in the table's sort key order, then the current version of
     each, until `limit` candidates are found, the rows run out or `pages` pages are read
-    (`None`: no page cap). Only rows of the shapes in `only_shapes` are selected. A selected
-    row the detector leaves unlabelled stays unlabelled and is selected again on the next
-    run; reading past it keeps a run of them from hiding a later row that is high."""
+    (`None`: no page cap), starting after the sort key `start_after` (the first key when
+    None). Only rows of the shapes in `only_shapes` are selected. A selected row the
+    detector leaves unlabelled stays unlabelled and is selected again on the next run;
+    reading past it, and starting the next pass at `resume_after`, keeps a run of them from
+    hiding a later row that is high."""
     ch = ch or _default_client()
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
     report = SweepReport()
@@ -221,7 +232,7 @@ async def scan(
         params["ns"] = namespace
     if since_days:
         params["days"] = int(since_days)
-    last: dict[str, Any] = {}  # the last key of the page before
+    last: dict[str, Any] = dict(start_after or {})  # the last key of the page before
     pages_read = 0
     while pages is None or pages_read < pages:
         pages_read += 1
@@ -241,12 +252,15 @@ async def scan(
         report.scanned += len(rows)
         report.truncated = len(keys) >= limit
         _add_candidates(report, rows, keep)
+        report.resume_after = keys[-1] if report.truncated else None
         if not report.truncated or len(report.candidates) >= limit:
             break
         last = keys[-1]
     if len(report.candidates) > limit:
         report.candidates = report.candidates[:limit]
         report.truncated = True
+        last_kept = report.candidates[-1]
+        report.resume_after = {col: getattr(last_kept, col) for col in SORT_KEY}
     return report
 
 

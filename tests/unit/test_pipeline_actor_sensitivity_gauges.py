@@ -419,6 +419,41 @@ async def test_a_pass_reads_at_most_its_page_cap() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_each_pass_starts_after_the_key_the_last_one_stopped_at(monkeypatch) -> None:
+    # Two pages of selected-but-unlabelled rows sit ahead of a PIN row, and a pass reads one
+    # page. Each pass starts after the last key the one before read, so the third reaches
+    # the PIN row; it reads the last row, and the pass after it starts again at the first.
+    from server.workers import pass_context
+
+    ch = _local_memory(_spin_rows_then_a_pin(4))
+    cursor = ""
+    labelled, cursors = [], []
+    for _ in range(4):
+        ctx = pass_context.begin("sensitivity_sweep", resume_cursor=cursor)
+        try:
+            applied, _out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=2, pages=1)
+        finally:
+            pass_context.clear()
+        labelled.append([c.memory_key for c in applied])
+        cursor = ctx.cursor
+        cursors.append(json.loads(cursor)[-1:])
+    assert labelled == [[], [], ["vault_door"], []]
+    assert cursors == [["spin_1"], ["spin_3"], [], ["spin_1"]]
+
+
+def test_a_sort_key_too_long_for_the_cursor_store_resumes_at_or_before_it() -> None:
+    from server.memory.workers.sensitivity_sweep import cursor_key, cursor_text
+    from server.workers.pass_context import MAX_CURSOR
+
+    key = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-"}
+    long_key = key | {"memory_key": "k" * MAX_CURSOR}
+    assert cursor_key(cursor_text(key | {"memory_key": "k"})) == key | {"memory_key": "k"}
+    assert cursor_key(cursor_text(long_key)) == key | {"memory_key": ""}
+    assert cursor_text(None) == "[]" and cursor_key("[]") is None and cursor_key("") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_pages_cross_namespace_and_user_boundaries_without_a_gap() -> None:
     # Pages of two rows end inside one user, at a user boundary and at a namespace boundary:
     # each selected row comes back exactly once, and the scan reaches the PIN row at the end.

@@ -506,6 +506,15 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
     assert detect_sensitivity(text) == "medium"
 
 
+def test_an_ibans_printed_groups_are_not_read_as_a_card() -> None:
+    # A valid German IBAN whose groups 4005 0150 0000 0005 read as a Visa number that
+    # passes Luhn: the IBAN is medium, and a card beside it is still high.
+    iban = "DE24 4005 0150 0000 0005 00"
+    assert detect_sensitivity("card 4005 0150 0000 0005") == "high"
+    assert detect_sensitivity(f"salary goes to {iban}") == "medium"
+    assert detect_sensitivity(f"iban {iban}, card 4111 1111 1111 1111") == "high"
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -713,6 +722,12 @@ def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
     assert not re.search(COARSE_SHAPE_RE, "pin the base image before the 2025 release")
     assert not re.search(COARSE_SHAPE_RE, "pin 128 rows before the import")
     assert not re.search(COARSE_SHAPE_RE, "GPIO pin 115")
+    # `pin` and `pin code` take 3-5 digits, so a postal code is not selected
+    assert not re.search(COARSE_SHAPE_RE, "Bengaluru, Karnataka, PIN: 560001")
+    assert not re.search(COARSE_SHAPE_RE, "ship to MG Road, Bengaluru, PIN code 560001")
+    assert not re.search(COARSE_SHAPE_RE, "PIN is 560001")
+    # while every other label takes up to 8, so a 6-digit `PIN number` is
+    assert re.search(COARSE_SHAPE_RE, "PIN number 560001")
     # a backspace is not whitespace to the detector, so the filter does not take it as one
     stored = json.dumps({"note": "PIN:\b4471"})
     assert detect_sensitivity(detector_text(stored)) == ""

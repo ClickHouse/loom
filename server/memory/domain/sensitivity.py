@@ -165,7 +165,11 @@ def _is_card(digits: str) -> bool:
 
 
 def _has_card(text: str) -> bool:
-    """Whether `text` holds a card number, ungrouped or in a printed grouping."""
+    """Whether `text` holds a card number, ungrouped or in a printed grouping. The digits
+    of an IBAN are left out: its printed groups can read as a card grouping that passes
+    Luhn ("DE24 4005 0150 0000 0005 00"), and an IBAN is medium."""
+    for start, end in _iban_spans(text):
+        text = text[:start] + "x" * (end - start) + text[end:]
     for m in _DIGIT_GROUPS.finditer(text):
         groups = re.split(r"[ -]", m.group())
         if any(len(group) in (15, 16) and _is_card(group) for group in groups):
@@ -212,17 +216,28 @@ def _is_iban(candidate: str) -> bool:
     return int("".join(str(int(ch, 36)) for ch in moved)) % 97 == 1
 
 
-def _has_iban(text: str) -> bool:
-    """An IBAN in `text`. A spaced match can take in an uppercase word before or after it
-    ("XY12 GB82 ...", "... 1332 EUR"), so each run of its groups is checked (at most ten
-    groups, so at most 55 runs)."""
+def _iban_spans(text: str) -> list[tuple[int, int]]:
+    """The (start, end) of each IBAN in `text`. A spaced match can take in an uppercase
+    word before or after it ("XY12 GB82 ...", "... 1332 EUR"), so each run of its groups is
+    checked, longest first (at most ten groups, so at most 55 runs)."""
+    spans = []
     for m in _IBAN.finditer(text):
         groups = m.group().split(" ")
+        span = None
         for start in range(len(groups)):
             for end in range(len(groups), start, -1):
                 if _is_iban("".join(groups[start:end])):
-                    return True
-    return False
+                    offset = m.start() + len(" ".join(groups[:start])) + (start > 0)
+                    span = (offset, offset + len(" ".join(groups[start:end])))
+                    break
+            if span:
+                spans.append(span)
+                break
+    return spans
+
+
+def _has_iban(text: str) -> bool:
+    return bool(_iban_spans(text))
 
 
 # --- Protected-attribute classes --------------------------------------------

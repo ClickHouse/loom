@@ -155,18 +155,18 @@ def test_a_high_row_is_written_without_an_embedding_row_and_the_gauge_reads_zero
 
 
 @pytest.mark.parametrize(
-    ("value", "level"),
+    ("value", "level", "other_tags"),
     [
-        ("My employee badge PIN is 4471", "high"),
-        ("the company card is 4111 1111 1111 1111", "high"),
-        ("her SSN is 123-45-6789", "high"),
-        ("salary goes to GB82 WEST 1234 5698 7654 32", "medium"),
-        ({"badge": "front door", "badge_pin": "4471"}, "high"),
+        ("My employee badge PIN is 4471", "high", []),
+        ("the company card is 4111 1111 1111 1111", "high", []),
+        ("her SSN is 123-45-6789", "high", []),
+        ("salary goes to GB82 WEST 1234 5698 7654 32", "medium", ["attribute:income"]),
+        ({"badge": "front door", "badge_pin": "4471"}, "high", []),
     ],
     ids=["pin", "card", "ssn", "iban", "keyed-pin"],
 )
 def test_payment_and_identity_numbers_are_labelled_on_write(
-    control_plane_url: str, ch_client, token: str, value: object, level: str
+    control_plane_url: str, ch_client, token: str, value: object, level: str, other_tags: list
 ) -> None:
     key = f"pii_{uuid.uuid4().hex[:6]}"
     ident = {"org": ORG, "namespace": NAMESPACE, "agent": "canary"}
@@ -183,8 +183,38 @@ def test_payment_and_identity_numbers_are_labelled_on_write(
     r = _post(control_plane_url, token, "memory.get", {**ident, "memory_key": key})
     assert r.status_code == 200 and r.json().get("found") is True, r.text
     got = r.json()
-    assert (got.get("value"), got.get("sensitivity")) == (value, level), r.text[:300]
-    assert f"sensitivity:{level}" in got.get("tags", []), r.text[:300]
+    # every field the write decides, beside the label; the retention window a label can
+    # stamp is off by default (`memory_sensitive_retention_days` 0)
+    fields = (
+        "value", "sensitivity", "tags", "memory_type", "agent", "actor", "source_class",
+        "expires_at", "on_expire", "expire_reason", "pinned", "status", "lock_mode",
+    )  # fmt: skip
+    got["tags"] = sorted(got.get("tags", []))
+    assert {f: got.get(f) for f in fields} == {
+        "value": value,
+        "sensitivity": level,
+        "tags": sorted([*other_tags, f"sensitivity:{level}"]),
+        "memory_type": "semantic",
+        "agent": "canary",
+        "actor": "process:canary",
+        "source_class": "asserted",
+        "expires_at": None,
+        "on_expire": "",
+        "expire_reason": "",
+        "pinned": False,
+        "status": "active",
+        "lock_mode": "",
+    }, r.text[:500]
+    assert got.get("memory_id") and got.get("created_at") and got.get("version"), r.text[:500]
+    stored = ch_client.query(
+        "SELECT memory_id, org, namespace, agent, user_id, session_id, sensitivity "
+        "FROM loom.memory FINAL WHERE org = {o:String} AND namespace = {n:String} "
+        "AND memory_key = {k:String} AND tombstoned_at IS NULL",
+        parameters={"o": ORG, "n": NAMESPACE, "k": key},
+    ).result_rows
+    assert [tuple(map(str, row)) for row in stored] == [
+        (got["memory_id"], ORG, NAMESPACE, "canary", "-", "-", level)
+    ]
     _wait(lambda: _live_vectors(ch_client, fence) == 1)
     if level == "high":
         assert _live_vectors(ch_client, key) == 0

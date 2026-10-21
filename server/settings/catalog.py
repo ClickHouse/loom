@@ -2373,8 +2373,8 @@ class MemorySettings(BaseModel):
     # (at least 1).
     sensitivity_sweep_max_rows_per_pass: int = Field(default=500, ge=1)
     # Pages of `sensitivity_sweep_max_rows_per_pass` keys one sensitivity sweep
-    # pass scans at most (at least 1); a row behind more waits for
-    # `loom sensitivity-sweep --apply`.
+    # pass scans at most (at least 1); the next pass starts after the last key
+    # this one read.
     sensitivity_sweep_pages_per_pass: Annotated[int, LIVE] = Field(default=10, ge=1)
     # Shapes the sensitivity sweep applies (comma-separated: credential, email, phone,
     # other). Every high row is `credential`; an IBAN-only row is `other`.
