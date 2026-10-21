@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from uuid import UUID
+
 import pytest
 
 from server.memory.workers.profile_consolidation import (
@@ -13,7 +16,9 @@ from server.memory.workers.profile_consolidation import (
 class StubCH:
     def __init__(self, identities, memories, last=None) -> None:
         self._identities = identities
-        self._memories = memories
+        self._memories = [
+            {"memory_id": str(UUID(int=i + 1)), **row} for i, row in enumerate(memories)
+        ]
         self._last = last
 
     async def query_all(self, sql, params=None):
@@ -54,10 +59,10 @@ async def test_folds_stale_identity_into_a_profile_section(monkeypatch) -> None:
     writes = []
     import server.memory.app.profile as profmod
 
-    async def fake_set(inp):
-        writes.append(inp)
+    async def fake_set(**kwargs):
+        writes.append(SimpleNamespace(**kwargs))
 
-    monkeypatch.setattr(profmod, "handle_profile_set", fake_set)
+    monkeypatch.setattr(profmod, "write_folded_section", fake_set)
 
     res = await run_pass()
     assert res.identities_scanned == 1
@@ -129,10 +134,10 @@ async def test_default_fold_reads_stated_facts_only(monkeypatch) -> None:
 
     monkeypatch.setattr(llmmod, "get_llm_client", lambda: _RecLLM())
 
-    async def fake_set(inp):
+    async def fake_set(**kwargs):
         return None
 
-    monkeypatch.setattr(profmod, "handle_profile_set", fake_set)
+    monkeypatch.setattr(profmod, "write_folded_section", fake_set)
     res = await run_pass(ProfileConsolidationConfig(model=""))
     assert res.profiles_written == 1
     scan, *reads = calls
@@ -179,9 +184,9 @@ async def test_a_row_reading_as_high_never_reaches_the_fold_model(
 
     monkeypatch.setattr(llmmod, "get_llm_client", lambda: _RecLLM())
 
-    async def fake_set(inp):
+    async def fake_set(**kwargs):
         return None
 
-    monkeypatch.setattr(profmod, "handle_profile_set", fake_set)
+    monkeypatch.setattr(profmod, "write_folded_section", fake_set)
     await run_pass(ProfileConsolidationConfig(model=""))
     assert sent == ["- [2025-09-01] vim"]
