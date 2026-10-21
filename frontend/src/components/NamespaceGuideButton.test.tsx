@@ -109,4 +109,22 @@ describe("NamespaceGuideButton", () => {
     await waitFor(() => expect(guideButton()).toHaveAccessibleDescription(/Revision 3: Per-account plans/));
     expect(guideButton()).not.toHaveTextContent("Guide");
   });
+
+  it("opens a writer on the read view when the namespace has a guide", async () => {
+    vi.mocked(api.getNamespaceGuide).mockResolvedValue(GUIDE);
+    render(<NamespaceGuideButton identity={identity} />);
+    await waitFor(() => expect(guideButton()).toHaveAccessibleDescription("Revision 3: Per-account plans"));
+    fireEvent.click(guideButton());
+    expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Guide (Markdown)")).toBeNull();
+  });
+
+  it("offers no editor on an end user's personal collection, which takes no guide", async () => {
+    vi.mocked(api.getNamespaceGuide).mockResolvedValue(NONE);
+    render(<NamespaceGuideButton identity={{ org: "o", namespace: "col-me-alice" }} />);
+    await waitFor(() => expect(guideButton()).toHaveAccessibleDescription("No guide yet"));
+    fireEvent.click(guideButton());
+    expect(await screen.findByText(/No guide yet\. Agents that write here/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Write the guide" })).toBeNull();
+  });
 });

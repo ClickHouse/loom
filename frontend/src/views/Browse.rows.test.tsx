@@ -165,8 +165,8 @@ describe("Spaces: the rows", () => {
     expect(within(beta).getByRole("button", { name: "Request upgrade" })).toBeInTheDocument();
     await user.click(within(beta).getByRole("button", { name: "Actions for beta" }));
     menu = await screen.findByRole("menu", { name: "Actions for beta" });
-    // A member opens the guide; a non-member (alpha) is not offered one it could not read.
-    expect(within(menu).getByRole("menuitem", { name: "Guide" })).toBeInTheDocument();
+    // beta's guide opens from its summary link, so its menu does not offer it twice.
+    expect(within(menu).queryByRole("menuitem", { name: "Guide" })).toBeNull();
     await user.click(within(menu).getByRole("menuitem", { name: "Leave" }));
     await waitFor(() => expect(leaveNamespace).toHaveBeenCalledWith("acme", "beta"));
   });

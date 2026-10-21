@@ -58,7 +58,8 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
         const g = await getNamespaceGuide(org, namespace, { signal });
         if (!live()) return;
         setGuide(g);
-        if (startEditing && canEdit) startEdit(g);
+        // Someone may have written one since the caller looked: then it is read first.
+        if (startEditing && canEdit && !g.found) startEdit(g);
       } catch (e) {
         if (live()) setError(humanizeError(e));
       }

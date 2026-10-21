@@ -23,7 +23,8 @@ export function NamespaceGuideButton({
   compact?: boolean;
 }) {
   const role = useNamespaceRole(identity.namespace);
-  const writer = canWrite(role);
+  // An end user's personal collection takes no guide (the server refuses the save).
+  const writer = canWrite(role) && !identity.namespace.startsWith("col-me-");
   const describedBy = useId();
   const [guide, setGuide] = useState<NamespaceGuide | null>(null);
   const [open, setOpen] = useState(false);

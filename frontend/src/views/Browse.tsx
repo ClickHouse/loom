@@ -541,7 +541,8 @@ const SpaceRow = memo(function SpaceRow({
     ...(standing === "admin" ? [{ label: "Settings", icon: "gear" as const, onSelect: settings }] : []),
     // Reading a guide takes a role on the namespace (a public row's visibility widens no
     // read); a viewer waiting on an upgrade still holds one.
-    ...(canReadGuide
+    // A row whose summary is shown opens the guide from it: one way in, not two.
+    ...(canReadGuide && !guideSummary
       ? [{ label: "Guide", icon: "info-in-circle" as const, onSelect: () => actions.guide(namespace) }]
       : []),
     {
@@ -608,15 +609,15 @@ const SpaceRow = memo(function SpaceRow({
           {description && <p className="mt-0.5 truncate text-xs text-text-muted">{description}</p>}
           {guideSummary &&
             (canReadGuide ? (
-              // Above the row's stretched open button, so it takes its own click; the
-              // summary is the link's name.
-              // The link truncates its own text, so the wrapper clips nothing, not even its ring.
+              // Above the row's stretched open button, so it takes its own click; the link
+              // truncates its own text, so nothing clips its ring.
               <span className="list-row-control mt-0.5 flex max-w-full min-w-0">
                 <Link
                   component="button"
                   type="button"
                   size="xs"
                   className="min-w-0 max-w-full"
+                  data-guide-link=""
                   onClick={() => actions.guide(namespace)}
                 >
                   <span className="truncate">Guide: {guideSummary}</span>
