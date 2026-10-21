@@ -127,6 +127,17 @@ export class Agent {
     return brief;
   }
 
+  /**
+   * How to use Loom, as Markdown — `mentor.guide`: the loop, where each kind
+   * of state goes and how to read answers (`"skill"`), every plane with its
+   * ops (`"reference"`), or both (`"all"`). Put it in the system prompt of an
+   * agent that has no plugin to carry it.
+   */
+  async guide(part: "skill" | "reference" | "all" = "skill"): Promise<string> {
+    const out = await this.call("mentor.guide", { part });
+    return out.text;
+  }
+
   /** With `LOOM_MENTOR_BRIEF=on`, the first call of an Agent also runs
    *  `mentor()` in the background (opt-in: a hidden request surprises a test
    *  that counts them; the explicit `mentor()` is the default path). */

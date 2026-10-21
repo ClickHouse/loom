@@ -343,6 +343,7 @@ class SyncAgent:
     call = _blocking(Agent.call)
     call_with_meta = _blocking(Agent.call_with_meta)
     mentor = _blocking(Agent.mentor)
+    guide = _blocking(Agent.guide)
     probe = _blocking(Agent.probe)
     capabilities = _blocking(Agent.capabilities)
     can_call = _blocking(Agent.can_call)

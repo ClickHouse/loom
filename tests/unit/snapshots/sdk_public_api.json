@@ -49,6 +49,9 @@
     "close": [
       "failed"
     ],
+    "guide": [
+      "part"
+    ],
     "identity": [
       "user_id",
       "session_id",
@@ -1189,6 +1192,10 @@
           "class": "MentorOps",
           "methods": {
             "brief": [
+              "body",
+              "options"
+            ],
+            "guide": [
               "body",
               "options"
             ]
