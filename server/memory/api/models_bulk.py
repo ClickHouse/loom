@@ -297,6 +297,9 @@ class MemorySetFromMessagesOutput(BaseModel):
     # Where the observation date the facts were anchored to came from:
     # "caller" | "request_time" | "" (none — undated rows).
     observation_date_source: str = ""
+    # True when the extraction ran under an operator's extraction policy; false
+    # on a deferred request.
+    under_operator_policy: bool = False
     # The sha256 keys of the rendered extractor prompts (one
     # per segment; the exact-prompt cache's own key, no text) and the cache's
     # hit / miss counts over this extraction's calls (0 / 0 = cache off).

@@ -50,7 +50,9 @@ def _msgs(n: int = 3, size: int = 100) -> list[dict[str, str]]:
 
 @pytest.mark.asyncio
 async def test_the_digest_is_dated_prose_under_its_budget(env) -> None:
-    draft = await ss._draft_session_summary(SimpleNamespace(session_id="s"), _msgs(), "2024-03-11")
+    draft = await ss._draft_session_summary(
+        SimpleNamespace(session_id="s"), _msgs(), "2024-03-11", operator_policy=""
+    )
     system, user, max_tokens = env.llm.calls[0]
     assert system == ss._SESSION_SUMMARY_SYSTEM and max_tokens == 160
     assert "Session date: 2024-03-11" in user

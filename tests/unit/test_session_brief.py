@@ -11,11 +11,14 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
+from server.core.errors import BackendUnavailableError
+from server.llm import customer
 from server.memory.api.models_session_brief import (
     SessionBriefDeleteInput,
     SessionBriefGetInput,
     SessionBriefListInput,
     SessionBriefSaveInput,
+    SessionBriefSaveOutput,
 )
 from server.memory.api.ops_session_brief import OPERATIONS
 from server.memory.app import session_brief as h
@@ -24,6 +27,7 @@ from server.memory.domain import session_brief_render as sb_render
 from server.memory.domain.session_brief import BriefEvent as E
 from server.memory.store import session_briefs as repo
 from tests.unit.schema_ddl import column_names, ddl
+from tests.unit.switch_state import policies_read_now, policies_unread, switch_off, switch_unread
 
 IDENT = {"org": "o", "namespace": "ns", "agent": "claude-code", "session_id": "s1"}
 
@@ -403,17 +407,19 @@ class _LLM:
     provider = "openai"
     model = "gpt-test"
 
-    def __init__(self, replies: list[str]) -> None:
+    def __init__(self, replies: list[str | Exception]) -> None:
         self.replies = list(replies)
         self.calls: list[tuple[str, str]] = []
 
     async def complete(self, system: str, user: str, max_tokens: int = 1024, response_format=None):
         from server.llm.client import LLMResult
 
+        with customer.for_org(IDENT["org"]):  # the request's org, as the transport sets it
+            await customer.require()
         self.calls.append((system, user))
         text = self.replies.pop(0) if self.replies else "{}"
-        if text == "RAISE":
-            raise RuntimeError("provider down")
+        if isinstance(text, Exception):
+            raise text
         return LLMResult(
             text=text,
             tokens_in=len(user) // 4,
@@ -441,7 +447,7 @@ def mem(monkeypatch) -> _MemCH:
     return ch
 
 
-def _llm(monkeypatch, replies: list[str]) -> _LLM:
+def _llm(monkeypatch, replies: list[str | Exception]) -> _LLM:
     llm = _LLM(replies)
     import server.llm.client as client_mod
 
@@ -532,13 +538,22 @@ def test_save_with_the_model_revises_grounds_and_counts(mem, monkeypatch) -> Non
 
 
 def test_save_falls_back_to_the_deterministic_builder(mem, monkeypatch) -> None:
-    _llm(monkeypatch, ["RAISE"])
+    _llm(monkeypatch, [RuntimeError("provider down")])
     out = _save(brief_key="mine", events=_session())
     assert out.changed and out.author == "deterministic"
     assert "Goal:\nAdd a session brief plane" in out.rendered
     _llm(monkeypatch, ["not json at all"])
     out2 = _save(brief_key="mine", events=[E(kind="assistant", text="later")])
     assert out2.author == "deterministic" and out2.revision == 2
+
+
+def test_with_no_policy_a_switched_off_org_falls_back_to_the_deterministic_builder(
+    mem, monkeypatch
+) -> None:
+    _llm(monkeypatch, [customer.ModelCallsDisabled("model calls are off for this org")])
+    out = _save(brief_key="mine", events=_session())
+    assert out.changed and out.author == "deterministic"
+    assert "Goal:\nAdd a session brief plane" in out.rendered
 
 
 def test_the_fake_provider_never_writes_a_brief(mem, monkeypatch) -> None:
@@ -1039,3 +1054,229 @@ def test_a_rule_must_come_from_the_persons_words() -> None:
         "Always run the tests before pushing",
     ]
     assert dropped == 1
+
+
+# -- under an operator's extraction policy -----------------------------------
+
+_CARD = "My card number is 4111 1111 1111 1111."
+
+
+def _policy(text: str) -> None:
+    """This process's copy of the extraction policies: `text` for IDENT's org."""
+    policies_read_now({(IDENT["org"], ""): text})
+
+
+def _saved_once(monkeypatch) -> SessionBriefSaveOutput:
+    """A brief saved before any policy, by the model."""
+    _llm(monkeypatch, [json.dumps({"goal": "Ship the login fix", "status": "in review"})])
+    out = _save(
+        brief_key="k", events=[E(kind="user", text="Ship the login fix.")], event_cursor="c1"
+    )
+    assert out.changed is True
+    return out
+
+
+@pytest.mark.parametrize(
+    "reply", [RuntimeError("provider down"), "not json"], ids=["call-failed", "not-json"]
+)
+def test_under_a_policy_a_save_whose_every_call_fails_is_refused(
+    mem, monkeypatch, reply: str | Exception
+) -> None:
+    """The deterministic builder copies the raw events, so under a policy a
+    save whose every model call failed or did not parse is refused (503) for
+    the client to send again: no insert, the revision, cursor and event count
+    unchanged, the summary not copied."""
+    first = _saved_once(monkeypatch)
+    rows = len(mem.rows)
+    _policy("Never store payment card data.")
+    llm = _llm(monkeypatch, [reply])
+    with pytest.raises(BackendUnavailableError):
+        _save(
+            brief_key="k",
+            events=[E(kind="user", text=_CARD), E(kind="summary", text=_CARD)],
+            event_cursor="c2",
+        )
+    assert len(mem.rows) == rows
+    stored = mem._newest()["k"]
+    assert (stored["revision"], stored["event_cursor"], stored["events_total"]) == (
+        first.revision,
+        "c1",
+        1,
+    )
+    assert "4111" not in json.dumps(stored, default=str)
+    assert llm.calls and "OPERATOR EXTRACTION POLICY" in llm.calls[0][0]
+
+
+def test_under_a_policy_a_save_with_no_model_writes_nothing(mem, monkeypatch) -> None:
+    first = _saved_once(monkeypatch)
+    rows = len(mem.rows)
+    _policy("Never store payment card data.")
+    out = _save(brief_key="k", events=[E(kind="user", text=_CARD)], use_llm=False)
+    assert (out.changed, out.reason, out.revision) == (False, "not-revised", first.revision)
+    assert len(mem.rows) == rows
+
+
+def test_under_a_policy_a_save_for_a_switched_off_org_writes_nothing(mem, monkeypatch) -> None:
+    """The org's model calls are off: there is no model to call, as with none
+    configured, so nothing is written and the save is not refused."""
+    first = _saved_once(monkeypatch)
+    rows = len(mem.rows)
+    _policy("Never store payment card data.")
+    switch_off(IDENT["org"])
+    llm = _llm(monkeypatch, [])
+    out = _save(brief_key="k", events=[E(kind="user", text=_CARD)], event_cursor="c2")
+    assert (out.changed, out.reason, out.revision) == (False, "not-revised", first.revision)
+    assert len(mem.rows) == rows and llm.calls == []
+
+
+def test_under_a_policy_an_org_switched_off_mid_save_keeps_the_windows_revised(
+    mem, monkeypatch
+) -> None:
+    """Two windows: the first revises, then the org is switched off. The save
+    stores the first window's revision, as when a later window's call fails,
+    and copies none of the raw events."""
+    first = _saved_once(monkeypatch)
+    _policy("Never store payment card data.")
+    monkeypatch.setattr(h.settings, "session_brief_window_chars", 200)
+    monkeypatch.setattr(h.settings, "session_brief_max_windows", 2)
+    _llm(
+        monkeypatch,
+        [
+            json.dumps({"goal": "Ship the login fix", "status": "merged"}),
+            customer.ModelCallsDisabled("model calls are off for this org"),
+        ],
+    )
+    events = [E(kind="assistant", text="The login fix is merged. " * 20)] + [
+        E(kind="user", text=_CARD + " " + "x" * 600)
+    ]
+    out = _save(brief_key="k", events=events, event_cursor="c2")
+    assert out.changed is True and out.revision == first.revision + 1
+    assert out.stats.windows == 2
+    stored = mem._newest()["k"]
+    assert json.loads(stored["sections"])["status"] == "merged"
+    assert "4111" not in json.dumps(stored, default=str)
+    assert "4111" not in out.rendered
+
+
+class _SwitchDown:
+    async def query_all(self, *_: Any, **__: Any) -> list[dict[str, Any]]:
+        raise ConnectionError("clickhouse away")
+
+
+def test_under_a_policy_a_save_held_by_an_unread_switch_is_refused(mem, monkeypatch) -> None:
+    """An unread switch may yet allow the call, so the save is refused (503)
+    for the client to send again, and nothing is written."""
+    _saved_once(monkeypatch)
+    rows = len(mem.rows)
+    _policy("Never store payment card data.")
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _SwitchDown())
+    switch_unread()
+    _llm(monkeypatch, [json.dumps({"goal": "g"})])
+    with pytest.raises(BackendUnavailableError):
+        _save(brief_key="k", events=[E(kind="user", text=_CARD)], event_cursor="c2")
+    assert len(mem.rows) == rows
+
+
+def test_under_a_policy_a_revised_brief_takes_no_summary_from_the_events(mem, monkeypatch) -> None:
+    _saved_once(monkeypatch)
+    _policy("Never store payment card data.")
+    _llm(monkeypatch, [json.dumps({"goal": "Ship the login fix", "status": "merged"})])
+    out = _save(brief_key="k", events=[E(kind="summary", text=_CARD)], event_cursor="c2")
+    assert out.changed is True
+    stored = mem._newest()["k"]
+    assert "4111" not in json.dumps(stored, default=str)
+    assert "4111" not in out.rendered
+
+
+def test_an_unreadable_policy_refuses_the_save(mem, monkeypatch) -> None:
+    from server.memory.app import extraction_policy
+
+    async def down(**_: Any) -> list[dict[str, Any]]:
+        raise ConnectionError("clickhouse away")
+
+    monkeypatch.setattr(extraction_policy.repo, "live_rows", down)
+    policies_unread()
+    _llm(monkeypatch, [json.dumps({"goal": "g"})])
+    with pytest.raises(customer.SwitchUnread):  # a 503: the client sends the events again
+        _save(brief_key="k", events=[E(kind="user", text=_CARD)])
+    assert mem.rows == []
+
+
+def test_under_a_policy_a_failed_window_is_skipped_and_the_next_one_revises(
+    mem, monkeypatch
+) -> None:
+    """Two windows: the first call fails, the second revises. The save stores
+    the second window's revision, and the failed window copies none of its raw
+    events."""
+    _saved_once(monkeypatch)
+    _policy("Never store payment card data.")
+    monkeypatch.setattr(h.settings, "session_brief_window_chars", 200)
+    monkeypatch.setattr(h.settings, "session_brief_max_windows", 2)
+    _llm(
+        monkeypatch,
+        [
+            RuntimeError("provider down"),
+            json.dumps({"goal": "Ship the login fix", "status": "merged"}),
+        ],
+    )
+    events = [E(kind="user", text=_CARD + " " + "x" * 600)] + [
+        E(kind="assistant", text="The login fix is merged. " * 20)
+    ]
+    out = _save(brief_key="k", events=events, event_cursor="c2")
+    assert out.changed is True
+    assert out.stats.windows == 2
+    stored = mem._newest()["k"]
+    assert json.loads(stored["sections"])["status"] == "merged"
+    assert "4111" not in json.dumps(stored, default=str)
+    assert "4111" not in out.rendered
+
+
+def test_under_a_policy_agent_sections_with_events_and_no_model_overlay_the_brief(
+    mem, monkeypatch
+) -> None:
+    """The calling agent wrote the sections; the events cannot be revised
+    without a model, so the sections go over the brief as it was and no raw
+    event is stored."""
+    from server.memory.domain.session_brief import BriefSections
+
+    _saved_once(monkeypatch)
+    _policy("Never store payment card data.")
+    out = _save(
+        brief_key="k",
+        events=[E(kind="user", text=_CARD), E(kind="edit", path="src/billing/cards.py")],
+        sections=BriefSections(status="handed over"),
+        use_llm=False,
+        event_cursor="c2",
+    )
+    assert (out.changed, out.author) == (True, "model")
+    stored = mem._newest()["k"]
+    sections = json.loads(stored["sections"])
+    assert (sections["goal"], sections["status"]) == ("Ship the login fix", "handed over")
+    assert "4111" not in json.dumps(stored, default=str)
+    assert "src/billing/cards.py" not in json.dumps(stored, default=str)
+
+
+def test_under_a_policy_agent_sections_with_events_whose_every_call_fails_overlay_the_brief(
+    mem, monkeypatch
+) -> None:
+    """Every model call fails: the agent's own sections still go over the brief
+    as it was, as with no model, and no raw event is stored. An event-only save
+    in the same state is refused (above)."""
+    from server.memory.domain.session_brief import BriefSections
+
+    _saved_once(monkeypatch)
+    _policy("Never store payment card data.")
+    llm = _llm(monkeypatch, [RuntimeError("provider down")])
+    out = _save(
+        brief_key="k",
+        events=[E(kind="user", text=_CARD), E(kind="edit", path="src/billing/cards.py")],
+        sections=BriefSections(status="handed over"),
+        event_cursor="c2",
+    )
+    assert (out.changed, out.author) == (True, "model")
+    assert llm.calls
+    stored = mem._newest()["k"]
+    sections = json.loads(stored["sections"])
+    assert (sections["goal"], sections["status"]) == ("Ship the login fix", "handed over")
+    assert "4111" not in json.dumps(stored, default=str)
+    assert "src/billing/cards.py" not in json.dumps(stored, default=str)

@@ -562,7 +562,7 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
         limit=settings.structured_profile_memory_limit,
         scope=WHOLE_NAMESPACE,
     )
-    # An unlabelled row holding a credential is never sent to the model either.
+    # A row whose value reads as high, whatever its label, is never sent to the model either.
     rows = [r for r in rows if not value_reads_high(r.get("value"))]
     used = [r["memory_id"] for r in rows]
     facts = render_facts(rows)

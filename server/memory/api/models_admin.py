@@ -52,7 +52,7 @@ class MemoryConsolidateOutput(BaseModel):
     # One entry per cluster merged (or that would be, under `dry_run`).
     consolidated: list[MemoryConsolidateResult] = Field(default_factory=list)
     # Eligible rows read: live, unpinned, unlocked, embedded, older than
-    # `min_age_seconds`, and neither labelled high nor reading as a credential
+    # `min_age_seconds`, and neither labelled `high` nor reading as `high`
     # (never sent to the merge model).
     examined: int = 0
     # Clusters of two or more rows found.

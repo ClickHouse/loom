@@ -608,7 +608,7 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
         if held_evidence:
             print(
                 f"  {held_evidence} raw chunk(s) or session digest(s) stayed in the database: "
-                "linked to a row kept home, or holding a credential shape "
+                "linked to a row kept home, or holding a high shape "
                 "(--include-high exports them)"
             )
         if unreadable:
@@ -1361,10 +1361,10 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--include-high",
         action="store_true",
         help="Also export rows with sensitivity=high, the raw chunks and digests linked to "
-        "them, and raw text that reads as a credential; the server audits each released "
-        "item. bulk_get does not serve a high row past its retention window, so it is named "
-        "and left out. Off by default: a mirror repository is a wider audience than the "
-        "namespace's grants.",
+        "them, and raw text that holds a high shape (a credential, card number, SSN or "
+        "stated PIN); the server audits each released item. bulk_get does not serve a high "
+        "row past its retention window, so it is named and left out. Off by default: a "
+        "mirror repository is a wider audience than the namespace's grants.",
     )
     p_exp.set_defaults(func=_cmd_export_okf)
 

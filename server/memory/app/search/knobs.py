@@ -56,8 +56,8 @@ def _reinforcement_half_life_use_scale(input: MemorySearchInput) -> float:
 
 def _sensitivity_penalty(input: object) -> float:
     """Deployment default (`memory_search_sensitivity_demote`), zero when the
-    query asks for a way to reach someone — then the labelled row IS the
-    answer. Per-request `sensitivity_penalty` wins."""
+    query asks for a contact detail or a bank account — then the labelled row IS
+    the answer. Per-request `sensitivity_penalty` wins."""
     from server.memory.domain.sensitivity import contact_intent
     from server.settings import settings
 

@@ -23,6 +23,7 @@ from server.memory.app.extract.keys import _sanitize_key
 from server.memory.app.extract.models import ExtractedFact, ExtractionError
 from server.memory.app.extract.parse import _parse_fact_list
 from server.memory.app.extract.turns import _format_indexed_turns
+from server.memory.domain.extraction_policy import with_policy
 from server.observability.genai import generation_attrs, llm_stage
 from server.settings import settings
 
@@ -219,7 +220,8 @@ async def _coverage_sweep(
     messages: list[dict[str, object]],
     facts: list[ExtractedFact],
     *,
-    system_prompt: str,
+    base_prompt: str,
+    operator_policy: str,
     observation_date: str | None,
     last_messages: list[dict[str, object]] | None,
     max_tokens: int,
@@ -257,7 +259,7 @@ async def _coverage_sweep(
     batch_items = int(settings.memory_extract_coverage_sweep_batch_items)
     groups = sweep_batches(idxs, sent_map, batch_items)
     client = client if client is not None else get_llm_client()
-    system = slim_sweep_system_prompt(system_prompt)
+    system = with_policy(slim_sweep_system_prompt(base_prompt), operator_policy)
     sem = asyncio.Semaphore(4)
 
     async def _one(g_idxs: list[int], g_sents: dict[int, list[str]]) -> LLMResult | None:
