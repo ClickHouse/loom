@@ -115,7 +115,8 @@ async def user_facts(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The user's current facts, most confident and most recently changed first, at
-    most `limit`; each dated by when it became true, else when it last changed."""
+    most `limit`; each dated by when it became true, else when it last changed, with
+    its writer (`actor`) and `version`, whom a builder's model call is for."""
     ch = ch or _default_client()
     params: dict[str, Any] = {
         "org": org,
@@ -129,7 +130,7 @@ async def user_facts(
     rows: list[dict[str, Any]] = await ch.query_all(
         f"""
         SELECT toString(memory_id) AS memory_id, value,
-               toString(coalesce(valid_at, updated_at)) AS since
+               toString(coalesce(valid_at, updated_at)) AS since, actor, version
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND user_id = {{uid:String}} AND {CURRENT_FACTS}

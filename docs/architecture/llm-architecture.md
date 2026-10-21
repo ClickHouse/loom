@@ -357,12 +357,12 @@ gateway.
   principal. A deferred `memory.set_from_messages` stores its enqueuer on the queue row; the
   entity extractor, the embedding worker, projection repair and the code-link judge read the
   writer of the memory they work on; observe-extract takes the newest writer of the session's
-  observations, a profile fold the newest writer of its facts, reflection and the period digest
-  the newest writer of the session's memories (`memory_repo.session_writers`), and the conflict
-  sweep the write's writer. Only a row that records no principal (a conversation turn, a
-  shared-scope vector) takes the agent whose own namespace it is in (owned by
-  `sa:<trust>:<agent>`, the home its trust made on the agent's first token exchange). Only the
-  deployment's own calls (`customer.system()`) name no one.
+  observations, a profile fold and a structured profile build the newest writer of the facts
+  they read, reflection and the period digest the newest writer of the session's memories
+  (`memory_repo.session_writers`), and the conflict sweep the write's writer. Only a row that
+  records no principal (a conversation turn, a shared-scope vector) takes the agent whose own
+  namespace it is in (owned by `sa:<trust>:<agent>`, the home its trust made on the agent's
+  first token exchange). Only the deployment's own calls (`customer.system()`) name no one.
 - **One identity per call.** A job that batches rows (the embedding worker, `loom reembed`, a
   model rebuild) groups them by the identity they render (`customer.groups`), so one call never
   carries two agents' texts, and one agent's rows in several namespaces share a call.
@@ -407,8 +407,9 @@ gateway.
   `held` with the reason until the hold ends, and claims none of that enqueuer's other
   requests in the namespace meanwhile (by its `enqueued_by` column). The profile fold reads
   four times its slots, gives a held identity's slot to the next one read, and leaves it out
-  of its scan. The embedding worker reads the stubs of a held writer's (org, namespace,
-  agent, user_id) groups after every other stub and leaves the held writer's rows among them
+  of its scan; the structured profile worker leaves a held user out of its passes until the
+  hold ends. The embedding worker reads the stubs of a held writer's (org, namespace, agent,
+  user_id) groups after every other stub and leaves the held writer's rows among them
   uncalled, so a neighbour under the same label is embedded when the batch has room; the
   groups are a handful of parameters, and every list it binds is cut to what one ClickHouse
   form field carries. The batch embedders (the embedding workers, `loom reembed`, a model

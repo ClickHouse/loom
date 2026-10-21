@@ -57,6 +57,7 @@ from server.memory.domain.profile_facts import fact_text, render_fold_input
 from server.memory.domain.prompt_fence import FENCE_NOTE, fence, new_nonce
 from server.memory.domain.provenance import pipeline_actor
 from server.memory.domain.sensitivity import is_high, value_reads_high
+from server.memory.domain.trust import subject_of
 from server.memory.store import profile_schemas, profile_sources
 from server.memory.store.profile_sources import Behind
 from server.observability import cost_accumulator
@@ -65,6 +66,7 @@ from server.settings import settings
 from server.settings.budgets import llm_max_tokens
 from server.workers import pass_context
 from server.workers.cost_event import emit_worker_cost_event_for
+from server.workers.holds import hold_seconds
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
@@ -79,7 +81,7 @@ _CUT_OFF = ("length", "max_tokens")  # not a setting: provider wire values
 
 @dataclass(frozen=True)
 class _Wait:
-    """A failed build or scan waiting to be retried."""
+    """A failed or held build, or a failed scan, waiting to be retried."""
 
     # Monotonic time it may be retried.
     until: float
@@ -101,7 +103,7 @@ class _Refusal:
 
 
 # Kept in this process only, so each starts over when the worker lease moves.
-# (org, namespace, user_id) -> the user's wait after a failed build.
+# (org, namespace, user_id) -> the user's wait after a failed or held build.
 _backoff: dict[tuple[str, str, str], _Wait] = {}
 # (org, namespace) -> the wait of a namespace whose scan or schema failed.
 _namespace_backoff: dict[tuple[str, str], _Wait] = {}
@@ -281,7 +283,7 @@ def _prune() -> None:
 
 
 def backing_off(org: str, namespace: str) -> tuple[str, ...]:
-    """Users of the namespace whose last build failed and who are still waiting."""
+    """Users of the namespace whose last build failed or was held, still waiting."""
     now = time.monotonic()
     waiting = [
         u for (o, n, u), w in _backoff.items() if (o, n) == (org, namespace) and w.until > now
@@ -333,6 +335,13 @@ async def _build_users(
         key = (schema.org, schema.namespace, user_id)
         try:
             dropped = await build_profile(schema, user_id)
+        except customer.GROUP_HOLDS as e:
+            # Its org switched off, or its identity refused, asked to wait or unread: no
+            # failure (a failure backoff's next wait stays as it was), and the user waits
+            # out the hold before a pass takes it again.
+            last = _backoff.get(key)
+            _backoff[key] = _Wait(time.monotonic() + hold_seconds(e), last.wait if last else 0.0)
+            continue
         except customer.HOLDS:
             continue  # a held call is no failure: the user is built once the org is back
         except Refused as e:
@@ -515,6 +524,15 @@ def _refuses_a_write(row: dict[str, Any] | None) -> bool:
     return bool(row.get("pinned")) or "value" in lock.REFUSES.get(mode, frozenset())
 
 
+def _writer(rows: list[dict[str, Any]]) -> str:
+    """The subject of the newest principal that wrote one of `rows` (by version); ''
+    when none did: a pipeline's or a worker's own write names no principal, and the
+    call is then for the agent whose namespace it is."""
+    written = [r for r in rows if subject_of(str(r.get("actor") or ""))]
+    newest = max(written, key=lambda r: int(r.get("version") or 0), default=None)
+    return subject_of(str(newest["actor"])) if newest is not None else ""
+
+
 async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
     """Build and write one user's profile; returns how many of the model's values
     broke the schema and were stored as null, or None when nothing was written: the
@@ -566,7 +584,10 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
     used = [r["memory_id"] for r in rows]
     facts = render_facts(rows)
     answer: Any = {}
-    with customer.for_org(org), pipeline_actor(profile_sources.WORKER_ACTOR):
+    # The model call is for the user's namespace, user and the newest principal that wrote
+    # the facts it reads, as the profile fold's is, never the gateway's default identity.
+    whose = {"namespace": ns, "subject": _writer(rows), "user_id": user_id}
+    with customer.for_org(org, **whose), pipeline_actor(profile_sources.WORKER_ACTOR):
         if facts:
             try:
                 answer = await _ask(org, ns, schema.props, facts)
