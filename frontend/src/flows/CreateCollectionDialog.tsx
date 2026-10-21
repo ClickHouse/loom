@@ -26,6 +26,12 @@ export function collectionNameError(name: string): string | null {
   return null;
 }
 
+/** The collections a new one may sit in: those the caller writes, never a personal one,
+ *  which holds no other collection. */
+export function parentChoices(collections: CollectionEntry[]): CollectionEntry[] {
+  return collections.filter((c) => !c.personal && c.role !== "viewer");
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;

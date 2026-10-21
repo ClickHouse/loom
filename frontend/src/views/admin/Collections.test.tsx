@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../lib/state";
 import { ApiError } from "../../lib/errors";
 import { axeViolations } from "../../test/axe";
-import { collectionNameError } from "../../flows/CreateCollectionDialog";
+import { collectionNameError, parentChoices } from "../../flows/CreateCollectionDialog";
 import { Collections } from "./Collections";
 
 const listCollections = vi.fn();
@@ -129,6 +129,19 @@ describe("Collections: the list", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "col-oncall" })).toHaveFocus());
   });
 
+  it("hands focus to the search when the last page adds no row the search shows", async () => {
+    listCollections.mockResolvedValueOnce({ collections: [HANDBOOK], next_cursor: "col-handbook" });
+    render(<Collections />);
+    await screen.findByRole("button", { name: "col-handbook" });
+    const search = screen.getByRole("textbox", { name: "Search collections" });
+    await userEvent.type(search, "zzz");
+    await screen.findByText(/No collections match/);
+    listCollections.mockResolvedValueOnce(page(ONCALL));
+    await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Load more" })).toBeNull());
+    await waitFor(() => expect(search).toHaveFocus());
+  });
+
   it("says a search that matches none covers only the pages loaded", async () => {
     listCollections.mockResolvedValueOnce({ collections: [HANDBOOK], next_cursor: "col-handbook" });
     render(<Collections />);
@@ -152,6 +165,14 @@ describe("Collections: a collection's details", () => {
       { org: "acme", namespace: "col-handbook" },
       expect.objectContaining({ limit: 25 }),
     );
+  });
+
+  it("opens on the dialog itself, not on Close or Delete", async () => {
+    listCollections.mockResolvedValueOnce(page(HANDBOOK));
+    render(<Collections />);
+    await userEvent.click(await screen.findByRole("button", { name: "col-handbook" }));
+    const dialog = await screen.findByRole("dialog", { name: "col-handbook" });
+    await waitFor(() => expect(dialog).toHaveFocus());
   });
 
   it("says it lists the newest documents when the collection holds more", async () => {
@@ -247,6 +268,13 @@ describe("Collections: members", () => {
 });
 
 describe("Collections: create", () => {
+  it("offers as parents only the collections the caller writes, never a personal one", () => {
+    const mine = { namespace: "col-me-1a2b", parent: "", personal: true, role: "admin" } as const;
+    const writer = { ...ONCALL, namespace: "col-writes", role: "writer" } as const;
+    const rows = [HANDBOOK, ONCALL, writer, mine] as Parameters<typeof parentChoices>[0];
+    expect(parentChoices(rows).map((c) => c.namespace)).toEqual(["col-handbook", "col-writes"]);
+  });
+
   it("checks the name before it is sent", () => {
     expect(collectionNameError("col-handbook")).toBeNull();
     expect(collectionNameError("handbook")).toMatch(/Start the name with "col-"/);

@@ -609,14 +609,14 @@ export interface GrantEntry {
 
 export async function listGrants(
   id: Pick<Identity, "org" | "namespace">,
-  opts: RequestOpts = {},
+  opts: { limit?: number } & RequestOpts = {},
 ): Promise<{ rows: GrantEntry[] }> {
   return post<{ rows: GrantEntry[] }>(
     "/v1/grants.list",
     {
       org: id.org,
       namespace: id.namespace,
-      limit: 100,
+      limit: opts.limit ?? 100,
     },
     opts.signal,
   );

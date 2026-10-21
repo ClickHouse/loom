@@ -17,6 +17,7 @@ import {
 import { useAbortableEffect } from "../../lib/hooks";
 import { useIdentity } from "../../lib/state";
 import { useRowNav } from "../../lib/useRowNav";
+import { useLastPageFocus } from "../../lib/useLastPageFocus";
 import { humanizeError } from "../../lib/format";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { toast, toastError } from "../../components/Toast";
@@ -37,7 +38,7 @@ import {
   Unavailable,
 } from "../../components/ui";
 import { PageContainer } from "../../layout/PageContainer";
-import { CreateCollectionDialog } from "../../flows/CreateCollectionDialog";
+import { CreateCollectionDialog, parentChoices } from "../../flows/CreateCollectionDialog";
 import { MembersDialog } from "../../flows/MembersDialog";
 
 /**
@@ -138,13 +139,21 @@ export function Collections() {
     [org, reads],
   );
 
-  // The names shown before a Load more: the last page removes the button, which held the
-  // focus, so it goes to the first row that page added.
-  const focusAdded = useRef<Set<string> | null>(null);
+  // The last page removes Load more, which held the focus: it goes to the first row that
+  // page added, else the last row shown, else the search.
+  const markShown = useLastPageFocus({
+    loading: loadingMore,
+    more: !!current?.next,
+    rows: () =>
+      [...(listBox.current?.querySelectorAll<HTMLElement>("[data-collection]") ?? [])].map(
+        (el) => [el.dataset.collection ?? "", el] as [string, HTMLElement],
+      ),
+    fallback: () => searchRef.current,
+  });
   const loadMore = () => {
     if (!current?.next) return;
     const from = current;
-    focusAdded.current = new Set(from.rows.map((c) => c.namespace));
+    markShown(from.rows.map((c) => c.namespace));
     setLoadingMore(true);
     listCollections(org, { cursor: from.next })
       .then((r) =>
@@ -154,14 +163,6 @@ export function Collections() {
       .catch((e) => toastError("Couldn't load more collections", e))
       .finally(() => setLoadingMore(false));
   };
-  useEffect(() => {
-    const before = focusAdded.current;
-    if (before === null || loadingMore) return;
-    focusAdded.current = null;
-    if (current?.next || document.activeElement !== document.body) return;
-    const opens = [...(listBox.current?.querySelectorAll<HTMLElement>("[data-collection]") ?? [])];
-    (opens.find((el) => !before.has(el.dataset.collection ?? "")) ?? opens[opens.length - 1])?.focus();
-  });
 
   // A deleted row leaves with the next read, and with it the menu or the dialog that held
   // the focus: once that read lands, focus goes to the search.
@@ -191,7 +192,7 @@ export function Collections() {
   // Built once per list or settled search, not on every render a keystroke makes.
   const tableRows = useMemo(() => shown.map((c) => collectionRow(c, setOpen, setMembers, onDelete)), [shown, onDelete]);
   // A new collection may sit in one the caller writes; a personal one holds none.
-  const parents = useMemo(() => (rows ?? []).filter((c) => !c.personal && c.role !== "viewer"), [rows]);
+  const parents = useMemo(() => parentChoices(rows ?? []), [rows]);
   const nav = useRowNav({ enabled: open === null && shown.length > 0 });
   // One stable ref for the list's box, so a render does not hand useRowNav a new element.
   const listRef = useCallback(
@@ -290,6 +291,8 @@ export function Collections() {
       />
       {open && (
         <CollectionDetails
+          // A fresh state for each collection opened.
+          key={`${org}/${open.namespace}`}
           org={org}
           collection={open}
           onClose={() => setOpen(null)}
@@ -354,7 +357,6 @@ function collectionRow(
 }
 
 interface Details {
-  key: string;
   info: NamespaceInfo | null;
   grants: GrantEntry[];
   documents: KnowledgeEntry[];
@@ -374,7 +376,6 @@ function CollectionDetails({
   onDelete: () => void;
 }) {
   const ns = collection.namespace;
-  const key = `${org}/${ns}`;
   const [details, setDetails] = useState<Details | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reads, setReads] = useState(0);
@@ -383,7 +384,7 @@ function CollectionDetails({
       setError(null);
       Promise.all([
         getNamespace({ org, namespace: ns }, { signal }),
-        listGrants({ org, namespace: ns }, { signal }),
+        listGrants({ org, namespace: ns }, { limit: GRANTS_READ, signal }),
         listKnowledge(
           { org, namespace: ns },
           { limit: DOCUMENTS_SHOWN, fields: ["source_uri", "title", "ingested_at"], signal },
@@ -392,7 +393,6 @@ function CollectionDetails({
         .then(([info, grants, docs]) => {
           if (!live()) return;
           setDetails({
-            key,
             info,
             grants: grants.rows ?? [],
             documents: docs.rows ?? [],
@@ -403,10 +403,9 @@ function CollectionDetails({
           if (live()) setError(humanizeError(e));
         });
     },
-    [key, reads],
+    [org, ns, reads],
   );
-  // Another collection's details are never shown under this one's title.
-  const shown = details?.key === key ? details : null;
+  const shown = details;
   const blocked = deleteBlocked(collection);
 
   return (
@@ -449,11 +448,12 @@ function CollectionDetails({
               id="collection-members-heading"
               label="Members"
               count={shown.grants.length}
-              // `listGrants` reads at most this many, with no next page.
-              caption={shown.grants.length >= GRANTS_READ ? `the newest ${GRANTS_READ}` : undefined}
+              // `grants.list` has no next page and folds a person's alias rows after its
+              // limit, so a list cut short can come back a few rows under it.
+              caption={shown.grants.length >= GRANTS_READ * 0.9 ? `up to the newest ${GRANTS_READ}` : undefined}
               hint={
                 collection.parent
-                  ? `These are the grants on this collection. Everyone who holds a grant on ${collection.parent} reaches it too.`
+                  ? `These are the grants on this collection. Everyone who holds a grant on ${collection.parent} or a collection above it reaches it too.`
                   : undefined
               }
             />
