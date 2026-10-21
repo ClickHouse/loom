@@ -3508,10 +3508,13 @@ export interface LearningEntry {
   memory_type: string;
   proposed_value: unknown;
   supporter_count: number;
+  supporter_sessions?: number;
+  supporter_writers?: number;
   confidence_avg: number;
   supporters: string[];
   rationale: string;
   source_kind?: string;
+  agent?: string;
   status: "pending" | "promoted" | "rejected";
   proposed_at: string; // date-time
   decided_at?: string | null;
@@ -3547,7 +3550,7 @@ export interface LearningsReviewInput {
   candidate_id: string;
   decision: "promote" | "reject";
   reason?: string;
-  destination?: "memory" | "knowledge" | "both";
+  destination?: "memory" | "knowledge" | "both" | null;
   approver?: string;
 }
 
@@ -3875,6 +3878,37 @@ export interface MemoryAssignCategoryOutput {
   category_id: string;
 }
 
+export interface MemoryAutoRetirementsInput {
+  org: string;
+  namespace: string;
+  since?: string | null;
+  limit?: number;
+  cursor?: string | null;
+}
+
+export interface MemoryAutoRetirement {
+  ts: string; // date-time
+  reason: string;
+  memory_id: string;
+  memory_key: string;
+  agent?: string;
+  user_id?: string;
+  session_id?: string;
+  superseded_by?: string;
+  superseded_by_key?: string;
+  label?: string;
+  unconfirmed?: boolean;
+  judge_verdict?: string;
+  judge_confidence?: number | null;
+  judge_model?: string;
+  judge_prompt_version?: string;
+}
+
+export interface MemoryAutoRetirementsOutput {
+  rows?: MemoryAutoRetirement[];
+  next_cursor?: string | null;
+}
+
 export interface MemoryBacklinksInput {
   org: string;
   namespace: string;
@@ -3984,6 +4018,8 @@ export interface MemoryGetOutput {
   actor?: string;
   source_class?: string;
   agent?: string;
+  user_id?: string;
+  session_id?: string;
   status?: string | null;
   code?: CodeLink[];
   superseded_by?: string;
@@ -4070,9 +4106,11 @@ export interface MemoryBulkSetInput {
 export interface BulkSetResult {
   memory_key: string;
   version: number;
+  memory_id?: string;
   conflict_verdict?: string;
   peers?: MemorySetPeer[];
   next?: string;
+  pinned_blocker_id?: string;
 }
 
 export interface MemorySetPeer {
@@ -4087,6 +4125,7 @@ export interface MemoryBulkSetOutput {
   written: BulkSetResult[];
   skipped_pinned?: string[];
   skipped_locked?: string[];
+  skipped_blacklisted?: string[];
   merged?: string[];
   value_updates_linked?: number;
   rejected_pinned?: string[];
@@ -4577,6 +4616,7 @@ export interface MemoryGetByIdInput {
   org: string;
   memory_id: string;
   as_of?: string | null;
+  omit_high_value?: boolean;
 }
 
 export interface MemoryGetByIdOutput {
@@ -5125,6 +5165,7 @@ export interface MemorySetInput {
   value: Record<string, unknown> | unknown[] | string | number | boolean;
   tags?: string[];
   entities?: string[];
+  relations?: Array<[string, string, string]>;
   files?: string[] | null;
   confidence?: number;
   source_trace?: string;
@@ -5142,7 +5183,6 @@ export interface MemorySetInput {
   char_limit?: number | null;
   sensitivity?: "" | "low" | "medium" | "high";
   dry_run?: boolean;
-  await_verdict?: boolean;
   proposed?: boolean;
 }
 
@@ -5161,7 +5201,6 @@ export interface MemorySetOutput {
   conflict_verdict?: string;
   peers?: MemorySetPeer[];
   next?: string;
-  verdict_at?: string;
   noop?: boolean;
   dry_run?: boolean;
   advisories?: string[];
@@ -5530,6 +5569,8 @@ export interface MemoryRestoreInput {
   session_id?: string;
   run_id?: string;
   memory_key: string;
+  if_superseded_by?: string;
+  only_if_superseded?: boolean;
 }
 
 export interface MemoryRestoreOutput {
@@ -5826,13 +5867,20 @@ export interface MemorySetFromMessagesInput {
   last_messages?: Message[];
   extraction_instructions?: string;
   coverage_sweep?: boolean | null;
+  agent_learnings?: boolean | null;
   pipeline_steps?: Array<Record<string, unknown>>;
   valid_at?: string | null;
   defer?: boolean;
 }
 
+export interface RefusedFact {
+  memory_key: string;
+  verdict: string;
+}
+
 export interface MemorySetFromMessagesOutput {
   written?: BulkSetResult[];
+  refused?: RefusedFact[];
   tokens_in?: number;
   tokens_out?: number;
   llm_provider?: string;
@@ -5844,6 +5892,8 @@ export interface MemorySetFromMessagesOutput {
   forget_requests?: number;
   about_other?: number;
   premise_facts?: number;
+  learning_candidates?: number;
+  ignored_args?: string[];
   segmenter?: string;
   cached_tokens_in?: number;
   ontology_warnings?: string[];
@@ -5898,6 +5948,22 @@ export interface MemoryStackOutput {
   tokens_budget: number;
   truncated: boolean;
   section_counts: Record<string, number>;
+}
+
+export interface MemoryStatusesInput {
+  org: string;
+  namespace: string;
+  memory_ids: string[];
+}
+
+export interface MemoryStatus {
+  memory_id: string;
+  status: string;
+  superseded_by?: string;
+}
+
+export interface MemoryStatusesOutput {
+  rows?: MemoryStatus[];
 }
 
 export interface MemorySweepExpiredInput {
@@ -6031,6 +6097,7 @@ export interface MemoryUpdateInput {
   if_match_sha256?: string;
   char_limit?: number | null;
   revive?: boolean;
+  relations?: Array<[string, string, string]>;
 }
 
 export interface MemoryUpdateCandidate {
@@ -6064,6 +6131,7 @@ export interface MemoryUpdateByIdInput {
   if_match_sha256?: string;
   char_limit?: number | null;
   revive?: boolean;
+  relations?: Array<[string, string, string]>;
 }
 
 export interface MemoryUpdateByIdOutput {
@@ -6924,7 +6992,7 @@ export interface OpsProjectionFailuresListInput {
   org: string;
   namespace?: string | null;
   projection?: string;
-  status?: "active" | "resolved" | "";
+  status?: "active" | "resolved" | "abandoned" | "";
   limit?: number;
 }
 
@@ -6971,6 +7039,7 @@ export interface ProjectionFailureRetryRow {
   projection: string;
   retried: boolean;
   resolved: boolean;
+  abandoned?: boolean;
   reason?: string;
   error?: string;
 }
@@ -6979,6 +7048,7 @@ export interface OpsProjectionFailuresRetryOutput {
   results?: ProjectionFailureRetryRow[];
   retried: number;
   resolved: number;
+  abandoned?: number;
 }
 
 export interface OrgModelCallsInput {
@@ -8893,6 +8963,7 @@ export type OpName =
   | "memory.apply"
   | "memory.ask"
   | "memory.assign_category"
+  | "memory.auto_retirements"
   | "memory.backlinks"
   | "memory.brief"
   | "memory.bulk_get"
@@ -8952,6 +9023,7 @@ export type OpName =
   | "memory.set"
   | "memory.set_from_messages"
   | "memory.stack"
+  | "memory.statuses"
   | "memory.sweep_expired"
   | "memory.timeline"
   | "memory.touch"
@@ -9224,6 +9296,7 @@ export interface OpMap {
   "memory.apply": { input: MemoryApplyInput; output: MemoryApplyOutput };
   "memory.ask": { input: MemoryAskInput; output: MemoryAskOutput };
   "memory.assign_category": { input: MemoryAssignCategoryInput; output: MemoryAssignCategoryOutput };
+  "memory.auto_retirements": { input: MemoryAutoRetirementsInput; output: MemoryAutoRetirementsOutput };
   "memory.backlinks": { input: MemoryBacklinksInput; output: MemoryBacklinksOutput };
   "memory.brief": { input: MemoryBriefInput; output: MemoryBriefOutput };
   "memory.bulk_get": { input: MemoryBulkGetInput; output: MemoryBulkGetOutput };
@@ -9283,6 +9356,7 @@ export interface OpMap {
   "memory.set": { input: MemorySetInput; output: MemorySetOutput };
   "memory.set_from_messages": { input: MemorySetFromMessagesInput; output: MemorySetFromMessagesOutput };
   "memory.stack": { input: MemoryStackInput; output: MemoryStackOutput };
+  "memory.statuses": { input: MemoryStatusesInput; output: MemoryStatusesOutput };
   "memory.sweep_expired": { input: MemorySweepExpiredInput; output: MemorySweepExpiredOutput };
   "memory.timeline": { input: MemoryTimelineInput; output: MemoryTimelineOutput };
   "memory.touch": { input: MemoryTouchInput; output: MemoryTouchOutput };
@@ -9555,6 +9629,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.apply", group: "memory", method: "apply", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 3000, audit: true, readOnly: false },
   { name: "memory.ask", group: "memory", method: "ask", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 8000, audit: false, readOnly: true },
   { name: "memory.assign_category", group: "memory", method: "assignCategory", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: true, readOnly: false },
+  { name: "memory.auto_retirements", group: "memory", method: "autoRetirements", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "memory.backlinks", group: "memory", method: "backlinks", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "memory.brief", group: "memory", method: "brief", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 4000, audit: false, readOnly: true },
   { name: "memory.bulk_get", group: "memory", method: "bulkGet", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
@@ -9614,6 +9689,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.set", group: "memory", method: "set", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 200, audit: false, readOnly: false },
   { name: "memory.set_from_messages", group: "memory", method: "setFromMessages", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 2500, audit: false, readOnly: false },
   { name: "memory.stack", group: "memory", method: "stack", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
+  { name: "memory.statuses", group: "memory", method: "statuses", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "memory.sweep_expired", group: "memory", method: "sweepExpired", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 2000, audit: true, readOnly: false },
   { name: "memory.timeline", group: "memory", method: "timeline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 120, audit: false, readOnly: true },
   { name: "memory.touch", group: "memory", method: "touch", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 40, audit: false, readOnly: false },
@@ -9747,4 +9823,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 328;
+export const GENERATED_OP_COUNT = 330;

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Loom session memory — SessionEnd hands the session's real turns to
 // memory.set_from_messages(defer=true), once. The server extracts the facts,
-// writes the session summary, judges the outcome and distils reflections; the
-// hook itself runs no model and stores no transcript (see lib/session-memory.mjs).
+// writes the session summary, judges the outcome, distils reflections and keeps
+// the turns as the facts' source evidence; the hook itself runs no model (see
+// lib/session-memory.mjs).
 //
 // Off-switch: LOOM_SESSION_MEMORY=off. Needs a writer token; fire-and-forget
 // through the detached flusher so the agent never waits on the request.

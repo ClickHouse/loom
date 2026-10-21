@@ -63,6 +63,7 @@ const Policies = lazy(() => import("./views/admin/Policies").then((m) => ({ defa
 const Audit = lazy(() => import("./views/admin/Audit").then((m) => ({ default: m.Audit })));
 const Spending = lazy(() => import("./views/admin/Spending").then((m) => ({ default: m.Spending })));
 const Agents = lazy(() => import("./views/admin/Agents").then((m) => ({ default: m.Agents })));
+const Collections = lazy(() => import("./views/admin/Collections").then((m) => ({ default: m.Collections })));
 const AdminUsersView = lazy(() => import("./views/admin/Users").then((m) => ({ default: m.Users })));
 const DeploymentSettings = lazy(() =>
   import("./views/admin/DeploymentSettings").then((m) => ({ default: m.DeploymentSettings })),
@@ -597,6 +598,8 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
       return <Spending />; // file unchanged, just relabelled
     case "admin:agents":
       return <Agents />;
+    case "admin:collections":
+      return <Collections />;
     case "admin:users":
       return <AdminUsersView />;
     case "admin:settings":

@@ -300,6 +300,7 @@ async def test_the_cli_resume_reopens_from_the_fresh_census_and_reports_what_ran
         batch=200,
         show=20,
         requester="t",
+        completed_since=None,
     )
     assert await hygiene._re_verify_run(object(), args) == 0
     assert seen["previously_completed"] == {"memory.tombstone"}

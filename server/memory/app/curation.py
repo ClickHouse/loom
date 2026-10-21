@@ -873,7 +873,7 @@ async def handle_memory_import_curated(
 def _version_time(version: Any) -> Any:
     """A version's write time: versions are epoch nanoseconds (`time.time_ns()`); anything
     outside a sane range is None."""
-    from datetime import UTC, datetime
+    from server.memory.store.rows import version_time
 
     try:
         ns = int(version)
@@ -881,4 +881,4 @@ def _version_time(version: Any) -> Any:
         return None
     if not 10**18 <= ns < 4 * 10**18:  # 2001..2096
         return None
-    return datetime.fromtimestamp(ns / 1e9, UTC).replace(tzinfo=None)
+    return version_time(ns)

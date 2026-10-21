@@ -50,7 +50,7 @@ def test_a_rows_cadences_are_numeric_settings(row: registry._Worker) -> None:
 _CADENCE_SETTINGS = {
     "usage_fold": "usage_fold_interval_seconds",
     "keeper_sweep": "keeper_sweep_interval_seconds",
-    "conflict_sweep": "conflict_sweep_interval_seconds",
+    "conflict_resolver": "memory_conflict_resolver_interval_seconds",
     "oauth_signin_state_sweep": "oauth_signin_state_sweep_interval_seconds",
     "mcp_session_run_sweep": "mcp_session_run_sweep_interval_seconds",
 }

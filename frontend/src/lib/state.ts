@@ -25,6 +25,7 @@ export type View =
   | "admin:activity"
   | "admin:usage"
   | "admin:agents"
+  | "admin:collections"
   | "admin:users"
   | "admin:settings";
 
@@ -48,6 +49,7 @@ export const ALL_VIEWS: View[] = [
   "admin:activity",
   "admin:usage",
   "admin:agents",
+  "admin:collections",
   "admin:users",
   "admin:settings",
 ];

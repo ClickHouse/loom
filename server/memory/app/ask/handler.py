@@ -401,21 +401,34 @@ async def _maybe_route_to_synthesize(input: MemoryAskInput) -> MemoryAskOutput |
         from server.knowledge.app.knowledge_search import handle_knowledge_search
         from server.knowledge.app.synthesize import handle_knowledge_synthesize
         from server.memory.api.models_ask import MemoryAskOutput
+        from server.memory.app.agent_rules import request_rule_agent, served_hits
 
-        found = await handle_knowledge_search(
-            KnowledgeSearchInput(
-                org=input.org,
-                namespace=input.namespace,
-                query=input.query,
-                top_k=20,
-                namespace_scope="this",
-                collapse_sections=False,
-                # The ask's hard tag filter reaches every leg.
-                tags=_hard_tags(input),
+        async def search(top_k: int) -> list[Any]:
+            found = await handle_knowledge_search(
+                KnowledgeSearchInput(
+                    org=input.org,
+                    namespace=input.namespace,
+                    query=input.query,
+                    top_k=top_k,
+                    namespace_scope="this",
+                    collapse_sections=False,
+                    # The ask's hard tag filter reaches every leg.
+                    tags=_hard_tags(input),
+                )
             )
+            return list(found.results)
+
+        top_k = 20  # not a setting: the hit pool pick_documents narrows to a few documents
+        # Another bot's promoted rule is not a rule about this agent.
+        hits = await served_hits(
+            await search(top_k),
+            search,
+            lambda h: list(getattr(h, "tags", None) or []),
+            request_rule_agent(input.agent),
+            top_k,
         )
         docs = ask_routing.pick_documents(
-            found.results,
+            hits,
             max_docs=int(settings.memory_ask_synthesize_route_max_docs),
         )
         if not docs:
@@ -619,18 +632,26 @@ def ask_shape_sha256(input: MemoryAskInput, settings: Any) -> str:
     by the token) never shares it with another user. The identity hashed is
     the one the read runs under: the token's read filters are pinned first,
     so a token bound to one end user never shares a precedent with another
-    user's token whatever the body names."""
+    user's token whatever the body names. The agent whose promoted rules the
+    knowledge passages serve is part of the shape when it is not the body's
+    agent ('-' when the body sends none), so a bot's token never reuses an
+    answer drawn from another bot's rule."""
     import hashlib
     import json
 
     from server.auth.context import current_auth
     from server.identity.domain.read_scope import pin_read_filters
+    from server.memory.app.agent_rules import request_rule_agent
 
     input, _ = pin_read_filters(input, current_auth())
+    rule_agent = request_rule_agent(input.agent)
     exclude = set(_ASK_SHAPE_EXCLUDE)
     # Only a user or session the read filters on is part of the shape.
     exclude |= {f for f in ("user_id", "session_id") if getattr(input, f) in (None, "-")}
     shape = input.model_dump(exclude=exclude, exclude_defaults=True)
+    # An empty body agent is served as '-', so only a pin that changes the agent adds the key.
+    if rule_agent != (input.agent or "-"):
+        shape["rule_agent"] = rule_agent
     # Absent, not empty, at every default: the shape a build without this key hashed.
     if shaped := _shape_settings(settings):
         shape["settings"] = shaped

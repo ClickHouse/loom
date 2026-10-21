@@ -3,6 +3,7 @@ the row memory.search reads; a reconcile pass repairs rows that diverged before.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any
 
@@ -71,7 +72,12 @@ def _existing(status: str = "active") -> Any:
 
 def _wire(monkeypatch: pytest.MonkeyPatch, ch: _CH, existing: Any) -> None:
     async def _get_by_id(
-        memory_id: str, *, org: str | None = None, ch: Any = None, scope: Any = None
+        memory_id: str,
+        *,
+        org: str | None = None,
+        ch: Any = None,
+        scope: Any = None,
+        strong: bool = False,
     ) -> Any:
         return existing
 
@@ -333,3 +339,84 @@ async def test_divergence_judges_liveness_on_the_newest_version() -> None:
         assert "tombstoned_at IS NULL AND" not in sql
         assert "AND tombstoned_at IS NULL" not in sql
         assert sql.count("HAVING argMax(tombstoned_at IS NULL, version) = 1") == 2
+
+
+async def test_rows_are_read_at_once_but_written_once_each_in_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    in_flight = peak = 0
+
+    async def get_by_id(mid: str, **kw: Any) -> Any:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        # The later ids finish first: the order kept is the order given, not the finish.
+        await asyncio.sleep(delay.get(mid, 0))
+        in_flight -= 1
+        return None if mid == "gone" else SimpleNamespace(memory_id=mid)
+
+    updated: list[str] = []
+
+    def update(row: Any) -> dict[str, Any]:
+        updated.append(row.memory_id)
+        return {}
+
+    async def insert(rows: list[dict[str, Any]], **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
+    monkeypatch.setattr(lifecycle, "build_memory_version_row", lambda row, **kw: {"status": ""})
+    monkeypatch.setattr(lifecycle, "insert_memory_versions", insert)
+    ids = [f"m{i}" for i in range(40)]
+    delay = {mid: (len(ids) - i) / 2000 for i, mid in enumerate(ids)}
+    n = await lifecycle.write_versions_by_ids("o", [*ids, "m3", "", "gone"], update)
+    assert updated == ids and n == len(ids)
+    assert 1 < peak <= lifecycle._READ_AT_ONCE
+
+
+@pytest.mark.parametrize("failure", [TimeoutError("replica down"), asyncio.CancelledError()])
+async def test_a_failed_read_stops_the_others_and_raises_as_itself(
+    monkeypatch: pytest.MonkeyPatch, failure: BaseException
+) -> None:
+    # A read that fails, or is cancelled on its own, while the caller is not.
+    cancelled: list[str] = []
+
+    async def get_by_id(mid: str, **kw: Any) -> Any:
+        if mid == "bad":
+            raise failure
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            cancelled.append(mid)
+            raise
+        return SimpleNamespace(memory_id=mid)
+
+    monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
+    with pytest.raises(type(failure)):
+        await lifecycle.write_versions_by_ids("o", ["a", "bad", "b"], lambda row: {})
+    # Stopped by the time the caller sees the failure.
+    assert sorted(cancelled) == ["a", "b"]
+
+
+async def test_a_cancelled_caller_lets_its_reads_clean_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    started: list[str] = []
+    cleaned: list[str] = []
+
+    async def get_by_id(mid: str, **kw: Any) -> Any:
+        started.append(mid)
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.01)  # cleanup that awaits, as the client's does
+            cleaned.append(mid)
+            raise
+
+    monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
+    # The queued reads stop first, so gather raises while the started ones clean up.
+    ids = [f"m{i}" for i in range(lifecycle._READ_AT_ONCE + 4)]
+    call = asyncio.ensure_future(lifecycle.write_versions_by_ids("o", ids, lambda row: {}))
+    await asyncio.sleep(0.05)
+    call.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await call
+    assert len(started) == lifecycle._READ_AT_ONCE and sorted(cleaned) == sorted(started)

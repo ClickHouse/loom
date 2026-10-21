@@ -12,7 +12,7 @@ from server.llm.client import LLMResult
 EXTRACTION_PROMPT_VERSION = "extraction-v1"
 
 # Per-fact cap on `derived` operands. Shared with the derived_facts writer
-# (memory/app/entity_projections.py) so the extractor never emits more
+# (memory/app/triple_projections.py) so the extractor never emits more
 # than the writer keeps (a mismatch silently drops the extra operands).
 MAX_DERIVED_PER_FACT = 12
 
@@ -68,7 +68,9 @@ class ExtractedFact:
     foresight: dict[str, Any] | None = None
     # Whose fact this is: "user" (default) or "other" — a
     # friend's preference, a colleague's schedule. Rides the row as the tag
-    # `about:other`; the profile fold and the reader read it.
+    # `about:other`; the profile fold and the reader read it. "agent" is a
+    # standing rule the assistant states about itself, asked for only under
+    # `agent_learnings`: it is filed to loom.learnings_queue, never written.
     about: str = "user"
     # The user asked the assistant not to remember / to forget this.
     # The entry is NOT written; the memories it names in

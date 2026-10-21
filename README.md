@@ -15,9 +15,10 @@
 
 ![Loom dashboard showing shared agent memories, a pinned fact and flagged conflicts](./docs/images/dashboard-memories.png)
 
-Loom gives your agents a shared place to remember decisions, find relevant code and
-documents, and hand work to each other. Context persists across tools and sessions,
-so the next agent can build on what the previous one learned.
+Loom is an open-source, self-hosted MCP server that gives your agents long-term, shared
+memory: one place to remember decisions, find relevant code and documents, and hand work
+to each other. Context persists across tools and sessions, so the next agent can build on
+what the previous one learned.
 
 Connect Claude Code, Codex, Cursor or your own agents through MCP, HTTP, Python or
 TypeScript. Self-host with Docker; agent context and index data live in ClickHouse.

@@ -829,6 +829,16 @@ def test_another_users_memory_id_is_not_found(
         assert r.status_code == 200 and r.json().get("found") is False, r.text
 
 
+def test_another_users_memory_ids_have_no_status(
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str]
+) -> None:
+    body = {"org": seed.org, "namespace": seed.ns, "memory_ids": seed.memory_ids_v}
+    r = _post(control_plane_url, tokens["pinned_u"], "memory.statuses", body)
+    assert r.status_code == 200 and r.json()["rows"] == [], r.text
+    r = _post(control_plane_url, tokens["namespace"], "memory.statuses", body)
+    assert r.status_code == 200 and len(r.json()["rows"]) == len(seed.memory_ids_v), r.text
+
+
 def test_an_answer_cached_for_v_is_never_served_to_u(
     control_plane_url: str, seed: _Seed, tokens: dict[str, str]
 ) -> None:
@@ -1257,3 +1267,38 @@ def test_a_superseded_hit_never_names_a_successor_outside_the_scope(
     assert "u-old" in r.text and '"both"' in r.text, r.text
     for secret in (nonce, v_succ, v_next):
         assert secret not in r.text, f"memory.search named {secret}: {r.text}"
+
+
+def test_automatic_retirements_list_only_the_callers_users(
+    control_plane_url: str, seed: _Seed
+) -> None:
+    """Under `newest_wins` V's second session rewrites V's key, and Loom retires the first
+    row. memory.auto_retirements names the key to a token narrowed to V, never to one
+    narrowed to U."""
+    ns = f"rs-retire-{uuid.uuid4().hex[:8]}"
+    ns_tok = _mint(seed.org, ns)
+    base = {"org": seed.org, "namespace": ns, "agent": "a"}
+    _write(
+        control_plane_url,
+        ns_tok,
+        "namespace.register",
+        {**base, "owner_email": "rs@example.com", "default_conflict_policy": "newest_wins"},
+    )
+    key = f"canary/retired-{seed.nonce_v}"
+    for session, city in (("sess-1", "Paris"), ("sess-2", "Rome")):
+        _write(
+            control_plane_url,
+            ns_tok,
+            "memory.set",
+            {**base, "user_id": V, "session_id": session, "memory_key": key, "value": city},
+        )
+
+    def keys(tok: str) -> list[str]:
+        r = _post(control_plane_url, tok, "memory.auto_retirements", base)
+        assert r.status_code == 200, r.text
+        return [row["memory_key"] for row in r.json()["rows"]]
+
+    v_tok = _mint(seed.org, ns, read_scope="own_user", read_user_id=V)
+    u_tok = _mint(seed.org, ns, read_scope="own_user", read_user_id=U)
+    wait_until(lambda: keys(v_tok) == [key], description="V's retirement is recorded")
+    assert keys(u_tok) == []

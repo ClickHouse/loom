@@ -15,7 +15,7 @@ import json
 import time
 import uuid
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -803,6 +803,12 @@ def next_version() -> int:
     cross-host clock skew (sub-ms under NTP).
     """
     return time.time_ns()
+
+
+def version_time(version: int) -> datetime:
+    """When `version` (`next_version`'s epoch ns) was taken, naive UTC, to the
+    microsecond: integer arithmetic, where a float of ns rounds."""
+    return datetime(1970, 1, 1) + timedelta(microseconds=int(version) // 1000)
 
 
 def reemit_version(row: dict[str, Any]) -> int:

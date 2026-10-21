@@ -19,6 +19,7 @@ from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
 from server.knowledge.app.repo_docs import knowledge_with_repo_docs
 from server.memory.api.models_search import MemorySearchInput
+from server.memory.app.agent_rules import request_rule_agent, served_hits
 from server.memory.app.loom_search.answer_first import answer_first
 from server.memory.app.loom_search.tracker_leg import tracker_leg
 from server.memory.app.profile_search import search_profile
@@ -190,6 +191,7 @@ async def search_sections(
     *,
     org: str,
     namespace: str,
+    agent: str,
     query: str,
     top_k: int,
     tags: list[str],
@@ -201,8 +203,9 @@ async def search_sections(
 ) -> dict[str, Any]:
     """The assembled loom_search payload for `query` addressed to
     (`org`, `namespace`); every leg reads the namespaces `namespaces_to_search`
-    gives for `namespace_scope`. The caller has already authorized
-    `namespace`."""
+    gives for `namespace_scope`, and the knowledge leg leaves out the rules
+    promoted for a bot other than the one `request_rule_agent(agent)` names. The
+    caller has already authorized `namespace`."""
     from server.auth.fanout import namespaces_to_search
     from server.knowledge.api.models_conversations import ConversationSearchInput
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput
@@ -269,7 +272,18 @@ async def search_sections(
     if isinstance(know_result, Exception):
         payload["knowledge"] = {"error": _leg_error(know_result), "results": []}
     else:
-        payload["knowledge"] = knowledge_above_floor(know_result.model_dump())
+
+        async def widen(k: int) -> list[dict[str, Any]]:
+            wider = await knowledge_with_repo_docs(know_input.model_copy(update={"top_k": k}))
+            results: list[dict[str, Any]] = wider.model_dump()["results"]
+            return results
+
+        know = know_result.model_dump()
+        # Another bot's promoted rule is not a rule about this agent.
+        know["results"] = await served_hits(
+            know["results"], widen, lambda h: h["tags"], request_rule_agent(agent), top_k
+        )
+        payload["knowledge"] = knowledge_above_floor(know)
     payload["profile"] = {
         "results": [] if isinstance(profile_rows, Exception) else list(profile_rows)
     }

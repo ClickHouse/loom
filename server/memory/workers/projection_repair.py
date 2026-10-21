@@ -31,6 +31,8 @@ class ProjectionRepairResult:
     retried: int = 0
     resolved: int = 0
     unsupported: int = 0
+    # Given up on: a failure no retry can do its work for (its reason says why).
+    abandoned: int = 0
     failed: list[dict[str, str]] = field(default_factory=list)
 
 
@@ -41,7 +43,7 @@ async def run_pass(
     result = ProjectionRepairResult()
     with record_pass("projection_repair") as rec:
         from server.memory.app.projection_failures import (
-            retry_projection_failure,
+            retry_failures,
             scan_active_projection_failures,
         )
 
@@ -49,16 +51,17 @@ async def run_pass(
             limit=max(1, int(cfg.max_failures_per_pass)),
             exclude_orgs=await customer.switched_off_orgs(),  # theirs wait, taking no slot
         )
-        result.scanned = len(failures)
-        for failure in failures:
-            with customer.for_org(str(failure.org)):
-                retry = await retry_projection_failure(failure)
+        retries = await retry_failures(failures)
+        result.scanned = len(retries)
+        for retry in retries:
             if retry.retried:
                 result.retried += 1
             if retry.resolved:
                 result.resolved += 1
             if retry.reason == "unsupported_projection":
                 result.unsupported += 1
+            if retry.abandoned:
+                result.abandoned += 1
             if retry.error:
                 result.failed.append(
                     {
@@ -72,15 +75,18 @@ async def run_pass(
             "retried": result.retried,
             "resolved": result.resolved,
             "unsupported": result.unsupported,
+            "abandoned": result.abandoned,
             "failed": len(result.failed),
         }
 
     log.info(
-        "projection repair pass: scanned=%d retried=%d resolved=%d unsupported=%d failed=%d",
+        "projection repair pass: scanned=%d retried=%d resolved=%d unsupported=%d"
+        " abandoned=%d failed=%d",
         result.scanned,
         result.retried,
         result.resolved,
         result.unsupported,
+        result.abandoned,
         len(result.failed),
     )
     return result
