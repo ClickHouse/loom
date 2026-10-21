@@ -151,6 +151,8 @@ def test_graph_projections_may_stay_async() -> None:
     for table in ("entity_edges", "entity_triples"):
         for wait in (False, True):
             assert graph_insert_settings(table, wait=wait, dedup_token="")["async_insert"] == 1
+        # A waited graph insert uses the same live wait bounds as every batched insert.
+        assert graph_insert_settings(table, wait=True, dedup_token="") == batched_insert_settings()
     # The projection repair's replay is the one synchronous, token-deduplicated form.
     assert graph_insert_settings("entity_edges", wait=False, dedup_token="t")["async_insert"] == 0
 

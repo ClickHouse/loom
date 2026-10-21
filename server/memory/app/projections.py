@@ -19,6 +19,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from server.core.ch_writes import batched_insert_settings
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.core.hashing import sha256_value
 from server.core.repo_base import param_slices
@@ -92,14 +93,17 @@ def graph_insert_settings(table: str, *, wait: bool, dedup_token: str) -> dict[s
     counts as an observation. A replay (`dedup_token`, the projection
     repair) inserts synchronously under a per-table deduplication token, so
     a replay that ran and then failed to resolve does not count its rows
-    twice (ClickHouse drops a block whose token it has seen)."""
+    twice (ClickHouse drops a block whose token it has seen). A waited
+    insert is a batched insert, so the live wait bounds govern it."""
     if dedup_token:
         return {
             "async_insert": 0,
             "insert_deduplicate": 1,
             "insert_deduplication_token": f"{dedup_token}:{table}",
         }
-    return {"async_insert": 1, "wait_for_async_insert": 1 if wait else 0}
+    if wait:
+        return batched_insert_settings()
+    return {"async_insert": 1, "wait_for_async_insert": 0}
 
 
 def edge_nodes(entry: Any, entity_map: dict[str, str]) -> list[str]:

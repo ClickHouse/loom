@@ -92,43 +92,14 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   row with a higher version and reads use `FINAL`. Mutations stay off the request path.
 - **Waited inserts.** A write that a later read depends on is sent with
   `wait_for_async_insert = 1`, so it is written when the insert returns: committed
-  (`async_insert = 0`, the client's session default) or batched (below). Fire-and-forget
+  (`async_insert = 0`, the client's session default) or batched
+  ([batched inserts](#batched-inserts)). Fire-and-forget
   telemetry is sent with `async_insert = 1, wait_for_async_insert = 0`. Every insert
   carries a per-batch `insert_deduplication_token` (`server/core/ch_writes.py`,
   `dedup_settings`), and an async insert is deduplicated by that token only, never by
   content: a retried batch lands once, and two identical rows in one flush window both land.
-- **Batched inserts.** A committed insert makes one part, so a table written on every
-  request makes parts at the request rate, and merges fall behind ("too many parts"). The
-  rows written on every request or by every process on a short interval are sent with
-  `async_insert = 1, wait_for_async_insert = 1` (`batched_insert_settings`): `audit_log`,
-  the `conversations` turns of `conversation.append`, the `agent_events` flush, the
-  policy witness's `agent_events` and `memory_exposures` rows, `memory_webhook_outbox`,
-  `memory_webhook_attempts`, `memory_evidence`, `memory_belief_sources`,
-  `auth_attempts`, `memory_projection_failures`, the graph Undo markers,
-  `namespace_write_marks`, and the usage-event and carry-acknowledgement flushes.
-  ClickHouse collects the concurrent inserts into one table in one part per
-  partition and answers each once those parts are written. On return the row is as
-  durable and as visible as a committed insert's, and a caller's next insert lands in a
-  later part, so the order of one caller's writes holds. The buffer is ClickHouse's, so a
-  Loom process that stops loses nothing it acknowledged. A flush that fails as a whole
-  fails every insert waiting on it; a retry of any of them lands once, under its own
-  token. Each insert waits between `ch_batched_insert_wait_min_ms` (writes are sparse)
-  and `ch_batched_insert_wait_max_ms` (under load) for others to join it, and holds its
-  pooled connection for the wait. Under steady load a table gets about 1000 /
-  `ch_batched_insert_wait_max_ms` parts a second per ClickHouse node, insert shape
-  (ClickHouse keeps one buffer per column list and settings) and partition written: more
-  when a buffer fills before the wait ends, at most one per insert when writes are sparse.
-  The version rows of `memory`, `memory_embeddings`, `shared`, `session_summaries` and
-  `entity_summaries` stay committed: their fenced `INSERT … SELECT FROM input()` ([rolling
-  upgrades](rolling-upgrades.md)) cannot be buffered. `entity_canonical_map` stays
-  committed as well: it is partitioned by `org`, so a shared flush would still write one
-  part per org. The rows with a `Quantized`-coded vector (`conversation_embeddings`,
-  `entity_vectors`, `memory_chunks`) stay committed: the codec refuses a vector of
-  another width when the part is written (code 190), so one mis-sized row in a shared
-  flush would fail every other insert in it. A write whose token names the row's
-  identity (`conversation.save_message`) stays committed too:
-  a replicated table keeps the tokens of committed and of buffered
-  inserts apart, so every writer of one identity sends it the same way.
+- **Batched inserts.** Tables written on every request share parts through ClickHouse's
+  async-insert buffer ([batched inserts](#batched-inserts)).
 - **Times are UTC.** `DateTime` columns carry no zone of their own, so the server
   client and the migration runner pin `session_timezone = 'UTC'` and bind aware params
   in UTC: a server whose `<timezone>` is something else reads and writes the same
@@ -138,6 +109,46 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   lands the batch once. A caller that passes its own token names the row's identity
   instead, so two writers of one row land it once: `conversation.save_message` writes a
   new transcript row this way.
+
+### Batched inserts
+
+A committed insert makes one part, so a table written on every request makes parts at
+the request rate, and merges fall behind ("too many parts"). The rows written on every
+request or by every process on a short interval are sent with `async_insert = 1,
+wait_for_async_insert = 1` (`server/core/ch_writes.py`, `batched_insert_settings`):
+`audit_log`, the `conversations` turns of `conversation.append`, the `agent_events`
+flush, the policy witness's `agent_events` and `memory_exposures` rows,
+`memory_webhook_outbox`, `memory_webhook_attempts`, `memory_evidence`,
+`memory_belief_sources`, `auth_attempts`, `memory_projection_failures`, the graph Undo
+markers, `namespace_write_marks`, the usage-event and carry-acknowledgement flushes, and
+the waited entity-graph inserts of `memory.set`.
+
+ClickHouse collects the concurrent inserts into one table in one part per partition and
+answers each once those parts are written. On return the row is as durable and as
+visible as a committed insert's, and a caller's next insert lands in a later part, so
+the order of one caller's writes holds. The buffer is ClickHouse's, so a Loom process
+that stops loses nothing it acknowledged. A flush that fails as a whole fails every
+insert waiting on it; a retry of any of them lands once, under its own token. Each
+insert waits between `ch_batched_insert_wait_min_ms` (writes are sparse) and
+`ch_batched_insert_wait_max_ms` (under load) for others to join it, and holds its pooled
+connection for the wait. Under steady load a table gets about 1000 /
+`ch_batched_insert_wait_max_ms` parts a second per ClickHouse node, insert shape
+(ClickHouse keeps one buffer per column list and settings) and partition written: more
+when a buffer fills before the wait ends, at most one per insert when writes are sparse.
+
+These tables stay committed:
+
+- **Version rows** of `memory`, `memory_embeddings`, `shared`, `session_summaries` and
+  `entity_summaries`: their fenced `INSERT … SELECT FROM input()` ([rolling
+  upgrades](rolling-upgrades.md)) cannot be buffered.
+- **`entity_canonical_map`**: it is partitioned by `org`, so a shared flush would still
+  write one part per org.
+- **Rows with a `Quantized`-coded vector** (`conversation_embeddings`, `entity_vectors`,
+  `memory_chunks`): the codec refuses a vector of another width when the part is written
+  (code 190), so one mis-sized row would fail every other insert in its flush.
+- **A write whose token names the row's identity** (`conversation.save_message`): a
+  replicated table keeps the tokens of committed and of buffered inserts apart, so every
+  writer of one identity sends it the same way.
 
 ## Engines and why
 

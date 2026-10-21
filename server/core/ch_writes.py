@@ -14,7 +14,7 @@ from server.settings import settings
 def batched_insert_settings() -> dict[str, Any]:
     """Settings of a batched insert: an async insert answered once its shared part
     is written, waiting between the two live bounds for others to join it. Why it
-    is safe: docs/architecture/clickhouse.md#conventions-every-table-follows."""
+    is safe: docs/architecture/clickhouse.md#batched-inserts."""
     wait_max = int(settings.ch_batched_insert_wait_max_ms)
     return {
         "async_insert": 1,
