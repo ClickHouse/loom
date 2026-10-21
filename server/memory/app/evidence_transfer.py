@@ -166,7 +166,7 @@ async def handle_memory_export_evidence(
             )
             for r in rows[: input.limit]
         ]
-        kept = await _without_high(input, digests)
+        kept = await _without_held_evidence(input, digests)
         return MemoryExportEvidenceOutput(
             digests=kept, has_more=len(rows) > input.limit, held_high=len(digests) - len(kept)
         )
@@ -216,13 +216,15 @@ async def handle_memory_export_evidence(
     next_cursor = _encode_cursor(chunks[-1].session_id, chunks[-1].chunk_index) if has_more else ""
     # A chunk stored without a vector holds a high shape, or the head or tail of one cut at
     # a chunk boundary, which its own text does not show.
-    kept = await _without_high(input, chunks, [int(r.get("embedding_dim") or 0) == 0 for r in rows])
+    kept = await _without_held_evidence(
+        input, chunks, [int(r.get("embedding_dim") or 0) == 0 for r in rows]
+    )
     return MemoryExportEvidenceOutput(
         chunks=kept, has_more=has_more, next_cursor=next_cursor, held_high=len(chunks) - len(kept)
     )
 
 
-async def _without_high(
+async def _without_held_evidence(
     input: MemoryExportEvidenceInput, items: list[Any], stored_held: list[bool] | None = None
 ) -> list[Any]:
     """`items` without those `okf_evidence.evidence_is_high` holds home, given which of the
