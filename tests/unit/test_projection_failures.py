@@ -1006,11 +1006,11 @@ async def test_a_drop_payload_without_its_versions_is_malformed(payload) -> None
 @pytest.mark.parametrize(
     "payload",
     [
-        {"drop": [], "deleted": []},
-        {"drop": [["m", "sha", "a"]], "deleted": [], "close_ids": []},
-        {"drop": [], "deleted": "m", "close_ids": []},
+        {"links": []},
+        {"links": [["m", "sha", "a", "b"]], "close_ids": []},
+        {"links": "m", "close_ids": []},
     ],
-    ids=["no-close-ids", "a-short-link", "deleted-not-a-list"],
+    ids=["no-close-ids", "a-link-without-its-deleted-flag", "links-not-a-list"],
 )
 async def test_a_restore_payload_without_its_links_is_malformed(payload) -> None:
     """A restore replays the links and closes it records: a payload missing them is

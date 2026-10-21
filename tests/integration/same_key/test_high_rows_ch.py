@@ -1288,7 +1288,9 @@ async def test_a_link_written_inside_a_drop_keeps_its_edge_and_survives(
 
     monkeypatch.setattr(projections, "end_edges", a_later_link_first)
     scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
-    await edge_links.drop_undeclared_links(scope, {str(out.memory_id): int(head["version"])}, ch=ch)
+    await edge_links.drop_undeclared_links(
+        scope, {str(out.memory_id): int(head["version"])}, ch=ch, op="memory.set"
+    )
     assert ("alice smith", "carol king") in await _open_edge_pairs(ch, org)
     linked = await ch.query_all(
         "SELECT entity_a, entity_b FROM loom.entity_edge_rows WHERE org = {org:String}"
@@ -1339,7 +1341,9 @@ async def test_a_high_re_set_naming_more_inside_a_drop_keeps_those_links(
 
     monkeypatch.setattr(projections, "end_edges", named_more_first)
     scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
-    await edge_links.drop_undeclared_links(scope, {str(out.memory_id): int(head["version"])}, ch=ch)
+    await edge_links.drop_undeclared_links(
+        scope, {str(out.memory_id): int(head["version"])}, ch=ch, op="memory.set"
+    )
     await after_write.drain()
     linked = await ch.query_all(
         "SELECT entity_a, entity_b FROM loom.entity_edge_rows WHERE org = {org:String}"
@@ -1416,7 +1420,9 @@ async def test_a_restored_link_keeps_its_edges_stated_end_and_weight(ch, org, mo
 
     monkeypatch.setattr(projections, "end_edges", plain_before_the_delete)
     scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
-    await edge_links.drop_undeclared_links(scope, {str(out.memory_id): int(head["version"])}, ch=ch)
+    await edge_links.drop_undeclared_links(
+        scope, {str(out.memory_id): int(head["version"])}, ch=ch, op="memory.set"
+    )
     after = await edge_rows()
     assert all(valid_to is not None for _, valid_to, _ in after), after
     assert sum(w for *_, w in after) == sum(w for *_, w in before) + 1  # the re-set's own
@@ -1539,6 +1545,60 @@ async def test_a_plain_re_set_after_the_drops_last_read_gets_its_links_back_from
     assert await _open_edge_pairs(ch, org) == {("alice smith", "bob lane")}
 
 
+async def test_a_row_made_high_again_before_the_repair_ends_its_undeclared_edges(
+    ch, org, monkeypatch
+) -> None:
+    """As above, but the row is made high again before the repair runs: that drop finds no
+    links to end the mined edges by, so the repair writes them back and drops them."""
+    from server.memory.app import edge_links
+    from server.memory.app.projection_errors import ProjectionScope
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    value = "Alice Smith met Bob Lane and Carol King in Berlin"
+    await _high_set(org, "s1", "contact", value)
+
+    async def nothing(*a: Any, **kw: Any) -> None:
+        return None
+
+    with monkeypatch.context() as m:
+        m.setattr(edge_links, "drop_undeclared_links", nothing)  # the drop runs below
+        out = await _high_set(
+            org, "s1", "contact", value, sensitivity="high", entities=["Alice Smith", "Bob Lane"]
+        )
+    head = await ch.query_one(
+        "SELECT version FROM loom.memory FINAL WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    real = edge_links._rows_still_high
+    reads = []
+
+    async def restore_lost(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("restore lost")
+
+    with monkeypatch.context() as patched:
+
+        async def plain_after_the_last_read(*a: Any, **kw: Any) -> dict[str, set[str]]:
+            high = await real(*a, **kw)
+            reads.append(high)
+            if len(reads) == 2:  # the read right before the DELETE
+                await _high_set(org, "s1", "contact", value, sensitivity="low")
+            return high
+
+        patched.setattr(edge_links, "_rows_still_high", plain_after_the_last_read)
+        patched.setattr(edge_links, "_restore_kept_links", restore_lost)
+        scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+        versions = {str(out.memory_id): int(head["version"])}
+        await edge_links.drop_undeclared_edges(scope, versions, ch=ch, op="memory.set")
+    await _high_set(
+        org, "s1", "contact", value, sensitivity="high", entities=["Alice Smith", "Bob Lane"]
+    )
+    assert ("alice smith", "carol king") in await _open_edge_pairs(ch, org)
+
+    await retry_projection_failures(org=org, ch=ch)
+    assert await _open_edge_pairs(ch, org) == {("alice smith", "bob lane")}
+
+
 async def test_a_same_value_plain_re_set_before_the_drops_delete_keeps_its_links(
     ch, org, monkeypatch
 ) -> None:
@@ -1574,7 +1634,9 @@ async def test_a_same_value_plain_re_set_before_the_drops_delete_keeps_its_links
 
     monkeypatch.setattr(projections, "end_edges", plain_before_the_delete)
     scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
-    await edge_links.drop_undeclared_links(scope, {str(out.memory_id): int(head["version"])}, ch=ch)
+    await edge_links.drop_undeclared_links(
+        scope, {str(out.memory_id): int(head["version"])}, ch=ch, op="memory.set"
+    )
     linked = await ch.query_all(
         "SELECT entity_a, entity_b FROM loom.entity_edge_rows WHERE org = {org:String}"
         " AND content_sha256 = {sha:String} SETTINGS select_sequential_consistency = 1",

@@ -118,7 +118,9 @@ def owes_undeclared_drop(previous: Any, declared: Sequence[str]) -> bool:
     )
 
 
-async def drop_undeclared_links(input: Any, versions: Mapping[str, int], *, ch: Any) -> None:
+async def drop_undeclared_links(
+    input: Any, versions: Mapping[str, int], *, ch: Any, op: str
+) -> None:
     """Rows a write left 'high' (`versions`: memory_id -> the version that write gave the
     row) keep only the edges of the entities on the row now: their links to any other
     pair go, and those edges end when that write landed unless another row names them,
@@ -128,7 +130,7 @@ async def drop_undeclared_links(input: Any, versions: Mapping[str, int], *, ch: 
     relabel) neither skips the drop nor brings back what it dropped."""
     keep = await _rows_still_high(input, sorted(versions), ch=ch)
     if keep:
-        await _drop_links_of(input, keep, versions, ch=ch)
+        await _drop_links_of(input, keep, versions, ch=ch, op=op)
 
 
 async def _rows_still_high(input: Any, ids: list[str], *, ch: Any) -> dict[str, set[str]]:
@@ -148,7 +150,7 @@ async def _rows_still_high(input: Any, ids: list[str], *, ch: Any) -> dict[str, 
 
 
 async def _drop_links_of(
-    input: Any, keep: Mapping[str, set[str]], versions: Mapping[str, int], *, ch: Any
+    input: Any, keep: Mapping[str, set[str]], versions: Mapping[str, int], *, ch: Any, op: str
 ) -> None:
     """`drop_undeclared_links` for the rows still 'high' (`keep`: memory_id -> the
     entities whose edges it keeps). The links read here go, and those a write since then
@@ -196,10 +198,9 @@ async def _drop_links_of(
         skip_versions=sorted({(memory_id, sha) for memory_id, sha, *_ in drop}),
     )
     # Read again right before the DELETE: a row re-set plain since the first read keeps
-    # its links even when the restore below fails, as its replay skips a row no longer
-    # 'high'; one re-set high naming more entities keeps those. The restore (or its
-    # replay) covers a write landing after this read. Parameters only: a mutation with a
-    # subquery is refused on a replicated table.
+    # its links, and one re-set high naming more entities keeps those. The restore (or
+    # its replay) covers a write landing after this read. Parameters only: a mutation
+    # with a subquery is refused on a replicated table.
     high = await _rows_still_high(input, sorted({memory_id for memory_id, *_ in drop}), ch=ch)
     deleted = [
         (memory_id, sha, a, b)
@@ -220,14 +221,17 @@ async def _drop_links_of(
     try:
         await _restore_kept_links(input, drop, set(deleted), close_ids, ch=ch)
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair restores them
-        log.warning("%d kept links not restored (recorded): %s", len(drop), e)
+        log.warning(
+            "%s: restore after dropping %d links failed (recorded): %s", op, len(deleted), e
+        )
         await record_projection_failure(
             org=input.org,
             namespace=input.namespace,
             agent=str(getattr(input, "agent", "") or ""),
             projection=EDGES_RESTORE,
+            source_operation=op,
             error=e,
-            payload=restore_payload(drop, deleted, close_ids),
+            payload=restore_payload(drop, set(deleted), close_ids),
             ch=ch,
             user_id=str(getattr(input, "user_id", "") or ""),
         )
@@ -235,23 +239,32 @@ async def _drop_links_of(
 
 def restore_payload(
     drop: list[tuple[str, str, str, str]],
-    deleted: list[tuple[str, str, str, str]],
+    deleted: set[tuple[str, str, str, str]],
     close_ids: list[str],
 ) -> dict[str, Any]:
-    """An EDGES_RESTORE payload: the arguments of the `_restore_kept_links` it owes."""
+    """An EDGES_RESTORE payload: the arguments of the `_restore_kept_links` it owes, each
+    link of the drop with whether the DELETE took it."""
     return {
-        "drop": [list(link) for link in drop],
-        "deleted": [list(link) for link in deleted],
+        "links": [[*link, link in deleted] for link in drop],
         "close_ids": list(close_ids),
     }
 
 
-async def restore_kept_links(payload: Mapping[str, Any], input: Any, *, ch: Any) -> None:
-    """Replay the restore an EDGES_RESTORE `payload` records; it reads the rows as they
-    are now, so a row revised, removed or made 'high' since keeps what it holds."""
-    drop = [(str(m), str(sha), str(a), str(b)) for m, sha, a, b in payload["drop"]]
-    deleted = {(str(m), str(sha), str(a), str(b)) for m, sha, a, b in payload["deleted"]}
-    await _restore_kept_links(input, drop, deleted, [str(c) for c in payload["close_ids"]], ch=ch)
+async def restore_kept_links(payload: Mapping[str, Any], input: Any, *, ch: Any, op: str) -> None:
+    """Replay the restore an EDGES_RESTORE `payload` records, against the rows as they are
+    now. A row that holds the same value but was made 'high' again since gets back the
+    links the DELETE took, and its drop runs again: that drop found none of them, so it
+    ended none of their edges."""
+    links = [
+        (str(m), str(sha), str(a), str(b), bool(gone)) for m, sha, a, b, gone in payload["links"]
+    ]
+    drop = [link[:4] for link in links]
+    deleted = {link[:4] for link in links if link[4]}
+    remade = await _restore_kept_links(
+        input, drop, deleted, [str(c) for c in payload["close_ids"]], ch=ch, relink_high=True
+    )
+    if remade:
+        await drop_undeclared_links(input, remade, ch=ch, op=op)
 
 
 async def _restore_kept_links(
@@ -261,15 +274,18 @@ async def _restore_kept_links(
     close_ids: list[str],
     *,
     ch: Any,
-) -> None:
+    relink_high: bool = False,
+) -> dict[str, int]:
     """After the DELETE, for the links of `drop` whose row holds them now (a write landed
     since the drop read them): write back those `deleted` took, and undo the ends this
-    drop's close (`close_ids`) stamped on their pairs."""
+    drop's close (`close_ids`) stamped on their pairs. With `relink_high`, a 'high' row
+    holding the same value also gets back the `deleted` links to pairs it does not name;
+    returns those rows (memory_id -> version), whose drop is owed again."""
     rows = await query_all_sliced(
         ch,
         f"""
         SELECT toString(memory_id) AS id, user_id, toString(content_sha256) AS sha,
-               sensitivity, entities
+               sensitivity, entities, version
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND memory_id IN {{ids:Array(UUID)}} AND {EDGE_HOLDER_SQL}
@@ -285,14 +301,18 @@ async def _restore_kept_links(
     current = {str(r["id"]): r for r in rows}
     links = []
     pairs = set()
+    remade: dict[str, int] = {}
     for memory_id, sha, a, b in drop:
         row = current.get(memory_id)
         if row is None or str(row["sha"]) != sha:
             continue  # gone, or a later value: that write's own links and edges
         named = set(set_entities.declared_entities(row["entities"]))
         if row["sensitivity"] == "high" and not {a, b} <= named:
-            continue
-        pairs.add((a, b))
+            if not relink_high or (memory_id, sha, a, b) not in deleted:
+                continue
+            remade[memory_id] = int(row["version"])
+        else:
+            pairs.add((a, b))
         if (memory_id, sha, a, b) in deleted:
             writer = SimpleNamespace(
                 org=input.org, namespace=input.namespace, user_id=row["user_id"]
@@ -303,6 +323,7 @@ async def _restore_kept_links(
     await projections.reopen_closed_by(
         ch, org=input.org, namespace=input.namespace, close_ids=close_ids, pairs=sorted(pairs)
     )
+    return remade
 
 
 def drop_payload(versions: Mapping[str, int]) -> dict[str, Any]:
@@ -317,7 +338,7 @@ async def drop_undeclared_edges(
     """`drop_undeclared_links`, fail-open: a failure is recorded for the projection repair
     (`EDGES_DROP_UNDECLARED`), which drops them again."""
     try:
-        await drop_undeclared_links(input, versions, ch=ch)
+        await drop_undeclared_links(input, versions, ch=ch, op=op)
     except Exception as e:  # noqa: BLE001 — recorded; the projection repair drops them
         log.warning(
             "%s: undeclared edges of %d rows not dropped (recorded): %s", op, len(versions), e
@@ -368,7 +389,7 @@ async def drop_undeclared_edges_beside(input: Any, versions: Mapping[str, int], 
             await drop_undeclared_edges(input, versions, ch=get_client(), op=op)
             return
         try:
-            await drop_undeclared_links(input, versions, ch=get_client())
+            await drop_undeclared_links(input, versions, ch=get_client(), op=op)
         except Exception as e:  # noqa: BLE001 — the intent stays; the repair drops them
             log.warning(
                 "%s: undeclared edges of %d rows not dropped (owed): %s", op, len(versions), e

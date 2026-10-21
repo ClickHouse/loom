@@ -99,8 +99,8 @@ EDGES_CLOSE = "entity_edges_close"
 # that write, which dates the edges' end); the drop reads the row's current entities.
 EDGES_DROP_UNDECLARED = "entity_edges_drop_undeclared"
 # A drop whose restore of the links a write landing since it read them holds failed:
-# payload drop and deleted (memory_id, content_sha256, entity_a, entity_b links) and
-# close_ids, the arguments of the restore. Its own name: a replay of the drop skips a
+# payload links (memory_id, content_sha256, entity_a, entity_b, whether the DELETE took
+# it) and close_ids, the arguments of the restore. Its own name: a replay of the drop skips a
 # row no longer 'high', and that is the row whose links went.
 EDGES_RESTORE = "entity_edges_restore"
 
@@ -729,7 +729,12 @@ async def _retry_edges_drop(failure: ProjectionFailureRow, *, ch: Any) -> str:
     if not all(isinstance(v, int) and not isinstance(v, bool) for v in versions.values()):
         return "malformed_payload"
     scope = _failure_scope(failure)
-    await drop_undeclared_links(scope, {str(mid): int(v) for mid, v in versions.items()}, ch=ch)
+    await drop_undeclared_links(
+        scope,
+        {str(mid): int(v) for mid, v in versions.items()},
+        ch=ch,
+        op=failure.source_operation,
+    )
     return ""
 
 
@@ -738,14 +743,14 @@ async def _retry_edges_restore(failure: ProjectionFailureRow, *, ch: Any) -> str
     leaves the row active."""
     from server.memory.app.edge_links import restore_kept_links
 
-    payload = failure.payload
-    links = (payload.get("drop"), payload.get("deleted"))
-    if not isinstance(payload.get("close_ids"), list) or not all(
-        isinstance(part, list) and all(isinstance(x, list) and len(x) == 4 for x in part)
-        for part in links
-    ):
+    links = failure.payload.get("links")
+    if not isinstance(failure.payload.get("close_ids"), list) or not isinstance(links, list):
         return "malformed_payload"
-    await restore_kept_links(payload, _failure_scope(failure), ch=ch)
+    if not all(isinstance(link, list) and len(link) == 5 for link in links):
+        return "malformed_payload"
+    await restore_kept_links(
+        failure.payload, _failure_scope(failure), ch=ch, op=failure.source_operation
+    )
     return ""
 
 

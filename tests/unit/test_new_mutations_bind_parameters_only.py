@@ -39,7 +39,9 @@ async def test_the_undeclared_edge_drop_deletes_by_parameters_only(monkeypatch) 
     link = {"id": _ROW, "sha": "a" * 64, "entity_a": "alice", "entity_b": "carol"}
     ch = _CH([{**link, "entities": ["alice", "bob"]}])
     scope = SimpleNamespace(org="o", namespace="ns")
-    await edge_links._drop_links_of(scope, {_ROW: {"alice", "bob"}}, {_ROW: 1}, ch=ch)
+    await edge_links._drop_links_of(
+        scope, {_ROW: {"alice", "bob"}}, {_ROW: 1}, ch=ch, op="memory.set"
+    )
     assert ch.executed and all("DELETE FROM" in sql for sql in ch.executed)
     assert not [sql for sql in ch.executed if "SELECT" in sql]
 

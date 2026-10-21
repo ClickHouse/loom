@@ -622,7 +622,10 @@ later plain write's links are its own), and one still `high` keeps only the edge
 entities on it, whatever later write (a pin, a lock, a relabel) kept it high. A write of
 the row that lands during the drop keeps its links and edges: after its DELETE the drop
 reads the rows again, writes back the links a row still holds and undoes the ends its
-own close stamped on their edges, so a stated end or a weight stays. A close recorded
+own close stamped on their edges, so a stated end or a weight stays. A failed restore
+is recorded as `entity_edges_restore`, which `projection_repair` replays against the rows
+as they are then; a row made `high` again since gets its links back and its drop runs
+again. A close recorded
 for a high row names no value: its repair ends each of the row's values with an open
 edge that the row no longer holds, and keeps the edges between entities the row names.
 It reads only values with a pair that can close (no other live row holds it), 20 pages
