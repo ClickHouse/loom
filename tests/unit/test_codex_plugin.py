@@ -241,10 +241,16 @@ def test_listing_fields_name_files_the_plugins_ship() -> None:
         isinstance(interface["defaultPrompt"], list) and 1 <= len(interface["defaultPrompt"]) <= 3
     )
     assert all(len(p) <= 128 for p in interface["defaultPrompt"])
-    assert claude["privacyPolicyUrl"] == interface["privacyPolicyURL"]
-    page, _, anchor = (
-        claude["privacyPolicyUrl"]
-        .removeprefix("https://github.com/ClickHouse/loom/blob/main/")
-        .partition("#")
+
+
+def test_both_plugins_link_the_data_handling_section() -> None:
+    """The privacy link of both listings is an absolute URL, which the doc-link check does
+    not follow; renaming the section would leave both listings pointing at nothing."""
+    claude = json.loads((CLAUDE / ".claude-plugin" / "plugin.json").read_text())
+    codex = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())
+    url = claude["privacyPolicyUrl"]
+    assert url == codex["interface"]["privacyPolicyURL"]
+    page, _, anchor = url.removeprefix("https://github.com/ClickHouse/loom/blob/main/").partition(
+        "#"
     )
     assert anchor == "data-handling" and "\n## Data handling\n" in (ROOT / page).read_text()
