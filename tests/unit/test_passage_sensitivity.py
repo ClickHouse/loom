@@ -309,6 +309,29 @@ def test_split_credentials_reads_only_the_boundary_of_each_distinct_pair(
     assert max(joins) <= 2 * sensitivity._BOUNDARY_REACH
 
 
+def test_split_credentials_holds_the_pairs_past_its_bound_without_reading_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.domain import sensitivity
+
+    # 128 distinct chunks at index 0 and 128 at index 1 make 16,384 distinct pairs.
+    chunks = [("s", 0, f"first {n} notes on the plan.") for n in range(128)]
+    chunks += [("s", 1, f"second {n} more notes.") for n in range(128)]
+    joined: list[tuple[str, str]] = []
+    cut = sensitivity._cut_at_boundary
+
+    def counting(first: str, second: str) -> bool:
+        joined.append((first, second))
+        return cut(first, second)
+
+    monkeypatch.setattr(sensitivity, "_cut_at_boundary", counting)
+    held = sensitivity.split_credentials(chunks)
+    assert len(joined) == sensitivity._MAX_JOINED_PAIRS
+    # The first four chunks at index 0 make the 512 pairs read, all clean; every other chunk
+    # is in a pair past the bound.
+    assert held == [False] * 4 + [True] * 252
+
+
 def test_split_credentials_finds_a_key_cut_at_the_boundary_of_long_chunks() -> None:
     from server.memory.domain.sensitivity import split_credentials
 

@@ -726,10 +726,13 @@ returns it.
   overlap are joined whole). A key shorter than a chunk is cut by at most one boundary, so
   pairs of neighbouring chunks are enough, and only the 1,000 characters each side of the
   boundary are read. A session written twice holds two chunks at an index, and every pair
-  is read, once for each distinct pair of texts. The check reads one call's chunks only (at most 256), so a key cut
-  at the boundary between the last chunk of one call and the first chunk of the next
-  reads as a credential in neither, and both chunks are embedded; an importer that sends
-  a session's chunks in one call, or splits them where no key is cut, avoids it.
+  is read, once for each distinct pair of texts. A call reads at most 512 distinct pairs,
+  and both chunks of a pair past that are held unread, so many versions of one session
+  cannot make the check's cost grow with the square of their count. The check reads one
+  call's chunks only (at most 256), so a key cut at the boundary between the last chunk of
+  one call and the first chunk of the next reads as a credential in neither, and both
+  chunks are embedded; an importer that sends a session's chunks in one call, or splits
+  them where no key is cut, avoids it.
   `memory.get` on a `chunk:` key leaves out a neighbour with no vector, as it leaves out
   one that reads as a credential, and audits a key read of either. This holds for a chunk
   of a long `memory.set` value whatever its row's label; a `low` row stays findable
@@ -737,8 +740,8 @@ returns it.
 - Digests and turns: a session digest whose text reads as a credential is written without
   a vector. A `conversation.append` turn that reads as one is stored as written in
   `loom.conversations` and gets no row in `loom.conversation_embeddings`, which keeps it
-  out of vector search. `conversation.save_message` answers `reason:
-"reads_as_credential"` for such a turn, so the saved search never holds it.
+  out of vector search. `conversation.save_message` answers
+  `reason: "reads_as_credential"` for such a turn, so the saved search never indexes it.
 - Compaction: `conversation.compact` leaves such a turn out of its window: it stays live
   and is never sent to the summarizer. A summary that reads as a credential anyway is
   refused (`reason: "summary-reads-as-credential"`) and tombstones nothing; the window

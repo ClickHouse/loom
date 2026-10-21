@@ -306,12 +306,18 @@ def _cut_at_boundary(first: str, second: str) -> bool:
     )
 
 
+# Distinct pairs of neighbouring chunks one call reads. A call that sends one version of each
+# session has at most one pair per chunk; past this, a pair is held without being read, so
+# many versions of a session cannot make the check's cost grow with the square of the count.
+_MAX_JOINED_PAIRS = 512  # not a setting: security bound
+
+
 def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]:
     """For each `(session, chunk_index, content)` chunk, whether it overlaps a credential in
     its own text or in the text it makes joined with a chunk of its session at the next index.
     Chunks with a gap in `chunk_index` are not joined. A key shorter than a chunk is cut by at
     most one boundary, so pairs of neighbouring chunks are enough. Pairs with the same
-    contents are read once."""
+    contents are read once, and both chunks of a pair past `_MAX_JOINED_PAIRS` are held."""
     held = [bool(credential_spans(content)) for _, _, content in chunks]
     by_index: dict[tuple[Hashable, int], list[int]] = {}
     for i, (session, index, _) in enumerate(chunks):
@@ -322,7 +328,7 @@ def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]
             for b in by_index.get((session, index + 1), []):
                 pair = (chunks[a][2], chunks[b][2])
                 if pair not in cut:
-                    cut[pair] = _cut_at_boundary(*pair)
+                    cut[pair] = len(cut) >= _MAX_JOINED_PAIRS or _cut_at_boundary(*pair)
                 if cut[pair]:
                     held[a] = held[b] = True
     return held
