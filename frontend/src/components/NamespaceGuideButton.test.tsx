@@ -122,9 +122,9 @@ describe("NamespaceGuideButton", () => {
   it("offers no editor on an end user's personal collection, which takes no guide", async () => {
     vi.mocked(api.getNamespaceGuide).mockResolvedValue(NONE);
     render(<NamespaceGuideButton identity={{ org: "o", namespace: "col-me-alice" }} />);
-    await waitFor(() => expect(guideButton()).toHaveAccessibleDescription("No guide yet"));
+    expect(guideButton()).toHaveAccessibleDescription("A personal collection takes no guide");
     fireEvent.click(guideButton());
-    expect(await screen.findByText(/No guide yet\. Agents that write here/)).toBeInTheDocument();
+    expect(await screen.findByText(/A personal collection takes no guide/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Write the guide" })).toBeNull();
   });
 

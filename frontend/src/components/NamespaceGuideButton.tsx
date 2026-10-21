@@ -4,6 +4,7 @@ import { getNamespaceGuide, type Identity, type NamespaceGuide } from "../api";
 import { GuideDialog } from "../flows/GuideDialog";
 import { IconButton } from "./IconButton";
 import { useAbortableEffect } from "../lib/hooks";
+import { isPersonalCollection } from "../lib/namespace";
 import { canEditGuide, useNamespaceRole } from "../lib/namespaceRole";
 import { Tip } from "./ui";
 
@@ -48,7 +49,7 @@ export function NamespaceGuideButton({
     [identity.org, identity.namespace, reads],
   );
 
-  const about = describeGuide(guide, writer);
+  const about = describeGuide(guide, writer, identity.namespace);
 
   return (
     <>
@@ -94,7 +95,8 @@ export function NamespaceGuideButton({
 
 /** What the button says the guide is: before the read answers, then its revision and
  *  summary, or that there is none (with what to do about it, to a writer). */
-function describeGuide(guide: NamespaceGuide | null, writer: boolean): string {
+function describeGuide(guide: NamespaceGuide | null, writer: boolean, namespace: string): string {
+  if (isPersonalCollection(namespace)) return "A personal collection takes no guide";
   if (guide === null) return "How this namespace is laid out, for agents and people";
   if (guide.found) return `Revision ${guide.revision}${guide.summary ? `: ${guide.summary}` : ""}`;
   if (writer) return "No guide yet: write how this namespace is laid out, for agents and people";

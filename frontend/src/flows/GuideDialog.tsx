@@ -8,6 +8,7 @@ import { Alert, Loading, Unavailable } from "../components/ui";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { humanizeError, relativeTime } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
+import { isPersonalCollection } from "../lib/namespace";
 
 interface Props {
   open: boolean;
@@ -136,8 +137,9 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
             </>
           ) : (
             <p className="text-sm text-text-muted">
-              No guide yet. Agents that write here follow it once one exists: the key layout, what each tag means and
-              which rows to ignore.
+              {isPersonalCollection(namespace)
+                ? "A personal collection takes no guide."
+                : "No guide yet. Agents that write here follow it once one exists: the key layout, what each tag means and which rows to ignore."}
             </p>
           )}
           <ModalFooter>
