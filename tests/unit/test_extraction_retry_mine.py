@@ -157,6 +157,22 @@ def test_a_requeue_buys_exactly_one_more_replay(max_attempts: int) -> None:
     assert status == "failed" and ch.inserted[-1]["attempts"] == max_attempts
 
 
+def test_a_batch_put_back_or_gone_between_the_reads_is_not_requeued_again() -> None:
+    """The second read decides: a batch another retry already put back is `not_failed`,
+    one no longer found (erased, or past the TTL) is in no list, so the handler answers
+    it `unknown`."""
+
+    class _CH(_StubCH):
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+            self.reads.append((sql, dict(params or {})))
+            if len(self.reads) == 1:  # the states: both failed
+                return [_failed_row("q1"), _failed_row("q2")]
+            return [_failed_row("q1") | {"status": "pending"}]  # q1 put back, q2 gone
+
+    ch = _CH([])
+    assert _requeue(ch, ["q1", "q2"]) == ([], ["q1"], []) and ch.inserted == []
+
+
 def test_nothing_is_written_when_no_asked_batch_failed() -> None:
     ch = _StubCH([{"queue_id": "q1", "status": "pending"}])
     assert _requeue(ch, ["q1", "q2"]) == ([], ["q1"], []) and ch.inserted == []

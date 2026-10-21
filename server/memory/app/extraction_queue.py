@@ -565,10 +565,12 @@ async def requeue_own_failed(
             [_mirror(r, status=STATUS_PENDING, attempts=left, lease_until=_EPOCH) for r in again],
             settings=_SYNC,
         )
+    # A failed id the full read no longer finds (erased, or past the TTL) is in no list.
+    seen = {str(r["queue_id"]) for r in rows}
     requeued = {str(r["queue_id"]) for r in again}
     return Requeued(
         [qid for qid in failed if qid in requeued],
-        waiting_or_done + [qid for qid in failed if qid not in requeued],
+        waiting_or_done + [qid for qid in failed if qid in seen and qid not in requeued],
         [],
     )
 
