@@ -181,7 +181,7 @@ def _post(base: str, token: str, op: str, body: dict) -> dict:
 
 @pytest.mark.asyncio
 async def test_export_user_id_includes_their_saved_messages_and_turns(
-    admin_agent, control_plane_url: str, mint_test_token
+    admin_agent, control_plane_url: str, mint_test_token, ch_client
 ) -> None:
     """A user's saved message, their transcript turns and their thread export with the
     columns stored; another user's do not, and a turn holding a key is labelled high."""
@@ -265,6 +265,22 @@ async def test_export_user_id_includes_their_saved_messages_and_turns(
     assert [(t["thread_id"], t["title"], t["user_id"]) for t in threads] == [
         (thread, "Renewal terms", grace)
     ]
+
+    # The high turn it served is audited, with its agent, thread and message.
+    for _ in range(30):
+        audited = ch_client.query(
+            """
+            SELECT subject FROM loom.audit_log
+            WHERE event_type = 'memory.sensitive_read' AND org = {o:String}
+              AND namespace = {ns:String}
+            """,
+            parameters={"o": org, "ns": ns},
+        ).result_rows
+        if audited:
+            break
+        await asyncio.sleep(0.1)
+    assert len(audited) == 1
+    assert all(part in audited[0][0] for part in ('"chat"', thread, '"m-turn"'))
 
 
 # ============================================================

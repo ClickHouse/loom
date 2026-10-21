@@ -31,6 +31,16 @@ _ROWS = rows_by_substring(
             {"mutation_id": "m1", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}
         ],
         "count()": [{"n": 1}],
+        # The conversation export's size pass finds one turn, so its text read renders.
+        "AS bytes_before_previous": [
+            {
+                "namespace": "n",
+                "thread_id": "t",
+                "ts": datetime(2026, 1, 1),
+                "msg_id": "m",
+                "bytes_before": 0,
+            }
+        ],
     }
 )
 

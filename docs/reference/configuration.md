@@ -710,7 +710,7 @@ Erasure: saga recovery, reclaim, purge and the external backends it cascades to.
 | `LOOM_ERASURE_RECLAIM_MIN_DEAD_FRACTION` | `float` | `0.3` |  | A table is reclaimed once this share of its rows on disk are purged rows. |
 | `LOOM_ERASURE_RECLAIM_MIN_DEAD_BYTES` | `int` | `1073741824` |  | Least bytes the deleted rows must hold before the erasure reclaim compacts a table (default 1 GiB). |
 | `LOOM_ERASURE_MUTATION_WAIT_S` | `int` | `3600` |  | Seconds one erasure step waits for its mutation (submitted with mutations_sync=0, polled in system.mutations); past it the saga fails naming the mutation. |
-| `LOOM_ERASURE_EXPORT_CONVERSATION_MAX_BYTES` | `int` | `67108864` | live | Most bytes of conversation text (content, reasoning and metadata) one `erasure.export` returns in its `conversations` section (default 64 MiB). A turn has no size cap, so past this the section stops and is marked `truncated`; its first turn is always returned. |
+| `LOOM_ERASURE_EXPORT_CONVERSATION_MAX_BYTES` | `int` | `67108864` | live | Most bytes of conversation text one `erasure.export` returns in its `conversations` section; past it the section stops and is marked `truncated`. |
 
 ### External erasure backends
 

@@ -2117,10 +2117,8 @@ settings:
   # polled in system.mutations); past it the saga fails naming the mutation. [restart]
   # erasure_mutation_wait_s: 3600
 
-  # Most bytes of conversation text (content, reasoning and metadata) one
-  # `erasure.export` returns in its `conversations` section (default 64 MiB). A turn has
-  # no size cap, so past this the section stops and is marked `truncated`; its first
-  # turn is always returned. [live]
+  # Most bytes of conversation text one `erasure.export` returns in its `conversations`
+  # section; past it the section stops and is marked `truncated`. [live]
   # erasure_export_conversation_max_bytes: 67108864
 
   # --- external erasure backends ---

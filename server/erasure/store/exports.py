@@ -135,38 +135,61 @@ async def export_conversations(
     rows past `max_bytes` of text were left out.
 
     A turn has no size cap, so the rows stop once the text before a row reaches
-    `max_bytes`; the first row is always read. The read also returns the first
-    row past the budget, which says more rows exist, and this drops it."""
+    `max_bytes`; the first row is always read. The first statement finds where
+    they stop from the text lengths alone, so no text past the budget is read;
+    it also returns the first row past the budget, which says more rows exist.
+    The second reads the text of the rows up to that point."""
     ch = ch or _default_client()
     shown_sql, shown_params = shown.clause()
     column = "user_id" if scope_type == "user_id" else "namespace"
     tomb_clause = "" if include_tombstoned else " AND tombstoned_at IS NULL"
-    rows = await ch.query_all(
+    where = f"org = {{org:String}} AND {column} = {{scope:String}}{tomb_clause}{shown_sql}"
+    params: dict[str, Any] = {"org": org, "scope": scope_value, **shown_params}
+    sizes = await ch.query_all(
         f"""
-        SELECT {_CONVERSATION_COLUMNS}, bytes_before
+        SELECT namespace, thread_id, ts, msg_id, bytes_before
         FROM (
-            SELECT {_CONVERSATION_COLUMNS},
-                   sum({_CONVERSATION_BYTES}) OVER (ORDER BY {_CONVERSATION_ORDER}
+            SELECT namespace, thread_id, ts, msg_id,
+                   sum(row_bytes) OVER (ORDER BY {_CONVERSATION_ORDER}
                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS bytes_before,
-                   sum({_CONVERSATION_BYTES}) OVER (ORDER BY {_CONVERSATION_ORDER}
+                   sum(row_bytes) OVER (ORDER BY {_CONVERSATION_ORDER}
                        ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) AS bytes_before_previous
-            FROM loom.conversations
-            WHERE org = {{org:String}} AND {column} = {{scope:String}}{tomb_clause}{shown_sql}
+            FROM (
+                SELECT namespace, thread_id, ts, msg_id, {_CONVERSATION_BYTES} AS row_bytes
+                FROM loom.conversations
+                WHERE {where}
+            )
         )
         WHERE bytes_before_previous < {{max_bytes:UInt64}}
         ORDER BY {_CONVERSATION_ORDER}
         LIMIT {{lim:UInt64}}
         """,
+        params={**params, "lim": int(limit), "max_bytes": int(max_bytes)},
+    )
+    kept = [s for s in sizes if int(s["bytes_before"]) < max_bytes]
+    if not kept:
+        return [], False
+    last = kept[-1]
+    rows = await ch.query_all(
+        f"""
+        SELECT {_CONVERSATION_COLUMNS}
+        FROM loom.conversations
+        WHERE {where}
+          AND ({_CONVERSATION_ORDER}) <= ({{last_ns:String}}, {{last_tid:String}},
+                                          {{last_ts:DateTime64(3)}}, {{last_mid:String}})
+        ORDER BY {_CONVERSATION_ORDER}
+        LIMIT {{kept:UInt64}}
+        """,
         params={
-            "org": org,
-            "scope": scope_value,
-            "lim": int(limit),
-            "max_bytes": int(max_bytes),
-            **shown_params,
+            **params,
+            "last_ns": last["namespace"],
+            "last_tid": last["thread_id"],
+            "last_ts": last["ts"],
+            "last_mid": last["msg_id"],
+            "kept": len(kept),
         },
     )
-    kept = [r for r in rows if int(r.pop("bytes_before")) < max_bytes]
-    return cast("list[ConversationExportRow]", kept), len(kept) < len(rows)
+    return cast("list[ConversationExportRow]", rows), len(kept) < len(sizes)
 
 
 async def export_conversation_threads(

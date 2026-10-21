@@ -27,7 +27,7 @@ def exports(monkeypatch):
         kept = [r for r in rows if _visible(shown, r["namespace"])][:limit]
         return kept, len(kept), False
 
-    async def _empty(org, scope_type, scope_value, *, limit, shown, **_k):
+    async def _empty(org, scope_type, scope_value, *, limit, shown):
         return ([], 0, False)
 
     monkeypatch.setattr(h, "_export_memory", _mem)
