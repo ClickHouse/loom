@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, cast
 
-from server.core.ch_writes import batched_insert_settings
 from server.core.datetimes import naive_utc_now
 from server.memory.domain.graph_quality import canonical_entity_text
 
@@ -471,12 +470,13 @@ async def resolve_entities_for_write(
             )
     if insert_rows:
         try:
-            # Waited for: the next session of the same ingest must read these
-            # resolutions.
+            # Committed: the next session of the same ingest must read these
+            # resolutions, and a batched flush of a table partitioned by org
+            # would write one part per org anyway.
             await ch.insert(
                 "loom.entity_canonical_map",
                 insert_rows,
-                settings=batched_insert_settings(),
+                settings={"async_insert": 0, "wait_for_async_insert": 1},
             )
         except Exception:  # noqa: BLE001 — a failed map write must not fail the ingest
             pass

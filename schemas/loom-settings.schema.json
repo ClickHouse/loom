@@ -187,7 +187,7 @@
           "default": 50,
           "exclusiveMinimum": 0,
           "type": "integer",
-          "description": "Longest a batched insert (rows written on every request) waits, ms, for others to share its part; under load ~1000 / this parts/s per table, node and insert shape."
+          "description": "Longest a batched insert (rows written on every request) waits, ms, for others to share its part; under load ~1000 / this parts/s per table, node, insert shape and partition."
         },
         "ch_batched_insert_wait_min_ms": {
           "default": 10,

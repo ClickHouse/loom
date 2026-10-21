@@ -15,11 +15,12 @@ from server.settings import settings
 def batched_insert_settings() -> dict[str, Any]:
     """Settings for an insert into a table written on every request (audit rows,
     transcript turns, request ledgers). ClickHouse collects concurrent inserts into
-    one table in one part (`async_insert = 1`) and answers each only once that part
-    is written (`wait_for_async_insert = 1`), so on return the row is as durable and
-    as visible as after a committed insert, and a caller's later insert lands in a
-    later part. Each waits at most `ch_batched_insert_wait_max_ms` for others to
-    join it. The deduplication token still applies (`dedup_settings`)."""
+    one table in one part per partition (`async_insert = 1`) and answers each only
+    once those parts are written (`wait_for_async_insert = 1`), so on return the
+    row is as durable and as visible as after a committed insert, and a caller's
+    later insert lands in a later part. Each waits at most
+    `ch_batched_insert_wait_max_ms` for others to join it. The deduplication token
+    still applies (`dedup_settings`)."""
     wait_max = int(settings.ch_batched_insert_wait_max_ms)
     return {
         "async_insert": 1,

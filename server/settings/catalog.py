@@ -561,7 +561,8 @@ class ClickHouseSettings(BaseModel):
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
     # Longest a batched insert (rows written on every request) waits, ms, for others to
-    # share its part; under load ~1000 / this parts/s per table, node and insert shape.
+    # share its part; under load ~1000 / this parts/s per table, node, insert shape and
+    # partition.
     ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0)
     # Shortest wait, ms, of a batched insert: what a lone insert waits when writes are
     # sparse. At most `ch_batched_insert_wait_max_ms`.
