@@ -34,6 +34,17 @@ const ROWS: MyNamespaceEntry[] = [
 ];
 
 let mine = ROWS;
+// The grouping, counted: the names decide the groups, so a keystroke reworks none.
+const { grouped } = vi.hoisted(() => ({ grouped: { calls: 0 } }));
+vi.mock("../lib/nameFamilies", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/nameFamilies")>();
+  return {
+    nameFamilies: (...args: Parameters<typeof actual.nameFamilies>) => {
+      grouped.calls += 1;
+      return actual.nameFamilies(...args);
+    },
+  };
+});
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return { ...actual, isAuthDisabled: () => false, listMine: vi.fn(async () => mine), setSavedNamespace: vi.fn() };
@@ -53,7 +64,10 @@ function seed(current: string, rows: MyNamespaceEntry[] = ROWS) {
 
 async function openPicker() {
   fireEvent.click(screen.getByRole("button", { name: /^Namespace: / }));
-  return screen.findByRole("dialog", { name: "Namespaces" });
+  const dialog = await screen.findByRole("dialog", { name: "Namespaces" });
+  // The open panel loads with its first open.
+  await within(dialog).findByRole("textbox", { name: "Search namespaces" });
+  return dialog;
 }
 
 const group = (dialog: HTMLElement, name: RegExp) => within(dialog).getByRole("button", { name });
@@ -261,6 +275,18 @@ describe("NamespacePicker groups", () => {
     const dialog = await openPicker();
     expect(within(dialog).getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Find public namespaces to join in Spaces" })).toBeNull();
+  });
+
+  it("groups the names once per list, not again for each keystroke of a search", async () => {
+    seed("team", [row("team", { role: "admin" }), row("agent-1-a"), row("agent-1-b"), row("agent-2-c")]);
+    const user = userEvent.setup();
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    await waitFor(() => expect(group(dialog, /^agent-…/)).toBeInTheDocument());
+    const before = grouped.calls;
+    await user.type(within(dialog).getByRole("textbox", { name: "Search namespaces" }), "agent-1");
+    expect(group(dialog, /^agent-…/)).toHaveTextContent("2 of 3");
+    expect(grouped.calls).toBe(before);
   });
 
   it("folds a group a search opened when its button is pressed, and opens it again", async () => {
