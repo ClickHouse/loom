@@ -98,7 +98,7 @@ def cli_actor(command: str) -> str:
 # The actors Loom's own jobs and commands write as when no token stands behind a write: a
 # pipeline, never a principal. A model call for such a row is made for the row's namespace
 # (server/llm/identity.py), not for the pipeline. Every `process:<name>` literal under
-# server/ is one of these, or a `loom` command's (tests/unit/test_pipeline_actors.py).
+# server/ is one of these, or a `loom` command's (tests/unit/test_model_call_writers.py).
 PIPELINE_ACTORS: Final = frozenset(
     {
         EXTRACTION_WORKER_ACTOR,

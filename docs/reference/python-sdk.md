@@ -217,6 +217,12 @@ and a 5xx always a `BackendUnavailable`.
 | `LoomError`            | any other code on any other status (423 `LOCKED`, …), and `OVERRIDE_NOT_STORED` | match on `.code`; a 409 `PINNED_CONFLICT` is a `PreconditionFailed`          |
 | `LoomError`            | `INVALID_RESPONSE`                                                              | a 2xx body that is not a JSON object                                         |
 
+A model call the inference gateway refused for its identity raises `AuthInsufficient`
+with code `MODEL_CALL_REFUSED` (403, never retried). One it asked to wait raises
+`BackendUnavailable` with code `MODEL_CALL_DEFERRED`, which has no `.retry_after_s`: the
+wait is in `.detail["retry_after_s"]` and the `Retry-After` header, which the transport's
+retries of an idempotent op honour.
+
 Only `PRECONDITION_FAILED` carries `.current_sha256`. The other 409s that land in
 `PreconditionFailed` (`PINNED_CONFLICT`, `GRANT_WOULD_DOWNGRADE`, `READS_LLM_FREE`)
 are not fixed by resending; match on `.code`.

@@ -182,8 +182,10 @@ class ModelCallDeferred(ModelCallRefused):
     """503 — the inference gateway asked the call's identity to wait for
     `retry_after_s`, its `Retry-After`. The answer is one
     `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists under `wait` (too many of the
-    agent's requests in progress, no credential for it yet). Not retried here;
-    a background job holds that identity's calls to the same model as long."""
+    agent's requests in progress). A request's call asked to wait two seconds or
+    less waits once and asks again first; a background job holds that identity's
+    calls to the same model as long. The SDKs raise it as `BackendUnavailable`,
+    the wait in `detail.retry_after_s` and the `Retry-After` header."""
 
     code = "MODEL_CALL_DEFERRED"
     status_code = 503
