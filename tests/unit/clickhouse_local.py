@@ -7,10 +7,11 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
-from clickhouse_connect.driver.binding import format_bind_value
+from clickhouse_connect.driver.binding import bind_query
 
 ROOT = Path(__file__).resolve().parents[2]
 CLICKHOUSE = shutil.which("clickhouse")
@@ -35,8 +36,9 @@ def run(
     `{name:Type}` parameters are bound by type, as the server binds them, so a parameter
     whose type does not fit its column fails or matches what it would in production."""
     script = ";\n".join(["CREATE DATABASE IF NOT EXISTS loom", *setup, sql])
-    # The server's own formatter: the server binds each value through it.
-    binds = [f"--param_{k}={format_bind_value(v)}" for k, v in (params or {}).items()]
+    # The server's own binder, which also keeps a DateTime64 value's fraction.
+    _, bound = bind_query(script, params or {}, UTC)
+    binds = [f"--{k}={v}" for k, v in bound.items()]
     kept = ["--path", str(path)] if path else []
     # The script goes on stdin: a test that keeps vector rows outgrows one argument's limit.
     out = subprocess.run(

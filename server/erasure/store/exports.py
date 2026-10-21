@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, cast
 
 from server.core.repo_base import _CHClient, _default_client
@@ -152,12 +152,12 @@ async def export_conversations(
     tomb_clause = "" if include_tombstoned else " AND tombstoned_at IS NULL"
     where = (
         f"org = {{org:String}} AND {column} = {{scope:String}}"
-        f" AND ts <= toDateTime64({{as_of:String}}, 3, 'UTC'){tomb_clause}{shown_sql}"
+        f" AND ts <= {{as_of:DateTime64(3)}}{tomb_clause}{shown_sql}"
     )
     params: dict[str, Any] = {
         "org": org,
         "scope": scope_value,
-        "as_of": _millis(as_of),
+        "as_of": as_of,
         **shown_params,
     }
     # A row's sums depend only on the rows before it, so the windows need only the
@@ -194,8 +194,7 @@ async def export_conversations(
         FROM loom.conversations
         WHERE {where}
           AND ({_CONVERSATION_ORDER}) <= ({{last_ns:String}}, {{last_tid:String}},
-                                          toDateTime64({{last_ts:String}}, 3, 'UTC'),
-                                          {{last_mid:String}})
+                                          {{last_ts:DateTime64(3)}}, {{last_mid:String}})
         ORDER BY {_CONVERSATION_ORDER}
         LIMIT {{kept:UInt64}}
         """,
@@ -203,7 +202,7 @@ async def export_conversations(
             **params,
             "last_ns": last["namespace"],
             "last_tid": last["thread_id"],
-            "last_ts": _millis(last["ts"]),
+            "last_ts": last["ts"],
             "last_mid": last["msg_id"],
             "kept": len(kept),
         },
@@ -217,14 +216,6 @@ async def export_conversations(
             served.append(r)
     left_out = len(kept) < len(sizes) or measured.total() > 0
     return cast("list[ConversationExportRow]", served), left_out
-
-
-def _millis(ts: datetime) -> str:
-    """`ts` as a naive UTC literal with its milliseconds: a datetime bound as a
-    parameter loses its fraction, and a turn's `ts` carries one."""
-    if ts.tzinfo is not None:
-        ts = ts.astimezone(UTC).replace(tzinfo=None)
-    return ts.strftime("%Y-%m-%d %H:%M:%S.") + f"{ts.microsecond // 1000:03d}"
 
 
 def _turn_key(row: dict[str, Any]) -> tuple[Any, ...]:
