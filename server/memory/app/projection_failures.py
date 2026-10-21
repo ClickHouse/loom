@@ -144,8 +144,8 @@ def projection_failure_row(
 
 
 async def insert_projection_failures(rows: list[dict[str, Any]], *, ch: Any | None = None) -> None:
-    """Append `projection_failure_row`s in one committed insert. Callers wrap this
-    helper in their own fail-open guard."""
+    """Append `projection_failure_row`s in one batched insert, waited for before it
+    returns. Callers wrap this helper in their own fail-open guard."""
     if not rows:
         return
     await (ch or get_client()).insert(

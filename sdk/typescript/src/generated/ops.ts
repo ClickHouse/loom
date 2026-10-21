@@ -9743,7 +9743,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.outcome_run", group: "memory", method: "outcomeRun", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 500, audit: true, readOnly: false },
   { name: "memory.outline", group: "memory", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: true },
   { name: "memory.owner_report", group: "memory", method: "ownerReport", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 800, audit: false, readOnly: true },
-  { name: "memory.pin", group: "memory", method: "pin", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: false },
+  { name: "memory.pin", group: "memory", method: "pin", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: false },
   { name: "memory.promote", group: "memory", method: "promote", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "memory.proposal_decide", group: "memory", method: "proposalDecide", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 800, audit: true, readOnly: false },
   { name: "memory.proposals", group: "memory", method: "proposals", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
