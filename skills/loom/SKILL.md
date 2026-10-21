@@ -41,10 +41,11 @@ change between releases, and ops MCP does not serve with ‡.
   stored once is recalled by meaning in every later session, yours or
   another agent's.
 - **You can trust what comes back.** A read by key (`memory.get`) says
-  when the fact was written (`created_at`, `updated_at`), names the writer
-  (`actor`, `agent`, `user_id`), and says whether a person verified it
-  (`verification`, `verified_by`) and whether a newer fact contradicts it.
-  A search with no hit strong enough to answer from says so (`abstain`).
+  when the fact was written (`created_at`, `updated_at`), who wrote it
+  (`actor`), whose memory it is (`agent`, `user_id`), how it entered memory
+  (`source_class`), whether a person verified it (`verification`,
+  `verified_by`) and whether a newer fact contradicts it. A search with no
+  hit strong enough to answer from says so (`abstain`).
 - **Your context stays small.** One `context.pack` call loads what matters
   for the task inside a token budget; large logs go to `context.offload`†
   and come back by pattern.
