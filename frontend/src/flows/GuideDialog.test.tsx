@@ -51,9 +51,9 @@ describe("GuideDialog", () => {
     await userEvent.type(screen.getByLabelText("Guide (Markdown)"), "{Enter}Tag stale");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    // The summary was not edited, so it is not sent: the server keeps the current one.
     expect(api.saveNamespaceGuide).toHaveBeenCalledWith("o", "billing", {
       content: "Keys: acct/<id>/plan\nTag stale",
-      summary: "Per-account plans",
       note: "",
       expected_revision: 3,
     });
@@ -83,6 +83,10 @@ describe("GuideDialog", () => {
     expect(onSaved).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
-    expect(vi.mocked(api.saveNamespaceGuide).mock.calls[1]?.[2].expected_revision).toBe(4);
+    const second = vi.mocked(api.saveNamespaceGuide).mock.calls[1]?.[2];
+    expect(second?.expected_revision).toBe(4);
+    // The untouched summary field took theirs, and is not sent back over it.
+    expect(screen.getByLabelText(/Summary/)).toHaveValue("Plans and tiers");
+    expect(second && "summary" in second).toBe(false);
   });
 });

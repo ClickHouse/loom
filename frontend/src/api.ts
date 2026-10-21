@@ -1228,7 +1228,7 @@ export async function getNamespaceGuide(
 export async function saveNamespaceGuide(
   org: string,
   namespace: string,
-  edit: { content: string; summary: string; note: string; expected_revision: number },
+  edit: { content: string; summary?: string; note: string; expected_revision: number },
 ): Promise<GuideSaveResult> {
   return post<GuideSaveResult>("/v1/namespace.guide_set", { org, namespace, ...edit });
 }

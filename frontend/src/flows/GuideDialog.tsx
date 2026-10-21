@@ -62,13 +62,16 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, onSav
     if (!base) return;
     setBusy(true);
     try {
+      // A summary left as the saved one is not sent, so the server keeps whatever
+      // is current: a save after a conflict does not put back an older summary.
       const r = await saveNamespaceGuide(org, namespace, {
         content,
-        summary,
+        ...(summary !== base.summary ? { summary } : {}),
         note,
         expected_revision: base.revision,
       });
       if (r.conflict && r.current) {
+        if (summary === base.summary) setSummary(r.current.summary);
         setBase(r.current);
         setConflict(true);
         return;

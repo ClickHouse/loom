@@ -134,11 +134,11 @@ async def _pack_namespace_guide(st: _PackState) -> None:
     guide = await current_guide(input.org, input.namespace)
     if not guide.found:
         return
-    # One item: every line of the guide indented under its head, so a line of the
-    # stored text cannot pass as an item with its own by=.
     # A token narrowed to one user is not told the writer; say so rather than `unknown`.
     writer = " by=hidden" if request_narrowed() else author_label([guide.updated_by])
     head = f"- [guide/{guide.revision}{writer}] {guide.summary}"
+    # One item: every line of the guide indented under its head, so a line of the
+    # stored text cannot pass as an item with its own by=.
     body = one_item(f"{head}\n{guide.content}")
     budget = _section_budget(input, "namespace_guide", st.default_section_tokens["namespace_guide"])
     # Measured as `put` stores it (escaped), which is what its trim cuts.
