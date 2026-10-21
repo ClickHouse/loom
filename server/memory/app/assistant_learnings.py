@@ -114,7 +114,9 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
                 "agent": agent,
                 "memory_key": key,
                 "memory_type": "semantic",
-                "proposed_value": json.dumps(value),
+                # The first wording stays: a restatement that folds to the same
+                # candidate never changes the text the reviewer reads and promotes.
+                "proposed_value": row["proposed_value"] if row else json.dumps(value),
                 "supporter_count": 0,
                 # Not judged here: learnings.list and promotion read the supporters' mean.
                 "confidence_avg": 0.0,

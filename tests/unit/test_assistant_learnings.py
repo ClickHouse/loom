@@ -342,6 +342,55 @@ async def test_a_different_rule_under_one_key_is_a_sibling_candidate(queue: _Que
 
 
 @pytest.mark.asyncio
+async def test_a_restated_rule_keeps_its_first_wording(
+    queue: _Queue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.api.models_learnings import LearningsListInput, LearningsReviewInput
+    from server.memory.app import learnings as h
+
+    restated = "the assistant escalates any refund over $500 to a human"
+    await _file(_state("alice", "s1"))
+    await _file(_state("bob", "s2"), _rule_fact(value=restated))
+    assert queue.support(_cid()) == [("alice", "s1"), ("bob", "s2")]
+
+    decided = {"decided_at": None, "decided_by": "", "decision_reason": ""}
+    written: list[Any] = []
+
+    async def fake_list(*_a: Any, **_kw: Any) -> list[dict[str, Any]]:
+        return [{**row, **decided} for row in queue.rows.values()]
+
+    async def fake_stats(*_a: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                "candidate_id": _cid(),
+                "users": 2,
+                "sessions": 2,
+                "confidence": 0.9,
+                "pairs": _PAIRS,
+                "asked": "",
+                "said": "",
+            }
+        ]
+
+    async def fake_upsert(doc: Any) -> None:
+        written.append(doc)
+
+    monkeypatch.setattr(learnings_repo, "list_by_status", fake_list)
+    monkeypatch.setattr(learnings_repo, "supporter_stats", fake_stats)
+    monkeypatch.setattr("server.knowledge.app.writes.handle_knowledge_upsert", fake_upsert)
+
+    listed = await h.handle_learnings_list(LearningsListInput(org="o", namespace="ns"))
+    assert [r.proposed_value for r in listed.rows] == [_VALUE]
+    await h.handle_learnings_review(
+        LearningsReviewInput(
+            org="o", namespace="ns", candidate_id=_cid(), decision="promote", approver="admin"
+        )
+    )
+    (doc,) = written
+    assert doc.content == _VALUE
+
+
+@pytest.mark.asyncio
 async def test_a_supporter_racing_a_review_keeps_the_decision(
     queue: _Queue, monkeypatch: pytest.MonkeyPatch
 ) -> None:
