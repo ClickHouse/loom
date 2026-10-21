@@ -59,7 +59,9 @@ change between releases, and ops MCP does not serve with ‡.
    `context.pack`, and keep it off `memory.search`‡ and `memory.ask`, where
    a `run_id` filters to the run's own rows (over HTTP, the `X-Loom-Run-Id`
    header labels a read without filtering it). In Python,
-   `agent.run_scope(...)` does this for every typed helper; in TypeScript,
+   `agent.run_scope(...)` does this for the typed helpers except
+   `agent.memory.update` and `update_by_id`, which need `run_id=` passed
+   (a raw `agent.call` to `memory.update` gets it); in TypeScript,
    pass `runId` in the scope argument of writes, working-memory calls and
    `contextPack`, never of `recall` or `ask`; over MCP, the connection's own
    run labels reads.
@@ -113,7 +115,7 @@ change between releases, and ops MCP does not serve with ‡.
 | `memory_id` and `version` on a `memory.set`, `new_version` on a `memory.update` | it persisted | only now say "saved" |
 | `updated: false`, `reason: "not_found"` on a `memory.update` | no live row under that key for the identity you sent; nothing was written | resend with `agent: "*"` when another agent wrote it; never assume it saved |
 | 409 `AMBIGUOUS_KEY`, `candidates` on a `memory.update` | several writers hold that key | resend with the candidate's `agent`, `user_id` and `session_id`, or use `memory.update_by_id` with its id |
-| `conflict_verdict: "conflict"`, `peers` | it contradicts a stored fact; both are marked | show both and ask which is current |
+| `conflict_verdict: "conflict"`, `peers` on a `memory.set` (`conflict_peers`, a count, on a `memory.update`) | it contradicts a stored fact; both are marked | show both (read a revision's peers with `memory.ask`) and ask which is current |
 | 409 `PINNED_CONFLICT` | a pinned fact holds that key, or one close to it; a write that does not pin never replaces it | if the pinned fact is wrong, `memory.update` it (the pin stays); if yours is a different fact, store it under its own key |
 | `conflict_verdict: "pending"` | the conflict judge runs after the write | the row is stored; `memory.get` later shows the settled `status` |
 | `noop`, `merged_into_key`, `duplicate_of` | already known | nothing more to store |
@@ -165,10 +167,10 @@ reads (`memory.search`‡, `memory.ask`, `memory.list`, `memory.history`†,
 `conversation.search`†‡) and revisions by key (`memory.update`).
 `memory.related`† looks its source key up under your exact identity, so
 name the identity that wrote it. In the Python helpers the argument is
-`agent_id="*"` (`agent="*"` on `agent.memory.update`; `agent.memory.list`
-takes none, so list every author through `agent.call`);
-`agent.memory.search` and `agent.memory.ask`, and TypeScript `agent.recall`
-and `agent.ask`, already send it. In TypeScript, `agent.call` takes
+`agent_id="*"` (`agent.memory.list` takes none, so list every author
+through `agent.call`); `agent.memory.search`, `agent.memory.ask` and
+`agent.memory.update`, and TypeScript `agent.recall` and `agent.ask`,
+already read every author. In TypeScript, `agent.call` takes
 `userId`, `sessionId` and `runId` in its scope argument, not the body.
 
 A token minted with an `own_user` read scope refuses a read without
@@ -183,9 +185,11 @@ naming it. That covers namespace-wide reads (`namespace.validate`,
 key or id (`memory.update`, `memory.move`, `memory.link`, `memory.verify`),
 writes to tables with no user column (`memory.record.write`,
 `decision.record`†, `procedure.record_run`†, `context.offload`†),
-conversations and the entity graph; skip that step or ask the owner. An end user's token also reaches no op outside a namespace except
-`collection.create`†, `collection.list`†, `namespace.list_mine`,
-`grants.pending_for_me`† and `mentor.guide`† (so not `ops.capabilities`).
+the conversation log (`conversation.append`, `conversation.search`†‡) and
+the entity graph; skip that step or ask the owner. An end user's token
+also reaches no op outside a namespace except `collection.create`†,
+`collection.list`†, `namespace.list_mine`, `grants.pending_for_me`† and
+`mentor.guide`† (so not `ops.capabilities`).
 
 ## End-of-task review
 

@@ -130,7 +130,8 @@ on loses that boost.
 | `observe.record` | Record one tool observation (input, output, error) under the run. |
 
 Python: `async with agent.run_scope(goal=...) as run:` opens and closes it.
-Its typed helpers carry the run's `run_id` on every call, and on
+Its typed helpers carry the run's `run_id` on every call (except
+`agent.memory.update` and `update_by_id`, which take `run_id=` from you), and on
 `memory.search`‡ and `memory.ask` send it as the `X-Loom-Run-Id` header (a
 body `run_id` there filters to the run's rows; `memory.list` gets the
 header too and has no run filter). A raw `agent.call` inside
