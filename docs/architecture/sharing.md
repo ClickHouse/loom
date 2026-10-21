@@ -70,17 +70,14 @@ The same five ops serve both ways a chat runs in front of Loom:
   conversation ops refuse an end-user token (it is pinned to one user, and a thread has
   no user axis to bound), so no transcript lives in a personal collection: a save there
   stores the text the request sends as a saved-only row, and unsaving it removes the row.
+  As under the pinned token above, a body naming another user is refused with 403.
 
-A save the server will not index answers `indexed: false` with a `reason`:
-`high_sensitivity` for text that reads as high (a credential, card number, SSN or stated
-PIN), `deleted` for a tombstoned turn (in `@me`, one a user erasure left),
-`embed_failed` when the embed fails (the message stays saved, and saving it again
-retries), and, for a turn a transcript holds, `unsupported_role` for a stored system
-or tool turn and `owner_mismatch` for another user's turn. Under the pinned token, a
-body naming another user is refused with 403. A client draws a conversation's saved state with one
-`conversation.saved_status` call, and a user erasure takes the user's conversation rows,
-saved ones included. A user-scope `erasure.export` does not return conversation rows,
-so it leaves out saved messages, as it leaves out the rest of a user's transcript.
+A save that is not indexed answers `indexed: false` with a `reason` ([Saving single
+messages](../features/conversations-and-sessions.md#saving-single-messages)). A client
+draws a conversation's saved state with one `conversation.saved_status` call, and a user
+erasure takes the user's conversation rows, saved ones included. A user-scope
+`erasure.export` does not cover saved messages yet: it reads no conversation rows, so a
+user's saved messages are not in their export.
 
 ## Identity
 
@@ -245,11 +242,11 @@ Collections that hold other writers' documents stay: Loom deletes only what its 
 asked to delete. `collection.delete` purges what its collection held (a namespace erasure
 that takes the rows off disk) before the collection leaves the tree. A user-scope
 `erasure.export` returns the chunks that user wrote in the collections its caller may
-read, and in the user's own personal collection (not their saved messages, which are
-conversation rows; see [Saved messages](#saved-messages)). An org admin may erase a
-collection's rows without reading them; a platform admin sees every collection. Each
-section's read leaves out what the caller may not see before its limit, so a hidden row
-never takes a visible row's place on the page.
+read, and in the user's own personal collection. Their saved messages are conversation
+rows, which the export does not cover yet ([Saved messages](#saved-messages)). An org
+admin may erase a collection's rows without reading them; a platform admin sees every
+collection. Each section's read leaves out what the caller may not see before its limit,
+so a hidden row never takes a visible row's place on the page.
 
 ## Namespace guides
 

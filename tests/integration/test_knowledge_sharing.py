@@ -263,8 +263,9 @@ def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gat
         ("c9", "m9", "assistant")
     ], rows
     assert rows[0]["content_excerpt"] == content, rows
-    # The listing's ts is the save time, which matches the save's answer
-    # (compared with the server's clock, not this host's).
+    # A saved-only row is written with its save time as its turn time, so the
+    # listing's saved_at matches the turn ts the save answers (both from the
+    # server's clock, not this host's).
     listed_at = datetime.fromisoformat(rows[0]["ts"]).replace(tzinfo=None)
     saved_at = datetime.fromisoformat(saved["ts"]).replace(tzinfo=None)
     assert abs(listed_at - saved_at) < timedelta(seconds=1), (rows, saved)
