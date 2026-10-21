@@ -104,6 +104,10 @@ async def test_update_with_the_identity_sentinels_resolves_the_key_across_identi
     assert (own["updated"], own["reason"]) == (True, "")
     assert other["updated"] is True and other["new_version"] > own["new_version"]
     assert got is not None and got["value"] == "Thursday."
+    # Both updates landed on the writer's row (read back under its own user and session)
+    # and kept its author.
+    assert own["memory_id"] == other["memory_id"] == got["memory_id"]
+    assert got["agent"] == "w" and got["version"] == other["new_version"]
 
 
 @pytest.mark.asyncio

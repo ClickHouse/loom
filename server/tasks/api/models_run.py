@@ -282,7 +282,7 @@ class RunGradeInput(BaseModel):
     ref: str = Field(default="", max_length=512)
 
     @model_validator(mode="after")
-    def _one_target(self) -> RunGradeInput:
+    def _at_most_one_target(self) -> RunGradeInput:
         # Naming neither is refused by the handler, after the read-scope gate.
         self.run_id = named(self.run_id.strip()) or ""
         self.session_id = named(self.session_id.strip()) or ""

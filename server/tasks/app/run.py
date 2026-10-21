@@ -867,13 +867,13 @@ _GRADE_SESSION_LIMIT = 200
 
 async def _runs_to_grade(ch: Any, input: RunGradeInput) -> list[RunLedgerRow]:
     """The run addressed by `run_id`, or the session's runs, newest first."""
-    run_id = input.run_id.strip()
+    run_id = input.run_id
     return await runs_store.runs_to_grade(
         ch,
         input.org,
         input.namespace,
         run_id=run_id,
-        session_id=input.session_id.strip(),
+        session_id=input.session_id,
         limit=1 if run_id else _GRADE_SESSION_LIMIT,
     )
 
@@ -895,7 +895,7 @@ async def handle_run_grade(input: RunGradeInput) -> RunGradeOutput:
     ch = get_client()
     rows = await _runs_to_grade(ch, input)
     if not rows:
-        what = f"run {input.run_id!r}" if input.run_id.strip() else f"session {input.session_id!r}"
+        what = f"run {input.run_id!r}" if input.run_id else f"session {input.session_id!r}"
         raise NotFoundError(f"{what} has no runs in {input.org}/{input.namespace}")
     source, reason, ref = input.source.strip(), input.reason.strip(), input.ref.strip()
     now = _now()
