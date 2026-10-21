@@ -502,7 +502,7 @@ Fields for every `mentor` op: [operations/mentor.md](operations/mentor.md).
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
 | [`mentor.brief`](operations/mentor.md#mentorbrief) | One agent's usage profile and the store's hints. | viewer | read | yes |  |
-| [`mentor.guide`](operations/mentor.md#mentorguide) | The agent guide this server ships. | viewer | read | no |  |
+| [`mentor.guide`](operations/mentor.md#mentorguide) | The agent guide this server ships; the same for every caller. | viewer | read | no |  |
 
 ### namespace
 

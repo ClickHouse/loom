@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import re
+from typing import Any
+
+import pytest
 
 import server
+from server.auth.jwt import AuthInfo
+from server.code.app import member_writes
 from server.core.paths import AGENT_GUIDE_DIR, REPO_ROOT
-from server.identity.domain.read_scope import honours_read_scope
 from server.insights.api.models_mentor import MentorGuideInput
 from server.insights.app.mentor_guide import handle_mentor_guide
 from server.operations.registry import OPERATIONS_BY_NAME
+from server.transport import gates
 
 
 def _guide(part: str):
@@ -62,9 +67,40 @@ def test_experimental_ops_in_the_reference_carry_the_marker() -> None:
                 assert bool(mark) == experimental, name
 
 
-def test_a_token_narrowed_to_one_user_may_read_the_guide() -> None:
+@pytest.mark.parametrize(
+    "auth",
+    [
+        AuthInfo(
+            subject="sa:bot",
+            org="acme",
+            namespaces=("n",),
+            roles=("viewer",),
+            is_service_account=True,
+        ),
+        AuthInfo(
+            subject="sa:bot",
+            org="acme",
+            namespaces=("n",),
+            roles=(),
+            is_service_account=True,
+            read_user_id="u1",
+        ),
+        AuthInfo(subject="user:u1", org="acme", namespaces=(), roles=(), is_service_account=False),
+    ],
+    ids=["viewer", "narrowed-to-one-user", "end-user"],
+)
+def test_every_caller_the_primer_names_the_guide_to_is_admitted(
+    auth: AuthInfo, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # The guide holds no memory, and the primer names it on every connection.
-    assert honours_read_scope("mentor.guide")
+    async def _role_gate(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(member_writes, "authorize_op", _role_gate)
+    op = OPERATIONS_BY_NAME["mentor.guide"]
+    target = gates.authz_target(op, org="acme", namespace=None, auth=auth)
+    asyncio.run(gates.authorize(op, auth, target, transport="http"))
+    gates.read_scope(op, auth, MentorGuideInput())
 
 
 def test_the_image_ships_the_guide() -> None:

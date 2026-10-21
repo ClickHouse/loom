@@ -30,9 +30,12 @@ def _frontmatter(text: str) -> dict[str, str]:
 
 
 @pytest.mark.parametrize("name", ROOT_SKILLS)
-def test_skill_frontmatter_follows_agent_skills_shape(name: str) -> None:
-    fm = _frontmatter((ROOT / "skills" / name / "SKILL.md").read_text())
+def test_skill_frontmatter_follows_agent_skills_shape_at_the_release_version(name: str) -> None:
+    text = (ROOT / "skills" / name / "SKILL.md").read_text()
+    fm = _frontmatter(text)
     assert fm["name"] == name
+    version = re.search(r'^\s+version:\s*"([^"]+)"', text, re.M)
+    assert version and version.group(1) == server.__version__
     assert "WHEN:" in fm["description"], (
         "description carries the trigger (WHEN:) like the MCP tool prose"
     )
@@ -50,16 +53,11 @@ def test_skill_names_only_registered_code_operations() -> None:
     assert {"code.search", "code.symbol", "code.callers", "code.outcome"} <= named
 
 
-@pytest.mark.parametrize("name", ROOT_SKILLS)
-def test_marketplace_lists_the_skill_plugin_with_repo_root_source(name: str) -> None:
+def test_marketplace_lists_the_skill_plugin_with_repo_root_source() -> None:
     mp = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
     entry = next(p for p in mp["plugins"] if p["name"] == "loom-code-skill")
     assert entry["source"] == "./"
     manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
     assert manifest["name"] == "loom-code-skill"
-    # One version, stated in the plugin, each skill and the server: the root skills are
-    # released with the server.
-    m = re.search(
-        r'^\s+version:\s*"([^"]+)"', (ROOT / "skills" / name / "SKILL.md").read_text(), re.M
-    )
-    assert m and m.group(1) == manifest["version"] == server.__version__
+    # The root skills are released with the server: the plugin carries its version.
+    assert manifest["version"] == server.__version__

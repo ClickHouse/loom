@@ -14013,14 +14013,14 @@ class MentorAdoption(TypedDict, total=False):
 
 
 class MentorGuideInput(TypedDict, total=False):
-    "The agent guide this server ships. Identity is optional: the guide"
+    "The agent guide this server ships; the same for every caller."
 
     org: NotRequired[str]
     part: NotRequired[Literal["skill", "reference", "all"]]
 
 
 class MentorGuideBody(TypedDict, total=False):
-    "The agent guide this server ships. Identity is optional: the guide"
+    "The agent guide this server ships; the same for every caller."
 
     org: NotRequired[str]
     part: NotRequired[Literal["skill", "reference", "all"]]

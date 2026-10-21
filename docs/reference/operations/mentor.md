@@ -40,7 +40,7 @@ One agent's usage profile and the store's hints.
 
 ## `mentor.guide`
 
-The agent guide this server ships.
+The agent guide this server ships; the same for every caller.
 
 `POST /v1/mentor.guide` · MCP `loom_mentor_guide` · role `viewer` · read · not listed under the MCP `all` toolset
 

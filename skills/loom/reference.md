@@ -28,8 +28,8 @@ on a row.
 | `memory.brief` | Orientation on a task: an answer, its grounding, unknowns, what to read next. |
 | `memory.get`, `memory.bulk_get`, `memory.list` | Read by exact key, many keys, or a key `prefix`. |
 | `memory.update`, `memory.update_by_id` | Revise an existing row; `if_match_sha256` refuses a stale overwrite. |
-| `memory.delete` | Retire a fact you or your writer stored. |
-| `memory.pin`† | Mark a fact as confirmed by a person; a contradicting write is refused. |
+| `memory.delete` | Retire a fact by key: yours, else the same user's row under another agent. |
+| `memory.pin`† | Save a fact and protect it: a write that does not pin never replaces it. |
 | `memory.link` | Assert an edge between two keys (`supersedes`, `supports`, `depends_on`, `caused`). |
 | `memory.move` | Rename keys and leave redirects, so old readers keep working. |
 | `memory.history`†, `memory.provenance`, `memory.lineage`† | Every version of a key; where a row came from. |

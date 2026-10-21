@@ -94,8 +94,7 @@ class MentorBriefOutput(BaseModel):
 
 
 class MentorGuideInput(BaseModel):
-    """The agent guide this server ships. Identity is optional: the guide
-    is the same for every caller."""
+    """The agent guide this server ships; the same for every caller."""
 
     org: str = ""
     # Which part: `skill` (the loop and the rules), `reference` (every plane and its ops) or `all`.

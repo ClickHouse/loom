@@ -29,7 +29,7 @@ experimental ops with †: their fields may change between releases.
 Experimental ops this file names: `blacklist.add`, `context.fetch`,
 `context.offload`, `decision.record`, `knowledge.upsert`, `memory.history`,
 `memory_schema.propose`, `mentor.guide`, `procedure.record_run`,
-`search.query`, `task.create`.
+`search.query`, `task.create`, `working_memory.append`.
 
 ## Why use it
 
@@ -74,7 +74,7 @@ Experimental ops this file names: `blacklist.add`, `context.fetch`,
 | A transcript, email or thread with facts in it | `memory.set_from_messages`: the server extracts them | one giant `memory.set` |
 | A document over about 2 KB (spec, runbook, report) | `knowledge.upsert` as Markdown, plus one pointer `memory.set` | `memory.set` holding the text |
 | Rows with identity (PRs by number, services by id) | `memory.record.write` against a schema an admin registered (`memory_schema.register`; a writer proposes one with `memory_schema.propose`) | one memory per batch |
-| Your plan, a checklist, a lease, a cursor, "where was I" | `working_memory.set` / `append` by `block_key` | `memory.set` read in a loop |
+| Your plan, a checklist, a lease, a cursor, "where was I" | `working_memory.set` or `working_memory.append` by `block_key` | `memory.set` read in a loop |
 | A log, diff or tool output too big for context | `context.offload`, then `context.fetch` | memory or working memory |
 | Work for another agent | `task.create` into its inbox | a memory it might search for |
 | A choice made, with its reasons | `decision.record` | a free-text memory |
@@ -105,7 +105,7 @@ Experimental ops this file names: `blacklist.add`, `context.fetch`,
 |---|---|---|
 | `memory_id` and `version` on a write | it persisted | only now say "saved" |
 | `conflict_verdict: "conflict"`, `peers` | it contradicts a stored fact; both are marked | show both and ask which is current |
-| 409 `PINNED_CONFLICT` | a person pinned the existing fact | report it; never retry under a new key |
+| 409 `PINNED_CONFLICT` | a pinned fact holds that key, or one close to it; a write that does not pin never replaces it | if the pinned fact is wrong, `memory.update` it (the pin stays); if yours is a different fact, store it under its own key |
 | `conflict_verdict: "pending"` | the conflict judge runs after the write | the row is stored; `memory.get` later shows the settled `status` |
 | `noop`, `merged_into_key`, `duplicate_of` | already known | nothing more to store |
 | `advisories` on a write | the shape is wrong (a blob, double-encoded JSON) | fix the shape, by the table above |
