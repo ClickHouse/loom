@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 
 import server
@@ -20,9 +19,7 @@ def _guide(part: str):
 
 def test_skill_part_is_the_body_without_frontmatter_and_carries_the_version() -> None:
     out = _guide("skill")
-    # The root skills ship in one plugin and are released with the server, at its version.
-    manifest = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())
-    assert out.version == manifest["version"] == server.__version__
+    assert out.version == server.__version__
     assert out.text.startswith("# loom")
     assert "description:" not in out.text
 
@@ -33,16 +30,28 @@ def test_all_is_the_skill_followed_by_the_reference() -> None:
     assert reference == (AGENT_GUIDE_DIR / "reference.md").read_text(encoding="utf-8")
 
 
+# Dotted names in the guide that are not ops: SDK call paths and the guide's own files.
+_NOT_OPS = ("agent.", "loom.", "reference.md")
+
+
+def _named_ops(text: str) -> set[str]:
+    # A backticked dotted name, alone or opening a call (`run.begin(goal=...)`).
+    names = set(re.findall(r"`([a-z_]+(?:\.[a-z_]+)+)[`(]", text))
+    return {n for n in names if not n.startswith(_NOT_OPS)}
+
+
 def test_every_op_the_guide_names_is_registered() -> None:
-    text = _guide("all").text
-    groups = {name.split(".")[0] for name in OPERATIONS_BY_NAME}
-    named = {
-        m
-        for m in re.findall(r"`([a-z_]+(?:\.[a-z_]+)+)`", text)
-        if m.split(".")[0] in groups and not m.endswith((".md", ".py"))
-    }
+    named = _named_ops(_guide("all").text)
     assert named, "the guide names no op"
     assert named <= set(OPERATIONS_BY_NAME), sorted(named - set(OPERATIONS_BY_NAME))
+
+
+def test_the_skill_lists_every_experimental_op_it_names() -> None:
+    text = _guide("skill").text
+    listed = re.search(r"Experimental ops this file names: (.*?)\.\n\n", text, re.S)
+    assert listed, "SKILL.md lists its experimental ops"
+    experimental = {n for n in _named_ops(text) if OPERATIONS_BY_NAME[n].maturity == "experimental"}
+    assert set(re.findall(r"`([a-z_.]+)`", listed.group(1))) == experimental
 
 
 def test_experimental_ops_in_the_reference_carry_the_marker() -> None:
@@ -51,15 +60,6 @@ def test_experimental_ops_in_the_reference_carry_the_marker() -> None:
             if name in OPERATIONS_BY_NAME:
                 experimental = OPERATIONS_BY_NAME[name].maturity == "experimental"
                 assert bool(mark) == experimental, name
-
-
-def test_skill_frontmatter_follows_agent_skills_shape() -> None:
-    front = re.match(r"\A---\n(.*?)\n---\n", (AGENT_GUIDE_DIR / "SKILL.md").read_text(), re.S)
-    assert front, "SKILL.md needs YAML frontmatter"
-    assert re.search(r"^name: loom$", front.group(1), re.M)
-    description = re.search(r'^description: "(.*)"$', front.group(1), re.M)
-    assert description and "WHEN:" in description.group(1)
-    assert len(description.group(1)) <= 1024
 
 
 def test_a_token_narrowed_to_one_user_may_read_the_guide() -> None:

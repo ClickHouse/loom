@@ -1,6 +1,7 @@
-"""The loom-code Agent Skill must name only operations that exist — the
-skill is read by agents on other tools, so a renamed op would send them
-to a 404 with no hook to correct it."""
+"""The root Agent Skills (loom-code, loom) keep the Agent Skills shape and the
+release version, and loom-code names only operations that exist — the skills
+are read by agents on other tools, so a renamed op would send them to a 404
+with no hook to correct it. The loom skill's ops: test_mentor_guide.py."""
 
 from __future__ import annotations
 
@@ -8,8 +9,13 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
+import server
+
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "skills" / "loom-code" / "SKILL.md"
+ROOT_SKILLS = ("loom-code", "loom")
 
 
 def _frontmatter(text: str) -> dict[str, str]:
@@ -23,9 +29,10 @@ def _frontmatter(text: str) -> dict[str, str]:
     return out
 
 
-def test_skill_frontmatter_follows_agent_skills_shape() -> None:
-    fm = _frontmatter(SKILL.read_text())
-    assert fm["name"] == "loom-code"
+@pytest.mark.parametrize("name", ROOT_SKILLS)
+def test_skill_frontmatter_follows_agent_skills_shape(name: str) -> None:
+    fm = _frontmatter((ROOT / "skills" / name / "SKILL.md").read_text())
+    assert fm["name"] == name
     assert "WHEN:" in fm["description"], (
         "description carries the trigger (WHEN:) like the MCP tool prose"
     )
@@ -43,12 +50,16 @@ def test_skill_names_only_registered_code_operations() -> None:
     assert {"code.search", "code.symbol", "code.callers", "code.outcome"} <= named
 
 
-def test_marketplace_lists_the_skill_plugin_with_repo_root_source() -> None:
+@pytest.mark.parametrize("name", ROOT_SKILLS)
+def test_marketplace_lists_the_skill_plugin_with_repo_root_source(name: str) -> None:
     mp = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
     entry = next(p for p in mp["plugins"] if p["name"] == "loom-code-skill")
     assert entry["source"] == "./"
     manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
     assert manifest["name"] == "loom-code-skill"
-    # one version, stated twice (ai-ready enforces the same in its CI)
-    m = re.search(r'^\s+version:\s*"([^"]+)"', SKILL.read_text(), re.M)
-    assert m and m.group(1) == manifest["version"]
+    # One version, stated in the plugin, each skill and the server: the root skills are
+    # released with the server.
+    m = re.search(
+        r'^\s+version:\s*"([^"]+)"', (ROOT / "skills" / name / "SKILL.md").read_text(), re.M
+    )
+    assert m and m.group(1) == manifest["version"] == server.__version__

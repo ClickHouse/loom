@@ -25,9 +25,11 @@ The fields are the same everywhere. `loom_op {op: "help", query: "<words>"}`
 (MCP) finds ops by words, with their arguments; `ops.capabilities` lists
 every op this server serves, with the role each one needs. The full catalog of planes is in `reference.md` beside this file;
 over the wire, `mentor.guide` with `part: "reference"` returns it. It marks
-experimental ops with †: their fields may change between releases, and
-several ops below are experimental (`search.query`, `context.offload`,
-`knowledge.upsert`, `task.create`, `decision.record`, `blacklist.add`).
+experimental ops with †: their fields may change between releases.
+Experimental ops this file names: `blacklist.add`, `context.fetch`,
+`context.offload`, `decision.record`, `knowledge.upsert`, `memory.history`,
+`memory_schema.propose`, `mentor.guide`, `procedure.record_run`,
+`search.query`, `task.create`.
 
 ## Why use it
 

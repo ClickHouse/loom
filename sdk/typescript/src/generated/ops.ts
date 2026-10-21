@@ -6227,7 +6227,7 @@ export interface MentorGuideInput {
 
 export interface MentorGuideOutput {
   version: string;
-  part: string;
+  part: "skill" | "reference" | "all";
   text: string;
 }
 

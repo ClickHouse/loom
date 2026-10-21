@@ -17,12 +17,12 @@ Bump each of these in the release commit:
 
 The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo` and `loom report` report it. Four checks keep the numbers consistent:
 
-| Check                                    | Asserts                                                                         |
-| ---------------------------------------- | ------------------------------------------------------------------------------- |
-| `tests/unit/test_release_version.py`     | `server/__init__.py` equals `pyproject.toml`, and every surface reports it      |
-| `npm run check:version` (TypeScript SDK) | its four version sources agree                                                  |
-| `tests/unit/test_codex_plugin.py`        | both plugin manifests carry one version                                         |
-| `tests/unit/test_mentor_guide.py`        | the `loom` skill's version equals `.claude-plugin/plugin.json` and the server's |
+| Check                                    | Asserts                                                                      |
+| ---------------------------------------- | ---------------------------------------------------------------------------- |
+| `tests/unit/test_release_version.py`     | `server/__init__.py` equals `pyproject.toml`, and every surface reports it   |
+| `npm run check:version` (TypeScript SDK) | its four version sources agree                                               |
+| `tests/unit/test_codex_plugin.py`        | both plugin manifests carry one version                                      |
+| `tests/unit/test_loom_code_skill.py`     | both root skills and `.claude-plugin/plugin.json` carry the server's version |
 
 Two plugin pull requests that bump to the same number merge without a conflict, and the second ships nothing to clients the first already updated. Check the plugin version on `main` before bumping.
 

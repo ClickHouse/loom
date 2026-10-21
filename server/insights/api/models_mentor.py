@@ -106,6 +106,6 @@ class MentorGuideOutput(BaseModel):
     # The guide's version (`metadata.version` of skills/loom/SKILL.md).
     version: str
     # The part returned, as requested.
-    part: str
+    part: Literal["skill", "reference", "all"]
     # The guide as Markdown, without the skill's frontmatter.
     text: str

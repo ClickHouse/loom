@@ -52,7 +52,7 @@ The agent guide this server ships.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `version` | `str` | The guide's version (`metadata.version` of skills/loom/SKILL.md). |
-| `part` | `str` | The part returned, as requested. |
+| `part` | `Literal['skill', 'reference', 'all']` | The part returned, as requested. |
 | `text` | `str` | The guide as Markdown, without the skill's frontmatter. |
 
 <!-- prettier-ignore-end -->

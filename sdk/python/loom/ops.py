@@ -14028,7 +14028,7 @@ class MentorGuideBody(TypedDict, total=False):
 
 class MentorGuideOutput(TypedDict, total=False):
     version: Required[str]
-    part: Required[str]
+    part: Required[Literal["skill", "reference", "all"]]
     text: Required[str]
 
 
