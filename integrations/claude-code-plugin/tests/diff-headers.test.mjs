@@ -101,6 +101,31 @@ test("a header-shaped text after a line end inside a changed line is not taken f
   assert.deepEqual(out.split("\n"), ["diff --git a/p.cpp b/p.cpp", "+++ b/p.cpp", "@@ -1 +1,2 @@ f("]);
 });
 
+test("the hunks of a file whose header is dropped are not filed under the file before it", () => {
+  const diff = [
+    "diff --git a/a.cpp b/a.cpp",
+    "+++ b/a.cpp",
+    "@@ -1 +1 @@ void f(int)",
+    "+x",
+    "diff --git a/odd\u2028name.cpp b/odd\u2028name.cpp",
+    "+++ b/odd\u2028name.cpp",
+    "@@ -5 +5 @@ void g(int)",
+    "+y",
+    "diff --git a/c.py b/c.py",
+    "+++ b/c.py",
+    "@@ -9 +9 @@ def h(x):",
+    "",
+  ].join("\n");
+  assert.deepEqual(diffHeaders(diff, 200_000, "").split("\n"), [
+    "diff --git a/a.cpp b/a.cpp",
+    "+++ b/a.cpp",
+    "@@ -1 +1 @@ f(",
+    "diff --git a/c.py b/c.py",
+    "+++ b/c.py",
+    "@@ -9 +9 @@ h(",
+  ]);
+});
+
 test("only diff --git, --- and +++ lines are kept from a file's header", () => {
   const diff = [
     "diff --git a/x b/x",

@@ -768,6 +768,8 @@ export const DIFF_ARGS = [
 
 // A hunk header: its ranges, then the function context git appends to it.
 const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/;
+// TOKEN_SHAPES_RE without its global flag, so `test` keeps no position between calls.
+const TOKEN_SHAPE_RE = new RegExp(TOKEN_SHAPES_RE.source);
 const NOT_FUNCTION_NAMES = new Set(["if", "for", "while", "switch", "return", "catch", "sizeof", "decltype"]);
 // Python's whitespace (`str.split()`, `str.strip()`) and line ends other than `\n`
 // (`str.splitlines()`), so the client reads a header the way the server does.
@@ -779,7 +781,7 @@ const PY_LINE_END_RE = /[\r\v\f\x1c-\x1e\x85\u2028\u2029]/;
 // header elsewhere (Markdown, YAML, `.env`) quotes whatever line came before the
 // change, so no name is sent for it. A language left out loses only the name.
 const FUNCTION_FILE_RE =
-  /\.(c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|rs|go|java|vue|svelte|astro|sh|bash)$/i;
+  /\.(c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|py|pyi|pyw|ts|tsx|mts|cts|js|jsx|mjs|cjs|rs|go|java|vue|svelte|astro|proto|sh|bash|zsh|ksh|bats|command)$/i;
 
 /** The function name in a hunk header's context, as the server reads it
  *  (`_hunk_context_name` in server/code/app/symbol/diff.py): the last word before
@@ -802,8 +804,9 @@ export function hunkFunctionName(context, token = "") {
   if (/(^|[^:]):$|=$/.test(before)) return "";
   if (NOT_FUNCTION_NAMES.has(name)) return "";
   if (!/^~?[A-Za-z_][\p{L}\p{N}_]*(::~?[A-Za-z_][\p{L}\p{N}_]*)*$/u.test(name)) return "";
-  // only these shapes can be a bare identifier; an assignment cannot (no `=` or `:`)
-  const credential = new RegExp(TOKEN_SHAPES_RE.source).test(name) || (token.length >= 8 && name.includes(token));
+  // the identifier test above already rejects `=` and `:`, so of the redaction
+  // patterns only the token shapes and the token itself can match a name
+  const credential = TOKEN_SHAPE_RE.test(name) || (token.length >= 8 && name.includes(token));
   return credential ? "" : name;
 }
 
@@ -817,17 +820,25 @@ export function diffHeaders(diff, max, token = resolveToken()) {
   const out = [];
   let built = 0;
   let inFileHeader = false;
+  let skipFile = false;
   let path = "";
   for (const line of String(diff ?? "").split("\n")) {
     let kept = null;
-    if (line.startsWith("diff --git ")) inFileHeader = true;
+    if (line.startsWith("diff --git ")) {
+      inFileHeader = true;
+      skipFile = false;
+    }
     const end = line.search(PY_LINE_END_RE);
+    // a header line the server would split is dropped with the file's hunks, which
+    // would otherwise be read as the previous file's
+    if (inFileHeader && end >= 0) skipFile = true;
+    if (skipFile) continue;
     const hunk = HUNK_HEADER_RE.exec(end < 0 ? line : line.slice(0, end));
     if (hunk) {
       inFileHeader = false;
       const name = FUNCTION_FILE_RE.test(path) ? hunkFunctionName(hunk[2], token) : "";
       kept = hunk[1] + (name ? ` ${name}(` : "");
-    } else if (inFileHeader && end < 0 && /^(diff --git |--- |\+\+\+ )/.test(line)) {
+    } else if (inFileHeader && /^(diff --git |--- |\+\+\+ )/.test(line)) {
       kept = line;
       if (line.startsWith("+++ ")) path = line.slice(4).trim();
     }
