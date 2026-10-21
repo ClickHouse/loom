@@ -5201,7 +5201,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.outcome_run": 500,
     "memory.outline": 250,
     "memory.owner_report": 800,
-    # The memory.set write path: its evidence and outbox rows are batched inserts that
+    # The memory.set write path: its audit row, its outbox row (namespaces with a
+    # webhook) and the waited entity-triple inserts are batched inserts that each
     # wait up to ch_batched_insert_wait_max_ms (50).
     "memory.pin": 80,
     "memory.promote": 100,

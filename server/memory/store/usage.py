@@ -103,14 +103,18 @@ async def _usage_flush_loop() -> None:
             continue
 
 
-def _ensure_usage_flusher_started() -> asyncio.Lock:
-    """Lazily start the background flush task on first use, and return the
-    buffer's lock. Called from record_usage_event so we don't need a
-    server-startup hook."""
-    global _USAGE_FLUSH_TASK, _USAGE_BUFFER_LOCK
-    lock = _USAGE_BUFFER_LOCK
-    if lock is None:
-        lock = _USAGE_BUFFER_LOCK = asyncio.Lock()
+def _buffer_lock() -> asyncio.Lock:
+    """The buffer's lock, created on first use."""
+    global _USAGE_BUFFER_LOCK
+    if _USAGE_BUFFER_LOCK is None:
+        _USAGE_BUFFER_LOCK = asyncio.Lock()
+    return _USAGE_BUFFER_LOCK
+
+
+def _ensure_usage_flusher_started() -> None:
+    """Lazily start the background flush task on first use. Called from
+    record_usage_event so we don't need a server-startup hook."""
+    global _USAGE_FLUSH_TASK
     if _USAGE_FLUSH_TASK is None or _USAGE_FLUSH_TASK.done():
         try:
             # Started by whichever request first records usage; it must not
@@ -122,7 +126,6 @@ def _ensure_usage_flusher_started() -> asyncio.Lock:
             # No running loop (sync caller); the periodic flush will
             # take over once a loop is running.
             pass
-    return lock
 
 
 def _reset_for_tests() -> None:
@@ -181,7 +184,7 @@ async def record_usage_event(
     '' is a path with no request (a worker, an import).
     """
 
-    lock = _ensure_usage_flusher_started()
+    _ensure_usage_flusher_started()
     event = {
         "memory_id": memory_id,
         "org": org,
@@ -193,7 +196,7 @@ async def record_usage_event(
         "ts": naive_utc_now(),
     }
     should_flush = False
-    async with lock:
+    async with _buffer_lock():
         _USAGE_BUFFER.append(event)
         if len(_USAGE_BUFFER) >= _USAGE_BUFFER_MAX:
             should_flush = True

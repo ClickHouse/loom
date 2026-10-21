@@ -33,6 +33,9 @@ from server.knowledge.domain.conversations import (
 )
 from server.settings import settings
 
+# Insert settings that commit the rows before the insert returns.
+COMMITTED_INSERT_SETTINGS: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
+
 
 @asynccontextmanager
 async def saved_message_write_lock(org: str, namespace: str, thread_id: str) -> AsyncIterator[None]:
@@ -195,8 +198,7 @@ async def append(
         # buffered inserts apart, so every writer of an identity sends it alike.
         identity = "\x1f".join((msg.org, msg.namespace, msg.agent, msg.thread_id, msg.msg_id))
         insert_settings: dict[str, Any] = {
-            "async_insert": 0,
-            "wait_for_async_insert": 1,
+            **COMMITTED_INSERT_SETTINGS,
             "insert_deduplication_token": "conversation-turn:"
             + hashlib.sha256(identity.encode()).hexdigest(),
         }
@@ -832,15 +834,14 @@ async def insert_embedding(
             "loom.conversation_embeddings", [cast(dict[str, Any], row)], settings=insert_settings
         )
     except Exception as e:
-        if insert_settings == _COMMITTED or error_code(e) != WIDTH_MISMATCH_CODE:
+        if insert_settings == COMMITTED_INSERT_SETTINGS or error_code(e) != WIDTH_MISMATCH_CODE:
             raise
         # Another insert's vector failed the shared flush; this row is sent alone.
         await ch.insert(
-            "loom.conversation_embeddings", [cast(dict[str, Any], row)], settings=_COMMITTED
+            "loom.conversation_embeddings",
+            [cast(dict[str, Any], row)],
+            settings=COMMITTED_INSERT_SETTINGS,
         )
-
-
-_COMMITTED: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
 
 
 def embedding_insert_settings(vector: list[float]) -> dict[str, Any]:
@@ -854,7 +855,7 @@ def embedding_insert_settings(vector: list[float]) -> dict[str, Any]:
     width = codes_state.stored_width(table, "embedding")
     if width == int(settings.embedding_dim) and len(vector) in (0, width):
         return batched_insert_settings()
-    return dict(_COMMITTED)
+    return dict(COMMITTED_INSERT_SETTINGS)
 
 
 async def tombstone_thread(

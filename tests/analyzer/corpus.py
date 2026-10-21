@@ -433,14 +433,8 @@ def _flushers_held() -> Iterator[None]:
     except Exception:  # noqa: BLE001 — nothing to hold
         yield
         return
-
-    def _lock_only() -> asyncio.Lock:
-        if usage._USAGE_BUFFER_LOCK is None:
-            usage._USAGE_BUFFER_LOCK = asyncio.Lock()
-        return usage._USAGE_BUFFER_LOCK
-
     saved = usage._ensure_usage_flusher_started
-    usage._ensure_usage_flusher_started = _lock_only
+    usage._ensure_usage_flusher_started = lambda: None
     try:
         yield
     finally:
