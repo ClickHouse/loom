@@ -117,10 +117,12 @@ request's `(org, namespace, agent)`:
   `destination="memory"` writes the agent's memory row instead (`user_id` `-`,
   `source_trace` `learning:<candidate_id>`), which namespace-wide reads find and a read
   bounded to one user does not.
-- A token bound to one end user (an end-user token, or one with a `read_user_id` pin)
-  files for the agent its issuer signed, never the body's `agent`, and files nothing
-  when it names no agent. Its reads are served that agent's rules the same way, and no
-  bot's rules when it names no agent.
+- A token bound to one end user files for the agent it names, never the body's `agent`.
+  An end-user token names the agent its issuer signed (its `agent` claim). A token Loom
+  mints names no agent, so one pinned with `--read-user-id` files no bot's rule. Its
+  reads are served that agent's rules the same way, and no bot's rules when it names
+  none: a bot that needs its own promoted rules for a user reads with an end-user token
+  signed for it, or with an unpinned token.
 
 `learning_candidates` in the response counts the rules that wrote a new candidate or this
 session's support of one. A failed queue

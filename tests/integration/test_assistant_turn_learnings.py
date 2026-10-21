@@ -291,6 +291,65 @@ def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(
     assert by_tag("other-bot") == []
 
 
+def test_a_loom_minted_read_user_id_token_names_no_agent(
+    base_url: str, token: tuple[str, str]
+) -> None:
+    """A token `loom mint-token --read-user-id` makes carries no agent: it files no
+    bot's rule and is served none, while the bot's unpinned reads are."""
+    from server.auth.jwt import mint_token
+
+    org, tok = token
+    ns = f"bot-{uuid.uuid4().hex[:8]}"
+    _converse(base_url, tok, org, ns, "alice", "s1")
+    (cand,) = _listed(base_url, tok, org, ns)
+    _call(
+        base_url,
+        tok,
+        "learnings.review",
+        {
+            "org": org,
+            "namespace": ns,
+            "candidate_id": cand["candidate_id"],
+            "decision": "promote",
+            "reason": "matches the refund policy",
+            "approver": "admin",
+        },
+    )
+    pinned = mint_token(
+        subject="support-bot-for-alice",
+        org=org,
+        namespaces=["*"],
+        roles=["writer"],
+        read_user_id="alice",
+        ttl_seconds=600,
+    )
+
+    def knowledge(read_token: str) -> str:
+        pack = _call(
+            base_url,
+            read_token,
+            "context.pack",
+            {
+                "org": org,
+                "namespace": ns,
+                "agent": _AGENT,
+                "user_id": "alice",
+                "query": "escalate any refund over $500 to a human",
+                "include_knowledge": True,
+            },
+        )
+        return str(pack["sections"].get("knowledge", ""))
+
+    rule = f"Assistant rule: {_RULE}"
+    assert rule in knowledge(tok)
+    assert rule not in knowledge(pinned)
+
+    other = "I always escalate any refund over $900 to a manager."
+    filed = _converse(base_url, pinned, org, ns, "alice", "s2", rule=other)
+    assert filed["learning_candidates"] == 0
+    assert _listed(base_url, tok, org, ns) == []
+
+
 def test_a_different_rule_under_one_key_is_its_own_candidate(
     base_url: str, token: tuple[str, str]
 ) -> None:

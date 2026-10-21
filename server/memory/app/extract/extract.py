@@ -593,10 +593,17 @@ async def extract_from_messages(
         if _cs_result is not None:
             accumulated = _merge_llm_results(accumulated, _cs_result)
 
+    # Off, a fact the model still marks as the assistant's rule is the user's, and
+    # gets every pass a user fact gets.
+    if not agent_learnings:
+        facts = [replace(f, about="user") if f.about == "agent" else f for f in facts]
     # Relation backfill: the facts the first pass left without a typed
     # relation get one more, smaller call. Before the relation key rewrite
     # below, which keys a fact by its single-valued relation, and before the
-    # judge, which then grades the backfilled facts too.
+    # judge, which then grades the backfilled facts too. A bot's rule takes no
+    # part: it is filed to the learnings queue, never keyed by a relation.
+    rules = [f for f in facts if f.about == "agent"]
+    facts = [f for f in facts if f.about != "agent"]
     relations_backfilled = 0
     if facts:
         facts, _bf_result, relations_backfilled = await _backfill_relations(facts, client=client)
@@ -604,11 +611,7 @@ async def extract_from_messages(
             accumulated = _merge_llm_results(accumulated, _bf_result)
         if relations_backfilled:
             log.info("relation backfill gave %d fact(s) a typed relation", relations_backfilled)
-
-    # Off, a fact the model still marks as the assistant's rule is the user's, and
-    # gets every pass a user fact gets.
-    if not agent_learnings:
-        facts = [replace(f, about="user") if f.about == "agent" else f for f in facts]
+    facts = [*facts, *rules]
     facts = _settle_facts(
         facts,
         messages,

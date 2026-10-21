@@ -5,13 +5,8 @@ are server.memory.domain.provenance."""
 
 from __future__ import annotations
 
-import logging
-from collections.abc import Awaitable, Callable
-
-from server.memory.domain import assistant_rules, trust
+from server.memory.domain import trust
 from server.memory.domain.provenance import pipeline_actor_var
-
-log = logging.getLogger(__name__)
 
 
 def writer_actor(fallback: str = "") -> str:
@@ -28,36 +23,3 @@ def writer_actor(fallback: str = "") -> str:
     if not subject:
         return pipeline_actor_var.get() or fallback or ""
     return trust.actor_for(subject, is_service_account=bool(auth.is_service_account))
-
-
-def request_rule_agent(body_agent: str) -> str:
-    """The agent the request in flight files a bot's rule for and is served that
-    bot's promoted rules as. A token bound to one end user acts as the agent its
-    issuer signed, and as none ('': nothing is filed, no bot's rule is served) when
-    it names none, never as the body's. Any other caller acts as the body's agent."""
-    from server.auth.context import current_auth
-
-    auth = current_auth()
-    if auth is not None and auth.read_user_id:
-        return auth.agent_principal.removeprefix("agent:")
-    return body_agent or "-"
-
-
-async def served_hits[H](
-    hits: list[H],
-    widen: Callable[[int], Awaitable[list[H]]],
-    tags_of: Callable[[H], list[str]],
-    agent: str,
-    top_k: int,
-) -> list[H]:
-    """The first `top_k` knowledge hits that serve `agent`. When another bot's rule
-    took a place among `hits`, `widen(n)` searches again for `n` hits; if that search
-    fails, the hits served from the first pass answer."""
-    served = [h for h in hits if assistant_rules.serves_agent(tags_of(h), agent)]
-    if len(served) < len(hits):
-        try:
-            wider = await widen(assistant_rules.hits_to_ask(top_k))
-            served = [h for h in wider if assistant_rules.serves_agent(tags_of(h), agent)]
-        except Exception as e:  # noqa: BLE001 — the first pass's served hits still answer
-            log.warning("knowledge search widened past other bots' rules failed: %s", e)
-    return served[:top_k]

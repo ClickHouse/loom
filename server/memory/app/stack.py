@@ -12,7 +12,7 @@ from server.core.ch import get_client
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_lifecycle import MemoryStackInput, MemoryStackOutput, _StackEntry
-from server.memory.app.provenance import request_rule_agent, served_hits
+from server.memory.app.agent_rules import request_rule_agent, served_hits
 
 log = logging.getLogger(__name__)
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from server.knowledge.domain.documents import MAX_SEARCH_TOP_K
 from server.memory.domain.sensitivity import reads_high
 
 SOURCE_KIND = "assistant_turn"
@@ -31,8 +32,8 @@ def serves_agent(tags: list[str], agent: str) -> bool:
 def hits_to_ask(top_k: int) -> int:
     """How many knowledge hits a read asks for again when serves_agent dropped
     another bot's rule from its first `top_k`, so that `top_k` remain, within
-    knowledge.search's cap of 100."""
-    return min(top_k * 4, 100)  # not a setting: headroom for other bots' rules
+    knowledge.search's cap."""
+    return min(top_k * 4, MAX_SEARCH_TOP_K)  # not a setting: headroom for other bots' rules
 
 
 def normalized_value(value: str) -> str:

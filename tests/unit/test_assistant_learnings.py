@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from server.llm import client as llm_client_module
-from server.memory.app import assistant_learnings, blacklist_guard, pipeline, provenance
+from server.memory.app import agent_rules, assistant_learnings, blacklist_guard, pipeline
 from server.memory.app.extract import extract_from_messages
 from server.memory.app.extract.parse import _parse_fact_list
 from server.memory.app.extract.prompts import _extraction_base_prompt
@@ -105,6 +105,31 @@ async def test_an_agent_fact_stays_one_only_when_asked_for(
     assert off.memory_key.startswith("pr1234_")
     assert off.grounding
     assert not on.grounding
+
+
+@pytest.mark.asyncio
+async def test_a_rule_without_a_relation_asks_for_no_relation_backfill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_fact = {
+        "key": "user_order",
+        "value": "The user ordered a laptop from the shop.",
+        "entities": ["user", "laptop"],
+        "relations": [{"s": "user", "v": "ordered", "o": "laptop"}],
+        "source_message_indices": [0],
+    }
+    rule = _rule_fact(entities=["refund", "human"])
+    llm = ScriptedLLM([json.dumps({"facts": [user_fact, rule]})], repeat_last=True)
+    monkeypatch.setattr(settings, "memory_extract_coverage_sweep_auto_min_uncovered", 0)
+    monkeypatch.setattr("server.memory.app.extract.extract._extractor_client", lambda **_: llm)
+    result = await extract_from_messages(
+        _MESSAGES, judge=False, coverage_sweep=False, agent_learnings=True
+    )
+    # The rule is the only fact with two entities and no relation: no backfill call.
+    assert len(llm.calls) == 1
+    assert result.relations_backfilled == 0
+    rules = [f.memory_key for f in result.facts if f.about == "agent"]
+    assert rules == ["assistant_rule_refund_escalation"]
 
 
 @pytest.mark.asyncio
@@ -486,7 +511,7 @@ def test_the_rule_agent_comes_from_the_token(auth: dict[str, Any], agent: str) -
 
     token = current_auth_var.set(_auth(**auth))
     try:
-        assert provenance.request_rule_agent("body-bot") == agent
+        assert agent_rules.request_rule_agent("body-bot") == agent
     finally:
         current_auth_var.reset(token)
 
@@ -1148,7 +1173,7 @@ async def test_a_failed_wider_search_answers_the_first_pass_served_hits() -> Non
     async def widen(_k: int) -> list[dict[str, Any]]:
         raise RuntimeError("search down")
 
-    served = await provenance.served_hits(hits, widen, lambda h: h["tags"], "support-bot", 2)
+    served = await agent_rules.served_hits(hits, widen, lambda h: h["tags"], "support-bot", 2)
     assert served == [{"id": 2, "tags": []}]
 
 

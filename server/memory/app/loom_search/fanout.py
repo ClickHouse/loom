@@ -19,10 +19,10 @@ from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
 from server.knowledge.app.repo_docs import knowledge_with_repo_docs
 from server.memory.api.models_search import MemorySearchInput
+from server.memory.app.agent_rules import request_rule_agent, served_hits
 from server.memory.app.loom_search.answer_first import answer_first
 from server.memory.app.loom_search.tracker_leg import tracker_leg
 from server.memory.app.profile_search import search_profile
-from server.memory.app.provenance import request_rule_agent, served_hits
 
 # Query words that name nothing in a profile section — otherwise "where does
 # the user live" matches every persona that says "user".
