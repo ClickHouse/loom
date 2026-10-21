@@ -60,7 +60,7 @@ def _headers(diff: str, home: Path) -> str:
         pytest.skip("node is not installed")
     script = (
         f"import({json.dumps(CLIENT.as_uri())}).then((m) => "
-        "process.stdout.write(m.diffHeaders(require('fs').readFileSync(0, 'utf8'), 200000, '')))"
+        "process.stdout.write(m.diffHeaders(require('fs').readFileSync(0, 'utf8'), 200000)))"
     )
     # No LOOM_* settings and an empty HOME: the helper must not read this machine's
     # token or config.
@@ -70,7 +70,7 @@ def _headers(diff: str, home: Path) -> str:
         [node, "-e", script],
         input=diff,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=True,
         env=env,
         timeout=60,

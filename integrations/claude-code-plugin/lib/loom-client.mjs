@@ -789,11 +789,10 @@ const FUNCTION_FILE_RE =
 /** The function name in a hunk header's context, as the server reads it
  *  (`_hunk_context_name` in server/code/app/symbol/diff.py): the last word before
  *  the first `(`, template arguments dropped, when it is a (scope-qualified)
- *  identifier. Empty when there is none; when the word before it ends in a single
- *  `:` (other than a C++ access specifier) or in `=` (`Password: value (`,
- *  `x = getpass(`), which makes it a value; and
- *  when it has a credential's shape or holds `token` (`token ghp_… (`). */
-export function hunkFunctionName(context, token = "") {
+ *  identifier. Empty when there is no such identifier, when the word before it ends
+ *  in `=` or in a single `:` other than a C++ access specifier (`x = getpass(`,
+ *  `Password: value (`), or when it has a credential's shape (`token ghp_… (`). */
+export function hunkFunctionName(context) {
   const ctx = String(context ?? "").replace(PY_TRIM_RE, "");
   if (!ctx.includes("(")) return "";
   // two passes drop one level of nested template arguments, as the server does
@@ -808,10 +807,9 @@ export function hunkFunctionName(context, token = "") {
   if (/(^|[^:]):$|=$/.test(before) && !ACCESS_SPECIFIERS.has(before)) return "";
   if (NOT_FUNCTION_NAMES.has(name)) return "";
   if (!/^~?[A-Za-z_][\p{L}\p{N}_]*(::~?[A-Za-z_][\p{L}\p{N}_]*)*$/u.test(name)) return "";
-  // the identifier test above already rejects `=` and `:`, so of the redaction
-  // patterns only the token shapes and the token itself can match a name
-  const credential = TOKEN_SHAPE_RE.test(name) || (token.length >= 8 && name.includes(token));
-  return credential ? "" : name;
+  // the identifier test above rejects `=`, `:` and `.`, so of the redaction patterns
+  // only the token shapes can match a name
+  return TOKEN_SHAPE_RE.test(name) ? "" : name;
 }
 
 /** The part of a unified diff that code.impact and code.test_gate read, at most
@@ -820,7 +818,7 @@ export function hunkFunctionName(context, token = "") {
  *  from its context (`@@ -1 +1 @@ name(`), for a code file. The changed lines, the
  *  rest of the context and the other header lines (an `index` line's blob hashes)
  *  are left out, so nothing in them is sent. */
-export function diffHeaders(diff, max, token = resolveToken()) {
+export function diffHeaders(diff, max) {
   const out = [];
   let built = 0;
   let inFileHeader = false;
@@ -840,7 +838,7 @@ export function diffHeaders(diff, max, token = resolveToken()) {
     if (skipFile) continue;
     if (hunk) {
       inFileHeader = false;
-      const name = FUNCTION_FILE_RE.test(path) ? hunkFunctionName(hunk[2], token) : "";
+      const name = FUNCTION_FILE_RE.test(path) ? hunkFunctionName(hunk[2]) : "";
       kept = hunk[1] + (name ? ` ${name}(` : "");
     } else if (inFileHeader && /^(diff --git |--- |\+\+\+ )/.test(line)) {
       kept = line;
