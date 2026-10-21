@@ -63,9 +63,10 @@ _PROFILE_HEAD = """
     AND memory_type = 'profile' AND tombstoned_at IS NULL
 """
 
-# The actor the structured profile worker writes as. No token maps to it: the server
-# stamps it from the worker's pipeline actor, never from a request.
-WORKER_ACTOR = "process:structured-profile-worker"
+# The actor the structured profile worker writes as. Its kind is neither `human` nor
+# `process`, the only kinds a token maps to (`trust.actor_for`), so no request can
+# write as it, whatever its token's subject.
+WORKER_ACTOR = "worker:structured-profile"
 
 # A live structured profile row: written by the worker, and not deleted, expired or
 # redacted. A row a caller wrote to the key is no profile, whatever its tags say. A

@@ -5,8 +5,9 @@ write and never taken from the request body:
 
 * `actor` — `human:<subject>` or `process:<subject>`, the kind decided by the
   token (`memory.domain.trust.actor_for`), exactly as memory.verify already does.
-  Empty only when no auth context exists (dev mode, internal workers that
-  pass no fallback).
+  A worker whose rows a read must tell from any caller's writes as its own kind
+  (`worker:structured-profile`). Empty only when no auth context exists (dev mode,
+  internal workers that pass no fallback).
 * `source_class` — how the content entered memory. One of
   `asserted` (the caller wrote it directly), `extracted` (an LLM lifted it
   from conversation), `observed` (observe.record), `derived` (consolidation

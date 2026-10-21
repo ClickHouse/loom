@@ -214,12 +214,13 @@ def render_facts(rows: list[dict[str, Any]]) -> str:
     return render_fold_input([{**r, "value": fact_text(r.get("value"))} for r in rows])
 
 
-def parse_answer(text: str) -> Any:
+def parse_answer(text: str) -> dict[str, Any] | None:
     """The model's JSON object; None when the answer is not one."""
     try:
-        return json.loads(strip_code_fence(text or ""))
+        answer = json.loads(strip_code_fence(text or ""))
     except ValueError:
         return None
+    return answer if isinstance(answer, dict) else None
 
 
 def _next_wait(wait: float) -> float:
@@ -602,7 +603,7 @@ async def _ask(
     ns: str,
     props: list[profile_schema.ProfileProperty],
     facts: str,
-) -> Any:
+) -> dict[str, Any]:
     started = time.monotonic()
     # Bind an accumulator so this worker's spend is visible.
     cost_accumulator.begin_op()
@@ -624,6 +625,6 @@ async def _ask(
             org=org, namespace=ns, operation="worker.structured_profile", started=started
         )
     answer = parse_answer(out.text)
-    if not isinstance(answer, dict):
+    if answer is None:
         raise ValueError("the profile model's answer is not a JSON object")
     return answer

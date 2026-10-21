@@ -10,6 +10,7 @@ import pytest
 
 from server.core.errors import ValidationError
 from server.memory.domain import profile_schema as ps
+from server.memory.domain import trust
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
@@ -163,6 +164,13 @@ def test_the_fake_model_fills_the_prompt_properties() -> None:
         "age": None,
         "languages": ["I speak these languages: en"],
     }
+
+
+@pytest.mark.parametrize("text", ["[1]", "3", '"x"', "null", "not json"])
+def test_an_answer_that_is_not_a_json_object_parses_to_none(text: str) -> None:
+    from server.memory.workers import structured_profile as w
+
+    assert w.parse_answer(text) is None
 
 
 def test_the_prompt_fences_the_facts_and_names_each_property() -> None:
@@ -480,13 +488,22 @@ async def test_an_expired_redacted_or_high_profile_is_no_profile(gone: dict[str,
 
 @_needs_ch
 @pytest.mark.asyncio
-async def test_a_profile_row_a_caller_wrote_is_no_profile() -> None:
+@pytest.mark.parametrize(
+    "actor",
+    [
+        trust.actor_for("alice", is_service_account=False),
+        # A service account named after the worker still writes as a `process` actor.
+        trust.actor_for("structured-profile-worker", is_service_account=True),
+        trust.actor_for("structured-profile", is_service_account=True),
+    ],
+)
+async def test_a_profile_row_a_caller_wrote_is_no_profile(actor: str) -> None:
     """A writer can put the worker's tags on its own row of the profile key; only a
     row the worker wrote reads as the user's profile."""
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.store import profile_sources as src
 
-    built = await _built(_fact(_A, "u1", "tz", "a"), actor="'human:alice'")
+    built = await _built(_fact(_A, "u1", "tz", "a"), actor=f"'{actor}'")
     ch = _LocalCH(*built)
     key = {
         "org": "o",

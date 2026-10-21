@@ -3,11 +3,9 @@ which orgs and users it passes over, and what it never writes."""
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import sys
 from collections.abc import Callable, Iterator
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,6 +18,7 @@ from server.memory.store.profile_sources import Behind
 from server.memory.workers import structured_profile as w
 from server.settings import settings
 from server.workers import pass_context
+from tests.unit.clock_fake import ManualClock
 
 _PROPS = ps.parse(
     {"type": "object", "properties": {"tz": {"type": "string", "description": "time zone"}}}
@@ -202,12 +201,12 @@ async def test_a_slow_pass_stops_taking_users_halfway_to_its_deadline(
     monkeypatch: pytest.MonkeyPatch,
     settings_override: Callable[..., None],
 ) -> None:
-    clock = [0.0]
-    monkeypatch.setattr(w, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    clock = ManualClock(t=1000.0)
+    monkeypatch.setattr(w.time, "monotonic", clock.monotonic)
     real_build = w.build_profile
 
     async def slow_build(schema: w.ActiveSchema, user_id: str) -> int | None:
-        clock[0] += 30  # each build takes 30 of the pass's 100 seconds
+        clock.advance(30)  # each build takes 30 of the pass's 100 seconds
         return await real_build(schema, user_id)
 
     monkeypatch.setattr(w, "build_profile", slow_build)
@@ -240,8 +239,11 @@ async def test_a_switched_off_org_is_passed_over(
 @pytest.mark.asyncio
 async def test_a_failed_build_is_counted_and_backs_off_until_it_succeeds(
     world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
     settings_override: Callable[..., None],
 ) -> None:
+    clock = ManualClock(t=1000.0)
+    monkeypatch.setattr(w.time, "monotonic", clock.monotonic)
     key = ("o2", "a", "u0")
     world["fail"] = {key}
     settings_override(structured_profile_max_users_per_pass=10)
@@ -261,11 +263,11 @@ async def test_a_failed_build_is_counted_and_backs_off_until_it_succeeds(
         w._note_failure(key)
     assert w._backoff[key].wait == settings.structured_profile_backoff_cap_seconds
 
-    # Once the wait is over the user is built again, and the success clears it.
-    w._backoff[key] = dataclasses.replace(w._backoff[key], until=0.0)
+    # Once the wait is over the user is built again, and the success clears it. The
+    # wait outlasts the last scan, so the pass scans again.
+    clock.advance(settings.structured_profile_backoff_cap_seconds)
     world["fail"] = set()
     world["built"].clear()
-    w._scans.clear()  # and the last scan is old enough to run again
     await w.run_pass(_cfg(("o2", "a")))
     assert key in world["built"] and key not in w._backoff
 
@@ -273,8 +275,11 @@ async def test_a_failed_build_is_counted_and_backs_off_until_it_succeeds(
 @pytest.mark.asyncio
 async def test_a_refused_build_waits_then_is_tried_again_when_the_refusal_lapses(
     world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
     settings_override: Callable[..., None],
 ) -> None:
+    clock = ManualClock(t=1000.0)
+    monkeypatch.setattr(w.time, "monotonic", clock.monotonic)
     key = ("o2", "a", "u0")
     world["refuse"] = {key}
     settings_override(structured_profile_max_users_per_pass=10)
@@ -288,8 +293,8 @@ async def test_a_refused_build_waits_then_is_tried_again_when_the_refusal_lapses
     world["built"].clear()
     await w.run_pass(_cfg(("o2", "a")))
     assert key not in world["built"]
-    w._refused[key] = dataclasses.replace(w._refused[key], lapses=0.0)
-    w._scans.clear()  # and the last scan is old enough to run again
+    # The refusal outlasts the last scan, so the pass scans again.
+    clock.advance(settings.structured_profile_refusal_retry_seconds)
     await w.run_pass(_cfg(("o2", "a")))
     assert key in world["built"] and key not in w._refused
 
@@ -613,6 +618,8 @@ async def test_a_failing_namespace_backs_off_without_keeping_the_pass_busy(
         world["scans"] += 1
         raise RuntimeError("the scan failed")
 
+    clock = ManualClock(t=1000.0)
+    monkeypatch.setattr(w.time, "monotonic", clock.monotonic)
     monkeypatch.setattr(profile_sources, "users_behind", failing)
     settings_override(structured_profile_max_users_per_pass=10)
     cfg = _cfg(("o2", "a"))
@@ -621,9 +628,11 @@ async def test_a_failing_namespace_backs_off_without_keeping_the_pass_busy(
     ctx = pass_context.begin("structured_profile")
     result = await w.run_pass(cfg)
     assert world["scans"] == 1 and result.errors == 0 and ctx.idle
-    # Once its wait is over it is scanned again.
-    space = ("o2", "a")
-    w._namespace_backoff[space] = dataclasses.replace(w._namespace_backoff[space], until=0.0)
+    # Its first wait is the base backoff, and it is scanned again once that is over.
+    clock.advance(settings.structured_profile_backoff_base_seconds - 1)
+    await w.run_pass(cfg)
+    assert world["scans"] == 1
+    clock.advance(1)
     await w.run_pass(cfg)
     assert world["scans"] == 2
 
@@ -634,10 +643,12 @@ async def test_a_schema_change_or_an_old_scan_scans_again(
     monkeypatch: pytest.MonkeyPatch,
     settings_override: Callable[..., None],
 ) -> None:
+    clock = ManualClock(t=1000.0)
+    monkeypatch.setattr(w.time, "monotonic", clock.monotonic)
     settings_override(structured_profile_max_users_per_pass=1)
     cfg = _cfg(("o2", "a"))
     await w.run_pass(cfg)
-    w._scans[("o2", "a")].scanned_at -= settings.structured_profile_scan_max_age_seconds + 1
+    clock.advance(settings.structured_profile_scan_max_age_seconds + 1)
     await w.run_pass(cfg)
     assert world["scans"] == 2
     w._scans[("o2", "a")].schema_sha256 = "x" * 64
