@@ -75,9 +75,9 @@ A save the server will not index answers `indexed: false` with a `reason`:
 `high_sensitivity` for text that reads as high (a credential, card number, SSN or stated
 PIN), `deleted` for a tombstoned turn (in `@me`, one a user erasure left),
 `embed_failed` when the embed fails (the message stays saved, and saving it again
-retries), and, in a recording namespace, `unsupported_role` for a stored system or
-tool turn and `owner_mismatch` for another user's turn. Under the pinned token, a body naming another
-user is refused with 403. A client draws a conversation's saved state with one
+retries), and, for a turn a transcript holds, `unsupported_role` for a stored system
+or tool turn and `owner_mismatch` for another user's turn. Under the pinned token, a
+body naming another user is refused with 403. A client draws a conversation's saved state with one
 `conversation.saved_status` call, and a user erasure takes the user's conversation rows,
 saved ones included. A user-scope `erasure.export` does not return conversation rows,
 so it leaves out saved messages, as it leaves out the rest of a user's transcript.
