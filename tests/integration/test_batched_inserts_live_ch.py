@@ -41,8 +41,8 @@ async def test_batched_inserts_are_read_back_share_parts_and_land_once_per_token
                 for i in range(40)
             )
         )
-        rows = await c.query_one(f"SELECT count() AS n FROM {table} WHERE startsWith(k, 'c')")
-        assert rows is not None and rows["n"] == 40
+        count = await c.query_one(f"SELECT count() AS n FROM {table} WHERE startsWith(k, 'c')")
+        assert count is not None and count["n"] == 40
         parts = await c.query_one(
             f"SELECT uniqExact(_part) AS n FROM {table} WHERE startsWith(k, 'c')"
         )

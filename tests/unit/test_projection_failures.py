@@ -833,9 +833,9 @@ async def test_a_failure_row_is_committed_not_left_in_a_buffer() -> None:
     await record_projection_failure(
         org="o", namespace="n", projection="entity_edges", error="boom", ch=_CH()
     )
-    assert seen == [
-        ("loom.memory_projection_failures", {"async_insert": 1, "wait_for_async_insert": 1})
-    ]
+    from server.core.ch_writes import batched_insert_settings
+
+    assert seen == [("loom.memory_projection_failures", batched_insert_settings())]
 
 
 @pytest.mark.parametrize(
