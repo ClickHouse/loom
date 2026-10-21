@@ -255,7 +255,6 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
     ch = ch or _default_client()
     result = ApplyResult()
     now = naive_utc_now()
-    relabelled: list[dict[str, Any]] = []
     for c in candidates:
         try:
             version = memory_repo.next_version()  # the relabel's, which the high retire carries
@@ -282,7 +281,9 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
             if not n:
                 continue  # gone between scan and apply
             result.relabelled += n
-            relabelled.append(webhooks.memory_change(c, version))
+            # Announced now: a pass cut short later would lose it, since the next
+            # scan reads only unlabelled rows.
+            await webhooks.announce([("memory.revised", webhooks.memory_change(c, version))])
             if c.level == HIGH:
                 result.high += 1
                 result.embeddings_tombstoned += retired
@@ -304,7 +305,6 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                 result.embeddings_tagged += await _tag_embeddings(c, ch=ch)
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the sweep
             result.errors.append(f"{c.namespace}/{c.memory_key}: {e}")
-    await webhooks.announce([("memory.revised", change) for change in relabelled])
     return result
 
 

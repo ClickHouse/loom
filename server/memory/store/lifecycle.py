@@ -26,6 +26,7 @@ from server.memory.store.rows import (
     build_memory_version_row,
     next_version,
 )
+from server.observability import degradations
 
 _log = logging.getLogger(__name__)
 
@@ -275,9 +276,11 @@ async def bulk_tombstone_scope(
     repo runs the query as-given (a scope-less call would clear the whole
     namespace — that's `erasure.request_namespace`'s job).
 
-    `on_tombstoned`, when given, is called after the mutation with each page of
-    the memory rows it tombstoned (identity tuple, memory_key, memory_id and
-    version), for the handler's webhook events; without it no row is read.
+    `on_tombstoned`, when given, is called after the memory mutation and before
+    the embeddings one, with each page of the memory rows it tombstoned
+    (identity tuple, memory_key, memory_id and version), for the handler's
+    webhook events; without it no row is read. A failed read-back is noted as
+    a degradation, never raised.
 
     Returns {table_name: rows_tombstoned}.
     """
@@ -335,8 +338,13 @@ async def bulk_tombstone_scope(
             """,
             params=params,
         )
-    if on_tombstoned is not None and counts["loom.memory"]:
-        await _page_tombstoned(" AND ".join(scope), params, on_tombstoned, ch=ch)
+        # Announced before the embeddings step, so a failure there cannot lose
+        # the events: a retry finds no live memory rows and announces nothing.
+        if table == "loom.memory" and on_tombstoned is not None:
+            try:
+                await _page_tombstoned(" AND ".join(scope), params, on_tombstoned, ch=ch)
+            except Exception as e:  # noqa: BLE001 — the rows are tombstoned; the clear must not fail
+                degradations.note("memory.webhook", "not_announced", e)
     counts["locked_skipped"] = locked_n
     return counts
 

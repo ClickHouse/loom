@@ -621,6 +621,40 @@ async def test_a_blacklist_sweep_announces_the_rows_it_tombstones(
 
 
 @pytest.mark.asyncio
+async def test_a_sweep_cut_short_has_announced_the_rows_it_relabelled(
+    monkeypatch: pytest.MonkeyPatch, announced: list[Any]
+) -> None:
+    from server.memory.app import sensitivity_sweep
+
+    def candidate(key: str) -> sensitivity_sweep.SweepCandidate:
+        return sensitivity_sweep.SweepCandidate(
+            memory_id=f"m-{key}",
+            org="acme",
+            namespace="chat",
+            agent="bot",
+            user_id="u1",
+            session_id="-",
+            memory_key=key,
+            level="medium",
+            shapes=("email",),
+        )
+
+    async def write(org: str, ids: list[str], update: Any, **k: Any) -> int:
+        if ids == ["m-second"]:
+            raise asyncio.CancelledError  # the pass deadline
+        return 1
+
+    async def tag(c: Any, **k: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(memory_repo, "write_versions_by_ids", write)
+    monkeypatch.setattr(sensitivity_sweep, "_tag_embeddings", tag)
+    with pytest.raises(asyncio.CancelledError):
+        await sensitivity_sweep.apply([candidate("first"), candidate("second")], ch=object())
+    assert _events(announced) == {("memory.revised", "first")}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("decision", "tombstoned"),
     [("keep_canonical", "dup/key"), ("keep_duplicate", "canon/key"), ("keep_both", None)],

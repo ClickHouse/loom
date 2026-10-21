@@ -248,3 +248,64 @@ async def test_clear_announces_what_it_tombstoned_a_page_at_a_time(
     # The pages read back exactly the rows this clear's mutation stamped.
     (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
     assert first.params["at"] == memory_alter.params["at"]
+
+
+@pytest.mark.asyncio
+async def test_clear_announces_before_the_embeddings_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed embeddings mutation answers 5xx, and a retry finds no live memory
+    rows: the tombstoned rows are announced before that step runs."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app import webhooks
+    from server.memory.app.handlers import handle_memory_clear
+
+    webhooks._registry._reset_for_tests(
+        {("acme", "chat"): (("wh1", frozenset({"memory.tombstoned"})),)},
+        read=True,
+        refresh_s=float("inf"),
+    )
+    cleared = {"agent": "bot", "user_id": "u1", "session_id": "-", "memory_key": "a"}
+    ch = _clear_ch(monkeypatch, [[cleared]])
+
+    async def execute(sql, params=None, **_kw):
+        if "loom.memory_embeddings" in sql:
+            raise TimeoutError("mutation timed out")
+
+    monkeypatch.setattr(ch, "execute", execute)
+    announced: list[str] = []
+
+    async def announce(changes) -> None:
+        announced.extend(c["memory_key"] for _, c in changes)
+
+    monkeypatch.setattr(webhooks, "announce", announce)
+    with pytest.raises(TimeoutError):
+        await handle_memory_clear(
+            MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
+        )
+    assert announced == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_clear_with_a_failed_read_back_still_clears(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app import webhooks
+    from server.memory.app.handlers import handle_memory_clear
+    from server.observability import degradations
+
+    webhooks._registry._reset_for_tests(
+        {("acme", "chat"): (("wh1", frozenset({"memory.tombstoned"})),)},
+        read=True,
+        refresh_s=float("inf"),
+    )
+
+    def fail(sql, params):
+        raise TimeoutError("read timed out")
+
+    ch = _clear_ch(monkeypatch, [])
+    ch.on("ORDER BY agent, user_id, session_id, memory_key", fail)
+    noted: list[tuple[str, str]] = []
+    monkeypatch.setattr(degradations, "note", lambda area, what, e=None: noted.append((area, what)))
+    out = await handle_memory_clear(
+        MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
+    )
+    assert out.rows_affected == {"loom.memory": 2, "loom.memory_embeddings": 2}
+    assert noted == [("memory.webhook", "not_announced")]
