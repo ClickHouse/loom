@@ -36,7 +36,7 @@ the row and its prior versions in `loom.memory_versions` stay on disk:
 - `memory.restore` revives a tombstoned key within 14 days (after that it answers
   `expired=true`). It also reverses an automatic supersession.
 - `memory.clear` (admin) tombstones every memory for an agent or user in a namespace;
-  `confirm_subject` must repeat a scope value. `agent="*"` with a `user_id` clears that
+  `confirm_subject` must repeat a scope value other than `'-'`. `agent="*"` with a `user_id` clears that
   user's rows under every agent, and `user_id="*"` with an `agent` that agent's rows for
   every user; `'-'` beside an open field is refused, as a namespace-wide clear is.
   Locked rows stay and are counted in `locked_skipped`. Cleared keys revive the same way.

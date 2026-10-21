@@ -452,8 +452,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "memory.clear": (
         'Bulk-tombstone every memory for an agent or a user (agent="*": the user\'s rows '
         "under every agent). "
-        "DESTRUCTIVE — only call when the user clearly wants to wipe a "
-        'whole workspace ("forget everything for X", "reset the bot\'s '
+        "DESTRUCTIVE — only call when the user clearly wants to wipe an "
+        "agent's or a user's memories (\"forget everything for X\", \"reset the bot's "
         'memory"). For one-off forgetting, prefer memory.delete.'
     ),
     "memory.related": (

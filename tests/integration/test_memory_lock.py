@@ -206,9 +206,11 @@ def test_a_star_agent_clear_leaves_only_the_locked_identity(
     # Agent b's vector of the locked key goes too: only agent a's is excluded.
     assert c["rows_affected"]["loom.memory_embeddings"] == 2
 
-    def found(agent: str, key: str) -> bool:
-        return _post(writer, "memory.get", ident(agent, memory_key=key)).json()["found"]
+    # memory.list reads one agent's rows; memory.get would fall back to another agent's.
+    def keys(agent: str) -> list[str]:
+        r = _post(writer, "memory.list", ident(agent))
+        assert r.status_code == 200, r.text
+        return sorted(e["memory_key"] for e in r.json()["entries"])
 
-    assert found("a", "deploy_window")
-    assert not found("b", "deploy_window")
-    assert not found("b", "oncall")
+    assert keys("a") == ["deploy_window"]
+    assert keys("b") == []

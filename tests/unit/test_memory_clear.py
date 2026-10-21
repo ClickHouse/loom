@@ -325,6 +325,27 @@ async def test_clear_refuses_star_as_confirm_subject() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("user_id", "agent"), [("-", "bot"), ("-", "-")])
+async def test_dash_never_confirms_a_clear(user_id: str, agent: str) -> None:
+    """'-' is a value anyone can type, so it never confirms, even as a literal scope."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    with pytest.raises(HTTPException) as exc:
+        await handle_memory_clear(
+            MemoryClearInput(
+                org="clickhouse",
+                namespace="finance",
+                user_id=user_id,
+                agent=agent,
+                confirm_subject="-",
+            )
+        )
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "CONFIRM_SUBJECT_MISMATCH"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("user_id", "agent"), [("-", "bot"), ("u1", "-")])
 async def test_clear_accepts_dash_beside_a_named_axis(
     monkeypatch: pytest.MonkeyPatch, user_id: str, agent: str

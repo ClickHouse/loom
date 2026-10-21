@@ -1146,7 +1146,7 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
                 ),
             },
         )
-    candidates = [v for v in (user_id, agent) if v is not None]
+    candidates = named  # "-" never confirms: anyone can type it
     if input.confirm_subject not in candidates:
         raise HTTPException(
             status_code=400,
