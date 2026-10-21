@@ -61,9 +61,9 @@ const DOCUMENTS_SHOWN = 25;
 const GRANTS_READ = 500;
 
 /** Whether `grants.list` stopped at its limit: it folds a person's spellings into one row
- *  after the limit, so the stored rows it read are each row plus its `also`. A fold of two
- *  spellings that differ only in case adds nothing to `also`, so such a pair in a list cut
- *  at the limit reads as one row short and the list as whole. */
+ *  after the limit, so the stored rows it read are each row plus its `also`. A folded row
+ *  whose subject differs from the kept row's only in case adds nothing to `also`, so a list
+ *  cut at the limit with such a pair reads as one stored grant short, and as whole. */
 export function grantsCut(rows: Pick<GrantEntry, "also">[]): boolean {
   return rows.reduce((n, g) => n + 1 + (g.also?.length ?? 0), 0) >= GRANTS_READ;
 }

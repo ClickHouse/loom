@@ -161,6 +161,8 @@ describe("Collections: a collection's details", () => {
     expect(within(dialog).getByText("Team runbooks")).toBeInTheDocument();
     expect(within(dialog).getByText("Restarting a replica")).toBeInTheDocument();
     expect(within(dialog).getByText("1 in all")).toBeInTheDocument();
+    // Two grants read: the list is whole.
+    expect(within(dialog).queryByText("the newest; more not shown")).toBeNull();
     expect(listKnowledge).toHaveBeenCalledWith(
       { org: "acme", namespace: "col-handbook" },
       expect.objectContaining({ limit: 25 }),
