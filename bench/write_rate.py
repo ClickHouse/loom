@@ -30,9 +30,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import time
 import uuid
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -152,7 +152,8 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         base_url=args.base_url, timeout=120, limits=limits, headers=headers
     ) as http:
         if args.target == "server" and "conversation.append" in kinds:
-            for n in range(args.namespaces):
+            # Every (org, namespace) pair a write can name.
+            for n in range(math.lcm(args.orgs, args.namespaces)):
                 r = await http.post(
                     "/v1/conversation.set_logging",
                     json={"org": _org(n, args), "namespace": _namespace(n, args), "enabled": True},
@@ -163,18 +164,18 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             r = await http.post(f"/v1/{kind}", json=_server_body(kind, i, run, args))
             if r.status_code >= 400:
                 raise RuntimeError(f"{r.status_code} {r.text[:300]}")
+            if r.json().get("stored") is False:
+                raise RuntimeError(f"not stored: {r.text[:300]}")
 
         async def one(i: int, at: float) -> None:
             kind = kinds[i % len(kinds)]
-            write: Callable[[], Awaitable[None]] = (
-                (lambda: server_write(i, kind))
-                if args.target == "server"
-                else (lambda: _client_write(i, run, args))
-            )
             await asyncio.sleep(max(0.0, at - time.monotonic()))
             sent = time.monotonic()
             try:
-                await write()
+                if args.target == "server":
+                    await server_write(i, kind)
+                else:
+                    await _client_write(i, run, args)
                 latencies[kind].append((time.monotonic() - sent) * 1000)
             except Exception as e:  # noqa: BLE001 — counted and reported, the run goes on
                 errors[kind] += 1

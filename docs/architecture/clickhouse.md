@@ -111,8 +111,8 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   `ch_batched_insert_wait_min_ms` (writes are sparse) and `ch_batched_insert_wait_max_ms`
   (under load) for others to join it. Under steady load a table gets about
   1000 / `ch_batched_insert_wait_max_ms` parts a second per ClickHouse node and insert
-  shape (ClickHouse keeps one buffer per column list and settings), fewer when a buffer
-  fills first. The version rows of `memory`,
+  shape (ClickHouse keeps one buffer per column list and settings): more when a buffer
+  fills before the wait ends, at most one per insert when writes are sparse. The version rows of `memory`,
   `memory_embeddings`, `shared`, `session_summaries` and `entity_summaries` stay
   committed: their fenced `INSERT … SELECT FROM input()`
   ([rolling upgrades](rolling-upgrades.md)) cannot be buffered. A write whose token

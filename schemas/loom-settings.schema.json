@@ -187,7 +187,7 @@
           "default": 50,
           "exclusiveMinimum": 0,
           "type": "integer",
-          "description": "Longest a batched insert (audit, transcript and ledger rows written on every request) waits, ms, for concurrent inserts into the same table to share its part. Under load each such insert waits about this long, and a table gets about 1000 / this parts a second per ClickHouse node."
+          "description": "Longest a batched insert (rows written on every request) waits, ms, for others to share its part; under load ~1000 / this parts/s per table, node and insert shape."
         },
         "ch_batched_insert_wait_min_ms": {
           "default": 10,

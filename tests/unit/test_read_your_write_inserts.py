@@ -59,10 +59,10 @@ def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
             ):
                 found.append(batched_insert_settings())
                 continue
-            if not isinstance(kw.value, ast.Dict):
+            if not isinstance(value, ast.Dict):
                 continue
             d: dict[str, int] = {}
-            for k, v in zip(kw.value.keys, kw.value.values, strict=True):
+            for k, v in zip(value.keys, value.values, strict=True):
                 if isinstance(k, ast.Constant) and isinstance(v, ast.Constant):
                     d[str(k.value)] = int(v.value)
             found.append(d)
@@ -81,13 +81,12 @@ def test_default_read_path_tables_are_written_synchronously(rel_path: str, table
     settings_seen = _insert_settings(ROOT / rel_path, table)
     assert settings_seen, f"no `settings=` on any {table} insert in {rel_path}"
     for s in settings_seen:
-        # The guarantee is "committed before the INSERT returns":
-        # `wait_for_async_insert = 1`. Whether the rows travel through the
-        # async buffer is the client's call, not the site's.
+        # The guarantee is "written before the INSERT returns":
+        # `wait_for_async_insert = 1`, committed or batched.
         assert s.get("wait_for_async_insert") == 1 and s.get("async_insert") in (0, 1), (
             f"{table} in {rel_path} is written with {s}. This table is read on the "
             "default search path, so a fire-and-forget insert lets memory.set "
-            "return 200 before the memory can be found. Keep it committed."
+            "return 200 before the memory can be found. Keep wait_for_async_insert = 1."
         )
 
 
