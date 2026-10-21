@@ -398,9 +398,11 @@ queries per filter; the command is in `bench/vector_index_vs_exact.py`.
 
 **A tenant read never uses it.** ClickHouse searches the graph only when the primary-key
 condition keeps every granule of the part. Every Loom vector read filters on
-`(org, namespace)`, the prefix of every vector table's sort key, so it reads the
-tenant's granules and sorts them exactly: no index search runs
-(`ProfileEvents['USearchSearchCount'] = 0`) and the read costs what the plain table costs.
+`(org, namespace)`, the prefix of every vector table's sort key. In every vector table
+but `code_chunks` a part holds many tenants (`memory_embeddings` is partitioned by
+month), so the read takes the tenant's granules and sorts them exactly: no index search
+runs (`ProfileEvents['USearchSearchCount'] = 0`) and the read costs what the plain table
+costs.
 MiB read and p50 per query, every read under `FINAL`:
 
 | Tenant share | Rows | Exact scan        | With the index    | Codes-first, LIMIT 60 |
@@ -431,17 +433,19 @@ The unfiltered row is this graph's own recall on this data at
 `hnsw_candidate_list_size_for_search = 256` (0.847 at 1024). A partition per tenant
 makes the index run for tenant reads: the 50% tenant's read under `FINAL` then takes
 76 ms instead of 141 ms, at recall@10 0.757, and the 10% and 1% tenants get 0.747 and
-0.843. That layout also needs one partition per namespace, which a table with thousands
-of namespaces cannot hold.
+0.843. `code_chunks` is partitioned by `(org, namespace)`, so an index there would run
+and read this way; the recall loss and the stale versions below are what rule it out.
+For `memory_embeddings`, a partition per namespace is not a layout a table with
+thousands of namespaces can hold.
 
 **Under `FINAL` it serves superseded versions.** The graph returns rows of every version
 before `FINAL` collapses them, so a key's newest version or tombstone loses to an older
 row. `bench/ann_final_staleness.py` (30k keys, 3 versions each, 18 parts, 128
 dimensions, 5 queries) on 26.9: recall@10 0.38 with 6.2 of 10 rows stale, against 1.00
-and none for the exact read. Its `reread` arm, which takes candidate keys from the graph
-and reads them again under `FINAL` with skip indexes off, removes the stale rows (recall
-0.90-0.98) and takes twice as long as the exact read (37-39 ms against 20 ms). It does
-not change the decision: a tenant read never reaches the graph in the first place.
+and none for the `prefilter` arm, which leaves the index unused. Its `reread` arm, which
+takes candidate keys from the graph and reads them again under `FINAL` with skip indexes
+off, removes the stale rows (recall 0.90-0.98) and takes twice as long as `prefilter`
+(37-39 ms against 20 ms), so the index then costs more than the scan it replaces.
 
 **It doubles storage and slows writes.** The graph took 2.27 GiB beside 2.25 GiB of table
 data. Copying the 1M rows into the indexed table took 135-166 s over two runs, against

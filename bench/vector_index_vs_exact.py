@@ -30,6 +30,7 @@ password `loomdev`:
         bash dev/ci_start_clickhouse.sh
     PYTHONPATH=$PWD .venv/bin/python bench/vector_index_vs_exact.py \
         --port 18433 --user loom --password loomdev --rows 1000000 --dim 1536 --build
+    docker rm -f ch-vbench
 """
 
 from __future__ import annotations

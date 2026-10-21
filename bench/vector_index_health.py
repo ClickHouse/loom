@@ -1,17 +1,17 @@
 """Is a vector index doing anything?
 
-Read-only probe, over TLS, of a table shaped like `loom.memory_embeddings` (its
-`status`, `embedding_dim` and `tombstoned_at` columns) that carries a `vector_similarity`
-index (`--table`; no Loom table has one, so on `loom.memory_embeddings` it reports that
-and exits): part-count
-shape, HNSW index bytes, and, for a few namespaces and the whole org, how many granules
-the index lets the read skip (EXPLAIN indexes=1), the latency of the production-shaped
-query (FINAL, bare distance ORDER BY) against exact search, and recall of the indexed
-read against exact. A sample reading: 83 parts (61 under 1,000 rows), 2.74 GiB of HNSW
-for 596k rows, ≤17% of granules pruned org-wide, 0% inside a namespace, latency
-identical to exact at every size, FINAL doubling the read (526 vs 271 ms org-wide).
+Read-only probe, over TLS, of `--table`: a table shaped like `loom.memory_embeddings`
+(its `status`, `embedding_dim` and `tombstoned_at` columns) that carries a
+`vector_similarity` index. No Loom table has one, so on `loom.memory_embeddings` it says
+so and exits. On an indexed table it reports part-count shape, HNSW index bytes, and,
+for a few namespaces and the whole org, how many granules the index lets the read skip
+(EXPLAIN indexes=1), the latency of the production-shaped query (FINAL, bare distance
+ORDER BY) against exact search, and recall of the indexed read against exact. A sample
+reading: 83 parts (61 under 1,000 rows), 2.74 GiB of HNSW for 596k rows, ≤17% of
+granules pruned org-wide, 0% inside a namespace, latency identical to exact at every
+size, FINAL doubling the read (526 vs 271 ms org-wide).
 docs/architecture/clickhouse.md#why-there-is-no-vector-index measures why: a
-namespace-filtered read never searches the graph, even on one merged part.
+namespace-filtered read never searches the graph of a part that holds many tenants.
 
     python bench/vector_index_health.py --env .env --namespaces a,b --org dev
 """
