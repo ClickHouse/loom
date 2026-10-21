@@ -13,11 +13,14 @@ shape matches run ids and integer limits); the historical
 backlog is the operator's `loom sensitivity-sweep --apply`, not this worker's.
 
 A pass starts at the agent the previous one stopped in (the worker's cursor in
-`loom.worker_status`), past it when the previous pass found nothing to label and started
-and stopped there, and the next starts again at the first key once a pass reads the last
-row. So selected rows the detector leaves unlabelled in one agent cannot fill every pass's
-pages ahead of another agent's rows. The cursor is `(org, namespace, agent)` and no more: a user
-id or a memory key in `loom.worker_status` would outlive that user's erasure.
+`loom.worker_status`), and the next starts again at the first key once a pass reads the
+last row. Inside a pass, a full page in one agent that gives nothing to label moves the
+scan past that agent, so selected rows the detector leaves unlabelled cannot fill every
+pass's pages ahead of another agent's rows. A pass whose candidates all fail in `apply`
+leaves the cursor past the agent it stopped in, so a row that fails every time is retried
+when the sweep comes back round to it rather than holding every pass there. The cursor is
+`(org, namespace, agent)` and no more: a user id or a memory key in `loom.worker_status`
+would outlive that user's erasure.
 """
 
 from __future__ import annotations
@@ -51,16 +54,14 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
             pages=int(settings.sensitivity_sweep_pages_per_pass),
             only_shapes=shapes or None,
             start_after=start,
+            skip_noisy_agents=True,
             ch=ch,
         )
         result = await sweep.apply(report.candidates, ch=ch)
-        # after `apply`, so a pass that fails there is read again from the same agent. Only a
-        # pass that found nothing to label may skip ahead: one that labelled rows, or failed
-        # to, reads the same agent again.
-        stuck = not report.candidates and not result.errors
-        pass_context.set_cursor(
-            cursor_text(report.resume_after, started_at=start if stuck else None)
-        )
+        # after `apply`: a pass that labelled rows reads the same agent again, and one whose
+        # candidates all failed moves past it
+        stuck = bool(result.errors) and not result.relabelled
+        pass_context.set_cursor(cursor_text(report.resume_after, past=stuck))
         outcome = {"scanned": report.scanned, "truncated": report.truncated, **result.as_dict()}
         rec.outcome = outcome
         if result.relabelled or result.errors:
@@ -83,21 +84,19 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
 CURSOR_KEY = SORT_KEY[:3]
 
 
-def cursor_text(key: dict[str, Any] | None, *, started_at: dict[str, Any] | None = None) -> str:
+def cursor_text(key: dict[str, Any] | None, *, past: bool = False) -> str:
     """The agent of `key` as the pass's cursor: a JSON list of its org, namespace and agent,
-    `[]` for the first key (never empty, which would keep the previous cursor). A key longer
-    than the cursor store holds keeps its leading columns and empties the rest, which sorts
-    before it.
+    `[]` for the first key (never empty, which would keep the previous cursor).
 
-    `started_at` is where a pass that found nothing to label started. When the cursor would
-    be that same place, the next pass would read the same pages again, so the cursor skips
-    past it instead: past the agent, or past the namespace or the org when the longer
-    cursor does not fit, or back to the first key when none does."""
+    With `past`, or when the agent does not fit the cursor store, the cursor names the
+    place just past the agent instead, or past the namespace or the org when the longer
+    cursor does not fit, or the first key when none does. A cursor before an agent too
+    long to name would have the next pass read the same pages again."""
     if not key:
         return "[]"
     parts = [str(key[col]) for col in CURSOR_KEY]
-    text = _fitted(parts)
-    if started_at is None or json.loads(text) != [started_at[col] for col in CURSOR_KEY]:
+    text = json.dumps(parts)
+    if not past and len(text) <= pass_context.MAX_CURSOR:
         return text
     for kept in range(len(parts), 0, -1):
         # `\x01` sorts after every key under that column's value and before the next value,
@@ -105,15 +104,6 @@ def cursor_text(key: dict[str, Any] | None, *, started_at: dict[str, Any] | None
         # as a query parameter)
         skipped = parts[: kept - 1] + [parts[kept - 1] + "\x01"] + [""] * (len(parts) - kept)
         text = json.dumps(skipped)
-        if len(text) <= pass_context.MAX_CURSOR:
-            return text
-    return "[]"
-
-
-def _fitted(parts: list[str]) -> str:
-    """`parts` as JSON, with its trailing columns emptied until it fits the cursor store."""
-    for kept in range(len(parts), 0, -1):
-        text = json.dumps(parts[:kept] + [""] * (len(parts) - kept))
         if len(text) <= pass_context.MAX_CURSOR:
             return text
     return "[]"

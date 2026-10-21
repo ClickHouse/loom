@@ -292,6 +292,13 @@ async def _integrity_repair_run(ch: Any, args: argparse.Namespace) -> int:
     return rc if not any(counts.get(k, 0) for k in repo.GAUGES) else max(rc, 1)
 
 
+def _positive_int(value: str) -> int:
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a positive integer")
+    return n
+
+
 def _add_sensitivity_sweep_parser(sub: Any) -> None:
     """`loom sensitivity-sweep`: the detector's late pass."""
     p_ssw = sub.add_parser(
@@ -310,7 +317,7 @@ def _add_sensitivity_sweep_parser(sub: Any) -> None:
     )
     p_ssw.add_argument(
         "--limit",
-        type=int,
+        type=_positive_int,
         default=20000,
         help="Rows labelled per run, and the page size the scan reads in (default 20000)",
     )

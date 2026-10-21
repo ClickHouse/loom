@@ -10873,7 +10873,7 @@
        "const": null,
        "choices": null,
        "nargs": null,
-       "type": "builtins:int",
+       "type": "server.cli.ops:_positive_int",
        "required": false,
        "help": "Rows labelled per run, and the page size the scan reads in (default 20000)",
        "metavar": null

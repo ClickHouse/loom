@@ -208,6 +208,7 @@ async def scan(
     pages: int | None,
     only_shapes: Iterable[str] | None = None,
     start_after: dict[str, Any] | None = None,
+    skip_noisy_agents: bool = False,
     ch: _CHClient | None = None,
 ) -> SweepReport:
     """Live unlabelled rows the detector would label, exactly as the write
@@ -222,7 +223,13 @@ async def scan(
     None). Only rows of the shapes in `only_shapes` are selected. A selected row the
     detector leaves unlabelled stays unlabelled and is selected again on the next run;
     reading past it, and starting the next pass at `resume_after`, keeps a run of them from
-    hiding a later row that is high."""
+    hiding a later row that is high.
+
+    With `skip_noisy_agents`, a full page inside one agent that gives no candidate moves
+    the scan past that agent, so one pass crosses up to `pages` agents whose selected rows
+    the detector leaves unlabelled. A row more than a page into such an agent is read once
+    the rows ahead of it leave the window, or by the operator's run, which reads every row
+    and leaves this off."""
     ch = ch or _default_client()
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
     report = SweepReport()
@@ -254,17 +261,42 @@ async def scan(
             sql = scan_sql(org=org, namespace=namespace, since_days=since_days, after=after)
             rows = await ch.query_all(sql, params=page_params)
         report.scanned += len(rows)
-        report.truncated = len(keys) >= limit
+        report.truncated = bool(keys) and len(keys) >= limit
+        found = len(report.candidates)
         _add_candidates(report, rows, keep)
-        report.resume_after = keys[-1] if report.truncated else None
-        if not report.truncated or len(report.candidates) >= limit:
+        if not report.truncated:
+            report.resume_after = None
             break
         last = keys[-1]
+        if (
+            skip_noisy_agents
+            and len(report.candidates) == found
+            and _agent(keys[0]) == _agent(last)
+        ):
+            last = _past_agent(last)
+        report.resume_after = last
+        if len(report.candidates) >= limit:
+            break
     if len(report.candidates) > limit:
         report.candidates = report.candidates[:limit]
         report.truncated = True
         report.resume_after = report.candidates[-1].sort_key
     return report
+
+
+def _agent(key: dict[str, Any]) -> tuple[str, str, str]:
+    return key["org"], key["namespace"], key["agent"]
+
+
+def _past_agent(key: dict[str, Any]) -> dict[str, Any]:
+    """A sort key after every key of `key`'s agent and before the next agent's.
+
+    `\\x01` sorts after every key under that agent name and before the next name, as no
+    org, namespace or agent name holds a control character (a NUL would not pass as a
+    query parameter)."""
+    org, namespace, agent = _agent(key)
+    skipped = dict.fromkeys(SORT_KEY, "")
+    return skipped | {"org": org, "namespace": namespace, "agent": agent + "\x01"}
 
 
 def scan_text(row: dict[str, Any]) -> str:

@@ -828,14 +828,16 @@ A worker pass is bounded:
   `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` keys, until that many candidates are found or
   `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` pages are read.
 - It starts at the agent the pass before stopped in, and the pass after one that reads the
-  window's last row starts again at the first key. A pass that found nothing to label and
-  started and stopped in the same agent leaves its cursor past that agent instead, or past
-  its namespace or org when a cursor naming the agent does not fit in 512 characters. A run
-  of selected rows the detector leaves unlabelled in one agent therefore cannot hide
-  another agent's rows from every pass, and a pass that labelled rows, or failed to, is
-  followed by one that reads the same agent again. The cursor, in
-  `loom.worker_status`, holds the org, namespace and agent only, so it names no user or
-  memory key that would outlive an erasure.
+  window's last row starts again at the first key. A full page inside one agent that gives
+  nothing to label moves the pass past that agent, so one pass crosses up to its page cap of
+  agents whose selected rows the detector leaves unlabelled, and a row more than a page into
+  such an agent waits until the rows ahead of it leave the window, or for the operator's run.
+  A pass that labelled rows leaves its cursor at the agent it stopped in, so the next reads
+  that agent again. A pass whose candidates all failed to apply leaves its cursor past that
+  agent, so a row that fails every time is retried when the sweep comes back round to it. A
+  cursor past an agent that does not fit in 512 characters is past its namespace or org
+  instead. The cursor, in `loom.worker_status`, holds the org, namespace and agent only, so
+  it names no user or memory key that would outlive an erasure.
 - Its ClickHouse filter selects only the shapes the default filter applies (`credential`
   and `email`; every high shape, a card number, SSN or stated PIN included, counts as
   `credential`), and within them only what the detector can label: a card is a lone 15- or
