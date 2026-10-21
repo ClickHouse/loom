@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Hashable, Iterable, Sequence
 from typing import Any, Final
+
+from server.memory.domain import chunk_shape
 
 HIGH: Final = "high"
 MEDIUM: Final = "medium"
@@ -274,30 +276,26 @@ def overlaps_credential(source: str, ranges: list[tuple[int, int]]) -> list[bool
     ]
 
 
-# The characters a memory chunk repeats from the one before it (chunk_projection cuts with it).
-CHUNK_OVERLAP = 100  # not a setting: algorithm shape, changed only with a benchmark
-
-
 def _overlap(previous: str, chunk: str) -> int:
     """The length of the longest start of `chunk` that ends `previous`: the characters a
-    chunk repeats from the one before it (`CHUNK_OVERLAP`, less the whitespace a chunk
-    is trimmed of). The chunker repeats at most `CHUNK_OVERLAP` characters; the search
+    chunk repeats from the one before it (`chunk_shape.CHUNK_OVERLAP`, less the whitespace a chunk
+    is trimmed of). The chunker repeats at most that many characters; the search
     stops at twice that, a margin that still keeps the scan short and leaves a longer
     repeated run as new text."""
-    for size in range(min(len(previous), len(chunk), 2 * CHUNK_OVERLAP), 0, -1):
+    for size in range(min(len(previous), len(chunk), 2 * chunk_shape.CHUNK_OVERLAP), 0, -1):
         if previous.endswith(chunk[:size]):
             return size
     return 0
 
 
-def split_credentials(chunks: list[tuple[object, int, str]]) -> list[bool]:
+def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]:
     """For each `(session, chunk_index, content)` chunk, whether it overlaps a credential in
     its session's text, rebuilt by joining the session's chunks in `chunk_index` order with
     each one's overlap with the one before it dropped: a key cut at a chunk boundary reads
     as one only when joined. A gap in `chunk_index` starts a new text, so chunks that were
     never neighbours are not joined."""
     held = [False] * len(chunks)
-    sessions: dict[object, list[int]] = {}
+    sessions: dict[Hashable, list[int]] = {}
     for i, (session, _, _) in enumerate(chunks):
         sessions.setdefault(session, []).append(i)
     for positions in sessions.values():

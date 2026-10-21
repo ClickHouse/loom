@@ -15,15 +15,12 @@ from server.core.datetimes import naive_utc_now
 from server.llm import customer
 from server.memory.app.credential_passages import embed_plain
 from server.memory.app.projection_errors import record_input_projection_failure
-from server.memory.domain.sensitivity import CHUNK_OVERLAP, overlaps_credential
+from server.memory.domain import chunk_shape
+from server.memory.domain.sensitivity import overlaps_credential
 
 log = logging.getLogger(__name__)
 
 
-# 800 chars ≈ 200 tokens; preserves multi-sentence units a 400-char window
-# splits mid-thought. A CHUNK_OVERLAP-char overlap so a boundary-straddling
-# date/entity appears in both neighbors.
-_CHUNK_SIZE = 800
 _MIN_CHUNK_SIZE = 20  # drop chunks shorter than this (mostly noise)
 # Fallback when the setting is unreadable; the cap itself is
 # `settings.memory_chunks_max_per_call`. 64 chunks is ~50K chars, which a
@@ -113,7 +110,7 @@ def _extend_over_enumeration(text: str, start: int, end: int) -> int:
 
 
 def chunk_text(text: str) -> list[tuple[str, int, int]]:
-    """Split `text` into ~_CHUNK_SIZE-char chunks at semantic boundaries.
+    """Split `text` into ~`chunk_shape.CHUNK_SIZE`-char chunks at semantic boundaries.
 
     Returns (chunk_text, line_start, line_end) triples, 1-indexed line numbers
     in the original text (operator UIs jump to a hit's range). Prefers a
@@ -154,9 +151,9 @@ def chunk_text_with_ranges(
     start = 0
     last_end = 0
     while start < n and len(chunks) < cap:
-        end = min(start + _CHUNK_SIZE, n)
+        end = min(start + chunk_shape.CHUNK_SIZE, n)
         if end < n:
-            half = start + _CHUNK_SIZE // 2
+            half = start + chunk_shape.CHUNK_SIZE // 2
             para_break = text.rfind("\n\n", half, end)
             if para_break != -1:
                 end = para_break + 2
@@ -181,7 +178,7 @@ def chunk_text_with_ranges(
         last_end = end
         if end >= n:
             break
-        start = max(start + 1, end - CHUNK_OVERLAP)
+        start = max(start + 1, end - chunk_shape.CHUNK_OVERLAP)
     # The loop only stops short of the end when the chunk cap is hit; the
     # tail past the last chunk's end is what nobody will ever be able to find.
     return chunks, ranges, max(0, n - last_end)

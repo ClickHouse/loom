@@ -359,17 +359,17 @@ async def test_schema_mode_records_stubbed_fields(monkeypatch: pytest.MonkeyPatc
 
 def test_chunk_split_reports_truncated_tail() -> None:
     from server.memory.app.chunk_projection import (
-        _CHUNK_SIZE,
         _MAX_CHUNKS_PER_CALL,
         chunk_text,
         chunk_text_with_truncation,
     )
+    from server.memory.domain.chunk_shape import CHUNK_SIZE
 
     small = "line of text\n" * 40
     chunks, lost = chunk_text_with_truncation(small)
     assert lost == 0 and chunks == chunk_text(small)
 
-    huge = ("x" * (_CHUNK_SIZE - 1) + "\n") * (_MAX_CHUNKS_PER_CALL + 10)
+    huge = ("x" * (CHUNK_SIZE - 1) + "\n") * (_MAX_CHUNKS_PER_CALL + 10)
     # The default cap is 512; the tail accounting is exercised at a smaller
     # constant through the explicit cap.
     chunks, lost = chunk_text_with_truncation(huge, max_chunks=_MAX_CHUNKS_PER_CALL)
@@ -385,10 +385,10 @@ async def test_write_memory_chunks_records_truncation(monkeypatch: pytest.Monkey
     import server.core.ch as chmod
     import server.embedding as embmod
     from server.memory.app.chunk_projection import (
-        _CHUNK_SIZE,
         _MAX_CHUNKS_PER_CALL,
         write_memory_chunks,
     )
+    from server.memory.domain.chunk_shape import CHUNK_SIZE
     from server.settings import settings
 
     # The cap is the setting; pin it to the old constant so the
@@ -421,7 +421,7 @@ async def test_write_memory_chunks_records_truncation(monkeypatch: pytest.Monkey
         agent = "a"
         session_id = "s"
 
-    body = ("x" * (_CHUNK_SIZE - 1) + "\n") * (_MAX_CHUNKS_PER_CALL + 5)
+    body = ("x" * (CHUNK_SIZE - 1) + "\n") * (_MAX_CHUNKS_PER_CALL + 5)
     await write_memory_chunks(_Input(), [{"role": "user", "content": body}])
     assert _pairs() == [("chunk.split", "truncated")]
     assert drops._peek_for_tests()[0]["item"].startswith("chars=")

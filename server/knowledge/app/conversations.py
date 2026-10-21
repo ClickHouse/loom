@@ -1323,11 +1323,7 @@ def _compacted_from(row: Mapping[str, Any]) -> list[str]:
     the same test `_PEER_COPIES` applies in SQL."""
     if row.get("role") != "system":
         return []
-    try:
-        meta = json.loads(row.get("metadata") or "{}")
-    except (ValueError, TypeError):
-        return []
-    ids = meta.get("compacted_from") if isinstance(meta, dict) else None
+    ids = metadata_object(row.get("metadata")).get("compacted_from")
     return [str(i) for i in ids] if isinstance(ids, list) else []
 
 
