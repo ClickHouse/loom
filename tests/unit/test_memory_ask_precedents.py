@@ -785,16 +785,17 @@ def test_ask_shape_hashes_the_identity_the_token_pins() -> None:
     assert alice != ask_shape_sha256(_input(read_scope="own_user", user_id="alice"), settings)
 
 
-def test_ask_shape_hashes_the_agent_whose_rules_the_token_is_served(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_ask_shape_hashes_the_agent_whose_rules_the_token_is_served() -> None:
     """Two tokens pinned to one end user, signed for different bots, one body under the
     default agent: each is served only its own bot's promoted rules, so the precedent
     keys must differ; a caller with no pin hashes the shape without a rule_agent key."""
     from server.auth.context import set_current_auth
     from server.auth.jwt import AuthInfo
-    from server.memory.app import agent_rules
-    from server.memory.app.ask.handler import ask_shape_sha256
+    from server.memory.app.ask.handler import (
+        _ASK_SHAPE_EXCLUDE,
+        _shape_settings,
+        ask_shape_sha256,
+    )
     from server.memory.domain.precedents import precedent_key
     from server.operations.base import Role
     from server.settings import settings
@@ -823,7 +824,14 @@ def test_ask_shape_hashes_the_agent_whose_rules_the_token_is_served(
     finally:
         set_current_auth(None)
     assert support != sales
-    # With no pin the shape carries no rule_agent key, so it hashes as a build
-    # without that key did and precedents stored before an upgrade still match.
-    monkeypatch.setattr(agent_rules, "request_rule_agent", lambda body_agent: body_agent)
-    assert unpinned == _key()
+    # With no pin the shape hashes as a build without the rule_agent key did, so
+    # precedents stored before an upgrade still match. That build's shape, by hand:
+    body = _input()
+    exclude = set(_ASK_SHAPE_EXCLUDE)
+    exclude |= {f for f in ("user_id", "session_id") if getattr(body, f) in (None, "-")}
+    shape = body.model_dump(exclude=exclude, exclude_defaults=True)
+    if shaped := _shape_settings(settings):
+        shape["settings"] = shaped
+    canonical = json.dumps(shape, sort_keys=True, default=str, separators=(",", ":"))
+    older_build = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    assert unpinned == precedent_key(body.query, older_build)

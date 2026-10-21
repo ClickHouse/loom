@@ -812,11 +812,10 @@ async def _step_bulk_write(
     """Convert extracted_facts to bulk_set entries and write."""
     del config
     await _file_agent_rules(state)
-    # The deterministic passes read the messages, not
-    # the extractor's output — a session that is only "please forget X" /
-    # "got it" extracts to nothing and still has work here. Under an operator
-    # policy every row comes from the model that was given it, so no premise
-    # fact is added from the raw turns.
+    # The deterministic passes read the messages, not the extractor's output — a session
+    # that is only "please forget X" / "got it" extracts to nothing and still has work
+    # here. Under an operator policy every row comes from the model that was given it,
+    # so no premise fact is added from the raw turns.
     premise_facts = (
         []
         if state.operator_policy
@@ -897,8 +896,7 @@ async def _step_bulk_write(
             if isinstance(r, (list, tuple)) and len(r) == 3:
                 rels.append((str(r[0]), str(r[1]), str(r[2])))
         derived = [d for d in (fact.get("derived") or []) if isinstance(d, dict)]
-        # Preserve the judge verdict in source_trace for audit/UI, and apply
-        # a bounded ordering nudge to confidence (CORRECT / unjudged keep 1.0).
+        # The judge verdict goes to source_trace (audit/UI) and nudges confidence.
         verdict = str(fact.get("judge_verdict") or "").upper()
         fact_confidence = judged_confidence(fact)
         # A coverage-sweep fact fills a gap; at equal similarity

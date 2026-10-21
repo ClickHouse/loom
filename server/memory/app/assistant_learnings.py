@@ -73,8 +73,9 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     if row is not None and row["status"] != "pending":
         return False  # decided: support no longer changes anything
     # A promoted rule is served back to the bot, which restates it in other words; a
-    # new wording under the key of a promoted rule is not filed again. A rejected rule
-    # is never served back, so it does not stop a different rule under its key.
+    # new wording under the key of a promoted rule is not filed again while that rule
+    # is served. Deleting its `learning://` document lets a revised rule be filed. A
+    # rejected rule is never served back, so it does not stop a different rule.
     if row is None and await learnings_repo.rule_promoted(state.org, state.namespace, agent, key):
         record_drop(state.org, state.namespace, "learnings.file", "already_promoted", item=key)
         return False

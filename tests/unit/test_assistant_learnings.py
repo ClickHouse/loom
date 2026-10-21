@@ -216,6 +216,8 @@ class _Queue:
         self.inserts: list[dict[str, Any]] = []
         self.supporters: dict[tuple[str, str, str], dict[str, Any]] = {}
         self.order: list[str] = []
+        # Promoted candidates whose `learning://` document was deleted.
+        self.deleted_docs: set[str] = set()
 
     async def find(self, org: str, namespace: str, cid: str) -> dict[str, Any] | None:
         row = self.rows.get(cid)
@@ -237,7 +239,10 @@ class _Queue:
 
     async def promoted(self, org: str, ns: str, agent: str, key: str) -> bool:
         return any(
-            r["agent"] == agent and r["memory_key"] == key and r["status"] == "promoted"
+            r["agent"] == agent
+            and r["memory_key"] == key
+            and r["status"] == "promoted"
+            and str(r["candidate_id"]) not in self.deleted_docs
             for r in self.rows.values()
         )
 
@@ -451,6 +456,64 @@ async def test_a_promoted_rule_restated_in_new_words_is_not_filed_again(
     assert (
         await _file(_state("carol", "s3", rule_agent="sales-bot"), _rule_fact(value=reworded)) == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_a_revised_rule_is_filed_once_the_promoted_rules_document_is_deleted(
+    queue: _Queue,
+) -> None:
+    await _file(_state("alice", "s1"))
+    queue.rows[_cid()]["status"] = "promoted"
+    revised = "The assistant escalates any refund over $1000 to a human."
+    assert await _file(_state("bob", "s2"), _rule_fact(value=revised)) == 0
+    # The admin deletes the promoted rule's document: the revision reaches a reviewer.
+    queue.deleted_docs.add(_cid())
+    assert await _file(_state("carol", "s3"), _rule_fact(value=revised)) == 1
+    assert queue.rows[_cid(revised)]["status"] == "pending"
+    assert queue.support(_cid(revised)) == [("carol", "s3")]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_promoted_rule_counts_only_while_its_document_is_live() -> None:
+    """rule_promoted on clickhouse-local: a promoted candidate whose `learning://`
+    document a later version superseded no longer counts."""
+
+    def candidate(status: str) -> str:
+        return (
+            "INSERT INTO loom.learnings_queue (candidate_id, org, namespace, memory_key, "
+            "memory_type, proposed_value, supporter_count, confidence_avg, supporters, "
+            "status, version, source_kind, agent) VALUES "
+            f"('{_SUPPORTED}', 'o', 'ns', 'assistant_rule_refund_escalation', 'semantic', "
+            f"'\"rule\"', 0, 0, [], '{status}', 2, 'assistant_turn', 'support-bot')"
+        )
+
+    def document(version: int, superseded: str) -> str:
+        return (
+            "INSERT INTO loom.documents (org, namespace, source_uri, content, tags, version, "
+            f"superseded_at) VALUES ('o', 'ns', 'learning://{_SUPPORTED}', 'rule', [], "
+            f"{version}, {superseded})"
+        )
+
+    class _LocalCH:
+        def __init__(self, setup: list[str]) -> None:
+            self.setup = [ddl("learnings_queue"), ddl("documents"), *setup]
+
+        async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
+            rows = run(self.setup, sql, params)
+            return rows[0] if rows else None
+
+    async def promoted(*setup: str) -> bool:
+        return await learnings_repo.rule_promoted(
+            "o", "ns", "support-bot", "assistant_rule_refund_escalation", ch=_LocalCH(list(setup))
+        )
+
+    live = document(1, "NULL")
+    assert await promoted(candidate("promoted"), live)
+    assert not await promoted(candidate("pending"), live)
+    assert not await promoted(candidate("promoted"))
+    # knowledge.delete writes a newer version with superseded_at set.
+    assert not await promoted(candidate("promoted"), live, document(2, "now()"))
 
 
 @pytest.mark.asyncio

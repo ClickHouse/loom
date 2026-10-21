@@ -444,6 +444,17 @@ def _settle_facts(
 
 
 @staged("extract")
+def _split_agent_rules(
+    facts: list[ExtractedFact], agent_learnings: bool
+) -> tuple[list[ExtractedFact], list[ExtractedFact]]:
+    """The user facts and the assistant's rules about itself. Off, a fact the model
+    still marks as the assistant's rule is the user's, and gets every pass a user
+    fact gets."""
+    if not agent_learnings:
+        return [replace(f, about="user") if f.about == "agent" else f for f in facts], []
+    return [f for f in facts if f.about != "agent"], [f for f in facts if f.about == "agent"]
+
+
 async def extract_from_messages(
     messages: list[dict[str, object]],
     *,
@@ -495,9 +506,8 @@ async def extract_from_messages(
     Token cost in the misfire case: one extra LLM call. In the
     legitimately-empty case (greetings, trivial replies): no retry.
 
-    `agent_learnings` asks the same call for the assistant's standing rules
-    about itself, returned as facts with `about="agent"`. Off, a fact the
-    model still marks that way is the user's, as without the block.
+    `agent_learnings` asks the same call for the assistant's standing rules about
+    itself, returned as facts with `about="agent"` (`_split_agent_rules`).
     """
     if not messages:
         client = get_llm_client()
@@ -595,17 +605,12 @@ async def extract_from_messages(
         if _cs_result is not None:
             accumulated = _merge_llm_results(accumulated, _cs_result)
 
-    # Off, a fact the model still marks as the assistant's rule is the user's, and
-    # gets every pass a user fact gets.
-    if not agent_learnings:
-        facts = [replace(f, about="user") if f.about == "agent" else f for f in facts]
-    # Relation backfill: the facts the first pass left without a typed
-    # relation get one more, smaller call. Before the relation key rewrite
-    # below, which keys a fact by its single-valued relation, and before the
-    # judge, which then grades the backfilled facts too. A bot's rule takes no
-    # part: it is filed to the learnings queue, never keyed by a relation.
-    rules = [f for f in facts if f.about == "agent"]
-    facts = [f for f in facts if f.about != "agent"]
+    # Relation backfill: the facts the first pass left without a typed relation get
+    # one more, smaller call. Before the relation key rewrite below, which keys a fact
+    # by its single-valued relation, and before the judge, which then grades the
+    # backfilled facts too. A bot's rule takes no part: it is filed to the learnings
+    # queue, never keyed by a relation.
+    facts, rules = _split_agent_rules(facts, agent_learnings)
     relations_backfilled = 0
     if facts:
         facts, _bf_result, relations_backfilled = await _backfill_relations(facts, client=client)
@@ -613,8 +618,7 @@ async def extract_from_messages(
             accumulated = _merge_llm_results(accumulated, _bf_result)
         if relations_backfilled:
             log.info("relation backfill gave %d fact(s) a typed relation", relations_backfilled)
-    # A rule only has its citations repaired: a key rewrite (an identifier in
-    # the value, a relation) would file one rule under a different key per session.
+    # A rule's citations are repaired, never its key: a rewrite would rekey it each session.
     facts = _settle_facts(
         facts,
         messages,
