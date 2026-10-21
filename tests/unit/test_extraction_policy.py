@@ -426,7 +426,7 @@ def stored(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
     async def namespace_count(org: str, **_: Any) -> int:
         scopes = {r["namespace"] for r in rows if r["org"] == org and r["namespace"]}
-        return sum(1 for ns in scopes if await get(org, ns))
+        return len([ns for ns in scopes if await get(org, ns)])
 
     monkeypatch.setattr(extraction_policy.repo, "insert_row", insert_row)
     monkeypatch.setattr(extraction_policy.repo, "get", get)
