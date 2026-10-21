@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from server.core.repo_base import _CHClient, _default_client
@@ -136,18 +137,28 @@ async def export_conversations(
     rows past `max_bytes` of text were left out.
 
     A turn has no size cap, so the rows stop once the text before a row reaches
-    `max_bytes`; the first row is always read. The first statement finds where
-    they stop from the text lengths alone, so no text past the budget is read;
-    it also returns the first row past the budget, which says more rows exist.
-    The second reads the text of the rows up to that point; a turn written between
-    the two was never measured, so it is dropped, and a measured one it pushed out
-    of the page marks the section truncated."""
+    `max_bytes`. The first statement finds where they stop from the text lengths
+    alone, and also returns the first row past the budget, which says more rows
+    exist. The second reads the text of the rows up to that point. Both read only
+    turns stamped no later than the export's start, so a turn appended meanwhile is
+    not read; one written with an earlier stamp of its own can still be read, and is
+    dropped, as the first statement never measured it. A measured turn such a write
+    pushes out of the page marks the section truncated, so the page can then even be
+    empty."""
     ch = ch or _default_client()
     shown_sql, shown_params = shown.clause()
     column = "user_id" if scope_type == "user_id" else "namespace"
     tomb_clause = "" if include_tombstoned else " AND tombstoned_at IS NULL"
-    where = f"org = {{org:String}} AND {column} = {{scope:String}}{tomb_clause}{shown_sql}"
-    params: dict[str, Any] = {"org": org, "scope": scope_value, **shown_params}
+    where = (
+        f"org = {{org:String}} AND {column} = {{scope:String}}"
+        f" AND ts <= {{as_of:DateTime64(3)}}{tomb_clause}{shown_sql}"
+    )
+    params: dict[str, Any] = {
+        "org": org,
+        "scope": scope_value,
+        "as_of": datetime.now(UTC),
+        **shown_params,
+    }
     sizes = await ch.query_all(
         f"""
         SELECT namespace, thread_id, ts, msg_id, bytes_before

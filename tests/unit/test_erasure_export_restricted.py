@@ -1,6 +1,7 @@
-"""`erasure.export`: a namespace export is authorized against
-the namespace itself; a subject export excludes the restricted namespaces
-the caller may not read."""
+"""`erasure.export`: who may export what (a namespace export is authorized against the
+namespace itself; a subject export excludes the restricted namespaces the caller may not
+read), and the reads behind each section, the conversation sections' byte budget,
+labelling and audit included."""
 
 from __future__ import annotations
 
