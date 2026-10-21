@@ -190,9 +190,10 @@ async def handle_learnings_review(
     # A bot rule with no supporter left (blanked once decided, deleted once pending
     # by the erasure that took its last supporter): there is no rule left to review,
     # so it answers as a missing candidate does.
-    agent_rule = row is not None and row.get("source_kind") == assistant_rules.SOURCE_KIND
+    agent_rule = False
     support: list[dict[str, Any]] = []
-    if row is not None and agent_rule:
+    if row is not None and row.get("source_kind") == assistant_rules.SOURCE_KIND:
+        agent_rule = True
         support = await learnings_repo.supporter_stats(
             input.org, input.namespace, [str(row["candidate_id"])]
         )

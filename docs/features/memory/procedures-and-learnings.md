@@ -232,10 +232,11 @@ erased answers 404, as a missing candidate does. Field lists:
 
 ## Settings
 
-| Setting                       | Effect                                                                                                |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `LOOM_PROCEDURE_STRIKE_LIMIT` | Consecutive failed runs before quarantine ([Workers](../../reference/configuration.md#workers)).      |
-| `LOOM_REFLECTION_DISTILL_*`   | The reflection distillation worker ([Consolidation](../../reference/configuration.md#consolidation)). |
+| Setting                               | Effect                                                                                                                                                             |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `LOOM_PROCEDURE_STRIKE_LIMIT`         | Consecutive failed runs before quarantine ([Workers](../../reference/configuration.md#workers)).                                                                   |
+| `LOOM_REFLECTION_DISTILL_*`           | The reflection distillation worker ([Consolidation](../../reference/configuration.md#consolidation)).                                                              |
+| `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS` | Experimental, off: extraction files the assistant's rules about itself as `assistant_turn` candidates ([Extraction](../../reference/configuration.md#extraction)). |
 
 ## Limits
 
@@ -250,5 +251,6 @@ erased answers 404, as a missing candidate does. Field lists:
 - [Runs](../runs.md): `run.complete`, `memories_used` and reflections.
 - [Working memory and profiles](./working-memory-and-profiles.md): how `context.pack`
   shows procedures.
-- [Namespaces and sharing](../namespaces-and-sharing.md): the shared zone learnings
-  promote into.
+- [Namespaces and sharing](../namespaces-and-sharing.md): the shared zone a supporters
+  candidate promotes into.
+- [Knowledge](../knowledge.md): where a bot's rule promotes by default.

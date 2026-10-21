@@ -418,13 +418,14 @@ async def _maybe_route_to_synthesize(input: MemoryAskInput) -> MemoryAskOutput |
             )
             return list(found.results)
 
+        top_k = 20  # not a setting: the hit pool pick_documents narrows to a few documents
         # Another bot's promoted rule is not a rule about this agent.
         hits = await served_hits(
-            await search(20),
+            await search(top_k),
             search,
             lambda h: list(getattr(h, "tags", None) or []),
             request_rule_agent(input.agent),
-            20,
+            top_k,
         )
         docs = ask_routing.pick_documents(
             hits,
