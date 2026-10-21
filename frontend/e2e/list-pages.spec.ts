@@ -445,3 +445,30 @@ test("styles.css draws the Kbd and the score bar on radius tokens", () => {
     expect(rule(selector), selector).toMatch(/border-radius: var\(--/);
   }
 });
+
+// The guide link is only as wide as its text: a click beside it on its line still opens
+// the row (a member's Request upgrade), not the guide.
+test.describe("1400 px, the guide summary line", () => {
+  test.use({ viewport: { width: 1400, height: 900 } });
+  test("a click beside a Spaces row's guide link is the row's", async ({ page }) => {
+    await installApi(page, {
+      browseRows: 3,
+      mine: [
+        { namespace: NAMESPACE, role: "writer", status: "active", visibility: "private", kind: "memory" },
+        { namespace: "team-002", role: "writer", status: "active", visibility: "public", kind: "memory" },
+      ],
+      claims: [NAMESPACE, "team-002"],
+    });
+    await page.goto("/spaces");
+    const link = page.locator("[data-guide-link]");
+    await expect(link).toBeVisible();
+    const box = await link.boundingBox();
+    const row = await page.locator(".list-row", { has: link }).boundingBox();
+    if (!box || !row) throw new Error("the guide link or its row has no box");
+    const beside = box.x + box.width + 24;
+    expect(beside).toBeLessThan(row.x + row.width / 2);
+    await page.mouse.click(beside, box.y + box.height / 2);
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Guide for team-002" })).toHaveCount(0);
+  });
+});

@@ -96,9 +96,8 @@ export function useNamespaceRole(namespace: string | undefined): NamespaceRole |
   return roleOnNamespace(whoami, stored ?? fetched, namespace ?? "");
 }
 
-/** Whether the caller may write the namespace's guide: a known writer or admin only (the
- *  role decides which screen the guide opens on, so an unknown one reads), and never an end
- *  user's personal collection, which takes no guide. */
+/** Whether the caller may write the namespace's guide: a known writer or admin, never a
+ *  personal collection; an unknown role reads. */
 export function canEditGuide(role: NamespaceRole | null, namespace: string): boolean {
   return (role === "writer" || role === "admin") && !isPersonalCollection(namespace);
 }

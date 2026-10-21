@@ -152,4 +152,13 @@ describe("NamespaceGuideButton", () => {
     await userEvent.type(editor, "Keys: acct/{{}id}/plan");
     expect(screen.getByRole("button", { name: "Save" })).not.toHaveAttribute("aria-disabled");
   });
+
+  it("keeps its neutral description when the read fails, and the dialog says why", async () => {
+    vi.mocked(api.getNamespaceGuide).mockRejectedValue(new Error("the guide service is down"));
+    render(<NamespaceGuideButton identity={identity} />);
+    await waitFor(() => expect(api.getNamespaceGuide).toHaveBeenCalledTimes(1));
+    expect(guideButton()).toHaveAccessibleDescription("How this namespace is laid out, for agents and people");
+    fireEvent.click(guideButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent(/the guide service is down/);
+  });
 });

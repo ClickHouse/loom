@@ -619,7 +619,7 @@ const SpaceRow = memo(function SpaceRow({
             (canReadGuide ? (
               // Above the row's stretched open button, so it takes its own click; the link
               // truncates its own text, so nothing clips its ring.
-              <span className="list-row-control mt-0.5 flex max-w-full min-w-0">
+              <span className="list-row-control mt-0.5 inline-flex max-w-full min-w-0 align-top">
                 <Link
                   component="button"
                   type="button"
