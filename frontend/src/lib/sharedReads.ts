@@ -23,6 +23,7 @@ import {
   type BudgetStatus,
   boundedSignal,
 } from "../api";
+import { hasAutoResolved } from "../api/audit";
 import { isRecord } from "./guards";
 
 const cache = new Map<string, { at: number; p: Promise<unknown> }>();
@@ -94,5 +95,15 @@ export function sharedHealth(): Promise<Record<string, unknown> | null> {
 export function sharedBudgetStatus(id: Pick<Identity, "org" | "namespace">): Promise<BudgetStatus> {
   return shared(`budget:${id.org}/${id.namespace}`, 25_000, () =>
     getBudgetStatus({ org: id.org, namespace: id.namespace }),
+  );
+}
+
+/** Whether the namespace has auto-resolved memories, once per 25 s for every asker: the
+ *  sidebar's Review queue entry and the Review queue page ask the same yes/no. A static
+ *  import: an on-demand chunk that 404s after a redeploy would reload the page from this
+ *  timer (staleChunk.ts), with nobody clicking. */
+export function sharedHasAutoResolved(id: Pick<Identity, "org" | "namespace">): Promise<boolean> {
+  return shared(`auto_resolved:${id.org}/${id.namespace}`, 25_000, () =>
+    hasAutoResolved({ org: id.org, namespace: id.namespace }),
   );
 }

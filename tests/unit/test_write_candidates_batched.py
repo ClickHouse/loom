@@ -32,7 +32,8 @@ class StubCH:
 
 def test_batched_statement_has_one_distance_term_per_fact_and_no_lambda_over_the_vector() -> None:
     sql = conflict_candidates.candidate_sql_many(3)
-    assert sql.count("cosineDistance(e.embedding, {embs:Array(Array(Float32))}[") == 3
+    for i in (1, 2, 3):
+        assert f"({i}, cosineDistance(e.embedding, {{emb{i}:Array(Float32)}}))" in sql
     assert "arrayMap(" not in sql  # would replicate the 6 KB vector per fact per row
     assert "ARRAY JOIN arrayFilter(" in sql and "LIMIT 10 BY qidx" in sql
     assert "{types:Array(String)}[x.1] = m.memory_type" in sql
@@ -50,7 +51,7 @@ def test_batched_statement_has_one_distance_term_per_fact_and_no_lambda_over_the
     with pytest.raises(ValueError):
         conflict_candidates.candidate_sql_many(0)
     vsql = value_updates._peers_sql_many(2)
-    assert vsql.count("1 - cosineDistance(e.embedding, {embs:Array(Array(Float32))}[") == 2
+    assert vsql.count("1 - cosineDistance(e.embedding, {emb") == 2
     assert "x.2 >= {min_cos:Float32}" in vsql and "LIMIT 8 BY qidx" in vsql
 
 
@@ -68,7 +69,7 @@ async def test_candidate_rows_many_chunks_by_batch_and_maps_rows_back_by_qidx() 
     ]
     out = await conflicts.candidate_rows_many(org="o", namespace="ns", items=items, batch=2, ch=ch)
     assert len(ch.query_all_calls) == 3
-    sizes = [len(p["embs"]) for _, p in ch.query_all_calls]
+    sizes = [len([k for k in p if k.startswith("emb")]) for _, p in ch.query_all_calls]
     assert sorted(sizes) == [1, 2, 2]
     assert out[1] == [{"qidx": 1, "memory_id": "p", "memory_key": "peer_of_k1", "dist": 0.1}]
     assert out[4] == [{"qidx": 0, "memory_id": "q", "memory_key": "peer_of_k4", "dist": 0.2}]
@@ -124,8 +125,11 @@ async def test_link_value_updates_uses_one_statement_per_batch(monkeypatch) -> N
     monkeypatch.setattr(settings, "memory_write_candidate_batch", 6)
     writes: list[list[str]] = []
 
-    async def fake_write(org: str, ids: list[str], update: Any, *, ch: Any = None) -> int:
+    async def fake_write(
+        org: str, ids: list[str], update: Any, *, ch: Any = None, **_kw: Any
+    ) -> int:
         writes.append(ids)
+        _kw["on_written"]([{"memory_id": ids[0], "memory_key": "k"}])
         return len(ids)
 
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", fake_write)
@@ -166,6 +170,7 @@ async def test_link_value_updates_uses_one_statement_per_batch(monkeypatch) -> N
         namespace="ns",
         rows=rows,
         embeddings_by_key={"k0": [0.1, 0.2], "user_5k_personal_best_time": [0.3, 0.4]},
+        agent="a",
         ch=ch,
     )
     assert len(ch.query_all_calls) == 1  # two rows, one statement
@@ -200,7 +205,25 @@ async def test_batch_zero_keeps_the_per_row_statement(monkeypatch) -> None:
         namespace="ns",
         rows=rows,
         embeddings_by_key={f"k{i}": [0.1, 0.2] for i in range(3)},
+        agent="a",
         ch=ch,
     )
     assert len(ch.query_all_calls) == 3
     assert all("qidx" not in sql for sql, _ in ch.query_all_calls)
+
+
+@pytest.mark.asyncio
+async def test_no_parameter_of_a_full_batch_reaches_the_128_kib_field_cap() -> None:
+    # Six 3072-d vectors (the bulk default batch, production width) in one array
+    # parameter are ~400 KB as text; ClickHouse refuses any field over 128 KiB.
+    from clickhouse_connect.driver.binding import format_query_value
+
+    ch = StubCH()
+    vec = [0.123456789] * 3072
+    items = [("semantic", f"k{i}", vec, 0.3) for i in range(6)]
+    await conflicts.candidate_rows_many(org="o", namespace="ns", items=items, batch=6, ch=ch)
+    ((sql, params),) = ch.query_all_calls
+    sizes = {k: len(str(format_query_value(v))) for k, v in params.items()}
+    assert max(sizes.values()) < 128 * 1024, sizes
+    assert sum(sizes.values()) > 128 * 1024, "the batch itself is past one field's cap"
+    assert all(f"{{emb{i}:Array(Float32)}}" in sql for i in range(1, 7))

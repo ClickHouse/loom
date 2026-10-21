@@ -83,21 +83,29 @@ async def ready_event_exists(
     org: str, inbox: str, task_id: str, *, ch: _CHClient | None = None
 ) -> bool:
     ch = ch or _default_client()
-    row = await ch.query_one(
-        "SELECT count() AS n FROM loom.task_events "
+    return bool(await _ready_event_seqs(org, inbox, task_id, ch=ch))
+
+
+async def insert_ready_event(row: dict[str, Any], *, ch: _CHClient | None = None) -> bool:
+    """Insert the ready event; True when this row landed.
+    Why the dedup token and its retry: docs/architecture/rolling-upgrades.md, rule 10."""
+    ch = ch or _default_client()
+    task_id = str(row["task_id"])
+    settings = {**_INSERT_SETTINGS, "insert_deduplication_token": task_id}
+    await ch.insert("loom.task_events", [row], settings=settings)
+    seqs = await _ready_event_seqs(row["org"], row["inbox"], task_id, ch=ch)
+    if seqs:
+        return int(row["seq"]) in seqs
+    settings["insert_deduplication_token"] = f"{task_id}:{uuid.uuid4().hex}"
+    await ch.insert("loom.task_events", [row], settings=settings)
+    return True
+
+
+async def _ready_event_seqs(org: str, inbox: str, task_id: str, *, ch: _CHClient) -> set[int]:
+    rows = await ch.query_all(
+        "SELECT seq FROM loom.task_events "
         "WHERE org = {org:String} AND inbox = {inbox:String} AND task_id = {tid:UUID} "
         "AND event = {event:String} SETTINGS select_sequential_consistency = 1",
         params={"org": org, "inbox": inbox, "tid": task_id, "event": READY_EVENT},
     )
-    return bool(row and int(row.get("n") or 0) > 0)
-
-
-async def insert_ready_event(row: dict[str, Any], *, ch: _CHClient | None = None) -> None:
-    """The event row; the id doubles as the insert's dedup token, so a retried
-    insert of the same row lands once."""
-    ch = ch or _default_client()
-    await ch.insert(
-        "loom.task_events",
-        [row],
-        settings={**_INSERT_SETTINGS, "insert_deduplication_token": str(row["task_id"])},
-    )
+    return {int(r["seq"]) for r in rows}

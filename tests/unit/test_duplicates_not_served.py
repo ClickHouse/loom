@@ -403,6 +403,8 @@ def _row(status: str = "active", duplicate_of: str = "") -> SimpleNamespace:
         last_recalled_at=None,
         evidence_count=1,
         agent="a",
+        user_id="-",
+        session_id="-",
         reinforcement_count=1,
         last_reinforced_at=None,
         tags=[],

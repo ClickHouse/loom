@@ -4,10 +4,14 @@ first stated event date a merged row keeps. No I/O."""
 
 from __future__ import annotations
 
+import dataclasses
+from collections.abc import Collection
 from typing import Any
 
 from server.core.datetimes import parse_iso_dt
-from server.memory.app.set_commit import _set_next, _set_peers
+from server.memory.app.conflicts import resolver_mark
+from server.memory.app.set_commit import peer_id_in_read_scope, set_next, set_peers
+from server.memory.domain.conflicts import kept_versions
 
 # ---------------------------------------------------------------------------
 # Bulk conflict surfacing
@@ -25,20 +29,23 @@ class BulkVerdictPlan:
         self.duplicates: list[str] = []
         self.conflicted: list[str] = []
         self.conflict_marks: list[tuple[str, list[str]]] = []
-        # (new memory_id, new key, refined peers) per judged elaboration.
-        self.refines: list[tuple[str, str, list[Any], str, str]] = []
+        # (new memory_id, new key, replaced peers) per templated substitution.
+        self.refines: list[tuple[str, str, list[Any]]] = []
         self.refined: list[str] = []
         self.reinforce_ids: list[str] = []
+        # id() of a merged row -> the stored row it merged into. By row, not key: a key
+        # written twice can merge twice.
+        self.merged_into: dict[int, str] = {}
         self.unchecked: int = 0
 
-    def add_refine(self, row: dict[str, Any], key: str, refined: list[Any], relation: str) -> None:
-        """A refines verdict with the new row's text, so `apply_refines` can
-        keep a peer the new statement would truncate."""
-        self.refines.append(
-            (str(row["memory_id"]), key, refined, relation, str(row.get("value") or ""))
-        )
+    def add_refine(self, row: dict[str, Any], key: str, refined: list[Any]) -> None:
+        self.refines.append((str(row["memory_id"]), key, refined))
 
 
+# The verdicts that keep an entry's row out of the insert.
+NOT_LANDING = ("merge", "rejected")
+
+# A restatement dated within this many days of its peer's first date keeps its own date.
 _FIRST_DATE_MAX_GAP_DAYS = 2
 
 
@@ -106,6 +113,7 @@ def _fold_verdict(
         plan.merged.append(key)
         if getattr(v, "existing_memory_id", ""):
             plan.reinforce_ids.append(str(v.existing_memory_id))
+            plan.merged_into[id(row)] = str(v.existing_memory_id)
     elif verdict == "rejected":
         drop.add(idx)
         plan.rejected_pinned.append(key)
@@ -117,15 +125,17 @@ def _fold_verdict(
     elif verdict == "refines":
         refined = list(getattr(v, "refined_peers", None) or [])
         if refined:
-            relation = str(getattr(v, "refine_relation", "refines") or "refines")
             _keep_first_event_date(row, embedding_rows, emb_idx_of, idx, refined)
-            plan.add_refine(row, key, refined, relation)
+            plan.add_refine(row, key, refined)
             plan.refined.append(key)
     elif verdict == "conflict":
         peers = [str(p.memory_id) for p in (getattr(v, "peers", None) or [])]
         if peers:
             plan.conflict_marks.append((str(row["memory_id"]), peers))
             plan.conflicted.append(key)
+    mark = resolver_mark(v)
+    if mark is not None and verdict not in NOT_LANDING and idx in emb_idx_of:
+        embedding_rows[emb_idx_of.index(idx)]["conflict_checked_at"] = mark
 
 
 def _kept_embeddings(
@@ -143,30 +153,95 @@ def _kept_embeddings(
     return kept
 
 
+def verdict_target(v: Any) -> str:
+    """The stored row a merge or duplicate verdict matched, else ''."""
+    return str(getattr(v, "existing_memory_id", "") or getattr(v, "duplicate_of_id", "") or "")
+
+
+def _without_rewritten_peers(v: Any, landing_ids: set[str]) -> Any:
+    """A refines or conflict verdict without the peers a landing row of the batch
+    rewrites. An earlier row replaced the bytes judged; a later one would have its new
+    value retired or flagged, since the marks run after the insert. A peer is never the
+    row's own id: the conflict check skips the writer's key. Returns `v` itself when no
+    peer was dropped."""
+    if getattr(v, "verdict", "") not in ("refines", "conflict"):
+        return v
+    old_peers = list(getattr(v, "peers", None) or [])
+    old_refined = list(getattr(v, "refined_peers", None) or [])
+    peers = [p for p in old_peers if str(p.memory_id) not in landing_ids]
+    refined = [p for p in old_refined if str(p.memory_id) not in landing_ids]
+    if len(peers) == len(old_peers) and len(refined) == len(old_refined):
+        return v
+    return dataclasses.replace(v, peers=peers, refined_peers=refined)
+
+
+def _settling_rows(memory_rows: list[dict[str, Any]], landed: Collection[int]) -> set[int]:
+    """The `id()` of each row FINAL keeps. A key written twice in one bulk is two
+    versions of one row, so only the kept version's verdict may mark or retire
+    peers. Only the `landed` rows are written."""
+    written = [r for r in memory_rows if id(r) in landed]
+    return {id(r) for r in kept_versions(written).values()}
+
+
+def _stamp_result(result: Any, v: Any, verdict: str) -> None:
+    """The per-row verdict memory.set returns, on the bulk result too. No query: the peers
+    are the ones the check already read. A bulk merge cannot tell a first merge from a
+    repeated one without the reinforced row, so its `next` names only conflicts. A
+    rejection names its pinned blocker, as memory.set's 409 does."""
+    peers = set_peers(v)
+    result.conflict_verdict = verdict
+    result.peers = peers
+    result.next = set_next(verdict, peers)
+    if verdict == "rejected":
+        blocker = str(getattr(v, "pinned_blocker_id", "") or "")
+        result.pinned_blocker_id = peer_id_in_read_scope(v, blocker)
+
+
 def apply_bulk_verdicts(
     memory_rows: list[dict[str, Any]],
     embedding_rows: list[dict[str, Any]],
     emb_idx_of: list[int],
     results: list[Any],
     verdicts: dict[int, Any],
+    *,
+    stale_rows: Collection[int],
+    landed_rows: Collection[int],
 ) -> BulkVerdictPlan:
     """Pure: fold ConflictResults into the rows. `merge` and `rejected` drop
     the row (its result reports version 0); `duplicate` stamps status and
     duplicate_of on both rows; `conflict` keeps the row and records the peers
-    to cross-link after the insert. Rows without a verdict pass through."""
+    to cross-link after the insert. Rows without a verdict pass through.
+    `stale_rows` are the `id()` of the rows whose verdict is stale
+    (`settle_batch_rows`): they land as clear. `landed_rows` are the `id()` of the rows
+    that land (`settle_batch_rows`); a peer one of them rewrites is not marked or retired."""
     plan = BulkVerdictPlan()
     drop: set[int] = set()
     dup_idx: set[int] = set()
+    stale = {i for i in verdicts if id(memory_rows[i]) in stale_rows}
+    landing_ids = {str(r.get("memory_id") or "") for r in memory_rows if id(r) in landed_rows}
+    verdicts = dict(verdicts)
+    for i, v in list(verdicts.items()):
+        trimmed = _without_rewritten_peers(v, landing_ids)
+        if trimmed is v:
+            continue
+        verdicts[i] = trimmed
+        # Every peer it judged was rewritten: nothing left to mark or retire.
+        left = trimmed.refined_peers if trimmed.verdict == "refines" else trimmed.peers
+        if not left:
+            stale.add(i)
+    settling = _settling_rows(memory_rows, landed_rows)
     for idx, v in verdicts.items():
         verdict = getattr(v, "verdict", "clear")
-        # The per-row verdict memory.set returns, on the bulk result too. No query: the peers
-        # are the ones the check already read. A bulk merge cannot tell a first merge from a
-        # repeated one without the reinforced row, so its `next` names only conflicts.
+        # A later entry of this key replaced the value judged: nothing to mark or retire.
+        replaced = verdict in ("refines", "conflict") and id(memory_rows[idx]) not in settling
+        replaced = replaced or idx in stale
+        if replaced:
+            verdict = "clear"
         if idx < len(results):
-            _peers = _set_peers(v)
-            results[idx].conflict_verdict = str(verdict or "")
-            results[idx].peers = _peers
-            results[idx].next = _set_next(str(verdict or ""), _peers)
+            # A verdict demoted to clear names no peers, as memory.set's demotion does.
+            _stamp_result(results[idx], None if replaced else v, str(verdict or ""))
+        if replaced:
+            continue
         _fold_verdict(
             plan,
             memory_rows[idx],
@@ -180,6 +255,7 @@ def apply_bulk_verdicts(
     for idx in drop:
         if idx < len(results):
             results[idx].version = 0
+            results[idx].memory_id = ""
     # ch.insert derives the column list from rows[0]: a `duplicate` verdict stamping
     # status/duplicate_of on SOME rows would make the key sets uneven and fail the whole batch
     # with KeyError('status'). Every row carries both keys; the defaults are the columns' own

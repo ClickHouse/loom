@@ -40,6 +40,7 @@ import { oneOf } from "../lib/oneOf";
 import { parseSearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
 import { useMedia, PHONE_QUERY } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
+import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
 
 const FIRST_SCREEN_ROWS = 12;
@@ -188,7 +189,7 @@ export function Documents() {
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
     const scope = scopeRef.current;
-    focusAdded.current = new Set(shownRows?.map((r) => r.source_uri));
+    markShown(shownRows?.map((r) => r.source_uri) ?? []);
     setLoadingMore(true);
     try {
       const r = await listKnowledge(
@@ -213,17 +214,17 @@ export function Documents() {
   };
 
   // The last page removes Load more, which held the focus: it goes to the first document
-  // in the list's order that the page added, else the last one shown.
+  // in the list's order that the page added, else the last one shown, else the search.
   const listBox = useRef<HTMLDivElement | null>(null);
-  const focusAdded = useRef<Set<string> | null>(null);
-  useEffect(() => {
-    const before = focusAdded.current;
-    if (before === null || loadingMore) return;
-    focusAdded.current = null;
-    if (nextCursor || document.activeElement !== document.body) return;
-    const rows = [...(listBox.current?.querySelectorAll<HTMLElement>("[data-doc-row]") ?? [])];
-    const row = rows.find((el) => !before.has(el.dataset.docRow ?? "")) ?? rows[rows.length - 1];
-    row?.querySelector<HTMLElement>("[data-row-open]")?.focus();
+  const markShown = useLastPageFocus({
+    loading: loadingMore,
+    more: !!nextCursor,
+    rows: () =>
+      [...(listBox.current?.querySelectorAll<HTMLElement>("[data-doc-row]") ?? [])].flatMap((el) => {
+        const open = el.querySelector<HTMLElement>("[data-row-open]");
+        return open ? [[el.dataset.docRow ?? "", open] as [string, HTMLElement]] : [];
+      }),
+    fallback: () => searchRef.current,
   });
 
   // The read behind a `?doc=` link past the loaded rows. It ends with the page, with its

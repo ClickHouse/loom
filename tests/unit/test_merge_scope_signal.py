@@ -1,7 +1,6 @@
 """A merge names the scope it folded into, so the write path can count
 cross-run merges as drops."""
 
-from server.memory.app.conflict_judge import Judgement
 from server.memory.domain import conflicts as conflict_rules
 
 
@@ -32,9 +31,3 @@ def test_merge_results_carry_their_scope_and_duplicates_carry_none() -> None:
     assert unscoped.verdict == "merge" and unscoped.merge_scope == "unscoped"
     dup = conflict_rules.merge_or_run_duplicate(_peer("rA"), [_peer("rA")], new_run_id="rB")
     assert dup.verdict == "duplicate" and dup.merge_scope == ""
-    judged = conflict_rules._fold_judged(
-        Judgement("merge", {"peer-1": "restatement"}, ["peer-1"], ran=True),
-        [_peer("rA")],
-        new_run_id="rA",
-    )
-    assert judged.verdict == "merge" and judged.merge_scope == "same_run"

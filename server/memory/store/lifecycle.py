@@ -6,9 +6,10 @@ tombstone cascades.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from typing import Any
 
@@ -32,6 +33,9 @@ from server.observability import degradations
 
 _log = logging.getLogger(__name__)
 
+# Rows `write_versions_by_ids` reads concurrently.
+_READ_AT_ONCE = 16  # not a setting: the fan-out of one call
+
 
 async def write_versions_by_ids(
     org: str,
@@ -40,47 +44,111 @@ async def write_versions_by_ids(
     *,
     ch: _CHClient | None = None,
     skip: Callable[[MemoryRow], bool] | None = None,
+    strong: bool = False,
+    on_written: Callable[[list[dict[str, Any]]], None] | None = None,
+    on_unconfirmed: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
     judged: bool = False,
 ) -> int:
-    """Write new RMT versions for live rows addressed by memory_id.
-
-    `update(existing)` returns the column overrides for that row. The helper
-    always assigns a fresh `version` unless the callback explicitly supplies
-    one, and it carries every persisted column forward via
-    build_memory_version_row. This is the preferred replacement for
-    in-place status flips on `loom.memory`. A row `skip(existing)` answers
-    True for is left as it is. `judged`: the rows land a deferred verdict on the
-    write it judged (`conflicts.judged_write`), and the status mirror copies only
-    that write's vector rows (`mirror_status_to_embeddings(judged=True)`).
-    """
+    """Write a new version of each live row in `memory_ids`: `update(existing)`'s
+    overrides on every persisted column carried forward, a fresh `version` unless it
+    sets one. `skip` leaves a row as it is; `strong` reads read-your-writes.
+    `on_written` / `on_unconfirmed` hear what the re-read confirmed or could not (see
+    Lifecycle in memory-architecture.md). `judged`: the rows land a verdict reached
+    after the write (the conflict resolver's) on the write it judged
+    (`conflicts.judged_write`), and the status mirror copies only that write's vector
+    rows (`mirror_status_to_embeddings(judged=True)`).
+    Returns the rows written, or confirmed."""
 
     if not memory_ids:
         return 0
     ch = ch or _default_client()
+    # Each row once, in the order given, at most `_READ_AT_ONCE` reads in flight.
+    ids = list(dict.fromkeys(mid for mid in map(str, memory_ids) if mid))
+    gate = asyncio.Semaphore(_READ_AT_ONCE)
+
+    async def read(mid: str) -> MemoryRow | None:
+        async with gate:
+            return await get_by_id(mid, org=org, ch=ch, scope=WHOLE_NAMESPACE, strong=strong)
+
+    reads = [asyncio.ensure_future(read(mid)) for mid in ids]
+    try:
+        found = await asyncio.gather(*reads)
+    except BaseException:
+        # Stop the other reads, letting any already cancelled finish their cleanup.
+        for r in reads:
+            if not r.cancelling():
+                r.cancel()
+        await asyncio.gather(*reads, return_exceptions=True)
+        raise
     rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for memory_id in memory_ids:
-        mid = str(memory_id)
-        if not mid or mid in seen:
-            continue
-        seen.add(mid)
-        existing = await get_by_id(mid, org=org, ch=ch, scope=WHOLE_NAMESPACE)
+    for existing in found:
         if existing is None or (skip is not None and skip(existing)):
             continue
         overrides = dict(update(existing))
         overrides.setdefault("version", next_version())
         rows.append(build_memory_version_row(existing, **overrides))
 
-    if rows:
-        await insert_memory_versions(rows, ch=ch)
-        # A status change on loom.memory is mirrored onto the row
-        # memory.search actually reads: the pool filters and penalises on
-        # memory_embeddings.status, so without the mirror it would keep
-        # admitting superseded and unpenalised conflicted rows.
-        status_changes = [r for r in rows if r.get("status") and r.get("status") != "active"]
-        if status_changes:
-            await mirror_status_to_embeddings(status_changes, ch=ch, judged=judged)
-    return len(rows)
+    if not rows:
+        return 0
+    await insert_memory_versions(rows, ch=ch)
+    confirmed = rows
+    if on_written is not None:
+        heads = await _head_versions(org, rows, ch=ch)
+        confirmed = [r for r in rows if heads.get(_key(r)) == int(r["version"])]
+        on_written(confirmed)
+        # Not seen at the head yet (no key, or an older version): it may or may not land.
+        unconfirmed = [r for r in rows if heads.get(_key(r), -1) < int(r["version"])]
+        if unconfirmed and on_unconfirmed is not None:
+            await on_unconfirmed(unconfirmed)
+        # Mirrored: what was confirmed, or, with no one to reconcile the rest, all but
+        # the overtaken.
+        rows = (
+            confirmed
+            if on_unconfirmed is not None
+            else [r for r in rows if heads.get(_key(r), -1) <= int(r["version"])]
+        )
+    # A status change on loom.memory is mirrored onto the row
+    # memory.search actually reads: the pool filters and penalises on
+    # memory_embeddings.status, so without the mirror it would keep
+    # admitting superseded and unpenalised conflicted rows.
+    status_changes = [r for r in rows if r.get("status") and r.get("status") != "active"]
+    if status_changes:
+        await mirror_status_to_embeddings(status_changes, ch=ch, judged=judged)
+    return len(confirmed)
+
+
+_IDENTITY_KEY = ("namespace", "agent", "user_id", "session_id", "memory_key")
+
+
+async def _head_versions(
+    org: str, rows: list[dict[str, Any]], *, ch: _CHClient
+) -> dict[tuple[str, ...], int]:
+    """The head version at each of `rows`' keys under FINAL, read up to twice;
+    empty when both reads fail, so nothing is confirmed."""
+    keys = sorted({_key(r) for r in rows})
+    for attempt in (1, 2):
+        try:
+            heads = await ch.query_all(
+                """
+                SELECT namespace, agent, user_id, session_id, memory_key, version
+                FROM loom.memory FINAL
+                WHERE org = {org:String}
+                  AND (namespace, agent, user_id, session_id, memory_key)
+                      IN {keys:Array(Tuple(String, String, String, String, String))}
+                SETTINGS select_sequential_consistency = 1
+                """,
+                params={"org": org, "keys": keys},
+            )
+            return {_key(h): int(h["version"]) for h in heads}
+        except Exception as e:  # noqa: BLE001 — the mirror must still run for what was written
+            _log.warning("write_versions_by_ids: head re-read %d failed: %s", attempt, e)
+            if attempt == 1:
+                await asyncio.sleep(0.05)
+    return {}
+
+
+def _key(row: Mapping[str, Any]) -> tuple[str, ...]:
+    return tuple(str(row[c]) for c in _IDENTITY_KEY)
 
 
 async def supersede_duplicates(
@@ -89,6 +157,10 @@ async def supersede_duplicates(
     *,
     ch: _CHClient | None = None,
     skip: Callable[[MemoryRow], bool] | None = None,
+    strong: bool = False,
+    on_written: Callable[[list[dict[str, Any]]], None] | None = None,
+    on_unconfirmed: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
+    judged: bool = False,
 ) -> int:
     """Mark near-duplicate memories status='superseded' in BOTH loom.memory
     and loom.memory_embeddings via version re-emit (never an in-place ALTER,
@@ -104,7 +176,12 @@ async def supersede_duplicates(
     (`agent`, `user_id`, `session_id`, `memory_key`) and `superseded_by`
     (the kept row's memory_id). Empty short-circuits. A victim whose head
     row `skip` answers True for (the caller's policy, e.g. a lock) is left
-    live in both tables and not counted. Returns how many were retired."""
+    live in both tables and not counted. `strong` reads the rows read-your-writes
+    (`write_versions_by_ids`). `on_written` hears the rows whose retirement the
+    re-read confirmed, `on_unconfirmed` those it could not tell about
+    (`write_versions_by_ids`). `judged` (a verdict reached after the write): each
+    row is superseded at its read version + 1, so a write drawn after that read stays
+    newer. Returns how many were written; with `on_written`, how many were confirmed."""
     if not victims:
         return 0
     ch = ch or _default_client()
@@ -113,15 +190,9 @@ async def supersede_duplicates(
     retired_at = naive_utc_now()
     version = next_version()  # the supersede's, which the vector retire carries
     by_id = {str(v["memory_id"]): str(v.get("superseded_by") or "") for v in victims}
-    skipped: set[str] = set()
-
-    def _skip(row: MemoryRow) -> bool:
-        if skip is not None and skip(row):
-            skipped.add(str(row.memory_id))
-            return True
-        return False
-
-    await write_versions_by_ids(
+    # `write_versions_by_ids` also mirrors the flip onto loom.memory_embeddings, the
+    # table recall reads, at the supersede's version.
+    return await write_versions_by_ids(
         org,
         list(by_id),
         lambda row: {
@@ -130,15 +201,15 @@ async def supersede_duplicates(
             # record-axis retirement stamp: knowledge_time replay before this
             # instant still sees the row, after it does not
             "invalid_at": retired_at,
-            "version": version,
+            "version": int(row.version) + 1 if judged else version,
         },
         ch=ch,
-        skip=_skip,
+        skip=skip,
+        strong=strong,
+        on_written=on_written,
+        on_unconfirmed=on_unconfirmed,
+        judged=judged,
     )
-    victims = [v for v in victims if str(v["memory_id"]) not in skipped]
-    # 2) loom.memory_embeddings — the write recall actually reads.
-    #    `write_versions_by_ids` mirrored the flip there at the supersede's version.
-    return len(victims)
 
 
 async def consolidated_dependents_of(

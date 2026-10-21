@@ -25,11 +25,16 @@ from server.llm.client import LLMResult
 _OPTIONAL = ("temperature", "reasoning_effort", "max_completion_tokens", "max_tokens")
 
 
-def _reasoning_effort(model: str) -> str:
+def _reasoning_effort(model: str, wanted: str = "") -> str:
+    """`wanted`, a client's own effort, replaces the pin and the 'none' default, but
+    never goes below the lowest effort the model said it takes."""
     from server.settings import settings
 
+    floor = traits.traits(model).effort or traits.EFFORT_ORDER[0]
+    if wanted in traits.EFFORT_ORDER and floor in traits.EFFORT_ORDER:
+        return max(wanted, floor, key=traits.EFFORT_ORDER.index)
     pinned = settings.llm_openai_reasoning_effort.strip()
-    return pinned or traits.traits(model).effort or traits.EFFORT_ORDER[0]
+    return pinned or floor
 
 
 def _payload(
@@ -39,6 +44,7 @@ def _payload(
     max_tokens: int,
     response_format: dict[str, str] | None,
     temperature: float | None,
+    effort: str = "",
 ) -> dict[str, Any]:
     """The request this call would like to send, minus what the model refused."""
     t = traits.traits(model)
@@ -58,7 +64,7 @@ def _payload(
     cap_field = "max_tokens" if "max_completion_tokens" in t.refused else "max_completion_tokens"
     payload[cap_field] = traits.output_cap(model, max_tokens)
     if "reasoning_effort" not in t.refused:
-        payload["reasoning_effort"] = _reasoning_effort(model)
+        payload["reasoning_effort"] = _reasoning_effort(model, effort)
     if temperature is not None and "temperature" not in t.refused:
         payload["temperature"] = temperature
     if response_format is not None:
@@ -125,9 +131,14 @@ async def _post(
 
 class OpenAILLMClient:
     provider = "openai"
+    # This client's own reasoning effort ('' = the pin, else the lowest the model takes).
+    reasoning_effort = ""
 
-    def __init__(self, model: str, *, api_key: str | None = None) -> None:
+    def __init__(
+        self, model: str, *, api_key: str | None = None, reasoning_effort: str = ""
+    ) -> None:
         self.model = model
+        self.reasoning_effort = reasoning_effort
         self._api_key = provider_key("openai") if api_key is None else api_key
         if not self._api_key and not gateway.exchanging():
             raise RuntimeError(
@@ -148,7 +159,10 @@ class OpenAILLMClient:
         org = await customer.require()
         client = _http_client()
         data: dict[str, Any] = {}
-        payload = _payload(self.model, system, user, max_tokens, response_format, temperature)
+        effort = self.reasoning_effort
+        payload = _payload(
+            self.model, system, user, max_tokens, response_format, temperature, effort
+        )
         # Span covers the WHOLE retry loop: tenacity retries up to 4
         # attempts and only the last one's usage is returned, so timing a
         # single attempt would under-report latency by up to 4x.
@@ -176,7 +190,13 @@ class OpenAILLMClient:
                             if not _learn_from_refusal(self.model, r, payload):
                                 break
                             payload = _payload(
-                                self.model, system, user, max_tokens, response_format, temperature
+                                self.model,
+                                system,
+                                user,
+                                max_tokens,
+                                response_format,
+                                temperature,
+                                effort,
                             )
                             r = await _post(client, self.model, headers, payload)
                         _raise_for_status(r, "openai:chat")

@@ -8,10 +8,10 @@ import { installApi } from "./fixtures";
 // drift (the drift shows in the ui.vitals rows).
 const LCP_BUDGET_MS = 2000;
 const LONG_TASK_BUDGET_MS = 1500;
-// Every route reads at most 11 times (Settings, Conversations, Tasks and Review queue
-// are the ceiling). The budget is that ceiling plus one read of headroom, so a second
-// new read on any route fails here.
-const CALL_BUDGET = 12;
+// Every route reads at most 12 times, the sidebar's Auto-resolved audit.list included
+// (Settings, Conversations, Tasks, Review queue and Usage). The budget is that ceiling
+// plus one read of headroom, so a second new read on any route fails here.
+const CALL_BUDGET = 13;
 
 const ROUTES: Array<[string, string]> = [
   ["Memories", "/memories"],
@@ -33,6 +33,7 @@ const ROUTES: Array<[string, string]> = [
   ["Activity", "/admin/activity"],
   ["Usage", "/admin/usage"],
   ["Agents", "/admin/agents"],
+  ["Collections", "/admin/collections"],
   ["Users", "/admin/users"],
 ];
 
