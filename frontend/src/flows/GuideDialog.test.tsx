@@ -87,6 +87,28 @@ describe("GuideDialog", () => {
     expect(second?.expected_revision).toBe(4);
     // The untouched summary field took theirs, and is not sent back over it.
     expect(screen.getByLabelText(/Summary/)).toHaveValue("Plans and tiers");
-    expect(second && "summary" in second).toBe(false);
+    expect(second).not.toHaveProperty("summary");
+  });
+
+  it("sends an edited summary, and keeps it over a newer one after a conflict", async () => {
+    const newer = { ...GUIDE, revision: 4, summary: "Plans and tiers", updated_by: "human:bob" };
+    vi.mocked(api.saveNamespaceGuide)
+      .mockResolvedValueOnce({ written: false, conflict: true, revision: 4, current: newer })
+      .mockResolvedValueOnce({ written: true, conflict: false, revision: 5, current: null });
+    const onSaved = vi.fn();
+    open(true, onSaved);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    await userEvent.clear(screen.getByLabelText(/Summary/));
+    await userEvent.type(screen.getByLabelText(/Summary/), "Mine");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/was saved while you edited/)).toBeInTheDocument();
+    expect(vi.mocked(api.saveNamespaceGuide).mock.calls[0]?.[2]).toMatchObject({ summary: "Mine" });
+    expect(screen.getByLabelText(/Summary/)).toHaveValue("Mine");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(vi.mocked(api.saveNamespaceGuide).mock.calls[1]?.[2]).toMatchObject({
+      summary: "Mine",
+      expected_revision: 4,
+    });
   });
 });
