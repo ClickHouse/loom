@@ -288,26 +288,39 @@ entry's tags, expiry or confidence differ. In one `memory.bulk_set`, a key that 
 earlier entry of the batch wrote is `memory.revised`; if the batch's lookup of live keys
 fails, its revisions are announced as `memory.written`. A merge (`merged_into_key`) writes
 no version at your key and sends no event; neither does a dry run or a refused write.
-These writes send no event: the summaries `memory.delete` retires with the row they were
-built from, `memory.consolidate` and the consolidation worker, observations and their
-distillation, period digests, `memory.touch`, `memory.pin` and `memory.unpin`,
-`memory.lock` and `memory.unlock`, `memory.verify`, `memory.apply`, `memory.reject` and
-the quarantine `memory.outcome` makes after repeated negative outcomes (both set the row's
-status to `rejected` in place, which takes it out of search: a receiver that mirrors what
-Loom serves reads the key again after one), `memory.resolve_orphan_duplicates` (which
-re-activates rows), `memory.dedup_collapse` (the search mirror only), `memory.promote` and
-`memory.demote` (the namespace's shared copy, not the memory row), the counters of
-`memory.outcome` and `memory.outcome_run`, `memory.assign_category`, `memory.link`,
-`memory.reindex`, a proposal
-(`memory.set` with `proposed`, which is not served until it is accepted) and its
-rejection, the status change `conflicts.resolve` and `memory.dedup_resolve` make on the rows they keep, the
-supersessions a write makes of other rows (the older same-key rows the `newest_wins`
-conflict policy retires, and the peers a `refines` verdict supersedes; the new row's own
-event is sent), the undo of an automatic supersession through `memory.restore`, copies into another namespace
-(`memory.copy_to`, `memory.cross_promote`), `namespace.restore` from a snapshot, entity
-backfills, typed records (`memory.record.*`) and saved chat messages (`conversation.*`),
-neither of which is a memory row. Accepting a proposal, by `memory.proposal_decide` or
-the namespace's `auto` proposal policy, sends `memory.written`.
+
+These writes send no event:
+
+- the summaries `memory.delete` retires with the row they were built from
+- `memory.consolidate` and the consolidation worker
+- observations and their distillation
+- period digests
+- `memory.touch`, `memory.pin` and `memory.unpin`, `memory.lock` and `memory.unlock`,
+  `memory.verify` and `memory.apply`
+- `memory.reject`, and the quarantine `memory.outcome` makes after repeated negative
+  outcomes. Both set the row's status to `rejected` in place, which takes it out of search:
+  a receiver that mirrors what Loom serves reads the key again after one.
+- `memory.resolve_orphan_duplicates`, which re-activates rows
+- `memory.dedup_collapse`, which changes only the search mirror
+- `memory.promote` and `memory.demote`, which change the namespace's shared copy, not the
+  memory row
+- the counters of `memory.outcome` and `memory.outcome_run`
+- `memory.assign_category`, `memory.link` and `memory.reindex`
+- a proposal (`memory.set` with `proposed`, which is not served until it is accepted) and
+  its rejection
+- the status change `conflicts.resolve` and `memory.dedup_resolve` make on the rows they keep
+- the supersessions a write makes of other rows: the older same-key rows the `newest_wins`
+  conflict policy retires, and the peers a `refines` verdict supersedes. The new row's own
+  event is sent.
+- the undo of an automatic supersession through `memory.restore`
+- copies into another namespace (`memory.copy_to`, `memory.cross_promote`)
+- `namespace.restore` from a snapshot
+- entity backfills
+- typed records (`memory.record.*`) and saved chat messages (`conversation.*`). Neither is
+  a memory row.
+
+Accepting a proposal, by `memory.proposal_decide` or the namespace's `auto` proposal
+policy, sends `memory.written`.
 
 ```json
 {

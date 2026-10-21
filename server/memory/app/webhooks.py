@@ -185,10 +185,12 @@ async def announce(changes: Sequence[tuple[EventType, Mapping[str, Any]]]) -> No
     try:
         now = naive_utc_now()
         actor = _actor()
+        hooks = await _fresh_hooks()
         rows = [
             _outbox_row(event, wid, c, actor=actor, now=now)
             for event, c in changes
-            for wid in await subscribers(str(c["org"]), str(c["namespace"]), event)
+            for wid, events in hooks.get((str(c["org"]), str(c["namespace"])), ())
+            if event in events
         ]
         await store.insert_outbox(rows)
     except Exception as e:  # noqa: BLE001 — the write is in; its announcement must not fail it

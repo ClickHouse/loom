@@ -255,12 +255,13 @@ async def test_a_cold_read_that_fails_announces_nothing_until_a_read_lands(
     _unread_registry()
     ch = RecordingCH().install(monkeypatch)
     # Two writes at once: the second takes the first's failed read, not a second one.
+    # A write of many changes reads the copy, and notes the unread registry, once.
     await asyncio.gather(
-        app.announce([("memory.written", _change())]),
+        app.announce([("memory.written", _change())] * 3),
         app.announce([("memory.written", _change())]),
     )
     assert len(reads) == 1 and ch.inserted("memory_webhook_outbox") == []
-    assert ("memory.webhook", "registry_unread") in notes
+    assert notes == [("memory.webhook", "registry_unread")] * 2
     # The failed read waits its interval like any other; a change made here reads at once.
     answer[0] = [_registration("wh1")]
     app.forget_registry()
