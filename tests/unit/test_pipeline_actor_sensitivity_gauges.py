@@ -518,14 +518,15 @@ async def test_a_pass_whose_time_runs_out_applies_what_it_found_and_stores_its_c
 async def test_one_pass_crosses_several_agents_it_finds_nothing_to_label_in(monkeypatch) -> None:
     # Agents `a` and `b` each hold more than a page of selected-but-unlabelled rows, ahead
     # of a PIN row in agent `c`. One pass reads a page of each, moves past both and labels
-    # the PIN row.
+    # the PIN row. Its three pages are spent, so it reads none of the rest of `a` and `b`
+    # and says it was truncated.
     spins = _spin_rows_then_a_pin(3)[:-1]
     in_b = [r._replace(agent="b", memory_id=_uuid(10 + i)) for i, r in enumerate(spins)]
     pin_row = _Row("o", "n", "-", _uuid(99), "vault_door", "badge PIN is 4471", 60, agent="c")
     ch = _local_memory([*spins, *in_b, pin_row])
     applied, out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=2, pages=3)
     assert [c.memory_key for c in applied] == ["vault_door"]
-    assert out["scanned"] == 5 and not out["truncated"]
+    assert out["scanned"] == 5 and out["truncated"]
 
 
 @pytest.mark.asyncio
