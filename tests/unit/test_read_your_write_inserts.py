@@ -212,8 +212,9 @@ class _RecordingCH:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("switch", [True, False])
 async def test_usage_flush_a_request_waits_on_takes_the_short_window(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, switch: bool
 ) -> None:
     """The event that fills the buffer flushes it inside the request, whose op
     budget assumes the short window."""
@@ -221,7 +222,7 @@ async def test_usage_flush_a_request_waits_on_takes_the_short_window(
 
     from server.memory.store import usage
 
-    monkeypatch.setattr(settings, "ch_batched_inserts", True)
+    monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     monkeypatch.setattr(usage, "_ensure_usage_flusher_started", lambda: None)
     usage._reset_for_tests()
     usage._USAGE_BUFFER_LOCK = asyncio.Lock()
@@ -237,8 +238,9 @@ async def test_usage_flush_a_request_waits_on_takes_the_short_window(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("switch", [True, False])
 async def test_usage_flush_of_the_timer_takes_the_background_window(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, switch: bool
 ) -> None:
     """The flush loop's tick waits on nobody, so it takes the background window."""
     import asyncio
@@ -249,7 +251,7 @@ async def test_usage_flush_of_the_timer_takes_the_background_window(
         if ch.settings:
             raise asyncio.CancelledError
 
-    monkeypatch.setattr(settings, "ch_batched_inserts", True)
+    monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     ch = _RecordingCH()
     monkeypatch.setattr(usage, "_default_client", lambda: ch)
     monkeypatch.setattr(asyncio, "sleep", _one_tick)

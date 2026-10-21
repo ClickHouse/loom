@@ -49,12 +49,21 @@ async def test_batched_inserts_are_read_back_share_parts_and_land_once_per_token
         assert parts is not None and 1 <= parts["n"] < 40
 
         # A batch sent twice with one token (a retry) lands once, in sequence and at once.
-        token = {**batched_insert_settings(), "insert_deduplication_token": uuid.uuid4().hex}
-        await c.insert(table, [{"k": "retry", "v": "x"}], settings=dict(token))
-        await c.insert(table, [{"k": "retry", "v": "x"}], settings=dict(token))
-        racing = {**batched_insert_settings(), "insert_deduplication_token": uuid.uuid4().hex}
+        retry_settings = {
+            **batched_insert_settings(),
+            "insert_deduplication_token": uuid.uuid4().hex,
+        }
+        await c.insert(table, [{"k": "retry", "v": "x"}], settings=dict(retry_settings))
+        await c.insert(table, [{"k": "retry", "v": "x"}], settings=dict(retry_settings))
+        race_settings = {
+            **batched_insert_settings(),
+            "insert_deduplication_token": uuid.uuid4().hex,
+        }
         await asyncio.gather(
-            *(c.insert(table, [{"k": "race", "v": "y"}], settings=dict(racing)) for _ in range(2))
+            *(
+                c.insert(table, [{"k": "race", "v": "y"}], settings=dict(race_settings))
+                for _ in range(2)
+            )
         )
         got = await c.query_all(
             f"SELECT k, count() AS n FROM {table} WHERE k IN ('retry', 'race') GROUP BY k"
