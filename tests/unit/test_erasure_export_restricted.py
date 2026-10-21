@@ -409,7 +409,7 @@ def test_an_export_reads_the_turns_and_saved_messages_in_scope(
     got, over_budget = _read_turns(scope_type, scope_value, include_tombstoned=include_tombstoned)
     assert [r["msg_id"] for r in got] == expected and not over_budget
     assert "m-later" not in {r["msg_id"] for r in got}  # stamped after `as_of`
-    assert "bytes_before" not in got[0]
+    assert "row_bytes" not in got[0] and "bytes_before" not in got[0]
     assert got[0]["is_saved"] is True and got[0]["saved_at"] is not None
 
 
@@ -578,6 +578,7 @@ def test_two_measured_copies_of_one_turn_are_both_served() -> None:
         )
     )
     assert [r["is_saved"] for r in got] == [True, False] and not left_out
+    assert all("row_bytes" not in r for r in got)
 
 
 def test_the_turns_stop_at_the_row_limit_without_reading_the_next_ones_text() -> None:
