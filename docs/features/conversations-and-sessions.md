@@ -93,7 +93,7 @@ They differ from `conversation.append` and `conversation.search` in six ways:
   corpus is one user's saved messages, so its statistics are computed per query.
 - **A token pinned to one user works here.** An integration that serves many users through
   one credential mints it with `--read-scope own_user` (and `--read-user-id` for one
-  user). Both saved-message ops then act as that user only: a body naming another
+  user). The saved-message ops then act as that user only: a body naming another
   `user_id` is refused with 403, and every statement carries the token's user. An
   end-user token ([sharing](../architecture/sharing.md#saved-messages)) is pinned the same
   way and calls these ops with `namespace: "@me"`, the user's personal collection; the

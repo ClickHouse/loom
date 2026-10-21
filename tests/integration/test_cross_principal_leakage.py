@@ -1583,11 +1583,12 @@ def test_an_end_users_at_me_extraction_runs_under_the_policy_of_the_collection_i
 
 # ── knowledge sharing (docs/architecture/sharing.md) ─────────────────────────
 #
-# A service's end users, signed in with end-user tokens, own collections: a parent shared with a group and one
-# user, a child that inherits it, and a personal collection holding a
-# document and a saved message. A user once granted and then revoked, a member once listed and then
-# removed, a stranger, the owner's id in another tenant, an org admin and a
-# writer of another namespace then drive every read op against each of them.
+# A service's end users, signed in with end-user tokens, own collections: a
+# parent shared with a group and one user, a child that inherits it, and a
+# personal collection holding a document and a saved message. A user once
+# granted and then revoked, a member once listed and then removed, a stranger,
+# the owner's id in another tenant, an org admin and a writer of another
+# namespace then drive every read op against each of them.
 
 
 def _post_as(base: str, org: str, user: str, op: str, payload: dict[str, Any]) -> httpx.Response:
@@ -1664,8 +1665,7 @@ def shared(control_plane_url: str, mint_test_token) -> _Shared:
         s.seed.nonces.append(nonce)
         content = f"{nonce} quarterly renewal plan"
         s.ok("owner", "knowledge.upsert", {"namespace": ns, "source_uri": uri, "content": content})
-    # A saved message in the owner's `@me`, which the walk's saved-message listing and
-    # search reach (they read every saved message of the user).
+    # A saved message in the owner's `@me`; the walk also asks for it by the owner's id.
     nonce = _canary()
     s.seed.nonces.append(nonce)
     turn = {"conversation_id": "canary", "message_id": "m1", "role": "user", "user_id": "owner"}
@@ -1746,13 +1746,20 @@ def test_every_read_op_against_a_collection_leaks_nothing(
             payload = _synth_payload(op.input_model, seed=shared.seed, namespace=namespace)
             if payload is None:
                 continue
-            r = post(op.name, payload)
-            if r.status_code in (400, 422):  # unbuildable here, or `@me` for a non-gateway caller
-                continue
-            if r.status_code not in _OK_STATUSES:
-                bad_status[f"{op.name}@{namespace}"] = r.status_code
-            found = shared.seed.leaked(r.text)
-            if found:
-                leaks[f"{op.name}@{namespace}"] = found
+            bodies = [payload]
+            # The saved canary is the owner's: ask for it by name too, so only
+            # the gate stands between a caller and it.
+            if payload.get("user_id") == "-":
+                bodies.append({**payload, "user_id": "owner"})
+            for body in bodies:
+                label = f"{op.name}@{namespace}/{body.get('user_id', '-')}"
+                r = post(op.name, body)
+                if r.status_code in (400, 422):  # unbuildable, or `@me` for a non-gateway caller
+                    continue
+                if r.status_code not in _OK_STATUSES:
+                    bad_status[label] = r.status_code
+                found = shared.seed.leaked(r.text)
+                if found:
+                    leaks[label] = found
     assert not leaks, f"{who}: canary nonces in responses: {leaks}"
     assert not bad_status, f"{who}: unexpected statuses: {bad_status}"

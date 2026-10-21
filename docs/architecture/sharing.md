@@ -63,9 +63,9 @@ The same five ops serve both ways a chat runs in front of Loom:
 
 - **A chat that records its conversations** in its own namespace writes the transcript
   with a namespace-scoped writer token and calls these ops with a token pinned to the
-  user (`read_user_id`). Saving a turn the transcript holds flags it in
-  place, so the message is stored and embedded once; the transcript row decides its
-  owner, so two users never both save one turn, and compaction keeps a saved turn.
+  user (`read_user_id`). Saving a turn the transcript holds flags it in place, so the
+  message is stored and embedded once; the transcript row decides its owner, so two
+  users never both save one turn, and compaction keeps a saved turn.
 - **A chat that signs end-user tokens** calls them with `namespace: "@me"`. The other
   conversation ops refuse an end-user token (it is pinned to one user, and a thread has
   no user axis to bound), so no transcript lives in a personal collection: a save there
