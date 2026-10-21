@@ -1,6 +1,6 @@
 # Release process
 
-Loom follows SemVer. The server, the Python SDK, the TypeScript SDK, the web app and the `loom-code` skill share one version `X.Y.Z`. The two coding-agent plugins share their own version, bumped on a behaviour change to any file the plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`): installed clients pick up a hook change only through a new plugin version.
+Loom follows SemVer. The server, the Python SDK, the TypeScript SDK, the web app and the root skills (`loom-code`, `loom`) share one version `X.Y.Z`. The two coding-agent plugins share their own version, bumped on a behaviour change to any file the plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`): installed clients pick up a hook change only through a new plugin version.
 
 ## Where the version lives
 
@@ -12,16 +12,17 @@ Bump each of these in the release commit:
 | Python SDK           | `sdk/python/pyproject.toml` and `sdk/python/loom/_version.py`                                                                                                                                                                                                                        |
 | TypeScript SDK       | `sdk/typescript/package.json`, `sdk/typescript/package-lock.json`, `sdk/typescript/src/version.ts`                                                                                                                                                                                   |
 | Web app              | `frontend/package.json` and `frontend/package-lock.json`                                                                                                                                                                                                                             |
-| `loom-code` skill    | `.claude-plugin/plugin.json` and the `metadata.version` of `skills/loom-code/SKILL.md`                                                                                                                                                                                               |
+| Root skills          | `.claude-plugin/plugin.json` and the `metadata.version` of `skills/loom-code/SKILL.md` and `skills/loom/SKILL.md`                                                                                                                                                                    |
 | Coding-agent plugins | `integrations/claude-code-plugin/.claude-plugin/plugin.json`, `integrations/codex-plugin/.codex-plugin/plugin.json` (their own version; bump on a behaviour change to any file the plugin ships: `hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`) |
 
-The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo` and `loom report` report it. Three checks keep the numbers consistent:
+The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo` and `loom report` report it. Four checks keep the numbers consistent:
 
 | Check                                    | Asserts                                                                                      |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `tests/unit/test_release_version.py`     | `server/__init__.py` equals `pyproject.toml` and `server.json`, and every surface reports it |
 | `npm run check:version` (TypeScript SDK) | its four version sources agree                                                               |
 | `tests/unit/test_codex_plugin.py`        | both plugin manifests carry one version                                                      |
+| `tests/unit/test_loom_code_skill.py`     | both root skills and `.claude-plugin/plugin.json` carry the server's version                 |
 
 Two plugin pull requests that bump to the same number merge without a conflict, and the second ships nothing to clients the first already updated. Check the plugin version on `main` before bumping.
 
@@ -177,7 +178,7 @@ Agents and people find Loom through these listings. Each reads files in this rep
 | Claude Code plugin suggestions                 | the `relevance` block of the `loom` entry in `.claude-plugin/marketplace.json`: the `loom` command, Loom's config files, an SDK dependency in a manifest                             | read from the marketplace on the default branch; shown only where an administrator allowlists the marketplace (`pluginSuggestionMarketplaces`) |
 | Codex plugin directory                         | `integrations/codex-plugin/.codex-plugin/plugin.json` (`interface`)                                                                                                                  | submitted in the plugin portal; a plugin with lifecycle hooks is not eligible there, so the public listing needs a build without them          |
 | Docs index for coding agents                   | `context7.json`                                                                                                                                                                      | refreshed from the default branch after the repository is added once                                                                           |
-| Agent Skills index                             | `skills/loom-code` and the Claude Code plugin's skills; the contributor skills are marked internal in their frontmatter and are not offered                                          | ranked by `npx skills add ClickHouse/loom` installs; nothing to submit                                                                         |
+| Agent Skills index                             | `skills/loom-code`, `skills/loom` and the Claude Code plugin's skills; the contributor skills are marked internal in their frontmatter and are not offered                           | ranked by `npx skills add ClickHouse/loom` installs; nothing to submit                                                                         |
 
 The `mcp-registry` job runs in the `mcp-registry` environment. Give it the same protection rules as `pypi` and `npm` before the first dispatch: GitHub creates a missing environment with none. Its login needs no secret.
 

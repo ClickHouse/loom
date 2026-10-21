@@ -1,7 +1,7 @@
 """Behavior-preserving parallelization of the retrieval legs.
 
 The handler issues the result-independent retrieval legs concurrently:
-  * within ``vector_search``: the primary HNSW facts, verbatim chunks, the
+  * within ``vector_search``: the primary vector facts, verbatim chunks, the
     BM25-only lexical union, and schema records run in one ``asyncio.gather``;
   * in the handler: the session-summary, current-state-observation, and
     entity-store-ANN legs launch as tasks BEFORE the vector legs and are

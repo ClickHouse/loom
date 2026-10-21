@@ -620,14 +620,6 @@ class ClickHouseSettings(BaseModel):
     migrate_mutation_wait_s: int = 600
 
     # --- vector search ---
-    # HNSW candidate list size (`ef_search`) for the helper legs, emitted via
-    # vector_search_settings(); tracks ClickHouse's default. The
-    # main leg scales its own value with top_k.
-    vector_search_ef_search: int = 256
-    # Post-filter over-fetch for a `vector_similarity` (HNSW) index: the index
-    # returns top-N before the tenant predicate drops rows. Sent on uncoded
-    # vector reads; coded reads use `vector_search_quantized_fetch_multiplier`.
-    vector_search_index_fetch_multiplier: float = 10.0
     # Send `vector_search_use_quantized_codes = 1` on vector-ranked reads whose
     # column has a `Quantized(...)` codec and whose table has no patch parts:
     # a codes-first scan plus full-precision rescore. A replica that rejects
@@ -5399,6 +5391,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # sort key, a handful of FINAL-scoped counts over the namespace, three of
     # the audit's shape checks, and two adoption reads — cached an hour.
     "mentor.brief": 3000,
+    "mentor.guide": 20,
     # Three summary reads, ten FINAL-scoped aggregates over
     # the namespace and one Python scan of up to 20k (key, clipped value)
     # rows for the hand-rolled index check. Namespace-sized; the ledger

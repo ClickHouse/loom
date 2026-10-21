@@ -49,6 +49,9 @@
     "close": [
       "failed"
     ],
+    "guide": [
+      "part"
+    ],
     "identity": [
       "user_id",
       "session_id",
@@ -1189,6 +1192,10 @@
           "class": "MentorOps",
           "methods": {
             "brief": [
+              "body",
+              "options"
+            ],
+            "guide": [
               "body",
               "options"
             ]
@@ -2907,7 +2914,8 @@
           "confidence",
           "reason",
           "relations",
-          "revive"
+          "revive",
+          "run_id"
         ],
         "update_by_id": [
           "memory_id",

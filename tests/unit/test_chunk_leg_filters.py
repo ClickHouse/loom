@@ -61,7 +61,7 @@ async def test_hard_tags_gate_both_stages_through_the_parent() -> None:
         assert "status IN (" in sql and "tombstoned_at IS NULL" in sql
         assert "agent = {agent:String}" in sql  # a private read stays per-agent
         assert params["tags"] == ["workflow:w"] and params["agent"] == "bot"
-    # stage 1 stays the shape the vector index serves: the predicate is a
+    # stage 1 stays the shape the codes-first read serves: the predicate is a
     # WHERE term, not a JOIN, and there is no FINAL on the chunk table itself
     assert "FROM loom.memory_chunks AS c\n" in sql1 and "JOIN" not in sql1
 

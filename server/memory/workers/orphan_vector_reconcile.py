@@ -16,8 +16,8 @@ This pass heals the gauge instead of only reading it:
   2. re-emit those identities' embedding rows with `tombstoned_at` set
      (`memory_repo.reemit_embedding_rows_for_keys`: one keyed read and one
      insert per 500 identities; a new RMT version, every column carried, so
-     the ReplacingMergeTree collapses onto a tombstone and the HNSW
-     post-filter drops the vector);
+     the ReplacingMergeTree collapses onto a tombstone, which a read under
+     FINAL sees instead of the vector);
   3. re-emit the same keys' `loom.entity_vectors` rows with `tombstoned_at`
      set, per namespace (`memory_repo.tombstone_entity_vectors_for_keys`, with
      the pass's version as the cutoff: a row created in a later second is

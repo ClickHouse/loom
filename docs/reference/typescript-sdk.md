@@ -95,7 +95,7 @@ server; on the stock stack's fake providers it abstains or returns a stub.
 - **`Agent(org, namespace, agent, options | client)`** fills the identity
   `(org, namespace, agent)` on every request, with `userId`, `sessionId` and
   `runId` per call. Its verbs: `remember`, `recall`, `ask`, `ingest`,
-  `outcome`, `contextPack`, `canCall`, `mentor`, `session(sessionId)` and
+  `outcome`, `contextPack`, `canCall`, `mentor`, `guide`, `session(sessionId)` and
   `tools(scope)`. An agent named `""`, `"-"` or `"*"` becomes
   `sdk-ts:<script>` with a warning.
 - **`Datapack(org, namespace, options | client).agent(name)`** spawns agents

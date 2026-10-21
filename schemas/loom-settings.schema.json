@@ -6018,16 +6018,6 @@
           "type": "integer",
           "description": "Seconds between re-reads of which vector columns are coded and which coded tables carry patch parts. A write that embeds reads again on its own when the reading is older than a few seconds (codes_state.FRESH_READING_S)."
         },
-        "vector_search_ef_search": {
-          "default": 256,
-          "type": "integer",
-          "description": "HNSW candidate list size (`ef_search`) for the helper legs, emitted via vector_search_settings(); tracks ClickHouse's default. The main leg scales its own value with top_k."
-        },
-        "vector_search_index_fetch_multiplier": {
-          "default": 10.0,
-          "type": "number",
-          "description": "Post-filter over-fetch for a `vector_similarity` (HNSW) index: the index returns top-N before the tenant predicate drops rows. Sent on uncoded vector reads; coded reads use `vector_search_quantized_fetch_multiplier`."
-        },
         "vector_search_quantized_codes": {
           "default": true,
           "type": "boolean",
