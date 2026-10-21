@@ -343,6 +343,9 @@ def _local_memory(rows: list[_Row], *later: list[_Row]) -> _LocalCH:
     as its own part, as a later write would be (no merge runs between them)."""
     # the CLI's closing invariant reads memory_embeddings, whose vector column is quantized
     setup = ["SET enable_quantized_codec = 1", ddl("memory"), ddl("memory_embeddings")]
+    # An insert merges its own block by default, keeping only each key's newest version;
+    # every version listed stays a row, as separate writes leave them until a merge.
+    setup.append("SET optimize_on_insert = 0")
     params: dict[str, Any] = {}
     for part, part_rows in enumerate([rows, *later]):
         if part_rows:
