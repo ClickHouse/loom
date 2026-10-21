@@ -172,8 +172,10 @@ async def _step_erase_blobs_by_ns(org: str, namespace: _NS) -> int:
 UserStep = tuple[str, Callable[[str, str], Awaitable[int]]]
 NamespaceStep = tuple[str, Callable[[str, _NS], Awaitable[int]]]
 
-# The tables the census does not count, one step each, run after the
-# counted steps; the registry test holds them to `_CENSUS`.
+# The steps that run after the memory steps, one per table. Most clean
+# tables the census does not count; some, such as `learnings_queue.delete`,
+# own census rows and sit here for ordering. The registry test holds them
+# to `_CENSUS`.
 _UNCOUNTED_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("conversations.tombstone", ledger_steps.tombstone_conversations_by_namespace),
     ("context_blobs.tombstone", ledger_steps.tombstone_context_blobs_by_namespace),

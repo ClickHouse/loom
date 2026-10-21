@@ -10,7 +10,7 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `learnings.list`
 
-List candidate learnings waiting for review: memories several writers back (promoted to shared), conversation-seeded facts (promoted to a namespace memory row), and rules a bot stated about itself…
+List candidate learnings waiting for review.
 
 `POST /v1/learnings.list` · MCP `loom_learnings_list` · role `viewer` · read · not listed under the MCP `all` toolset
 
