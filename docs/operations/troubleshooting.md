@@ -96,15 +96,20 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 - **Cause:** a ClickHouse statement ran past its class deadline (504
   `BACKEND_TIMEOUT`), or every pooled ClickHouse connection of the process stayed busy
-  (503 `OVERLOADED`). From `conversation.delete` or `conversation.compact`, `OVERLOADED`
-  can also mean writes to the thread's embeddings kept landing for 8 reconcile rounds;
-  resend once the thread's writes settle.
+  (503 `OVERLOADED`). Under a sustained write rate, batched inserts (audit rows,
+  transcript turns, ledgers) hold their connection for up to
+  `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` ([batched inserts](../architecture/clickhouse.md#batched-inserts)).
+  From `conversation.delete` or `conversation.compact`, `OVERLOADED` can also mean writes
+  to the thread's embeddings kept landing for 8 reconcile rounds; resend once the
+  thread's writes settle.
 - **Check:** the slowest sources in `system.query_log` by `log_comment`
   ([monitoring](./monitoring.md#logs-traces-and-query-attribution)); `ops.health` for part
   pressure.
 - **Fix:** the query or worker that dominates. A Loom far from its ClickHouse (a WAN)
   needs `LOOM_LATENCY_BUDGET_MULTIPLIER` near 20 so its latency budgets do not fire on
-  every call. The [errors reference](../reference/errors.md) lists every code.
+  every call. For `OVERLOADED` under a sustained write rate, lower
+  `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` (a live setting) or raise `LOOM_CH_POOL_MAXSIZE`.
+  The [errors reference](../reference/errors.md) lists every code.
 
 ## Providers and search quality
 

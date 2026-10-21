@@ -5160,8 +5160,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # ch_batched_insert_wait_max_ms (50).
     "memory.delete": 80,
     # memory.delete's work plus two committed check inserts and the read after the
-    # tombstone (80 before the batched wait), plus a batched audit row and outbox row
-    # that each wait up to ch_batched_insert_wait_max_ms (50).
+    # tombstone, plus a batched audit row and an outbox row that each wait up to
+    # ch_batched_insert_wait_max_ms (50).
     "memory.delete_version": 180,
     "memory.demonstrate": 400,
     "memory.demote": 100,
@@ -5221,7 +5221,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # Two point-lookups + one bounded arrayIntersect scan (entities bloom index).
     "memory.related": 120,
     "memory.resolve_orphan_duplicates": 5000,
-    "memory.restore": 80,
+    # Its outbox row (namespaces with a webhook) is a batched insert that waits up to
+    # ch_batched_insert_wait_max_ms (50).
+    "memory.restore": 130,
     # Covers semantic / hybrid / all_mine fan-out (auto_touch is async, no
     # contribution). Reranker hop is EXCLUDED — the operator endpoint owns its
     # own latency. Rerank usage surfaces as `loom.search.assist{kind="rerank"}`
@@ -5247,8 +5249,12 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.touch": 40,
     "memory.unlock": 40,
     "memory.unpin": 40,
-    "memory.update": 120,
-    "memory.update_by_id": 80,
+    # Its outbox row (namespaces with a webhook) is a batched insert that waits up to
+    # ch_batched_insert_wait_max_ms (50).
+    "memory.update": 170,
+    # Its outbox row (namespaces with a webhook) is a batched insert that waits up to
+    # ch_batched_insert_wait_max_ms (50).
+    "memory.update_by_id": 130,
     "memory.verify": 80,
     "memory_schema.approve": 120,
     "memory_schema.list": 120,

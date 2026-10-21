@@ -275,7 +275,7 @@ newer (its `superseded_by`), one `memory.auto_supersede` record names it
 (`follow_row_supersessions`). A flag the newer row held against the retired one is removed
 as a clear removes it, and the audit row's pair says `flag_cleared`, so the winner does
 not stay on the review queue against a retired row. The follow and the record are owed
-before the supersede commits: one committed `triples_follow_owed` projection-failure row
+before the supersede commits: one waited-for `triples_follow_owed` projection-failure row
 holds the pair and the record's entry, and is resolved once both land, so a failure or a
 crash in between leaves them for the projection repair, which follows a pair, writes its
 record when none exists and clears the winner's flag against the loser, only while its
