@@ -469,3 +469,39 @@ def test_a_sessions_writer_is_its_newest_live_versions() -> None:
     sql, params = ch.sent[0]
     assert "FROM loom.memory FINAL" in sql and "argMaxIf(actor, version," in sql
     assert "tombstoned_at IS NULL" in sql and params["keys"] == [("acme", "ns", "a", "-", "s1")]
+
+
+def test_a_judge_scheduled_inside_a_job_is_for_the_jobs_writer(monkeypatch) -> None:
+    """A write a job makes for a row's writer (an extraction replay, say) schedules its
+    deferred judge for that writer; a request's, for its caller; a pipeline's own write
+    whose principal the provenance names, for that principal."""
+    from datetime import UTC, datetime
+
+    from server.memory.app import conflict_deferred as cd
+    from server.memory.domain.provenance import pipeline_actor
+
+    settled: list[str] = []
+
+    async def settle(*_: Any, subject: str = "", **__: Any) -> str:
+        settled.append(subject)
+        return "clear"
+
+    monkeypatch.setattr(cd, "settle", settle)
+    pending = SimpleNamespace(verdict=cd.PENDING, pending_judge=object())
+
+    async def schedule() -> None:
+        task = cd.schedule_settle(
+            SimpleNamespace(org="acme"),
+            pending,
+            memory_id="m1",
+            version=1,
+            created_at=datetime.now(UTC),
+        )
+        assert task is not None
+        await task
+
+    with customer.for_org("acme", namespace=AGENT_NS, subject=AGENT_8):
+        asyncio.run(schedule())  # no request behind it: the job named the writer
+    with pipeline_actor(f"process:{AGENT_8}"), customer.for_org("acme", namespace=AGENT_NS):
+        asyncio.run(schedule())  # the write's principal, from its provenance
+    assert settled == [AGENT_8, AGENT_8]

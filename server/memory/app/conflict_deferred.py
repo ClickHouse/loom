@@ -192,7 +192,6 @@ def schedule_settle(
     pj = getattr(conflict_result, "pending_judge", None)
     if pj is None or getattr(conflict_result, "verdict", "") != PENDING:
         return None
-    from server.auth.context import current_caller
     from server.core.logging_config import request_id_var
 
     request_id = str(request_id_var.get() or "")
@@ -211,7 +210,7 @@ def schedule_settle(
                 content_sha256=content_sha256,
                 cfg=cfg,
                 request_id=request_id,
-                subject=current_caller()[0],  # the write's writer: the request's caller
+                subject=_writer(),
             ),
             name="loom-conflict-judge",
         )
@@ -220,6 +219,17 @@ def schedule_settle(
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
     return task
+
+
+def _writer() -> str:
+    """The subject of the write a settle judges: whom the surrounding model calls are
+    for (a request's caller, or the writer a job named for its row), else the write's
+    own principal (`writer_actor`); '' for a pipeline's write."""
+    from server.llm import customer
+    from server.memory.app.provenance import writer_actor
+    from server.memory.domain.trust import subject_of
+
+    return customer.attribution().subject or subject_of(writer_actor())
 
 
 async def settle(
