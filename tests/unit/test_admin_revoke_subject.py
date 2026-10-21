@@ -394,9 +394,10 @@ def test_a_later_cutoff_stays_and_a_repeat_writes_nothing_more(store: _Store) ->
     written = len(store.revocations)
     assert c.post("/v1/admin/revoke_subject", json=late).json() == first
     early = {**late, "issued_before": _at(now - 3600).isoformat()}  # a retry sent long ago
-    c.post("/v1/admin/revoke_subject", json=early)
+    answer = c.post("/v1/admin/revoke_subject", json=early).json()
     assert len(store.revocations) == written
     cut = now - 60 + 1 + revocation.CLOCK_SKEW_S
+    assert datetime.fromisoformat(answer["issued_before"]) == _at(cut)  # the one in force
     assert revocation.is_revoked("lee", issued_at=cut - 1)  # still refused up to the later one
     assert not revocation.is_revoked("lee", issued_at=cut)
 

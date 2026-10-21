@@ -23,7 +23,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from server.auth import revocation
@@ -96,13 +96,15 @@ async def audit_revocation(
 class Revoked:
     """A subject revoked for good: the row in force for the request (written
     now, or `kept`, an earlier one that already covered it), whether the subject
-    is now revoked `outright` (by that row, or one beside it), how many of its
-    sign-in sessions it ends, and how many tokens it made (directly or through
-    its tokens) it ends, each now listed revoked."""
+    is now revoked `outright` (by that row, or one beside it) or else the
+    `cutoff` in force across its revocations, how many of its sign-in sessions
+    it ends, and how many tokens it made (directly or through its tokens) it
+    ends, each now listed revoked."""
 
     row: dict[str, Any]
     kept: bool
     outright: bool
+    cutoff: datetime | None
     sessions: int
     tokens: int
 
@@ -157,12 +159,13 @@ async def finish(subject: str, row: dict[str, Any], kept: bool, *, by: str, org:
     from server.auth import oauth_store, service_accounts
 
     subject = subject.strip()
-    outright, sessions, tokens = False, 0, 0
+    outright, in_force, sessions, tokens = False, None, 0, 0
     try:
         revoked = await revocation.cutoffs([subject])  # its own row, the cutoff's, SCIM's
         if subject in revoked:
             at = revoked[subject]
             outright = at is None
+            in_force = None if at is None else datetime.fromtimestamp(at, UTC)
             families = await oauth_store.session_families(subject)
             sessions = sum(
                 revocation.kills(at, newest) and not revocation.is_revoked(family)
@@ -181,7 +184,9 @@ async def finish(subject: str, row: dict[str, Any], kept: bool, *, by: str, org:
             tokens=tokens,
             kept=kept,
         )
-    return Revoked(row=row, kept=kept, outright=outright, sessions=sessions, tokens=tokens)
+    return Revoked(
+        row=row, kept=kept, outright=outright, cutoff=in_force, sessions=sessions, tokens=tokens
+    )
 
 
 async def revoke_subject(

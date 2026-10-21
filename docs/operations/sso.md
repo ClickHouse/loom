@@ -626,10 +626,12 @@ as it is.
 }
 ```
 
-`issued_before` in the answer is the cutoff applied, `null` for an outright
-request, and `outright` names the subjects refused outright now: all of them
-after an outright request, and after a cutoff those an outright revocation
-(their own, time-boxed or not, or SCIM's) still holds. `sessions` counts the sign-in sessions of those subjects the revocation
+`issued_before` in the answer is the cutoff now in force for the subjects not
+revoked outright, the earliest when theirs differ: the one the request asked for,
+or a later one an earlier request set; it is `null` for an outright request, and
+when every subject is revoked outright. `outright` names the subjects refused
+outright now: all of them after an outright request, and after a cutoff those an
+outright revocation (their own, time-boxed or not, or SCIM's) still holds. `sessions` counts the sign-in sessions of those subjects the revocation
 ends (each refreshed before the cutoff), and `tokens` the tokens they made,
 directly or through their tokens, that it ends. A subject is a name, not an
 org's, so the revocation holds in every org; `org` picks the directory the

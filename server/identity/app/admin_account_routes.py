@@ -4,6 +4,7 @@ do on the host, for an admin signed in from anywhere (`loom call`, the SDK)."""
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -275,15 +276,20 @@ async def revoke_subject(input: RevokeSubjectInput, info: Admin) -> dict[str, An
         "org": org,
         "revoked_at": max(d.row["revoked_at"] for _, d in done),
         "reason": input.reason,
-        # The cutoff applied; None for an outright request. A later cutoff a
-        # subject already had stays in force.
-        "issued_before": at,
+        # The cutoff in force for the subjects not revoked outright, the earliest
+        # when theirs differ: the one asked for, or a later one set before.
+        "issued_before": None if at is None else _earliest(d.cutoff for _, d in done),
         # The subjects revoked outright now: all of them after an outright
         # request, and after a cutoff those an outright revocation still holds.
         "outright": [s for s, d in done if d.outright],
         "sessions": sum(d.sessions for _, d in done),
         "tokens": sum(d.tokens for _, d in done),
     }
+
+
+def _earliest(cutoffs: Iterable[datetime | None]) -> datetime | None:
+    """The earliest of the cutoffs in force; None when every subject is revoked outright."""
+    return min((c for c in cutoffs if c is not None), default=None)
 
 
 @router.get("/v1/admin/revocations")
