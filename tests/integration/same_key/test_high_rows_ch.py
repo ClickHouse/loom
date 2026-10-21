@@ -249,6 +249,7 @@ async def test_a_relabel_to_high_closes_mined_facts_and_keeps_declared_edges(ch,
         memory_key="door",
         level="high",
         shapes=("credential",),
+        sort_key={"org": org, "namespace": NS, "agent": "bot", "memory_key": "door"},
     )
     result = await sensitivity_sweep.apply([candidate], ch=ch)
     assert result.high == 1, result
