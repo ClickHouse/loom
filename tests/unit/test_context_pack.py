@@ -11,6 +11,7 @@ def test_ordered_section_names_honors_valid_custom_order_and_appends_rest() -> N
         "profile",
         "working_memory",
         "namespace_health",
+        "namespace_guide",
         "mentor",
         "memory_stack",
         "procedures",
@@ -82,8 +83,10 @@ def test_context_pack_section_order_is_independent_of_completion_order(
 
     # First block in the default order finishes LAST.
     # `runs` is opt-in and not requested here, so it is not built;
-    # `namespace_health` renders only for an unhealthy namespace.
-    order = [n for n in _DEFAULT_SECTION_ORDER if n not in ("runs", "namespace_health", "mentor")]
+    # `namespace_health` renders only for an unhealthy namespace, `namespace_guide`
+    # only for one with a guide.
+    skipped = ("runs", "namespace_health", "namespace_guide", "mentor")
+    order = [n for n in _DEFAULT_SECTION_ORDER if n not in skipped]
     delay = {name: (len(order) - i) * 0.01 for i, name in enumerate(order)}
 
     def _stub(name: str, out: Any) -> Any:

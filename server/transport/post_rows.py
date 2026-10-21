@@ -37,12 +37,14 @@ async def gather_best_effort(
             log.warning("%s %s failed for %s (non-fatal): %s", transport, what, op_name, res)
 
 
-def _audit_subject(input_obj: Any) -> dict[str, Any]:
-    """The validated input as the audit row's subject; {} when it will not
-    serialize (the row is still written)."""
+def _audit_subject(op: Operation, input_obj: Any, response_body: Any) -> dict[str, Any]:
+    """The audit row's subject: the op's `audit_subject`, else the validated
+    input; {} when either fails (the row is still written)."""
     try:
+        if op.audit_subject:
+            return op.audit_subject(input_obj, response_body)
         subject = input_obj.model_dump(mode="json")
-    except Exception:  # noqa: BLE001 — an unserializable input still gets an audit row
+    except Exception:  # noqa: BLE001 — a subject that cannot be built still gets an audit row
         return {}
     return subject if isinstance(subject, dict) else {}
 
@@ -103,7 +105,7 @@ async def post_handler_rows(
                     org=org,
                     namespace=namespace,
                     actor=actor,
-                    subject=_audit_subject(input_obj),
+                    subject=_audit_subject(op, input_obj, response_body),
                 ),
             )
         )
