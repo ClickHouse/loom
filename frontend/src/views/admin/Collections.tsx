@@ -57,8 +57,14 @@ const HEADERS = [
 
 /** How many of a collection's documents its details list. */
 const DOCUMENTS_SHOWN = 25;
-/** The grants `listGrants` reads: one page, newest first. */
-const GRANTS_READ = 100;
+/** The grants the details read: `grants.list`'s largest page, newest first, with no next. */
+const GRANTS_READ = 500;
+
+/** Whether `grants.list` stopped at its limit: it folds a person's spellings into one row
+ *  after the limit, so the stored rows it read are each row plus its `also`. */
+function grantsCut(rows: GrantEntry[]): boolean {
+  return rows.reduce((n, g) => n + 1 + (g.also?.length ?? 0), 0) >= GRANTS_READ;
+}
 
 const ROLE_LABEL: Record<string, string> = { viewer: "Viewer", writer: "Writer", admin: "Admin" };
 
@@ -359,6 +365,7 @@ function collectionRow(
 interface Details {
   info: NamespaceInfo | null;
   grants: GrantEntry[];
+  grantsCut: boolean;
   documents: KnowledgeEntry[];
   moreDocuments: boolean;
 }
@@ -395,6 +402,7 @@ function CollectionDetails({
           setDetails({
             info,
             grants: grants.rows ?? [],
+            grantsCut: grantsCut(grants.rows ?? []),
             documents: docs.rows ?? [],
             moreDocuments: !!docs.next_cursor,
           });
@@ -405,7 +413,6 @@ function CollectionDetails({
     },
     [org, ns, reads],
   );
-  const shown = details;
   const blocked = deleteBlocked(collection);
 
   return (
@@ -415,7 +422,7 @@ function CollectionDetails({
         if (!v) onClose();
       }}
       title={ns}
-      description={shown?.info?.description || undefined}
+      description={details?.info?.description || undefined}
       className="w-full max-w-[640px]"
       // A read-only view: it opens on itself, not on the footer's Delete.
       initialFocus="dialog"
@@ -425,9 +432,9 @@ function CollectionDetails({
           {collection.parent || "Top level"}
         </MetaRow>
         <MetaRow label="Your role">{ROLE_LABEL[collection.role] ?? collection.role}</MetaRow>
-        {shown?.info?.created_at && (
+        {details?.info?.created_at && (
           <MetaRow label="Created">
-            <ListTime time={shown.info.created_at} />
+            <ListTime time={details.info.created_at} />
           </MetaRow>
         )}
       </MetaList>
@@ -440,30 +447,28 @@ function CollectionDetails({
           </Button>
         </div>
       )}
-      {!error && !shown && <Loading label="Loading the collection" />}
-      {!error && shown && (
+      {!error && !details && <Loading label="Loading the collection" />}
+      {!error && details && (
         <div className="space-y-4">
           <section aria-labelledby="collection-members-heading">
             <SectionHeading
               id="collection-members-heading"
               label="Members"
-              count={shown.grants.length}
-              // `grants.list` has no next page and folds a person's alias rows after its
-              // limit, so a list cut short can come back a few rows under it.
-              caption={shown.grants.length >= GRANTS_READ * 0.9 ? `up to the newest ${GRANTS_READ}` : undefined}
+              count={details.grants.length}
+              caption={details.grantsCut ? `the newest ${GRANTS_READ}` : undefined}
               hint={
                 collection.parent
                   ? `These are the grants on this collection. Everyone who holds a grant on ${collection.parent} or a collection above it reaches it too.`
                   : undefined
               }
             />
-            {shown.grants.length === 0 ? (
+            {details.grants.length === 0 ? (
               <p className="text-sm text-text-muted">
                 {collection.personal ? "A personal collection admits its user alone." : "No grants on it."}
               </p>
             ) : (
               <ul className="space-y-1 text-sm">
-                {shown.grants.map((g) => (
+                {details.grants.map((g) => (
                   <li key={g.subject} className="flex min-w-0 items-center justify-between gap-3">
                     <span className="min-w-0 truncate font-mono text-xs">{g.subject}</span>
                     <span className="shrink-0 text-text-muted">
@@ -479,13 +484,13 @@ function CollectionDetails({
             <SectionHeading
               id="collection-documents-heading"
               label="Documents"
-              caption={shown.moreDocuments ? `the newest ${DOCUMENTS_SHOWN}` : `${shown.documents.length} in all`}
+              caption={details.moreDocuments ? `the newest ${DOCUMENTS_SHOWN}` : `${details.documents.length} in all`}
             />
-            {shown.documents.length === 0 ? (
+            {details.documents.length === 0 ? (
               <p className="text-sm text-text-muted">It holds no documents.</p>
             ) : (
               <ul className="space-y-1 text-sm">
-                {shown.documents.map((d) => (
+                {details.documents.map((d) => (
                   <li key={d.source_uri} className="flex min-w-0 items-center justify-between gap-3">
                     <span className="min-w-0 truncate">{d.title || d.source_uri}</span>
                     <ListTime time={d.ingested_at} quiet className="shrink-0 text-text-muted" />

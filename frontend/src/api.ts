@@ -605,6 +605,8 @@ export interface GrantEntry {
   pending_since?: string | null;
   granted_at: string;
   granted_by: string;
+  /** The person's other spellings whose rows folded onto this one. */
+  also?: string[];
 }
 
 export async function listGrants(
