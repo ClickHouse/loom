@@ -64,10 +64,12 @@ def guides(monkeypatch: pytest.MonkeyPatch) -> _Guides:
     return store
 
 
-def _set(content: str, expected: int, summary: str | None = None, note: str = "") -> Any:
+def _set(
+    content: str, expected: int, summary: str | None = None, note: str = "", namespace: str = "ns"
+) -> Any:
     body = NamespaceGuideSetInput(
         org="o",
-        namespace="ns",
+        namespace=namespace,
         content=content,
         summary=summary,
         expected_revision=expected,
@@ -202,17 +204,14 @@ def test_an_end_user_s_personal_collection_takes_no_guide(guides: _Guides) -> No
     from server.auth.sharing import PERSONAL_PREFIX
     from server.core.errors import ValidationError
 
-    body = NamespaceGuideSetInput(
-        org="o", namespace=PERSONAL_PREFIX + "alice", content="x", expected_revision=0
-    )
-    with acting_as(WRITER), pytest.raises(ValidationError):
-        asyncio.run(guide_app.handle_namespace_guide_set(body))
+    with pytest.raises(ValidationError):
+        _set("x", 0, namespace=PERSONAL_PREFIX + "alice")
     assert guides.rows == []
 
 
 def test_a_person_s_personal_namespace_takes_a_guide(guides: _Guides) -> None:
     """`personal-<slug>` is an ordinary memory namespace, which a namespace erasure reaches."""
-    assert _set("my layout", 0).written
+    assert _set("my layout", 0, namespace="personal-alice").written
 
 
 def test_a_save_that_cannot_claim_the_guide_asks_for_a_retry(
