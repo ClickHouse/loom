@@ -255,10 +255,10 @@ async def _get_chunk_with_neighbors(input: MemoryGetInput) -> MemoryGetOutput:
     if target is None:
         return MemoryGetOutput(found=False)
 
-    # A chunk that reads as high, or that was written without a vector for holding
-    # part of a high shape, is served only when its own key is read, and that read is audited as a
-    # key read of a 'high' row is. A neighbour is context the caller did not name: a held
-    # one is left out of the passage.
+    # A chunk that reads as high, or that was written without a vector for holding part
+    # of a high shape, is served only when its own key is read, and that read is audited
+    # as a key read of a 'high' row is. A neighbour is context the caller did not name: a
+    # held one is left out of the passage.
     def held(row: dict[str, Any]) -> bool:
         return int(row["embedding_dim"]) == 0 or reads_high(str(row["content"]))
 

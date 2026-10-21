@@ -833,7 +833,7 @@ only those with a vector (`embedding_dim > 0`), so no search leg returns it.
   on its own. The conversation and long-value writers check the chunked text once, plus
   one chunk past its end for a key that crosses it, in a worker thread, and also hold
   every chunk whose character range overlaps a high shape, and every chunk whose own
-  text reads as one (a chunk can start inside a word, where a pattern's word boundary
+  text reads as high (a chunk can start inside a word, where a pattern's word boundary
   falls). A private-key block reads as high from its header to its closing line
   (without one, through the base64 characters, line breaks and `Proc-Type:` /
   `DEK-Info:` lines after the header, so prose ends it), so every chunk its body covers
@@ -914,10 +914,10 @@ rewritten:
   high. The conversation titler never sends a turn that reads as high to its model and
   never stores a title that reads as high: it marks the thread `title_refused` in its
   metadata instead, as it does a thread whose first eight user and assistant turns all
-  read as high, and later passes skip it. A thread with
-  fewer such turns stays unmarked, so a plain turn that arrives later gets it titled.
-  New `metadata` from `conversation.update` or `conversation.create` replaces the mark,
-  and the titler then asks its model once more and marks the thread again.
+  read as high, and later passes skip it. A thread with fewer such turns stays unmarked,
+  so a plain turn that arrives later gets it titled. New `metadata` from
+  `conversation.update` or `conversation.create` replaces the mark, and the titler then
+  asks its model once more and marks the thread again.
 - Read by key and audited: `memory.get` on the `chunk:` key of a chunk that reads as high
   serves it and writes a `memory.sensitive_read` row.
 - `memory.export_evidence` leaves out the chunks and digests linked to a key with any `high`
