@@ -42,7 +42,7 @@ change between releases, and ops MCP does not serve with ‡.
   another agent's.
 - **You can trust what comes back.** Every hit says who wrote it, when and
   from which source; a read by key also says whether a person verified it
-  (over MCP, `memory.get` with `explain: true`) and whether a newer fact
+  (`verification` and `verified_by` on `memory.get`) and whether a newer fact
   contradicts it. A search that finds nothing says so (`abstain`).
 - **Your context stays small.** One `context.pack` call loads what matters
   for the task inside a token budget; large logs go to `context.offload`†
@@ -129,7 +129,7 @@ change between releases, and ops MCP does not serve with ‡.
 | `advisories` on a write | the shape is wrong (a blob, double-encoded JSON) | fix the shape, by the table above |
 | `abstain: true` on a read | nothing cleared the relevance floor | treat it as "not in Loom" and use your other context; never present the nearest weak hit as the answer |
 | `pending_extraction` > 0 (dropped over MCP unless `explain: true`) | extraction has not run yet | an empty result is not evidence of absence |
-| `source_class`, `verified`, `verification` (over MCP, on `memory.get` with `explain: true`; `loom_search` drops them) | how a row entered memory and whether someone attested it | weigh `external` and unverified rows as claims |
+| `source_class` and `verification` on a `memory.get`, `verified` on a search hit (`loom_search` drops them) | how a row entered memory and whether someone attested it | weigh `external` and unverified rows as claims |
 | `hint` on a result (header `X-Loom-Hint`) | the mentor names a plane you are not using | act on it once; `mentor.brief` has the counts |
 | `found: false` on a read by id | not found, or not yours | the same answer for both, by design |
 
@@ -164,7 +164,8 @@ cover the loop:
   most active writer instead).
   `memory.list` also compares `user_id` and `session_id` exactly (`-` when
   omitted): send `"*"` for those too to list every row (not under a token
-  narrowed to one user, which refuses `"*"`).
+  narrowed to one user, which refuses `user_id: "*"` but takes
+  `session_id: "*"` for that user's rows across sessions).
 - **Narrow only on purpose.** A `user_id`, `session_id` or `run_id` on a
   read narrows it to those rows. `search.query`† has none of them; to read
   one user's rows, use `memory.ask` with `user_id`.

@@ -42,7 +42,7 @@ on a row.
 | `memory.move` | Rename keys and leave redirects, so old readers keep working. |
 | `memory.history`†, `memory.provenance`, `memory.lineage`† | Every version of a key; where a row came from. |
 | `memory.timeline`†, `memory.related`† | Rows about an entity or tag in time order; rows sharing entities with a key. |
-| `memory.verify` | Attest that a row is correct (`verified` on later reads). |
+| `memory.verify` | Attest that a row is correct (`verification` on `memory.get`, `verified` on search hits). |
 
 Memory types: `semantic` (default, embedded and searched), `episodic` and
 `profile` (stored, not searched), `procedural` (procedure bodies). A row
