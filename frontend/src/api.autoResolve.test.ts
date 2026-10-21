@@ -125,7 +125,7 @@ describe("hasAutoResolved", () => {
     expect(await hasAutoResolved({ org: "o", namespace: "n" })).toBe(true);
     expect(await hasAutoResolved({ org: "o", namespace: "n" })).toBe(false);
     expect(bodies).toHaveLength(2);
-    expect(bodies[0]).toMatchObject({ org: "o", namespace: "n", limit: 5 });
+    expect(bodies[0]).toMatchObject({ org: "o", namespace: "n", limit: 50 });
     const since = Date.parse(String(bodies[0]?.["since"]));
     expect(Date.now() - since).toBeGreaterThan(29 * 24 * 3600 * 1000);
     expect(Date.now() - since).toBeLessThan(31 * 24 * 3600 * 1000);

@@ -139,13 +139,14 @@ export async function listAutoResolved(
   return { rows: out, next_cursor: page.next_cursor ?? null };
 }
 
-/** Whether the Auto-resolved tab has a row to show: its five newest retirements, read with
- *  the tab's filter. The sidebar shows the Review queue for it when there is no open
- *  conflict. */
+/** Whether the Auto-resolved tab has a row to show, from the 50 newest retirement records
+ *  in one call. A token narrowed to one user sees only that user's rows of them, so older
+ *  rows in its scope do not show the entry. The sidebar shows the Review queue for it when
+ *  there is no open conflict. */
 export async function hasAutoResolved(
   id: Pick<Identity, "org" | "namespace">,
   opts: RequestOpts = {},
 ): Promise<boolean> {
-  const page = await listAutoResolved(id, { limit: 5, withCurrent: false, signal: opts.signal });
+  const page = await listAutoResolved(id, { limit: 50, withCurrent: false, signal: opts.signal });
   return page.rows.length > 0;
 }

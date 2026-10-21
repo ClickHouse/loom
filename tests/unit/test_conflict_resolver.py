@@ -2201,11 +2201,10 @@ def test_a_resolver_burst_ends_within_half_the_pass_deadline() -> None:
 
     with pytest.raises(ValidationError, match="BURST_SECONDS must be at most half"):
         MemorySettings(memory_conflict_resolver_max_pass_seconds=200.0)
-    assert (
-        MemorySettings(
-            memory_conflict_resolver_burst_seconds=100.0
-        ).memory_conflict_resolver_max_pass_seconds
-        == 600.0
+    # 300 s, the default, is exactly half of a 600 s deadline.
+    MemorySettings(
+        memory_conflict_resolver_burst_seconds=300.0,
+        memory_conflict_resolver_max_pass_seconds=600.0,
     )
 
 

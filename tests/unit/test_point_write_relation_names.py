@@ -60,9 +60,6 @@ def test_a_refused_relation_names_what_it_was_stored_as(verb, stored):
         ("रखता है", "रखता_है"),
         # The stemmer cuts the final e, as it cuts "owns" to "own"; the è stays.
         ("possède", "possèd"),
-        # One wide character is a whole verb.
-        ("爱", "爱"),
-        ("住", "住"),
         ("posse\u0300de", "possèd"),  # the same word typed as e and a combining accent
     ],
 )

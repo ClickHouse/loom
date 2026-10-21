@@ -175,7 +175,7 @@ const BUDGET: Record<string, { render: () => JSX.Element; view: View; allow: Rec
     // The task inbox bell asks for counts once per two minutes.
     allow: {
       "/v1/conflicts.list": 1,
-      // Five retired rows: whether the Review queue's Auto-resolved tab has anything.
+      // Fifty retirement records: whether the Review queue's Auto-resolved tab has anything.
       "/v1/memory.auto_retirements": 1,
       "/v1/cost.budget_status": 1,
       "/v1/agents.connected": 1,

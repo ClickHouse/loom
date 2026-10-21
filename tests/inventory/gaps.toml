@@ -186,7 +186,6 @@
 "setting:memory_bm25_cache_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_bulk_contextualize_concurrency" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_bulk_contextualize_max_entries" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_conflict_resolver_max_pass_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_conflicts_count_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_coverage_sweep_gate_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_expiry_demote_factor" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }

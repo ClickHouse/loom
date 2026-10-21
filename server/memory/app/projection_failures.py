@@ -504,6 +504,7 @@ async def scan_active_projection_failures(
                    AND created_at > now() - INTERVAL {{grace:UInt32}} SECOND)
         ORDER BY created_at ASC, failure_id ASC
         LIMIT {{lim:UInt32}}
+        SETTINGS select_sequential_consistency = 1
         """,
         params={
             "lim": int(limit),
