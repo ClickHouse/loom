@@ -174,7 +174,7 @@ async def _gather_legs(
     and record legs, and return the fact rows plus each optional leg's hits."""
     # Gather every result-independent leg in parallel — facts, chunks, the
     # BM25-only lexical union, records. None consumes another's output (the
-    # lexical dedup-against-ANN-keys runs post-gather), so sequencing would
+    # lexical dedup against the vector-leg keys runs post-gather), so sequencing would
     # only add latency. The plane mask decides which legs participate.
     # Each leg is its own `ch.query.*` span. The handler's
     # `ch.query.memory_embeddings` span covers the whole fan-out, which would
@@ -190,7 +190,7 @@ async def _gather_legs(
         else None
     )
     lexical_task = (
-        # Admit lexical hits HNSW missed, dropping those semantically far
+        # Admit lexical hits the vector leg missed, dropping those semantically far
         # (0.9 distance = 0.1 similarity floor) as false friends. The rrf route
         # skips it: its fact leg already fuses a lexical rank, and the pool is
         # a second FINAL scan of the namespace's vectors.

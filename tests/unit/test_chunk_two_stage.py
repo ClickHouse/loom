@@ -1,6 +1,6 @@
-"""The chunk leg is indexed and re-read like the fact leg.
+"""The chunk leg is a candidate read, then a re-read like the fact leg.
 
-Stage 1 must be the one query shape the vector index serves (bare ORDER BY
+Stage 1 must be the one query shape the codes-first read serves (bare ORDER BY
 cosineDistance LIMIT, no FINAL, no JOIN, identities only); stage 2 must be
 the full query as a primary-key lookup over those identities under FINAL
 with skip indexes off. The legacy single query stays behind the flag.
@@ -22,15 +22,19 @@ def _cands(*pairs: tuple[str, int]) -> list[dict[str, Any]]:
     ]
 
 
-def test_stage_one_is_the_shape_the_index_serves() -> None:
+def test_stage_one_is_the_shape_the_codes_first_read_serves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core.vectors import quantized_setting
     from server.memory.app.retrieval.chunks import _chunk_candidates_sql
 
+    monkeypatch.setattr(quantized_setting, "_quantized_codes_supported", True)
     sql = _chunk_candidates_sql("AND c.agent = {agent:String}")
     assert "FROM loom.memory_chunks AS c\n" in sql or "FROM loom.memory_chunks AS c " in sql
     assert " FINAL" not in sql
     assert "JOIN" not in sql
     assert "ORDER BY distance ASC" in sql and "LIMIT {chunk_limit:UInt32}" in sql
-    assert "hnsw_candidate_list_size_for_search" in sql
+    assert "vector_search_use_quantized_codes = 1" in sql
     assert "vector_search_index_fetch_multiplier" in sql
     for pred in (
         "c.org = {org:String}",
@@ -135,7 +139,7 @@ async def test_stage_one_failure_is_logged_and_fails_open(caplog: pytest.LogCapt
 @pytest.mark.asyncio
 async def test_run_scope_reaches_both_chunk_stages() -> None:
     """A run-scoped search filters the chunk leg on run_id in
-    the index stage and the FINAL stage, mirroring the fact leg."""
+    the candidate stage and the FINAL stage, mirroring the fact leg."""
     from server.memory.app.retrieval.chunks import _search_memory_chunks
 
     ch = StubCH()
@@ -240,13 +244,19 @@ def _union_row(
     return r
 
 
-def test_stage_one_inherits_the_multiplier_and_carries_no_thread_pin() -> None:
-    """Stage 1 carries the deployment's vector multiplier, and no `max_threads`
+def test_stage_one_inherits_the_multiplier_and_carries_no_thread_pin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stage 1 carries the deployment's codes multiplier, and no `max_threads`
     pin on a no-FINAL scan (the threads follow the marks)."""
+    from server.core.vectors import quantized_setting
     from server.memory.app.retrieval.chunks import _chunk_candidates_sql
+    from server.settings import settings
 
+    monkeypatch.setattr(quantized_setting, "_quantized_codes_supported", True)
     sql = _chunk_candidates_sql("")
-    assert "vector_search_index_fetch_multiplier = " in sql
+    multiplier = float(settings.vector_search_quantized_fetch_multiplier)
+    assert f"vector_search_index_fetch_multiplier = {multiplier}" in sql
     assert "max_threads" not in sql
     assert "c.parent_memory_key AS parent_memory_key" in sql.split("FROM", 1)[0]
     assert "c.content" not in sql.split("FROM", 1)[0]
