@@ -815,7 +815,7 @@ async def _signed_in_as(
     if pending["kind"] == "device":
         return await device.signed_in(pending["user_code"], identity, upstream)
     if pending["kind"] == "dashboard":
-        return await _dashboard_signed_in(identity)
+        return await _dashboard_signed_in(identity, pending)
     return await _connect_consent(pending, identity, upstream)
 
 
@@ -1126,12 +1126,27 @@ async def _decide_connect(f: dict[str, str]) -> Response:
     return _back_to_client(client["redirect_uri"], {"error": "access_denied"}, pending["mcp_state"])
 
 
-async def _dashboard_signed_in(identity: Identity) -> Response:
+async def _dashboard_signed_in(identity: Identity, pending: dict[str, Any]) -> Response:
     """Hand the dashboard its token the way a sign-in link does: in the URL
     fragment, which the browser never sends to a server. The token is short
     because the dashboard cannot refresh it and only a refresh asks the IdP
-    whether the user is still active."""
+    whether the user is still active. A subject revoked for it gets none: like
+    every mint, this reads revocations from ClickHouse. The landing page, `/me`,
+    serves the dashboard without the aggregator redirect
+    (`LOOM_DASHBOARD_REDIRECT_URL`), so the fragment never follows a redirect
+    to another origin."""
+    from server.auth.revocation import subjects_revoked
+
     subject, org, namespaces, roles = identity
+    issued_at = int(time.time())  # before the read: a revocation after it postdates the token
+    try:
+        revoked = await subjects_revoked([subject], issued_at=issued_at)
+    except Exception as e:  # noqa: BLE001 — unchecked, nobody is signed in: the user retries
+        log.warning("dashboard sign-in: revocations not read: %s", e)
+        return _sign_in_unavailable(_restart_url(pending))
+    if revoked:
+        await _signin_denied(subject, "revoked")
+        return _denied_page("this account's tokens are revoked")
     family = new_jti()
     token = mint_token(
         subject=subject,
@@ -1144,6 +1159,7 @@ async def _dashboard_signed_in(identity: Identity) -> Response:
         # is bounded like the person, not by its access-token lifetime.
         session_id=family,
         first_party=True,
+        issued_at=issued_at,
     )
     await audit.emit(
         "auth.sso_signin",

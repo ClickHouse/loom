@@ -810,7 +810,8 @@ tokens alone.
 With SSO on, nobody can sign in with a password, including operators. If the
 provider is down, mint a token on the server host with
 `docker exec loom-server loom mint-token --subject <you> --org <org> --namespaces <ns>`
-and open `/me#token=<token>`.
+and open `/me#token=<token>`: the sign-in landing page, which never redirects (`/`
+follows `LOOM_DASHBOARD_REDIRECT_URL`, and the browser would carry the token along).
 
 ## Other providers
 
