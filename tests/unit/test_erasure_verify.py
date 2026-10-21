@@ -13,6 +13,7 @@ from server.erasure.app import saga as h
 from server.erasure.app import saga_steps
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
 class _StubCH:
@@ -117,7 +118,7 @@ def test_census_covers_every_substrate_and_uses_final_on_soft_deleted_tables() -
     out = asyncio.run(erasure_census.residue_census("o", "namespace", "ns", ch=ch))
     assert set(out) == set(erasure_census.census_tables("namespace"))
     # every namespace-scoped substrate, entity, cache, chunk-link and code table
-    assert len(out) == 58 and sum(out.values()) == 0
+    assert len(out) == 59 and sum(out.values()) == 0
     by_table = {sql.split("FROM ")[1].split()[0]: sql for sql, _ in ch.query_one_calls}
     assert (
         " FINAL" in by_table["loom.memory"] and "tombstoned_at IS NULL" in by_table["loom.memory"]
@@ -146,6 +147,38 @@ def test_census_covers_every_substrate_and_uses_final_on_soft_deleted_tables() -
         assert "namespace = {ns:String}" in sql and params["ns"] == "ns"
 
 
+def _outbox_row(event_type: str) -> str:
+    return (
+        "INSERT INTO loom.memory_webhook_outbox (org, namespace, webhook_id, event_id, "
+        "event_type, agent, user_id, session_id, memory_key, memory_id, memory_version, actor, "
+        f"request_id, erasure_id, occurred_at) VALUES ('o', 'ns', 'wh', 'ev', '{event_type}', "
+        "'-', '-', '-', '', '', 0, 'x', '', 'er', now64(3))"
+    )
+
+
+class _OutboxCH(_StubCH):
+    """Runs the outbox's count on clickhouse-local after `setup`; every other table is 0."""
+
+    def __init__(self, *setup: str) -> None:
+        super().__init__([])
+        self.setup = [ddl("memory_webhook_outbox"), *setup]
+
+    async def query_one(self, sql, params=None):
+        if "loom.memory_webhook_outbox" not in sql:
+            return {"n": 0}
+        return run(self.setup, sql, params)[0]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_census_does_not_count_the_sagas_own_erasure_announcements() -> None:
+    ch = _OutboxCH(_outbox_row("memory.erased"))
+    out = asyncio.run(erasure_census.residue_census("o", "namespace", "ns", ch=ch))
+    assert out["loom.memory_webhook_outbox"] == 0
+    ch = _OutboxCH(_outbox_row("memory.erased"), _outbox_row("memory.written"))
+    out = asyncio.run(erasure_census.residue_census("o", "namespace", "ns", ch=ch))
+    assert out["loom.memory_webhook_outbox"] == 1
+
+
 def test_census_user_scope_skips_namespace_only_tables() -> None:
     ch = _StubCH([0] * 40)
     out = asyncio.run(erasure_census.residue_census("o", "user_id", "alice", ch=ch))
@@ -159,7 +192,7 @@ def test_census_user_scope_skips_namespace_only_tables() -> None:
         "loom.llm_response_cache",
     } <= set(out)
     assert "loom.memory_answers" not in out
-    assert len(out) == 43
+    assert len(out) == 44
     assert "loom.blob_uploads" in out  # who uploaded what: the user's go
     # the user's supporter rows, and any bot-rule candidate left with no supporter
     assert {"loom.learnings_queue", "loom.learnings_supporters"} <= set(out)

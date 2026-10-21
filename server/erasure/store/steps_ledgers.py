@@ -246,6 +246,24 @@ async def delete_delete_version_checks_by_user(
     )
 
 
+async def delete_memory_webhook_outbox_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """Memory webhook events name a row's identity, key and id; 3-day TTL. Their
+    attempt rows hold only event ids and counters and are left to expire."""
+    return await delete_scoped(
+        "loom.memory_webhook_outbox", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
+async def delete_memory_webhook_outbox_by_user(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    return await delete_scoped(
+        "loom.memory_webhook_outbox", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+    )
+
+
 _TASK_TABLES = ("loom.tasks", "loom.task_events")
 
 

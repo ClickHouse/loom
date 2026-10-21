@@ -88,10 +88,14 @@ class HistoryTarget:
     memory_key: str
     version: int
     tombstoned_at: Any
+    org: str
+    memory_id: str
 
     @classmethod
     def from_row(cls, r: Mapping[str, Any]) -> HistoryTarget:
         return cls(
+            org=str(r.get("org") or ""),
+            memory_id=str(r.get("memory_id") or ""),
             namespace=str(r.get("namespace") or ""),
             agent=str(r.get("agent") or ""),
             user_id=str(r.get("user_id") or ""),
@@ -223,10 +227,13 @@ async def find_history_target(
     by redact, which needs to know the identity tuple + tombstone state
     before mutating in place."""
     ch = ch or _default_client()
-    cols = "namespace, agent, user_id, session_id, memory_key, version, tombstoned_at"
+    cols = (
+        "org, memory_id, namespace, agent, user_id, session_id, memory_key, version, tombstoned_at"
+    )
     r = await ch.query_one(
         f"""
-        SELECT {cols}
+        SELECT org, toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
+               memory_key, version, tombstoned_at
         FROM (
             SELECT {cols} FROM loom.memory_versions
             WHERE org = {{org:String}} AND memory_id = {{mid:UUID}}

@@ -86,7 +86,7 @@ checkout.
 7. Turn on a feature the previous build cannot honour only once every replica runs
    the new build: `memory_extract_agent_learnings`, since the previous build does not
    erase `loom.learnings_supporters`
-   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 14).
+   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 15).
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in

@@ -38,6 +38,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _sha
+from server.memory.app import webhooks
 from server.memory.domain import lock as _lock
 from server.memory.store.inserts import insert_memory_versions
 
@@ -238,6 +239,13 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
                 error=f"{type(e).__name__}: {e}",
             )
             return res
+        # A demoted or anonymized row is a new version of a live key.
+        await webhooks.announce(
+            [
+                ("memory.tombstoned" if action == "tombstone" else "memory.revised", row)
+                for row, (action, _r, _v) in zip(version_rows, mirrors, strict=True)
+            ]
+        )
         try:
             await _mirror_embeddings_batch(mirrors, cfg=cfg)
         except Exception as e:  # noqa: BLE001 — the memory rows are authoritative

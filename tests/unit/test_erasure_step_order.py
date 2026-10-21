@@ -207,6 +207,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("code_search_trace.delete", ((D, "loom.code_search_trace"),)),
     ("events.delete", ((D, "loom.events"),)),
     ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
+    ("memory_webhook_outbox.delete", ((D, "loom.memory_webhook_outbox"),)),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
     # The fake finds no candidate left without a supporter: only the user's rows go.
     ("learnings_queue.delete", ((D, "loom.learnings_supporters"),)),
@@ -288,6 +289,7 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("events.delete", ((D, "loom.events"),)),
     ("memory_drops.delete", ((D, "loom.memory_drops"),)),
     ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
+    ("memory_webhook_outbox.delete", ((D, "loom.memory_webhook_outbox"),)),
     ("learnings_queue.delete", ((D, "loom.learnings_supporters"), (D, "loom.learnings_queue"))),
     ("tasks.delete", ((D, "loom.tasks"), (D, "loom.task_events"))),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
@@ -375,6 +377,7 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("events.delete", ((D, "loom.events"),)),
     ("memory_drops.delete", ((D, "loom.memory_drops"),)),
     ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
+    ("memory_webhook_outbox.delete", ((D, "loom.memory_webhook_outbox"),)),
     ("learnings_queue.delete", ((D, "loom.learnings_supporters"), (D, "loom.learnings_queue"))),
     ("tasks.delete", ((D, "loom.tasks"), (D, "loom.task_events"))),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),

@@ -38,6 +38,7 @@ from server.memory.api.models_graph import (
     _LineageSupporter,
     _MemoryRelatedHit,
 )
+from server.memory.app import webhooks
 from server.memory.domain import assistant_rules
 
 
@@ -368,25 +369,19 @@ async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryD
     # A locked side of the pair cannot be the one tombstoned.
     from server.memory.domain import lock as _lock
 
-    if input.decision == "keep_canonical":
-        _lock.assert_unlocked(
-            await memory_repo.get_by_id(
-                dup_row.memory_id, org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
-            ),
-            "delete",
-            op="memory.dedup_resolve",
+    async def _tombstone(memory_id: str) -> None:
+        row = await memory_repo.get_by_id(
+            memory_id, org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
         )
-        await memory_repo.tombstone_by_id(input.org, dup_row.memory_id)
+        _lock.assert_unlocked(row, "delete", op="memory.dedup_resolve")
+        tombstoned = await memory_repo.tombstone_by_id(input.org, memory_id)
+        await webhooks.announce([("memory.tombstoned", change) for change in tombstoned])
+
+    if input.decision == "keep_canonical":
+        await _tombstone(dup_row.memory_id)
         duplicate_tombstoned = True
     elif input.decision == "keep_duplicate":
-        _lock.assert_unlocked(
-            await memory_repo.get_by_id(
-                canon_row.memory_id, org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
-            ),
-            "delete",
-            op="memory.dedup_resolve",
-        )
-        await memory_repo.tombstone_by_id(input.org, canon_row.memory_id)
+        await _tombstone(canon_row.memory_id)
         await memory_repo.clear_duplicate_tag(
             input.org,
             dup_row.memory_id,
