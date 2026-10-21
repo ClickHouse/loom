@@ -882,7 +882,7 @@ def test_a_window_of_only_held_turns_has_nothing_to_compact(monkeypatch, held) -
 
 def test_long_turns_compact_and_the_check_stops_past_the_window(monkeypatch) -> None:
     """Turns longer than a third of the window still compact at the default
-    min_to_compact: the credential check runs until the window is full and enough new
+    min_to_compact: the sensitivity check runs until the window is full and enough new
     turns are counted, and never reaches a turn past that cut."""
     import server.core.ch
     import server.llm.client

@@ -119,7 +119,7 @@ The bundle's `evidence/` and `digests/` are written back through `memory.import_
 (`--no-evidence` skips them) and re-embedded by the importing server on every import,
 changed or not: a scheduled import passes `--no-evidence`.
 A chunk or digest whose text reads as high (a credential, card number, SSN or stated
-PIN), or a chunk that holds part of a key cut at a chunk boundary, is written without a
+PIN), or a chunk that holds part of one cut at a chunk boundary, is written without a
 vector and is not searchable
 ([sensitivity](../../architecture/security.md#sensitivity)).
 

@@ -205,7 +205,7 @@ def _invariants_sql() -> str:
             -- Row-level invariants: a live vector row with `embedding_dim = 0` and a
             -- vector (never returned); a tombstoned memory whose status is not
             -- `tombstoned`; an active memory past its own `valid_to`; a live `high`
-            -- memory with a live embedding row (a credential one similarity query away).
+            -- memory with a live embedding row (a high value one similarity query away).
             sum(s.dim0_vec) AS dim0_with_vector,
             sum(s.drift) AS tombstone_status_drift,
             sum(s.past) AS active_past_valid_to,

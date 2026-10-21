@@ -55,7 +55,7 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     agent = state.rule_agent
     if not key or not value or not agent:
         return False
-    # A rule that reads as a credential is never filed: promoted, it would reach
+    # A rule that reads as high is never filed: promoted, it would reach
     # every user of the bot.
     if reads_high(value):
         record_drop(state.org, state.namespace, "learnings.file", "sensitive", item=key)
@@ -89,7 +89,7 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     if new_supporter:
         asked, said = assistant_rules.cited_texts(fact, context, context_cited)
         # A quote that matches a blacklist pattern is left blank, as one that reads
-        # as a credential is. Checked whole: the cut and the folded spacing could
+        # as high is. Checked whole: the cut and the folded spacing could
         # split a pattern or change its spacing.
         if asked and await _blacklisted(state, key, asked, "quote stored blank"):
             asked = ""

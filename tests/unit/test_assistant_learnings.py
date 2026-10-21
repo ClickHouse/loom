@@ -699,7 +699,7 @@ def test_a_credential_the_cut_would_split_still_blanks_the_quote() -> None:
     # A token straddling the rule quote's 400th character.
     said = "b" * 380 + " " + _JWT
     messages = [{"role": "user", "content": asked}, {"role": "assistant", "content": said}]
-    # Cut first, neither half reads as a credential; read whole, both do.
+    # Cut first, neither half reads as high; read whole, both do.
     assert _quotes(_rule_fact(), messages) == ("", "")
 
 

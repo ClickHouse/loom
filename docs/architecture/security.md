@@ -821,10 +821,9 @@ no search leg returns it. The other reads that could serve its value follow thre
   `expires_at` until the expiry sweep.
 
 Raw evidence has no caller to label it, so the text decides (`reads_high`, whatever
-`LOOM_MEMORY_SENSITIVITY_AUTODETECT` says). A passage whose text reads as high (in
-this section, any high shape: a credential, card number, SSN or stated PIN) is stored as
-written with no vector, and its text is never sent to the embedder. Every read
-that ranks passages reads only those with a vector (`embedding_dim > 0`), so no search leg
+`LOOM_MEMORY_SENSITIVITY_AUTODETECT` says). A passage whose text reads as high (any
+high shape: a credential, card number, SSN or stated PIN) is stored as written with no
+vector, and its text is never sent to the embedder. Every read that ranks passages reads only those with a vector (`embedding_dim > 0`), so no search leg
 returns it.
 
 - Chunk writers: a verbatim chunk in `loom.memory_chunks` (a conversation chunk
