@@ -223,17 +223,9 @@ def main() -> None:
         database=args.database,
         send_receive_timeout=7200,
     )
-    if args.build:
-        build(ch, args.rows, args.dim)
-    for kind in KINDS:
-        r = ch.query(
-            "SELECT count(), sum(rows), formatReadableSize(sum(data_compressed_bytes)),"
-            " formatReadableSize(sum(secondary_indices_compressed_bytes)) FROM system.parts"
-            " WHERE database = currentDatabase() AND table = {t:String} AND active",
-            parameters={"t": f"vb_{kind}"},
-        ).result_rows[0]
-        print(f"vb_{kind}: parts={r[0]} rows={r[1]} table data={r[2]} index={r[3]}")
     try:
+        if args.build:
+            build(ch, args.rows, args.dim)
         measure(ch, args)
     finally:
         # Also on a failed or interrupted run: the 1M-row tables take about 12 GiB.
@@ -243,6 +235,20 @@ def main() -> None:
 
 
 def measure(ch, args: argparse.Namespace) -> None:
+    for kind in KINDS:
+        r = ch.query(
+            "SELECT count(), sum(rows), formatReadableSize(sum(data_compressed_bytes)),"
+            " formatReadableSize(sum(secondary_indices_compressed_bytes)) FROM system.parts"
+            " WHERE database = currentDatabase() AND table = {t:String} AND active",
+            parameters={"t": f"vb_{kind}"},
+        ).result_rows[0]
+        print(f"vb_{kind}: parts={r[0]} rows={r[1]} table data={r[2]} index={r[3]}")
+    # The cache-check row depends on these.
+    cache = ch.query(
+        "SELECT name, value FROM system.server_settings"
+        " WHERE name LIKE 'vector_similarity_index_cache_%'"
+    ).result_rows
+    print("server: " + ", ".join(f"{n}={v}" for n, v in cache))
     # Tags carry a run id: system.query_log keeps every earlier run's rows.
     run = uuid.uuid4().hex[:8]
     rnd = random.Random(7)

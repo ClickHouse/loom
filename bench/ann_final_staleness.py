@@ -1,4 +1,4 @@
-"""Does the HNSW index return stale versions under ReplacingMergeTree FINAL?
+"""Does an HNSW index return stale versions under ReplacingMergeTree FINAL?
 
 Builds a versioned table shaped like loom.memory_embeddings (3 versions per key, the
 latest 20% tombstoned, parts left unmerged), then asks the same nearest-neighbour
@@ -8,7 +8,7 @@ question four ways and scores each against the exact answer (skip indexes off):
   plain      same without FINAL
   prefilter  vector_search_filter_strategy = 'prefilter'                  (index unused)
   reread     index for candidate KEYS, then FINAL re-read of those keys
-             with use_skip_indexes = 0                                    (the fix)
+             with use_skip_indexes = 0                                    (stale rows dropped)
 
 Run against any ClickHouse (default: a local one on :8125):
 

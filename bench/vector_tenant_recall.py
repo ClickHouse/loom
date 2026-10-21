@@ -99,7 +99,7 @@ async def main_async(args: argparse.Namespace) -> int:
         share = t["c"] / total_rows
         print(
             f"  {t['org']}/{t['namespace']:<32} rows={t['c']:>7} share={share:6.2%} "
-            f"index∩brute={agree}/{total} ({rate:.0%})"
+            f"skip-indexes∩brute={agree}/{total} ({rate:.0%})"
         )
     if worst < args.min_agreement:
         print(

@@ -401,13 +401,13 @@ condition keeps every granule of the part. Every Loom vector read filters on
 `(org, namespace)`, the prefix of every vector table's sort key, so it reads the
 tenant's granules and sorts them exactly: no index search runs
 (`ProfileEvents['USearchSearchCount'] = 0`) and the read costs what the plain table costs.
-MiB read and p50 per query:
+MiB read and p50 per query, every read under `FINAL`:
 
 | Tenant share | Rows | Exact scan        | With the index    | Codes-first, LIMIT 60 |
 | ------------ | ---- | ----------------- | ----------------- | --------------------- |
-| 50%          | 500k | 1,478 MiB, 141 ms | 1,476 MiB, 134 ms | 134 MiB, 55 ms        |
-| 10%          | 100k | 295 MiB, 491 ms   | 294 MiB, 476 ms   | 49 MiB, 44 ms         |
-| 1%           | 10k  | 30 MiB, 57 ms     | 30 MiB, 57 ms     | 21 MiB, 18 ms         |
+| 50%          | 500k | 1,478 MiB, 141 ms | 1,478 MiB, 140 ms | 134 MiB, 55 ms        |
+| 10%          | 100k | 295 MiB, 491 ms   | 295 MiB, 476 ms   | 49 MiB, 44 ms         |
+| 1%           | 10k  | 30 MiB, 57 ms     | 30 MiB, 55 ms     | 21 MiB, 18 ms         |
 | 0.1%         | 1k   | 3.2 MiB, 12 ms    | 3.2 MiB, 13 ms    | 3.4 MiB, 9 ms         |
 
 Compare the bytes: the 10% tenant's read was slower than the 50% tenant's in both runs,
@@ -428,10 +428,11 @@ against the exact answer, by `vector_search_index_fetch_multiplier`:
 | 1%                     | 0.080 | 0.163 | 0.723 |
 
 The unfiltered row is this graph's own recall on this data at
-`hnsw_candidate_list_size_for_search = 256` (0.847 at 1024). A partition per tenant makes the index run for
-tenant reads: the 50% tenant's read under `FINAL` then takes 76 ms instead of 141 ms, at
-recall@10 0.757, and the 10% and 1% tenants get 0.747 and 0.843. That layout also needs
-one partition per namespace, which a table with thousands of namespaces cannot hold.
+`hnsw_candidate_list_size_for_search = 256` (0.847 at 1024). A partition per tenant
+makes the index run for tenant reads: the 50% tenant's read under `FINAL` then takes
+76 ms instead of 141 ms, at recall@10 0.757, and the 10% and 1% tenants get 0.747 and
+0.843. That layout also needs one partition per namespace, which a table with thousands
+of namespaces cannot hold.
 
 **Under `FINAL` it serves superseded versions.** The graph returns rows of every version
 before `FINAL` collapses them, so a key's newest version or tombstone loses to an older
@@ -447,10 +448,10 @@ data. Copying the 1M rows into the indexed table took 135-166 s over two runs, a
 17-51 s into a coded table without an index. With
 `exclude_materialize_skip_indexes_on_merge` naming the index, a merged part carries no
 graph at all; without it every merge rebuilds the graph. A graph also has to stay
-resident in `vector_similarity_index_cache_size` (5 GiB by default). After the
-partitioned table's graphs were loaded, every read of the single-part graph missed the
-cache (`VectorSimilarityIndexCacheMisses` 30 of 30), reloaded it and took 4.8 s instead
-of 9 ms.
+in the vector similarity index cache, or a read loads it from disk. On this server
+(`vector_similarity_index_cache_size` 5 GiB, `SLRU`), once the partitioned table's
+graphs had been loaded, all 30 reads of the single-part graph missed the cache
+(`VectorSimilarityIndexCacheMisses`), reloaded it and took 4.8 s instead of 9 ms.
 
 The codes-first read is what cuts a large namespace's scan instead: at 100k rows and
 more it reads 6-11x fewer bytes than the exact scan, inside the tenant's granules and
