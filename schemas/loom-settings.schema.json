@@ -193,7 +193,7 @@
           "default": 10,
           "exclusiveMinimum": 0,
           "type": "integer",
-          "description": "Shortest wait, ms, of a batched insert: what a lone insert waits when writes are sparse. At most `ch_batched_insert_wait_max_ms`."
+          "description": "Shortest wait, ms, of a batched insert: what a lone insert waits when writes are sparse. A value above `ch_batched_insert_wait_max_ms` is read as the maximum."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,

@@ -106,7 +106,7 @@ settings:
   # ch_batched_insert_wait_max_ms: 50
 
   # Shortest wait, ms, of a batched insert: what a lone insert waits when writes are
-  # sparse. At most `ch_batched_insert_wait_max_ms`. [live]
+  # sparse. A value above `ch_batched_insert_wait_max_ms` is read as the maximum. [live]
   # ch_batched_insert_wait_min_ms: 10
 
   # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot

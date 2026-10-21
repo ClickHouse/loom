@@ -152,7 +152,7 @@ RESTART_PLANE = "restart"
 
 async def mark_process_start(*, ch: _CHClient | None = None) -> None:
     """Move the all-orgs mark: a predecessor that crashed took its unflushed
-    marks with it. Committed; a failure is logged (the next start retries)."""
+    marks with it. Waited for; a failure is logged (the next start retries)."""
     from server.core.ch import query_tag_var
 
     ch = ch or _default_client()
@@ -164,7 +164,7 @@ async def mark_process_start(*, ch: _CHClient | None = None) -> None:
     }
     tag = query_tag_var.set("namespace_write_marks.process_start")
     try:
-        await ch.insert(TABLE, [row], settings={"async_insert": 0, "wait_for_async_insert": 1})
+        await ch.insert(TABLE, [row], settings=batched_insert_settings())
     except Exception as e:  # noqa: BLE001 — a missed start mark never blocks boot
         log.warning("namespace_write_marks: process-start mark failed (non-fatal): %s", e)
     finally:
@@ -327,6 +327,7 @@ async def bump(
                     "last_write": naive_utc_now(),
                 }
             ],
+            settings=batched_insert_settings(),
         )
     except Exception as e:  # noqa: BLE001 — telemetry-grade write
         log.warning("namespace_write_marks bump failed (%s/%s/%s): %s", org, namespace, plane, e)

@@ -3,7 +3,9 @@
 Writes at a fixed rate for a fixed time, open loop: write i starts at
 start + i / rate whether or not earlier ones have finished. Prints the achieved
 rate, p50/p95/p99 latency, errors, and from `system.part_log` the new parts each
-table of the schema got while it ran. Free with the fake embedder and LLM.
+table of the schema got while it ran, and from `system.query_log` how many
+conversation inserts carried each `async_insert` value, so the output shows which
+form ran. Free with the fake embedder and LLM.
 
 `--target server` sends `memory.set` and/or `conversation.append` to a running
 server (`--op`). `--target client` runs, in this process, the two inserts a
@@ -135,6 +137,28 @@ async def _parts(since: float, until: float) -> dict[str, dict[str, int]]:
     return {str(r["table"]): {"parts": int(r["parts"]), "rows": int(r["rows"])} for r in rows}
 
 
+async def _inserts_sent(since: float, until: float) -> dict[str, dict[str, int]]:
+    """Per table, how many inserts the query log saw with each `async_insert` value:
+    the proof of which form the run actually sent."""
+    ch = get_client()
+    rows = await ch.query_all(
+        "SELECT splitByChar('.', tables[1])[2] AS table, "
+        "Settings['async_insert'] AS async_insert, count() AS n "
+        "FROM system.query_log "
+        "WHERE type = 'QueryFinish' AND query_kind = 'Insert' AND length(tables) = 1 "
+        "AND tables[1] IN (currentDatabase() || '.conversations', "
+        "currentDatabase() || '.conversation_embeddings') "
+        "AND event_time BETWEEN toDateTime({since:UInt32}) AND toDateTime({until:UInt32}) "
+        "GROUP BY table, async_insert ORDER BY table, async_insert",
+        {"since": int(since), "until": int(until) + 2},
+    )
+    out: dict[str, dict[str, int]] = {}
+    for r in rows:
+        # An unset value is the server default, 0.
+        out.setdefault(str(r["table"]), {})[f"async_insert={r['async_insert'] or 0}"] = int(r["n"])
+    return out
+
+
 async def _run(args: argparse.Namespace) -> dict[str, Any]:
     await get_client().connect()
     run = uuid.uuid4().hex[:8]
@@ -187,11 +211,13 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         await asyncio.gather(*(one(i, start + i / args.rate) for i in range(total)))
         elapsed = time.monotonic() - start
         parts = await _parts(started, time.time())
+        sent = await _inserts_sent(started, time.time())
 
     return {
         "target": args.target,
         "op": args.op if args.target == "server" else "conversation.append inserts",
         "inserts": "committed" if args.committed else "as the code sends them",
+        "inserts_sent": sent,
         "target_rate": args.rate,
         "seconds": args.seconds,
         "achieved_rate": round(sum(len(v) for v in latencies.values()) / elapsed, 1),

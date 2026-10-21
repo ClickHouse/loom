@@ -35,9 +35,10 @@ from server.core.ch_writes import batched_insert_settings  # noqa: E402
 
 
 def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
-    """Every `settings=` passed to a `ch.insert` for `table` (a dict literal,
-    `batched_insert_settings()` resolved to its value, or `{}` for an insert that
-    passes none), in one module or in every module of a package directory."""
+    """Every `settings=` passed to a `ch.insert` for `table`, in one module or in
+    every module of a package directory: a dict literal, `batched_insert_settings()`
+    resolved to its value, the session defaults for an insert that passes none, and
+    `{"unresolved": 1}` for any other value."""
     files = sorted(path.rglob("*.py")) if path.is_dir() else [path]
     trees = [ast.parse(f.read_text()) for f in files]
     # A module-level name bound to the table, like `OUTBOX = "loom.memory_webhook_outbox"`.
@@ -68,7 +69,8 @@ def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
         if not names_table:
             continue
         if not any(kw.arg == "settings" for kw in node.keywords):
-            found.append({})  # the client's defaults: a committed insert
+            # The client's session defaults: a committed insert.
+            found.append({"async_insert": 0, "wait_for_async_insert": 1})
         for kw in node.keywords:
             if kw.arg != "settings":
                 continue
@@ -80,6 +82,8 @@ def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
                 found.append(batched_insert_settings())
                 continue
             if not isinstance(value, ast.Dict):
+                # A name or another call: unknown here, so it fails every check.
+                found.append({"unresolved": 1})
                 continue
             d: dict[str, int] = {}
             for k, v in zip(value.keys, value.values, strict=True):
@@ -118,6 +122,10 @@ BATCHED_TABLES = [
     ("server/memory/store/webhooks.py", "loom.memory_webhook_attempts"),
     ("server/memory/app/evidence.py", "loom.memory_evidence"),
     ("server/memory/app/evidence.py", "loom.memory_belief_sources"),
+    ("server/memory/app/chunk_projection.py", "loom.memory_chunks"),
+    ("server/memory/app/projections.py", "loom.entity_vectors"),
+    ("server/core/namespace_write_marks.py", "loom.namespace_write_marks"),
+    ("server/core/rmt_carry.py", "loom.carry_acks"),
 ]
 
 

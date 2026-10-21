@@ -565,7 +565,7 @@ class ClickHouseSettings(BaseModel):
     # partition.
     ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0)
     # Shortest wait, ms, of a batched insert: what a lone insert waits when writes are
-    # sparse. At most `ch_batched_insert_wait_max_ms`.
+    # sparse. A value above `ch_batched_insert_wait_max_ms` is read as the maximum.
     ch_batched_insert_wait_min_ms: Annotated[int, LIVE] = Field(default=10, gt=0)
     # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED.
     # 0 = no slot gate.

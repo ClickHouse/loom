@@ -90,7 +90,7 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   event kinds.
 - **Append, then collapse.** Mutable state is a `ReplacingMergeTree`; writers insert a new
   row with a higher version and reads use `FINAL`. Mutations stay off the request path.
-- **Committed inserts.** A write that a later read depends on is sent with
+- **Waited inserts.** A write that a later read depends on is sent with
   `wait_for_async_insert = 1`, so it is written when the insert returns: committed
   (`async_insert = 0`, the client's session default) or batched (below). Fire-and-forget
   telemetry (`async_insert = 1, wait_for_async_insert = 0`) adds `async_insert_deduplicate = 0`
@@ -103,8 +103,9 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   `agent_events` flush, the policy witness's `agent_events` and `memory_exposures` rows,
   `memory_webhook_outbox`, `memory_webhook_attempts`, `memory_evidence`,
   `memory_belief_sources`, the `memory_chunks` of `memory.set_from_messages`,
-  `auth_attempts`, `memory_projection_failures`, the graph Undo markers, and the
-  usage-event, write-mark and carry-acknowledgement flushes) are sent with
+  `entity_vectors`, `auth_attempts`, `memory_projection_failures`, the graph Undo
+  markers, `namespace_write_marks`, and the usage-event and carry-acknowledgement
+  flushes) are sent with
   `async_insert = 1, wait_for_async_insert = 1` (`batched_insert_settings`): ClickHouse
   collects the concurrent inserts into one table in one part per partition and answers each once those
   parts are written. On return the row is as durable and as visible as a committed
@@ -662,7 +663,7 @@ the request went without. The pending set is re-read at most once a minute.
 
 ## Read-your-writes
 
-On a single self-hosted server a committed insert is visible to the next read. On
+On a single self-hosted server a committed or batched insert is visible to the next read. On
 ClickHouse Cloud replicas may lag and the HTTP pool spreads requests over replicas, so Loom
 adds `select_sequential_consistency = 1` where it matters:
 
@@ -760,7 +761,7 @@ Supported server versions are in
 | Area                               | Self-hosted (single node)                                                                 | ClickHouse Cloud                                                                                                                    |
 | ---------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Connection                         | HTTP on 8123                                                                              | TLS on 8443 (`LOOM_CH_PORT=8443` or `LOOM_CH_SECURE=true`). Keep `LOOM_CH_KEEPALIVE_TIMEOUT` below the load balancer's idle cutoff. |
-| Read-your-writes                   | A committed insert is visible to the next read.                                           | Replicas may lag; see [Read-your-writes](#read-your-writes).                                                                        |
+| Read-your-writes                   | A waited insert is visible to the next read.                                              | Replicas may lag; see [Read-your-writes](#read-your-writes).                                                                        |
 | Rolling upgrades                   | One version.                                                                              | Replicas can differ for a while; setting support is probed per replica, and a rejected setting is dropped and the read retried.     |
 | NLP functions                      | `stem()` available.                                                                       | `allow_experimental_nlp_functions` is read-only; migrations run without it. The lemma column is filled by the application on both.  |
 | Codecs                             | `Quantized` needs 26.8+.                                                                  | `allow_suspicious_codecs` is read-only, so it is sent only for the `entity_vectors` LZ4 chain.                                      |

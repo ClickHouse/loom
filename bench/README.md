@@ -284,7 +284,9 @@ Latency, throughput and storage at scale.
 - **`write_rate.py`** — writes at a fixed rate (`memory.set` and
   `conversation.append` against a server, or the append's inserts in-process
   with `--committed` as the baseline) and reports latency and the ClickHouse
-  parts each table got from `system.part_log`. Free with the fake providers.
+  parts each table got from `system.part_log`, with the `async_insert` value
+  each conversation insert carried from `system.query_log`. Free with the fake
+  providers.
 - **`ch_cost_by_op.py`** — ClickHouse cost per loom operation from
   `system.query_log`, joined through the `log_comment` tag every loom query
   carries (`"<op> <request_id>"` / `"worker.<name>"`).
