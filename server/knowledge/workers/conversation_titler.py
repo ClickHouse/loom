@@ -15,18 +15,25 @@ provider, so on-by-default is safe out of the box.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from server.core.datetimes import naive_utc_now_seconds
+from server.knowledge.domain.conversations import (
+    metadata_object,
+    title_refused,
+    with_title_refused,
+)
 from server.knowledge.store import conversations as conversation_repo
 from server.knowledge.store.conversations import ThreadInsertRow
 from server.llm import customer
 from server.memory.app import extraction_policy
 from server.memory.domain.extraction_policy import with_policy
+from server.memory.domain.sensitivity import reads_high
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
 from server.settings import settings
@@ -42,6 +49,8 @@ _TITLE_SYSTEM = (
     "characters, capturing the topic. No quotes, no trailing punctuation, no "
     "preamble. Output only the title."
 )
+# The opening turns the title is written from.
+_OPENING_TURNS = 8  # not a setting: the shape of the title prompt
 
 
 @dataclass
@@ -58,6 +67,9 @@ class ConversationTitlerConfig:
 @dataclass
 class ConversationTitlerResult:
     titled: int = 0
+    # Threads marked so they are never titled: the model's title, or every opening
+    # turn, read as a credential.
+    refused: int = 0
     skipped_titled: int = 0
     skipped_deleted: int = 0
     errors: int = 0
@@ -79,17 +91,28 @@ async def _make_title(
     cfg: ConversationTitlerConfig,
     llm: Any,
     existing: ThreadInsertRow | None = None,
-) -> bool:
+) -> Literal["titled", "refused"] | None:
+    """Title one thread. Says whether it stored a title, marked the thread refused, or
+    left it as it was (None) for a later pass."""
     turns = await conversation_repo.opening_turns(
-        str(row["org"]), str(row["namespace"]), str(row["thread_id"])
+        str(row["org"]), str(row["namespace"]), str(row["thread_id"]), limit=_OPENING_TURNS
     )
-    snippet = "\n".join(
-        f"{r['role']}: {str(r['content'])[:500]}"
-        for r in turns
-        if str(r.get("content") or "").strip()
+    # A turn that reads as a credential never reaches the model: the title is listed to
+    # every reader of the namespace. A turn can be as long as the request cap allows, so
+    # the check runs in a worker thread.
+    spoken = [r for r in turns if str(r.get("content") or "").strip()]
+    plain = await asyncio.to_thread(
+        lambda: [r for r in spoken if not reads_high(str(r["content"]))]
     )
+    snippet = "\n".join(f"{r['role']}: {str(r['content'])[:500]}" for r in plain)
     if not snippet:
-        return False
+        if spoken and len(turns) >= _OPENING_TURNS:
+            # Every opening turn reads as a credential and no later turn can join them.
+            # The thread is marked, so it stops taking one of the scan's slots on every
+            # pass. With fewer turns it stays unmarked: a plain turn may still arrive.
+            await _store_title(row, existing, "", refused=True)
+            return "refused"
+        return None
     # A title is written from the thread's own turns and stored: the model is
     # given the operator's extraction policy, as extraction is.
     policy = await extraction_policy.effective(str(row["org"]), str(row["namespace"]))
@@ -116,8 +139,17 @@ async def _make_title(
         )
     title = (getattr(out, "text", "") or "").strip().strip('"').strip()[:80]
     if not title:
-        return False
+        return None
+    # A title that reads as a credential is never stored. The thread is marked instead,
+    # so later passes do not pay for the same title again.
+    refused = reads_high(title)
+    await _store_title(row, existing, "" if refused else title, refused=refused)
+    return "refused" if refused else "titled"
 
+
+async def _store_title(
+    row: TitleCandidate, existing: ThreadInsertRow | None, title: str, *, refused: bool
+) -> None:
     now = naive_utc_now_seconds()
     if existing is not None:
         # A stored row (conversation.create with no title): carry every
@@ -138,8 +170,9 @@ async def _make_title(
             "updated_at": now,
             "tombstoned_at": None,
         }
+    if refused:
+        new_row["metadata"] = with_title_refused(metadata_object(new_row["metadata"]))
     await conversation_repo.insert_thread(new_row)
-    return True
 
 
 async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationTitlerResult:
@@ -157,7 +190,7 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
             return result
 
         # Recent threads with enough turns in opted-in namespaces. Over-fetch
-        # (many already have titles) and stop once we've titled the cap.
+        # (many already have titles) and stop once the cap's model calls are made.
         rows = await conversation_repo.titler_candidates(
             window_hours=int(cfg.window_hours),
             min_turns=int(cfg.min_turns),
@@ -169,7 +202,9 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
             [(str(r["org"]), str(r["namespace"]), str(r["thread_id"])) for r in candidates]
         )
         for row in candidates:
-            if result.titled >= cfg.max_threads_per_pass:
+            # A refused thread is written like a titled one (a model call or a mark), so it
+            # takes a slot.
+            if result.titled + result.refused >= cfg.max_threads_per_pass:
                 break
             try:
                 # Re-checked on the row itself: the scan's exclusion ran on
@@ -180,11 +215,17 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
                 if existing is not None and existing.get("tombstoned_at") is not None:
                     result.skipped_deleted += 1
                     continue
-                if existing is not None and str(existing.get("title") or "").strip():
+                if existing is not None and (
+                    str(existing.get("title") or "").strip()
+                    or title_refused(existing.get("metadata"))
+                ):
                     result.skipped_titled += 1
                     continue
-                if await _make_title(row, cfg, llm, existing):
+                made = await _make_title(row, cfg, llm, existing)
+                if made == "titled":
                     result.titled += 1
+                elif made == "refused":
+                    result.refused += 1
             except customer.HOLDS:
                 # A held call is no failure: the thread is titled once the org is back
                 # on and the policy is read.
@@ -196,6 +237,7 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
         rec.outcome = {
             "candidates": len(candidates),
             "titled": result.titled,
+            "refused": result.refused,
             "skipped_titled": result.skipped_titled,
             "skipped_deleted": result.skipped_deleted,
             "errors": result.errors,

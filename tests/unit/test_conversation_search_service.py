@@ -13,6 +13,8 @@ from server.knowledge.app.conversation_search import (
     ConversationVectorQuery,
     vector_search,
 )
+from server.memory.domain.sensitivity import HELD_MARGIN
+from tests.unit._fake_credentials import AWS_KEY_ID, OPENAI_KEY
 
 
 class StubCH:
@@ -44,7 +46,7 @@ def _row() -> dict[str, Any]:
         "thread_id": "t-1",
         "msg_id": "m-7",
         "role": "user",
-        "excerpt": "deploy soon?",
+        "embedded_text": "deploy soon? " + "x" * 300,
         "ts": datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
         "distance": 0.18,
     }
@@ -68,9 +70,7 @@ async def test_vector_search_default_filters_and_order() -> None:
     assert params["model"] == "text-embedding-3-small"
     assert len(out) == 1 and isinstance(out[0], ConversationHit)
     # The row stores the embedded text; a hit shows its first 240 characters.
-    assert "substringUTF8(content_excerpt, 1, {excerpt:UInt32}) AS excerpt" in sql
-    assert params["excerpt"] == 240
-    assert out[0].content_excerpt == "deploy soon?"
+    assert out[0].content_excerpt == ("deploy soon? " + "x" * 300)[:240]
 
 
 @pytest.mark.asyncio
@@ -202,6 +202,109 @@ async def test_the_substring_fallback_cuts_a_hit_as_the_vector_path_does(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_vector_search_holds_back_a_row_whose_text_reads_as_a_credential() -> None:
+    """An embedding row an earlier build wrote for a credential turn is never a hit, even
+    when the credential sits past the excerpt a hit shows."""
+    ch = StubCH()
+    ch.query_all_returns.append(
+        [
+            {
+                **_row(),
+                "msg_id": "m-key",
+                "embedded_text": "deploy soon? " + "x" * 300 + " " + AWS_KEY_ID,
+            },
+            {**_row(), "msg_id": "m-plain"},
+        ]
+    )
+    out = await vector_search(_q(), ch=ch)
+    assert [h.msg_id for h in out] == ["m-plain"]
+
+
+@pytest.mark.asyncio
+async def test_the_substring_fallback_holds_back_a_turn_that_reads_as_a_credential(
+    monkeypatch,
+) -> None:
+    """Spare rows are read, so a held-back turn does not leave the page short."""
+    from server.knowledge.api.models_conversations import ConversationSearchInput
+    from server.knowledge.app import conversations as h
+    from server.knowledge.store import conversations as conversation_repo
+
+    def turn(msg_id: str, content: str):
+        return conversation_repo.MessageRow(
+            org="o",
+            namespace="ns",
+            agent="a",
+            thread_id="t",
+            msg_id=msg_id,
+            role="user",
+            content=content,
+            ts=datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
+        )
+
+    limits: list[int] = []
+
+    async def fake_search_substring(*a, limit, **k):
+        limits.append(limit)
+        return [
+            turn("m-key", "deploy with " + OPENAI_KEY),
+            turn("m2", "deploy"),
+            turn("m3", "deploy again"),
+        ]
+
+    monkeypatch.setattr(conversation_repo, "search_substring", fake_search_substring)
+    out = await h._search_substring_fallback(
+        ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy", top_k=2),
+        ["ns"],
+        [],
+        scope=WHOLE_NAMESPACE,
+        saved_only=False,
+    )
+    assert [hit.msg_id for hit in out.hits] == ["m2", "m3"]
+    assert limits == [2 + HELD_MARGIN]
+
+
+@pytest.mark.asyncio
+async def test_the_thread_list_shows_no_text_of_a_last_turn_that_reads_as_a_credential(
+    monkeypatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationThreadsInput
+    from server.knowledge.app import conversations as h
+    from server.knowledge.store import conversations as conversation_repo
+
+    def thread(tid: str, excerpt: str) -> dict[str, Any]:
+        at = datetime(2026, 5, 17, 10, 0, tzinfo=UTC)
+        return {
+            "thread_id": tid,
+            "last_agent": "a",
+            "msg_count": 2,
+            "first_seen": at,
+            "last_seen": at,
+            "last_role": "user",
+            "last_content": excerpt,
+        }
+
+    # The key crosses the excerpt's 240-character cut, within the checked characters.
+    async def recent(*a, **k):
+        return [
+            thread("t-key", "x " * 118 + "use " + AWS_KEY_ID),
+            thread("t2", "lunch? " * 50),
+        ]
+
+    async def titles(*a, **k):
+        return {"t2": "Deploy key " + OPENAI_KEY}
+
+    monkeypatch.setattr(conversation_repo, "recent_threads", recent)
+    monkeypatch.setattr(conversation_repo, "thread_titles", titles)
+    out = await h.handle_conversation_threads(
+        ConversationThreadsInput(org="o", namespace="ns", agent="a")
+    )
+    assert [(t.thread_id, t.last_content_excerpt, t.title) for t in out.threads] == [
+        ("t-key", "", ""),
+        ("t2", ("lunch? " * 50)[:240], ""),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_a_live_excerpt_length_reaches_both_cuts(monkeypatch) -> None:
     """conversation_search_excerpt_chars is read per search, by the vector path and the
     fallback alike."""
@@ -213,8 +316,8 @@ async def test_a_live_excerpt_length_reaches_both_cuts(monkeypatch) -> None:
     monkeypatch.setattr(settings, "conversation_search_excerpt_chars", 12)
     ch = StubCH()
     ch.query_all_returns.append([_row()])
-    await vector_search(_q(), ch=ch)
-    assert ch.query_all_calls[0][1]["excerpt"] == 12
+    [hit] = await vector_search(_q(), ch=ch)
+    assert hit.content_excerpt == _row()["embedded_text"][:12]
 
     content = "deploy " * 100
 

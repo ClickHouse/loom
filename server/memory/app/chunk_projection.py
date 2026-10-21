@@ -13,16 +13,13 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.llm import customer
+from server.memory.app.credential_passages import embed_chunks_of
 from server.memory.app.projection_errors import record_input_projection_failure
+from server.memory.domain import chunk_shape
 
 log = logging.getLogger(__name__)
 
 
-# 800 chars ≈ 200 tokens; preserves multi-sentence units a 400-char window
-# splits mid-thought. 100-char overlap so a boundary-straddling date/entity
-# appears in both neighbors.
-_CHUNK_SIZE = 800
-_CHUNK_OVERLAP = 100
 _MIN_CHUNK_SIZE = 20  # drop chunks shorter than this (mostly noise)
 # Fallback when the setting is unreadable; the cap itself is
 # `settings.memory_chunks_max_per_call`. 64 chunks is ~50K chars, which a
@@ -112,7 +109,7 @@ def _extend_over_enumeration(text: str, start: int, end: int) -> int:
 
 
 def chunk_text(text: str) -> list[tuple[str, int, int]]:
-    """Split `text` into ~_CHUNK_SIZE-char chunks at semantic boundaries.
+    """Split `text` into ~`chunk_shape.CHUNK_SIZE`-char chunks at semantic boundaries.
 
     Returns (chunk_text, line_start, line_end) triples, 1-indexed line numbers
     in the original text (operator UIs jump to a hit's range). Prefers a
@@ -129,21 +126,33 @@ def chunk_text_with_truncation(
     cap (`max_chunks`, default the setting) that were NOT chunked (0 = nothing lost).
     Callers with an identity record that tail in the drop ledger, so the cap
     never truncates silently."""
+    chunks, _ranges, truncated = chunk_text_with_ranges(text, max_chunks=max_chunks)
+    return chunks, truncated
+
+
+def chunk_text_with_ranges(
+    text: str, *, max_chunks: int | None = None
+) -> tuple[list[tuple[str, int, int]], list[tuple[int, int]], int]:
+    """`chunk_text_with_truncation` plus each chunk's [start, end) character range in
+    `text`, so a caller can tell which chunks a span of the text falls in."""
     if not text:
-        return [], 0
+        return [], [], 0
     cap = int(max_chunks) if max_chunks else _max_chunks_per_call()
+    offset = len(text) - len(text.lstrip())
     text = text.strip()
     if len(text) < _MIN_CHUNK_SIZE:
-        line_end = text.count("\n") + 1
-        return ([(text, 1, line_end)] if text else []), 0
+        if not text:
+            return [], [], 0
+        return [(text, 1, text.count("\n") + 1)], [(offset, offset + len(text))], 0
     chunks: list[tuple[str, int, int]] = []
+    ranges: list[tuple[int, int]] = []
     n = len(text)
     start = 0
     last_end = 0
     while start < n and len(chunks) < cap:
-        end = min(start + _CHUNK_SIZE, n)
+        end = min(start + chunk_shape.CHUNK_SIZE, n)
         if end < n:
-            half = start + _CHUNK_SIZE // 2
+            half = start + chunk_shape.CHUNK_SIZE // 2
             para_break = text.rfind("\n\n", half, end)
             if para_break != -1:
                 end = para_break + 2
@@ -164,13 +173,14 @@ def chunk_text_with_truncation(
             line_start = text.count("\n", 0, start) + 1
             line_end = line_start + chunk.count("\n")
             chunks.append((chunk, line_start, line_end))
+            ranges.append((offset + start, offset + end))
         last_end = end
         if end >= n:
             break
-        start = max(start + 1, end - _CHUNK_OVERLAP)
+        start = max(start + 1, end - chunk_shape.CHUNK_OVERLAP)
     # The loop only stops short of the end when the chunk cap is hit; the
     # tail past the last chunk's end is what nobody will ever be able to find.
-    return chunks, max(0, n - last_end)
+    return chunks, ranges, max(0, n - last_end)
 
 
 def message_index_to_evidence_id(
@@ -302,7 +312,8 @@ async def write_memory_chunks(
     run_id = str(getattr(input, "run_id", "") or "-")
     user_id = str(getattr(input, "user_id", "") or "-")
 
-    chunks, truncated_chars = chunk_text_with_truncation(_conversation_text(msgs))
+    text = _conversation_text(msgs)
+    chunks, ranges, truncated_chars = chunk_text_with_ranges(text)
     if truncated_chars:
         _note_truncation(input, truncated_chars)
     if not chunks:
@@ -325,17 +336,18 @@ async def write_memory_chunks(
     chunk_payloads = [
         (i, chunk, line_start, line_end) for i, (chunk, line_start, line_end) in enumerate(chunks)
     ]
-    vectors = await _embed_chunks(embedder, [chunk for _, chunk, _, _ in chunk_payloads])
+    embedded = await embed_chunks_of(
+        text,
+        ranges,
+        [chunk for _, chunk, _, _ in chunk_payloads],
+        lambda texts: _embed_chunks(embedder, texts),
+    )
 
     rows: list[dict[str, Any]] = []
     spans: list[tuple[int, str, int, int]] = []
-    for (i, chunk, line_start, line_end), vec in zip(
-        chunk_payloads,
-        vectors,
-        strict=True,
-    ):
-        if not vec:
-            continue
+    for (i, chunk, line_start, line_end), e in zip(chunk_payloads, embedded, strict=True):
+        if not e.written:
+            continue  # unembeddable: a plain chunk is written only with its vector
         content_sha256 = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
         rows.append(
             {
@@ -348,9 +360,9 @@ async def write_memory_chunks(
                 "chunk_index": i,
                 "content_sha256": content_sha256,
                 "content": chunk,
-                "embedding": vec,
+                "embedding": e.vector,
                 "embedding_model": embedder.model_name,
-                "embedding_dim": len(vec),
+                "embedding_dim": len(e.vector),
                 "parent_memory_key": parent_memory_key,
                 "line_start": int(line_start),
                 "line_end": int(line_end),

@@ -184,3 +184,22 @@ async def test_backlinks_of_an_unknown_key_is_empty_not_an_error(
         MemoryBacklinksInput(org="o", namespace="n", agent="a", memory_key="nope")
     )
     assert not out.found and out.evidence_count == 0 and out.related == []
+
+
+@pytest.mark.asyncio
+async def test_outline_shows_no_headline_for_a_digest_that_reads_as_a_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.unit._fake_credentials import OPENAI_KEY
+
+    ch = _RoutedCH(
+        {
+            "coalesce(valid_at, created_at)": [
+                {"session_id": "ns:s1", "summary_text": f"Key {OPENAI_KEY}. Then lunch."},
+                {"session_id": "ns:s2", "summary_text": "Planned the retreat."},
+            ],
+        }
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    out = await cur.handle_memory_outline(MemoryOutlineInput(org="o", namespace="n", agent="a"))
+    assert [s.headline for s in out.sessions] == ["", "Planned the retreat."]
