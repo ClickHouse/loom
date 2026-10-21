@@ -15,6 +15,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
+from server.core.naming import SENTINEL
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
@@ -242,9 +243,10 @@ async def _live_rows_for_key(input: MemoryUpdateInput, ch: Any) -> list[dict[str
         "ns": input.namespace,
         "key": input.memory_key,
     }
+    # "-" (the identity sentinel the SDKs stamp) and "*" mean unset, as in memory.ask.
     for col in ("agent", "user_id", "session_id"):
         val = getattr(input, col, "") or ""
-        if val:
+        if val not in ("", SENTINEL, "*"):
             where.append(f"{col} = {{{col}:String}}")
             params[col] = val
     sql = f"""

@@ -157,7 +157,7 @@ class MemorySearchInput(BaseModel):
     # Default ON so MCP callers, which wouldn't otherwise set it, still get telemetry.
     auto_touch: bool = True
     user_id: str | None = None  # filter by user_id (for preference recall)
-    run_id: str | None = None  # filter by run_id (task scope)
+    run_id: str | None = None  # only rows written under this run; unset or "-" reads every run
     # Filter by session_id. None = no session filter. Also the identity that
     # read_scope="own_session" binds to.
     session_id: str | None = None

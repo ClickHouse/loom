@@ -8,6 +8,7 @@ from typing import Any
 
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.budget import SearchBudget, _ensure_search_budget
+from server.memory.app.search.filters import without_run_sentinel
 from server.memory.app.search.query_plan import (
     _apply_default_search_mode,
     _apply_search_recipe,
@@ -175,6 +176,7 @@ async def _resolve_search_input(
     from server.identity.domain.read_scope import pin_read_filters
 
     input, _ = pin_read_filters(input, current_auth())
+    input = without_run_sentinel(input)
     input, _top_k_ceiling = _apply_k_defaults(input)
 
     # One budget object bounds the whole recursive fallback cascade; minted

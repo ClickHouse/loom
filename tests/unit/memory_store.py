@@ -184,7 +184,7 @@ class MemoryStore:
             and r["tombstoned_at"] is None
             and r["status"] in ("active", "duplicate", "conflicted")
             and all(
-                getattr(input, f, None) in (None, "", r[f])
+                getattr(input, f, None) in (None, "", "-", "*", r[f])
                 for f in ("agent", "user_id", "session_id")
             )
         ]

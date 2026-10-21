@@ -1,0 +1,104 @@
+"""The identity sentinel `Agent.call` stamps when a call names no run, user or
+session ("-") reads as unset: memory.search with `run_id: "-"` reads every run's
+rows, and memory.update with `user_id` / `session_id` "-" (or `agent: "*"`)
+resolves the key across the namespace. A named value still narrows."""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import uuid
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "sdk" / "python"))
+sys.path.insert(0, str(ROOT))
+
+
+from tests.integration._resources import unique_org  # noqa: E402
+
+ORG = unique_org("id-sentinel")
+
+
+@pytest.mark.asyncio
+async def test_search_with_the_run_sentinel_reads_rows_written_inside_a_run(
+    control_plane_url: str, mint_test_token
+) -> None:
+    from loom import Agent
+
+    ns = f"rs-{uuid.uuid4().hex[:6]}"
+    tok = mint_test_token(org=ORG)
+    async with Agent(
+        org=ORG, namespace=ns, agent="w", base_url=control_plane_url, api_key=tok
+    ) as a:
+        run_id = (await a.run.begin(goal="Pick the deploy window"))["run_id"]
+        await a.memory.set(
+            "deploy:window",
+            "Deploys go out on Tuesday mornings.",
+            memory_type="semantic",
+            run_id=run_id,
+        )
+        await a.memory.set(
+            "deploy:freeze", "Deploys pause during the Tuesday freeze.", memory_type="semantic"
+        )
+
+    # Another agent reads every author's rows, so the writer's read-your-writes pass
+    # cannot add the rows back.
+    body = {"agent": "*", "query": "Tuesday deploys", "top_k": 10, "auto_touch": False}
+    async with Agent(
+        org=ORG, namespace=ns, agent="r", base_url=control_plane_url, api_key=tok
+    ) as a:
+        # Embeddings land a moment after the write: wait until both rows are searchable.
+        deadline = asyncio.get_running_loop().time() + 15.0
+        while True:
+            narrowed = await a.call("memory.search", body, run_id=run_id)
+            outside = await a.call("memory.search", {**body, "query": "Tuesday freeze"})
+            ready = {h["memory_key"] for h in narrowed["results"] + outside["results"]}
+            if {"deploy:window", "deploy:freeze"} <= ready:
+                break
+            assert asyncio.get_running_loop().time() < deadline, ready
+            await asyncio.sleep(0.25)
+        stamped = await a.call("memory.search", body)
+
+    assert {h["memory_key"] for h in stamped["results"]} == {"deploy:window", "deploy:freeze"}
+    assert [h["memory_key"] for h in narrowed["results"]] == ["deploy:window"]
+
+
+@pytest.mark.asyncio
+async def test_update_with_the_identity_sentinels_resolves_the_key_across_identities(
+    control_plane_url: str, mint_test_token
+) -> None:
+    from loom import Agent
+
+    ns = f"us-{uuid.uuid4().hex[:6]}"
+    tok = mint_test_token(org=ORG)
+    async with Agent(
+        org=ORG, namespace=ns, agent="w", base_url=control_plane_url, api_key=tok
+    ) as a:
+        await a.memory.set(
+            "deploy:day",
+            "Deploys go out on Tuesday.",
+            memory_type="semantic",
+            user_id="u1",
+            session_id="s1",
+        )
+        # The writer's own call stamps user_id and session_id "-".
+        own = await a.call("memory.update", {"memory_key": "deploy:day", "value": "Wednesday."})
+
+    async with Agent(
+        org=ORG, namespace=ns, agent="r", base_url=control_plane_url, api_key=tok
+    ) as a:
+        other = await a.call(
+            "memory.update", {"agent": "*", "memory_key": "deploy:day", "value": "Thursday."}
+        )
+
+    async with Agent(
+        org=ORG, namespace=ns, agent="w", base_url=control_plane_url, api_key=tok
+    ) as a:
+        got = await a.memory.get("deploy:day", user_id="u1", session_id="s1")
+
+    assert (own["updated"], own["reason"]) == (True, "")
+    assert other["updated"] is True and other["new_version"] > own["new_version"]
+    assert got is not None and got["value"] == "Thursday."

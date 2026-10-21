@@ -890,7 +890,7 @@ class MemoryUpdateInput(BaseModel):
     memory_key: str
     # None = keep the current value (a tags/concepts-only rewrite).
     value: dict[str, Any] | list[Any] | str | int | float | bool | None = None
-    # Optional identity narrowing; "" = any row under the namespace.
+    # Optional identity narrowing; "", "-" or "*" = any row under the namespace.
     agent: str = ""
     user_id: str = ""
     session_id: str = ""
