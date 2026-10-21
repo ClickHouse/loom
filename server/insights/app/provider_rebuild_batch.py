@@ -76,7 +76,7 @@ def _held_run(by_index: Mapping[int, Sequence[Mapping[str, Any]]], at: int) -> s
     outward from it while a chunk has no vector (`embedding_dim = 0`), plus the first chunk
     with one on each side. The write path holds every chunk a key covers and those chunks
     are contiguous, so the key's header is inside this run."""
-    run = set()
+    run: set[int] = set()
     for step in (-1, 1):
         n = at + step
         while n in by_index:
@@ -127,7 +127,7 @@ async def _held_chunks(rows: Sequence[Mapping[str, Any]], ch: _CHClient | None) 
         settings.memory_set_chunk_max_chunks,
         IMPORT_MAX_ITEMS,
     )
-    held = set()
+    held: set[int] = set()
     for session, indexes in by_session.items():
         page = [(int(rows[i]["chunk_index"]), str(rows[i]["content"])) for i in indexes]
         ats = [at for at, _ in page]

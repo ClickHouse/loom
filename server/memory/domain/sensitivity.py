@@ -44,15 +44,9 @@ HIGH: Final = "high"
 MEDIUM: Final = "medium"
 LEVELS: Final = ("", "low", "medium", "high")
 
-# A private-key block from its header to its closing line, or, when that is not in the
-# text, through the base64 characters, line breaks and `Proc-Type:` / `DEK-Info:` lines
-# after the header: the body runs past a chunk, and every chunk it covers is held. Prose
-# ends a block without a closing line, so a header quoted alone holds only its own chunk.
-# A body line can be any length: chunks joined whole can lose the line break between them.
-# The header lines come first among the alternatives: the character class would otherwise
-# take the `Proc` of `Proc-Type:` and end the block there.
-# The search for a closing line stops at the next header, so text of many headers without
-# one is read in linear time.
+# A block without its closing line runs through its base64 body, so every chunk it covers
+# is held. The header-line alternatives come first, or the class would take the `Proc` of
+# `Proc-Type:`; the closing-line search stops at the next header to stay linear.
 _PRIVATE_KEY_BLOCK = re.compile(
     r"-----BEGIN ((?:RSA |EC |OPENSSH |PGP )?)PRIVATE KEY-----"
     r"(?:(?:(?!-----BEGIN ).)*?-----END \1PRIVATE KEY-----"
