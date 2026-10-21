@@ -648,18 +648,20 @@ export interface GrantEntry {
   pending_since?: string | null;
   granted_at: string;
   granted_by: string;
+  /** The person's other spellings whose rows folded onto this one. */
+  also?: string[];
 }
 
 export async function listGrants(
   id: Pick<Identity, "org" | "namespace">,
-  opts: RequestOpts = {},
+  opts: { limit?: number } & RequestOpts = {},
 ): Promise<{ rows: GrantEntry[] }> {
   return post<{ rows: GrantEntry[] }>(
     "/v1/grants.list",
     {
       org: id.org,
       namespace: id.namespace,
-      limit: 100,
+      limit: opts.limit ?? 100,
     },
     opts.signal,
   );
@@ -1324,6 +1326,7 @@ export * from "./api/admin";
 // The audit-log read the sidebar badge calls, kept apart from admin.ts so the shell carries only it.
 export * from "./api/audit";
 export * from "./api/autoResolve";
+export * from "./api/collections";
 export * from "./api/search";
 export * from "./api/profile";
 export * from "./api/code";

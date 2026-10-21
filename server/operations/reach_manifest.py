@@ -112,6 +112,9 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "code.trace": ("sdk_method",),
     "code.verify": ("sdk_method",),
     "code.verify_citations": ("sdk_method",),
+    "collection.create": ("plugin_hook",),
+    "collection.delete": ("plugin_hook",),
+    "collection.list": ("plugin_hook",),
     "conflicts.allowlist_list": (
         "sdk_method",
         "plugin_hook",
