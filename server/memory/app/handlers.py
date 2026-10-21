@@ -1135,8 +1135,8 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
             detail={
                 "code": "MISSING_SCOPE",
                 "message": (
-                    "memory.clear requires at least one of `user_id` "
-                    "or `agent`. For namespace-wide clearing use "
+                    "memory.clear requires a concrete `user_id` or `agent` "
+                    '("*" means every value of that field). For namespace-wide clearing use '
                     "erasure.request_namespace (full saga, cross-system "
                     "cascade, auditable)."
                 ),

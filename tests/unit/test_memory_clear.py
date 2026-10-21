@@ -211,6 +211,45 @@ async def test_clear_reads_star_agent_as_every_agent(
 
 
 @pytest.mark.asyncio
+async def test_clear_star_agent_tombstones_without_an_agent_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The statement a star-agent clear runs filters on the user alone."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    ch = _clear_ch(monkeypatch, [])
+    await handle_memory_clear(
+        MemoryClearInput(
+            org="acme", namespace="chat", user_id="u1", agent="*", confirm_subject="u1"
+        )
+    )
+    (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
+    assert "user_id = {" in memory_alter.sql
+    assert "agent = {" not in memory_alter.sql
+    assert "agent" not in memory_alter.params
+
+
+@pytest.mark.asyncio
+async def test_clear_refuses_star_as_confirm_subject() -> None:
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    with pytest.raises(HTTPException) as exc:
+        await handle_memory_clear(
+            MemoryClearInput(
+                org="clickhouse",
+                namespace="finance",
+                user_id="alice",
+                agent="*",
+                confirm_subject="*",
+            )
+        )
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "CONFIRM_SUBJECT_MISMATCH"
+
+
+@pytest.mark.asyncio
 async def test_clear_refuses_star_on_every_axis() -> None:
     """ "*" on both axes is a namespace-wide clear, which is erasure's job."""
     from server.memory.api.models_crud import MemoryClearInput
