@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import own_write_reads
-from server.core.ch_writes import COMMITTED_INSERT_SETTINGS, batched_insert_settings
+from server.core.ch_writes import batched_insert_settings, committed_insert_settings
 from server.core.repo_base import _CHClient, _default_client
 
 WEBHOOKS = "loom.memory_webhooks"
@@ -105,7 +105,7 @@ def _whole(row: dict[str, Any], cols: tuple[str, ...]) -> dict[str, Any]:
 
 async def insert_webhook(row: dict[str, Any], *, ch: _CHClient | None = None) -> None:
     ch = ch or _default_client()
-    await ch.insert(WEBHOOKS, [_whole(row, WEBHOOK_COLS)], settings=COMMITTED_INSERT_SETTINGS)
+    await ch.insert(WEBHOOKS, [_whole(row, WEBHOOK_COLS)], settings=committed_insert_settings())
 
 
 async def namespace_webhooks(
@@ -289,7 +289,7 @@ async def mark_dead(
             "ON a.event_id = o.event_id "
             "WHERE ifNull(a.event_id, '') = '' OR a.status IN ('pending', 'leased')",
             params=params,
-            settings=COMMITTED_INSERT_SETTINGS,
+            settings=committed_insert_settings(),
         )
 
 

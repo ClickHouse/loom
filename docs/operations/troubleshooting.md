@@ -98,7 +98,10 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   `BACKEND_TIMEOUT`), or every pooled ClickHouse connection of the process stayed busy
   (503 `OVERLOADED`). Under a sustained write rate, batched inserts (audit rows,
   transcript turns, ledgers) hold their connection for up to
-  `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` ([batched inserts](../architecture/clickhouse.md#batched-inserts)).
+  `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS`, and background ones (webhook delivery attempts,
+  usage-event and write-mark flushes) for up to
+  `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS`
+  ([batched inserts](../architecture/clickhouse.md#batched-inserts)).
   From `conversation.delete` or `conversation.compact`, `OVERLOADED` can also mean writes
   to the thread's embeddings kept landing for 8 reconcile rounds; resend once the
   thread's writes settle.
@@ -108,7 +111,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 - **Fix:** the query or worker that dominates. A Loom far from its ClickHouse (a WAN)
   needs `LOOM_LATENCY_BUDGET_MULTIPLIER` near 20 so its latency budgets do not fire on
   every call. For `OVERLOADED` under a sustained write rate, lower
-  `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` (a live setting) or raise `LOOM_CH_POOL_MAXSIZE`.
+  `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` and `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS`
+  (live settings), switch batching off with `LOOM_CH_BATCHED_INSERTS=false`, or raise
+  `LOOM_CH_POOL_MAXSIZE`.
   The [errors reference](../reference/errors.md) lists every code.
 
 ## Providers and search quality

@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from server.core import bm25
 from server.core.ch import caller_shaped, own_write_reads, sequential_reads
 from server.core.ch_errors import WIDTH_MISMATCH_CODE, error_code
-from server.core.ch_writes import COMMITTED_INSERT_SETTINGS, batched_insert_settings
+from server.core.ch_writes import batched_insert_settings, committed_insert_settings
 from server.core.errors import OverloadedError
 from server.core.repo_base import _CHClient, _default_client, param_slices
 from server.core.vectors import codes_state
@@ -195,7 +195,7 @@ async def append(
         # buffered inserts apart, so every writer of an identity sends it alike.
         identity = "\x1f".join((msg.org, msg.namespace, msg.agent, msg.thread_id, msg.msg_id))
         insert_settings: dict[str, Any] = {
-            **COMMITTED_INSERT_SETTINGS,
+            **committed_insert_settings(),
             "insert_deduplication_token": "conversation-turn:"
             + hashlib.sha256(identity.encode()).hexdigest(),
         }
@@ -775,7 +775,7 @@ async def insert_thread(
     await ch.insert(
         "loom.conversation_threads",
         [cast(dict[str, Any], row)],
-        settings=COMMITTED_INSERT_SETTINGS,
+        settings=committed_insert_settings(),
     )
 
 
@@ -838,7 +838,7 @@ async def insert_embedding(
         await ch.insert(
             "loom.conversation_embeddings",
             [cast(dict[str, Any], row)],
-            settings=COMMITTED_INSERT_SETTINGS,
+            settings=committed_insert_settings(),
         )
 
 
@@ -853,7 +853,7 @@ def embedding_insert_settings(vector: list[float]) -> dict[str, Any]:
     width = codes_state.stored_width(table, "embedding")
     if width == int(settings.embedding_dim) and len(vector) in (0, width):
         return batched_insert_settings()
-    return dict(COMMITTED_INSERT_SETTINGS)
+    return committed_insert_settings()
 
 
 async def tombstone_thread(

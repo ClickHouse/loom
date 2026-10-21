@@ -48,7 +48,7 @@ from typing import Any
 import httpx
 
 from server.core.ch import get_client
-from server.core.ch_writes import COMMITTED_INSERT_SETTINGS, batched_insert_settings
+from server.core.ch_writes import batched_insert_settings, committed_insert_settings
 from server.knowledge.store.conversations import embedding_insert_settings
 
 _SERVER_OPS = {
@@ -109,7 +109,7 @@ def _server_body(op: str, i: int, run: str, args: argparse.Namespace) -> dict[st
 
 async def _client_write(i: int, run: str, args: argparse.Namespace) -> None:
     ch = get_client()
-    settings = COMMITTED_INSERT_SETTINGS if args.committed else batched_insert_settings()
+    settings = committed_insert_settings() if args.committed else batched_insert_settings()
     ts = datetime.now(UTC).replace(tzinfo=None)
     turn = {
         "org": _org(i, args),
@@ -146,7 +146,7 @@ async def _client_write(i: int, run: str, args: argparse.Namespace) -> None:
                 "embed_failed_at": ts,
             }
         ],
-        settings=COMMITTED_INSERT_SETTINGS if args.committed else embedding_insert_settings([]),
+        settings=committed_insert_settings() if args.committed else embedding_insert_settings([]),
     )
 
 

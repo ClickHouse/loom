@@ -1,7 +1,7 @@
 """The deduplication settings `CHClient.insert` adds to every write
 (`dedup_settings`, `insert_dedup_token`), and the settings a call site passes
 for a batched insert (`batched_insert_settings`) or a committed one
-(`COMMITTED_INSERT_SETTINGS`).
+(`committed_insert_settings`). Each returns a new dict the caller may change.
 """
 
 from __future__ import annotations
@@ -11,11 +11,10 @@ from typing import Any
 
 from server.settings import settings
 
-# Insert settings that commit the rows before the insert returns.
-COMMITTED_INSERT_SETTINGS: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
 
-# A waited async insert on the server profile's own flush timeouts.
-_PROFILE_ASYNC_INSERT_SETTINGS: dict[str, Any] = {"async_insert": 1, "wait_for_async_insert": 1}
+def committed_insert_settings() -> dict[str, Any]:
+    """Settings of an insert that commits its rows before it returns."""
+    return {"async_insert": 0, "wait_for_async_insert": 1}
 
 
 def batched_insert_settings(
@@ -27,12 +26,12 @@ def batched_insert_settings(
     `ch_batched_insert_background_wait_max_ms`. With `ch_batched_inserts` off, the
     committed settings, or, for a site that `async_when_off` marks (a site that is a
     waited async insert whether or not batching is on), a waited async insert on the
-    server profile's timeouts. Each call returns a new dict. Why it is safe:
+    server profile's timeouts. Why it is safe:
     docs/architecture/clickhouse.md#batched-inserts."""
     if not settings.ch_batched_inserts:
         if async_when_off:
-            return dict(_PROFILE_ASYNC_INSERT_SETTINGS)
-        return dict(COMMITTED_INSERT_SETTINGS)
+            return {"async_insert": 1, "wait_for_async_insert": 1}
+        return committed_insert_settings()
     if background:
         wait_max = int(settings.ch_batched_insert_background_wait_max_ms)
     else:
@@ -109,8 +108,8 @@ def dedup_settings(token: str, base: dict[str, Any] | None) -> dict[str, Any]:
 
 
 __all__ = [
-    "COMMITTED_INSERT_SETTINGS",
     "batched_insert_settings",
+    "committed_insert_settings",
     "dedup_settings",
     "insert_dedup_token",
 ]

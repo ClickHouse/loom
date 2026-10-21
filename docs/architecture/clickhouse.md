@@ -149,10 +149,12 @@ two insert shapes, so they fill separate buffers.
 ClickHouse's own target is about one insert, one part, a second per table, with 1,000
 rows or more per insert. These windows stay well short of it; they cut the part rate
 from one per insert to the rate above. Batching trades latency for parts: each waited
-insert adds up to its window, and holds its pooled connection meanwhile. A sustained R
-batched inserts a second therefore hold about R × `ch_batched_insert_wait_max_ms` / 1000
-connections, and the ClickHouse connection pool (`ch_pool_maxsize`) is sized for that on
-top of the other statements. `ch_batched_inserts` (live, on by default) switches
+insert adds up to its window, and holds its pooled connection meanwhile. A sustained
+R_request request-path and R_background background batched inserts a second therefore
+hold about R_request × `ch_batched_insert_wait_max_ms` / 1000 + R_background ×
+`ch_batched_insert_background_wait_max_ms` / 1000 connections: a delivery worker writing
+20 attempt batches a second holds about 4. The ClickHouse connection pool
+(`ch_pool_maxsize`) is sized for that on top of the other statements. `ch_batched_inserts` (live, on by default) switches
 batching off. Off, the request-path inserts (`audit_log`, the `conversation.append`
 rows, the `agent_events` flush, the outbox, webhook attempts, evidence, belief sources,
 the write-mark bump and process-start mark) are sent committed, one part each; the

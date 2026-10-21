@@ -31,14 +31,17 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from server.core.ch_writes import batched_insert_settings  # noqa: E402
+from server.core.ch_writes import (  # noqa: E402
+    batched_insert_settings,
+    committed_insert_settings,
+)
 from server.settings import settings  # noqa: E402
 
 
 def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
     """Every `settings=` passed to a `ch.insert` for `table`, in one module or in
-    every module of a package directory: a dict literal, `batched_insert_settings()`
-    resolved to its value under the current switch (a `background=` or
+    every module of a package directory: a dict literal, `committed_insert_settings()`,
+    `batched_insert_settings()` resolved to its value under the current switch (a `background=` or
     `async_when_off=` that is not a constant reads as False), the session defaults for
     an insert that passes none, and `{"unresolved": 1}` for any other value."""
     files = sorted(path.rglob("*.py")) if path.is_dir() else [path]
@@ -88,6 +91,12 @@ def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
                     and isinstance(k.value, ast.Constant)
                 }
                 found.append(batched_insert_settings(**flags))
+                continue
+            if (
+                isinstance(value, ast.Call)
+                and getattr(value.func, "id", "") == "committed_insert_settings"
+            ):
+                found.append(committed_insert_settings())
                 continue
             if not isinstance(value, ast.Dict):
                 # A name or another call: unknown here, so it fails every check.
@@ -188,6 +197,68 @@ def test_write_marks_take_the_window_of_who_waits() -> None:
     assert calls["bump"] == [{}]
     assert calls["flush_now"] == [{"background": True, "async_when_off": True}]
     assert calls["mark_process_start"] == [{"background": True}]
+
+
+class _RecordingCH:
+    def __init__(self) -> None:
+        self.settings: list[dict] = []
+
+    async def insert(self, table, rows, *, settings=None):
+        self.settings.append(settings)
+
+
+@pytest.mark.asyncio
+async def test_usage_flush_a_request_waits_on_takes_the_short_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The event that fills the buffer flushes it inside the request, whose op
+    budget assumes the short window."""
+    import asyncio
+
+    from server.memory.store import usage
+
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
+    monkeypatch.setattr(usage, "_ensure_usage_flusher_started", lambda: None)
+    usage._reset_for_tests()
+    usage._USAGE_BUFFER_LOCK = asyncio.Lock()
+    usage._USAGE_BUFFER.extend({"memory_id": "m"} for _ in range(usage._USAGE_BUFFER_MAX - 1))
+    ch = _RecordingCH()
+    try:
+        await usage.record_usage_event(
+            memory_id="m", org="o", namespace="n", event_type="recall", consumer="", ch=ch
+        )
+    finally:
+        usage._reset_for_tests()
+    assert ch.settings == [batched_insert_settings(async_when_off=True)]
+    assert ch.settings != [batched_insert_settings(background=True, async_when_off=True)]
+
+
+@pytest.mark.asyncio
+async def test_usage_flush_of_the_timer_takes_the_background_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flush loop's tick waits on nobody, so it takes the background window."""
+    import asyncio
+
+    from server.memory.store import usage
+
+    async def _one_tick(_seconds: float) -> None:
+        if ch.settings:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
+    ch = _RecordingCH()
+    monkeypatch.setattr(usage, "_default_client", lambda: ch)
+    monkeypatch.setattr(asyncio, "sleep", _one_tick)
+    usage._reset_for_tests()
+    usage._USAGE_BUFFER_LOCK = asyncio.Lock()
+    usage._USAGE_BUFFER.append({"memory_id": "m"})
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await usage._usage_flush_loop()
+    finally:
+        usage._reset_for_tests()
+    assert ch.settings == [batched_insert_settings(background=True, async_when_off=True)]
 
 
 # Every insert of these tables anywhere under server/, not one module per table.
