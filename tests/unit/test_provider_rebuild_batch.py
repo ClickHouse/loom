@@ -235,3 +235,16 @@ async def test_a_memory_row_is_rebuilt_whatever_its_text(target):
     row = {**row_for("memory_embeddings"), "content_excerpt": "key " + AWS_KEY_ID}
     result = await rebuild_batch("memory_embeddings", [row], target)
     assert result[0]["embedding_dim"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("table", sorted(PASSAGE_TABLES))
+async def test_a_passage_stored_without_a_vector_is_rebuilt_without_one(table, target):
+    # A chunk holding only a key's head reads as plain text; its write path left it empty.
+    row = {**row_for(table), TEXT_COLUMNS[table]: "token sk-proj-", "embedding_dim": 0}
+    for surface in EMBEDDING_SURFACES:
+        if surface.table == table:
+            row[surface.column] = []
+    result = (await rebuild_batch(table, [row], target))[0]
+    assert (result["embedding_model"], result["embedding_dim"]) == ("target-model", 0)
+    target.embed_many.assert_not_awaited()

@@ -718,8 +718,8 @@ that ranks reads only chunks with a vector (`embedding_dim > 0`), so no search l
 it. Chunks overlap and can be cut through a key, so the conversation and long-value
 writers check the whole text once and also hold every chunk whose character range
 overlaps a credential: a chunk that holds only a key's head or tail does not read as one
-on its own. `memory.import_evidence` checks each session's imported chunks joined in
-`chunk_index` order the same way. `memory.get` on a `chunk:` key leaves out a neighbour with no vector, as it
+on its own. `memory.import_evidence` checks each session's imported chunks the same way, joined in
+`chunk_index` order with the overlap each chunk repeats from the one before it dropped. `memory.get` on a `chunk:` key leaves out a neighbour with no vector, as it
 leaves out one that reads as a credential, and audits a key read of either. This holds for
 a chunk of a long `memory.set` value whatever its row's label; a `low` row stays findable
 through its own embedding. A session digest whose text reads as a
@@ -732,16 +732,20 @@ turn, so the saved search never holds it.
 sent to the summarizer. A summary that reads as a credential anyway is refused (`reason:
 "summary-reads-as-credential"`) and tombstones nothing; the window stays the same while
 its turns are live, so a retry most likely gets the same refusal.
-A provider rebuild stages a chunk, digest or turn embedding that reads as a credential
-without a vector, and its verification reads the text of every row left empty and accepts
-those that read as a credential. `loom reembed` keeps a conversation turn that reads as
+A provider rebuild stages a chunk, digest or turn embedding that reads as a credential,
+or that was stored without a vector (such as a chunk holding only part of a key), without
+a vector, and its verification reads the text of every row left empty whose source held a
+vector and accepts those that read as a credential. `loom reembed` keeps a conversation turn that reads as
 a credential on its old model, which search does not read, until `--delete-old` removes it
 (a memory row's vector follows its sensitivity label). `loom reembed --in-database` runs
 the embedding inside ClickHouse and cannot check the text, so it re-embeds such a turn
 too.
 
 Chunks, digests and turn embeddings that an earlier build embedded keep their vector, so
-the reads that serve passages check their text too:
+the reads that serve passages check their text too. That check reads each passage's own
+text, so a chunk an earlier build embedded that holds only the head or tail of a key cut
+at a chunk boundary does not read as a credential and stays searchable until it is
+rewritten:
 
 - Left out: `memory.search`'s `chunk` and `summary` hits (and so what `memory.ask` hands
   its model and the context pack built from search), the chunks `memory.ask` injects for
@@ -869,8 +873,9 @@ hashing are engineering primitives, not a compliance guarantee.
   conversation turn whose text reads as a credential is written without a vector
   (`loom reembed --in-database` and a chunk restored with the vector an earlier build
   gave it excepted), and the ranked reads (`memory.search`, `memory.ask`,
-  `conversation.search` and the saved search) hold back one an earlier build embedded;
-  see Sensitivity for the reads that serve it as written.
+  `conversation.search` and the saved search) hold back one an earlier build embedded,
+  except a chunk that holds only part of a key; see Sensitivity for the reads that serve
+  it as written.
 - Every memory write leaves a hash-only audit row; no audit row carries a value.
 - An erasure saga succeeds only when its residue census finds nothing.
 

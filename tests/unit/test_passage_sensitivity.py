@@ -283,8 +283,10 @@ async def test_import_evidence_stores_a_credential_chunk_and_digest_without_a_ve
 async def test_a_key_split_across_two_chunks_is_exported_as_held_and_imported_without_a_vector(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Neither half of the key reads as a credential on its own: the export holds both by
-    their missing vectors, and the import reads them joined."""
+    """The write path cuts the text at 800 characters with a 100-character overlap, so the
+    first chunk ends with the key's head, which does not read as a credential on its own: the
+    export holds it by its missing vector, and the import reads the chunks joined at their
+    overlap, so no piece of the key reaches the embedder."""
     import server.embedding as embmod
     import server.memory.store as memory_repo
     from server.memory.api.models_evidence_transfer import (
@@ -292,15 +294,19 @@ async def test_a_key_split_across_two_chunks_is_exported_as_held_and_imported_wi
         MemoryImportEvidenceInput,
     )
     from server.memory.app import chunk_links, evidence_transfer
-    from server.memory.domain.sensitivity import reads_high
+    from server.memory.app.chunk_projection import chunk_text_with_ranges
+    from server.memory.domain.sensitivity import overlaps_credential, reads_high
     from server.observability import audit
 
-    head, tail = f"deploy with {OPENAI_KEY[:18]}", f"{OPENAI_KEY[18:]} then restart"
-    assert not reads_high(head) and not reads_high(tail)
+    text = ("plain words here " * 60)[:784] + f" {OPENAI_KEY} " + "more plain words " * 60
+    chunks, ranges, _ = chunk_text_with_ranges(text, max_chunks=64)
+    contents = [c for c, _, _ in chunks]
+    assert OPENAI_KEY[:8] in contents[0] and not reads_high(contents[0])
+    held_on_write = overlaps_credential(text, ranges)
+    assert held_on_write == [True, True, False]
     stored = [
-        {"session_id": "s", "chunk_index": 0, "content": _PLAIN, "embedding_dim": 2},
-        {"session_id": "s", "chunk_index": 1, "content": head, "embedding_dim": 0},
-        {"session_id": "s", "chunk_index": 2, "content": tail, "embedding_dim": 0},
+        {"session_id": "s", "chunk_index": i, "content": c, "embedding_dim": 0 if h else 2}
+        for i, (c, h) in enumerate(zip(contents, held_on_write, strict=True))
     ]
 
     class _Export:
@@ -329,11 +335,11 @@ async def test_a_key_split_across_two_chunks_is_exported_as_held_and_imported_wi
         )
 
     held = await export(include_high=False)
-    assert [c.chunk_index for c in held.chunks] == [0] and held.held_high == 2
+    assert [c.chunk_index for c in held.chunks] == [2] and held.held_high == 2
     assert audited == []
     released = await export(include_high=True)
     assert [c.chunk_index for c in released.chunks] == [0, 1, 2]
-    assert [a["chunk_index"] for a in audited] == [1, 2]
+    assert [a["chunk_index"] for a in audited] == [0, 1]
 
     async def not_refused(*_: Any, **__: Any) -> bool:
         return False
@@ -349,8 +355,10 @@ async def test_a_key_split_across_two_chunks_is_exported_as_held_and_imported_wi
         )
     )
     dims = {r["chunk_index"]: r["embedding_dim"] for r in ch.inserts["loom.memory_chunks"]}
-    assert dims == {0: 2, 1: 0, 2: 0}
-    assert emb.seen == [_PLAIN]
+    assert dims == {0: 0, 1: 0, 2: 2}
+    assert emb.seen == [contents[2]]
+    pieces = {OPENAI_KEY[i : i + 8] for i in range(len(OPENAI_KEY) - 7)}
+    assert not any(piece in seen for piece in pieces for seen in emb.seen)
 
 
 def _hit(key: str, excerpt: str, rank: float) -> SearchHit:

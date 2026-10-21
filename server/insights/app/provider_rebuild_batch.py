@@ -31,7 +31,8 @@ TEXT_COLUMNS = {
 }
 SPECIAL_TEXT_TABLES = frozenset({"categories", "code_chunks", "qa_item_embeddings"})
 # Raw passages the write path leaves without a vector when they read as a credential
-# (`reads_high`); a rebuild stages such a row without one too.
+# (`reads_high`) or hold part of a key cut at a chunk boundary, which the text alone does
+# not show; a rebuild stages such a row, and any passage stored without a vector, without one.
 PASSAGE_TABLES = frozenset({"conversation_embeddings", "memory_chunks", "session_summaries"})
 _CALL_BATCH = 64
 
@@ -73,7 +74,9 @@ def _inputs(
         if row.get("tombstoned_at") is not None:
             continue
         text = _source_text(table, row, index, source_texts)
-        if table in PASSAGE_TABLES and reads_high(text):
+        if table in PASSAGE_TABLES and (
+            reads_high(text) or not any(any(row[column]) for column in columns)
+        ):
             continue
         for column in columns:
             value = text
@@ -153,10 +156,12 @@ async def rebuild_batch(
     the rebuild completes and counts it in its progress (`rows_waiting`). Once the
     org is back on, memory_embeddings and code_chunks / code_summaries stubs are
     embedded again by their recovery workers; a row of any other table has no
-    vector until a write replaces it or a later rebuild covers it.
+    vector until a write replaces it or a later rebuild covers it, except a raw
+    passage, which keeps none until a write replaces it.
 
-    A raw passage whose text reads as a credential is staged without a vector, as its
-    write path leaves it; verification reads the text and accepts it.
+    A raw passage whose text reads as a credential, or that was stored without a
+    vector, is staged without one, as its write path leaves it; verification reads
+    the text and the source vector and accepts it.
 
     The caller must hydrate tracker text from its source and supply every stored
     column. Tombstones remain tombstones and are never sent to the provider.

@@ -28,6 +28,7 @@ from server.memory.api.models_evidence_transfer import (
     MemoryImportEvidenceInput,
     MemoryImportEvidenceOutput,
 )
+from server.memory.app.chunk_projection import _CHUNK_OVERLAP
 from server.memory.app.credential_passages import embed_plain
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.okf_evidence import evidence_is_high, evidence_keys
@@ -294,22 +295,35 @@ async def _refused(
     return False
 
 
+def _overlap(previous: str, chunk: str) -> int:
+    """The length of the longest start of `chunk` that ends `previous`: the characters a
+    chunk repeats from the one before it (`_CHUNK_OVERLAP`, less the whitespace a chunk
+    is trimmed of)."""
+    for size in range(min(len(previous), len(chunk), 2 * _CHUNK_OVERLAP), 0, -1):
+        if previous.endswith(chunk[:size]):
+            return size
+    return 0
+
+
 def _split_credentials(chunks: list[EvidenceChunk]) -> list[bool]:
-    """For each chunk, whether it overlaps a credential in its session's chunks joined in
-    `chunk_index` order: a key cut at a chunk boundary reads as one only when joined."""
+    """For each chunk, whether it overlaps a credential in its session's text, rebuilt by
+    joining the chunks in `chunk_index` order with each one's overlap with the one before it
+    dropped: a key cut at a chunk boundary reads as one only when joined."""
     held = [False] * len(chunks)
     sessions: dict[str, list[int]] = {}
     for i, c in enumerate(chunks):
         sessions.setdefault(c.session_id, []).append(i)
     for positions in sessions.values():
         positions.sort(key=lambda i: chunks[i].chunk_index)
+        source = ""
         ranges: list[tuple[int, int]] = []
-        start = 0
+        previous = ""
         for i in positions:
-            end = start + len(chunks[i].content)
-            ranges.append((start, end))
-            start = end
-        source = "".join(chunks[i].content for i in positions)
+            content = chunks[i].content
+            start = len(source) - _overlap(previous, content)
+            source += content[len(source) - start :]
+            ranges.append((start, len(source)))
+            previous = content
         for i, overlaps in zip(positions, overlaps_credential(source, ranges), strict=True):
             held[i] = overlaps
     return held
