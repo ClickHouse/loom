@@ -210,6 +210,10 @@ Each op declares `required_role`.
   successor.
   `loom mint-token --platform-admin` mints it only for a non-agent `sa:` subject, for at
   most 90 days, and audits each mint.
+  Both token issuance paths require a fresh fleet view with every replica protecting
+  human credentials; an older replica could accept the token on an unprotected SSO route.
+  Before a rollback starts an older replica, disable admin bots and revoke standalone
+  CLI-minted admin subjects or tokens.
 
 ### The gate
 

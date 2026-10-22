@@ -1584,6 +1584,15 @@ async def _machine_tokens(
     if await subjects_revoked([trust, subject], issued_at=since):
         raise OAuthError("invalid_client", 401, description="this bot is revoked")
     admin = bool(m.get("platform_admin", False)) and not agent  # never an agent's
+    if admin:
+        from server.core import instances
+
+        if not machines.platform_admin_tokens_ready(instances.live_rows()):
+            raise OAuthError(
+                "temporarily_unavailable",
+                503,
+                description="platform-admin tokens require every replica to finish the rollout",
+            )
     ns_roles: list[tuple[str, str]] = []
     if not admin:
         ns_roles = ([(own, "writer")] if own else []) + await machines.live_roles(m)

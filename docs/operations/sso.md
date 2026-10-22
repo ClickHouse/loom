@@ -353,6 +353,13 @@ audit row:
 loom mint-token --platform-admin --subject sa:controlplane --org acme --ttl-days 30 --json
 ```
 
+Admin machine tokens are issued only after every live replica protects human sign-in
+changes. An older replica or an unread fleet refuses the exchange with 503
+`temporarily_unavailable`; the CLI reads a fresh fleet view and refuses to mint as well.
+The CLI requires at least one live replica and cannot mint against an empty fleet.
+Before rolling back to an older build, disable the admin bots and revoke every
+standalone CLI-minted admin subject or token before that build starts serving.
+
 SSO does not affect bots or minted tokens. A token a person creates from a `loom
 login` or dashboard SSO session (`/v1/me/service_accounts`) lasts as long as
 they chose and belongs to them: revoking the person ends it. One a third-party

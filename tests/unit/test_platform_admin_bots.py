@@ -183,6 +183,8 @@ def minting(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     monkeypatch.setattr(settings, "jwt_secret", _SECRET, raising=False)
     # An empty keyring: the mint signs with the root secret, reading no ClickHouse.
     monkeypatch.setattr(access, "run_connected", lambda run: None)
+    # These mint tests run after every replica has the human-admin guards.
+    monkeypatch.setattr(access, "_platform_admin_rollout_ready", lambda: True)
     recorded: list[dict[str, Any]] = []
 
     def audited(args: Any, summary: dict[str, Any]) -> bool:

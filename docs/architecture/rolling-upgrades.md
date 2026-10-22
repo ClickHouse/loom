@@ -251,12 +251,16 @@ schema. These rules keep that safe. The operator procedure is in
     on the same ClickHouse, such as a branch server, is not counted.
 
 25. **Platform-admin bots** (`loom.machine_identities.platform_admin`, migration
-    `074_machine_platform_admin.sql`): the column's `UInt8 DEFAULT 0` reads 0 for every
-    bot made before it. N-1 does not know the flag: it answers a platform-admin bot's
-    exchange 401 (the bot names no namespace), and its `/v1/admin/bots.create` refuses the
-    field (422). Register and use such a bot only once no N-1 replica serves. N-1 writes
-    the flag back to 0 only when it saves the bot itself, on an explicit `bots.disable`
-    or replace; no other N-1 write touches a bot that names no namespace.
+    `076_machine_platform_admin.sql`): the column's `UInt8 DEFAULT 0` reads 0 for every
+    bot made before it. N-1 refuses an admin bot's exchange but accepts a flat admin JWT
+    issued by N, and its SSO account routes lack the human-only check. Both OAuth admin
+    exchanges and `loom mint-token --platform-admin` therefore refuse until a fresh,
+    nonempty fleet view shows every replica at migration 76 or later. OAuth answers 503
+    `temporarily_unavailable`; the CLI refreshes the fleet before minting and prints no
+    token when it is unreadable or contains an older replica. Register and use such bots
+    only after the rollout. Before starting any N-1 replica for a rollback, disable admin
+    bots and revoke every standalone CLI-minted admin subject or token. N-1 writes the
+    column back to 0 when it disables or replaces a bot.
 
 ## What checks them
 

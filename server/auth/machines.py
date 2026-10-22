@@ -37,6 +37,7 @@ log = logging.getLogger(__name__)
 
 TABLE = "loom.machine_identities"
 TOKEN_TTL = 3600
+_PLATFORM_ADMIN_MIGRATION = 76  # schemas/migrations/076_machine_platform_admin.sql
 ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
 SUBJECT_TOKEN_TYPES = frozenset(
@@ -67,6 +68,13 @@ class Machine(TypedDict):
     # Its tokens carry the platform_admin role, which spans every org; such a
     # bot names no namespace and tells no agents apart (`account_admin.bot_from`).
     platform_admin: bool
+
+
+def platform_admin_tokens_ready(live: list[dict[str, Any]]) -> bool:
+    """Older replicas accept admin JWTs without protecting human sign-in changes."""
+    return bool(live) and all(
+        int(row["schema_version"] or 0) >= _PLATFORM_ADMIN_MIGRATION for row in live
+    )
 
 
 class Refused(Exception):

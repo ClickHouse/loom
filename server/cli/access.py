@@ -121,6 +121,12 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
     if refused:
         print(f"  ✗ {refused}", file=sys.stderr)
         return 2
+    if args.platform_admin and not _platform_admin_rollout_ready():
+        print(
+            "  ✗ platform-admin tokens require a readable fleet with the rollout complete",
+            file=sys.stderr,
+        )
+        return 1
     try:
         keyring.load_for_offline_mint(run=run_connected)
     except ValueError as e:  # another root: no server would accept the token
@@ -261,6 +267,20 @@ def _platform_admin_refusal(args: argparse.Namespace) -> str | None:
     if args.namespace_role:
         return "--platform-admin mints a flat token: pass no --namespace-role"
     return None
+
+
+def _platform_admin_rollout_ready() -> bool:
+    from server.auth import machines
+    from server.core import instances
+
+    async def ready(ch: Any) -> bool:
+        return machines.platform_admin_tokens_ready(await instances.read_live(ch))
+
+    try:
+        return bool(run_connected(ready))
+    except Exception as e:  # noqa: BLE001 — an unread fleet refuses an admin token
+        print(f"  ✗ fleet state could not be read: {type(e).__name__}", file=sys.stderr)
+        return False
 
 
 def _audit_platform_admin_mint(args: argparse.Namespace, summary: dict[str, Any]) -> bool:
