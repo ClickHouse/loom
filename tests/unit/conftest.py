@@ -662,10 +662,7 @@ def _trace_tasks_left_as_found() -> Iterator[None]:
     code_common._TRACE_TASKS.clear()
 
 
-@pytest.fixture(autouse=True)
-def _deferred_ledgers_left_empty() -> Iterator[None]:
-    """Cancel ledger timers so their flushes cannot reach the next test's client."""
-    yield
+def _reset_deferred_ledgers() -> None:
     from server.core import namespace_write_marks
     from server.memory.app import drops, graph_write_marks
     from server.memory.store import usage as memory_repo_usage
@@ -674,6 +671,15 @@ def _deferred_ledgers_left_empty() -> Iterator[None]:
     drops._reset_for_tests()
     namespace_write_marks._reset_for_tests()
     graph_write_marks._reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _deferred_ledgers_left_empty() -> Iterator[None]:
+    """Empty the deferred ledgers, stop the usage flusher and cancel the drops and
+    write-marks timers: a flush armed in one test would write into a later test's
+    client and register a task its `drain_task_sets` counts."""
+    yield
+    _reset_deferred_ledgers()
 
 
 @pytest.fixture(autouse=True)
@@ -746,6 +752,9 @@ async def _tasks_left_as_found() -> Any:
     """
     before = set(asyncio.all_tasks())
     yield
+    # A ledger timer due during this teardown would spawn its flush after the
+    # leaked tasks are listed, so cancel the timers first.
+    _reset_deferred_ledgers()
     current = asyncio.current_task()
     leaked = [t for t in asyncio.all_tasks() - before if t is not current and not t.done()]
     for t in leaked:
