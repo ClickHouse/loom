@@ -517,11 +517,12 @@ first (`DROP TABLE IF EXISTS loom.<table>_pre_rebuild SYNC`).
 
    ```sql
    SELECT org, namespace FROM loom.<table> FINAL
-   WHERE length(<column>) = <n>
-     AND (org, namespace) IN (SELECT org, namespace FROM loom.<table>
+   WHERE (org, namespace) IN (SELECT org, namespace FROM loom.<table>
                               WHERE length(<column>) = <n> AND <column>[1] != 0)
    GROUP BY org, namespace
-   HAVING countIf(<column>[1] != 0) < 20 AND countIf(<column>[1] = 0) > 0
+   HAVING countIf(length(<column>) = <n> AND <column>[1] != 0) < 20
+      AND (countIf(length(<column>) = <n> AND <column>[1] = 0) > 0
+           OR countIf(length(<column>) = <n> AND <column>[1] != 0) = 0)
    ```
 
    Skip that table's line while this returns rows: its layout stays as it is.
@@ -541,10 +542,10 @@ first (`DROP TABLE IF EXISTS loom.<table>_pre_rebuild SYNC`).
 3. After the tool's checks pass, inspect the tables with read-only ClickHouse queries and
    drop the old copies: run the lines of the tables you rebuilt again with
    `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its old copy as
-   `loom.<table>_pre_rebuild`, a full second copy, its merges stopped by the tool. To go back
-   instead, run that table's line with `mode="--rollback --yes"`; the coded copy then sits
-   in `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the table was
-   rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
+   `loom.<table>_pre_rebuild`, a full second copy, its merges stopped by the tool. To go
+   back instead, run that table's line with `mode="--rollback --yes"`; the coded copy then
+   sits in `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the table
+   was rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
    `--chain LZ4` only if its rebuild had it.
 
 Before restarting Loom or resuming traffic, drop every leftover `<table>_rebuild` and
