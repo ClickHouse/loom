@@ -207,7 +207,7 @@
         "ch_batched_inserts": {
           "default": true,
           "type": "boolean",
-          "description": "Batch the inserts written on every request (docs/architecture/clickhouse.md#batched-inserts) as waited async inserts that share parts; false commits them, one part each."
+          "description": "Batch the inserts written on every request as waited async inserts that share parts; each holds a pooled connection while it waits, so size ch_pool_maxsize. False commits them."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,
@@ -259,7 +259,7 @@
         "ch_pool_maxsize": {
           "default": 64,
           "type": "integer",
-          "description": "HTTP connection pool size; the driver default (~8) exhausts under bulk writes plus workers. Size to request concurrency (docs/architecture/clickhouse.md#batched-inserts)."
+          "description": "HTTP connection pool size: request concurrency plus about 3 x batched inserts a second x ch_batched_insert_wait_max_ms / 1000 (docs/architecture/clickhouse.md#batched-inserts)."
         },
         "ch_pool_wait_ms": {
           "default": 500,

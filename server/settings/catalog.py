@@ -536,8 +536,8 @@ class ClickHouseSettings(BaseModel):
     # collect the shapes an acceptance run executes for the analyzer corpus. '' = off;
     # never set it in production.
     ch_capture_statements: str = ""
-    # HTTP connection pool size; the driver default (~8) exhausts under bulk writes plus
-    # workers. Size to request concurrency (docs/architecture/clickhouse.md#batched-inserts).
+    # HTTP connection pool size: request concurrency plus about 3 x batched inserts a second x
+    # ch_batched_insert_wait_max_ms / 1000 (docs/architecture/clickhouse.md#batched-inserts).
     ch_pool_maxsize: int = 64
     # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load
     # balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled
@@ -558,8 +558,8 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Batch the inserts written on every request (docs/architecture/clickhouse.md#batched-inserts)
-    # as waited async inserts that share parts; false commits them, one part each.
+    # Batch the inserts written on every request as waited async inserts that share parts; each
+    # holds a pooled connection while it waits, so size ch_pool_maxsize. False commits them.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched or waited async insert a request waits on; it holds a
     # pooled connection meanwhile.
@@ -5237,11 +5237,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.search": 200,
     "memory.search_trace": 200,
     "memory.search_trace_log": 200,
-    # Version inserts plus the conflict and dedup reads: p50 1,062 ms and p99 3.7 s on
-    # ClickHouse Cloud; 200 ms at the x20 multiplier = 4 s sits at that p99, so a
-    # violation is a signal. + audit-row, entity-edge and entity-triple (concurrent) and
-    # outbox-row waits (~150 ms). 200 stands: the waited graph inserts fell from 200 to
-    # 50 ms, which offsets the new audit and outbox waits.
+    # Version inserts plus the conflict and dedup reads (p99 3.7 s on ClickHouse Cloud, 4 s
+    # at x20), + the audit, outbox and concurrent graph-insert waits (~150 ms).
     "memory.set": 200,
     # LLM extraction dominates (~7K-token prompt); bulk_set adds ~200 ms + ~4 insert waits
     # (audit, evidence, belief sources twice) before it.

@@ -673,8 +673,10 @@ class CHClient:
             # Close idle pooled connections before the Cloud load balancer
             # does, so the pool never holds a peer-closed TLS transport.
             keepalive_timeout=float(settings.ch_keepalive_timeout),
-            # Writes are committed unless the call site passes batched_insert_settings() or
-            # async_insert_settings() (docs/architecture/clickhouse.md#batched-inserts).
+            # Writes are committed unless the call site passes async settings: the waited
+            # batched_insert_settings() / async_insert_settings()
+            # (docs/architecture/clickhouse.md#batched-inserts) or a fire-and-forget
+            # wait_for_async_insert=0.
             # insert_deduplicate is 0 here; each insert turns dedup on with its own
             # per-batch token (ch_writes.dedup_settings).
             settings={
