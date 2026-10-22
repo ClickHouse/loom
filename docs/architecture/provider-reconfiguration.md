@@ -175,7 +175,10 @@ engines require a separate replication-path plan.
 
 On coded tables, preparation preserves the canonical DDL and the existing
 Quantized method and codec chain, replacing only the table identity, ownership
-comment and vector width. Cleared staging vectors become fixed-width zero
+comment and vector width. The candidate is created as the server takes the codec
+settings ([gated settings](clickhouse.md#gated-clickhouse-settings)): refused before
+its `CREATE` where the codec cannot be on (an owned stale candidate is dropped first),
+and without the chain where `allow_suspicious_codecs` cannot be on. Cleared staging vectors become fixed-width zero
 placeholders in these physical columns; dimension flags, tombstones and other
 metadata remain unchanged. Full-row verification compares this explicit physical
 projection, not an equal row count alone. Rabitq and TurboQuant widths must be

@@ -44,7 +44,7 @@ def _runner(monkeypatch, tmp_path: Path, *, applied_reads: list[dict[str, str]],
     monkeypatch.setattr(mig, "_apply_file", lambda ch, f, **kw: applied.append(1))
     monkeypatch.setattr(mig, "_record", lambda ch, name, cs: recorded.append(name))
     monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
-    monkeypatch.setattr(mig, "_codec_supported", lambda ch: False)
+    monkeypatch.setattr(mig, "_codec_settings", lambda ch: mig.NO_CODEC)
     monkeypatch.setattr(mig, "_acquire_lease", lambda ch: lease)
     return d, applied, recorded
 

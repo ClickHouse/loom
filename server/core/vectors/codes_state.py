@@ -43,7 +43,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.ch_names import database
-from server.core.schema.vector_codec_ddl import CODED_TABLES, codec_width
+from server.core.schema.vector_codec_ddl import (
+    CODEC_SETTINGS_SQL,
+    CODED_TABLES,
+    CodecSettings,
+    codec_width,
+)
 from server.core.vectors.code_tables import vector_dim_for_table
 
 log = logging.getLogger(__name__)
@@ -64,7 +69,6 @@ LEFT JOIN (
 ) AS p ON p.table = c.table
 WHERE c.database = {db:String} AND c.compression_codec LIKE '%Quantized(%'
 """
-CODEC_SETTING_SQL = "SELECT count() AS n FROM system.settings WHERE name = 'enable_quantized_codec'"
 
 
 @dataclass
@@ -75,7 +79,7 @@ class _State:
     widths: dict[str, int] = field(default_factory=dict)
     # monotonic start of the probe the reading came from; None = never probed
     probed_at: float | None = None
-    # whether the server has the Quantized codec at all; None = not asked yet
+    # whether a coded column can be created here at all; None = not asked yet
     codec_available: bool | None = None
     ch: Any = None
     # the latest probe task, and when it started
@@ -128,7 +132,7 @@ def stored_width(table: str, column: str) -> int | None:
 async def served_model_writes_coded() -> bool:
     """Whether a coded column takes the served model's writes, so a model change
     must pick a width the codec can encode. Without any reading (ClickHouse did
-    not answer) it says yes unless the server lacks the codec."""
+    not answer) it says yes unless no coded column can be created here."""
     await _reading_since(time.monotonic() - _ttl())
     if _state.probed_at is None:
         return _state.codec_available is not False
@@ -312,15 +316,18 @@ async def probe(ch: Any) -> None:
 
 
 async def _has_codec(ch: Any) -> bool | None:
-    """Whether the server knows the Quantized codec (26.8 or later); None when
-    the question failed, so the next probe asks again. A "no" stands until a
-    restart: a server upgraded under Loom has no coded table until a rebuild."""
+    """Whether a coded column can be created here: the server knows the
+    Quantized codec (26.8 or later) and this user can have it on
+    (`CodecSettings.codec`; ClickHouse Cloud holds it read-only until the
+    operator enables it for the service). None when the question failed, so the
+    next probe asks again. A "no" stands until a restart: a server upgraded or a
+    setting enabled under Loom has no coded table until a rebuild."""
     try:
-        rows = await ch.query_all(CODEC_SETTING_SQL)
+        rows = await ch.query_all(CODEC_SETTINGS_SQL)
     except Exception as e:  # noqa: BLE001 — advisory; asked again on the next probe
         log.info("codec probe failed: %s", str(e)[:160])
         return None
-    return bool(rows and int(rows[0].get("n") or 0))
+    return CodecSettings.from_rows(rows).codec
 
 
 async def ensure_probed(ch: Any, *, reread: bool = False) -> None:

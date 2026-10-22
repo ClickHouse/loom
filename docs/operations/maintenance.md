@@ -29,8 +29,10 @@ before ClickHouse applies it; watch `system.mutations`.
   `--in-database` cannot check the text and re-embeds such a turn too; search still holds
   it back ([sensitivity](../architecture/security.md#sensitivity)).
 - **A model of another width.** On ClickHouse 26.8 or later a fresh install codes its
-  vector columns (`Quantized`), and a coded column takes vectors of the width it was
-  created with only. Change to a model of another width (a multiple of 8) in Settings → Models & keys, which
+  vector columns (`Quantized`) where `enable_quantized_codec` can be on
+  ([ClickHouse](../architecture/clickhouse.md#gated-clickhouse-settings)), and a coded
+  column takes vectors of the width it was created with only. Change to a model of
+  another width (a multiple of 8) in Settings → Models & keys, which
   rebuilds the vector tables at the new width; `loom reembed` refuses a width the tables
   do not take, and editing `LOOM_EMBEDDING_DIM` alone makes every vector write answer 503
   `CODED_WIDTH_MISMATCH` while `/v1/health` reports `coded_width_mismatch`.

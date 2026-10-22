@@ -39,7 +39,9 @@ logs the live table's active patch parts, refuses to EXCHANGE unless the twin
 has none, and logs the count after.
 
 Preconditions: one ClickHouse version (26.7+) on every replica of the
-cluster `--cluster` names (`default`; `''` checks this server only), `enable_quantized_codec` settable, every replica writable,
+cluster `--cluster` names (`default`; `''` checks this server only), `enable_quantized_codec`
+settable or held at 1 for this user (`allow_suspicious_codecs` too with `--chain`; a setting held
+at 1 is never sent), every replica writable,
 and no row written in the last hour with an empty vector in the named columns
 (writers' fixed-length placeholders must be deployed first: a coded column
 rejects an empty vector).
@@ -67,6 +69,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from functools import cached_property
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +87,13 @@ from server.core.schema.table_rebuild import (
     UNCONFIRMED,
     Aborted,
     log,
+)
+from server.core.schema.vector_codec_ddl import (
+    CHAIN_SETTING,
+    CODEC_SETTING,
+    CODEC_SETTINGS_SQL,
+    CodecSettings,
+    statement_settings,
 )
 
 # Fixed-arity `Quantized(method, dim, 0)` methods of ClickHouse 26.7+ (`prefix` /
@@ -312,6 +322,29 @@ class VectorRebuild:
     def cmd(self, sql: str, **st: Any) -> None:
         self.ch.command(sql, settings=st or None)
 
+    @cached_property
+    def codec(self) -> CodecSettings:
+        """How this server takes the codec settings, read once before any is sent."""
+        return CodecSettings.from_rows(self.q(CODEC_SETTINGS_SQL))
+
+    def codec_on(self) -> dict[str, int]:
+        """`enable_quantized_codec = 1` where this user may set it; held at 1, it is not sent."""
+        return {CODEC_SETTING: 1} if self.codec.settable(CODEC_SETTING) else {}
+
+    def codec_refusal(self) -> str:
+        """Why this server cannot take the twin's codec, or ''."""
+        if not self.codec.codec:
+            return (
+                f"the Quantized codec cannot be on: {CODEC_SETTING} is absent (before 26.8) "
+                "or held at 0 for this user"
+            )
+        if self.chain and not self.codec.chain:
+            return (
+                f"--chain {self.chain} needs {CHAIN_SETTING}, held at 0 for this user: "
+                "rebuild without --chain"
+            )
+        return ""
+
     def ddl(self, name: str) -> str:
         return unqualify(str(self.q(f"SHOW CREATE TABLE loom.{name}")[0][0]))
 
@@ -372,7 +405,8 @@ class VectorRebuild:
         log("replica versions", vers)
         if len(vers) != 1 or tuple(int(x) for x in next(iter(vers)).split(".")[:2]) < (26, 7):
             return f"every replica must run one ClickHouse 26.7+; found {sorted(vers)}"
-        self.q("SELECT 1", enable_quantized_codec=1)
+        if why := self.codec_refusal():
+            return why
         ro = self.q(
             f"SELECT hostName(), is_readonly FROM {self.replicas('replicas')} "
             f"WHERE database = '{database()}' AND table='{self.t}'",
@@ -458,8 +492,6 @@ class VectorRebuild:
 
     def create_twin(self, twin_ddl: str) -> tuple[str, bool]:
         """Create (or reuse) the twin: (why not, or '', whether it was reused with rows)."""
-        from server.core.schema.vector_codec_ddl import statement_settings
-
         row = tr.table_row(self.ch, self.twin)
         if row is not None:
             n = tr.row_count(self.ch, self.twin)
@@ -470,7 +502,7 @@ class VectorRebuild:
             self.cmd(f"DROP TABLE loom.{self.twin} SYNC")
             log(f"dropped loom.{self.twin} of an earlier run")
         try:
-            self.cmd(twin_ddl, **{"enable_quantized_codec": 1, **statement_settings(twin_ddl)})
+            self.cmd(twin_ddl, **statement_settings(twin_ddl, self.codec))
         except Exception as e:  # noqa: BLE001 - a lost CREATE race is a refusal, anything else too
             return f"could not create loom.{self.twin} (another run?): {str(e)[:160]}", False
         row = tr.table_row(self.ch, self.twin)
@@ -500,8 +532,7 @@ class VectorRebuild:
         n = int(self.q(f"SELECT count() FROM loom.{src} WHERE {cond}")[0][0])
         if n:
             self.cmd(
-                f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE {cond}",
-                enable_quantized_codec=1,
+                f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE {cond}", **self.codec_on()
             )
             self.rows_copied += n
         return n
@@ -531,7 +562,7 @@ class VectorRebuild:
             lits = ", ".join("(" + ", ".join(key_literal(v) for v in k) + ")" for k in batch)
             self.cmd(
                 f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE ({ident}) IN ({lits})",
-                enable_quantized_codec=1,
+                **self.codec_on(),
                 max_execution_time=1800,
             )
         self.rows_copied += len(keys)
@@ -617,7 +648,7 @@ class VectorRebuild:
             try:
                 self.cmd(
                     f"INSERT INTO loom.{self.twin} {sel} FROM loom.{self.t}",
-                    enable_quantized_codec=1,
+                    **self.codec_on(),
                     max_insert_threads=4,
                     max_execution_time=7000,
                     max_threads=8,

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from server.core.schema import migrate as _migrate
+from server.core.schema.vector_codec_ddl import CODEC_SETTINGS_SQL
 
 
 class _Result:
@@ -31,8 +32,8 @@ class _CH:
             return _Result([])
         if "_migrations" in sql:
             return _Result([(name, cs) for name, cs in self.ledger.items()])
-        if "enable_quantized_codec" in sql:
-            return _Result([(0,)])
+        if sql == CODEC_SETTINGS_SQL:
+            return _Result([])  # no codec settings: the plain layout
         return _Result([])
 
     def command(self, stmt: str, settings=None):
@@ -163,7 +164,7 @@ def test_status_prints_the_report_and_honours_strict(monkeypatch, mig_dir: Path,
 
 def test_apply_path_is_unchanged_by_the_report(monkeypatch, mig_dir: Path, capsys) -> None:
     ch = _CH({f.name: _sha(f.read_text()) for f in _files(mig_dir)[:2]})
-    monkeypatch.setattr(_migrate, "_codec_supported", lambda ch: False)
+    monkeypatch.setattr(_migrate, "_codec_settings", lambda ch: _migrate.NO_CODEC)
     rc = _main(monkeypatch, ch, mig_dir)
     out = capsys.readouterr().out
     assert rc == 0 and "done — 1 applied" in out
@@ -203,7 +204,7 @@ def test_the_renamed_file_is_recorded_without_running(monkeypatch, mig_dir: Path
             "019_pending.sql": _sha((mig_dir / "020_pending.sql").read_text()),
         }
     )
-    monkeypatch.setattr(_migrate, "_codec_supported", lambda ch: False)
+    monkeypatch.setattr(_migrate, "_codec_settings", lambda ch: _migrate.NO_CODEC)
     assert _main(monkeypatch, ch, mig_dir, "--dry-run", "--strict") == 0
     rc = _main(monkeypatch, ch, mig_dir)
     out = capsys.readouterr().out
@@ -227,7 +228,7 @@ def test_a_repeated_text_is_matched_to_its_own_copy_by_name(monkeypatch, mig_dir
     rep = _migrate.ledger_report(ledger, _files(mig_dir))
     assert rep.renamed == (("029_two_again.sql", "030_two_again.sql"),) and rep.clean
     ch = _CH(ledger)
-    monkeypatch.setattr(_migrate, "_codec_supported", lambda ch: False)
+    monkeypatch.setattr(_migrate, "_codec_settings", lambda ch: _migrate.NO_CODEC)
     assert _main(monkeypatch, ch, mig_dir) == 0
     assert ch.commands == [] and [i[1][0][0] for i in ch.inserts] == ["030_two_again.sql"]
 
@@ -329,7 +330,7 @@ def test_a_baselined_file_is_recorded_without_running(tmp_path, monkeypatch) -> 
 
     monkeypatch.setattr(_migrate, "_record", lambda ch, name, cs: recorded.append(name))
     monkeypatch.setattr(_migrate, "_nlp_available", lambda ch: False)
-    monkeypatch.setattr(_migrate, "_codec_supported", lambda ch: False)
+    monkeypatch.setattr(_migrate, "_codec_settings", lambda ch: _migrate.NO_CODEC)
     rc = _migrate._apply_pending(
         _CH(), [base], dry=False, lease=None, baselined=frozenset({"005_base.sql"})
     )
@@ -364,7 +365,7 @@ def test_target_classifies_the_ledger_against_every_file(
 
 def test_target_limits_only_what_is_applied(monkeypatch, mig_dir: Path, capsys) -> None:
     ch = _CH({"000_init.sql": _sha((mig_dir / "000_init.sql").read_text())})
-    monkeypatch.setattr(_migrate, "_codec_supported", lambda ch: False)
+    monkeypatch.setattr(_migrate, "_codec_settings", lambda ch: _migrate.NO_CODEC)
     rc = _main(monkeypatch, ch, mig_dir, "--target", "10")
     assert rc == 0 and "done — 1 applied" in capsys.readouterr().out
     assert [row[1][0][0] for row in ch.inserts] == ["010_two.sql"]

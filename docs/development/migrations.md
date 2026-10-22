@@ -57,9 +57,10 @@ shared number.
   residue-census row (`server/erasure/store/census.py`, `_CENSUS`);
   `tests/unit/test_every_table_is_classified.py` fails on a new table that is in no list
   ([adding a table](adding-a-table.md)).
-- **Engine-portable DDL.** Declare vector columns `Array(BFloat16) CODEC(NONE)`; on a
-  server with the `Quantized` codec the runner creates them coded. Use plain `MergeTree`
-  engine names, which ClickHouse Cloud runs as `SharedMergeTree`.
+- **Engine-portable DDL.** Declare vector columns `Array(BFloat16) CODEC(NONE)`; where
+  the `Quantized` codec can be on the runner creates them coded
+  ([gated settings](../architecture/clickhouse.md#gated-clickhouse-settings)). Use plain
+  `MergeTree` engine names, which ClickHouse Cloud runs as `SharedMergeTree`.
 
 **Why additive.** The build that was serving before a migration ran must still read and
 write every table it knew afterwards. That makes a blue/green rollback a proxy swap
@@ -91,8 +92,9 @@ server, on a fully migrated ledger and on a partway one.
 
 The runner also adapts statements at apply time without changing the files or their
 checksums: it drops the experimental NLP flag where the server forbids it, creates vector
-columns with the `Quantized` codec where the server has it
-(`server/core/schema/vector_codec_ddl.py`), creates every view under the user running the migration
+columns with the `Quantized` codec where it can be on, dropping a general codec chained
+after it where `allow_suspicious_codecs` cannot be (`server/core/schema/vector_codec_ddl.py`),
+creates every view under the user running the migration
 (`DEFINER = CURRENT_USER`: the dump names its own user, which another server may not have), and waits for every mutation a file issues before
 recording it (`LOOM_MIGRATE_MUTATION_WAIT_S`).
 
@@ -146,9 +148,9 @@ make schema-dump                    # rewrites schemas/schema.sql only when the 
 make schema-check                   # exit 1 with the head of the diff; writes nothing
 ```
 
-A dump that fails leaves the file as it was. Another ClickHouse version, a server with the
-`Quantized` codec, or a database holding rebuild twins dumps differently, which is why the
-pinned container matters. Internal tables (`_migrations`, names with a leading `_` or `.`)
+A dump that fails leaves the file as it was. Another ClickHouse version, a server where the
+`Quantized` codec or its `LZ4` chain cannot be on, or a database holding rebuild twins dumps
+differently, which is why the pinned container matters. Internal tables (`_migrations`, names with a leading `_` or `.`)
 are left out. CI's `schema-check` job replays every migration on a fresh server, runs the
 strict dry run, then `make schema-check`.
 

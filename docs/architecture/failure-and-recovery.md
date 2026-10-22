@@ -400,7 +400,8 @@ container needs more CPU or the provider more quota.
 A memory stores up to two vectors (value and key) of `Array(BFloat16)`: 6 KiB at 1536
 dimensions, 12 KiB at 3072. Storage and scan bytes grow linearly with `LOOM_EMBEDDING_DIM`.
 There is no HNSW index, so a read scans every vector of the tenant's namespace and latency
-grows with namespace size. Quantized codes shrink the scan where the server supports them.
+grows with namespace size. Quantized codes shrink the scan where the codec can be on
+([gated settings](clickhouse.md#gated-clickhouse-settings)).
 Details are in [ClickHouse](clickhouse.md#vector-storage).
 
 ### Measuring

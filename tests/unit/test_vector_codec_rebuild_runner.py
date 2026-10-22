@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from scripts.ops import vector_codec_rebuild as vcr
 from server.core.schema.vector_codec_ddl import statement_settings
+from tests.unit.codec_states import settings
 
 DDL = """CREATE TABLE loom.memory_chunks
 (
@@ -84,19 +85,20 @@ def test_replace_select_pads_every_named_column() -> None:
 
 
 def test_the_twin_create_asks_for_suspicious_codecs_only_when_chained() -> None:
-    # allow_suspicious_codecs is READONLY on ClickHouse Cloud, so the driver
-    # refuses a rebuild that sends it; it is sent only when chaining.
+    # allow_suspicious_codecs is readonly on ClickHouse Cloud, so it is sent only
+    # when chaining, and only where this user may change it.
     plain = vcr.rewrite_ddl(
         DDL, "loom.memory_chunks", "loom.memory_chunks_q", ["embedding"], None, dim=3072
     )
     chained = vcr.rewrite_ddl(
         DDL, "loom.memory_chunks", "loom.memory_chunks_q", ["embedding"], "LZ4", dim=3072
     )
-    assert statement_settings(plain) == {"enable_quantized_codec": 1}
-    assert statement_settings(chained) == {
+    assert statement_settings(plain, settings()) == {"enable_quantized_codec": 1}
+    assert statement_settings(chained, settings()) == {
         "enable_quantized_codec": 1,
         "allow_suspicious_codecs": 1,
     }
+    assert statement_settings(chained, settings("on", "on")) == {}
 
 
 def test_sql_literal_renders_datetime_versions_as_todatetime() -> None:

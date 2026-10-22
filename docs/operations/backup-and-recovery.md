@@ -41,7 +41,12 @@ attaches the staged parts to the table. An attach fires no materialized view, so
 restored row is not copied again into a table the backup also restores (`memory_versions`
 would otherwise hold every version twice), and the views keep running for the writes of a
 live database. Restore into a database `loom migrate` prepared (the views exist) or into a
-scratch database (tables are created from the recorded DDL). The insert runs with
+scratch database (tables are created from the recorded DDL). A backup holding a coded
+vector table (`Quantized(` in its recorded `CREATE`) is refused before anything is
+written, `--dry-run` included, where the target's codec settings cannot be read or
+`enable_quantized_codec` cannot be on; where it can, the table loses a general codec after
+`Quantized` if `allow_suspicious_codecs` cannot be on
+([gated settings](../architecture/clickhouse.md#gated-clickhouse-settings)). The insert runs with
 `optimize_on_insert = 0`, so every dumped row lands, duplicates of a
 `ReplacingMergeTree` key included, and the table collapses them at its own merges.
 Each table prints `… attaching <table>` before its attach and `✓` after it: if a run

@@ -10,7 +10,12 @@ from uuid import UUID
 
 from server.core.ch_names import qualify, unqualify
 from server.core.repo_base import _CHClient, _default_client
-from server.core.schema.vector_codec_ddl import statement_settings
+from server.core.schema.vector_codec_ddl import (
+    CODEC_SETTING,
+    CODEC_SETTINGS_SQL,
+    EXPERIMENTAL_CODEC_SETTING,
+    CodecSettings,
+)
 from server.insights.domain.provider_prepared_ddl import PreparedDDL, prepared_ddl
 from server.insights.domain.provider_rebuild import PUBLISHABLE_ENGINES
 from server.insights.store.provider_staging import (
@@ -98,26 +103,22 @@ async def _ddl_plan(
 
 
 async def _create_candidate(plan: PreparedDDL, client: _CHClient) -> None:
+    """Create the candidate; a coded one as this server takes it (`CodecSettings`):
+    refused before its CREATE where the codec cannot be on (an owned stale
+    candidate is already dropped by then), its general codec after Quantized
+    dropped where `allow_suspicious_codecs` cannot be on."""
     if not plan.padded_columns:
         await client.execute(plan.sql)
         return
-    available = await client.query_all(
-        "SELECT name FROM system.settings WHERE name IN "
-        "('enable_quantized_codec', 'allow_experimental_codecs')"
-    )
-    names = {row["name"] for row in available}
-    setting = (
-        "enable_quantized_codec"
-        if "enable_quantized_codec" in names
-        else "allow_experimental_codecs"
-    )
-    if setting not in names:
+    codec = CodecSettings.from_rows(await client.query_all(CODEC_SETTINGS_SQL))
+    # 26.8+ gates the codec with enable_quantized_codec, 26.7 with allow_experimental_codecs.
+    gate = CODEC_SETTING if codec.listed(CODEC_SETTING) else EXPERIMENTAL_CODEC_SETTING
+    if not codec.usable(gate):
         raise ValueError("Quantized codec setting is unavailable")
-    # A preserved general-codec chain needs this on self-hosted ClickHouse.
-    options = {setting: 1}
-    if statement_settings(plan.sql).get("allow_suspicious_codecs"):
-        options["allow_suspicious_codecs"] = 1
-    await client.execute(plan.sql, settings=options)
+    sql, options = codec.statement(plan.sql)
+    if codec.settable(gate):
+        options[gate] = 1
+    await client.execute(sql, settings=options)
 
 
 async def prepare_live_table(
