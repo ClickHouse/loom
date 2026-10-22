@@ -246,7 +246,9 @@ it would drop holds a change the live table lacks, also when both tables are on 
 target layout (a `--require-patch-free` rebuild of a table already on it). After a swap, a change only the
 rollback copy holds names `--rollback --yes`; a change the live table holds names no
 rollback (see after the swap below). After a rollback, a change only the new-layout copy
-holds, or a key that differs at one version, keeps it. When the checks cannot run (a failed drain or sync, a read past the
+holds, a key that differs at one version, or a mutation on the copy since its creation
+(an unfinished `ALTER UPDATE` does not show under `FINAL`, and the rollback did not carry
+it back), keeps it. When the checks cannot run (a failed drain or sync, a read past the
 timeout, or a read on a replica that has not caught up), it also refuses and keeps the
 copy: fix the grant, connect directly to one replica, or raise `--statement-timeout-s`,
 and rerun `--drop-pre-rebuild`. The erasure saga does not

@@ -1318,8 +1318,9 @@ class VectorRebuild:
         """Why the new-layout copy a rollback left may hold a change the live table lacks,
         or ''. A key both hold at one version with other content is either a same-version
         change made in the new table, which the rollback did not copy back, or a mutation
-        on the old table that applied once the rollback started its merges. Raises when
-        the checks cannot run."""
+        on the old table that applied once the rollback started its merges. A mutation on
+        the copy counts even when FINAL reads do not show it yet. Raises when the checks
+        cannot run."""
         engine, version, key = self.drain_after_swap()
         self.sync_rollback_copy(engine)
         _, new_ahead, same = self.differences(version, key, self.t, self.pre)
@@ -1331,6 +1332,11 @@ class VectorRebuild:
                 f"{same}: a same-version change in the new-layout copy, or a mutation the "
                 f"rollback carried back that has since applied to loom.{self.t}, which "
                 "another --rollback would undo"
+            )
+        if n := self.mutations_since(self.pre, self.metadata_time(self.pre)):
+            why.append(
+                f"{n} mutation(s) on loom.{self.pre} since the copy, which the rollback "
+                "did not carry back"
             )
         return "; ".join(why)
 

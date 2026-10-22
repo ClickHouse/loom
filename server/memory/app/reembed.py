@@ -49,7 +49,7 @@ _TABLES: dict[str, dict[str, Any]] = {
         "version": None,
     },
 }
-# The tables a re-embed covers.
+# read by scripts/ops/vector_codec_rebuild.py to name the re-embed in its width refusal
 REEMBED_TABLES = tuple(_TABLES)
 
 _MATERIALIZED = "MATERIALIZED"

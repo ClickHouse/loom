@@ -249,6 +249,25 @@ def test_rollback_and_drop_need_yes_and_check_their_result() -> None:
     assert "memory_chunks_pre_rebuild" not in ch.t
 
 
+def test_a_mutation_on_the_copy_after_a_rollback_keeps_it(capsys: Any) -> None:
+    """An ALTER UPDATE on the new table after the swap, such as an erasure tombstone, is
+    not copied back by --rollback and does not show under FINAL until it finishes, so
+    --drop-pre-rebuild counts the copy's mutations and keeps it."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    ch = _CH(
+        memory_chunks={"ddl": coded, "rows": 5, "uuid": "a"}, memory_chunks_pre_rebuild=_live()
+    )
+    assert _run(ch, "--rollback", "--yes") == tr.OK
+    capsys.readouterr()
+    ch.mutations = 1
+    ch.cons = (0, 0, 0)
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+    assert "memory_chunks_pre_rebuild" in ch.t
+    assert (
+        "1 mutation(s) on loom.memory_chunks_pre_rebuild since the copy" in capsys.readouterr().out
+    )
+
+
 def test_an_existing_rollback_copy_refuses_a_new_rebuild(capsys: Any) -> None:
     ch = _CH(memory_chunks=_live(), memory_chunks_pre_rebuild=_live())
     assert _run(ch, "--yes") == tr.REFUSED and _writes(ch) == []
@@ -633,7 +652,8 @@ def test_a_mutation_rolled_back_shows_as_a_same_version_difference_in_the_drop(
     assert _run(ch, "--rollback", "--yes") == tr.OK
     assert "SYSTEM START MERGES loom.memory_chunks" in ch.commands
     capsys.readouterr()
-    ch.cons = (1, 0, 0)  # the tombstone applied to the restored table
+    ch.mutations = 0  # the tombstone finished and applied to the restored table
+    ch.cons = (1, 0, 0)
     assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
     assert "memory_chunks_pre_rebuild" in ch.t
     out = capsys.readouterr().out
