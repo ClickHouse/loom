@@ -489,14 +489,16 @@ because its merges are stopped: drop that copy first
 
    Check the list against `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`), which
    names every coded table and its vector columns, before you run it. The
-   `--gate-fetch-multiplier` values are the defaults the search legs serve; where the
-   deployment sets `LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER`,
-   `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER`,
-   `LOOM_CODE_SEARCH_CARDS_FETCH_MULTIPLIER` or `LOOM_TRACKER_EMBED_FETCH_MULTIPLIER`,
-   pass that value on the matching line. Where `allow_suspicious_codecs` cannot be on, the
-   tool refuses `--chain`. Skip the `entity_vectors` line and it stays as it is, plain or
-   coded without the chain; or, where it is plain, rebuild it without `--chain` and keep
-   quantization without the additional `LZ4` compression.
+   `--gate-fetch-multiplier` values are the defaults the search legs serve. Where the
+   deployment changes one, in its environment or as a live override, pass that value on
+   its line: `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER` on `memory_embeddings`,
+   `LOOM_CODE_SEARCH_CARDS_FETCH_MULTIPLIER` on `code_summaries`,
+   `LOOM_TRACKER_EMBED_FETCH_MULTIPLIER` on `qa_item_embeddings`, and
+   `LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER` on the rest. Where
+   `allow_suspicious_codecs` cannot be on, the tool refuses `--chain`. Skip the
+   `entity_vectors` line and it stays as it is, plain or coded without the chain; or,
+   where it is plain, rebuild it without `--chain` and keep quantization without the
+   additional `LZ4` compression.
 
    A table with no real vectors yet (no rows, or only the zero placeholder vectors of rows
    without an embedding) cannot pass the rebuild's recall gate, and the dry run does not
