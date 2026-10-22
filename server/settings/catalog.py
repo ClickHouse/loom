@@ -5232,7 +5232,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.search": 200,
     "memory.search_trace": 200,
     "memory.search_trace_log": 200,
-    # Version inserts + conflict/dedup reads + audit, outbox and graph-insert waits (graph concurrent).
+    # Version inserts + conflict/dedup reads + audit, outbox and graph-insert waits
+    # (the graph legs run concurrently).
     "memory.set": 200,
     # LLM extraction (~7K-token prompt) + bulk_set (~200 ms) + ~4 batched-insert waits.
     "memory.set_from_messages": 2700,
