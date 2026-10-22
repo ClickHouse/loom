@@ -213,8 +213,9 @@ compact it in an announced window. Bulk passes compact on their own after
 **Changing a table's sort key, partition key or vector codec** is a rebuild, never an
 `ALTER`: `scripts/ops/table_rebuild.py` and `scripts/ops/vector_codec_rebuild.py` copy
 into a twin table, check it, swap with `EXCHANGE TABLES` and keep the old table for
-`--rollback`. Both print their plan and change nothing without `--yes`; the procedure is
-in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-key).
+`--rollback`. Both print their plan and change nothing without `--yes`. The sort-key and
+partition-key procedure is in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-key),
+the vector-codec one in [recommended settings](deployment.md#recommended-clickhouse-settings).
 
 `vector_codec_rebuild.py` needs a maintenance window with every writer and erasure
 stopped and all in-flight writes drained. It never repairs the live table. Before
