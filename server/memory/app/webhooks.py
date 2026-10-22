@@ -189,7 +189,8 @@ async def announce(
     request_id: str | None = None,
 ) -> bool:
     """Leave one outbox row per (event, change) and webhook that takes the event,
-    in one insert; True when it sent any outbox rows, even if the insert then failed. A
+    in one insert; True when a webhook took any change (outbox rows were built), whether or
+    not their insert landed. A
     change is a mapping with the memory's org, namespace, agent, user_id, session_id,
     memory_key, memory_id and version (a memory version row is one). The event's actor
     and request id come from the call, never from the row: a version row's `actor` is

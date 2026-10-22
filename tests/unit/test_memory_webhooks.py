@@ -386,7 +386,7 @@ async def test_a_failed_outbox_insert_never_fails_the_write(
         raise RuntimeError("ClickHouse is away")
 
     monkeypatch.setattr(store, "insert_outbox", broken)
-    # the rows were sent and waited on before the insert failed
+    # a webhook took the change, so the call waited on its insert
     assert await app.announce([("memory.written", _change())]) is True
 
 

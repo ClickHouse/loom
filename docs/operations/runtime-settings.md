@@ -3,9 +3,10 @@
 Every setting is an environment variable `LOOM_<FIELD>` read at startup, and can also go
 in the YAML settings file ([configuration reference](../reference/configuration.md)). A
 setting the reference marks **live** also takes a deployment-wide override while Loom
-runs: retrieval and ranking (`memory_search_*`), answer synthesis (`memory_ask_*`),
-extraction, context and knowledge tuning. Every other setting is read once at startup and
-changes with a restart. The similarity gates that calibration replaces
+runs (among them retrieval and ranking, `memory_search_*`; answer synthesis,
+`memory_ask_*`; extraction, context and knowledge tuning; and ClickHouse insert batching,
+`ch_batched_insert*`). Every other setting is read once at startup and changes with a
+restart. The similarity gates that calibration replaces
 (`memory_search_min_similarity`, `memory_search_abstain_threshold`,
 `memory_search_hyde_fallback_threshold`, `memory_search_query_rewrite_threshold`) are not
 live: with `LOOM_ADAPTIVE_THRESHOLDS` on they apply only when there is no calibration.
