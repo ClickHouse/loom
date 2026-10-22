@@ -30,14 +30,14 @@ The twin's vector columns are `Array(BFloat16) CODEC(Quantized(<method>, dim, 0)
 `--gate-fetch-multiplier`, as the search legs do.
 
 The dimension comes from the live table: a coded column states it, a
-plain column's vectors show it (the most common length among its real,
+plain column's vectors show it (the most common length in a sample of real,
 not all-zero, vectors), and a column with none takes `LOOM_EMBEDDING_DIM`.
 Every named column must agree.
 
 Run it in a maintenance window with every writer and erasure stopped and
 in-flight writes drained: it fails closed and never repairs the live table. Its width refusal, its gates and
-its pre-swap checks are in docs/operations/maintenance.md ("Changing a table's
-sort key, partition key or vector codec").
+its pre-swap checks are in
+docs/operations/maintenance.md#compaction-and-optimize.
 
 `--require-patch-free`: the twin-and-EXCHANGE also sheds the patch parts of
 past lightweight UPDATEs (`OPTIMIZE FINAL` / `APPLY PATCHES` do not). The flag
@@ -142,6 +142,7 @@ def key_literal(v: Any) -> str:
 
 
 REPAIR_BATCH = 500  # keys per repair INSERT: a literal list the statement carries
+DIM_SAMPLE_ROWS = 100_000  # Bound the real vectors used to infer the target width.
 
 
 def patch_parts_sql(name: str) -> str:
@@ -152,13 +153,12 @@ def patch_parts_sql(name: str) -> str:
     )
 
 
-def patch_part_names_sql(name: str) -> str:
-    """Names of the active patch parts of one schema table: the pre-swap check fails on
-    a name that was not there before the copy, since patch parts merge with each other
-    and a count can stay level while a new UPDATE lands. Pure."""
+def patch_blocks_sql(name: str) -> str:
+    """Read patch partitions' highest blocks; merging parts does not raise them."""
     return (
-        "SELECT name FROM system.parts WHERE database = currentDatabase() "
-        f"AND table = '{name}' AND active AND startsWith(name, 'patch')"
+        "SELECT partition_id, max(max_block_number) FROM system.parts "
+        f"WHERE database = currentDatabase() AND table = '{name}' AND active "
+        "AND startsWith(name, 'patch') GROUP BY partition_id"
     )
 
 
@@ -301,6 +301,31 @@ def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
     )
 
 
+def dim_sql(table: str, column: str, fin: str) -> str:
+    """Infer width from sampled real vectors, ignoring old zero placeholders."""
+    return (
+        f"SELECT topK(1)(w) FROM (SELECT length({column}) AS w FROM loom.{table}{fin} "
+        f"WHERE {real_vector(column)} LIMIT {DIM_SAMPLE_ROWS})"
+    )
+
+
+def consistency_sql(src: str, twin: str, fin: str, version: str | None, key: list[str]) -> str:
+    """Compare versions or per-key counts, separating absent keys from mismatches.
+    join_use_nulls=0 supplies default values for the missing side."""
+    ident = ", ".join(key)
+    if version:
+        vsel, group, vcmp = f", {version}", "", f"s.{version} != t.{version}"
+    else:
+        vsel, group, vcmp = ", count() AS n", f" GROUP BY {ident}", "s.n != t.n"
+    return (
+        f"SELECT countIf(s.__present = 1 AND t.__present = 1 AND {vcmp}) AS mismatched, "
+        "countIf(t.__present = 0) AS source_only, countIf(s.__present = 0) AS twin_only "
+        f"FROM (SELECT {ident}{vsel}, 1 AS __present FROM loom.{src}{fin}{group}) AS s "
+        f"FULL OUTER JOIN (SELECT {ident}{vsel}, 1 AS __present FROM loom.{twin}{fin}{group}) AS t "
+        f"USING ({ident})"
+    )
+
+
 def twin_only_failure(n: int) -> str:
     """The gate's message for keys only the twin holds. Pure."""
     return (
@@ -427,11 +452,7 @@ class VectorRebuild:
         for c in self.cols:
             d = vector_dim(ddl, c)
             if d is None:
-                # real vectors only: a run of old zero placeholders never sets the target
-                seen = self.q(
-                    f"SELECT topK(1)(length({c})) FROM loom.{name}{fin} WHERE {real_vector(c)}",
-                    max_execution_time=self.a.statement_timeout_s,
-                )
+                seen = self.q(dim_sql(name, c, fin), max_execution_time=self.a.statement_timeout_s)
                 d = int(seen[0][0][0]) if seen and seen[0][0] else int(settings.embedding_dim)
             dims.add(d)
         if len(dims) != 1:
@@ -682,33 +703,18 @@ class VectorRebuild:
                 log("monitor err", str(e)[:120])
 
     def consistent(self, version: str | None, key: list[str]) -> tuple[int, int, int]:
-        """(mismatched, source_only, twin_only) keys. Without a version column a key can
-        hold several rows (a re-ingest adds rows under the same key), so a key is
-        mismatched when its row count differs."""
-        ident, fin = ", ".join(key), self.fin
-        if version:
-            vsel, group = f", {version}", ""
-            vcmp = f"s.{version} != t.{version}"
-            vnull_s = f"s.{version} = 0 OR s.{version} IS NULL"
-            vnull_t = f"t.{version} = 0 OR t.{version} IS NULL"
-        else:
-            vsel, group = ", count() AS n", f" GROUP BY {ident}"
-            vcmp, vnull_s, vnull_t = "s.n != t.n", "s.__present = 0", "t.__present = 0"
+        """(mismatched, source_only, twin_only) keys of the live table against the twin."""
         row = self.q(
-            f"""
-          SELECT countIf({vcmp}) AS mismatched, countIf({vnull_t}) AS source_only, countIf({vnull_s}) AS twin_only
-          FROM (SELECT {ident}{vsel}, 1 AS __present FROM loom.{self.t}{fin}{group}) AS s
-          FULL OUTER JOIN (SELECT {ident}{vsel}, 1 AS __present FROM loom.{self.twin}{fin}{group}) AS t USING ({ident})
-        """,
+            consistency_sql(self.t, self.twin, self.fin, version, key),
             join_use_nulls=0,
             max_execution_time=self.a.statement_timeout_s,
         )[0]
         return int(row[0]), int(row[1]), int(row[2])
 
-    def patch_names(self) -> set[str]:
-        """The live table's active patch parts, by name."""
-        rows = self.q(patch_part_names_sql(self.t), max_execution_time=self.a.statement_timeout_s)
-        return {str(r[0]) for r in rows}
+    def patch_blocks(self) -> dict[str, int]:
+        """The highest block number of the live table's active patch parts, per partition."""
+        rows = self.q(patch_blocks_sql(self.t), max_execution_time=self.a.statement_timeout_s)
+        return {str(r[0]): int(r[1]) for r in rows}
 
     def recall(self, ddl: str) -> list[float]:
         """Distance recall per probe: exact on the source vs the twin read as the legs read it."""
@@ -755,7 +761,7 @@ class VectorRebuild:
         if self.aborted():
             raise Aborted("abort file present before the copy; the twin is left")
         # a lightweight UPDATE keeps a key and its version, so only its patch part shows it
-        live_patches = self.patch_names()
+        live_patches = self.patch_blocks()
         if not reused:
             stop = threading.Event()
             threading.Thread(target=self.monitor, args=(stop,), daemon=True).start()
@@ -838,8 +844,10 @@ class VectorRebuild:
                 "twin no longer matches it; no swap. Stop writes and rerun with --restart"
             )
             return GATE_FAILED
-        new_patches = self.patch_names() - live_patches
-        log("live patch parts new since the copy:", sorted(new_patches))
+        new_patches = sorted(
+            p for p, block in self.patch_blocks().items() if block > live_patches.get(p, -1)
+        )
+        log("live patch partitions with a block new since the copy:", new_patches)
         if new_patches:
             log(
                 "GATE FAILED: a lightweight UPDATE landed on the source during the run (a "

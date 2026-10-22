@@ -204,7 +204,7 @@ def test_a_lightweight_update_during_recall_stops_the_swap(
         ch.command(
             f"UPDATE loom.{table} SET embedding = [2., 2., 2., 2., 2., 2., 2., 2.] WHERE id = 1"
         )
-        assert self.patch_names()
+        assert self.patch_blocks()
         return [1.0]
 
     try:
