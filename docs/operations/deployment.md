@@ -402,10 +402,12 @@ user with SQL.
 
 ### Recommended ClickHouse settings
 
-Loom runs without these, but vector search is faster with them on. Make sure Loom's
-ClickHouse user can have both on before the first `loom migrate` or the first server start
-(the server applies its migrations at boot): a fresh install codes its vector columns only
-if the codec can be on at that moment.
+Loom runs without these. With them on, vector reads scan compact codes first and rescore
+only the best rows at full precision, and `entity_vectors` stays about four times smaller
+than it would be coded without its chain. Make sure Loom's ClickHouse user can have both on
+before the first `loom migrate` or the first server start (a server with boot migrations on
+applies them when it starts): a fresh install codes its vector columns only if the codec
+can be on at that moment.
 
 | Setting                   | Value | What it gives Loom                                                                                                                          |
 | ------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -443,13 +445,14 @@ the server does not change existing tables:
    unavailable keeps that answer until it restarts.
 2. Rebuild each coded table with `scripts/ops/vector_codec_rebuild.py`. The tool is not in
    the image: run it from a clone of the repository at the deployed version, after
-   `uv sync --locked`, with `LOOM_CH_*` pointing at the deployment's ClickHouse. `mode`
-   holds the action: run the block with `mode=--dry-run` to see each plan, then again with
-   `mode=--yes` to rebuild:
+   `uv sync --locked`, with `LOOM_CH_*` pointing at the deployment's ClickHouse. Run the
+   block in bash. `mode` holds the action: run the block with `mode=--dry-run` to see each
+   plan, then again with `mode=--yes` to rebuild. Set `cluster` to your cluster's name, or to
+   `''` to check this server only:
 
    ```bash
-   mode=--dry-run   # then mode=--yes
-   cluster=default  # your cluster's name; '' checks this server only
+   mode=--dry-run
+   cluster=default
    rebuild() { uv run python -P -m scripts.ops.vector_codec_rebuild "$@" --cluster "$cluster" $mode; }
    rebuild --table memory_embeddings --columns embedding,memory_key_embedding
    rebuild --table memory_chunks --columns embedding
@@ -466,9 +469,9 @@ the server does not change existing tables:
    ```
 
    These are the tables in `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`). Where
-   `allow_suspicious_codecs` cannot be on, the tool refuses `--chain`: leave `entity_vectors`
-   plain (skip its line), or rebuild it without `--chain` and accept a column about four
-   times larger.
+   `allow_suspicious_codecs` cannot be on, the tool refuses `--chain`. Skip the
+   `entity_vectors` line and it stays as it is, plain or coded without the chain; or, where
+   it is plain, rebuild it without `--chain` and accept a column about four times larger.
 
    A table with no full-length vectors yet (no rows, or only placeholder vectors from failed
    embeds) cannot pass the rebuild's recall gate, and the dry run does not show that. The
@@ -482,10 +485,10 @@ the server does not change existing tables:
 3. Once search looks right, drop the old copies: run the lines of the tables you rebuilt
    again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its old
    copy as `loom.<table>_pre_rebuild`, a full second copy that erasure does not reach. To go
-   back instead, run that table's line with `mode="--rollback --yes"`. Use the table's own
-   line in both cases: the tool checks the layout it built, so `entity_vectors` needs its
-   `--chain LZ4`
-   ([table rebuilds](../development/migrations.md#changing-a-sort-key-or-a-partition-key)).
+   back instead, run that table's line with `mode="--rollback --yes"`; the coded copy then
+   sits in `loom.<table>_pre_rebuild`, so drop it the same way. Use the table's own line in
+   every case: the tool checks the layout it built, so `entity_vectors` needs its
+   `--chain LZ4` ([vector storage](../architecture/clickhouse.md#vector-storage)).
 
 How Loom reads these settings is in
 [gated settings](../architecture/clickhouse.md#gated-clickhouse-settings), and how Loom uses
