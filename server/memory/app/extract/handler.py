@@ -515,6 +515,9 @@ async def handle_memory_set_from_messages(
     setting_on = _settings.memory_extract_agent_learnings
     learnings_on = setting_on and input.agent_learnings is not False
     ignored = bool(input.agent_learnings) and not setting_on
+    if ignored:
+        # Dropped, so a deferred replay does not carry the ask either.
+        input = input.model_copy(update={"agent_learnings": None})
     if rule_agent is None:
         rule_agent = request_rule_agent(input.agent)
     out = await _set_from_messages(input, rule_agent, learnings_on)

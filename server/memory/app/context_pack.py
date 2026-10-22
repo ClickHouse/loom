@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.naming import SENTINEL as _WM_SENTINEL
+from server.core.naming import named
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_context import ContextBlock, ContextPackInput, ContextPackOutput
 from server.memory.api.models_lifecycle import MemoryStackInput
@@ -41,20 +42,9 @@ from server.memory.domain.context_layout import (
     one_item,
 )
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
+from server.memory.domain.memory_types import excluded_from_unfiltered_search
 
 log = logging.getLogger(__name__)
-
-
-def _recall_rows(pinned: list[Any], recent: list[Any]) -> list[Any]:
-    """Startup recall's candidates, pins first, without trajectory transcript rows: in a
-    coding namespace the most recent rows are the agent's own step echoes."""
-    from server.memory.domain.transcript_rows import is_transcript_row
-
-    return [
-        r
-        for r in [*pinned, *recent]
-        if not is_transcript_row(getattr(r, "tags", None), getattr(r, "source_trace", ""))
-    ]
 
 
 def _without_transcript_rows(hits: list[Any]) -> list[Any]:
@@ -119,6 +109,38 @@ async def _advisory_health(
                 "codes": [f.code for f in health.findings],
             },
         )
+
+
+async def _pack_namespace_guide(st: _PackState) -> None:
+    """The namespace's guide (`namespace.guide_get`): what the namespace holds and
+    how to use it, cut to the section budget, under a line naming its revision,
+    writer and summary. Nothing when the namespace has none."""
+    from server.identity.app.namespace_guide import current_guide
+    from server.identity.app.request_scope import request_narrowed
+
+    input = st.input
+    if not st.wanted("namespace_guide"):
+        return
+    guide = await current_guide(input.org, input.namespace)
+    if not guide.found:
+        return
+    # A token narrowed to one user is not told the writer; say so rather than `unknown`.
+    writer = " by=hidden" if request_narrowed() else author_label([guide.updated_by])
+    head = f"- [guide/{guide.revision}{writer}] {guide.summary}"
+    # One item: every line of the guide indented under its head, so a line of the
+    # stored text cannot pass as an item with its own by=.
+    body = one_item(f"{head}\n{guide.content}")
+    budget = _section_budget(input, "namespace_guide", st.default_section_tokens["namespace_guide"])
+    # Measured as `put` stores it (escaped), which is what its trim cuts.
+    if len(escape_data(body)) > budget:
+        body = one_item(f"{head} (full text: namespace.guide_get)\n{guide.content}")
+    st.put(
+        "namespace_guide",
+        body,
+        citations=[f"guide:{guide.revision}"],
+        source_count=1,
+        extra_meta={"revision": guide.revision},
+    )
 
 
 async def _advisory_mentor(
@@ -324,37 +346,37 @@ async def _pack_startup_recall(st: _PackState) -> None:
                 return v
         return _json.dumps(v, default=str)
 
+    # The identity SENTINEL ("-") means unset, as on the query path; "*" drops the axis.
     ident = memory_repo.Identity(
         org=input.org,
         namespace=input.namespace,
         agent="*",
-        user_id=input.user_id,
-        session_id=input.session_id,
+        user_id=named(input.user_id) or "*",
+        session_id=named(input.session_id) or "*",
     )
     k = input.top_k
+    # Transcripts leave in the statement, before the limit: every session's tool calls
+    # would otherwise fill the window. Across sessions the recall also leaves out what an
+    # unfiltered memory.search does (session replays, profiles, reflections).
+    shape: dict[str, Any] = {
+        "exclude_high_sensitivity": True,
+        "exclude_transcripts": True,
+        "exclude_memory_types": (
+            excluded_from_unfiltered_search() if ident.session_id == "*" else []
+        ),
+        "order_by": "created_at_desc",
+        "scope": request_scope(),
+    }
     try:
-        pinned = await memory_repo.list_by_namespace(
-            ident,
-            exclude_high_sensitivity=True,
-            pinned_only=True,
-            order_by="created_at_desc",
-            limit=k,
-            scope=request_scope(),
-        )
-        recent = await memory_repo.list_by_namespace(
-            ident,
-            exclude_high_sensitivity=True,
-            order_by="created_at_desc",
-            limit=k * 2,
-            scope=request_scope(),
-        )
+        pinned = await memory_repo.list_by_namespace(ident, pinned_only=True, limit=k, **shape)
+        recent = await memory_repo.list_by_namespace(ident, limit=k * 2, **shape)
     except Exception as e:  # noqa: BLE001 — recall is best-effort
         log.warning("context.pack startup recall failed: %s", e)
         return
 
     seen: set[str] = set()
     rows: list[Any] = []
-    for r in _recall_rows(pinned, recent):  # pins first, then recency; dedup by key
+    for r in [*pinned, *recent]:  # pins first, then recency; dedup by key
         if r.memory_key in seen or r.status not in ("active", "conflicted"):
             continue
         seen.add(r.memory_key)
@@ -527,8 +549,8 @@ async def _pack_memories(st: _PackState) -> None:
         org=input.org,
         namespace=input.namespace,
         agent="*",
-        user_id=(input.user_id if input.user_id and input.user_id != "-" else None),
-        session_id=(input.session_id if input.session_id and input.session_id != "-" else None),
+        user_id=named(input.user_id),
+        session_id=named(input.session_id),
         read_scope=input.read_scope,
         query=input.query,
         top_k=input.top_k,
@@ -831,6 +853,7 @@ async def _gather_sections(st: _PackState) -> None:
         _pack_working_memory(st),
         _pack_profile(st),
         _advisory_health(input, st.wanted, st.put),
+        _pack_namespace_guide(st),
         _advisory_mentor(input, st.wanted, st.put),
         _pack_memory_stack(st),
         _pack_memories(st),

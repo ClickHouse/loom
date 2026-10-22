@@ -168,16 +168,6 @@ settings:
 
   # --- vector search ---
 
-  # HNSW candidate list size (`ef_search`) for the helper legs, emitted via
-  # vector_search_settings(); tracks ClickHouse's default. The main leg scales its own
-  # value with top_k. [restart]
-  # vector_search_ef_search: 256
-
-  # Post-filter over-fetch for a `vector_similarity` (HNSW) index: the index returns
-  # top-N before the tenant predicate drops rows. Sent on uncoded vector reads; coded
-  # reads use `vector_search_quantized_fetch_multiplier`. [restart]
-  # vector_search_index_fetch_multiplier: 10.0
-
   # Send `vector_search_use_quantized_codes = 1` on vector-ranked reads whose column has
   # a `Quantized(...)` codec and whose table has no patch parts: a codes-first scan plus
   # full-precision rescore. A replica that rejects the setting (code 115) drops the
@@ -2124,6 +2114,11 @@ settings:
   # polled in system.mutations); past it the saga fails naming the mutation. [restart]
   # erasure_mutation_wait_s: 3600
 
+  # Bytes of conversation text after which `erasure.export` stops its `conversations`
+  # section, marked `truncated`; a page holds up to this plus the turn that crosses it.
+  # [live]
+  # erasure_export_conversation_max_bytes: 67108864
+
   # --- external erasure backends ---
 
   # The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse
@@ -2331,7 +2326,7 @@ settings:
   # changes no stored row. At most 2048, the most an embedding row stores
   # (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. A saved-message
   # listing reads this many characters and a fixed margin past them, and checks them all
-  # for a credential before it cuts the excerpt. [live]
+  # for a high shape before it cuts the excerpt. [live]
   # conversation_search_excerpt_chars: 240
 
   # LLM-title untitled threads in namespaces with conversation_logging_enabled (the

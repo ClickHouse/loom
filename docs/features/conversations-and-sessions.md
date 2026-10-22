@@ -47,15 +47,15 @@ up front.
 - **The embed is fail-open.** A failed embed still stores the turn, with the error
   recorded on its embedding row. Nothing retries it: the turn stays out of vector
   search and is found only by the substring fallback.
-- **A turn that holds a credential is not embedded.** A turn whose text reads as a
-  credential (a pasted API key, an access key id, a `password=` assignment) is stored as
-  written but gets no embedding row, and its text is never sent to the embedder.
+- **A turn that reads as high is not embedded.** A turn whose text holds a high shape (a
+  pasted API key, a `password=` assignment, a card number, an SSN or a stated PIN) is
+  stored as written but gets no embedding row, and its text is never sent to the embedder.
   `conversation.search` never returns it, by vector or by the substring fallback, and
   `conversation.threads` lists such a last turn with an empty excerpt (and a title that
-  reads as a credential as empty); it checks the 240 characters its excerpt shows and
+  reads as high as empty); it checks the 240 characters its excerpt shows and
   1,024 past them. The titler never sends such a turn to its model. A thread whose
-  first eight user and assistant turns all read as a credential, or whose generated
-  title reads as one, stays untitled, marked `title_refused` in its metadata so the
+  first eight user and assistant turns all read as high, or whose generated
+  title reads as high, stays untitled, marked `title_refused` in its metadata so the
   titler does not ask again; one with fewer such turns waits, unmarked, for a plain
   turn. New `metadata` from `conversation.update` or `conversation.create` replaces
   the mark, and the titler then asks once more and marks the thread again.
@@ -66,7 +66,9 @@ up front.
 
 A chat client can let a user save one message for later search without recording the
 namespace's transcripts. `conversation.save_message` (writer) is that opt-in, and
-`conversation.search_saved_messages` (viewer) is its search.
+`conversation.search_saved_messages` (viewer) is its search. A saved message is a
+conversation row, never a document in the user's personal collection
+([sharing](../architecture/sharing.md#saved-messages)).
 
 Clients save messages only when every replica preserves saved state during
 compaction. See the
@@ -91,17 +93,19 @@ They differ from `conversation.append` and `conversation.search` in six ways:
   corpus is one user's saved messages, so its statistics are computed per query.
 - **A token pinned to one user works here.** An integration that serves many users through
   one credential mints it with `--read-scope own_user` (and `--read-user-id` for one
-  user). Both saved-message ops then act as that user only: a body naming another
-  `user_id` is refused with 403, and every statement carries the token's user. The
-  conversation tables have no `session_id`, so an `own_session` token is refused.
-  `conversation.search` and `conversation.get` stay refused under such a token, because
-  a thread mixes users and has no user axis to bound.
+  user). The saved-message ops then act as that user only: a body naming another
+  `user_id` is refused with 403, and every statement carries the token's user. An
+  end-user token calls these ops with `namespace: "@me"`
+  ([sharing](../architecture/sharing.md#saved-messages)). The conversation tables have no
+  `session_id`, so an `own_session` token is refused.
+  Every other conversation op (`append`, `get`, `list`, `search`, `threads`, ...) stays
+  refused under such a token, because a thread mixes users and has no user axis to bound.
 - **Ownership, deletion and role are checked on every save.** Saving a message stored
   under another `user_id` answers `indexed: false, reason: "owner_mismatch"`. A tombstoned
   message answers `reason: "deleted"`, and a stored system or tool turn, which is never
-  embedded, answers `reason: "unsupported_role"`. A message whose text reads as a
-  credential is never embedded either: it answers `reason: "reads_as_credential"`, and a
-  new one is not stored. One an earlier build saved is never a vector or keyword hit of
+  embedded, answers `reason: "unsupported_role"`. A message whose text reads as high is
+  never embedded either: it answers `reason: "high_sensitivity"`, and a new one is not
+  stored. One an earlier build saved is never a vector or keyword hit of
   `conversation.search_saved_messages`, and `conversation.list_saved_messages` lists it
   with an empty excerpt (it checks the `conversation_search_excerpt_chars` characters it
   shows and 1,024 past them, as `conversation.threads` does).
@@ -181,16 +185,16 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   separate allowance; one that doesn't fit what is left of it stays live, and one a failed
   run left (its turns all still live and in the window, at the first one's `ts`) is
   replaced unread. A summary further into the window takes prompt budget like any turn and
-  is replaced with it. A turn that reads as a credential is left out of the window: it
+  is replaced with it. A turn that reads as high is left out of the window: it
   stays live and is never sent to the summarizer, so the summary, placed at the window's
   first turn, can come before it in the thread. A turn saved with
   `conversation.save_message` is never summarised or tombstoned either; it stays verbatim
   between the summary and the recent turns. A summary that cannot be embedded compacts
-  nothing (`reason: "embed-failed"`), and neither does one that reads as a credential
-  anyway (`reason: "summary-reads-as-credential"`), since it is never embedded. Unlike
+  nothing (`reason: "embed-failed"`), and neither does one that reads as high
+  anyway (`reason: "summary-high-sensitivity"`), since it is never embedded. Unlike
   `embed-failed`, that refusal is not worth a retry: the window stays the same while its
   turns are live, so a retry pays for the same summarizer call and most likely gets the
-  same summary. A window that holds only saved turns or turns that read as a credential
+  same summary. A window that holds only saved turns or turns that read as high
   answers `reason: "nothing-to-compact"`.
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
@@ -207,12 +211,15 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   person's or a namespace's data everywhere, use
   [`erasure.request`](./memory/retention-and-erasure.md).
 
-Tombstoned turns are filtered from every read. They are removed from disk only if the
+Tombstoned turns are filtered from every read but `erasure.export`, which returns them
+unless asked with `include_tombstoned: false`. They are removed from disk only if the
 operator set a table TTL (`LOOM_RETENTION_CONVERSATIONS_DAYS`, 0 = keep forever). That
 TTL covers `loom.conversations` only: a turn's embedding row, which keeps up to 2,048
 characters of its text, has no TTL. Once its message has expired, a whole-thread
 delete in its thread passes it to a live copy of the turn or tombstones it; an erasure
 request tombstones it, and removes it only on a `namespace_list` erasure with `purge`.
+`erasure.export` does not return embedding rows, so the excerpt of a turn the TTL
+expired is erased with the subject but is not in their export.
 
 ### Thread titles
 

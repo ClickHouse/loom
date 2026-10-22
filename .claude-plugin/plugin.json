@@ -1,12 +1,12 @@
 {
   "name": "loom-code-skill",
   "version": "1.0.0",
-  "description": "Code search and code intelligence for repositories in a Loom code index: an Agent Skill that finds the function or file with code.* first, then reads only that. Skill only, no hooks.",
+  "description": "Code search and code intelligence for repositories in a Loom code index (the loom-code Agent Skill: code.* first, then read only that), and the loom Agent Skill: how an agent uses Loom. Skills only, no hooks.",
   "author": { "name": "Loom" },
   "homepage": "https://github.com/ClickHouse/loom",
   "repository": "https://github.com/ClickHouse/loom",
   "license": "Apache-2.0",
-  "keywords": ["code-intelligence", "code-search", "mcp", "clickhouse", "agent", "skill"],
-  "displayName": "Loom code skill",
+  "keywords": ["code-intelligence", "code-search", "agent-memory", "mcp", "clickhouse", "agent", "skill"],
+  "displayName": "Loom skills",
   "icon": "./integrations/claude-code-plugin/assets/icon.png"
 }

@@ -174,8 +174,8 @@ def test_legs_put_the_predicates_in_plain_where_after_identity_keys() -> None:
         )
         assert ".hpp" in params["sc_exts"]
     assert (
-        "FINAL" in ch.calls[1][0] and "SETTINGS" in ch.calls[1][0]
-    )  # vector leg keeps FINAL + SETTINGS
+        "FINAL" in ch.calls[1][0] and "ORDER BY distance ASC" in ch.calls[1][0]
+    )  # vector leg keeps FINAL + its bare distance order
 
 
 def test_unset_scope_leaves_the_leg_statements_unchanged() -> None:

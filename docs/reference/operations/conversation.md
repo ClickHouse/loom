@@ -22,7 +22,7 @@ Log one chat turn (role + content) to the active thread.
 | `thread_id` | `str` | required | The thread to append to; it need not have been created first. |
 | `msg_id` | `str` | `''` | optional; server derives a content hash when omitted |
 | `role` | `Literal['user', 'assistant', 'system', 'tool']` | required | Who spoke: `user`, `assistant`, `system` or `tool`. |
-| `content` | `str` | required | The message text, stored verbatim; a user or assistant turn is also embedded for `conversation.search`, unless its text reads as a credential. |
+| `content` | `str` | required | The message text, stored verbatim; a user or assistant turn is also embedded for `conversation.search`, unless its text reads as high. |
 | `reasoning` | `str` | `''` | The model's reasoning for this turn, stored beside `content`; empty = none. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
@@ -58,7 +58,7 @@ Summarize old turns into one embedded system turn and tombstone the originals.
 | `summary_msg_id` | `str` | Id of the synthetic `system` summary message; empty when not compacted. |
 | `tokens_in` | `int` | Prompt tokens the summarizer LLM call used; 0 when no call was made. |
 | `tokens_out` | `int` | Completion tokens of the summary; 0 when no call was made. |
-| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, embed-failed (retry once the embedder answers), summary-reads-as-credential (do not retry: the same window gets the same summary). |
+| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, embed-failed (retry once the embedder answers), summary-high-sensitivity (do not retry: the same window gets the same summary). |
 
 ## `conversation.create`
 
@@ -147,7 +147,7 @@ Enumerate stored conversation threads for an agent / namespace.
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | "*" or "-" reads every agent's turns in the thread (a turn two agents both logged once), for a caller that has only its id, as conversation.search reads "*" and "-"; any other value reads that one agent's. |
 | `thread_id` | `str` | required | The thread to page through, oldest message first. |
-| `run_id` | `str \| None` | `None` | optional filter |
+| `run_id` | `str \| None` | `None` | optional filter; None or "-" = every run |
 | `limit` | `int` | `100` | At most this many messages per page (1-1000). |
 | `cursor` | `str \| None` | `None` | opaque (ts, msg_id) |
 
@@ -200,7 +200,7 @@ Save one chat message a user picked for search, whether or not the namespace rec
 | `conversation_id` | `str` |  |
 | `message_id` | `str` |  |
 | `indexed` | `bool` | True when the turn is saved and has a vector the saved search ranks: a new write, a re-save (finishing what an interrupted save left behind), and a transcript turn that is now flagged saved. |
-| `reason` | `Literal['', 'duplicate', 'owner_mismatch', 'deleted', 'unsupported_role', 'embed_failed', 'reads_as_credential']` | "duplicate": already saved, nothing changed. "owner_mismatch": the stored turn belongs to another user. "deleted": the stored turn was tombstoned. "unsupported_role": the stored turn is a system or tool turn, which is not embedded.… |
+| `reason` | `Literal['', 'duplicate', 'owner_mismatch', 'deleted', 'unsupported_role', 'embed_failed', 'high_sensitivity']` | "duplicate": already saved, nothing changed. "owner_mismatch": the stored turn belongs to another user. "deleted": the stored turn was tombstoned. "unsupported_role": the stored turn is a system or tool turn, which is not embedded.… |
 | `ts` | `datetime` | The stored turn's timestamp; the time of the refusal when one is refused. |
 
 ## `conversation.saved_status`
@@ -235,9 +235,9 @@ Rank conversation messages by embedding similarity to `query`.
 | `agent` | `str` | required | "*" or "-" searches every agent's turns; any other value, that one agent's. |
 | `query` | `str` | required | Text matched against message content, by embedding similarity, or by substring when the embedder is unavailable. |
 | `thread_id` | `str \| None` | `None` | optional: scope to one thread |
-| `run_id` | `str \| None` | `None` | optional: filter by run_id |
+| `run_id` | `str \| None` | `None` | optional: filter by run_id; None or "-" = every run |
 | `role` | `Literal['user', 'assistant', 'system', 'tool'] \| None` | `None` | Filter by speaker; system turns other than compaction summaries, and tool turns, are not embedded, so they match only on the substring fallback. |
-| `user_id` | `str \| None` | `None` | Optional owner filter. |
+| `user_id` | `str \| None` | `None` | Optional owner filter; None or "-" = every user. |
 | `top_k` | `int` | `20` | At most this many hits (1-200). |
 | `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | "all_mine" also reads the caller's own namespaces, up to `memory_search_fanout_max_namespaces`, as knowledge.search does. |
 
@@ -317,8 +317,8 @@ Withdraw one message from a user's saved-message search.
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
-| `conversation_id` | `str` | required | LibreChat's conversation id, as given to conversation.save_message. |
-| `message_id` | `str` | required | LibreChat's message id, as given to conversation.save_message. |
+| `conversation_id` | `str` | required | The client's conversation id, as given to conversation.save_message. |
+| `message_id` | `str` | required | The client's message id, as given to conversation.save_message. |
 | `user_id` | `str` | required | Only this user's saved row is withdrawn. |
 
 | Output field | Type | Meaning |
@@ -343,7 +343,7 @@ Update one thread's title/metadata/run_id.
 | `thread_id` | `str` | required | The thread to update; an unknown thread returns `updated=False`. |
 | `title` | `str \| None` | `None` | Handler raises 400 if all three are absent (no-op signals a caller bug). |
 | `metadata` | `dict[str, Any] \| None` | `None` | New metadata JSON, replacing the old object whole; None leaves it unchanged. |
-| `run_id` | `str \| None` | `None` | The agent run (task scope) the call belongs to; `'-'` for none. |
+| `run_id` | `str \| None` | `None` | The thread's new run; None or "-" leaves it unchanged, "" detaches it from its run. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

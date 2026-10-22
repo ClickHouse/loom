@@ -40,7 +40,11 @@ the row and its prior versions in `loom.memory_versions` stay on disk:
 - `memory.restore` revives a tombstoned key within 14 days (after that it answers
   `expired=true`). It also reverses an automatic supersession.
 - `memory.clear` (admin) tombstones every memory for an agent or user in a namespace;
-  `confirm_subject` must repeat a scope value. Cleared keys revive the same way.
+  `confirm_subject` must repeat the concrete `user_id` or `agent` (neither `'*'` nor `'-'`
+  confirms). `agent="*"` with a `user_id` clears that user's rows under every agent, and
+  `user_id="*"` with an `agent` that agent's rows for every user. A scope that names nobody
+  but `'-'` is refused, as a namespace-wide clear is. Locked rows stay and are counted in
+  `locked_skipped`. Cleared keys revive the same way.
 
 To remove the bytes, use an [erasure](#erasure). To strip one value but keep the row and
 audit trail, use [`memory.redact`](./history-and-provenance.md#scrubbing-history-memoryredact).
@@ -188,12 +192,12 @@ ran during an upgrade; with `--resume` it deletes only their orphan row links
 
 ### Operations
 
-| Op                | Role                         | Does                                                                                                                                                                                       |
-| ----------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `erasure.request` | writer (admin on the target) | Run the saga for one scope. `urgency` `normal` or `urgent`; `purge`; `external`.                                                                                                           |
-| `erasure.status`  | viewer                       | One request's state, current step, failure reason and census. A user's erasure answers only an org admin or platform admin of its org. Not listed in the MCP toolsets.                     |
-| `erasure.list`    | viewer                       | Recent requests (filter by `status`), with `steps_completed_count`, `reversals_count`, `residue_count`.                                                                                    |
-| `erasure.export`  | admin                        | A subject's data as JSON: `memory`, `knowledge`, `agent_events`, `audit_log`, each capped by `section_limit` (default 10,000; `truncated` when over). Includes tombstoned rows by default. |
+| Op                | Role                         | Does                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `erasure.request` | writer (admin on the target) | Run the saga for one scope. `urgency` `normal` or `urgent`; `purge`; `external`.                                                                                                                                                                                                                                                                            |
+| `erasure.status`  | viewer                       | One request's state, current step, failure reason and census. A user's erasure answers only an org admin or platform admin of its org. Not listed in the MCP toolsets.                                                                                                                                                                                      |
+| `erasure.list`    | viewer                       | Recent requests (filter by `status`), with `steps_completed_count`, `reversals_count`, `residue_count`.                                                                                                                                                                                                                                                     |
+| `erasure.export`  | admin                        | A subject's data as JSON: `memory`, `knowledge`, `conversations` (transcript turns and saved messages), `conversation_threads`, `agent_events`, `audit_log`, each capped by `section_limit` (default 10,000; `truncated` when over), and `conversations` also by `LOOM_ERASURE_EXPORT_CONVERSATION_MAX_BYTES` of text. Includes tombstoned rows by default. |
 
 Ledger rows are kept 90 days. Field lists:
 [operations reference](../../reference/operations.md#erasure).

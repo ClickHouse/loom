@@ -382,7 +382,7 @@
  ],
  "loom sensitivity-sweep": [
   "usage: loom sensitivity-sweep [-h] [--org ORG] [--namespace NAMESPACE] [--since-days SINCE_DAYS] [--limit LIMIT] [--show SHOW] [--only-shape {credential,email,phone,other}] [--apply | --dry-run]",
-  "options: -h, --help show this help message and exit --org ORG Limit to one org --namespace NAMESPACE Limit to one namespace --since-days SINCE_DAYS Only rows created in the last N days (0 = all) --limit LIMIT Candidates found per run, labelled with --apply (default 20000) --show SHOW Namespaces to print --only-shape {credential,email,phone,other} Select only rows of this probe shape (repeatable); the phone shape is a ten-digit run and the noisiest, so apply credential + email first --apply write the labels (default: dry run) --dry-run report what --apply would write, write nothing (the default)"
+  "options: -h, --help show this help message and exit --org ORG Limit to one org --namespace NAMESPACE Limit to one namespace --since-days SINCE_DAYS Only rows created in the last N days (0 = all) --limit LIMIT Candidates found per run, labelled with --apply (default 20000) --show SHOW Namespaces to print --only-shape {credential,email,phone,other} Select only rows of this probe shape (repeatable); credential is every row the detector reads as high (a credential, card number, SSN or stated PIN); the phone shape is a ten-digit run and the noisiest, so apply credential + email first --apply write the labels (default: dry run) --dry-run report what --apply would write, write nothing (the default)"
  ],
  "loom integrity-repair": [
   "usage: loom integrity-repair [-h] [--org ORG] [--namespace NAMESPACE] [--limit LIMIT] [--show SHOW] [--apply | --dry-run]",

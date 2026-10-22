@@ -337,7 +337,7 @@ async def fetch_current_state_observation(
     """The LATEST-dated value of one single-valued attribute.
 
     For stated-value-update query shapes the answer is the CURRENT value, not
-    the whole history. ANN-restrict to the query's entities, then keep the
+    the whole history. Vector-restrict to the query's entities, then keep the
     latest-dated row per ``memory_key`` via a window function — read-time and
     non-mutating, so it can't over-delete. Returns at most one
     ``source="observation"`` hit rendered ``current {attr} = {value} (as of
@@ -405,7 +405,7 @@ async def fetch_current_state_observation(
         -- The window function + subquery boundary put this plane permanently
         -- on brute force: the vector-search rewrite needs the LIMIT/sort to sit
         -- directly above the table read. Latest-per-key is the point of the
-        -- plane, so that trade stands; ef_search still has to be right.
+        -- plane, so that trade stands.
         ORDER BY distance ASC
         LIMIT 1
         {vector_search_settings(table="loom.memory_embeddings")}

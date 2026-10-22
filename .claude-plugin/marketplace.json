@@ -33,7 +33,7 @@
     {
       "name": "loom-code-skill",
       "source": "./",
-      "description": "Code search and code intelligence for repositories in a Loom code index: an Agent Skill that finds the function or file with code.* first, then reads only that. Skill only, no hooks.",
+      "description": "Code search and code intelligence for repositories in a Loom code index (the loom-code Agent Skill: code.* first, then read only that), and the loom Agent Skill: how an agent uses Loom. Skills only, no hooks.",
       "license": "Apache-2.0",
       "category": "code-intelligence"
     }

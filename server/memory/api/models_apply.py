@@ -136,8 +136,9 @@ class MemoryApplyInput(_Identity):
     `target` names exactly one of keys | filter | search;
     filter and search need `limit`; `dry_run` is True by default and the
     enforcing call says dry_run=false; `reason` is required and carried
-    where a column exists (lock_reason, expire_reason). Namespace-wide
-    (`agent="*"`) is refused — that is memory.clear's job.
+    where a column exists (lock_reason, expire_reason). Every agent at once
+    (`agent="*"`) is refused: name one agent (memory.clear tombstones a user's
+    rows under every agent).
     """
 
     # Which rows: exactly one of `keys` (up to 500), `filter` (predicates, ANDed)
@@ -166,7 +167,10 @@ class MemoryApplyInput(_Identity):
     @model_validator(mode="after")
     def _shape(self) -> MemoryApplyInput:
         if self.agent == "*":
-            raise ValueError("memory.apply is per agent; a namespace-wide write is memory.clear")
+            raise ValueError(
+                "memory.apply is per agent: name one agent "
+                "(memory.clear tombstones a user's rows under every agent)"
+            )
         if self.target.kind != "keys" and self.limit is None:
             raise ValueError("a filter or search target needs `limit`")
         need = {

@@ -74,7 +74,7 @@ Park a large tool result (log, page, diff, query output) outside the model conte
 
 ## `context.pack`
 
-Bounded startup context pack for this session, once near the start of a substantial task: profile, relevant memories, matching procedures, optionally docs/conversations, in one prompt-sized bundle.
+Startup context pack for this session, once near the start of a substantial task: profile, relevant memories, matching procedures, optionally docs/conversations, in one prompt-sized bundle.
 
 `POST /v1/context.pack` · MCP `loom_context_pack` · role `viewer` · read
 
@@ -83,8 +83,8 @@ Bounded startup context pack for this session, once near the start of a substant
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
-| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
-| `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
+| `user_id` | `str` | `'-'` | The user the pack reads for; "-" reads every user in the memories, profile, procedures and runs sections, and the rows filed under no user in the stack and working-memory sections. |
+| `session_id` | `str` | `'-'` | The session the pack reads for; "-" reads every session in the memories section, and the rows filed under no session in the stack and working-memory sections. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `query` | `str` | `''` | Optional task/question used to select relevant memories and docs. |
 | `situation` | `str` | `''` | Optional situation description used to match procedures. |
@@ -101,7 +101,7 @@ Bounded startup context pack for this session, once near the start of a substant
 | `section_token_budgets` | `dict[str, int]` | *(computed)* | Per-section token budgets that override the mode's defaults, keyed by section name; a section never gets fewer than 80 tokens. |
 | `block_order` | `list[str]` | *(computed)* | Optional caller-specified block ordering. |
 | `session_block` | `str` | `''` | The caller's own session bookmark (`session:<project>`, the plugin's Stop-hook note). |
-| `only_sections` | `list[Literal['working_memory', 'memory_stack', 'profile', 'memories', 'procedures', 'decisions', 'knowledge', 'conversations', 'runs', 'namespace_health', 'mentor']]` | *(computed)* | Restrict the pack to these sections. |
+| `only_sections` | `list[Literal['working_memory', 'memory_stack', 'profile', 'memories', 'procedures', 'decisions', 'knowledge', 'conversations', 'runs', 'namespace_health', 'namespace_guide', 'mentor']]` | *(computed)* | Restrict the pack to these sections. |
 | `include_decisions` | `bool` | `True` | Decision-typed hits leave the memories block and render as their own tagged <decisions> section carrying the structured record (scenario, outcome, realized outcome). |
 
 | Output field | Type | Meaning |

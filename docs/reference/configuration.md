@@ -165,8 +165,6 @@ Ceilings for the reads a caller shapes (code.grep, code.search with a pattern or
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_VECTOR_SEARCH_EF_SEARCH` | `int` | `256` |  | HNSW candidate list size (`ef_search`) for the helper legs, emitted via vector_search_settings(); tracks ClickHouse's default. The main leg scales its own value with top_k. |
-| `LOOM_VECTOR_SEARCH_INDEX_FETCH_MULTIPLIER` | `float` | `10.0` |  | Post-filter over-fetch for a `vector_similarity` (HNSW) index: the index returns top-N before the tenant predicate drops rows. Sent on uncoded vector reads; coded reads use `vector_search_quantized_fetch_multiplier`. |
 | `LOOM_VECTOR_SEARCH_QUANTIZED_CODES` | `bool` | `True` |  | Send `vector_search_use_quantized_codes = 1` on vector-ranked reads whose column has a `Quantized(...)` codec and whose table has no patch parts: a codes-first scan plus full-precision rescore. A replica that rejects the setting (code 115) drops the fragment and retries. |
 | `LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER` | `float` | `3.0` |  | Over-fetch for the codes-first read: stage 1 keeps LIMIT × this by code distance, stage 2 rescores. Only read when the codes setting is sent. |
 | `LOOM_VECTOR_CODES_STATE_PROBE_SECONDS` | `int` | `60` |  | Seconds between re-reads of which vector columns are coded and which coded tables carry patch parts. A write that embeds reads again on its own when the reading is older than a few seconds (codes_state.FRESH_READING_S). |
@@ -711,6 +709,7 @@ Erasure: saga recovery, reclaim, purge and the external backends it cascades to.
 | `LOOM_ERASURE_RECLAIM_MIN_DEAD_FRACTION` | `float` | `0.3` |  | A table is reclaimed once this share of its rows on disk are purged rows. |
 | `LOOM_ERASURE_RECLAIM_MIN_DEAD_BYTES` | `int` | `1073741824` |  | Least bytes the deleted rows must hold before the erasure reclaim compacts a table (default 1 GiB). |
 | `LOOM_ERASURE_MUTATION_WAIT_S` | `int` | `3600` |  | Seconds one erasure step waits for its mutation (submitted with mutations_sync=0, polled in system.mutations); past it the saga fails naming the mutation. |
+| `LOOM_ERASURE_EXPORT_CONVERSATION_MAX_BYTES` | `int` | `67108864` | live | Bytes of conversation text after which `erasure.export` stops its `conversations` section, marked `truncated`; a page holds up to this plus the turn that crosses it. |
 
 ### External erasure backends
 
@@ -799,7 +798,7 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY` | `float` | `0.3` | live | conversation.search cosine floor; without it the top_k nearest threads return however far. Stricter than memory recall: chat excerpts are noisy. |
-| `LOOM_CONVERSATION_SEARCH_EXCERPT_CHARS` | `int` | `240` | live | Characters of a turn a conversation search hit or a saved-message listing shows; it changes no stored row. At most 2048, the most an embedding row stores (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. A saved-message listing reads this many characters and a fixed margin past them, and checks them all for a credential before it cuts the excerpt. |
+| `LOOM_CONVERSATION_SEARCH_EXCERPT_CHARS` | `int` | `240` | live | Characters of a turn a conversation search hit or a saved-message listing shows; it changes no stored row. At most 2048, the most an embedding row stores (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. A saved-message listing reads this many characters and a fixed margin past them, and checks them all for a high shape before it cuts the excerpt. |
 | `LOOM_CONVERSATION_TITLER_ENABLED` | `bool` | `True` |  | LLM-title untitled threads in namespaces with conversation_logging_enabled (the Sessions "Recording" toggle is the off-switch). Skipped with the fake LLM. |
 | `LOOM_CONVERSATION_TITLER_INTERVAL_SECONDS` | `int` | `1800` |  | Seconds between titler passes. |
 | `LOOM_CONVERSATION_TITLER_WINDOW_HOURS` | `int` | `168` |  | Only threads with a turn in the last this-many hours are titled. |

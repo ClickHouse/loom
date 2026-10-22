@@ -2036,6 +2036,14 @@ class MentorOps:
             "_ops.MentorBriefOutput", await self._agent.call("mentor.brief", body, **options)
         )
 
+    async def guide(
+        self, body: _ops.MentorGuideBody | None = None, /, **options: Any
+    ) -> _ops.MentorGuideOutput:
+        """`mentor.guide`."""
+        return cast(
+            "_ops.MentorGuideOutput", await self._agent.call("mentor.guide", body, **options)
+        )
+
 
 class NamespaceOps:
     """The `namespace.*` operations."""
@@ -2087,6 +2095,33 @@ class NamespaceOps:
         """`namespace.get`."""
         return cast(
             "_ops.NamespaceGetOutput", await self._agent.call("namespace.get", body, **options)
+        )
+
+    async def guide_get(
+        self, body: _ops.NamespaceGuideGetBody | None = None, /, **options: Any
+    ) -> _ops.NamespaceGuideGetOutput:
+        """`namespace.guide_get`."""
+        return cast(
+            "_ops.NamespaceGuideGetOutput",
+            await self._agent.call("namespace.guide_get", body, **options),
+        )
+
+    async def guide_history(
+        self, body: _ops.NamespaceGuideHistoryBody | None = None, /, **options: Any
+    ) -> _ops.NamespaceGuideHistoryOutput:
+        """`namespace.guide_history`."""
+        return cast(
+            "_ops.NamespaceGuideHistoryOutput",
+            await self._agent.call("namespace.guide_history", body, **options),
+        )
+
+    async def guide_set(
+        self, body: _ops.NamespaceGuideSetBody | None = None, /, **options: Any
+    ) -> _ops.NamespaceGuideSetOutput:
+        """`namespace.guide_set`."""
+        return cast(
+            "_ops.NamespaceGuideSetOutput",
+            await self._agent.call("namespace.guide_set", body, **options),
         )
 
     async def join(

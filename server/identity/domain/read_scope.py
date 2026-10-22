@@ -20,13 +20,12 @@ from typing import Any
 from pydantic import BaseModel
 
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+from server.core.naming import named
 
 # Higher = narrower. The effective scope is the narrowest of the request and
 # the token's ceiling. The keys are the token claim's values
 # (`server.auth.jwt.READ_SCOPES`), widest first.
 _NARROWNESS: dict[str, int] = {"namespace": 0, "own_user": 1, "own_session": 2}
-
-SENTINEL = "-"
 
 
 def narrower(a: str, b: str) -> str:
@@ -42,10 +41,7 @@ def effective_read_scope(requested: str | None, auth: Any) -> str:
 
 
 def _clean(value: str | None) -> str | None:
-    if value is None:
-        return None
-    v = str(value).strip()
-    return v if v and v != SENTINEL else None
+    return named(str(value).strip()) if value is not None else None
 
 
 @dataclass(frozen=True)
@@ -396,6 +392,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # other users' memory keys and payloads.
     "ops.capabilities": "the deployment's capabilities",
     "ops.health": "deployment health",
+    "mentor.guide": "the deployment's static agent guide, no memory",
     # Not blacklist.*: a pattern has no user axis (created_by is the token subject,
     # which many users' tokens can share). List, remove and sweep would reach another
     # user's patterns, and an add would be a namespace-wide Refuse the token can't manage.
@@ -404,6 +401,9 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "memory_schema.list": "value schemas",
     # A narrowed token is not told the subject that set the schema (updated_by).
     "profile_schema.get": "operator configuration: property names and descriptions",
+    # The same text the session-start pack gives such a token; the writer (updated_by)
+    # is not shown. Not guide_history: it lists every revision's writer.
+    "namespace.guide_get": "the namespace's conventions",
     "admin.users": "the deployment's users",
     # Not agents.connected: no user axis; it lists every user's agents, their ops,
     # when they were seen and what they cost.

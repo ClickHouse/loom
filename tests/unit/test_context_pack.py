@@ -11,6 +11,7 @@ def test_ordered_section_names_honors_valid_custom_order_and_appends_rest() -> N
         "profile",
         "working_memory",
         "namespace_health",
+        "namespace_guide",
         "mentor",
         "memory_stack",
         "procedures",
@@ -82,8 +83,10 @@ def test_context_pack_section_order_is_independent_of_completion_order(
 
     # First block in the default order finishes LAST.
     # `runs` is opt-in and not requested here, so it is not built;
-    # `namespace_health` renders only for an unhealthy namespace.
-    order = [n for n in _DEFAULT_SECTION_ORDER if n not in ("runs", "namespace_health", "mentor")]
+    # `namespace_health` renders only for an unhealthy namespace, `namespace_guide`
+    # only for one with a guide.
+    skipped = ("runs", "namespace_health", "namespace_guide", "mentor")
+    order = [n for n in _DEFAULT_SECTION_ORDER if n not in skipped]
     delay = {name: (len(order) - i) * 0.01 for i, name in enumerate(order)}
 
     def _stub(name: str, out: Any) -> Any:
@@ -181,7 +184,9 @@ def test_context_pack_section_order_is_independent_of_completion_order(
         "server.knowledge.app.knowledge_search.handle_knowledge_search",
         _stub(
             "knowledge",
-            NS(results=[NS(namespace="ns", source_uri="doc://1", content="kn", score=0.5)]),
+            NS(
+                results=[NS(namespace="ns", source_uri="doc://1", content="kn", score=0.5, tags=[])]
+            ),
         ),
     )
     monkeypatch.setattr(
@@ -245,6 +250,7 @@ def test_context_pack_cites_the_knowledge_section_when_the_hit_carries_one(
                     content="deploy on tuesdays",
                     score=0.9,
                     section="Ops > Deploys",
+                    tags=[],
                 ),
                 NS(
                     namespace="ns",
@@ -252,6 +258,7 @@ def test_context_pack_cites_the_knowledge_section_when_the_hit_carries_one(
                     content="no headings here",
                     score=0.5,
                     section="",
+                    tags=[],
                 ),
             ]
         )

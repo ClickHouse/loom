@@ -25,8 +25,13 @@ from typing import Any
 
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
-from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
-from server.core.naming import SENTINEL, names_session
+from server.core.errors import (
+    AuthInsufficientError,
+    IdentityIncompleteError,
+    NotFoundError,
+    ValidationError,
+)
+from server.core.naming import SENTINEL, named, names_session
 from server.identity.app.request_scope import request_narrowed, request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, row_in_read_scope
 from server.memory.app import run_feedback, run_retention
@@ -375,7 +380,7 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     run of its own that already exists; a new one gets a server-made id."""
     ch = get_client()
     supplied = (input.run_id or "").strip()
-    if not supplied:
+    if named(supplied) is None:
         # A server-made id cannot collide: nothing to claim or check.
         return await _open_run(ch, input, uuid.uuid4().hex, None)
     if is_session_run_id(supplied):
@@ -459,10 +464,12 @@ async def _open_run(
         row["version"] = version
     await runs_store.insert_runs(ch, [row])
     next_step = (
-        f"run_id={run_id}. Pass it as run_id on memory.set, memory.ask, "
-        "memory.search and observe.record so the run's writes and recalls "
-        "join this ledger. When done, call run.complete with the memory_keys "
-        "you actually relied on in memories_used."
+        f"run_id={run_id}. Pass it as run_id on writes (memory.set, memory.update, "
+        "observe.record) so the run's writes and observations join this ledger. A body run_id on "
+        "memory.search or memory.ask filters to the run's own rows; over HTTP, label "
+        "reads with the X-Loom-Run-Id header instead. Over MCP, reads are labelled "
+        "with the session's own run, not this one. When done, call run.complete "
+        "with the memory_keys you actually relied on in memories_used."
     )
     if dropped_usd:
         next_step += (
@@ -860,14 +867,13 @@ _GRADE_SESSION_LIMIT = 200
 
 async def _runs_to_grade(ch: Any, input: RunGradeInput) -> list[RunLedgerRow]:
     """The run addressed by `run_id`, or the session's runs, newest first."""
-    run_id = input.run_id.strip()
     return await runs_store.runs_to_grade(
         ch,
         input.org,
         input.namespace,
-        run_id=run_id,
-        session_id=input.session_id.strip(),
-        limit=1 if run_id else _GRADE_SESSION_LIMIT,
+        run_id=input.run_id,
+        session_id=input.session_id,
+        limit=1 if input.run_id else _GRADE_SESSION_LIMIT,
     )
 
 
@@ -883,10 +889,12 @@ async def handle_run_grade(input: RunGradeInput) -> RunGradeOutput:
     twice."""
     from server.memory.app import proposals as _proposals
 
+    if not (input.run_id or input.session_id):
+        raise ValidationError("pass exactly one of run_id or session_id")
     ch = get_client()
     rows = await _runs_to_grade(ch, input)
     if not rows:
-        what = f"run {input.run_id!r}" if input.run_id.strip() else f"session {input.session_id!r}"
+        what = f"run {input.run_id!r}" if input.run_id else f"session {input.session_id!r}"
         raise NotFoundError(f"{what} has no runs in {input.org}/{input.namespace}")
     source, reason, ref = input.source.strip(), input.reason.strip(), input.ref.strip()
     now = _now()
@@ -1000,10 +1008,10 @@ async def handle_run_list(input: RunListInput) -> RunListOutput:
 
     where: list[str] = []
     params: dict[str, Any] = {}
-    if input.agent:
+    if named(input.agent, wildcard=True):
         where.append("agent = {agent:String}")
         params["agent"] = input.agent
-    if input.session_id:
+    if named(input.session_id, wildcard=True):
         where.append("session_id = {sid:String}")
         params["sid"] = input.session_id
     if input.status:
@@ -1069,10 +1077,10 @@ async def recent_run_heads(
     `-`/empty drops the user predicate."""
     where: list[str] = []
     params: dict[str, Any] = {}
-    if agent and agent not in ("*", "-"):
+    if named(agent, wildcard=True):
         where.append("agent = {agent:String}")
         params["agent"] = agent
-    if user_id and user_id != "-":
+    if named(user_id):
         where.append("user_id = {uid:String}")
         params["uid"] = user_id
     return await runs_store.recent_run_heads(

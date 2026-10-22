@@ -49,6 +49,9 @@
     "close": [
       "failed"
     ],
+    "guide": [
+      "part"
+    ],
     "identity": [
       "user_id",
       "session_id",
@@ -1191,6 +1194,10 @@
             "brief": [
               "body",
               "options"
+            ],
+            "guide": [
+              "body",
+              "options"
             ]
           }
         },
@@ -1214,6 +1221,18 @@
               "options"
             ],
             "get": [
+              "body",
+              "options"
+            ],
+            "guide_get": [
+              "body",
+              "options"
+            ],
+            "guide_history": [
+              "body",
+              "options"
+            ],
+            "guide_set": [
               "body",
               "options"
             ],
@@ -2895,7 +2914,8 @@
           "confidence",
           "reason",
           "relations",
-          "revive"
+          "revive",
+          "run_id"
         ],
         "update_by_id": [
           "memory_id",

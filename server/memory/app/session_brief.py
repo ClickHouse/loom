@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.errors import BackendUnavailableError
+from server.core.naming import named
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
 from server.llm import customer
@@ -53,8 +54,8 @@ def resolve_key(inp: Any) -> str:
         return key
     if inp.project or inp.branch:
         return sb.auto_brief_key(inp.project, inp.branch)
-    sid = (inp.session_id or "").strip()
-    if sid and sid != "-":
+    sid = named((inp.session_id or "").strip())
+    if sid:
         return f"session/{sid}"[:160]
     raise HTTPException(
         status_code=422,
@@ -383,7 +384,7 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
     events_total = int(live.get("events_total") or 0) + events_in if live else events_in
     source_chars = (int(live.get("source_chars") or 0) if live else 0) + sb.event_chars(inp.events)
     sessions = list(live.get("source_sessions") or []) if live else []
-    sid = inp.session_id if inp.session_id and inp.session_id != "-" else ""
+    sid = named(inp.session_id) or ""
     if sid and sid not in sessions:
         sessions.append(sid)
     sessions = sessions[-_MAX_SOURCE_SESSIONS:]

@@ -46,11 +46,36 @@ flowchart LR
 - **Personal collections.** Each end user has one, `col-me-<hash of org and user>`; a
   request names it `namespace: "@me"`, which only the server maps. Its name says whose it
   is: it admits that user (as admin) and no one else (an org admin's export of that user
-  reads it, see below), takes no grant, sits in no tree, and
-  needs no setup (its directory row appears with its first write). A chat service's saved
-  messages are documents there, at
-  `chat/<conversation>/<message>`: `knowledge.upsert` saves one, `knowledge.delete`
-  removes it, `knowledge.search` and `knowledge.list` (with `uri_prefix`) find them.
+  reads it, see below), takes no grant, sits in no tree, and needs no setup (its
+  directory row appears with its first write). It holds the user's own documents (their
+  files, a chat's attachments), chunked and embedded whatever their text holds, and the
+  memories a chat writes for them. A message the user saves from a chat is not a
+  document there; see [Saved messages](#saved-messages).
+
+## Saved messages
+
+A chat's saved message is a conversation turn flagged for its user:
+`conversation.save_message` saves one, `conversation.unsave_message` withdraws it,
+`conversation.list_saved_messages`, `conversation.saved_status` and
+`conversation.search_saved_messages` read them
+([Saving single messages](../features/conversations-and-sessions.md#saving-single-messages)).
+The same five ops serve both ways a chat runs in front of Loom:
+
+- **A chat that records its conversations** in its own namespace writes the transcript
+  with a namespace-scoped writer token and calls these ops with a token pinned to the
+  user (`read_user_id`). Saving a turn the transcript holds flags it in place, so the
+  message is stored and embedded once; the transcript row decides its owner, so two
+  users never both save one turn, and compaction keeps a saved turn.
+- **A chat that signs end-user tokens** calls them with `namespace: "@me"`. The other
+  conversation ops refuse an end-user token (it is pinned to one user, and a thread has
+  no user axis to bound), so no transcript lives in a personal collection: a save there
+  stores the text the request sends as a saved-only row, and unsaving it removes the row.
+  As under the pinned token above, a body naming another user is refused with 403.
+
+A save that is not indexed answers `indexed: false` with a `reason` (listed on the
+feature page). A client draws a conversation's saved state with one
+`conversation.saved_status` call, and a user erasure takes the user's conversation rows,
+saved ones included.
 
 ## Identity
 
@@ -89,7 +114,8 @@ refresh before it signs with it.
 Ids are lowercase (`server/core/principals.py`), so two spellings never name one user; a
 SCIM member is the service's own lowercase user id, not an identity provider's. Of the
 org-level ops (those that name no namespace to gate), an end user may call only
-`collection.create`, `collection.list`, `namespace.list_mine` and `grants.pending_for_me`.
+`collection.create`, `collection.list`, `namespace.list_mine`, `grants.pending_for_me` and
+`mentor.guide` (the static agent guide).
 An end-user token is served by the op endpoint and `knowledge.download`; MCP, `/v1/me/*`,
 the admin routes and the task watch refuse it (403). A trusted caller
 (`LOOM_TRUSTED_CALLERS`) acts for Loom subjects only and cannot assert a subject spelled
@@ -213,20 +239,78 @@ grants that named it, so a group made later under the same id starts with none.
 Collections that hold other writers' documents stay: Loom deletes only what its writer
 asked to delete. `collection.delete` purges what its collection held (a namespace erasure
 that takes the rows off disk) before the collection leaves the tree. A user-scope
-`erasure.export` returns the chunks that user wrote in the collections its caller may
-read, and in the user's own personal collection. An org admin may erase a collection's
-rows without reading them; a platform admin sees every collection. Each section's read
-leaves out what the caller may not see before its limit, so a hidden row never takes a
-visible row's place on the page.
+`erasure.export` returns the chunks and the conversation rows (transcript turns, saved
+messages and threads) that user owns in the collections its caller may read, and in the
+user's own personal collection. An org admin may erase a collection's rows without
+reading them; a platform admin sees every collection. Each section's read leaves out what
+the caller may not see before its limit, so a hidden row never takes a visible row's place
+on the page.
+
+## Namespace guides
+
+A shared namespace is usable only when a newcomer knows its conventions: which key
+prefixes mean what, what a tag marks, which rows to ignore. The rows do not say. Each
+namespace therefore has a guide (`namespace.guide_*`, [namespaces and
+sharing](../features/namespaces-and-sharing.md#a-namespaces-guide)): Markdown text and a
+one-line summary that its writers keep current and every reader is shown.
+
+`loom.namespace_guides` holds one row per revision, ordered by `(org, namespace,
+revision)`; the highest revision is the guide, and the older ones are its history. A
+save is optimistic: it names the revision it was read at, and under a deployment-wide
+lease on the namespace's guide (`server.core.leases.holding`) the server compares that
+with the current revision and inserts the next one only on a match. Without the lease,
+two replicas inside ClickHouse's visibility lag could both find revision N current and
+both write N+1. A mismatch writes nothing and returns the current guide: the agent that
+lost merges its edit into that text, which it does better than a text merge on the
+server would.
+
+A save's audit row records the revision it was made from and the text's length and
+SHA-256, never the text, summary or note (`Operation.audit_subject`): `loom.audit_log`
+outlives an erasure. The directory's search matches a guide's summary, the one part the
+org sees; matching the text would let someone who may not read the guide rebuild it a
+character at a time. An end user's personal collection (`col-me-…`) takes no guide,
+since only their erasure removes it and that scope does not reach the table.
+
+A guide is the namespace's, not its writer's: it describes how the namespace's data is
+laid out, as a category description or a profile schema does, and carries no `user_id`.
+So a namespace erasure deletes it, and a user erasure, which follows the `user_id` of
+memory rows, leaves it, with the writer's actor on the revisions they wrote. The guide
+is not a place for facts about anyone: the docs and the skill send those to memory,
+where the user's erasure reaches them.
+
+The guide is shown where an agent already looks: the session-start pack, the
+`namespace.browse` directory (a public row's guide summary to everyone, a private code
+row's, which is listed to people who may not read it, to its members only, and a
+restricted row's to no one) and `namespace.get`.
+One text serves agents and people, so there is no second copy to drift.
+
+### Alternatives not taken for guides
+
+- **A memory row at a reserved key.** The conflict resolver, extraction, dedup and
+  search would all treat a README as a fact, and a memory write has no compare-and-set.
+- **Separate guides for agents and people.** Both need the same facts, and two texts
+  drift apart.
+- **Sections with a revision each.** Two agents editing different sections at once
+  would both land, at the cost of a section API; a whole-text revision keeps the API to
+  one text, and a conflict costs one merge and one retry.
+- **Merging concurrent edits on the server.** A three-way merge of prose either
+  conflicts on most real edits or silently produces text neither writer wrote.
 
 ## Alternatives not taken
 
 - **An owner column on documents.** Every read path would add a row predicate, one miss
   would leak, and the column would not prune (it is not in the sort key), so a user's
   search would still read the whole tenant.
-- **A saved-items table with `user_id` in the sort key.** It fixes the cost of one
-  feature by building a second document store: chunking, lexical statistics, embedding
-  retries and erasure twice, and saved items that can never join a collection.
+- **A personal-documents table with `user_id` in the sort key.** It fixes the cost of
+  a user's own documents by building a second document store: chunking, lexical
+  statistics, embedding retries and erasure twice, and documents that can never join a
+  collection.
+- **Saved messages as documents in the personal collection**
+  (`chat/<conversation>/<message>` through `knowledge.upsert`). It needs no op of its
+  own, but it serves only a chat that signs end-user tokens, so a chat that records its
+  conversations would need the conversation ops anyway: two ways to save one message. A
+  document gets no role or sensitivity check, and a client finds a conversation's saved
+  state by listing a URI prefix. A saved message is a conversation row in both setups.
 - **One namespace per tenant with row-level ACLs.** Every read filters rows one by one and
   prunes nothing, and a move or a revoke rewrites every affected chunk row.
 - **An ACL key in the sort order.** A request's readable set is a union over its

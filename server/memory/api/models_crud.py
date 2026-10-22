@@ -646,16 +646,22 @@ class MemoryAutoRetirementsOutput(BaseModel):
 class MemoryClearInput(BaseModel):
     """Bulk-tombstone memories in one scope.
 
-    At least one of `user_id` or `agent` must be set; a scope-less clear
-    is refused at the handler (use erasure.request_namespace). `confirm_subject`
-    must equal one of the set scope values — guards against UI-dropdown accidents.
+    At least one of `user_id` or `agent` must name a concrete value other than `'-'`;
+    anything wider is refused at the handler (use erasure.request_namespace).
+    `confirm_subject` must equal one of those concrete values — guards against UI-dropdown
+    accidents.
     """
 
     org: str
     namespace: str
+    # The user whose rows are cleared (`'-'` for rows with no user); `'*'` or unset clears
+    # every user's.
     user_id: str | None = None
+    # The agent whose rows are cleared; `'*'` clears every agent's, and unset clears every
+    # agent's over HTTP but only the calling client's over MCP.
     agent: str | None = None
-    # Must equal the `user_id` or `agent` being cleared; anything else is a 400.
+    # Must equal the concrete `user_id` or `agent` being cleared (`'*'` and `'-'` never
+    # confirm); anything else is a 400.
     confirm_subject: str = Field(..., min_length=1, max_length=256)
 
 
@@ -1043,9 +1049,11 @@ class MemoryUpdateInput(BaseModel):
     memory_key: str
     # None = keep the current value (a tags/concepts-only rewrite).
     value: dict[str, Any] | list[Any] | str | int | float | bool | None = None
-    # Optional identity narrowing; "" = any row under the namespace.
+    # Narrows the key to rows written by this agent; "", "-" or "*" = any agent.
     agent: str = ""
+    # Narrows the key to this user's rows; "" or "-" = any user.
     user_id: str = ""
+    # Narrows the key to this session's rows; "" or "-" = any session.
     session_id: str = ""
     # The run this revision is made under: stamped on the new
     # version's row so the run ledger and the `acted` fold see that this run

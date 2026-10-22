@@ -51,7 +51,7 @@ class ConversationAppendInput(BaseModel):
     # Who spoke: `user`, `assistant`, `system` or `tool`.
     role: ConversationRole
     # The message text, stored verbatim; a user or assistant turn is also embedded for
-    # `conversation.search`, unless its text reads as a credential.
+    # `conversation.search`, unless its text reads as high.
     content: str
     # The model's reasoning for this turn, stored beside `content`; empty = none.
     reasoning: str = ""
@@ -115,8 +115,9 @@ class ConversationSaveMessageOutput(BaseModel):
     # turn belongs to another user. "deleted": the stored turn was tombstoned.
     # "unsupported_role": the stored turn is a system or tool turn, which is not
     # embedded. "embed_failed": the turn is saved but its embed failed; saving it
-    # again retries the embed. "reads_as_credential": the turn's text reads as a
-    # credential, which is never embedded, so it is not indexed.
+    # again retries the embed. "high_sensitivity": the turn's text reads as high
+    # (a credential, card number, SSN or stated PIN), which is never embedded, so it is
+    # not indexed.
     reason: Literal[
         "",
         "duplicate",
@@ -124,7 +125,7 @@ class ConversationSaveMessageOutput(BaseModel):
         "deleted",
         "unsupported_role",
         "embed_failed",
-        "reads_as_credential",
+        "high_sensitivity",
     ] = ""
     # The stored turn's timestamp; the time of the refusal when one is refused.
     ts: datetime
@@ -136,9 +137,9 @@ class ConversationUnsaveMessageInput(BaseModel):
     org: str
     namespace: str
     agent: str
-    # LibreChat's conversation id, as given to conversation.save_message.
+    # The client's conversation id, as given to conversation.save_message.
     conversation_id: str = Field(min_length=1, max_length=256)
-    # LibreChat's message id, as given to conversation.save_message.
+    # The client's message id, as given to conversation.save_message.
     message_id: str = Field(min_length=1, max_length=256)
     # Only this user's saved row is withdrawn.
     user_id: str = Field(min_length=1, max_length=256)
@@ -201,6 +202,7 @@ class ConversationUpdateInput(BaseModel):
     title: str | None = None
     # New metadata JSON, replacing the old object whole; None leaves it unchanged.
     metadata: dict[str, Any] | None = None
+    # The thread's new run; None or "-" leaves it unchanged, "" detaches it from its run.
     run_id: str | None = None
 
 
@@ -309,7 +311,7 @@ class ConversationListInput(BaseModel):
     agent: str
     # The thread to page through, oldest message first.
     thread_id: str
-    run_id: str | None = None  # optional filter
+    run_id: str | None = None  # optional filter; None or "-" = every run
     # At most this many messages per page (1-1000).
     limit: int = Field(default=100, ge=1, le=1000)
     cursor: str | None = None  # opaque (ts, msg_id)
@@ -328,11 +330,11 @@ class ConversationSearchInput(BaseModel):
     """Rank conversation messages by embedding similarity to `query`.
 
     `thread_id`, `run_id` and `role` each narrow the hits, and they combine. User and
-    assistant turns and compaction summaries are embedded, unless their text reads as a
-    credential; when the embedder is unavailable a substring match stands in, newest
-    first, and it also matches the other system turns and tool turns. No path returns
-    text that reads as a credential: the vector path checks the text its embedding was
-    built from, and the substring fallback checks the whole turn."""
+    assistant turns and compaction summaries are embedded, unless their text reads as high;
+    when the embedder is unavailable a substring match stands in, newest first, and it also
+    matches the other system turns and tool turns. No path returns text that reads as high:
+    the vector path checks the text its embedding was built from, and the substring
+    fallback checks the whole turn."""
 
     org: str
     namespace: str
@@ -342,12 +344,12 @@ class ConversationSearchInput(BaseModel):
     # when the embedder is unavailable.
     query: str
     thread_id: str | None = None  # optional: scope to one thread
-    run_id: str | None = None  # optional: filter by run_id
+    run_id: str | None = None  # optional: filter by run_id; None or "-" = every run
     # Filter by speaker; system turns other than compaction summaries, and tool turns,
     # are not embedded, so they match only on the substring fallback.
     role: ConversationRole | None = None
-    # Optional owner filter. Integrations that serve many users from one
-    # namespace set it so a search cannot cross their user boundary.
+    # Optional owner filter; None or "-" = every user. Integrations that serve many
+    # users from one namespace set it so a search cannot cross their user boundary.
     user_id: str | None = None
     # At most this many hits (1-200). Across agents ("*" or "-") a turn several agents
     # logged is one hit: the embeddings hold one row per turn, and the substring path
@@ -405,7 +407,7 @@ class _SavedMessageHit(ProjectedRow):
     message_id: str
     role: Literal["user", "assistant"]
     # A window of the message: its opening, or the text around the first matched term
-    # in a keyword hit; empty in the saved list when it reads as a credential.
+    # in a keyword hit; empty in the saved list when it reads as high.
     content_excerpt: str
     ts: datetime
 
@@ -485,9 +487,9 @@ class ConversationThreadSummary(ProjectedRow):
     first_seen: datetime
     last_seen: datetime
     last_role: str
-    # The last turn's first 240 characters; empty when it reads as a credential.
+    # The last turn's first 240 characters; empty when it reads as high.
     last_content_excerpt: str
-    # Empty when untitled or when the title reads as a credential.
+    # Empty when untitled or when the title reads as high.
     title: str = ""
 
 
@@ -505,7 +507,7 @@ class ConversationCompactInput(BaseModel):
     (user, assistant or a summary).
     The summary carries metadata.compacted_from=[msg_ids]; when its embed fails,
     no summary is written and no turn is tombstoned (`reason="embed-failed"`), and the
-    same holds for a summary that reads as a credential (`reason="summary-reads-as-credential"`).
+    same holds for a summary that reads as high (`reason="summary-high-sensitivity"`).
 
     Idempotent: re-running on an already-summarized window is a no-op.
     """
@@ -537,5 +539,5 @@ class ConversationCompactOutput(BaseModel):
     tokens_out: int = 0
     # Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted,
     # summarizer-empty, embed-failed (retry once the embedder answers),
-    # summary-reads-as-credential (do not retry: the same window gets the same summary).
+    # summary-high-sensitivity (do not retry: the same window gets the same summary).
     reason: str = ""

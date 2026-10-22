@@ -21,7 +21,7 @@ Open a RUN — one execution of a task — BEFORE you start working on it.
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The conversation this run belongs to. |
-| `run_id` | `str` | `''` | Caller-supplied for end-to-end tracing (re-sending the same id is a replace, not a duplicate). |
+| `run_id` | `str` | `''` | The run's id; empty or "-" = the server mints one. |
 | `goal` | `str` | required | What the run sets out to do, in the agent's words; stored on the run row. |
 | `user_request` | `str` | `''` | The original request that started the run, verbatim; empty when not given. |
 | `expected_outcome` | `str` | `''` | What a successful run should produce; stored for later review, empty when not given. |
@@ -119,8 +119,8 @@ A verdict on a CLOSED run, usually days after it — a maintainer confirmed the 
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `run_id` | `str` | `''` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `session_id` | `str` | `''` | The session or conversation the row belongs to; `'-'` for none. |
+| `run_id` | `str` | `''` | The run to grade; "" or "-" = none. |
+| `session_id` | `str` | `''` | Every closed run of this session; "" or "-" = none. |
 | `grade` | `Literal['pass', 'fail']` | required | The verdict: `pass` (the result held up) or `fail`. |
 | `source` | `str` | `'caller'` | Who graded: `maintainer`, `ci`, `reviewer`, `judge`… (free text, short). |
 | `reason` | `str` | `''` | Why the grade was given; stored on the run as `grade_reason`. |
@@ -145,8 +145,8 @@ A page of a namespace's agent runs and their match count (`total`), filtered and
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `agent` | `str` | `''` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
-| `session_id` | `str` | `''` | The session or conversation the row belongs to; `'-'` for none. |
+| `agent` | `str` | `''` | Only this agent's runs; "", "*" or "-" = every agent. |
+| `session_id` | `str` | `''` | Only this session's runs; "", "*" or "-" = every session. |
 | `status` | `Literal['', 'active', 'completed', 'failed', 'cancelled']` | `''` | Only runs in this status; "" lists every status. |
 | `limit` | `int` | `50` | At most this many runs, in `order_by` order; the server caps it at 200. |
 | `offset` | `int` | `0` | Runs to skip before the page (0-100,000); default 0, the first page. |

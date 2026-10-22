@@ -1,4 +1,4 @@
-"""A raw passage whose text reads as a credential is stored as written with no vector, is
+"""A raw passage whose text reads as high is stored as written with no vector, is
 never sent to the embedder, and is held back from the reads that serve passages to every
 reader."""
 
@@ -31,7 +31,7 @@ _PLAIN = "We moved the standup to Thursday mornings and the deploy plan is uncha
     ],
 )
 async def test_embed_plain_never_sends_a_credential_to_the_embedder(secret: str) -> None:
-    from server.memory.app.credential_passages import embed_plain
+    from server.memory.app.sensitive_passages import embed_plain
 
     sent: list[list[str]] = []
 
@@ -55,7 +55,7 @@ async def test_embed_plain_never_sends_a_credential_to_the_embedder(secret: str)
 async def test_embed_plain_makes_no_call_when_every_text_reads_as_a_credential(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.memory.app.credential_passages import embed_plain
+    from server.memory.app.sensitive_passages import embed_plain
     from server.settings import settings
 
     # The text decides, whatever the autodetect setting says.
@@ -68,13 +68,13 @@ async def test_embed_plain_makes_no_call_when_every_text_reads_as_a_credential(
     assert (e.vector, e.held) == ([], True)
 
 
-def test_without_credentials_keeps_order_and_fills_the_limit() -> None:
-    from server.memory.domain.sensitivity import without_credentials
+def test_without_high_keeps_order_and_fills_the_limit() -> None:
+    from server.memory.domain.sensitivity import without_high
 
     items = [f"key {AWS_KEY_ID}", "one", f"key {OPENAI_KEY}", "two", "three"]
-    assert without_credentials(items, str) == ["one", "two", "three"]
-    assert without_credentials(items, str, 2) == ["one", "two"]
-    assert without_credentials([], str, 2) == []
+    assert without_high(items, str) == ["one", "two", "three"]
+    assert without_high(items, str, 2) == ["one", "two"]
+    assert without_high([], str, 2) == []
 
 
 class _Embedder:
@@ -177,7 +177,7 @@ async def test_a_chunk_holding_only_part_of_a_key_is_stored_without_a_vector(
     # No line or sentence break, so chunks are cut at 800 characters and overlap by 100:
     # [0, 800), [700, 1500), [1400, 2200). The first key crosses the first chunk's end, so
     # that chunk ends with its head; the second crosses the third chunk's start, so that
-    # chunk opens with its tail. Neither fragment reads as a credential on its own.
+    # chunk opens with its tail. Neither fragment reads as high on its own.
     value = filler(780) + key + " " + filler(1300 - 781 - len(key)) + key + " " + filler(1000)
     assert (value.find(key), value.rfind(key)) == (780, 1300)
     ch, emb = _CH(), _Embedder()
@@ -226,7 +226,7 @@ async def test_a_chunk_that_starts_inside_a_word_and_reads_as_a_key_is_held(
 async def test_memory_get_leaves_a_vectorless_neighbour_out_and_audits_its_own_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A chunk held for part of a key does not read as a credential: its missing vector
+    """A chunk held for part of a key does not read as high: its missing vector
     is what marks it."""
     from server.memory.api.models_crud import MemoryGetInput
     from server.memory.app import handlers
@@ -263,16 +263,16 @@ async def test_memory_get_leaves_a_vectorless_neighbour_out_and_audits_its_own_r
     assert audits == ["memory.sensitive_read"]
 
 
-def test_credential_spans_map_an_escaped_match_back_to_the_text() -> None:
-    from server.memory.domain.sensitivity import credential_spans
+def test_high_spans_map_an_escaped_match_back_to_the_text() -> None:
+    from server.memory.domain.sensitivity import high_spans
 
     text = '{"note": "rotate it\\npassword=hunter2hunter2"}'
-    [(start, end)] = credential_spans(text)
+    [(start, end)] = high_spans(text)
     assert text[start:end] == "password=hunter2hunter2"
 
 
 def test_a_key_header_search_for_its_closing_line_stops_at_the_next_header() -> None:
-    from server.memory.domain.sensitivity import credential_spans
+    from server.memory.domain.sensitivity import high_spans
 
     # Each header's search reads only up to the next header, so text of many headers
     # without a closing line is read in linear time.
@@ -280,12 +280,12 @@ def test_a_key_header_search_for_its_closing_line_stops_at_the_next_header() -> 
     closed = header + "MIIEvQ\n-----END " + "PRIVATE KEY-----"
     text = header + "plain notes, no closing line\n" + closed
     second = text.index(closed)
-    spans = credential_spans(text)
+    spans = high_spans(text)
     assert (second, len(text)) in spans
     assert all(end <= second for start, end in spans if start < second)
     # A larger text of unclosed headers gives one span per header, each its own header.
     for count in (1_000, 4_000):
-        spans = credential_spans(header * count)
+        spans = high_spans(header * count)
         assert len(spans) == count
         assert all(end - start == len(header) for start, end in spans)
 
@@ -294,23 +294,25 @@ _KEY_HEAD = "the staging account uses " + AWS_KEY_ID[:10]
 _KEY_TAIL = AWS_KEY_ID[10:] + " for uploads"
 
 
-def test_split_credentials_joins_only_neighbouring_chunks_of_one_session() -> None:
-    from server.memory.domain.sensitivity import split_credentials
+def test_joined_overlaps_high_joins_only_neighbouring_chunks_of_one_session() -> None:
+    from server.memory.domain.sensitivity import joined_overlaps_high
 
     # A gap in chunk_index: the two chunks were never neighbours, so no key is rebuilt.
-    assert split_credentials([("s", 0, _KEY_HEAD), ("s", 2, _KEY_TAIL)]) == [False, False]
+    assert joined_overlaps_high([("s", 0, _KEY_HEAD), ("s", 2, _KEY_TAIL)]) == [False, False]
     # Neighbours: the key cut at the boundary reads as one when joined.
-    assert split_credentials([("s", 0, _KEY_HEAD), ("s", 1, _KEY_TAIL)]) == [True, True]
+    assert joined_overlaps_high([("s", 0, _KEY_HEAD), ("s", 1, _KEY_TAIL)]) == [True, True]
     # Chunks of another session that share an index are never joined with this one's.
-    assert split_credentials([("a", 0, _KEY_HEAD), ("b", 1, _KEY_TAIL), ("b", 0, _KEY_HEAD)]) == [
+    assert joined_overlaps_high(
+        [("a", 0, _KEY_HEAD), ("b", 1, _KEY_TAIL), ("b", 0, _KEY_HEAD)]
+    ) == [
         False,
         True,
         True,
     ]
 
 
-def test_split_credentials_reads_a_session_with_two_texts_at_one_index_in_pairs() -> None:
-    from server.memory.domain.sensitivity import split_credentials
+def test_joined_overlaps_high_reads_a_session_with_two_texts_at_one_index_in_pairs() -> None:
+    from server.memory.domain.sensitivity import joined_overlaps_high
 
     # Two writes of one session each number their chunks from 0, so index 0 holds two
     # texts. Each chunk is joined only with a chunk at the next index that it overlaps.
@@ -326,24 +328,24 @@ def test_split_credentials_reads_a_session_with_two_texts_at_one_index_in_pairs(
         ("s", 1, head[-60:] + AWS_KEY_ID[10:] + " for uploads"),
     ]
     # Two plain calls stay embedded; the key cut across the third call's boundary is held.
-    assert split_credentials(chunks) == [False, False, False, False, True, True]
+    assert joined_overlaps_high(chunks) == [False, False, False, False, True, True]
     # The same text sent twice is one text; another session in the call is read as usual.
     plain = "the build passed on the second try"
     chunks = [("s", 0, plain), ("s", 0, plain), ("s", 1, "The deploy is on Thursday.")]
     chunks += [("t", 0, "x"), ("t", 0, "y"), ("u", 0, _KEY_HEAD), ("u", 1, _KEY_TAIL)]
-    assert split_credentials(chunks) == [False, False, False, False, False, True, True]
+    assert joined_overlaps_high(chunks) == [False, False, False, False, False, True, True]
 
 
-def test_split_credentials_keeps_a_boundary_character_that_only_happens_to_repeat() -> None:
-    from server.memory.domain.sensitivity import split_credentials
+def test_joined_overlaps_high_keeps_a_boundary_character_that_only_happens_to_repeat() -> None:
+    from server.memory.domain.sensitivity import joined_overlaps_high
 
     # Imported chunks with no overlap: the head ends in "X" and the tail starts with one.
     key = "AKIA" + "IOSFOX" + "XN7EXAMPLE"
     head, tail = "the staging account uses " + key[:10], key[10:] + " for uploads"
-    assert split_credentials([("s", 0, head), ("s", 1, tail)]) == [True, True]
+    assert joined_overlaps_high([("s", 0, head), ("s", 1, tail)]) == [True, True]
 
 
-def test_split_credentials_reads_each_session_once(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_joined_overlaps_high_reads_each_session_once(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.memory.domain import sensitivity
 
     # Two sessions of 128 chunks each: the spans are found once over each session's joined
@@ -351,7 +353,7 @@ def test_split_credentials_reads_each_session_once(monkeypatch: pytest.MonkeyPat
     chunks = [(s, n, f"{s} {n} notes on the plan. ") for s in ("a", "b") for n in range(128)]
     scanned: list[str] = []
     read_alone: list[str] = []
-    spans = sensitivity.credential_spans
+    spans = sensitivity.high_spans
     holds = sensitivity._reads_high_text
 
     def counting_spans(text: str) -> list[tuple[int, int]]:
@@ -362,27 +364,27 @@ def test_split_credentials_reads_each_session_once(monkeypatch: pytest.MonkeyPat
         read_alone.append(text)
         return holds(text)
 
-    monkeypatch.setattr(sensitivity, "credential_spans", counting_spans)
+    monkeypatch.setattr(sensitivity, "high_spans", counting_spans)
     monkeypatch.setattr(sensitivity, "_reads_high_text", counting_holds)
-    assert sensitivity.split_credentials(chunks) == [False] * 256
+    assert sensitivity.joined_overlaps_high(chunks) == [False] * 256
     assert scanned == ["".join(c for s, _, c in chunks if s == name) for name in ("a", "b")]
     assert sum(len(t) for t in read_alone) <= sum(len(c) for _, _, c in chunks)
 
 
-def test_split_credentials_finds_a_key_cut_at_the_boundary_of_long_chunks() -> None:
-    from server.memory.domain.sensitivity import split_credentials
+def test_joined_overlaps_high_finds_a_key_cut_at_the_boundary_of_long_chunks() -> None:
+    from server.memory.domain.sensitivity import joined_overlaps_high
 
     head, tail = "plain words. " * 400 + _KEY_HEAD, _KEY_TAIL + " plain words." * 400
-    assert split_credentials([("s", 0, head), ("s", 1, tail)]) == [True, True]
+    assert joined_overlaps_high([("s", 0, head), ("s", 1, tail)]) == [True, True]
 
 
-def test_split_credentials_finds_a_key_spread_over_three_short_chunks() -> None:
-    from server.memory.domain.sensitivity import split_credentials
+def test_joined_overlaps_high_finds_a_key_spread_over_three_short_chunks() -> None:
+    from server.memory.domain.sensitivity import joined_overlaps_high
 
     # Imported chunks have no minimum length, so a key can run through a whole chunk.
     parts = ["note " + AWS_KEY_ID[:4], AWS_KEY_ID[4:12], AWS_KEY_ID[12:] + " end"]
     chunks = [("s", i, part) for i, part in enumerate(parts)]
-    assert split_credentials([*chunks, ("s", 3, "The build passed.")]) == [True] * 3 + [False]
+    assert joined_overlaps_high([*chunks, ("s", 3, "The build passed.")]) == [True] * 3 + [False]
 
 
 @pytest.mark.asyncio
@@ -391,7 +393,7 @@ async def test_okf_import_sends_a_session_whole_so_a_key_cut_between_its_chunks_
 
     from server.cli.okf import _import_evidence
     from server.memory.domain.okf_evidence import ChunkRecord
-    from server.memory.domain.sensitivity import split_credentials
+    from server.memory.domain.sensitivity import joined_overlaps_high
 
     # Session "b" starts at the bundle's 41st chunk, so its chunks 23 and 24 are the bundle's
     # 64th and 65th: a cut every 64 chunks would send the two halves of the key apart.
@@ -403,7 +405,7 @@ async def test_okf_import_sends_a_session_whole_so_a_key_cut_between_its_chunks_
     class Loom:
         async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
             sent = [(c["session_id"], c["chunk_index"], c["content"]) for c in body["chunks"]]
-            for (session, index, _), hit in zip(sent, split_credentials(sent), strict=True):
+            for (session, index, _), hit in zip(sent, joined_overlaps_high(sent), strict=True):
                 held[(session, index)] = hit
             return {"chunks_written": len(sent)}
 
@@ -416,8 +418,8 @@ async def test_okf_import_sends_a_session_whole_so_a_key_cut_between_its_chunks_
 @pytest.mark.asyncio
 async def test_every_chunk_a_private_key_block_covers_is_held_on_write() -> None:
     from server.memory.app.chunk_projection import chunk_text_with_ranges
-    from server.memory.app.credential_passages import embed_plain
-    from server.memory.domain.sensitivity import overlaps_credential, reads_high
+    from server.memory.app.sensitive_passages import embed_plain
+    from server.memory.domain.sensitivity import overlaps_high, reads_high
 
     # The key's body runs past a chunk: only the first chunk holds its header.
     text = "We rotated the deploy key.\n\n" + PRIVATE_KEY_BLOCK + "\n\nThe build passed."
@@ -430,28 +432,28 @@ async def test_every_chunk_a_private_key_block_covers_is_held_on_write() -> None
         seen.extend(texts)
         return [[0.6, 0.8] for _ in texts]
 
-    out = await embed_plain(contents, embed, held=overlaps_credential(text, ranges))
+    out = await embed_plain(contents, embed, held=overlaps_high(text, ranges))
     assert [e.held for e in out] == [True, True, True]
     assert not any(line in t for t in seen for line in PRIVATE_KEY_LINES)
 
 
-def test_split_credentials_holds_every_chunk_of_a_private_key_block() -> None:
-    from server.memory.domain.sensitivity import split_credentials
+def test_joined_overlaps_high_holds_every_chunk_of_a_private_key_block() -> None:
+    from server.memory.domain.sensitivity import joined_overlaps_high
 
     # Imported chunks cut at line breaks: the header, the body, then the rest and the
     # closing line. The chunk after the closing line is plain.
     lines = PRIVATE_KEY_BLOCK.split("\n")
     parts = ["\n".join(lines[:12]), "\n".join(lines[12:24]), "\n".join(lines[24:])]
     chunks = [("s", i, part) for i, part in enumerate(parts)]
-    assert split_credentials([*chunks, ("s", 3, "The build passed.")]) == [True] * 3 + [False]
+    assert joined_overlaps_high([*chunks, ("s", 3, "The build passed.")]) == [True] * 3 + [False]
     # A header cut at a boundary opens the block all the same.
     cut = [PRIVATE_KEY_BLOCK[:20], PRIVATE_KEY_BLOCK[20:900], PRIVATE_KEY_BLOCK[900:]]
     chunks = [("s", i, part) for i, part in enumerate(cut)]
-    assert split_credentials([*chunks, ("s", 3, "The build passed.")]) == [True] * 3 + [False]
+    assert joined_overlaps_high([*chunks, ("s", 3, "The build passed.")]) == [True] * 3 + [False]
 
 
-def test_split_credentials_holds_an_encrypted_private_key_without_its_closing_line() -> None:
-    from server.memory.domain.sensitivity import split_credentials
+def test_joined_overlaps_high_holds_an_encrypted_private_key_without_its_closing_line() -> None:
+    from server.memory.domain.sensitivity import joined_overlaps_high
 
     # A legacy encrypted key, pasted without its closing line: the Proc-Type and DEK-Info
     # lines after the header are part of the block, so the body chunks are held too.
@@ -465,11 +467,11 @@ def test_split_credentials_holds_an_encrypted_private_key_without_its_closing_li
         body,
     ]
     chunks = [("s", i, part) for i, part in enumerate(parts)]
-    assert split_credentials([*chunks, ("s", 3, " The build passed.")]) == [True] * 3 + [False]
+    assert joined_overlaps_high([*chunks, ("s", 3, " The build passed.")]) == [True] * 3 + [False]
 
 
 def test_a_private_key_header_without_a_body_holds_only_its_own_chunk() -> None:
-    from server.memory.domain.sensitivity import split_credentials
+    from server.memory.domain.sensitivity import joined_overlaps_high
 
     # A session quotes the header alone, and the closing line names another key type:
     # prose after the header ends the block, so the later chunks stay plain.
@@ -481,7 +483,7 @@ def test_a_private_key_header_without_a_body_holds_only_its_own_chunk() -> None:
         "-----END " + "PRIVATE KEY----- closes a PKCS#8 key instead.",
     ]
     chunks = [("s", i, part) for i, part in enumerate(parts)]
-    assert split_credentials(chunks) == [True, False, False, False]
+    assert joined_overlaps_high(chunks) == [True, False, False, False]
 
 
 @pytest.mark.asyncio
@@ -533,7 +535,7 @@ async def test_a_key_split_across_two_chunks_is_exported_as_held_and_imported_wi
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The write path cuts the text at 800 characters with a 100-character overlap, so the
-    first chunk ends with the key's head, which does not read as a credential on its own: the
+    first chunk ends with the key's head, which does not read as high on its own: the
     export holds it by its missing vector, and the import reads the chunks joined at their
     overlap, so no piece of the key reaches the embedder."""
     import server.embedding as embmod
@@ -544,14 +546,14 @@ async def test_a_key_split_across_two_chunks_is_exported_as_held_and_imported_wi
     )
     from server.memory.app import chunk_links, evidence_transfer
     from server.memory.app.chunk_projection import chunk_text_with_ranges
-    from server.memory.domain.sensitivity import overlaps_credential, reads_high
+    from server.memory.domain.sensitivity import overlaps_high, reads_high
     from server.observability import audit
 
     text = ("plain words here " * 60)[:784] + f" {OPENAI_KEY} " + "more plain words " * 60
     chunks, ranges, _ = chunk_text_with_ranges(text, max_chunks=64)
     contents = [c for c, _, _ in chunks]
     assert OPENAI_KEY[:8] in contents[0] and not reads_high(contents[0])
-    held_on_write = overlaps_credential(text, ranges)
+    held_on_write = overlaps_high(text, ranges)
     assert held_on_write == [True, True, False]
     stored = [
         {"session_id": "s", "chunk_index": i, "content": c, "embedding_dim": 0 if h else 2}
@@ -642,7 +644,7 @@ def test_the_chunk_leg_serves_no_chunk_that_reads_as_a_credential() -> None:
 
 def test_a_chunk_key_with_a_credential_version_is_held_back() -> None:
     """Two stored versions of one chunk key, the plain one read first: the hit is held
-    back, since the version that reads as a credential could be the one it serves."""
+    back, since the version that reads as high could be the one it serves."""
     from server.memory.app.retrieval.chunks import _served
 
     hits = [_hit("chunk:s:0", "[user] notes", 0.9), _hit("chunk:s:1", _PLAIN, 0.8)]

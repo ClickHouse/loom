@@ -2023,7 +2023,7 @@
           "maximum": 2048,
           "minimum": 1,
           "type": "integer",
-          "description": "Characters of a turn a conversation search hit or a saved-message listing shows; it changes no stored row. At most 2048, the most an embedding row stores (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. A saved-message listing reads this many characters and a fixed margin past them, and checks them all for a credential before it cuts the excerpt."
+          "description": "Characters of a turn a conversation search hit or a saved-message listing shows; it changes no stored row. At most 2048, the most an embedding row stores (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. A saved-message listing reads this many characters and a fixed margin past them, and checks them all for a high shape before it cuts the excerpt."
         },
         "conversation_search_min_similarity": {
           "default": 0.3,
@@ -2300,6 +2300,12 @@
           "default": 900,
           "type": "integer",
           "description": "Seconds between the entity extractor's mirror divergence heal, a FINAL-to-FINAL join of loom.memory and loom.memory_embeddings (343 GB/day if run every pass). Divergence arrives a few rows a day."
+        },
+        "erasure_export_conversation_max_bytes": {
+          "default": 67108864,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Bytes of conversation text after which `erasure.export` stops its `conversations` section, marked `truncated`; a page holds up to this plus the turn that crosses it."
         },
         "erasure_mutation_wait_s": {
           "default": 3600,
@@ -5986,16 +5992,6 @@
           "default": 60,
           "type": "integer",
           "description": "Seconds between re-reads of which vector columns are coded and which coded tables carry patch parts. A write that embeds reads again on its own when the reading is older than a few seconds (codes_state.FRESH_READING_S)."
-        },
-        "vector_search_ef_search": {
-          "default": 256,
-          "type": "integer",
-          "description": "HNSW candidate list size (`ef_search`) for the helper legs, emitted via vector_search_settings(); tracks ClickHouse's default. The main leg scales its own value with top_k."
-        },
-        "vector_search_index_fetch_multiplier": {
-          "default": 10.0,
-          "type": "number",
-          "description": "Post-filter over-fetch for a `vector_similarity` (HNSW) index: the index returns top-N before the tenant predicate drops rows. Sent on uncoded vector reads; coded reads use `vector_search_quantized_fetch_multiplier`."
         },
         "vector_search_quantized_codes": {
           "default": true,

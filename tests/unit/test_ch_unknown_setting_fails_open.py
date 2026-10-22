@@ -49,7 +49,7 @@ def _client(responses: list[Any]) -> Any:
 
 def test_strip_removes_only_the_fragment() -> None:
     sql = (
-        "SELECT k FROM t ORDER BY d ASC LIMIT 5 SETTINGS hnsw_candidate_list_size_for_search = 64, "
+        "SELECT k FROM t ORDER BY d ASC LIMIT 5 SETTINGS "
         "vector_search_index_fetch_multiplier = 2.0, vector_search_use_quantized_codes = 1"
     )
     out = ch_errors.strip_quantized_setting(sql)
@@ -64,7 +64,7 @@ async def test_code_115_on_the_setting_turns_it_off_and_retries_without_it(monke
     ok = SimpleNamespace(column_names=["k"], result_rows=[("a",)])
     c = _client([DatabaseError(_ERR), ok])
     rows = await c.query_all(
-        "SELECT k FROM t SETTINGS hnsw_candidate_list_size_for_search = 64, "
+        "SELECT k FROM t SETTINGS vector_search_index_fetch_multiplier = 3.0, "
         "vector_search_use_quantized_codes = 1"
     )
     assert rows == [{"k": "a"}]

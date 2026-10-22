@@ -2,13 +2,14 @@
 
 `resolve_sensitivity` runs on `memory.set`, `memory.bulk_set`, `memory.update` and the
 extractor's entries only. `observe.record`, `copy_to`, `namespace.restore` and the
-imports write `sensitivity = ''` whatever the value holds, so a credential or a contact
-detail that entered by one of those paths is embedded and searchable. This pass runs the
-detector late over rows created in the trailing window (`sensitivity_sweep_window_days`,
-2) and labels what it finds the way the write path would have — a new version per row,
-the `high` rows' embedding rows tombstoned. Bounded per pass and limited to the shapes in
-`sensitivity_sweep_shapes` (credential and email by default — the phone shape matches run
-ids and integer limits); the historical backlog is the operator's
+imports write `sensitivity = ''` whatever the value holds, so a high value (a credential,
+card number, SSN or stated PIN) or a contact detail that entered by one of those paths is
+embedded and searchable. This pass runs the detector late over rows created in the
+trailing window (`sensitivity_sweep_window_days`, 2) and labels what it finds the way the
+write path would have — a new version per row, the `high` rows' embedding rows
+tombstoned. Bounded per pass and limited to the shapes in `sensitivity_sweep_shapes`
+(`credential`, which covers every high shape, and `email` by default — the phone shape
+matches run ids and integer limits); the historical backlog is the operator's
 `loom sensitivity-sweep --apply`, not this worker's.
 
 A row behind more than `sensitivity_sweep_pages_per_pass` x

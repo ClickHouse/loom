@@ -653,14 +653,6 @@ class ClickHouseSettings(BaseModel):
     migrate_mutation_wait_s: int = 600
 
     # --- vector search ---
-    # HNSW candidate list size (`ef_search`) for the helper legs, emitted via
-    # vector_search_settings(); tracks ClickHouse's default. The
-    # main leg scales its own value with top_k.
-    vector_search_ef_search: int = 256
-    # Post-filter over-fetch for a `vector_similarity` (HNSW) index: the index
-    # returns top-N before the tenant predicate drops rows. Sent on uncoded
-    # vector reads; coded reads use `vector_search_quantized_fetch_multiplier`.
-    vector_search_index_fetch_multiplier: float = 10.0
     # Send `vector_search_use_quantized_codes = 1` on vector-ranked reads whose
     # column has a `Quantized(...)` codec and whose table has no patch parts:
     # a codes-first scan plus full-precision rescore. A replica that rejects
@@ -1761,6 +1753,9 @@ class ErasureSettings(BaseModel):
     # mutations_sync=0, polled in system.mutations); past it the saga fails
     # naming the mutation.
     erasure_mutation_wait_s: int = 3600
+    # Bytes of conversation text after which `erasure.export` stops its `conversations`
+    # section, marked `truncated`; a page holds up to this plus the turn that crosses it.
+    erasure_export_conversation_max_bytes: Annotated[int, LIVE] = Field(default=67108864, ge=1)
 
     # ---- external erasure backends ----
     # The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse
@@ -1948,7 +1943,7 @@ class KnowledgeSettings(BaseModel):
     # it changes no stored row. At most 2048, the most an embedding row stores
     # (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. A saved-message
     # listing reads this many characters and a fixed margin past them, and checks them
-    # all for a credential before it cuts the excerpt.
+    # all for a high shape before it cuts the excerpt.
     conversation_search_excerpt_chars: Annotated[int, LIVE] = Field(default=240, ge=1, le=2048)
 
     # LLM-title untitled threads in namespaces with conversation_logging_enabled
@@ -5275,6 +5270,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # sort key, a handful of FINAL-scoped counts over the namespace, three of
     # the audit's shape checks, and two adoption reads — cached an hour.
     "mentor.brief": 3000,
+    "mentor.guide": 20,
     # Three summary reads, ten FINAL-scoped aggregates over
     # the namespace and one Python scan of up to 20k (key, clipped value)
     # rows for the hand-rolled index check. Namespace-sized; the ledger
@@ -5284,6 +5280,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "namespace.cancel_request": 80,
     "namespace.delete": 60,
     "namespace.get": 30,
+    "namespace.guide_get": 40,
+    "namespace.guide_history": 60,
+    # A claim on the guide (two KeeperMap writes), one point read, one insert.
+    "namespace.guide_set": 250,
     "namespace.join": 80,
     "namespace.leave": 80,
     "namespace.list": 80,

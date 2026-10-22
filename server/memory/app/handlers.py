@@ -255,10 +255,10 @@ async def _get_chunk_with_neighbors(input: MemoryGetInput) -> MemoryGetOutput:
     if target is None:
         return MemoryGetOutput(found=False)
 
-    # A chunk that reads as a credential, or that was written without a vector for holding
-    # part of one, is served only when its own key is read, and that read is audited as a
-    # key read of a 'high' row is. A neighbour is context the caller did not name: a held
-    # one is left out of the passage.
+    # A chunk that reads as high, or that was written without a vector for holding part
+    # of a high shape, is served only when its own key is read, and that read is audited
+    # as a key read of a 'high' row is. A neighbour is context the caller did not name: a
+    # held one is left out of the passage.
     def held(row: dict[str, Any]) -> bool:
         return int(row["embedding_dim"]) == 0 or reads_high(str(row["content"]))
 
@@ -1165,37 +1165,42 @@ async def _retire_derived(
 async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
     """Bulk-tombstone for `memory.clear`.
 
-    Defenses: at least one of `user_id` / `agent` is required (a scope-less
-    clear is `erasure.request_namespace`'s job), and `confirm_subject` must
-    match one of them (guard against UI-dropdown accidents).
+    Defenses: a concrete `user_id` or `agent` other than `'-'` is required (`"*"` opens
+    an axis; a scope-less clear is `erasure.request_namespace`'s job), and
+    `confirm_subject` must match one (guard against UI-dropdown accidents).
 
     Same tombstone semantics as `memory.delete`.
     """
     import server.memory.store as memory_repo
 
-    if input.user_id is None and input.agent is None:
+    # "*" opens an axis as it does on reads; matched literally it would clear nothing.
+    user_id = None if input.user_id == "*" else input.user_id
+    agent = None if input.agent == "*" else input.agent
+    # One axis must name someone: "-" (no user, no agent) beside an open axis selects most
+    # of a namespace, which is erasure's job too, and anyone can type it to confirm.
+    named = [v for v in (user_id, agent) if v not in (None, "-")]
+    if not named:
         raise HTTPException(
             status_code=400,
             detail={
                 "code": "MISSING_SCOPE",
                 "message": (
-                    "memory.clear requires at least one of `user_id` "
-                    "or `agent`. For namespace-wide clearing use "
+                    "memory.clear requires a concrete `user_id` or `agent` other than '-' "
+                    '("*" means every value of that field). For namespace-wide clearing use '
                     "erasure.request_namespace (full saga, cross-system "
                     "cascade, auditable)."
                 ),
             },
         )
-    candidates = [v for v in (input.user_id, input.agent) if v is not None]
-    if input.confirm_subject not in candidates:
+    if input.confirm_subject not in named:
         raise HTTPException(
             status_code=400,
             detail={
                 "code": "CONFIRM_SUBJECT_MISMATCH",
                 "message": (
-                    "`confirm_subject` must equal the user_id or agent "
-                    "being cleared. This is a mid-weight defense against "
-                    "destructive UI-dropdown accidents."
+                    "`confirm_subject` must equal the concrete user_id or agent "
+                    'being cleared ("*" and "-" never confirm). This is a mid-weight '
+                    "defense against destructive UI-dropdown accidents."
                 ),
             },
         )
@@ -1208,8 +1213,8 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
     counts = await memory_repo.bulk_tombstone_scope(
         org=input.org,
         namespace=input.namespace,
-        user_id=input.user_id,
-        agent=input.agent,
+        user_id=user_id,
+        agent=agent,
         on_tombstoned=announce_page if subscribed else None,
     )
     locked_skipped = int(counts.pop("locked_skipped", 0) or 0)
