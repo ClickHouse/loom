@@ -626,7 +626,8 @@ def test_a_mutation_after_the_checks_fails_the_postcondition(capsys: Any) -> Non
     """A mutation created after the gate's last mutation check follows the rename onto the
     rollback copy; the new table may not hold it."""
     ch = _CH(memory_chunks=_live())
-    ch.mutations_first = [0, 0]  # the preflight and the gate before the swap
+    # the preflight and the gate before the swap, then the new table after it
+    ch.mutations_first = [0, 0, 0]
     ch.mutations = 1
     assert _run(ch, "--yes") == tr.POSTCONDITION
     assert "1 mutation(s) on loom.memory_chunks_pre_rebuild" in capsys.readouterr().out
@@ -643,7 +644,8 @@ def test_a_mutation_rolled_back_shows_as_a_same_version_difference_in_the_drop(
     the --drop-pre-rebuild that follows reports the touched keys as differing at one
     version without naming the new-layout copy as the one that holds the change."""
     ch = _CH(memory_chunks=_live())
-    ch.mutations_first = [0, 0]  # the preflight and the gate before the swap
+    # the preflight and the gate before the swap, then the new table after it
+    ch.mutations_first = [0, 0, 0]
     ch.mutations = 1
     assert _run(ch, "--yes") == tr.POSTCONDITION
     out = capsys.readouterr().out
@@ -899,6 +901,29 @@ def test_columns_that_differ_by_name_after_the_swap_keep_both_tables(
     assert "inspect the difference" in summary["next"] and "--rollback --yes" not in summary["next"]
 
 
+def test_drop_pre_rebuild_keeps_both_tables_when_their_columns_differ_by_name(
+    capsys: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A column added to either table after the swap is refused as a difference, never as
+    checks that could not run, and the drop names no rollback."""
+    ch = _CH(memory_chunks=_live())
+    assert _run(ch, "--yes") == tr.OK
+    capsys.readouterr()
+    columns = tr.columns
+
+    def added_to_one(ch: Any, table: str) -> dict[str, tuple[Any, ...]]:
+        cols = columns(ch, table)
+        return {**cols, "added": ("String", "", "", "")} if table.endswith("_pre_rebuild") else cols
+
+    monkeypatch.setattr(tr, "columns", added_to_one)
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+    assert "memory_chunks_pre_rebuild" in ch.t
+    out = capsys.readouterr().out
+    assert "fix the grant" not in out
+    summary = json.loads(out.rsplit("summary ", 1)[1])
+    assert vcr.KEEP_BOTH in summary["next"] and "--rollback --yes" not in summary["next"]
+
+
 REPLICATED = ARRAY.replace(
     "ReplacingMergeTree(created_at)",
     "ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}', '{replica}', created_at)",
@@ -995,6 +1020,26 @@ def test_a_write_into_the_new_table_after_the_swap_never_names_the_rollback(
     ch.cons, ch.newer = (1, 0, 0), (1, 0)  # the rollback copy holds the newer version
     assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
     assert "--rollback --yes" in capsys.readouterr().out
+
+
+def test_a_delete_in_the_new_table_after_the_swap_never_names_the_rollback(
+    capsys: Any,
+) -> None:
+    """A delete in the new table after the swap leaves keys only in the rollback copy, as a
+    write to the old table would; the new table's mutation tells them apart, and
+    --rollback would bring the deleted rows back."""
+    ch = _CH(memory_chunks=_live())
+    assert _run(ch, "--yes") == tr.OK
+    capsys.readouterr()
+    ch.cons = (0, 1, 0)
+    ch.mutations_first = [1]  # the new table's lightweight DELETE
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+    assert "memory_chunks_pre_rebuild" in ch.t
+    out = capsys.readouterr().out
+    assert "1 mutation(s) on loom.memory_chunks after the copy started" in out
+    assert "--rollback --yes" not in out
+    assert vcr.KEEP_BOTH in json.loads(out.rsplit("summary ", 1)[1])["next"]
+    assert ch.params[_last(ch, "system.mutations")]["t"] == "memory_chunks"
 
 
 def test_drop_pre_rebuild_after_a_rollback_keeps_a_change_only_the_new_layout_copy_holds(

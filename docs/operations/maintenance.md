@@ -244,7 +244,8 @@ an abandoned twin. `--drop-pre-rebuild` first compares the two tables again (aft
 same drain as the postcondition) and refuses (exit 3), keeping the copy, while the copy
 it would drop holds a change the live table lacks, also when both tables are on the
 target layout (a `--require-patch-free` rebuild of a table already on it). After a swap, a change only the
-rollback copy holds names `--rollback --yes`; a change the live table holds names no
+rollback copy holds names `--rollback --yes`; a change the live table holds, a mutation on
+it since the copy started, or a column-name difference between the two tables names no
 rollback (see after the swap below). After a rollback, a change only the new-layout copy
 holds, a key that differs at one version, or a mutation on the copy since its creation
 (an unfinished `ALTER UPDATE` does not show under `FINAL`, and the rollback did not carry
@@ -303,8 +304,8 @@ cover these copies.
   since the twin was created), less a minute for replica clocks.
 - **After the swap (exit 7).** The tool runs the consistency check again, the rollback
   copy as the source and the new table as the twin, with the same read settings and
-  replica check as the last gate reads, and counts the rollback copy's mutations since
-  the copy. On `ReplicatedMergeTree` it first runs `SYSTEM SYNC REPLICA ... LIGHTWEIGHT`
+  replica check as the last gate reads, and counts both tables' mutations since the
+  copy. On `ReplicatedMergeTree` it first runs `SYSTEM SYNC REPLICA ... LIGHTWEIGHT`
   on the rollback copy, which has its own replication queue: a write that reached
   another replica before the swap belongs to the copy after the rename. `LIGHTWEIGHT`,
   because the swap stops the copy's merges and a full sync would wait on a merge entry.
@@ -318,7 +319,9 @@ cover these copies.
   and keeps both tables. A key only the new table holds or a newer version there (a write
   to the new table after the swap, or a delete in the old table after the last check) is
   a change `--rollback` would drop, since it copies back only newer versions and absent
-  keys. A key whose content differs at one version (a lightweight `UPDATE` in either
+  keys. A mutation on the new table since the copy started (a lightweight `DELETE`, such
+  as `loom reembed --delete-old` runs, or an `ALTER UPDATE`) is a change `--rollback`
+  would undo, and a key it deleted shows only in the rollback copy. A key whose content differs at one version (a lightweight `UPDATE` in either
   table, merged or not, or an `ALTER UPDATE` that finished before the swap) may be in
   either table; the hash shows only that the rows differ. In both cases the run fails its
   postcondition, names no rollback, and asks for both tables to be kept and the

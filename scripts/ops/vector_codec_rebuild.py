@@ -124,7 +124,7 @@ COPY_RECEIVE_TIMEOUT_S = 7200
 # The full copy and the rollback's catch-up copy run under this limit.
 # not a setting: stays below the client's read timeout
 COPY_EXECUTION_TIME_S = COPY_RECEIVE_TIMEOUT_S - 200
-# The defaults of --cluster and --statement-timeout-s; a printed next step names any other.
+# The default of --cluster; a printed next step names any other.
 DEFAULT_CLUSTER = "default"
 # not a setting: the default of this operator tool's --statement-timeout-s flag
 DEFAULT_STATEMENT_TIMEOUT_S = 1800.0
@@ -1145,9 +1145,7 @@ class VectorRebuild:
         if not live or not self.exists(self.pre) or self.exists(self.twin):
             log("POSTCONDITION FAILED: the names do not hold what the swap leaves")
             return POSTCONDITION
-        if set(tr.columns(self.ch, self.t)) != set(tr.columns(self.ch, self.pre)):
-            # either table may have changed, so neither --rollback nor the drop keeps it whole
-            self.next_step = f"loom.{self.t} and loom.{self.pre} differ. {KEEP_BOTH}"
+        if self.columns_differ():
             log("POSTCONDITION FAILED: the rollback copy's columns differ by name")
             return POSTCONDITION
         if self.a.require_patch_free:
@@ -1171,6 +1169,15 @@ class VectorRebuild:
             "--yes`, which checks the two tables again before it drops the rollback copy"
         )
         return OK
+
+    def columns_differ(self) -> bool:
+        """Whether the live table and the rollback copy name other columns, with the next
+        step recorded. Either table may have changed, so neither --rollback nor the drop
+        keeps it whole."""
+        if set(tr.columns(self.ch, self.t)) == set(tr.columns(self.ch, self.pre)):
+            return False
+        self.next_step = f"loom.{self.t} and loom.{self.pre} differ. {KEEP_BOTH}"
+        return True
 
     def recheck_step(self) -> str:
         """The next step when the checks after the swap could not run."""
@@ -1239,13 +1246,21 @@ class VectorRebuild:
                 "; ".join(why) + ". --rollback would drop a change the new table holds, "
                 "since it copies back only newer versions and absent keys"
             ), False
+        # a delete in the new table after the swap also leaves keys only in the copy
+        if live_mutations := self.mutations_since(self.t, since):
+            return (
+                f"{live_mutations} mutation(s) on loom.{self.t} after the copy started "
+                f"({old_ahead or 'no key'} differs): a delete or update in the new table, "
+                "which --rollback would undo"
+            ), False
         mutations = self.mutations_since(self.pre, since)
         log("mutations on the rollback copy:", mutations)
         if old_ahead or mutations:
             why = (
                 f"the source changed after the last check ({old_ahead or 'no key'}; "
-                f"{mutations} mutation(s) on loom.{self.pre}), and the new table may not "
-                "hold the change"
+                f"{mutations} mutation(s) on loom.{self.pre}): a write to the old table "
+                "after the last check, or a delete in the new table after the swap, and "
+                "the new table may not hold the change"
             )
             if mutations:
                 # the swap stopped the copy's merges; the rollback starts them again
@@ -1352,6 +1367,9 @@ class VectorRebuild:
             return REFUSED
         # after a swap or a rollback the copy may be the only copy of a change
         try:
+            if self.columns_differ():
+                log(f"REFUSED: the rollback copy's columns differ by name. {KEEP_BOTH}")
+                return REFUSED
             if live and pre:
                 # a --require-patch-free run rebuilds a table already on the target layout;
                 # the run's twin is the newer table, after a swap and after a rollback
