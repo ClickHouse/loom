@@ -52,6 +52,13 @@ provider's discovery document lists it (Okta's does). It needs:
 
 Group claims are not mapped. Namespace access comes from Loom's own grants.
 
+Loom checks an ID token's signature with the algorithms the discovery document
+lists in `id_token_signing_alg_values_supported`, among RS256, RS384, RS512,
+PS256, ES256, ES384 and ES512, and with RS256 alone when it lists none. A token
+signed with an algorithm the document does not list is refused, as is any token
+with `none` or an HMAC algorithm (`HS256` and the like), whatever the document
+lists; a provider that lists only those signs no one in.
+
 ## Accounts
 
 The verified email matches an SSO account (one with no password) by its
@@ -308,6 +315,53 @@ loom mint-token --subject sa:legacy --org acme --service-account \
   --namespace-role legacy=writer --json
 ```
 
+A system that administers Loom itself, such as a control plane that registers
+trusts and grants for its tenants, holds the `platform_admin` role as a bot.
+**Platform admin spans every org**: a token holding it passes every admin route
+and acts in any org, so give it to as few identities as you can, and prefer a
+trust (no secret to leak) to a key. `--platform-admin` registers such a bot; it
+takes no `--namespace-role` (its tokens cover every namespace), no
+`--agent-claim` (it is one identity, never an agent's), and only exact `--claim`
+values (a prefix would hand the role to every token it matches). Give it an
+audience of its own, so no token meant for another trust can meet it:
+
+```bash
+loom bot create --name controlplane --org acme --platform-admin \
+  --issuer https://cp.example/workload-identity --audience loom-admin \
+  --claim sub=controlplane
+```
+
+Each proof still gets an hour-long token, for `sa:controlplane`, carrying the
+role; `loom bot disable` ends them as it ends any bot's. Only a person signed in
+to Loom as a platform admin (`"platform_admin": true` on `/v1/admin/bots.create`)
+or an operator on the host sets the flag: the route refuses it to every service
+account's token, a platform-admin bot's included, and to a third-party MCP
+client's session, whose tokens end with it, so a leaked token never mints itself
+a lasting successor. The `auth.machine_created` audit row records it, and
+`loom bot list` and `/v1/admin/bots.list` show it. A trust of the same issuer
+that tells agents apart must not be able to take the platform-admin trust's
+token: give each a claim the other's tokens cannot meet, such as distinct `sub`
+values (`sub=controlplane` for this one, `sub=tenants/<id>/agents/*` beside an
+exact `tenant_id` for a tenant's), or registration refuses the second one.
+Where a trust cannot be used, an operator mints an expiring platform-admin token
+for a service account instead. `--platform-admin` refuses a token without
+`--ttl-days` or for longer than 90 days, refuses an agent's subject
+(`sa:<trust>:<agent>`), and records each mint as an `auth.platform_admin_minted`
+audit row:
+
+```bash
+loom mint-token --platform-admin --subject sa:controlplane --org acme --ttl-days 30 --json
+```
+
+Admin machine tokens are issued only after every live replica protects human sign-in
+changes. An older replica or an unread fleet refuses the exchange with 503
+`temporarily_unavailable`; the CLI reads a fresh fleet view and refuses to mint as well.
+Both checks include deployment and non-deployment processes sharing ClickHouse;
+neither uses the replica cache, which separates those kinds.
+The CLI requires at least one live replica and cannot mint against an empty fleet.
+Before rolling back to an older build, disable the admin bots and revoke every
+standalone CLI-minted admin subject or token before that build starts serving.
+
 SSO does not affect bots or minted tokens. A token a person creates from a `loom
 login` or dashboard SSO session (`/v1/me/service_accounts`) lasts as long as
 they chose and belongs to them: revoking the person ends it. One a third-party
@@ -344,7 +398,7 @@ of the above, so they do not stop with someone's offboarding.
   ended session writes an `auth.*` row to the audit log:
   `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,
   `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
-  `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`, `auth.agent_provisioned`,
+  `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`, `auth.agent_provisioned`, `auth.platform_admin_minted`,
   `auth.session_revoked`, `auth.scim_deactivated`, `auth.scim_reactivated`,
   `auth.scim_deleted`, `auth.scim_collateral`.
 
@@ -659,6 +713,21 @@ sign-ins, 300 identity-provider sign-in starts and 30 failed callbacks) count
 per client address, an IPv6 /64 as one. Set `LOOM_TRUSTED_PROXIES` to your proxy's
 addresses so that address is the user's own, not the proxy's for everyone.
 
+When Loom cannot reach the identity provider at the issuer's own host (its
+public name resolves to an address only browsers reach, for example), set
+`LOOM_OIDC_BACKCHANNEL_BASE_URL` to an address it can reach the provider at, such
+as `http://idp.example:8080`: a scheme, a host and an optional port, nothing
+else. Loom's own calls to the issuer's host then go there, with the path kept and
+the issuer's host in the `Host` header: the discovery document
+(`<base>/<issuer path>/.well-known/openid-configuration`), the token and
+revocation endpoints, and the keys ID tokens are checked with. The browser still
+goes to the issuer's `authorization_endpoint`, an endpoint the document names on
+another host is called as it is, a bot trust's keys are always fetched from the
+https address it names, and the document and every ID token must still name
+`LOOM_OIDC_ISSUER` as their issuer. None of these calls follows a redirect. A
+plain `http` base sends the client secret unencrypted: use one only on a network
+you trust.
+
 ## ClickHouse Keeper
 
 Sign-in keeps codes, device grants and each session's current refresh token in
@@ -751,7 +820,8 @@ tokens alone.
 With SSO on, nobody can sign in with a password, including operators. If the
 provider is down, mint a token on the server host with
 `docker exec loom-server loom mint-token --subject <you> --org <org> --namespaces <ns>`
-and open `/me#token=<token>`.
+and open `/me#token=<token>`: the sign-in landing page, which never redirects (`/`
+follows `LOOM_DASHBOARD_REDIRECT_URL`, and the browser would carry the token along).
 
 ## Other providers
 

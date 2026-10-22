@@ -1,6 +1,8 @@
 """Run a statement the server issues on clickhouse-local against the production table
 definitions in schemas/schema.sql, for the unit tests that check real SQL. Tests that use
-it skip when the `clickhouse` binary is not installed (`CLICKHOUSE` is None)."""
+it skip when the `clickhouse` binary is not installed (`CLICKHOUSE` is None). The session
+reads and writes `DateTime` in UTC, as the server pins it (`server/core/ch.py`), whatever
+the host's zone."""
 
 from __future__ import annotations
 

@@ -38,6 +38,7 @@ def _trust() -> machines.Machine:
         "jwks_uri": "",
         "max_token_s": 3600,
         "max_agents": 1000,
+        "platform_admin": False,
     }
 
 

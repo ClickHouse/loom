@@ -100,7 +100,7 @@ def _inject(monkeypatch: pytest.MonkeyPatch, pub: Any) -> None:
         }
 
     monkeypatch.setattr(oidc, "_discover", fake_discover)
-    monkeypatch.setattr(oidc, "signing_key", lambda jwks_uri, token: pub)
+    monkeypatch.setattr(oidc, "signing_key", lambda jwks_uri, token, **_: pub)
 
 
 # ── id_token verification (the security-critical bit) ──────────────────────

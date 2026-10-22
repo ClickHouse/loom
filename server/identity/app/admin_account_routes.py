@@ -29,6 +29,23 @@ def _by(info: AuthInfo | None) -> str:
     return f"admin:{info.subject}" if info else "admin:local"
 
 
+def _only_a_person(info: AuthInfo | None, done: str, on_host: str) -> None:
+    """Only a human admin may create lasting credentials or change human sign-in."""
+    if info is None:
+        return
+    third_party_session = bool(info.session_id) and not info.first_party
+    if info.is_service_account or info.subject.startswith("sa:") or third_party_session:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "AUTH_INSUFFICIENT",
+                "message": f"{done} by a person signed in to Loom as a platform admin, or on "
+                f"the host (`{on_host}`), never with a service account's token or a "
+                "third-party client's session",
+            },
+        )
+
+
 def _invalid(e: ValueError) -> HTTPException:
     return HTTPException(status_code=422, detail={"code": "VALIDATION_FAILED", "message": str(e)})
 
@@ -51,6 +68,8 @@ class AdoptInput(_Input):
 async def sso_adopt(input: AdoptInput, info: Admin) -> dict[str, Any]:
     """The password accounts at a domain and why any is skipped; with `apply`,
     links the rest (see `loom sso adopt`)."""
+    if input.apply:
+        _only_a_person(info, "accounts are adopted", "loom sso adopt")
     try:
         plan = await account_admin.adopt_plan(input.domain, input.org, input.skip)
         linked = (
@@ -83,6 +102,7 @@ class LinkInput(_Input):
 @router.post("/v1/admin/sso.link")
 async def sso_link(input: LinkInput, info: Admin) -> dict[str, Any]:
     """Point one password account at the address its owner signs in with (see `loom sso link`)."""
+    _only_a_person(info, "an account is linked to an SSO address", "loom sso link")
     try:
         was, carried = await account_admin.link_account(
             input.email, input.org, input.namespace, by=_by(info)
@@ -99,6 +119,7 @@ async def sso_link(input: LinkInput, info: Admin) -> dict[str, Any]:
 @router.post("/v1/admin/sso.unlink")
 async def sso_unlink(input: EmailInput, info: Admin) -> dict[str, Any]:
     """Detach the email's accounts from their SSO sign-in (see `loom sso unlink`)."""
+    _only_a_person(info, "an SSO link is undone", "loom sso unlink")
     accounts = await account_admin.unlink(input.email, input.org, by=_by(info))
     return {"unlinked": [{"org": org, "namespace": ns} for org, ns in accounts]}
 
@@ -107,6 +128,7 @@ async def sso_unlink(input: EmailInput, info: Admin) -> dict[str, Any]:
 async def sso_password_link(input: EmailInput, info: Admin, request: Request) -> dict[str, Any]:
     """A one-time link (valid for `password_link_ttl_seconds`) that gives the email's SSO
     accounts a password."""
+    _only_a_person(info, "an SSO account is given a password", "loom sso password-link")
     try:
         code, namespaces = await account_admin.password_link(input.email, input.org, by=_by(info))
     except ValueError as e:
@@ -128,6 +150,8 @@ class BotInput(_Input):
     jwks_uri: str = ""
     max_token_s: int = 3600
     max_agents: int = 1000
+    # Its tokens carry platform_admin, which spans every org.
+    platform_admin: bool = False
     replace: bool = False
 
 
@@ -135,6 +159,10 @@ class BotInput(_Input):
 async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
     """Register a bot. With `generate_key` the answer carries its private key,
     once: Loom keeps only the public half."""
+    if input.platform_admin:
+        # A token that carries platform_admin must not mint itself a lasting
+        # successor: a leaked hour-long token would become a permanent one.
+        _only_a_person(info, "a platform-admin bot is registered", "loom bot create")
     if input.generate_key and input.public_key_pem:
         raise _invalid(ValueError("give a public key or ask for one to be generated, not both"))
     private, public = machines.generate_key() if input.generate_key else (b"", b"")
@@ -151,6 +179,7 @@ async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
             jwks_uri=input.jwks_uri,
             max_token_s=input.max_token_s,
             max_agents=input.max_agents,
+            platform_admin=input.platform_admin,
         )
     except ValueError as e:
         raise _invalid(e) from None
@@ -193,6 +222,7 @@ async def bots_list() -> dict[str, Any]:
                 "jwks_uri": r["jwks_uri"],
                 "max_token_s": int(r["max_token_s"]),
                 "max_agents": int(r["max_agents"]),
+                "platform_admin": bool(r.get("platform_admin", 0)),
                 "updated_by": r["updated_by"],
             }
             for r in rows

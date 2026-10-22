@@ -86,8 +86,9 @@ def test_one_jwk_client_per_jwks_uri(monkeypatch: pytest.MonkeyPatch) -> None:
     built: list[str] = []
 
     class _Client:
-        def __init__(self, uri: str, timeout: int) -> None:
+        def __init__(self, uri: str, timeout: int, headers: dict[str, str]) -> None:
             built.append(uri)
+            assert headers == {}  # no back-channel base set: the issuer's own address
 
         def get_signing_key_from_jwt(self, token: str) -> Any:
             return type("K", (), {"key": "k"})()
