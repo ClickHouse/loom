@@ -443,13 +443,14 @@ the server does not change existing tables:
    unavailable keeps that answer until it restarts.
 2. Rebuild each coded table with `scripts/ops/vector_codec_rebuild.py`. The tool is not in
    the image: run it from a clone of the repository at the deployed version, after
-   `uv sync --locked`, with `LOOM_CH_*` pointing at the deployment's ClickHouse. Run the
-   block with `mode=--dry-run` to see each plan, then again with `mode=--yes` to rebuild:
+   `uv sync --locked`, with `LOOM_CH_*` pointing at the deployment's ClickHouse. `mode`
+   holds the action: run the block with `mode=--dry-run` to see each plan, then again with
+   `mode=--yes` to rebuild:
 
    ```bash
    mode=--dry-run   # then mode=--yes
    cluster=default  # your cluster's name; '' checks this server only
-   rebuild() { uv run python -P -m scripts.ops.vector_codec_rebuild "$@" --cluster "$cluster" "$mode"; }
+   rebuild() { uv run python -P -m scripts.ops.vector_codec_rebuild "$@" --cluster "$cluster" $mode; }
    rebuild --table memory_embeddings --columns embedding,memory_key_embedding
    rebuild --table memory_chunks --columns embedding
    rebuild --table code_chunks --columns embedding
@@ -470,18 +471,20 @@ the server does not change existing tables:
    times larger.
 
    A table with no full-length vectors yet (no rows, or only placeholder vectors from failed
-   embeds) cannot pass the rebuild's recall gate, and the dry run does not show that. Skip
-   its line while this query, with the line's first column, returns 0:
-   `SELECT countIf(length(<column>) > 0 AND <column>[1] != 0) FROM loom.<table>`. A run that stopped at the gate leaves its twin,
-   `loom.<table>_rebuild`: drop it with `DROP TABLE`, or pass `--restart` the next time you
-   run that line.
+   embeds) cannot pass the rebuild's recall gate, and the dry run does not show that. The
+   dry run prints the width it will code (`target <table> dimension <n>`); skip the line
+   while this query, with the line's first column, returns 0:
+   `SELECT countIf(length(<column>) = <n> AND <column>[1] != 0) FROM loom.<table>`.
 
-3. Once search looks right, drop the old copies: with `mode=--yes`, run
-   `rebuild --table <table> --columns <columns> --drop-pre-rebuild` for each table you
-   rebuilt. Until then each rebuilt table keeps its old copy
-   as `loom.<table>_pre_rebuild`, a full second copy that erasure does not reach. To go back
-   instead, run a line with `--rollback` and `mode=--yes` (`--rollback` and
-   `--drop-pre-rebuild` cannot be combined with `--dry-run`)
+   A run that stopped at the gate leaves its twin, `loom.<table>_rebuild`: drop it with
+   `DROP TABLE`, or pass `--restart` the next time you run that line.
+
+3. Once search looks right, drop the old copies: run the lines of the tables you rebuilt
+   again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its old
+   copy as `loom.<table>_pre_rebuild`, a full second copy that erasure does not reach. To go
+   back instead, run that table's line with `mode="--rollback --yes"`. Use the table's own
+   line in both cases: the tool checks the layout it built, so `entity_vectors` needs its
+   `--chain LZ4`
    ([table rebuilds](../development/migrations.md#changing-a-sort-key-or-a-partition-key)).
 
 How Loom reads these settings is in
