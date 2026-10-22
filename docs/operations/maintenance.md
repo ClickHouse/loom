@@ -255,8 +255,9 @@ step that names a command carries the run's `--method`, `--chain`,
 left for inspection, or a leftover never exchanged in). When it names
 `RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild` or asks to compare the two
 tables, do that first and drop nothing: the rename step means the exchange ran without
-the rename, `<table>_rebuild` is the old table, and the tool refuses `--reuse`,
-`--restart` and `--drop-pre-rebuild` until the rename runs. The tool reads
+the rename, `<table>_rebuild` is the old table, and every run of the table's line
+refuses with exit 3 (the same line with `--yes`, `--reuse` or `--restart` included), as
+does `--drop-pre-rebuild`, until the rename runs. The tool reads
 this from every vector column of the two tables, not from the run's flags, so a rerun
 with another `--method`, `--chain`, `--index-granularity` or `--columns` refuses too: a
 twin not known to be a leftover, under a live table with a coded vector column, may be

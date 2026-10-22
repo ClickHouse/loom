@@ -266,17 +266,21 @@ def test_a_twin_left_behind_is_a_lock_until_reuse_or_restart(capsys: Any) -> Non
     assert _writes(ch)[0] == "DROP TABLE loom.memory_chunks_rebuild SYNC"
 
 
-@pytest.mark.parametrize("flag", ["--reuse", "--restart"])
+@pytest.mark.parametrize("patch_free", [(), ("--require-patch-free",)])
+@pytest.mark.parametrize("flags", [(), ("--reuse",), ("--restart",)])
 def test_a_twin_older_than_the_live_table_is_the_old_table_and_is_kept(
-    flag: str, capsys: Any
+    flags: tuple[str, ...], patch_free: tuple[str, ...], capsys: Any
 ) -> None:
     """An exchange without its rename leaves the old table as the twin, older than the
-    live table: the run refuses and prints the rename instead of dropping it."""
+    live table: the run refuses and prints the rename instead of dropping it. The live
+    table is then on the layout the same line names, and that rerun refuses too rather
+    than report nothing to do."""
     coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
     old = {"ddl": ARRAY, "rows": 5, "uuid": "old", "created": TWIN_CREATED}
     new = {"ddl": coded, "rows": 5, "uuid": "live", "created": COPY_STARTED}
     ch = _CH(memory_chunks=new, memory_chunks_rebuild=old)
-    assert _run(ch, "--yes", "--require-patch-free", flag) == tr.REFUSED
+    assert vcr.on_target(coded, ["embedding"], None, "rabitq", DIM)
+    assert _run(ch, "--yes", *patch_free, *flags) == tr.REFUSED
     assert _writes(ch) == [] and "memory_chunks_rebuild" in ch.t
     assert "RENAME TABLE loom.memory_chunks_rebuild TO loom.memory_chunks_pre_rebuild" in (
         capsys.readouterr().out

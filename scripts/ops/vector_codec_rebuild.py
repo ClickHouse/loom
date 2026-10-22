@@ -805,14 +805,6 @@ class VectorRebuild:
             log("rows written in the last hour with an empty vector:", n)
             if n:
                 return "recent rows carry an empty vector: add this table to placeholders.PLACEHOLDER_COLUMNS and deploy first"
-        if self.twin_after_exchange() is not None:
-            # Any ALTER of the live table also moves its metadata time past the twin's, so
-            # the time alone does not show an exchange; the codecs do. An older twin under
-            # a coded live table may be the old table, the only rollback copy, whatever
-            # layout or columns this run asks for: the report names the rename (a plain twin)
-            # or the comparison (two coded tables). Under a live table with no coded vector
-            # column the twin is a leftover.
-            return self.report_state()
         twin = tr.table_row(self.ch, self.twin)
         if twin is not None and not (self.a.reuse or self.a.restart):
             return (
@@ -965,6 +957,16 @@ class VectorRebuild:
             self.a.index_granularity,
             dim=self.dim,
         )
+        if self.twin_after_exchange() is not None:
+            # Any ALTER of the live table also moves its metadata time past the twin's, so
+            # the time alone does not show an exchange; the codecs do. An older twin under
+            # a coded live table may be the old table, the only rollback copy, whatever
+            # layout or columns this run asks for, and also when the live table already has
+            # the layout this run names, as after the same run's exchange: the report names
+            # the rename (a plain twin) or the comparison (two coded tables). Under a live
+            # table with no coded vector column the twin is a leftover.
+            log("REFUSED:", self.report_state())
+            return REFUSED
         if (
             on_target(
                 ddl,

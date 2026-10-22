@@ -572,8 +572,9 @@ dropping a `<table>_rebuild` twin, run that table's line with `mode=--dry-run` a
 the `next` it prints; an earlier run may have stopped before printing one. When `next`
 names `RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild`, the exchange ran
 without the rename and `<table>_rebuild` is the old table, the rollback copy: run that
-step instead of a drop. The tool refuses `--reuse`, `--restart` and `--drop-pre-rebuild`
-in that state, whatever layout or columns the rerun names. When `next` asks to compare `<table>` and
+step instead of a drop. In that state every run of the table's line refuses with exit 3,
+the same line with `--yes`, `--reuse` or `--restart` included, whatever layout or columns
+it names, and so does `--drop-pre-rebuild`. When `next` asks to compare `<table>` and
 `<table>_rebuild`, both are coded and either may be the old table: compare their rows
 before dropping either. When `next` names the twin a leftover never exchanged in, no
 exchange ran: rerun with `--restart --yes` or drop it. The tool tells a leftover by the
