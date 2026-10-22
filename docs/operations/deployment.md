@@ -446,7 +446,16 @@ Apply rebuilds during a maintenance window. Every Loom server, worker and direct
 writer must be stopped, and all in-flight writes, erasures and ClickHouse mutations must
 have finished before copying starts. Keep them stopped through rebuilding, read-only
 checks, rollback and cleanup. A copy or post-swap repair can restore erased rows, and
-erasure does not fully cover the rebuild and rollback copies.
+erasure does not fully cover the rebuild and rollback copies. Before copying starts, this
+returns no rows:
+
+```sql
+SELECT table, mutation_id, command FROM system.mutations
+WHERE database = 'loom' AND NOT is_done
+```
+
+A pending mutation on a `<table>_pre_rebuild` copy left by an earlier run never finishes,
+because its merges are stopped: drop that copy first.
 
 1. Check that Loom's ClickHouse user gets the settings above before starting the rebuild.
 2. Rebuild each coded table with `scripts/ops/vector_codec_rebuild.py`. The tool is not in
