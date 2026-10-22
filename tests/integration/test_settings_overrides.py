@@ -37,6 +37,14 @@ async def _listed(c: httpx.AsyncClient) -> dict[str, Any]:
     return row
 
 
+async def _without_override(c: httpx.AsyncClient) -> dict[str, Any]:
+    async def _seen() -> dict[str, Any] | None:
+        row = await _listed(c)
+        return row if row["source"] != "override" else None
+
+    return await eventually(_seen, max_wait=30, description="setting reset")
+
+
 async def _listed_as(c: httpx.AsyncClient, value: Any, source: str) -> dict[str, Any]:
     """The listing once the process that answers has adopted the change: with
     several processes, the one that took the write may not answer the read."""
@@ -51,7 +59,7 @@ async def _listed_as(c: httpx.AsyncClient, value: Any, source: str) -> dict[str,
 @pytest.mark.asyncio
 async def test_set_list_and_reset_a_live_setting(control_plane_url: str, ch_client) -> None:
     async with _client(control_plane_url) as c:
-        before = await _listed(c)
+        before = await _without_override(c)
         assert before["live"] is True and before["source"] != "override"
         try:
             r = await c.post("/v1/admin/settings.set", json={"name": NAME, "value": "1234"})
@@ -71,7 +79,7 @@ async def test_a_change_names_the_value_it_replaces_and_is_recorded(
     control_plane_url: str,
 ) -> None:
     async with _client(control_plane_url) as c:
-        listed = await _listed(c)
+        listed = await _without_override(c)
         before, before_source = listed["value"], listed["source"]
         try:
             r = await c.post(
@@ -83,7 +91,8 @@ async def test_a_change_names_the_value_it_replaces_and_is_recorded(
             )
             assert r.status_code == 200, r.text
         finally:
-            await c.post("/v1/admin/settings.set", json={"name": NAME, "clear": True})
+            r = await c.post("/v1/admin/settings.set", json={"name": NAME, "clear": True})
+            assert r.status_code == 200, r.text
 
         async def _two() -> list[dict[str, Any]] | None:
             r = await c.post("/v1/admin/settings.history", json={"name": NAME, "limit": 2})

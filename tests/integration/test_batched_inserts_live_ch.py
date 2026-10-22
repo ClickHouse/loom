@@ -12,13 +12,14 @@ from typing import Any, cast
 
 import pytest
 
-from server.core.ch import CHClient
+from server.core.ch import CHClient, set_query_tag
 from server.core.ch_errors import WIDTH_MISMATCH_CODE, error_code
 from server.core.ch_writes import batched_insert_settings
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.vectors import codes_state
 from server.knowledge.store import conversations
 from server.settings import settings
+from tests.integration._eventually import eventually
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
@@ -26,8 +27,7 @@ pytestmark = pytest.mark.usefixtures("ch_target_required")
 
 @pytest.fixture
 def one_flush_window(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Batching on, with a 1 s window: the concurrent inserts of a test reach
-    ClickHouse inside one busy window however the runner schedules them."""
+    """Allow concurrent inserts to share a busy window."""
     monkeypatch.setattr(settings, "ch_batched_inserts", True)
     monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 1000)
     monkeypatch.setattr(settings, "ch_batched_insert_wait_max_ms", 1000)
@@ -116,8 +116,17 @@ def _embedding_row(org: str, msg_id: str, vector: list[float]) -> dict[str, Any]
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("one_flush_window")
-async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_flush() -> None:
+async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_flush(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A slot per insert prevents pool waits from splitting the shared buffer.
+    # Keep it open until the barrier observes all 21 requests.
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
+    monkeypatch.setattr(settings, "ch_pool_maxsize", 64)
+    monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 30000)
+    monkeypatch.setattr(settings, "ch_batched_insert_wait_max_ms", 30000)
+    set_query_tag("integration.batched-width")
+    tasks: list[asyncio.Task[None]] = []
     table = "loom.conversation_embeddings"
     c = CHClient()
     await c.connect()
@@ -126,14 +135,21 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
         if width is None or width != int(settings.embedding_dim):
             pytest.skip("conversation_embeddings is not coded at the served width here")
         org = unique_org("batched-width")
+        query_ids = {msg: f"{org}:{msg}" for msg in ["stale", *(f"m{i}" for i in range(20))]}
+        # An adaptive queue can flush its first insert immediately after an idle period.
+        # Use a fixed window until the barrier confirms every request is buffered.
+        buffer_settings = {"async_insert_use_adaptive_busy_timeout": 0}
         calls: list[tuple[str, Any]] = []
         insert = c.insert
 
         async def recording_insert(
             table: str, rows: list[dict[str, Any]], settings: dict[str, Any] | None = None
         ) -> None:
-            calls.append((rows[0]["msg_id"], (settings or {}).get("async_insert")))
-            await insert(table, rows, settings=settings)
+            mode = (settings or {}).get("async_insert")
+            calls.append((rows[0]["msg_id"], mode))
+            # Only the batched send is tagged: the committed resend runs under its own id.
+            tag = {"query_id": query_ids[rows[0]["msg_id"]], **buffer_settings} if mode == 1 else {}
+            await insert(table, rows, settings={**(settings or {}), **tag})
 
         c.insert = recording_insert  # type: ignore[method-assign]
 
@@ -141,11 +157,33 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
             # A replica with a stale reading: its row skips the width guard and
             # reaches ClickHouse in the same flush as the others.
             row = _embedding_row(org, "stale", [0.5] * (width // 2))
-            await c._insert_rows(table, [row], batched_insert_settings())
+            await c._insert_rows(
+                table,
+                [row],
+                {**batched_insert_settings(), **buffer_settings, "query_id": query_ids["stale"]},
+            )
 
         rows = [_embedding_row(org, f"m{i}", [0.5] * width) for i in range(20)]
         good = [conversations.insert_embedding(cast(Any, row), ch=c) for row in rows]
-        results = await asyncio.gather(stale_width_insert(), *good, return_exceptions=True)
+        tasks = [asyncio.create_task(call) for call in [stale_width_insert(), *good]]
+
+        seen: list[Any] = []
+
+        async def shared_buffer() -> bool:
+            buffers = await c.query_all(
+                "SELECT entries.query_id AS ids FROM system.asynchronous_inserts"
+                " WHERE database = {db:String} AND table = 'conversation_embeddings'",
+                {"db": settings.ch_database},
+            )
+            seen[:] = [sorted(buffer["ids"]) for buffer in buffers]
+            return any(set(query_ids.values()) <= set(buffer["ids"]) for buffer in buffers)
+
+        try:
+            await eventually(shared_buffer, max_wait=10, description="all 21 inserts in one buffer")
+        except AssertionError as e:
+            raise AssertionError(f"{e}; buffers seen: {seen}") from e
+        await c.execute("SYSTEM FLUSH ASYNC INSERT QUEUE loom.conversation_embeddings")
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         stale_error = results[0]
         assert stale_error is not None and error_code(stale_error) == WIDTH_MISMATCH_CODE
@@ -181,4 +219,13 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
         assert all(first[f"m{i}"] == 1 for i in range(20))
         assert any(mode == 0 for _, mode in calls)  # at least one row was resent committed
     finally:
-        await c.disconnect()
+        try:
+            if any(not t.done() for t in tasks):
+                try:
+                    await c.execute("SYSTEM FLUSH ASYNC INSERT QUEUE loom.conversation_embeddings")
+                finally:
+                    await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True), timeout=40
+                    )
+        finally:
+            await c.disconnect()
