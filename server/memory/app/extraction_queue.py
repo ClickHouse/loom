@@ -6,8 +6,8 @@ returns; `server/memory/workers/extraction_queue.py` replays it through the same
 handler later, so the deferred write lands identical memories — evidence
 rows, conflict surfacing, blacklist, chunk projections — only later.
 
-Row lifecycle on `loom.memory_extraction_queue` (ReplacingMergeTree(version),
-every transition is a full mirrored row):
+Row lifecycle on `loom.memory_extraction_queue` (ReplacingMergeTree(version)):
+Worker transitions mirror full rows; explicit retries update failed versions in place.
 
     pending --claim--> running --done--> done
                           |--error--> pending (attempts+1, backoff) | failed (>= max)
