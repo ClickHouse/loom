@@ -12,6 +12,7 @@ import pytest
 from scripts.ops import vector_codec_rebuild as vcr
 from server.core.ch_names import NamedClient
 from server.core.schema import table_rebuild as tr
+from server.settings import settings
 from tests.integration._resources import ch_client_from_env
 
 
@@ -39,6 +40,26 @@ def table(ch: Any, request: pytest.FixtureRequest) -> Iterator[str]:
     finally:
         for suffix in ("", tr.TWIN_SUFFIX, tr.PRE_SUFFIX):
             ch.command(f"DROP TABLE IF EXISTS loom.{name}{suffix} SYNC")
+
+
+@pytest.fixture
+def replicated_ch(ch: Any, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+    """A client on a Replicated database the run takes as its schema: there a table's Keeper
+    path holds its own UUID, so the twin created from SHOW CREATE gets a path of its own."""
+    name = f"vcr_it_rdb_{uuid.uuid4().hex[:8]}"
+    ch.command(
+        f"CREATE DATABASE {name} ENGINE = Replicated('/clickhouse/databases/{name}', 's1', 'r1')"
+    )
+    client = ch_client_from_env(
+        database=name, settings={"session_timezone": "UTC"}, tz_source="server"
+    )
+    client.server_tz = UTC
+    monkeypatch.setattr(settings, "ch_database", name)
+    try:
+        yield NamedClient(client)
+    finally:
+        client.close()
+        ch.command(f"DROP DATABASE IF EXISTS {name} SYNC")
 
 
 def args(table: str) -> list[str]:
@@ -348,3 +369,61 @@ def test_rows_sharing_a_key_and_its_version_are_counted_until_optimized(
         ch.command(f"SYSTEM START MERGES loom.{table}")
     ch.command(f"OPTIMIZE TABLE loom.{table} FINAL")
     assert ch.query(vcr.tied_keys_sql(table, "version", key)).result_rows == [(0,)]
+
+
+def test_a_quiet_rebuild_of_a_replicated_table_checks_each_read_s_replica(
+    replicated_ch: Any,
+) -> None:
+    """On ReplicatedMergeTree every read after the drain also reads whether its replica has
+    fetched every part, and the checks after the swap sync the rollback copy LIGHTWEIGHT;
+    on a quiet table each of them passes."""
+    ch = replicated_ch
+    table = f"vcr_it_{uuid.uuid4().hex[:8]}"
+    ch.command(
+        f"CREATE TABLE loom.{table} (org String, namespace String, id UInt64, "
+        "embedding Array(Float32), version UInt64, note String DEFAULT '') "
+        "ENGINE = ReplicatedReplacingMergeTree(version) ORDER BY (org, namespace, id)"
+    )
+    vectors = {ident: [float(i == ident) for i in range(8)] for ident in range(1, 4)}
+    for ident, vector in vectors.items():
+        insert(ch, table, ident, vector)
+    job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
+    if why := job.codec_refusal():
+        pytest.skip(why)
+    assert vcr.main([*args(table), "--yes"], ch=ch) == tr.OK
+    assert ch.query(f"SELECT count() FROM loom.{table} FINAL").result_rows == [(3,)]
+    assert vcr.main([*args(table), "--drop-pre-rebuild", "--yes"], ch=ch) == tr.OK
+    assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
+
+
+def test_a_read_on_a_replica_that_has_not_fetched_a_part_refuses_the_run(
+    ch: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SYSTEM SYNC REPLICA syncs only the replica that answers it. Here the drain is left
+    out, as when its sync reached another replica, and the replica the run reads has its
+    fetches stopped while the other replica writes a part: the width read's own replica
+    check refuses the run."""
+    table = f"vcr_it_{uuid.uuid4().hex[:8]}"
+    other = f"{table}_r2"
+    for name, replica in ((table, "r1"), (other, "r2")):
+        ch.command(
+            f"CREATE TABLE loom.{name} (org String, namespace String, id UInt64, "
+            "embedding Array(Float32), version UInt64, note String DEFAULT '') "
+            f"ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{table}', "
+            f"'{replica}', version) ORDER BY (org, namespace, id)"
+        )
+    try:
+        insert(ch, table, 1, [1.0] * 8)
+        job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
+        if why := job.codec_refusal():
+            pytest.skip(why)
+        ch.command(f"SYSTEM STOP FETCHES loom.{table}")
+        insert(ch, other, 2, [1.0] * 8)
+        monkeypatch.setattr(vcr.VectorRebuild, "drain", lambda self, engine: None)
+        assert vcr.main([*args(table), "--yes"], ch=ch) == tr.REFUSED
+        assert "has not fetched every part" in capsys.readouterr().out
+        assert ch.query(f"EXISTS TABLE loom.{table}{tr.TWIN_SUFFIX}").result_rows == [(0,)]
+    finally:
+        ch.command(f"SYSTEM START FETCHES loom.{table}")
+        for name in (table, other):
+            ch.command(f"DROP TABLE IF EXISTS loom.{name} SYNC")

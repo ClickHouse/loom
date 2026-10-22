@@ -233,7 +233,9 @@ needs the re-embed below.
 
 Keep writers and erasure stopped until the rebuild finishes or is abandoned and every
 `<table>_rebuild` twin and `<table>_pre_rebuild` rollback copy is removed; a successful
-swap prints that as its next step. Use `--drop-pre-rebuild --yes` to remove the rollback
+swap prints that as its next step, in its log and in the summary line's `next`. Each next
+step that names a command carries the run's `--method`, `--chain` and
+`--index-granularity`, so it runs as printed. Use `--drop-pre-rebuild --yes` to remove the rollback
 copy after validation or rollback, and `DROP TABLE loom.<table>_rebuild SYNC` to remove
 an abandoned twin. `--drop-pre-rebuild` first compares the two tables again (after the
 same drain as the postcondition) and refuses (exit 3), keeping the copy, while the copy
@@ -309,10 +311,11 @@ cover these copies.
   fails its postcondition, keeps the copy and names `--drop-pre-rebuild`, which checks
   again.
 
-`--statement-timeout-s` (default 1800, below 7200, the client's read timeout) caps every
-read the tool makes, those after the swap and in `--drop-pre-rebuild` included, and each
-delta and repair before the swap; the copy and the rollback's catch-up copy run under
-their own limit of 7000 seconds. A read that times out after the swap fails the
+`--statement-timeout-s` (default 1800, below 7200, the client's read timeout) caps the
+width, consistency, mutation, delta and recall reads, those after the swap and in
+`--drop-pre-rebuild` included, and each delta and repair before the swap. The small
+reads of a table's row count, columns and catalog row run without it, and the copy and
+the rollback's catch-up copy run under their own limit of 7000 seconds. A read that times out after the swap fails the
 postcondition (exit 7) with the rollback copy kept, and one in `--drop-pre-rebuild`
 keeps the copy. The width read that sets the target, and each width check (the
 preflight, before the swap, and on the rollback copy after it), reads every vector of a

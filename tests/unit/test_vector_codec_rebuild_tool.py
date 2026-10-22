@@ -737,8 +737,11 @@ def test_a_failed_postcondition_names_only_the_rollback_and_keeps_the_copy(capsy
     ch.cons_first = [(0, 0, 0), (0, 0, 0)]  # the two gate reads before the swap
     ch.cons = (0, 1, 0)  # a key only the rollback copy holds
     assert _run(ch, "--yes") == tr.POSTCONDITION
-    summary = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])
+    out = capsys.readouterr().out
+    summary = json.loads(out.rsplit("summary ", 1)[1])
     assert "--rollback --yes" in summary["next"] and "--drop-pre-rebuild" not in summary["next"]
+    assert "writers and erasure stopped" in summary["next"]
+    assert "Keep writers and erasure stopped" in out.rsplit("summary ", 1)[0]
     assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
     assert "memory_chunks_pre_rebuild" in ch.t
     assert not any(c.startswith("DROP TABLE") for c in ch.commands)
@@ -747,6 +750,36 @@ def test_a_failed_postcondition_names_only_the_rollback_and_keeps_the_copy(capsy
     ch.cons = (0, 0, 0)  # the two tables match: the copy can go
     assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.OK
     assert "memory_chunks_pre_rebuild" not in ch.t
+
+
+def test_a_swap_names_its_next_step_with_the_run_s_layout_flags_in_the_summary(
+    capsys: Any,
+) -> None:
+    """The printed --drop-pre-rebuild runs as written: without the run's --method it would
+    check the tables against the default layout and refuse."""
+    ch = _CH(memory_chunks=_live())
+    assert _run(ch, "--method", "int8", "--index-granularity", "512", "--yes") == tr.OK
+    summary = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])
+    assert summary["exit"] == tr.OK and "writers and erasure stopped" in summary["next"]
+    assert "--method int8 --index-granularity 512 --drop-pre-rebuild --yes" in summary["next"]
+
+
+def test_columns_that_differ_by_name_after_the_swap_keep_both_tables(
+    capsys: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A column added to either table after the swap shows the same way, so the run names
+    no rollback, which would drop a column added to the new table."""
+    columns = tr.columns
+
+    def added_to_one(ch: Any, table: str) -> dict[str, tuple[Any, ...]]:
+        cols = columns(ch, table)
+        return {**cols, "added": ("String", "", "", "")} if table.endswith("_pre_rebuild") else cols
+
+    monkeypatch.setattr(tr, "columns", added_to_one)
+    ch = _CH(memory_chunks=_live())
+    assert _run(ch, "--yes") == tr.POSTCONDITION
+    summary = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])
+    assert "inspect the difference" in summary["next"] and "--rollback --yes" not in summary["next"]
 
 
 REPLICATED = ARRAY.replace(

@@ -381,7 +381,8 @@ def run_reported(
 ) -> int:
     """Run a tool's action with SIGTERM raised as `Interrupted`, map an abort
     or an interrupt to its exit code, print the next step after anything but
-    success (and after a dry run), and end with one `summary {json}` line."""
+    success, after a dry run and after a successful rebuild (whose swap leaves
+    the rollback copy to keep or drop), and end with one `summary {json}` line."""
     t0 = time.monotonic()
     previous = signal.signal(signal.SIGTERM, _on_sigterm)
     rc, next_step = 1, ""  # 1: an exception escaped; its traceback follows the summary
@@ -395,7 +396,8 @@ def run_reported(
         rc = INTERRUPTED
     finally:
         signal.signal(signal.SIGTERM, previous)
-        if rc not in (OK, UNCONFIRMED) or action == "dry-run":
+        reports = action == "dry-run" or (rc == OK and action == "rebuild")
+        if rc not in (OK, UNCONFIRMED) or reports:
             with contextlib.suppress(Exception):  # the report must not mask the exit code
                 next_step = report()
                 log("next:", next_step)

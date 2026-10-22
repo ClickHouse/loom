@@ -82,6 +82,7 @@ import datetime as _dt
 import math
 import os
 import re
+import shlex
 import statistics
 import sys
 import threading
@@ -129,9 +130,10 @@ COUNT_SETTLE_SLEEP_S = 15
 # Mutation timestamps come from other replicas; allow up to one minute of clock skew.
 # not a setting: a bound on replica clock skew, not an operator knob
 CLOCK_SKEW_MARGIN_S = 60
+# The next step when only the rollback copy holds a change; `{run}` is the run line.
 KEEP_AND_ROLL_BACK = (
-    "Keep writers stopped and run --rollback --yes, which puts the old table, the change "
-    "included, back in"
+    "Keep writers and erasure stopped and run `{run} --rollback --yes`, which puts the old "
+    "table, the change included, back in; do not drop the rollback copy"
 )
 KEEP_BOTH = (
     "Keep writers and erasure stopped and both tables as they are, and inspect the "
@@ -498,10 +500,11 @@ class VectorRebuild:
         self.fin = ""  # ' FINAL' where the live table is a ReplacingMergeTree
         self.since = 0  # the server's Unix time before the preflight's mutation check
         self.reads: dict[str, Any] = {}  # settings every read takes; sequential after the drain
-        self.replicated = False  # the drained table is a ReplicatedMergeTree
+        self.replicated = False  # the live table is a ReplicatedMergeTree
         self.rollback_only = False  # a check found what only the rollback copy holds
         self.diverged = False  # a check found a change the live table or a dropped copy holds
         self.recheck = False  # the checks after the swap could not run
+        self.swapped = False  # the swap and its postcondition passed
 
     # -- small reads -------------------------------------------------------
     def q(self, sql: str, parameters: dict[str, Any] | None = None, **st: Any) -> list[Any]:
@@ -605,11 +608,25 @@ class VectorRebuild:
 
     @property
     def run_line(self) -> str:
-        """The command line that runs this tool on this table, up to its action flags."""
-        return f"python -P -m scripts.ops.vector_codec_rebuild --table {self.t} --columns {','.join(self.cols)}"
+        """The command line that runs this tool on this table with this run's layout
+        flags, up to its action flags."""
+        line = (
+            f"python -P -m scripts.ops.vector_codec_rebuild --table {self.t} "
+            f"--columns {','.join(self.cols)} --method {self.a.method}"
+        )
+        if self.chain:
+            line += f" --chain {shlex.quote(self.chain)}"
+        if self.a.index_granularity:
+            line += f" --index-granularity {self.a.index_granularity}"
+        return line
 
     def report_state(self) -> str:
         run = self.run_line
+        if self.swapped:
+            return (
+                f"keep writers and erasure stopped; run `{run} --drop-pre-rebuild --yes`, "
+                "which checks the two tables again before it drops the rollback copy"
+            )
         if self.recheck:
             return (
                 f"the checks could not run: fix the grant or connect directly to one replica "
@@ -617,15 +634,11 @@ class VectorRebuild:
             )
         if self.rollback_only:
             return (
-                f"loom.{self.pre} holds a change the new table lacks: keep writers stopped and "
-                f"run `{run} --rollback --yes`; do not drop loom.{self.pre}"
+                f"loom.{self.pre} holds a change the new table lacks. "
+                + KEEP_AND_ROLL_BACK.format(run=run)
             )
         if self.diverged:
-            return (
-                f"loom.{self.t} and loom.{self.pre} differ in a way neither --rollback nor "
-                f"--drop-pre-rebuild keeps whole: keep writers and erasure stopped and both "
-                "tables, and inspect the difference by hand"
-            )
+            return f"loom.{self.t} and loom.{self.pre} differ. {KEEP_BOTH}"
         return tr.guidance(
             self.t,
             run,
@@ -754,7 +767,9 @@ class VectorRebuild:
             return REFUSED
         ddl = self.ddl(self.t)
         self.dim = self.find_dim()
-        self.fin = read_final(parse_engine(ddl)[0])
+        engine = parse_engine(ddl)[0]
+        self.fin = read_final(engine)
+        self.replicated = engine.startswith("Replicated")
         log(
             "target",
             self.t,
@@ -804,7 +819,11 @@ class VectorRebuild:
             log(f"plan only: pass --yes to copy loom.{self.t} into loom.{self.twin} and swap")
             print(twin_ddl)
             return UNCONFIRMED
-        return self.copy_and_swap(ddl, twin_ddl)
+        try:
+            return self.copy_and_swap(ddl, twin_ddl)
+        except ReplicaBehind as e:
+            log(f"GATE FAILED: {e}; no swap")
+            return GATE_FAILED
 
     def create_twin(self, twin_ddl: str) -> tuple[str, bool]:
         """Create (or reuse) the twin: (why not, or '', whether it was reused with rows)."""
@@ -943,7 +962,6 @@ class VectorRebuild:
         self.cmd(f"SYSTEM FLUSH ASYNC INSERT QUEUE loom.{self.t}")
         if engine.startswith(("Replicated", "Shared")):
             self.cmd(f"SYSTEM SYNC REPLICA loom.{self.t}")
-        self.replicated = engine.startswith("Replicated")
 
     def sync_rollback_copy(self, engine: str) -> None:
         """Synchronize this replica's parts of the rollback copy before a read compares it
@@ -985,13 +1003,6 @@ class VectorRebuild:
         return drec
 
     def copy_and_swap(self, ddl: str, twin_ddl: str) -> int:
-        try:
-            return self.copy_and_check(ddl, twin_ddl)
-        except ReplicaBehind as e:
-            log(f"GATE FAILED: {e}; no swap")
-            return GATE_FAILED
-
-    def copy_and_check(self, ddl: str, twin_ddl: str) -> int:
         why, reused = self.create_twin(twin_ddl)
         if why:
             log("REFUSED:", why)
@@ -1112,7 +1123,8 @@ class VectorRebuild:
             log("POSTCONDITION FAILED: the names do not hold what the swap leaves")
             return POSTCONDITION
         if set(tr.columns(self.ch, self.t)) != set(tr.columns(self.ch, self.pre)):
-            self.rollback_only = True
+            # either table may have changed, so neither --rollback nor the drop keeps it whole
+            self.diverged = True
             log("POSTCONDITION FAILED: the rollback copy's columns differ by name")
             return POSTCONDITION
         if self.a.require_patch_free:
@@ -1129,10 +1141,7 @@ class VectorRebuild:
         if why:
             log(f"POSTCONDITION FAILED: {why}. {self.keep_copy(rollback)}")
             return POSTCONDITION
-        log(
-            f"next: keep writers and erasure stopped; run `{self.run_line} --drop-pre-rebuild "
-            "--yes`, which checks the two tables again before it drops the rollback copy"
-        )
+        self.swapped = True
         return OK
 
     def keep_copy(self, rollback: bool) -> str:
@@ -1140,7 +1149,7 @@ class VectorRebuild:
         when only the rollback copy holds the change, else inspection with both kept."""
         if rollback:
             self.rollback_only = True
-            return KEEP_AND_ROLL_BACK
+            return KEEP_AND_ROLL_BACK.format(run=self.run_line)
         self.diverged = True
         return KEEP_BOTH
 
@@ -1240,6 +1249,7 @@ class VectorRebuild:
         sorting key) of the live table."""
         engine, version, key = parse_engine(self.ddl(self.t))
         self.fin = read_final(engine)
+        self.replicated = engine.startswith("Replicated")
         self.drain(engine)
         self.reads = dict(tr.CONSISTENT)
         return engine, version, key
