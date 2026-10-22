@@ -62,6 +62,7 @@ class _CH:
         self.query_settings: list[tuple[str, dict[str, Any]]] = []
         self.params: list[dict[str, Any]] = []  # each query's parameters, in order
         self.behind: set[str] = set()  # tables the replica answering a read has not caught up
+        self.no_probes = False  # the probe read finds no full-length vector
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _R:
         self.queries.append(sql)
@@ -114,7 +115,8 @@ class _CH:
             return _R([(self.mutations_first.pop(0) if self.mutations_first else self.mutations,)])
         if "ORDER BY rand()" in sql:
             name = sql.split("FROM loom.", 1)[1].split()[0]
-            return _R([("o", "n", [0.5] * DIM)] if self.t[name]["rows"] else [])
+            has_probe = self.t[name]["rows"] and not self.no_probes
+            return _R([("o", "n", [0.5] * DIM)] if has_probe else [])
         if "round(cosineDistance" in sql:
             return _R([(0.1,)] * 20)
         if "INTERVAL 1 HOUR" in sql:
@@ -231,6 +233,39 @@ def test_a_twin_older_than_the_live_table_is_the_old_table_and_is_kept(
     assert "RENAME TABLE loom.memory_chunks_rebuild TO loom.memory_chunks_pre_rebuild" in (
         capsys.readouterr().out
     )
+
+
+@pytest.mark.parametrize(
+    "flags", [("--method", "turboquant"), ("--index-granularity", "64"), ("--chain", "LZ4")]
+)
+def test_an_older_plain_twin_is_kept_whatever_layout_the_rerun_names(
+    flags: tuple[str, str], capsys: Any
+) -> None:
+    """After an exchange without its rename the live table is coded and the twin is the
+    older plain table. A rerun that names another layout finds the live table off its
+    target, and still refuses --restart and prints the rename."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    old = {"ddl": ARRAY, "rows": 5, "uuid": "old", "created": TWIN_CREATED}
+    new = {"ddl": coded, "rows": 5, "uuid": "live", "created": COPY_STARTED}
+    ch = _CH(memory_chunks=new, memory_chunks_rebuild=old)
+    assert _run(ch, "--yes", "--restart", *flags) == tr.REFUSED
+    assert _writes(ch) == [] and ch.t["memory_chunks_rebuild"] is old
+    assert "RENAME TABLE loom.memory_chunks_rebuild TO loom.memory_chunks_pre_rebuild" in (
+        capsys.readouterr().out
+    )
+
+
+def test_drop_pre_rebuild_without_the_copy_refuses_while_a_twin_exists(capsys: Any) -> None:
+    """With no rollback copy and an older plain twin, --drop-pre-rebuild names the rename
+    rather than reporting the copy gone, so no hand drop of the twin follows."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    old = {"ddl": ARRAY, "rows": 5, "uuid": "old", "created": TWIN_CREATED}
+    new = {"ddl": coded, "rows": 5, "uuid": "live", "created": COPY_STARTED}
+    ch = _CH(memory_chunks=new, memory_chunks_rebuild=old)
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+    assert _writes(ch) == [] and "memory_chunks_rebuild" in ch.t
+    step = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])["next"]
+    assert "RENAME TABLE loom.memory_chunks_rebuild TO loom.memory_chunks_pre_rebuild" in step
 
 
 def test_a_twin_older_than_a_plain_live_table_is_a_leftover() -> None:
@@ -478,6 +513,16 @@ def test_an_empty_source_is_rebuilt_without_probes(capsys: Any) -> None:
     out = capsys.readouterr().out
     assert "recall gate: loom.memory_chunks holds no rows, nothing to probe" in out
     assert any(c.startswith("EXCHANGE") for c in ch.commands)
+
+
+def test_a_source_with_rows_but_no_probe_fails_the_gate(capsys: Any) -> None:
+    """Rows whose vectors are all placeholders or another width give the recall gate
+    nothing to probe; unlike an empty source the run stops before the swap."""
+    ch = _CH(memory_chunks=_live())
+    ch.no_probes = True
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    assert "GATE FAILED: no probe rows with a full-length vector" in capsys.readouterr().out
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
 
 
 def test_a_rollback_names_the_drop_as_its_next_step(capsys: Any) -> None:

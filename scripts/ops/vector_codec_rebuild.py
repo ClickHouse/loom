@@ -662,9 +662,28 @@ class VectorRebuild:
             line += f" --statement-timeout-s {self.a.statement_timeout_s!r}"
         return line
 
+    def twin_after_exchange(self) -> bool | None:
+        """Whether the twin may be the old table an exchange without its rename left,
+        read from the two tables rather than this run's layout flags (a rerun may name
+        another layout). None when it is not: absent, not older than the live table, or
+        under a live table with a plain named column. Else whether the twin's named
+        columns are coded: False (all plain) means it is the old table, True means
+        either table may be the old one."""
+        if not (self.exists(self.t) and self.exists(self.twin)):
+            return None
+        if self.metadata_time(self.twin) >= self.metadata_time(self.t):
+            return None
+        live = self.ddl(self.t)
+        if any(vector_dim(live, c) is None for c in self.cols):
+            return None
+        twin = self.ddl(self.twin)
+        return any(vector_dim(twin, c) is not None for c in self.cols)
+
     def report_state(self) -> str:
         if self.next_step:
             return self.next_step
+        if not self.exists(self.pre) and (twin := self.twin_after_exchange()) is not None:
+            return tr.guidance(self.t, self.run_line, True, twin, None)
         return tr.guidance(
             self.t,
             self.run_line,
@@ -706,18 +725,14 @@ class VectorRebuild:
             log("rows written in the last hour with an empty vector:", n)
             if n:
                 return "recent rows carry an empty vector: add this table to placeholders.PLACEHOLDER_COLUMNS and deploy first"
-        twin = tr.table_row(self.ch, self.twin)
-        if (
-            twin is not None
-            and self.metadata_time(self.twin) < self.metadata_time(self.t)
-            and self.target_state(self.t)
-        ):
+        if self.twin_after_exchange() is not None:
             # Any ALTER of the live table also moves its metadata time past the twin's, so
-            # the time alone does not show an exchange; the layouts do. A twin off the
-            # target layout under a live table on it is the old table, the only rollback
-            # copy; two tables on it (--require-patch-free) may be either, and the report
-            # says to compare them. Under a live table off it the twin is a leftover.
+            # the time alone does not show an exchange; the codecs do. An older twin under
+            # a coded live table may be the old table, the only rollback copy, whatever
+            # layout this run asks for: the report names the rename (a plain twin) or the
+            # comparison (two coded tables). Under a plain live table the twin is a leftover.
             return self.report_state()
+        twin = tr.table_row(self.ch, self.twin)
         if twin is not None and not (self.a.reuse or self.a.restart):
             return (
                 f"loom.{self.twin} (created {twin[2]}, {tr.row_count(self.ch, self.twin)} rows) is "
@@ -1416,6 +1431,11 @@ class VectorRebuild:
     def drop_pre(self) -> int:
         tr.print_target(self.ch, self.t)
         if not self.exists(self.pre):
+            if self.exists(self.twin):
+                # an exchange without its rename leaves the old table under the twin's name
+                self.next_step = self.report_state()
+                log(f"REFUSED: loom.{self.pre} is absent and loom.{self.twin} exists")
+                return REFUSED
             log(f"loom.{self.pre} is already gone")
             return OK
         self.dim = self.find_dim()

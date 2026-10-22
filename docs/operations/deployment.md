@@ -456,8 +456,9 @@ WHERE database = 'loom' AND NOT is_done
 
 A `<table>_pre_rebuild` copy left by an earlier run blocks that table's rebuild, and a
 mutation pending on it does not finish while the tool keeps its merges stopped. Remove it
-with that table's line and `mode="--drop-pre-rebuild --yes"`, as in step 3, never with a
-hand `DROP TABLE`: the copy can be the only holder of a change.
+with that table's line and `mode="--drop-pre-rebuild --yes"`, as in step 3. The copy can be
+the only holder of a change: drop it by hand only after the read in
+[what the checks after a swap find](./maintenance.md#what-the-checks-after-a-swap-find).
 
 1. Check that Loom's ClickHouse user gets the settings above before starting the rebuild.
 2. Rebuild each coded table with `scripts/ops/vector_codec_rebuild.py`. The tool is not in
@@ -505,8 +506,10 @@ hand `DROP TABLE`: the copy can be the only holder of a change.
 
    An empty table is rebuilt too. A table with rows but no real vectors (only the zero
    placeholders of rows without an embedding) fails the recall gate (exit 5) and keeps its
-   layout. This query, with the line's first column, counts its real vectors:
-   `SELECT countIf(arrayExists(x -> x != 0, <column>)) FROM loom.<table>`. Placeholders
+   layout. This query, with the line's first column and the dry run's `dimension <n>`,
+   counts the real vectors the gate can probe (leave out `FINAL` for `chunks`):
+   `SELECT countIf(length(<column>) = <n> AND arrayExists(x -> x != 0, <column>)) FROM loom.<table> FINAL`.
+   Placeholders
    beside real vectors do not affect the gate. The tool refuses (exit 3), `--dry-run`
    included, while a plain named column holds real vectors of another width than the one
    it codes; the width it picks and the re-embed that clears the refusal are in
@@ -550,13 +553,15 @@ SELECT name FROM system.tables
 WHERE database = 'loom' AND endsWith(name, '_rebuild')
 ```
 
-Drop a `<table>_rebuild` twin with `DROP TABLE IF EXISTS loom.<table>_rebuild SYNC`, and a
-`<table>_pre_rebuild` copy with `--drop-pre-rebuild --yes` as in step 3. When a table's
-run printed `next` with `RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild`,
-its exchange ran without the rename and `<table>_rebuild` is the old table, the rollback
-copy: run that step instead of the drop. The tool refuses `--reuse` and `--restart` in
-that state. When `next` instead asks to compare `<table>` and `<table>_rebuild`, both are on
-the target layout: compare their rows before dropping either.
+Drop a `<table>_pre_rebuild` copy with `--drop-pre-rebuild --yes` as in step 3. Before
+dropping a `<table>_rebuild` twin, run that table's line with `mode=--dry-run` and follow
+the `next` it prints; an earlier run may have stopped before printing one. When `next`
+names `RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild`, the exchange ran
+without the rename and `<table>_rebuild` is the old table, the rollback copy: run that
+step instead of a drop. The tool refuses `--reuse`, `--restart` and `--drop-pre-rebuild`
+in that state, whatever layout the rerun names. When `next` asks to compare `<table>` and
+`<table>_rebuild`, both are coded: compare their rows before dropping either. Otherwise
+drop the twin with `DROP TABLE IF EXISTS loom.<table>_rebuild SYNC`.
 
 Start Loom again after cleanup; each process reads the codec settings when it starts.
 

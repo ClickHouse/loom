@@ -243,14 +243,18 @@ step that names a command carries the run's `--method`, `--chain`,
 `--index-granularity`, `--gate-fetch-multiplier`, `--probes`, `--require-patch-free`,
 `--cluster` and `--statement-timeout-s`, so it runs as printed. Use
 `--drop-pre-rebuild --yes` to remove the rollback copy after validation or rollback, and
-`DROP TABLE loom.<table>_rebuild SYNC` to remove an abandoned twin, unless the run's
-next step is `RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild`: there the
+`DROP TABLE loom.<table>_rebuild SYNC` to remove an abandoned twin, after a `--dry-run` of
+the table's line shows a next step other than
+`RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild`: that step means the
 exchange ran without the rename, `<table>_rebuild` is the old table, and the tool refuses
-`--reuse` and `--restart` until the rename runs. The tool names the rename only when the
-live table is on the target layout and an older twin is not. When both are on it (a
-`--require-patch-free` run) and the twin is older, the layouts do not show whether an
-exchange ran: the tool refuses, renames and drops nothing, and asks to compare the two
-tables' rows before dropping either by hand.
+`--reuse`, `--restart` and `--drop-pre-rebuild` until the rename runs. The tool reads
+this from the tables, not from the run's flags, so a rerun with another `--method`,
+`--chain` or `--index-granularity` refuses too: a twin older than a live table whose named
+columns are all coded may be the old table. When the twin's named columns are plain, the
+tool names the rename. When they are coded too (a `--require-patch-free` run, or a
+rebuild of a coded table), the codecs do not show whether an exchange ran: the tool
+refuses, renames and drops nothing, and asks to compare the two tables' rows before
+dropping either by hand.
 `--drop-pre-rebuild` first compares the two tables again, after the same drain as the
 postcondition, also when both are on the target layout (a `--require-patch-free`
 rebuild of a table already on it), and refuses (exit 3) and keeps the copy on any
