@@ -497,15 +497,15 @@ def test_the_queue_and_the_replica_are_drained_before_the_last_delta() -> None:
 
 
 def test_the_reads_after_the_drain_are_sequentially_consistent() -> None:
-    """The sync lands other replicas' parts on the replica that answers it only; every
-    later read and the last delta take select_sequential_consistency, so a request served
-    by another replica still sees every acknowledged write."""
+    """Enable sequential consistency for gate reads and delta inserts after the drain."""
     ch = _CH(memory_chunks=_live())
     ch.delta = 1
     assert _run(ch, "--yes") == tr.OK
     recall = max(i for i, (q, _) in enumerate(ch.query_settings) if "round(cosineDistance" in q)
     before, after = ch.query_settings[:recall], ch.query_settings[recall + 1 :]
-    assert not any("select_sequential_consistency" in st for _, st in before)
+    for needle in ("FULL OUTER JOIN", "GROUP BY w", "system.mutations"):
+        reads = [st for q, st in before if needle in q]
+        assert reads and all("select_sequential_consistency" not in st for st in reads), needle
     for needle in ("FULL OUTER JOIN", "GROUP BY w", "SELECT count(), ", "system.mutations"):
         reads = [st for q, st in after if needle in q]
         assert reads and all(st["select_sequential_consistency"] == 1 for st in reads), needle

@@ -53,7 +53,8 @@ at 1 is never sent), every replica writable, the `SYSTEM FLUSH ASYNC INSERT QUEU
 `SYSTEM SYNC REPLICA` privileges on the table (the preflight runs both once), and no row
 written in the last hour with an empty vector in the named columns (writers'
 fixed-length placeholders must be deployed first: a coded column rejects an
-empty vector).
+empty vector). ReplicatedMergeTree runs connect directly to one replica throughout
+the run so the drain and later checks use the same replica.
 
 The twin is the run's lock: an existing twin refuses the run unless
 `--reuse` (continue from it) or `--restart` (drop it and copy again), and the
@@ -114,10 +115,7 @@ COPY_RECEIVE_TIMEOUT_S = 7200
 DISTANCE_TOLERANCE = 1e-6
 COUNT_SETTLE_ATTEMPTS = 8
 COUNT_SETTLE_SLEEP_S = 15
-# How far before the mutation baseline (the preflight's server time, or a reused twin's
-# creation) the pre-swap check counts mutations from: a mutation's create_time comes from
-# the replica that took it, whose clock can run behind this one.
-# not a setting: a bound on replica clock skew, not an operator knob
+# Mutation timestamps come from other replicas; allow up to one minute of clock skew.
 CLOCK_SKEW_MARGIN_S = 60
 # A codec clause with one level of nested parentheses: CODEC(Quantized('rabitq', 3072, 0), LZ4).
 _CODEC = r"CODEC\((?:[^()]|\([^()]*\))*\)"
@@ -817,10 +815,11 @@ class VectorRebuild:
         return why
 
     def drain(self, engine: str) -> None:
-        """Land the writes ClickHouse has acknowledged: the async insert queue, and on a
-        replicated engine the parts other replicas took into the replica that answers. The
-        sync covers that one replica, so the reads after the drain are sequentially
-        consistent (`self.reads`), whichever replica serves them."""
+        """Flush buffered inserts and synchronize this replica's parts.
+
+        ReplicatedMergeTree runs must stay on this replica; SharedMergeTree reads use
+        sequential consistency when a different replica serves a later request.
+        """
         self.cmd(f"SYSTEM FLUSH ASYNC INSERT QUEUE loom.{self.t}")
         if engine.startswith(("Replicated", "Shared")):
             self.cmd(f"SYSTEM SYNC REPLICA loom.{self.t}")
