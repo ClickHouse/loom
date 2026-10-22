@@ -560,9 +560,7 @@ async def provision_agent(name: str, agent: str, *, by: str) -> tuple[str, str]:
 
 
 async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
-    """A bot's or an agent's tokens live an hour, or up to a day when asked;
-    revoked now, not when they run out, by a cutoff that never lapses. Returns
-    the cutoff: past every token issued so far."""
+    """Revoke existing bot or agent tokens with a permanent issue-time cutoff."""
     cutoff = revocation.from_now_on()
     await revocation.cut_off(subject, issued_before=cutoff, reason=reason, revoked_by=by)
     return cutoff

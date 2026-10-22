@@ -117,8 +117,7 @@ def _machine(row: dict[str, Any]) -> Machine:
 
 
 def asked_lifetime(raw: str | None) -> int | None:
-    """The lifetime a token request asks for (`expires_in`, whole seconds), or
-    None when it asks for none; Refused when it is no lifetime Loom issues."""
+    """Parse an optional lifetime in whole seconds, refusing invalid requests."""
     if raw is None or raw == "":
         return None
     digits = raw.lstrip("0") if raw.isascii() and raw.isdigit() else ""
@@ -133,8 +132,7 @@ def asked_lifetime(raw: str | None) -> int | None:
 
 
 def token_lifetime(m: Machine, asked: int | None) -> int:
-    """Seconds a token for `m` lives from its issue: what the request asked,
-    else an hour, never past the identity's own maximum nor a day."""
+    """Cap the requested or default lifetime at the bot's maximum and one day."""
     return min(TOKEN_TTL if asked is None else asked, m["max_access_token_s"], MAX_TOKEN_TTL)
 
 

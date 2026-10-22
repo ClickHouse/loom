@@ -1067,11 +1067,7 @@ def test_a_ci_exchange_asking_for_a_day_never_outlives_its_workload_token(bots) 
 
 
 def test_a_day_long_agent_token_is_cut_by_every_revocation_of_it(bots, monkeypatch) -> None:
-    """Revocation judges a token by its subject, parents and issue time, never
-    by its expiry: a subject revoked for good, a cutoff past its issue time
-    (`revoke_subject` with or without `issued_before`, `loom revoke-token
-    --subject`) and the trust's disable or replace each refuse a token that has
-    a day left."""
+    """Subject and parent revocations refuse tokens whose expiry is a day away."""
     from datetime import UTC, datetime
 
     from server.auth.jwt import TokenError, verify_token
@@ -1101,8 +1097,7 @@ def test_a_day_long_agent_token_is_cut_by_every_revocation_of_it(bots, monkeypat
 
 
 async def test_a_subjects_revocation_outlasts_a_day_long_token(monkeypatch) -> None:
-    """`revoke_subject`'s outright row is kept as long as the table can hold
-    it, past any token's expiry; a cutoff's row likewise (`record_cutoff`)."""
+    """A subject's revocation survives the longest token it can end."""
     from datetime import UTC, datetime, timedelta
 
     rows: list[dict[str, Any]] = []

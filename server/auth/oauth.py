@@ -1456,8 +1456,7 @@ def _refused(e: machines.Refused) -> OAuthError:
 
 
 async def _client_credentials_grant(f: dict[str, str], audiences: list[str]) -> dict[str, Any]:
-    """A bot proving its key (RFC 7523 private_key_jwt): a token of an hour, or
-    of the `expires_in` asked, up to the bot's `max_access_token_s`."""
+    """Exchange a bot's key proof for a token within its lifetime limit."""
     assertion = f.get("client_assertion", "")
     if f.get("client_assertion_type") != machines.ASSERTION_TYPE or not assertion:
         raise OAuthError(
@@ -1480,10 +1479,7 @@ async def _client_credentials_grant(f: dict[str, str], audiences: list[str]) -> 
 
 
 async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
-    """A CI job's own OIDC token for the bot whose workload trust it meets
-    (RFC 8693). Exchanged as often as the job's clients need while it lives,
-    and the token issued never outlives it: an hour, or the `expires_in` asked
-    up to the trust's `max_access_token_s`, cut to what the job's token has left."""
+    """Exchange a workload token without outliving its proof or the bot's limit."""
     token = f.get("subject_token", "")
     if f.get("subject_token_type") not in machines.SUBJECT_TOKEN_TYPES or not token:
         raise OAuthError("invalid_request", description="send the workload's OIDC token as a jwt")
