@@ -50,7 +50,9 @@ class _CH:
         self.widths: list[list[tuple[int, int]]] = [[]]  # (width, rows) the width check finds
         self.cons = [(0, 0, 0)]  # (mismatched, source_only, twin_only) the gate reads
         self.gone: list[list[tuple[Any, ...]]] = [[]]  # the keys only the twin holds
-        self.erased: list[tuple[Any, ...]] = []  # live keys the rollback copy lacks
+        # live keys the rollback copy lacks, each with its part's partition and highest block
+        self.erased: list[tuple[tuple[Any, ...], str, int]] = []
+        self.blocks = [("all", 3)]  # the twin's highest block per partition
         self.sync_writable = ["alter_sync", "mutations_sync", "lightweight_deletes_sync"]
         self.queries: list[str] = []
         self.reads_before_exchange = 0  # len(queries) when the EXCHANGE was sent
@@ -84,8 +86,11 @@ class _CH:
             return _R([(self.patches.get(name, 0),)])
         if "topK(1)" in sql:
             return _R([([DIM],)])
+        if "max(max_block_number)" in sql:
+            return _R(self.blocks)
         if "WHERE s.__present = 0" in sql and "_pre_rebuild" in sql:
-            return _R(self.erased)
+            upto = dict(re.findall(r"_partition_id = '(\w+)' AND \S+ <= (\d+)", sql))
+            return _R([k for k, p, b in self.erased if p in upto and b <= int(upto[p])])
         if "WHERE s.__present = 0" in sql:
             return _R(_next(self.gone))
         if "FULL OUTER JOIN" in sql:
@@ -339,7 +344,7 @@ def test_a_rollback_sends_the_codec_setting_only_where_it_is_writable(codec: str
 
 def test_vectors_of_another_width_refuse_before_the_twin_dry_run_included(capsys: Any) -> None:
     """The copy turns a vector of another length into a zero vector, so the run refuses
-    while the rows Loom serves hold one; an empty vector stays a placeholder."""
+    while any row holds one, tombstoned rows included; an empty vector stays a placeholder."""
     ch = _CH(memory_chunks=_live())
     ch.widths = [[(768, 3), (3072, 1)]]
     assert _run(ch, "--dry-run") == tr.REFUSED and _writes(ch) == []
@@ -402,7 +407,8 @@ def test_rows_that_stay_in_the_twin_only_fail_the_gate(capsys: Any) -> None:
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     assert "memory_chunks_rebuild" in ch.t
     out = capsys.readouterr().out
-    assert "2 keys are in the twin only" in out and "Pause erasures" in out
+    assert "2 keys the source no longer holds remain in the twin" in out
+    assert "Pause erasures" in out
 
 
 def test_the_recall_reads_rank_real_vectors_only() -> None:
@@ -423,15 +429,15 @@ def test_a_delete_during_the_gates_stops_the_swap(capsys: Any) -> None:
     ch.gone = [[("o", "n")]]
     assert _run(ch, "--yes") == tr.GATE_FAILED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
-    assert "1 keys are in the twin only" in capsys.readouterr().out
+    assert "1 keys the source no longer holds remain" in capsys.readouterr().out
 
 
 def test_the_twin_only_check_is_the_last_read_before_the_exchange() -> None:
     """The width scans read only the source and run first; a delete during them is
     caught by the twin-only read that follows, and the EXCHANGE comes right after it
-    and the twin's version mark. Only when that read deleted keys does a consistency
-    read recheck them."""
-    mark = "SELECT max(created_at) FROM loom.memory_chunks_rebuild"
+    and the read of the twin's highest blocks. Only when that read deleted keys does a
+    consistency read recheck them."""
+    mark = vcr.last_blocks_sql("memory_chunks_rebuild")
     ch = _CH(memory_chunks=_live())
     assert _run(ch, "--yes") == tr.OK
     before = ch.queries[: ch.reads_before_exchange]
@@ -446,34 +452,40 @@ def test_the_twin_only_check_is_the_last_read_before_the_exchange() -> None:
     assert "WHERE s.__present = 0" in before[-3]
 
 
-def test_a_row_erased_across_the_swap_is_deleted_from_the_live_table() -> None:
-    """An erasure after the last twin-only read reaches only the old table. A live row
-    below the twin's version mark was copied before the swap, so the rollback copy's
-    lacking it means its writer deleted it: the run deletes it from the live table."""
-    ch = _CH(memory_chunks=_live())
-    ch.erased = [("o", "n")]
-    assert _run(ch, "--yes") == tr.OK
+PRE_SWAP = "((_partition_id = 'all' AND toUInt64(splitByChar('_', _part)[3]) <= 3))"
+
+
+def _deletes_after_exchange(ch: _CH) -> list[str]:
     exchange = next(i for i, c in enumerate(ch.commands) if c.startswith("EXCHANGE"))
-    deletes = [c for c in ch.commands[exchange:] if c.startswith("DELETE")]
-    assert deletes == ["DELETE FROM loom.memory_chunks WHERE (org, namespace) IN (('o', 'n'))"]
+    return [c for c in ch.commands[exchange:] if c.startswith("DELETE")]
+
+
+@pytest.mark.parametrize("engine", ["ReplacingMergeTree(created_at)", "MergeTree"])
+def test_a_row_erased_across_the_swap_is_deleted_from_the_live_table(engine: str) -> None:
+    """An erasure after the last twin-only read reaches only the old table. A live row in
+    a part the twin held before the swap was copied before it, so the rollback copy's
+    lacking it means its writer deleted it: the run deletes it from those parts."""
+    ddl = ARRAY.replace("ReplacingMergeTree(created_at)", engine)
+    ch = _CH(memory_chunks={"ddl": ddl, "rows": 5, "uuid": "live"})
+    ch.erased = [(("o", "n"), "all", 2)]
+    assert _run(ch, "--yes") == tr.OK
+    assert _deletes_after_exchange(ch) == [
+        f"DELETE FROM loom.memory_chunks WHERE (org, namespace) IN (('o', 'n')) AND {PRE_SWAP}"
+    ]
     read = next(q for q in ch.queries if "_pre_rebuild" in q and "s.__present = 0" in q)
-    assert "FROM loom.memory_chunks FINAL WHERE created_at < 5)" in read
+    assert f"FROM loom.memory_chunks{vcr.read_final(engine)} WHERE {PRE_SWAP})" in read
 
 
-def test_without_a_version_a_key_missing_from_the_rollback_copy_fails_the_run(
-    capsys: Any,
-) -> None:
-    """With no version column a new write and an erased row look the same: the keys are
-    logged for the erasures to be rerun, nothing is deleted, and the run exits 7."""
-    plain = ARRAY.replace("ReplacingMergeTree(created_at)", "MergeTree")
-    ch = _CH(memory_chunks={"ddl": plain, "rows": 5, "uuid": "live"})
-    ch.erased = [("o", "n")]
-    assert _run(ch, "--yes") == tr.POSTCONDITION
-    assert any(c.startswith("EXCHANGE") for c in ch.commands)
-    assert not any(c.startswith("DELETE") for c in ch.commands)
-    out = capsys.readouterr().out
-    assert "1 keys are in loom.memory_chunks and not in loom.memory_chunks_pre_rebuild" in out
-    assert "('o', 'n')" in out
+@pytest.mark.parametrize("engine", ["ReplacingMergeTree(created_at)", "MergeTree"])
+def test_a_write_after_the_swap_is_kept_whatever_its_version(engine: str) -> None:
+    """A row written after the EXCHANGE, even with a version below every copied row's
+    (a turn's embedding stamped when its append started, a compaction summary at its
+    first turn's time), lands in a new part: it is kept, and the run succeeds."""
+    ddl = ARRAY.replace("ReplacingMergeTree(created_at)", engine)
+    ch = _CH(memory_chunks={"ddl": ddl, "rows": 5, "uuid": "live"})
+    ch.erased = [(("o", "new"), "all", 4), (("o", "fresh-partition"), "202610", 1)]
+    assert _run(ch, "--yes") == tr.OK
+    assert _deletes_after_exchange(ch) == []
 
 
 def test_a_write_of_another_width_during_the_run_stops_the_swap(capsys: Any) -> None:

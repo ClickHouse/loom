@@ -216,20 +216,21 @@ into a twin table, check it, swap with `EXCHANGE TABLES` and keep the old table 
 `--rollback`. Both print their plan and change nothing without `--yes`; the procedure is
 in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-key).
 `vector_codec_rebuild.py` refuses, `--dry-run` included, while a named column holds
-non-empty vectors of another width than the target's: re-embed those rows first, since the
-copy would replace them with zero vectors, and every writer must produce the target width
-until the run ends. A row removed from the source during the run (an erasure or delete) is
-deleted from the twin too, in one pass; the run stops before the swap if any such key
-remains after it: pause erasures and rerun with `--reuse`. It also stops when a vector of
-another width was written before the width scan: re-embed those rows, then rerun with
-`--restart`. Both checks run again before the swap. The last read before the `EXCHANGE` is
-the twin-only check, or, when it deleted keys, the consistency recheck that follows. A
-delete after that read, or one still running at the `EXCHANGE`, reaches only
-`<t>_pre_rebuild`. After the swap the run deletes from the live table every row below the
-twin's highest version before the swap that `<t>_pre_rebuild` lacks: it was copied before
-the swap, so its writer deleted it. A table with no version column (`chunks`) cannot tell
-those rows from new writes: the run logs their keys and exits 7; rerun the erasures that
-ran across the swap.
+non-empty vectors of another width than the target's, tombstoned rows included (a restore
+brings one back): re-embed or erase those rows first, since the copy would replace them with
+zero vectors, and every writer must produce the target width until the run ends. A row
+removed from the source during the run (an erasure or delete) is deleted from the twin too,
+in one pass; the run stops before the swap if any such key remains after it: pause erasures
+and rerun with `--reuse`. It also stops when a vector of another width was written before
+the width scan: re-embed those rows, then rerun with `--restart`. Both checks run again
+before the swap. The last read before the `EXCHANGE` is the twin-only check, or, when it
+deleted keys, the consistency recheck that follows, and then the twin's highest block number
+per partition. A delete after that read, or one still running at the `EXCHANGE`, reaches
+only `<t>_pre_rebuild`. After the swap the run deletes from the live table every row in a
+part within those blocks whose key `<t>_pre_rebuild` lacks: it was copied before the swap,
+so its writer deleted it. A write after the swap lands in a new part and is kept, whatever
+its version. `--statement-timeout-s` (default 1800) caps each check, repair and delete
+statement; raise it for a table whose full scans take longer.
 
 ## Disk pressure hygiene
 

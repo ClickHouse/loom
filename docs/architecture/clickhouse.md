@@ -488,20 +488,9 @@ flush never fails a request; a crash loses the queue.
   layout, and `scripts/ops/vector_codec_rebuild.py` applies the codec once the setting is on.
   ClickHouse Cloud holds the setting read-only at its default 0 until the operator enables
   it for the service with a settings-profile override; it then reads 1, still read-only,
-  and coded tables work. An existing table moves with the same tool. It refuses a table
-  whose served rows hold non-empty vectors of another width than the codec's (the copy
-  would zero them; re-embed them first, and keep every writer on that width while it
-  runs). A key the source no longer has (a row erased during the run) is deleted from
-  the twin in one pass, and the swap does not run while one remains. Before the swap the
-  width check runs again, then the last delta, then the twin-only check: a vector of
-  another width written before the width scan stops the swap. The last read before the
-  `EXCHANGE` is the twin-only check, or, when it deleted keys, the consistency recheck
-  that follows. A delete after that read, or one still running at the `EXCHANGE`,
-  reaches only `<t>_pre_rebuild`; after the swap, a live row below the twin's highest
-  version before the swap that `<t>_pre_rebuild` lacks was deleted by its writer and is
-  deleted from the live table too. A table with no version column cannot tell such a row
-  from a new write, so the run logs the keys and exits 7 for the erasures to be rerun.
-  Its recall gate ranks real vectors only, since a placeholder's cosine distance is NaN.
+  and coded tables work. An existing table moves with the same tool. It refuses mixed widths,
+  keeps rows erased during the run out of the swap, and its recall gate ignores
+  placeholders ([maintenance](../operations/maintenance.md#compaction-and-optimize)).
 - **Codes-first reads.** When a column is coded and its table has no patch parts, reads
   send `vector_search_use_quantized_codes = 1` (`LOOM_VECTOR_SEARCH_QUANTIZED_CODES`): a
   pass over the codes keeps `LIMIT × LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER`
