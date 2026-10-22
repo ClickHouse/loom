@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from server.code.app.index.repo_registry import refresh_db_repos
@@ -27,6 +28,10 @@ from server.settings import settings
 
 ROOT = Path("/app/var/code_repos")
 MANIFEST = ROOT / "docker-smoke.json"
+# How long the ingest passes may take to give every fixture its first index, and the
+# pause between two of them.
+SEED_TIMEOUT_S = 180
+SEED_POLL_S = 1.0
 
 
 def run(root: Path, *command: str, env: dict[str, str] | None = None) -> str:
@@ -136,14 +141,22 @@ async def seed(repo: CodeRepo) -> list[dict[str, str]]:
         )
         entries.append({"namespace": ns, "head": head, "producer": producer})
     MANIFEST.write_text(json.dumps(entries))
-    # Trigger the same worker passes that the supervisor schedules, with real IO.
-    for _ in range(5):
+    # Trigger the same worker passes that the supervisor schedules, with real IO. A pass
+    # hands a missing mirror's clone to a background job and moves on, so an entry's
+    # first index (its git_head) lands on a later pass: pass until every entry has it.
+    deadline = time.monotonic() + SEED_TIMEOUT_S
+    while True:
         result = await ingest.run_pass()
         assert not result.errors, result.errors
-        if all(
-            [await repo.get_state("dev", e["namespace"], "git_head") == e["head"] for e in entries]
-        ):
+        unseeded = [
+            e["namespace"]
+            for e in entries
+            if await repo.get_state("dev", e["namespace"], "git_head") != e["head"]
+        ]
+        if not unseeded:
             break
+        assert time.monotonic() < deadline, f"git_head not seeded: {unseeded} ({result.note})"
+        await asyncio.sleep(SEED_POLL_S)
     for worker in (scip_py_delta, scip_go_delta, scip_ts_delta):
         result = await worker.run_pass()
         assert not result.errors and not result.skipped, result
