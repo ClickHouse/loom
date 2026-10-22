@@ -23,9 +23,9 @@ batched instead: one committed insert per request makes one part per row there.
 from __future__ import annotations
 
 import ast
+import contextlib
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -262,21 +262,19 @@ async def test_usage_flush_of_the_timer_takes_the_background_window(
 
     from server.memory.store import usage
 
-    async def _one_tick(_seconds: float) -> None:
-        if ch.settings:
-            raise asyncio.CancelledError
-
     monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     ch = _RecordingCH()
     monkeypatch.setattr(usage, "_default_client", lambda: ch)
-    # Only the flusher's sleep is replaced, not the event loop's.
-    monkeypatch.setattr(usage, "asyncio", SimpleNamespace(**{**vars(asyncio), "sleep": _one_tick}))
+    monkeypatch.setattr(usage, "_USAGE_FLUSH_INTERVAL_S", 0.01)
     usage._reset_for_tests()
     usage._USAGE_BUFFER.append({"memory_id": "m"})
+    loop = asyncio.create_task(usage._usage_flush_loop())
     try:
-        with pytest.raises(asyncio.CancelledError):
-            await usage._usage_flush_loop()
+        await asyncio.sleep(0.1)
     finally:
+        loop.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop
         usage._reset_for_tests()
     assert ch.settings == [async_insert_settings(background=True)]
 
