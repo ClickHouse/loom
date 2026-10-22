@@ -174,8 +174,11 @@ lower bound: a waiting insert holds its connection for the window and then the f
 and part write, which queue up and grow under load. One process taking 200 writes a
 second, two batched inserts each (`bench/write_rate.py --target client`), refused
 3,367 of 12,000 writes with 503 `OVERLOADED` at `ch_pool_maxsize = 20`, the formula's
-bound, and none at 40 or 64. Size `ch_pool_maxsize` at three times the bound or more,
-plus the process's other statements. A process at
+bound, and none at 40 or 64; that is one run on one host, so read it as an order of
+magnitude. Size `ch_pool_maxsize` at three times the bound or more, plus the process's
+other statements: the default 64 holds three times the bound for about 300
+request-path batched inserts a second, with about 20 connections left for other
+statements. A process at
 that rate either raises `ch_pool_maxsize` or sets `ch_batched_inserts = false`; lowering
 `ch_batched_insert_wait_max_ms` also frees connections
 ([troubleshooting](../operations/troubleshooting.md)).

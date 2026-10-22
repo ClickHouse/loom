@@ -186,25 +186,28 @@
         "ch_batched_insert_background_wait_max_ms": {
           "default": 200,
           "exclusiveMinimum": 0,
+          "maximum": 5000,
           "type": "integer",
-          "description": "Longest wait, ms, of a batched or waited async insert no request waits on (the usage-event and write-mark flushes, webhook delivery attempts); ClickHouse's default."
+          "description": "Longest wait, ms, of a batched or waited async insert no request waits on (the usage-event and write-mark flushes, webhook delivery attempts); ClickHouse's default. At most 5000, far under the write deadline."
         },
         "ch_batched_insert_wait_max_ms": {
           "default": 50,
           "exclusiveMinimum": 0,
+          "maximum": 1000,
           "type": "integer",
-          "description": "Longest wait, ms, of a batched or waited async insert a request waits on for others to share its part; holds a pooled connection meanwhile."
+          "description": "Longest wait, ms, of a batched or waited async insert a request waits on for others to share its part; holds a pooled connection meanwhile. At most 1000, far under the write deadline."
         },
         "ch_batched_insert_wait_min_ms": {
           "default": 10,
           "exclusiveMinimum": 0,
+          "maximum": 1000,
           "type": "integer",
-          "description": "Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when writes are sparse; capped at the insert's longest wait."
+          "description": "Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when writes are sparse; capped at the insert's longest wait. At most 1000."
         },
         "ch_batched_inserts": {
           "default": true,
           "type": "boolean",
-          "description": "Batch inserts of tables written per request or by busy workers (audit, turns, embeddings, agent_events, webhook outbox and attempts, evidence) as waited async inserts; false commits."
+          "description": "Send the inserts of tables written per request or by the webhook worker (audit_log, conversation turns and conversation_embeddings, agent_events, webhook outbox and attempts, memory_evidence, memory_belief_sources) as waited async inserts that share parts; each holds a pooled connection while it waits, so size ch_pool_maxsize for it (docs/operations/upgrades.md). false commits them, one part each."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,

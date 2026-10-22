@@ -559,18 +559,25 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Batch inserts of tables written per request or by busy workers (audit, turns, embeddings,
-    # agent_events, webhook outbox and attempts, evidence) as waited async inserts; false commits.
+    # Send the inserts of tables written per request or by the webhook worker (audit_log,
+    # conversation turns and conversation_embeddings, agent_events, webhook outbox and
+    # attempts, memory_evidence, memory_belief_sources) as waited async inserts that share
+    # parts; each holds a pooled connection while it waits, so size ch_pool_maxsize for it
+    # (docs/operations/upgrades.md). false commits them, one part each.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched or waited async insert a request waits on for others
-    # to share its part; holds a pooled connection meanwhile.
-    ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0)
+    # to share its part; holds a pooled connection meanwhile. At most 1000, far under the
+    # write deadline.
+    ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0, le=1000)
     # Longest wait, ms, of a batched or waited async insert no request waits on (the
     # usage-event and write-mark flushes, webhook delivery attempts); ClickHouse's default.
-    ch_batched_insert_background_wait_max_ms: Annotated[int, LIVE] = Field(default=200, gt=0)
+    # At most 5000, far under the write deadline.
+    ch_batched_insert_background_wait_max_ms: Annotated[int, LIVE] = Field(
+        default=200, gt=0, le=5000
+    )
     # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits
-    # when writes are sparse; capped at the insert's longest wait.
-    ch_batched_insert_wait_min_ms: Annotated[int, LIVE] = Field(default=10, gt=0)
+    # when writes are sparse; capped at the insert's longest wait. At most 1000.
+    ch_batched_insert_wait_min_ms: Annotated[int, LIVE] = Field(default=10, gt=0, le=1000)
     # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED.
     # 0 = no slot gate.
     ch_pool_wait_ms: int = 500

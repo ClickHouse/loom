@@ -101,22 +101,25 @@ settings:
   # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. [restart]
   # ch_timeout_ddl_s: 300.0
 
-  # Batch inserts of tables written per request or by busy workers (audit, turns,
-  # embeddings, agent_events, webhook outbox and attempts, evidence) as waited async
-  # inserts; false commits. [live]
+  # Send the inserts of tables written per request or by the webhook worker (audit_log,
+  # conversation turns and conversation_embeddings, agent_events, webhook outbox and
+  # attempts, memory_evidence, memory_belief_sources) as waited async inserts that share
+  # parts; each holds a pooled connection while it waits, so size ch_pool_maxsize for it
+  # (docs/operations/upgrades.md). false commits them, one part each. [live]
   # ch_batched_inserts: true
 
   # Longest wait, ms, of a batched or waited async insert a request waits on for others
-  # to share its part; holds a pooled connection meanwhile. [live]
+  # to share its part; holds a pooled connection meanwhile. At most 1000, far under the
+  # write deadline. [live]
   # ch_batched_insert_wait_max_ms: 50
 
   # Longest wait, ms, of a batched or waited async insert no request waits on (the
   # usage-event and write-mark flushes, webhook delivery attempts); ClickHouse's
-  # default. [live]
+  # default. At most 5000, far under the write deadline. [live]
   # ch_batched_insert_background_wait_max_ms: 200
 
   # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits
-  # when writes are sparse; capped at the insert's longest wait. [live]
+  # when writes are sparse; capped at the insert's longest wait. At most 1000. [live]
   # ch_batched_insert_wait_min_ms: 10
 
   # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot
