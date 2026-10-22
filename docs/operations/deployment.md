@@ -488,17 +488,20 @@ because its merges are stopped: drop that copy first
    ```
 
    Check the list against `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`), which
-   names every coded table and its vector columns, before you run it. Where
-   `allow_suspicious_codecs` cannot be on, the tool refuses `--chain`. Skip the
-   `entity_vectors` line and it stays as it is, plain or coded without the chain; or,
-   where it is plain, rebuild it without `--chain` and keep quantization without the
-   additional `LZ4` compression.
+   names every coded table and its vector columns, before you run it. The
+   `--gate-fetch-multiplier` values are the defaults the search legs serve; where the
+   deployment sets `LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER`,
+   `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER`,
+   `LOOM_CODE_SEARCH_CARDS_FETCH_MULTIPLIER` or `LOOM_TRACKER_EMBED_FETCH_MULTIPLIER`,
+   pass that value on the matching line. Where `allow_suspicious_codecs` cannot be on, the
+   tool refuses `--chain`. Skip the `entity_vectors` line and it stays as it is, plain or
+   coded without the chain; or, where it is plain, rebuild it without `--chain` and keep
+   quantization without the additional `LZ4` compression.
 
    A table with no real vectors yet (no rows, or only the zero placeholder vectors of rows
    without an embedding) cannot pass the rebuild's recall gate, and the dry run does not
    show that. The dry run prints the width it will code (`target <table> dimension <n>`);
-   skip the line while this query, with the line's first column, returns 0 (`loom` in
-   these statements is your `LOOM_CH_DATABASE`):
+   skip the line while this query, with the line's first column, returns 0:
    `SELECT countIf(length(<column>) = <n> AND <column>[1] != 0) FROM loom.<table>`.
 
    A run can also fail the gate where one `(org, namespace)` holds placeholder rows and
@@ -543,8 +546,8 @@ because its merges are stopped: drop that copy first
 
 Before restarting Loom or resuming traffic, drop every leftover `<table>_rebuild` and
 `<table>_pre_rebuild` copy for the tables you processed, including copies left by an
-aborted run or rollback. This lists them (`loom` is your `LOOM_CH_DATABASE`; the
-`_rebuild` suffix also matches `_pre_rebuild`):
+aborted run or rollback. This lists them (the `_rebuild` suffix also matches
+`_pre_rebuild`):
 
 ```sql
 SELECT name FROM system.tables
