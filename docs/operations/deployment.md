@@ -461,10 +461,11 @@ first (`DROP TABLE IF EXISTS loom.<table>_pre_rebuild SYNC`).
 1. Check that Loom's ClickHouse user gets the settings above before starting the rebuild.
 2. Rebuild each coded table with `scripts/ops/vector_codec_rebuild.py`. The tool is not in
    the image: run it from a clone of the repository at the deployed version, after
-   `uv sync --locked`, with `LOOM_CH_*` pointing at the deployment's ClickHouse. Run the
-   block in bash. `mode` holds the action: run the block with `mode=--dry-run` to see each
-   plan, then again with `mode=--yes` to rebuild. Set `cluster` to your cluster's name, or
-   to `''` to check this server only:
+   `uv sync --locked`, with the deployment's `LOOM_*` environment (its `.env`), so
+   `LOOM_CH_*` and `LOOM_EMBEDDING_DIM` match the running Loom. Run the block in bash.
+   `mode` holds the action: run the block with `mode=--dry-run` to see each plan, then
+   again with `mode=--yes` to rebuild. Set `cluster` to your cluster's name, or to `''` to
+   check this server only:
 
    ```bash
    mode=--dry-run
@@ -528,19 +529,19 @@ first (`DROP TABLE IF EXISTS loom.<table>_pre_rebuild SYNC`).
    Skip that table's line while this returns rows: its layout stays as it is.
 
    The copy replaces every vector whose width is not `<n>` with a zero vector, and no gate
-   reports it. `<n>` is the table's most common width: if it is not the served model's
-   width, stop. Then check each named column for other widths among the rows Loom serves
-   (drop `FINAL` for `chunks`):
+   reports it. `<n>` is the table's most common width. Before each line, check each named
+   column for other widths among the rows Loom serves (drop `FINAL` for `chunks`):
 
    ```sql
    SELECT length(<column>) AS width, count() FROM loom.<table> FINAL
    WHERE length(<column>) > 0 GROUP BY width
    ```
 
-   A width other than `<n>` is lost in the rebuild. `loom reembed --delete-old` re-embeds
-   `memory_embeddings`, `entity_vectors` and `conversation_embeddings` and removes the old
-   model's rows; the code plane's re-embed moves a `code_chunks` label into its own
-   `LOOM_CODE_VECTOR_TABLES` table. For any other table, skip its line.
+   Skip the line while this shows any width other than `<n>`, or while `<n>` is not the
+   served model's width: the rebuild would zero those vectors. Bringing a table to one
+   width is re-embedding work
+   ([re-embed and re-extract](./maintenance.md#re-embed-and-re-extract)); run this check
+   again after it.
 
    To stop the block, create `ABORT_REBUILD` in `LOOM_REBUILD_DIR` (default: the directory
    you run from): the running line stops before its copy or its swap, and each later
