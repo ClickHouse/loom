@@ -30,15 +30,16 @@ The twin's vector columns are `Array(BFloat16) CODEC(Quantized(<method>, dim, 0)
 `--gate-fetch-multiplier`, as the search legs do.
 
 The dimension comes from the live table: a coded column states it, a
-plain column's vectors show it (the most common length), and an empty table
+plain column's nonzero vectors show it (the most common length), and an empty table
 takes `LOOM_EMBEDDING_DIM`. Every named column must agree.
 
-Run it in a maintenance window with every writer and erasure stopped: it
-fails closed and never repairs the live table. It refuses (exit 3), `--dry-run`
+Run it in a maintenance window with every writer and erasure stopped and all
+in-flight writes drained. It refuses unfinished source mutations before the
+copy and swap, fails closed and never repairs the live table. It refuses (exit 3), `--dry-run`
 included, while a named column holds non-empty vectors of another length among
 the rows Loom serves (under FINAL on a ReplacingMergeTree), printing each width,
 its row count and `LOOM_EMBEDDING_DIM`, since the copy would replace them with
-zero vectors. The target width of a plain column is its most common length, not
+zero vectors. The target width of a plain column is its nonzero vectors' most common length, not
 necessarily the configured one: re-embed or delete the rows of other widths until
 one width remains (for memory_embeddings, entity_vectors and
 conversation_embeddings, `loom reembed --delete-old` does this). A coded column
@@ -87,6 +88,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import math
 import os
 import re
 import statistics
@@ -297,9 +299,7 @@ def read_final(engine: str) -> str:
 
 
 def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
-    """(width, rows) of the vectors in `column` whose length is not `dim` and that are
-    not all zeros: the copy would replace each with a zero vector. A placeholder of
-    any width is a zero vector after the copy too, so it is not counted. Pure."""
+    """Count nonzero vectors of another width; zero placeholders can be resized."""
     return (
         f"SELECT length({column}) AS w, count() FROM loom.{table}{fin} "
         f"WHERE length({column}) NOT IN (0, {int(dim)}) AND arrayExists(x -> x != 0, {column}) "
@@ -339,7 +339,7 @@ def twin_read(column: str, lit: str, multiplier: float) -> tuple[str, dict[str, 
 def vector_filter(column: str, *, dim: int) -> str:
     """The predicate that keeps placeholder rows out of a probe's top-20: a placeholder
     is all zeros, so its cosine distance is NaN and it would sort last. Pure."""
-    return f"length({column}) = {int(dim)} AND {column}[1] != 0"
+    return f"length({column}) = {int(dim)} AND arrayExists(x -> x != 0, {column})"
 
 
 _CLUSTER_NAME = re.compile(r"[A-Za-z0-9_.-]+")
@@ -371,7 +371,11 @@ class VectorRebuild:
 
     # -- small reads -------------------------------------------------------
     def q(self, sql: str, **st: Any) -> list[Any]:
-        return list(self.ch.query(sql, settings=st or None).result_rows)
+        return list(
+            self.ch.query(
+                sql, settings={"max_execution_time": self.a.statement_timeout_s, **st}
+            ).result_rows
+        )
 
     def cmd(self, sql: str, **st: Any) -> None:
         self.ch.command(sql, settings=st or None)
@@ -429,7 +433,8 @@ class VectorRebuild:
             d = vector_dim(ddl, c)
             if d is None:
                 seen = self.q(
-                    f"SELECT topK(1)(length({c})) FROM loom.{name}{fin} WHERE length({c}) > 0"
+                    f"SELECT topK(1)(length({c})) FROM loom.{name}{fin} "
+                    f"WHERE arrayExists(x -> x != 0, {c})"
                 )
                 d = int(seen[0][0][0]) if seen and seen[0][0] else int(settings.embedding_dim)
             dims.add(d)
@@ -482,15 +487,24 @@ class VectorRebuild:
             log("rows written in the last hour with an empty vector:", n)
             if n:
                 return "recent rows carry an empty vector: add this table to placeholders.PLACEHOLDER_COLUMNS and deploy first"
-        if why := self.width_refusal(ddl, read_final(parse_engine(ddl)[0])):
-            return why
         twin = tr.table_row(self.ch, self.twin)
         if twin is not None and not (self.a.reuse or self.a.restart):
             return (
                 f"loom.{self.twin} (created {twin[2]}, {tr.row_count(self.ch, self.twin)} rows) is "
                 "another run's lock or its leftover: --reuse continues from it, --restart drops it"
             )
-        return ""
+        if why := self.mutation_refusal():
+            return why
+        return self.width_refusal(ddl, read_final(parse_engine(ddl)[0]))
+
+    def mutation_refusal(self) -> str:
+        """A stopped writer can leave mutations running on ClickHouse."""
+        pending = self.q(
+            f"SELECT count() FROM {self.replicas('mutations')} "
+            f"WHERE database = '{database()}' AND table = '{self.t}' AND NOT is_done",
+            max_execution_time=self.a.statement_timeout_s,
+        )[0][0]
+        return f"loom.{self.t} has unfinished mutations; wait for them to finish" if pending else ""
 
     def width_refusal(self, ddl: str, fin: str) -> str:
         """Why a named column holds vectors the copy would zero, or ''."""
@@ -801,14 +815,10 @@ class VectorRebuild:
                 "twin no longer matches it; no swap. Stop writes and rerun with --restart"
             )
             return GATE_FAILED
+        if why := self.mutation_refusal():
+            log(f"GATE FAILED: {why}; no swap")
+            return GATE_FAILED
         tr.swap_in(self.ch, self.t)
-        for _ in range(2):  # writes in flight at the exchange landed in the old table
-            time.sleep(self.a.settle_s)
-            log("post-swap delta rows:", self.delta_into(self.t, self.pre, sel, version, key))
-            log(
-                "post-swap repair keys:",
-                self.repair_into(self.t, self.pre, sel, fin, version, key),
-            )
         return self.check_swapped()
 
     def check_swapped(self) -> int:
@@ -936,7 +946,9 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
         default="default",
         help="cluster whose replicas the preflight and monitor check; '' = this server only",
     )
-    ap.add_argument("--settle-s", type=float, default=15.0, help="wait before each post-swap delta")
+    ap.add_argument(
+        "--settle-s", type=float, default=15.0, help="wait between rollback delta passes"
+    )
     ap.add_argument(
         "--statement-timeout-s",
         type=float,
@@ -950,8 +962,8 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
     a.table = a.table.removeprefix("loom.")
     if a.cluster and not _CLUSTER_NAME.fullmatch(a.cluster):
         ap.error(f"--cluster: not a cluster name: {a.cluster!r}")
-    if a.statement_timeout_s <= 0:
-        ap.error("--statement-timeout-s must be above 0")
+    if not math.isfinite(a.statement_timeout_s) or a.statement_timeout_s <= 0:
+        ap.error("--statement-timeout-s must be finite and above 0")
     return a
 
 

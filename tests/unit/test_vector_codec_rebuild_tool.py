@@ -46,11 +46,15 @@ class _CH:
         self.widths_first: list[list[tuple[int, int]]] = []  # earlier reads, before self.widths
         self.cons = (0, 0, 0)  # (mismatched, source_only, twin_only) the gate reads
         self.cons_first: list[tuple[int, int, int]] = []  # earlier reads, before self.cons
+        self.mutations = 0
+        self.mutations_first: list[int] = []
         self.queries: list[str] = []
+        self.query_settings: list[tuple[str, dict[str, Any]]] = []
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _R:
         p = parameters or {}
         self.queries.append(sql)
+        self.query_settings.append((sql, dict(settings or {})))
         if sql == CODEC_SETTINGS_SQL:
             return _R(self.codec_rows)
         if sql.startswith("SHOW CREATE TABLE loom."):
@@ -77,6 +81,8 @@ class _CH:
             return _R([self.cons_first.pop(0) if self.cons_first else self.cons])
         if "GROUP BY w" in sql:
             return _R(self.widths_first.pop(0) if self.widths_first else self.widths)
+        if "system.mutations" in sql:
+            return _R([(self.mutations_first.pop(0) if self.mutations_first else self.mutations,)])
         if "ORDER BY rand()" in sql:
             return _R([("o", "n", [0.5] * DIM)])
         if "round(cosineDistance" in sql:
@@ -386,8 +392,26 @@ def test_the_statement_timeout_caps_the_gate_reads_and_must_be_positive() -> Non
     assert _run(ch, "--statement-timeout-s", "60", "--yes") == tr.OK
     repairs = [st for s, st in ch.sent if "WHERE (org, namespace) IN" in s]
     assert repairs and all(st["max_execution_time"] == 60 for st in repairs)
-    with pytest.raises(SystemExit):
-        vcr.parse(["--table", "t", "--columns", "embedding", "--statement-timeout-s", "0"])
+    reads = [
+        st
+        for sql, st in ch.query_settings
+        if any(
+            marker in sql
+            for marker in (
+                "topK(1)",
+                "round(cosineDistance",
+                "GROUP BY w",
+                "system.mutations",
+                "FULL OUTER JOIN",
+                "ORDER BY rand()",
+            )
+        )
+    ]
+    assert len(reads) >= 7
+    assert all(st["max_execution_time"] == 60 for st in reads)
+    for value in ("0", "-1", "nan", "inf"):
+        with pytest.raises(SystemExit):
+            vcr.parse(["--table", "t", "--columns", "embedding", "--statement-timeout-s", value])
 
 
 def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:
@@ -412,4 +436,32 @@ def test_the_recall_reads_rank_real_vectors_only() -> None:
     assert _run(ch, "--yes") == tr.OK
     reads = [q for q in ch.queries if "round(cosineDistance" in q]
     assert len(reads) == 2  # the exact read on the source and the twin read
-    assert all(f"length(embedding) = {DIM} AND embedding[1] != 0 ORDER BY" in q for q in reads)
+    assert all(
+        f"length(embedding) = {DIM} AND arrayExists(x -> x != 0, embedding) ORDER BY" in q
+        for q in reads
+    )
+
+
+@pytest.mark.parametrize("during_run", [False, True])
+def test_unfinished_mutations_stop_the_rebuild(during_run: bool, capsys: Any) -> None:
+    ch = _CH(memory_chunks=_live())
+    ch.mutations_first = [0] if during_run else []
+    ch.mutations = 1
+    assert _run(ch, "--yes") == (tr.GATE_FAILED if during_run else tr.REFUSED)
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "unfinished mutations" in capsys.readouterr().out
+
+
+def test_the_rebuild_writes_only_to_the_twin() -> None:
+    ch = _CH(memory_chunks=_live())
+    ch.delta = 1
+    assert _run(ch, "--yes") == tr.OK
+    inserts = [c for c in ch.commands if c.startswith("INSERT")]
+    assert len(inserts) >= 3
+    assert all(c.startswith("INSERT INTO loom.memory_chunks_rebuild ") for c in inserts)
+
+
+def test_an_existing_twin_lock_refuses_before_width_scans() -> None:
+    ch = _CH(memory_chunks=_live(), memory_chunks_rebuild=_live())
+    assert _run(ch, "--yes") == tr.REFUSED
+    assert not any("GROUP BY w" in q for q in ch.queries)

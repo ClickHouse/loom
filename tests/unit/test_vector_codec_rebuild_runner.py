@@ -208,7 +208,7 @@ def test_twin_read_is_the_codes_at_the_leg_multiplier() -> None:
         "vector_search_index_fetch_multiplier": 10.0,
     }
     assert vcr.vector_filter("embedding", dim=3072) == (
-        "length(embedding) = 3072 AND embedding[1] != 0"
+        "length(embedding) = 3072 AND arrayExists(x -> x != 0, embedding)"
     )
 
 

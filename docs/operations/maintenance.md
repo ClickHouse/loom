@@ -216,10 +216,11 @@ into a twin table, check it, swap with `EXCHANGE TABLES` and keep the old table 
 `--rollback`. Both print their plan and change nothing without `--yes`; the procedure is
 in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-key).
 `vector_codec_rebuild.py` needs a maintenance window with every writer and erasure
-stopped; it fails closed and never repairs the live table. It refuses (exit 3),
+stopped and all in-flight writes drained. It refuses unfinished source mutations before
+copying and swapping, and never repairs the live table. It refuses (exit 3),
 `--dry-run` included, while a plain named column holds vectors of more than one width that
 are not all zeros, since the copy would replace all but the target's with zero vectors. The
-target of a plain column is its most common width, which may not be `LOOM_EMBEDDING_DIM`;
+target of a plain column is its nonzero vectors' most common width, which may not be `LOOM_EMBEDDING_DIM`;
 the message names both. Re-embed or delete the rows of other widths until one width
 remains; for `memory_embeddings`, `entity_vectors` and `conversation_embeddings`,
 `loom reembed --delete-old` does this. Just before the swap it checks the widths again and

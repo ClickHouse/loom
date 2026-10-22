@@ -489,10 +489,11 @@ flush never fails a request; a crash loses the queue.
   ClickHouse Cloud holds the setting read-only at its default 0 until the operator enables
   it for the service with a settings-profile override; it then reads 1, still read-only,
   and coded tables work. An existing table moves with the same tool, in a maintenance
-  window with every writer and erasure stopped: it fails closed and never repairs the
-  live table. It refuses a plain column whose served rows hold vectors of more than one
+  window with every writer and erasure stopped and in-flight writes drained. It refuses
+  unfinished source mutations before copying and swapping, and never repairs the live
+  table. It refuses a plain column whose served rows hold vectors of more than one
   width that are not all zeros, since the copy would zero all but the target's. A plain
-  column's target is its most common width, which may not be `LOOM_EMBEDDING_DIM`; the
+  column's target is its nonzero vectors' most common width, which may not be `LOOM_EMBEDDING_DIM`; the
   refusal names both. The rows of other widths are re-embedded or deleted first; for
   `memory_embeddings`, `entity_vectors` and `conversation_embeddings`,
   `loom reembed --delete-old` does this. Just before the swap it checks the widths again
