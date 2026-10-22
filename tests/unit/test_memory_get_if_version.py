@@ -14,6 +14,7 @@ from server.core.errors import AuthInsufficientError
 from server.memory.api.models_crud import MemoryGetInput
 from server.memory.app import handlers as mem
 from server.memory.store.rows import MemoryRow
+from server.observability.budget_shape import current_budget_shape, note_budget_shape
 
 
 def _row(version: int = 7, sensitivity: str = "") -> MemoryRow:
@@ -94,11 +95,13 @@ def _input(**kw: Any) -> MemoryGetInput:
 @pytest.mark.asyncio
 async def test_matching_version_returns_unchanged_without_body_audit_or_exposure(env) -> None:
     env.row = _row(version=7, sensitivity="high")
+    note_budget_shape("")
     out = await mem.handle_memory_get(_input(if_version=7))
     assert out.found and out.unchanged and out.value is None and out.version == 7
     assert out.version_text == "7"  # exact for a JavaScript caller on this path too
     assert out.memory_id == env.row.memory_id
     assert env.audits == [] and env.exposures == []
+    assert current_budget_shape() == ""  # no audit row, so the base budget
 
 
 @pytest.mark.asyncio
@@ -161,6 +164,7 @@ async def test_a_high_read_is_audited_as_the_tokens_principal(env) -> None:
     from server.memory.domain.trust import actor_for
 
     env.row = _row(sensitivity="high")
+    note_budget_shape("")
     set_current_auth(
         AuthInfo(
             subject="reader", org="acme", namespaces=("ns",), roles=(), is_service_account=True
@@ -172,6 +176,7 @@ async def test_a_high_read_is_audited_as_the_tokens_principal(env) -> None:
         set_current_auth(None)
     assert out.found and env.audits == ["memory.sensitive_read"]
     assert env.actor == actor_for("reader", is_service_account=True)
+    assert current_budget_shape() == "audited"  # held to the budget with the audit-row wait
 
 
 @pytest.mark.asyncio
@@ -192,6 +197,7 @@ async def test_a_high_read_by_id_is_audited_as_the_tokens_principal(
 
     monkeypatch.setattr(memory_repo, "get_by_id", by_id)
     monkeypatch.setattr("server.auth.authz.row_in_scope", in_scope)
+    note_budget_shape("")
     set_current_auth(
         AuthInfo(
             subject="reader", org="acme", namespaces=("ns",), roles=(), is_service_account=True
@@ -205,3 +211,4 @@ async def test_a_high_read_by_id_is_audited_as_the_tokens_principal(
         set_current_auth(None)
     assert env.audits == ["memory.sensitive_read"]
     assert env.actor == actor_for("reader", is_service_account=True)
+    assert current_budget_shape() == "audited"

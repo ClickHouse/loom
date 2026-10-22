@@ -94,19 +94,17 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   `wait_for_async_insert = 1`, so it is written when the insert returns: committed
   (`async_insert = 0`, the client's session default) or batched
   ([batched inserts](#batched-inserts)). Fire-and-forget
-  telemetry is sent with `async_insert = 1, wait_for_async_insert = 0`. Every insert
-  carries a per-batch `insert_deduplication_token` (`server/core/ch_writes.py`,
-  `dedup_settings`), and an async insert is deduplicated by that token only, never by
-  content: a retried batch lands once, and two identical rows in one flush window both land.
+  telemetry is sent with `async_insert = 1, wait_for_async_insert = 0`.
 - **Times are UTC.** `DateTime` columns carry no zone of their own, so the server
   client and the migration runner pin `session_timezone = 'UTC'` and bind aware params
   in UTC: a server whose `<timezone>` is something else reads and writes the same
   instants.
 - **Retries never duplicate.** Every insert carries an `insert_deduplication_token` from
   the batch and a per-batch nonce (`insert_dedup_token`), so a retry after a dropped socket
-  lands the batch once. A caller that passes its own token names the row's identity
-  instead, so two writers of one row land it once: `conversation.save_message` writes a
-  new transcript row this way.
+  lands the batch once. An async insert is deduplicated by that token only, never by
+  content, so two identical rows in one flush window both land. A caller that passes its
+  own token names the row's identity instead, so two writers of one row land it once:
+  `conversation.save_message` writes a new transcript row this way.
 
 ### Batched inserts
 

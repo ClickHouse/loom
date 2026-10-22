@@ -15,6 +15,7 @@ from server.memory.api.models_crud import MemoryListInput
 from server.memory.app import query
 from server.memory.store.rows import MemoryRow, _hydrate
 from server.observability import audit
+from server.observability.budget_shape import current_budget_shape, note_budget_shape
 
 
 def _row(key: str, **over: Any) -> MemoryRow:
@@ -83,6 +84,7 @@ def served(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_bulk_get_serves_sensitivity_and_usage_and_audits_high_rows(served) -> None:
+    note_budget_shape("")
     out = await query.handle_memory_bulk_get(
         MemoryBulkGetInput(org="o", namespace="n", agent="a", memory_keys=["plain", "secret"])
     )
@@ -91,6 +93,7 @@ async def test_bulk_get_serves_sensitivity_and_usage_and_audits_high_rows(served
     assert out.results["plain"].recall_count == 4
     assert served["audits"] == [("memory.sensitive_read", ["secret"])]  # one insert per call
     assert served["actor"] == "a"  # the token's principal; with no token, the request's agent
+    assert current_budget_shape() == "audited"  # held to the budget with the audit-row wait
 
 
 @pytest.mark.asyncio
@@ -262,7 +265,10 @@ async def test_history_audits_every_served_version_of_a_row_with_a_high_version(
     monkeypatch.setattr(memory_repo, "list_history", _history)
     monkeypatch.setattr(memory_repo, "high_memory_ids", _high_ids)
     monkeypatch.setattr(audit, "emit_many", _emit_many)
+    note_budget_shape("")
     out = await curation.handle_memory_history(
         MemoryHistoryInput(org="o", namespace="n", agent="*", memory_key="k")
     )
     assert len(out.rows) == len(served) and audits == [audited]
+    # only a history that writes audit rows is held to the budget with their wait
+    assert current_budget_shape() == ("audited" if audited else "")

@@ -14,6 +14,7 @@ from server.memory import store as memory_repo
 from server.memory.api.models_lifecycle import MemoryEvidenceInput, MemoryEvidenceOutput
 from server.memory.app import ops as _memory_ops
 from server.memory.app.evidence_reads import evidence_scope, handle_memory_evidence
+from server.observability.budget_shape import current_budget_shape, note_budget_shape
 from server.operations.registry import ALL_OPERATIONS
 
 
@@ -199,7 +200,9 @@ async def test_a_high_rows_evidence_read_is_audited(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(memory_repo, "get_by_key", fake_get_by_key)
     monkeypatch.setattr("server.core.ch.get_client", lambda: _FakeCH(links=[], evidence=[]))
     monkeypatch.setattr(audit, "emit", fake_emit)
+    note_budget_shape("")
     out = await handle_memory_evidence(
         MemoryEvidenceInput(org="o", namespace="ns", agent="a", memory_key="vault")
     )
     assert out.found and audits == ["memory.sensitive_read:vault"]
+    assert current_budget_shape() == "audited"

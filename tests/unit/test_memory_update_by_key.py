@@ -309,6 +309,31 @@ async def test_update_announces_its_row_when_supersession_fails(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("wrote", "shape"), [(True, "webhook"), (False, "")])
+async def test_an_update_is_held_to_the_webhook_budget_only_when_it_wrote_outbox_rows(
+    wired, monkeypatch: pytest.MonkeyPatch, wrote: bool, shape: str
+) -> None:
+    from server.observability.budget_shape import current_budget_shape, note_budget_shape
+
+    wired([_cand(_ID_A)], _row())
+
+    async def _announce(changes: Any) -> bool:
+        return wrote
+
+    monkeypatch.setattr("server.memory.app.webhooks.announce", _announce)
+    note_budget_shape("")
+    await update_mod.handle_memory_update(
+        MemoryUpdateInput(
+            org="test",
+            namespace="personal",
+            memory_key="deploy_day",
+            value="Deploys happen on Thursday",
+        )
+    )
+    assert current_budget_shape() == shape
+
+
+@pytest.mark.asyncio
 async def test_update_announces_its_row_when_the_high_fence_fails(
     wired, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -63,6 +63,7 @@ from server.memory.domain.webhook_events import memory_change
 from server.memory.store.history import HistoryTarget
 from server.memory.store.rows import MemoryRow
 from server.observability import audit as _audit
+from server.observability.budget_shape import note_budget_shape
 
 _CURATED_KEY_SLUG = re.compile(r"[^a-z0-9]+")
 
@@ -433,17 +434,20 @@ async def handle_memory_history(input: MemoryHistoryInput) -> MemoryHistoryOutpu
     high_ids |= await memory_repo.high_memory_ids(
         input.org, input.namespace, input.memory_key, sorted(plain_ids)
     )
+    audited = [
+        {"memory_key": input.memory_key, "memory_id": str(r.memory_id), "version": r.version}
+        for r in rows
+        # a redacted version served no value
+        if str(r.memory_id) in high_ids and r.redacted_at is None
+    ]
+    if audited:
+        note_budget_shape("audited")
     await _audit.emit_many(
         "memory.sensitive_read",
         org=input.org,
         namespace=input.namespace,
         actor=writer_actor(input.agent),
-        subjects=[
-            {"memory_key": input.memory_key, "memory_id": str(r.memory_id), "version": r.version}
-            for r in rows
-            # a redacted version served no value
-            if str(r.memory_id) in high_ids and r.redacted_at is None
-        ],
+        subjects=audited,
     )
     return MemoryHistoryOutput(rows=out_rows)
 
