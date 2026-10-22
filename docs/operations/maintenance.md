@@ -254,7 +254,9 @@ columns are all coded may be the old table. When the twin's named columns are pl
 tool names the rename. When they are coded too (a `--require-patch-free` run, or a
 rebuild of a coded table), the codecs do not show whether an exchange ran: the tool
 refuses, renames and drops nothing, and asks to compare the two tables' rows before
-dropping either by hand.
+dropping either by hand. A twin newer than the live table was never exchanged in, so
+the tool names it a leftover, whatever layout the rerun names: `--restart --yes` copies
+again, or drop it.
 `--drop-pre-rebuild` first compares the two tables again, after the same drain as the
 postcondition, also when both are on the target layout (a `--require-patch-free`
 rebuild of a table already on it), and refuses (exit 3) and keeps the copy on any

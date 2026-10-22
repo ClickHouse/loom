@@ -682,8 +682,18 @@ class VectorRebuild:
     def report_state(self) -> str:
         if self.next_step:
             return self.next_step
-        if not self.exists(self.pre) and (twin := self.twin_after_exchange()) is not None:
-            return tr.guidance(self.t, self.run_line, True, twin, None)
+        if not self.exists(self.pre) and self.exists(self.t) and self.exists(self.twin):
+            twin = self.twin_after_exchange()
+            if twin is not None:
+                return tr.guidance(self.t, self.run_line, True, twin, None)
+            if self.metadata_time(self.twin) >= self.metadata_time(self.t):
+                # a twin newer than the live table was never exchanged, so it is not the
+                # old table, whatever layout this run names
+                return (
+                    f"not swapped; loom.{self.twin} is a leftover newer than loom.{self.t}: "
+                    f"`{self.run_line} --restart --yes` copies again, or "
+                    f"DROP TABLE loom.{self.twin} SYNC"
+                )
         return tr.guidance(
             self.t,
             self.run_line,

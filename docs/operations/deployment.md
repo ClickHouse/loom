@@ -560,8 +560,10 @@ names `RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild`, the excha
 without the rename and `<table>_rebuild` is the old table, the rollback copy: run that
 step instead of a drop. The tool refuses `--reuse`, `--restart` and `--drop-pre-rebuild`
 in that state, whatever layout the rerun names. When `next` asks to compare `<table>` and
-`<table>_rebuild`, both are coded: compare their rows before dropping either. Otherwise
-drop the twin with `DROP TABLE IF EXISTS loom.<table>_rebuild SYNC`.
+`<table>_rebuild`, both are coded and the twin is the older table: compare their rows
+before dropping either. When `next` names the twin a leftover newer than `<table>`, no
+exchange ran: rerun with `--restart --yes` or drop it. Otherwise drop the twin with
+`DROP TABLE IF EXISTS loom.<table>_rebuild SYNC`.
 
 Start Loom again after cleanup; each process reads the codec settings when it starts.
 

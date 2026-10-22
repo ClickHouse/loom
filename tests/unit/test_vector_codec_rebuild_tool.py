@@ -293,6 +293,23 @@ def test_two_coded_tables_with_an_older_twin_are_refused_untouched(capsys: Any) 
     assert "compare" in out and "RENAME TABLE" not in out and "--restart --yes" not in out
 
 
+@pytest.mark.parametrize("flag", ["--dry-run", "--drop-pre-rebuild"])
+def test_a_twin_newer_than_a_coded_live_table_is_named_a_leftover(flag: str, capsys: Any) -> None:
+    """A failed `--chain LZ4` run on a table coded without a chain leaves a newer chained
+    twin. A rerun with the live table's flags names it a leftover, never the rename that
+    would make it the rollback copy."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    chained = coded.replace(", 0))", ", 0), LZ4)")
+    live = {"ddl": coded, "rows": 5, "uuid": "live", "created": TWIN_CREATED}
+    twin = {"ddl": chained, "rows": 3, "uuid": "failed", "created": COPY_STARTED}
+    ch = _CH(memory_chunks=live, memory_chunks_rebuild=twin)
+    _run(ch, flag, "--yes")
+    assert _writes(ch) == [] and ch.t["memory_chunks_rebuild"] is twin
+    step = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])["next"]
+    assert "RENAME TABLE" not in step and "compare" not in step
+    assert "leftover newer than loom.memory_chunks" in step and "--restart --yes" in step
+
+
 def test_a_twin_with_patch_parts_is_never_swapped() -> None:
     ch = _CH(memory_chunks=_live())
     ch.patches["memory_chunks_rebuild"] = 2
