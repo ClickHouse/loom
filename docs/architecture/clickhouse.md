@@ -491,9 +491,9 @@ flush never fails a request; a crash loses the queue.
   and coded tables work. An existing table moves with the same tool. It refuses a table
   whose served rows hold non-empty vectors of another width than the codec's (the copy
   would zero them; re-embed them first, and keep every writer on that width while it
-  runs). It does not swap while the twin holds a key the source no longer has (a row
-  erased during the copy; rerun with `--restart` once writes stop), and it checks both
-  again after its last delta, just before the swap. Its recall gate ranks real vectors
+  runs). A key the source no longer has (a row erased during the run) is deleted from
+  the twin before the swap, which does not run while one remains; the width check runs
+  again before the last delta and the twin-only check last, just before the swap. Its recall gate ranks real vectors
   only, since a placeholder's cosine distance is NaN.
 - **Codes-first reads.** When a column is coded and its table has no patch parts, reads
   send `vector_search_use_quantized_codes = 1` (`LOOM_VECTOR_SEARCH_QUANTIZED_CODES`): a

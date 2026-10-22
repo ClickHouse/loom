@@ -37,15 +37,15 @@ The gates, each of which leaves the table as it is and exits 5:
 
 - Consistency: a key whose newest version differs, or that the source holds
   and the twin lacks, is repaired key by key and fails the run if it remains.
-  A key only the twin holds fails it too: rows were removed from the source
-  during the copy (an erasure or delete) and the swap would bring them back;
-  stop writes and rerun with `--restart`.
+  A key only the twin holds was removed from the source during the run (an
+  erasure or delete): it is deleted from the twin too, and fails the run if
+  it remains, since the swap would bring it back.
 - Recall: both reads rank real vectors only (a zero placeholder's cosine
   distance is NaN), and each probe's recall is over the exact neighbours it
   found, at most 20.
-- Before the swap, after the last delta: the twin-only check and the width
-  check run again, so a delete or a vector of another width that landed during
-  the recall gate stops the swap too.
+- Before the swap: the width check runs again, then the last delta and the
+  twin-only check, so a vector of another width or a delete that landed during
+  the gates stops the swap too (or, for a delete, is removed from the twin).
 
 `--require-patch-free`: the twin-and-EXCHANGE also sheds the patch parts of
 past lightweight UPDATEs (`OPTIMIZE FINAL` / `APPLY PATCHES` do not). The flag
@@ -73,8 +73,8 @@ An `ABORT_REBUILD` file in `LOOM_REBUILD_DIR` (default `.`) stops the run
 before the copy and before the swap, leaving the twin.
 
 Exit codes (shared with table_rebuild): 0 done or nothing to do, 2 aborted,
-3 refused, 4 needs `--yes`, 5 a gate failed (consistency, recall, patch
-parts), 7 postcondition failed, 130 interrupted.
+3 refused, 4 needs `--yes`, 5 a gate failed (consistency, twin-only rows,
+recall, patch parts, a width that arrived during the run), 7 postcondition failed, 130 interrupted.
 """
 
 from __future__ import annotations
@@ -154,7 +154,12 @@ def key_literal(v: Any) -> str:
     return sql_literal(v)
 
 
-REPAIR_BATCH = 500  # keys per repair INSERT: a literal list the statement carries
+def key_literals(keys: list[Any]) -> str:
+    """Sorting keys as a tuple list for `(key) IN (...)`. Pure."""
+    return ", ".join("(" + ", ".join(key_literal(v) for v in k) + ")" for k in keys)
+
+
+REPAIR_BATCH = 500  # keys per repair INSERT or twin DELETE: a literal list the statement carries
 
 
 def patch_parts_sql(name: str) -> str:
@@ -302,9 +307,9 @@ def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
 def twin_only_failure(n: int) -> str:
     """The gate's message for `n` keys the twin holds and the source no longer has. Pure."""
     return (
-        f"GATE FAILED: {n} keys are in the twin only: rows were removed from the source "
-        "during the copy (an erasure or delete), and the swap would bring them back; "
-        "no swap. Stop writes and rerun with --restart"
+        f"GATE FAILED: {n} keys are in the twin only after the run deleted them there: "
+        "rows are still being removed from the source (an erasure or delete), and the "
+        "swap would bring them back; no swap. Pause erasures and rerun with --reuse"
     )
 
 
@@ -474,15 +479,13 @@ class VectorRebuild:
             log("rows written in the last hour with an empty vector:", n)
             if n:
                 return "recent rows carry an empty vector: add this table to placeholders.PLACEHOLDER_COLUMNS and deploy first"
-        if why := self.mixed_widths(read_final(parse_engine(ddl)[0])):
-            return why
         twin = tr.table_row(self.ch, self.twin)
         if twin is not None and not (self.a.reuse or self.a.restart):
             return (
                 f"loom.{self.twin} (created {twin[2]}, {tr.row_count(self.ch, self.twin)} rows) is "
                 "another run's lock or its leftover: --reuse continues from it, --restart drops it"
             )
-        return ""
+        return self.mixed_widths(read_final(parse_engine(ddl)[0]))
 
     def mixed_widths(self, fin: str) -> str:
         """Which named column serves non-empty vectors of another width than the target's,
@@ -622,14 +625,33 @@ class VectorRebuild:
         )
         keys = self.q(diverged, join_use_nulls=0, max_execution_time=1800)
         for i in range(0, len(keys), REPAIR_BATCH):
-            batch = keys[i : i + REPAIR_BATCH]
-            lits = ", ".join("(" + ", ".join(key_literal(v) for v in k) + ")" for k in batch)
+            lits = key_literals(keys[i : i + REPAIR_BATCH])
             self.cmd(
                 f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE ({ident}) IN ({lits})",
                 **self.codec_on(),
                 max_execution_time=1800,
             )
         self.rows_copied += len(keys)
+        return len(keys)
+
+    def remove_twin_only(self, fin: str, key: list[str]) -> int:
+        """Delete from the twin every key the source no longer holds: rows their writer
+        removed during the run (an erasure or delete), which the swap would bring back.
+        The keys are named as literals, as in `repair_into`."""
+        ident = ", ".join(key)
+        gone = (
+            f"SELECT {ident} FROM (SELECT {ident} FROM loom.{self.twin}{fin}) AS t "
+            f"LEFT JOIN (SELECT {ident}, 1 AS __present FROM loom.{self.t}{fin}) AS s "
+            f"USING ({ident}) WHERE s.__present = 0"
+        )
+        keys = self.q(gone, join_use_nulls=0, max_execution_time=1800)
+        for i in range(0, len(keys), REPAIR_BATCH):
+            lits = key_literals(keys[i : i + REPAIR_BATCH])
+            self.cmd(
+                f"DELETE FROM loom.{self.twin} WHERE ({ident}) IN ({lits})",
+                lightweight_deletes_sync=2,
+                max_execution_time=1800,
+            )
         return len(keys)
 
     def monitor(self, stop: threading.Event) -> None:
@@ -670,7 +692,6 @@ class VectorRebuild:
     def recall(self, ddl: str, fin: str) -> list[float]:
         """Distance recall per probe: exact on the source vs the twin read as the legs read it."""
         vcol, dim = self.cols[0], self.dim
-        # a fixed-length placeholder is all zeros: its cosine is NaN, never a probe
         real = vector_filter(vcol, dim=dim)
         probes = self.q(
             f"SELECT org, namespace, {vcol} FROM loom.{self.t} WHERE {real} ORDER BY rand() LIMIT {self.a.probes}"
@@ -692,7 +713,6 @@ class VectorRebuild:
                 **st,
             )
             d20 = ex[-1][0] if ex else 0.0
-            # the denominator is the real neighbours the exact read found, at most 20
             drec.append(sum(1 for r in tw if r[0] <= d20 + tol) / max(1, len(ex)))
         return drec
 
@@ -741,6 +761,9 @@ class VectorRebuild:
         log("consistency (mismatched, source_only, twin_only):", cons)
         if cons[0] or cons[1]:
             log("repair keys:", self.repair_into(self.twin, self.t, sel, fin, version, key))
+        if cons[2]:
+            log("twin-only keys deleted:", self.remove_twin_only(fin, key))
+        if any(cons):
             cons = self.consistent(fin, version, key)
             log("consistency after repair:", cons)
         if cons[0] or cons[1]:
@@ -769,14 +792,18 @@ class VectorRebuild:
         if not self.still_ours():
             log(f"REFUSED: loom.{self.twin} is no longer the twin this run created; no swap")
             return REFUSED
-        self.delta_into(self.twin, self.t, sel, version, key)
-        # a delete or a wrong-width write during the recall gate would reach the swap
-        twin_only = self.consistent(fin, version, key)[2]
-        if twin_only:
-            log(twin_only_failure(twin_only))
-            return GATE_FAILED
+        # a wrong-width write or a delete during the gates would reach the swap; the
+        # twin-only check reads last, so the delete window ends there
         if why := self.mixed_widths(fin):
             log(f"GATE FAILED: {why}; no swap")
+            return GATE_FAILED
+        self.delta_into(self.twin, self.t, sel, version, key)
+        twin_only = self.consistent(fin, version, key)[2]
+        if twin_only:
+            log("twin-only keys deleted:", self.remove_twin_only(fin, key))
+            twin_only = self.consistent(fin, version, key)[2]
+        if twin_only:
+            log(twin_only_failure(twin_only))
             return GATE_FAILED
         tr.swap_in(self.ch, self.t)
         for _ in range(2):  # writes in flight at the exchange landed in the old table

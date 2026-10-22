@@ -46,6 +46,7 @@ class _CH:
         self.widths: list[list[tuple[int, int]]] = [[]]  # (width, rows) the width check finds
         self.cons = [(0, 0, 0)]  # (mismatched, source_only, twin_only) the gate reads
         self.queries: list[str] = []
+        self.reads_before_exchange = 0  # len(queries) when the EXCHANGE was sent
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _R:
         p = parameters or {}
@@ -72,6 +73,8 @@ class _CH:
             return _R([(self.patches.get(name, 0),)])
         if "topK(1)" in sql:
             return _R([([DIM],)])
+        if "WHERE s.__present = 0" in sql:
+            return _R([("o", "n")])  # the keys only the twin holds
         if "FULL OUTER JOIN" in sql:
             return _R([_next(self.cons)])
         if "GROUP BY w" in sql:
@@ -100,6 +103,7 @@ class _CH:
         elif s.startswith("DROP TABLE"):
             self.t.pop(w[2])
         elif s.startswith("EXCHANGE TABLES"):
+            self.reads_before_exchange = len(self.queries)
             self.t[w[2]], self.t[w[4]] = self.t[w[4]], self.t[w[2]]
         elif s.startswith("RENAME TABLE"):
             self.t[w[4]] = self.t.pop(w[2])
@@ -129,11 +133,12 @@ def test_the_dimension_comes_from_the_live_table() -> None:
     coded = ARRAY.replace("CODEC(NONE)", "CODEC(Quantized('rabitq', 768, 0))")
     assert vcr.vector_dim(coded, "embedding") == 768
     assert vcr.vector_dim(ARRAY, "embedding") is None
-    job = vcr.VectorRebuild(
-        _CH(memory_chunks=_live()),
-        vcr.parse(["--table", "memory_chunks", "--columns", "embedding"]),
-    )
+    ch = _CH(memory_chunks=_live())
+    job = vcr.VectorRebuild(ch, vcr.parse(["--table", "memory_chunks", "--columns", "embedding"]))
     assert job.find_dim() == DIM  # a plain column: the vectors' own length
+    # under FINAL: a re-embedded ReplacingMergeTree does not report its old width
+    reads = [q for q in ch.queries if "topK(1)" in q]
+    assert reads and all("loom.memory_chunks FINAL " in q for q in reads)
 
 
 def test_without_yes_nothing_changes_and_the_plan_names_the_dimension(capsys: Any) -> None:
@@ -335,17 +340,28 @@ def test_vectors_of_another_width_refuse_before_the_twin_dry_run_included(capsys
     assert _run(ch, "--yes") == tr.OK
 
 
-def test_rows_only_the_twin_holds_fail_the_gate(capsys: Any) -> None:
-    """A key erased from the source during the copy is still in the twin; the swap would
-    bring it back, so the run stops before the EXCHANGE and leaves the twin."""
+def test_rows_only_the_twin_holds_are_deleted_from_it_before_the_swap() -> None:
+    """A key erased from the source during the copy is still in the twin, and the swap
+    would bring it back: the run deletes exactly those keys from the twin, by literal."""
+    ch = _CH(memory_chunks=_live())
+    ch.cons = [(0, 0, 2), (0, 0, 0)]
+    assert _run(ch, "--yes") == tr.OK
+    deletes = [c for c in ch.commands if c.startswith("DELETE")]
+    assert deletes[0] == (
+        "DELETE FROM loom.memory_chunks_rebuild WHERE (org, namespace) IN (('o', 'n'))"
+    )
+    assert all("memory_chunks_rebuild" in c.split(" WHERE ")[0] for c in deletes)
+
+
+def test_rows_that_stay_in_the_twin_only_fail_the_gate(capsys: Any) -> None:
+    """Rows still removed from the source as the run deletes them: no swap, the twin is left."""
     ch = _CH(memory_chunks=_live())
     ch.cons = [(0, 0, 2)]
     assert _run(ch, "--yes") == tr.GATE_FAILED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     assert "memory_chunks_rebuild" in ch.t
     out = capsys.readouterr().out
-    assert "2 keys are in the twin only" in out
-    assert "removed from the source during the copy" in out and "--restart" in out
+    assert "2 keys are in the twin only" in out and "Pause erasures" in out
 
 
 def test_the_recall_reads_rank_real_vectors_only() -> None:
@@ -358,7 +374,7 @@ def test_the_recall_reads_rank_real_vectors_only() -> None:
     assert all(f"length(embedding) = {DIM} AND embedding[1] != 0 ORDER BY" in q for q in reads)
 
 
-def test_a_delete_during_the_recall_gate_stops_the_swap(capsys: Any) -> None:
+def test_a_delete_during_the_gates_stops_the_swap(capsys: Any) -> None:
     """The last delta only adds rows, so a key erased from the source after the first
     consistency read is still in the twin: the check runs again before the EXCHANGE."""
     ch = _CH(memory_chunks=_live())
@@ -366,6 +382,19 @@ def test_a_delete_during_the_recall_gate_stops_the_swap(capsys: Any) -> None:
     assert _run(ch, "--yes") == tr.GATE_FAILED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     assert "1 keys are in the twin only" in capsys.readouterr().out
+
+
+def test_the_twin_only_check_is_the_last_read_before_the_exchange() -> None:
+    """The width scans read only the source and run first; a delete during them is
+    caught by the twin-only check that follows, and the EXCHANGE comes right after it."""
+    ch = _CH(memory_chunks=_live())
+    ch.cons = [(0, 0, 0), (0, 0, 1), (0, 0, 0)]
+    assert _run(ch, "--yes") == tr.OK
+    before = ch.queries[: ch.reads_before_exchange]
+    assert "FULL OUTER JOIN" in before[-1]
+    widths = max(i for i, q in enumerate(before) if "GROUP BY w" in q)
+    deleted = max(i for i, q in enumerate(before) if "WHERE s.__present = 0" in q)
+    assert widths < deleted < len(before) - 1
 
 
 def test_a_write_of_another_width_during_the_run_stops_the_swap(capsys: Any) -> None:
