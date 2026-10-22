@@ -231,16 +231,24 @@ stopped; it fails closed and never repairs the live table.
   only the twin holds fails it: rows were removed from the source after the copy, and the
   swap would bring them back. The recall gate ranks real vectors only, since a
   placeholder's cosine distance is NaN.
-- **Before the swap.** The width and consistency checks run again, so an insert or a
-  delete (an erasure among them) that landed during the run fails the gate. A lightweight
-  `UPDATE`, such as the quarantine `memory.reject` writes, keeps a key and its version, so
-  the tool also records the names of the source's patch parts before the copy and fails
-  the gate if a patch part appears that was not among them. Stop writes and rerun with
-  `--restart`. With `--reuse` the record starts at that run, so an `UPDATE` between runs
-  is covered only by the maintenance window.
+- **Before the swap.** A last delta copies in the rows written during the run, then the
+  width and consistency checks run again. They fail the gate on a delete (an erasure
+  among them), a write of another width, and a write the delta cannot pick up: one whose
+  version is below the twin's highest, or a row under a key the twin holds on a table
+  without a version column. Any other insert is copied in and the swap goes ahead: the
+  window, not the tool, keeps writers out. A lightweight `UPDATE`, such as the quarantine
+  `memory.reject` writes, keeps a key and its version, so the tool also records the
+  highest block number of the source's patch parts per partition before the copy and
+  fails the gate if a patch part reports a higher one; a merge of patch parts keeps the
+  highest block, so it does not fail the gate. Stop writes and rerun with `--restart`.
+  With `--reuse` the record starts at that run, so an `UPDATE` between runs is covered
+  only by the maintenance window.
 
 `--statement-timeout-s` (default 1800, at most 7200) caps each gate read, delta, repair
-and patch-part read; the copy itself runs under its own limit.
+and patch-part read; the copy itself runs under its own limit. Each width check, before
+the twin and again before the swap, reads every vector of a plain named column (under
+`FINAL` on a ReplacingMergeTree), so set the timeout to cover one full read of the column.
+The dimension read takes a sample of real vectors.
 
 ## Disk pressure hygiene
 

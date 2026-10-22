@@ -242,3 +242,32 @@ def test_a_coded_live_table_is_on_target_and_a_chained_ask_is_not() -> None:
     )
     assert vcr.on_target(coded, cols, None, "rabitq", 3072)
     assert vcr.on_target(ME_DDL, cols, "LZ4", "rabitq", 3072) is False
+
+
+def test_a_key_is_mismatched_only_when_both_sides_hold_it() -> None:
+    """With join_use_nulls=0 a key one side lacks reads defaults there; counted as
+    mismatched too, a key erased from the source would never read as twin-only alone."""
+    for version, vcmp in (("created_at", "s.created_at != t.created_at"), (None, "s.n != t.n")):
+        sql = vcr.consistency_sql("memory_chunks", "memory_chunks_rebuild", "", version, ["org"])
+        assert sql.startswith(
+            f"SELECT countIf(s.__present = 1 AND t.__present = 1 AND {vcmp}) AS mismatched, "
+            "countIf(t.__present = 0) AS source_only, countIf(s.__present = 0) AS twin_only "
+        )
+    plain = vcr.consistency_sql("chunks", "chunks_rebuild", "", None, ["org", "namespace"])
+    assert "count() AS n, 1 AS __present FROM loom.chunks GROUP BY org, namespace" in plain
+
+
+def test_the_dimension_read_samples_real_vectors() -> None:
+    assert vcr.dim_sql("memory_chunks", "embedding", " FINAL") == (
+        "SELECT topK(1)(w) FROM (SELECT length(embedding) AS w FROM loom.memory_chunks FINAL "
+        "WHERE length(embedding) > 0 AND arrayExists(x -> x != 0, embedding) "
+        f"LIMIT {vcr.DIM_SAMPLE_ROWS})"
+    )
+
+
+def test_the_patch_check_reads_the_highest_block_per_partition() -> None:
+    assert vcr.patch_blocks_sql("memory_embeddings") == (
+        "SELECT partition_id, max(max_block_number) FROM system.parts "
+        "WHERE database = currentDatabase() AND table = 'memory_embeddings' AND active "
+        "AND startsWith(name, 'patch') GROUP BY partition_id"
+    )

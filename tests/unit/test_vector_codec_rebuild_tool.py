@@ -40,8 +40,11 @@ class _CH:
         self.sent: list[tuple[str, dict[str, Any]]] = []  # (statement, its settings)
         self.patches: dict[str, int] = {}
         self.patches_first: dict[str, list[int]] = {}  # earlier reads, before self.patches
-        self.patch_names: list[str] = []  # the live table's active patch parts
-        self.patch_names_first: list[list[str]] = []  # earlier reads, before self.patch_names
+        # the live table's patch parts: partition id -> highest max_block_number
+        self.patch_blocks: dict[str, int] = {}
+        self.patch_blocks_first: list[
+            dict[str, int]
+        ] = []  # earlier reads, before self.patch_blocks
         self.uuids = iter(f"u{i}" for i in range(100))
         self.codec_rows = codec_rows("writable", "writable")
         self.delta = 0  # rows a delta finds above the destination's version
@@ -73,9 +76,11 @@ class _CH:
             return _R(
                 [(c, "T", "", "", "") for c in ("org", "namespace", "embedding", "created_at")]
             )
-        if sql.startswith("SELECT name FROM system.parts"):
-            names = self.patch_names_first.pop(0) if self.patch_names_first else self.patch_names
-            return _R([(n,) for n in names])
+        if sql.startswith("SELECT partition_id, max(max_block_number)"):
+            blocks = (
+                self.patch_blocks_first.pop(0) if self.patch_blocks_first else self.patch_blocks
+            )
+            return _R(list(blocks.items()))
         if "startsWith(name, 'patch')" in sql:
             name = re.search(r"table = '(\w+)'", sql).group(1)  # type: ignore[union-attr]
             first = self.patches_first.get(name)
@@ -354,7 +359,8 @@ def test_vectors_of_another_width_refuse_before_the_twin_dry_run_included(capsys
 
 def test_rows_only_the_twin_holds_fail_the_gate(capsys: Any) -> None:
     """A key erased from the source during the copy is still in the twin; the swap would
-    bring it back, so the run stops before the EXCHANGE and leaves the twin."""
+    bring it back, so the run stops before the EXCHANGE and leaves the twin. Such a key
+    counts as twin-only and not as mismatched (the SQL is pinned in the runner tests)."""
     ch = _CH(memory_chunks=_live())
     ch.cons = (0, 0, 2)
     assert _run(ch, "--yes") == tr.GATE_FAILED
@@ -405,7 +411,7 @@ def test_the_statement_timeout_caps_the_gate_reads_and_stays_within_the_read_tim
         "round(cosineDistance",
         "ORDER BY rand()",
         "SELECT max(created_at)",
-        "SELECT name FROM system.parts",
+        "max(max_block_number)",
     ):
         reads = [st for q, st in ch.query_settings if needle in q]
         assert reads and all(st["max_execution_time"] == 60 for st in reads), needle
@@ -417,19 +423,21 @@ def test_the_statement_timeout_caps_the_gate_reads_and_stays_within_the_read_tim
 @pytest.mark.parametrize(
     ("before", "after"),
     [
-        (["patch-a"], ["patch-a", "patch-b"]),
-        # two patch parts merged into one while a new one landed: the count stays level
-        (["patch-a", "patch-b"], ["patch-ab", "patch-c"]),
+        # a new UPDATE takes a block above every recorded one, merged or not
+        ({"patch-h1-all": 5}, {"patch-h1-all": 7}),
+        # an UPDATE of other columns writes patch parts in a partition not recorded
+        ({"patch-h1-all": 5}, {"patch-h1-all": 5, "patch-h2-all": 7}),
+        ({}, {"patch-h1-all": 7}),
     ],
 )
 def test_a_lightweight_update_during_the_run_stops_the_swap(
-    before: list[str], after: list[str], capsys: Any
+    before: dict[str, int], after: dict[str, int], capsys: Any
 ) -> None:
     """A quarantine keeps the key and its version, so the consistency reads match; the
     patch part it writes on the source is what shows it, and the run stops."""
     ch = _CH(memory_chunks=_live())
-    ch.patch_names_first = [before]
-    ch.patch_names = after
+    ch.patch_blocks_first = [before]
+    ch.patch_blocks = after
     assert _run(ch, "--yes") == tr.GATE_FAILED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     out = capsys.readouterr().out
@@ -452,11 +460,23 @@ def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:
     assert delta < _last(ch, "GROUP BY w")
 
 
-def test_patch_parts_that_were_there_before_the_copy_do_not_stop_the_swap() -> None:
+@pytest.mark.parametrize(
+    "after",
+    [
+        # patch-a (block 2) and patch-b (block 5) merged into one part: it keeps block 5
+        {"patch-h1-all": 5},
+        # applied and dropped during the run
+        {},
+    ],
+)
+def test_patch_parts_that_were_there_before_the_copy_do_not_stop_the_swap(
+    after: dict[str, int],
+) -> None:
     ch = _CH(memory_chunks=_live())
-    ch.patch_names_first = [["patch-a", "patch-b"]]
-    ch.patch_names = ["patch-a"]  # one applied and dropped during the run
+    ch.patch_blocks_first = [{"patch-h1-all": 5}]
+    ch.patch_blocks = after
     assert _run(ch, "--yes") == tr.OK
+    assert any(c.startswith("EXCHANGE") for c in ch.commands)
 
 
 def test_a_duplicate_key_insert_on_a_plain_merge_tree_stops_the_swap(capsys: Any) -> None:
