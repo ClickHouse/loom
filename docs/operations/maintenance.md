@@ -217,9 +217,10 @@ into a twin table, check it, swap with `EXCHANGE TABLES` and keep the old table 
 in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-key).
 `vector_codec_rebuild.py` refuses, `--dry-run` included, while a named column holds
 non-empty vectors of another width than the target's: re-embed those rows first, since the
-copy would replace them with zero vectors. It stops before the swap when the twin holds
-rows removed from the source during the copy (an erasure or delete); stop writes and rerun
-it with `--restart`.
+copy would replace them with zero vectors, and every writer must produce the target width
+until the run ends. It stops before the swap when the twin holds rows removed from the
+source during the run (an erasure or delete), or when such vectors arrived during it; both
+checks run again just before the swap. Stop writes and rerun it with `--restart`.
 
 ## Disk pressure hygiene
 
