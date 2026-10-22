@@ -32,8 +32,8 @@ The twin's vector columns are `Array(BFloat16) CODEC(Quantized(<method>, dim, 0)
 `--gate-fetch-multiplier`, as the search legs do.
 
 The dimension comes from the live table: a coded column states it, a
-plain column's vectors show it (the most frequent width among the first
-100,000 real, not all-zero, vectors read, approximate), and a column with
+plain column's real (not all-zero) vectors show it (`LOOM_EMBEDDING_DIM` when
+it is one of their widths, else the most frequent width), and a column with
 none takes `LOOM_EMBEDDING_DIM`. Every named column must agree.
 
 Run it in a maintenance window with every writer and erasure stopped and
@@ -54,11 +54,15 @@ at 1 is never sent), every replica writable, the `SYSTEM FLUSH ASYNC INSERT QUEU
 written in the last hour with an empty vector in the named columns (writers'
 fixed-length placeholders must be deployed first: a coded column rejects an
 empty vector). ReplicatedMergeTree runs connect directly to one replica throughout
-the run so the drain and later checks use the same replica: the drain records the
-replica that answers, and a consistency or width read on another one fails the run.
+the run: each consistency and width read after the drain also reads, in the same
+statement, whether the replica answering it has fetched every part its replication
+log names, and fails the run when it has not.
 
-`--drop-pre-rebuild` after a swap checks the rollback copy against the live table as
-the postcondition does, and refuses (keeping the copy) when the live table lacks a change.
+After a swap the tool compares the rollback copy with the live table. A change only
+the rollback copy holds names `--rollback`; a change the live table holds (a write
+after the swap, or other content at one version) keeps both tables for inspection.
+`--drop-pre-rebuild` runs the same comparison first, after a swap and after a
+rollback, and refuses (keeping the copy) while the copy it would drop holds a change.
 
 The twin is the run's lock: an existing twin refuses the run unless
 `--reuse` (continue from it) or `--restart` (drop it and copy again), and the
@@ -129,6 +133,10 @@ KEEP_AND_ROLL_BACK = (
     "Keep writers stopped and run --rollback --yes, which puts the old table, the change "
     "included, back in"
 )
+KEEP_BOTH = (
+    "Keep writers and erasure stopped and both tables as they are, and inspect the "
+    "difference by hand before any --rollback or --drop-pre-rebuild"
+)
 # A codec clause with one level of nested parentheses: CODEC(Quantized('rabitq', 3072, 0), LZ4).
 _CODEC = r"CODEC\((?:[^()]|\([^()]*\))*\)"
 
@@ -160,8 +168,6 @@ def key_literal(v: Any) -> str:
 
 
 REPAIR_BATCH = 500  # keys per repair INSERT: a literal list the statement carries
-# not a setting: the width read's sample size, a sampling shape
-DIM_SAMPLE_ROWS = 100_000
 
 
 def patch_parts_sql(name: str) -> str:
@@ -172,13 +178,13 @@ def patch_parts_sql(name: str) -> str:
     )
 
 
-def mutations_sql(cluster_mutations: str, name: str, since: int | None = None) -> str:
-    """Count the table's unfinished mutations, and with `since` (a Unix time) every one
-    created since then: a finished ALTER UPDATE keeps the key and its version."""
-    newer = f" OR create_time >= toDateTime({int(since)})" if since is not None else ""
+def mutations_sql(cluster_mutations: str, since: int) -> str:
+    """Count the unfinished mutations of table `{t}` in database `{db}`, and every one
+    created since `since` (a Unix time): a finished ALTER UPDATE keeps the key and its
+    version. Pure."""
     return (
-        f"SELECT count() FROM {cluster_mutations} "
-        f"WHERE database = '{database()}' AND table = '{name}' AND (NOT is_done{newer})"
+        f"SELECT count() FROM {cluster_mutations} WHERE database = {{db:String}} "
+        f"AND table = {{t:String}} AND (NOT is_done OR create_time >= toDateTime({int(since)}))"
     )
 
 
@@ -321,11 +327,12 @@ def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
     )
 
 
-def dim_sql(table: str, column: str, fin: str) -> str:
-    """Infer width from sampled real vectors, ignoring old zero placeholders."""
+def widths_sql(table: str, column: str, fin: str) -> str:
+    """Count every real vector by width, the most frequent first; zero placeholders are
+    left out. Pure."""
     return (
-        f"SELECT topK(1)(w) FROM (SELECT length({column}) AS w FROM loom.{table}{fin} "
-        f"WHERE {nonzero(column)} LIMIT {DIM_SAMPLE_ROWS})"
+        f"SELECT length({column}) AS w, count() AS n FROM loom.{table}{fin} "
+        f"WHERE {nonzero(column)} GROUP BY w ORDER BY n DESC, w"
     )
 
 
@@ -374,6 +381,35 @@ def consistency_sql(
         "countIf(t.__present = 0) AS source_only, countIf(s.__present = 0) AS twin_only "
         f"FROM ({src_side}) AS s FULL OUTER JOIN ({twin_side}) AS t USING ({ident})"
     )
+
+
+def newer_sql(old: str, new: str, fin: str, version: str | None, key: list[str]) -> str:
+    """Count the keys both tables hold where `old` is ahead and where `new` is: a newer
+    version, or on a table without a version column more rows under the key. Pure."""
+    ident = ", ".join(key)
+
+    def side(name: str) -> str:
+        if version:
+            return f"SELECT {ident}, {version} AS v FROM loom.{name}{fin}"
+        return f"SELECT {ident}, count() AS v FROM loom.{name}{fin} GROUP BY {ident}"
+
+    return (
+        f"SELECT countIf(o.v > n.v), countIf(o.v < n.v) FROM ({side(old)}) AS o "
+        f"INNER JOIN ({side(new)}) AS n USING ({ident})"
+    )
+
+
+# Whether the replica answering a read has fetched every part of the tables in
+# {tables:Array(String)} that their replication logs name: it has copied the whole log
+# into its queue, and the queue holds nothing but merges, which keep the rows. A
+# mutation fails the run through the mutation count instead.
+REPLICA_SYNCED_SQL = (
+    "(SELECT countIf(log_pointer > log_max_index) = length({tables:Array(String)}) "
+    "FROM system.replicas WHERE database = currentDatabase() "
+    "AND has({tables:Array(String)}, table)) "
+    "AND (SELECT count() FROM system.replication_queue WHERE database = currentDatabase() "
+    "AND has({tables:Array(String)}, table) AND type NOT IN ('MERGE_PARTS', 'MUTATE_PART')) = 0"
+)
 
 
 def tied_keys_sql(src: str, version: str, key: list[str]) -> str:
@@ -442,8 +478,8 @@ def replicas_source(cluster: str) -> Callable[[str], str]:
     return lambda t: f"clusterAllReplicas('{cluster}', system.{t})"
 
 
-class HostMoved(RuntimeError):
-    """A read after the drain was answered by another replica than the one it synchronized."""
+class ReplicaBehind(RuntimeError):
+    """A read after the drain was answered by a replica that has not fetched every part."""
 
 
 class VectorRebuild:
@@ -462,15 +498,17 @@ class VectorRebuild:
         self.fin = ""  # ' FINAL' where the live table is a ReplacingMergeTree
         self.since = 0  # the server's Unix time before the preflight's mutation check
         self.reads: dict[str, Any] = {}  # settings every read takes; sequential after the drain
-        self.host = ""  # the replica the drain synchronized, on a ReplicatedMergeTree engine
+        self.replicated = False  # the drained table is a ReplicatedMergeTree
         self.rollback_only = False  # a check found what only the rollback copy holds
-        self.recheck = False  # the --drop-pre-rebuild checks could not run
+        self.diverged = False  # a check found a change the live table or a dropped copy holds
+        self.recheck = False  # the checks after the swap could not run
 
     # -- small reads -------------------------------------------------------
-    def q(self, sql: str, **st: Any) -> list[Any]:
+    def q(self, sql: str, parameters: dict[str, Any] | None = None, **st: Any) -> list[Any]:
         return list(
             self.ch.query(
                 sql,
+                parameters=parameters,
                 settings={"max_execution_time": self.a.statement_timeout_s, **self.reads, **st},
             ).result_rows
         )
@@ -478,16 +516,23 @@ class VectorRebuild:
     def cmd(self, sql: str, **st: Any) -> None:
         self.ch.command(sql, settings=st or None)
 
-    def q_drained(self, sql: str, **st: Any) -> list[Any]:
-        """The rows of `sql`, read with the replica that answers it; raise HostMoved when
-        it is not the replica the drain synchronized (only a ReplicatedMergeTree records one)."""
-        if not self.host:
+    def q_drained(self, sql: str, tables: list[str], **st: Any) -> list[Any]:
+        """The rows of `sql`, which reads `tables`. On a ReplicatedMergeTree the same
+        statement reads whether the replica answering it has fetched every part of them,
+        and ReplicaBehind is raised when it has not: SYSTEM SYNC REPLICA syncs only the
+        replica that answers it, which need not be the one answering this read."""
+        if not self.replicated:
             return self.q(sql, **st)
-        ((host, rows),) = self.q(f"SELECT hostName(), groupArray(tuple(*)) FROM ({sql})", **st)
-        if host != self.host:
-            raise HostMoved(
-                f"a read after the drain ran on {host}, not on {self.host}, the replica "
-                "SYSTEM SYNC REPLICA synchronized; connect directly to one replica and rerun"
+        ((host, synced, rows),) = self.q(
+            f"SELECT hostName(), ({REPLICA_SYNCED_SQL}), groupArray(tuple(*)) FROM ({sql})",
+            parameters={"tables": tables},
+            **st,
+        )
+        if not synced:
+            raise ReplicaBehind(
+                f"a read after the drain ran on {host}, which has not fetched every part of "
+                f"{', '.join(f'loom.{t}' for t in tables)}; connect directly to one replica "
+                "and rerun"
             )
         # a server that names tuple elements returns each row as a dict
         return [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in rows]
@@ -544,8 +589,12 @@ class VectorRebuild:
         for c in self.cols:
             d = vector_dim(ddl, c)
             if d is None:
-                seen = self.q(dim_sql(name, c, fin))
-                d = int(seen[0][0][0]) if seen and seen[0][0] else int(settings.embedding_dim)
+                # every real vector counted, the configured width first: a read that
+                # stops early would see only the first orgs in sort-key order
+                widths = [int(w) for w, _ in self.q(widths_sql(name, c, fin))]
+                d = int(settings.embedding_dim)
+                if widths and d not in widths:
+                    d = widths[0]
             dims.add(d)
         if len(dims) != 1:
             raise SystemExit(f"the named columns disagree on the dimension: {sorted(dims)}")
@@ -554,8 +603,13 @@ class VectorRebuild:
     def aborted(self) -> bool:
         return self.abort.exists()
 
+    @property
+    def run_line(self) -> str:
+        """The command line that runs this tool on this table, up to its action flags."""
+        return f"python -P -m scripts.ops.vector_codec_rebuild --table {self.t} --columns {','.join(self.cols)}"
+
     def report_state(self) -> str:
-        run = f"python -P -m scripts.ops.vector_codec_rebuild --table {self.t} --columns {','.join(self.cols)}"
+        run = self.run_line
         if self.recheck:
             return (
                 f"the checks could not run: fix the grant or connect directly to one replica "
@@ -565,6 +619,12 @@ class VectorRebuild:
             return (
                 f"loom.{self.pre} holds a change the new table lacks: keep writers stopped and "
                 f"run `{run} --rollback --yes`; do not drop loom.{self.pre}"
+            )
+        if self.diverged:
+            return (
+                f"loom.{self.t} and loom.{self.pre} differ in a way neither --rollback nor "
+                f"--drop-pre-rebuild keeps whole: keep writers and erasure stopped and both "
+                "tables, and inspect the difference by hand"
             )
         return tr.guidance(
             self.t,
@@ -619,7 +679,7 @@ class VectorRebuild:
             return why
         try:
             return self.width_refusal(ddl)
-        except HostMoved as e:
+        except ReplicaBehind as e:
             return str(e)
 
     def mutation_refusal(self) -> str:
@@ -642,8 +702,8 @@ class VectorRebuild:
             return (
                 f"the pre-swap drain failed ({str(e)[:160]}); one cause is a missing grant: "
                 f"the run needs SYSTEM FLUSH ASYNC INSERT QUEUE and SYSTEM SYNC REPLICA on "
-                f"loom.{self.t} and, on a replicated engine, SYSTEM SYNC REPLICA on "
-                f"loom.{self.pre}"
+                f"loom.{self.t} (on a replicated engine SYSTEM SYNC REPLICA on "
+                f"loom.{self.pre} too, which only the checks after the swap can run)"
             )
         return ""
 
@@ -656,15 +716,15 @@ class VectorRebuild:
         after the swap); source mutations since then count against it."""
         sql = (
             "SELECT toUnixTimestamp(metadata_modification_time) FROM system.tables "
-            f"WHERE database = currentDatabase() AND name = '{name}'"
+            "WHERE database = currentDatabase() AND name = {t:String}"
         )
-        return int(self.q(sql)[0][0])
+        return int(self.q(sql, parameters={"t": name})[0][0])
 
     def mutations_since(self, name: str, since: int) -> int:
         """Count the unfinished mutations of `loom.<name>` and every one created since
         `since`, less the clock-skew margin."""
-        sql = mutations_sql(self.replicas("mutations"), name, since - CLOCK_SKEW_MARGIN_S)
-        return int(self.q(sql)[0][0])
+        sql = mutations_sql(self.replicas("mutations"), since - CLOCK_SKEW_MARGIN_S)
+        return int(self.q(sql, parameters={"db": database(), "t": name})[0][0])
 
     def width_refusal(self, ddl: str, table: str | None = None) -> str:
         """Why a named column of `table` (the live table by default) holds vectors the copy
@@ -672,16 +732,17 @@ class VectorRebuild:
         from server.settings import settings
 
         # a coded column's codec rejects any other width, so only plain columns are scanned
+        table = table or self.t
         for c in [c for c in self.cols if vector_dim(ddl, c) is None]:
-            widths = self.q_drained(mixed_width_sql(table or self.t, c, self.fin, dim=self.dim))
+            widths = self.q_drained(mixed_width_sql(table, c, self.fin, dim=self.dim), [table])
             if widths:
                 found = ", ".join(f"width {w}: {n} row(s)" for w, n in widths)
                 return (
                     f"{c} holds vectors of more than one width (target {self.dim}; {found}; "
                     f"LOOM_EMBEDDING_DIM {settings.embedding_dim}): the copy would zero all but "
-                    f"width {self.dim}; re-embed or delete the rows of other widths until one "
-                    "width remains (for memory_embeddings, entity_vectors and "
-                    "conversation_embeddings, loom reembed --delete-old does this)"
+                    f"width {self.dim}; re-embed to LOOM_EMBEDDING_DIM (`loom reembed "
+                    "--delete-old`, for memory_embeddings, entity_vectors and "
+                    "conversation_embeddings) and rerun"
                 )
         return ""
 
@@ -853,7 +914,7 @@ class VectorRebuild:
         source, copy = source or self.t, copy or self.twin
         hashed = [c for c in tr.insertable_columns(self.ch, self.t) if c not in self.cols]
         sql = consistency_sql(source, copy, self.fin, version, key, hashed, self.cols, dim=self.dim)
-        row = self.q_drained(sql, join_use_nulls=0)[0]
+        row = self.q_drained(sql, [source, copy], join_use_nulls=0)[0]
         return int(row[0]), int(row[1]), int(row[2])
 
     def gate_failure(
@@ -875,31 +936,24 @@ class VectorRebuild:
         """Flush buffered inserts and synchronize this replica's parts.
 
         SYSTEM SYNC REPLICA syncs only the replica that answers it. On ReplicatedMergeTree
-        the run records that replica, and each later consistency and width read fails on
-        another one (HostMoved); SharedMergeTree reads use sequential consistency when a
+        each later consistency and width read checks that its own replica has fetched
+        every part (q_drained); SharedMergeTree reads use sequential consistency when a
         different replica serves a later request.
         """
         self.cmd(f"SYSTEM FLUSH ASYNC INSERT QUEUE loom.{self.t}")
         if engine.startswith(("Replicated", "Shared")):
             self.cmd(f"SYSTEM SYNC REPLICA loom.{self.t}")
-        if engine.startswith("Replicated"):
-            self.host = str(self.q("SELECT hostName()")[0][0])
+        self.replicated = engine.startswith("Replicated")
 
     def sync_rollback_copy(self, engine: str) -> None:
-        """Synchronize the drained replica's parts of the rollback copy before a read
-        compares it. The copy has its own replication queue: a write that reached another
-        replica before the swap belongs to it after the rename. LIGHTWEIGHT, because
-        swap_in stops the copy's merges and a full sync would wait on a merge entry.
-        SharedMergeTree reads it with sequential consistency instead."""
-        if not engine.startswith("Replicated"):
-            return
-        self.cmd(f"SYSTEM SYNC REPLICA loom.{self.pre} LIGHTWEIGHT")
-        host = str(self.q("SELECT hostName()")[0][0])
-        if host != self.host:
-            raise HostMoved(
-                f"SYSTEM SYNC REPLICA loom.{self.pre} ran on {host}, not on {self.host}; "
-                "connect directly to one replica and rerun"
-            )
+        """Synchronize this replica's parts of the rollback copy before a read compares it
+        (the read checks that its own replica fetched them). The copy has its own
+        replication queue: a write that reached another replica before the swap belongs to
+        it after the rename. LIGHTWEIGHT, because swap_in stops the copy's merges and a
+        full sync would wait on a merge entry. SharedMergeTree reads it with sequential
+        consistency instead."""
+        if engine.startswith("Replicated"):
+            self.cmd(f"SYSTEM SYNC REPLICA loom.{self.pre} LIGHTWEIGHT")
 
     def recall(self, ddl: str) -> list[float]:
         """Distance recall per probe: exact on the source vs the twin read as the legs read it."""
@@ -933,7 +987,7 @@ class VectorRebuild:
     def copy_and_swap(self, ddl: str, twin_ddl: str) -> int:
         try:
             return self.copy_and_check(ddl, twin_ddl)
-        except HostMoved as e:
+        except ReplicaBehind as e:
             log(f"GATE FAILED: {e}; no swap")
             return GATE_FAILED
 
@@ -1064,39 +1118,89 @@ class VectorRebuild:
         if self.a.require_patch_free:
             log("live patch parts after:", self.q(patch_parts_sql(self.t))[0][0])
         try:
-            why = self.rollback_copy_change(engine, version, key, since)
-        except HostMoved as e:
-            why = str(e)
-        if why:
-            self.rollback_only = True
-            log(f"POSTCONDITION FAILED: {why}. {KEEP_AND_ROLL_BACK}")
+            why, rollback = self.rollback_copy_change(engine, version, key, since)
+        except Exception as e:  # noqa: BLE001 - checks that cannot run keep the copy
+            self.recheck = True
+            log(
+                f"POSTCONDITION FAILED: the checks could not run ({str(e)[:160]}); "
+                f"loom.{self.pre} is kept"
+            )
             return POSTCONDITION
+        if why:
+            log(f"POSTCONDITION FAILED: {why}. {self.keep_copy(rollback)}")
+            return POSTCONDITION
+        log(
+            f"next: keep writers and erasure stopped; run `{self.run_line} --drop-pre-rebuild "
+            "--yes`, which checks the two tables again before it drops the rollback copy"
+        )
         return OK
+
+    def keep_copy(self, rollback: bool) -> str:
+        """The next step when the two tables differ, recorded for the summary: --rollback
+        when only the rollback copy holds the change, else inspection with both kept."""
+        if rollback:
+            self.rollback_only = True
+            return KEEP_AND_ROLL_BACK
+        self.diverged = True
+        return KEEP_BOTH
+
+    def differences(
+        self, version: str | None, key: list[str], old: str, new: str
+    ) -> tuple[str, str]:
+        """What the old-layout table `old` holds that the new-layout table `new` lacks, and
+        what `new` holds that `old` lacks, each as a phrase or ''. A key both hold at one
+        version with other content counts for `new`: copying back newer versions and absent
+        keys cannot restore it. Raises when the checks cannot run."""
+        mismatched, old_only, new_only = self.consistent(version, key, source=old, copy=new)
+        old_newer = new_newer = 0
+        if mismatched:
+            sql = newer_sql(old, new, self.fin, version, key)
+            old_newer, new_newer = (int(n) for n in self.q_drained(sql, [old, new])[0])
+        same_version = mismatched - old_newer - new_newer
+        log(
+            f"loom.{old} against loom.{new} (mismatched, only in the first, only in the second):",
+            (mismatched, old_only, new_only),
+        )
+        old_ahead = new_ahead = ""
+        if old_only or old_newer:
+            old_ahead = f"{old_only} key(s) only in loom.{old}, {old_newer} newer there"
+        if new_only or new_newer or same_version:
+            new_ahead = (
+                f"{new_only} key(s) only in loom.{new}, {new_newer} newer there, "
+                f"{same_version} with other content at one version"
+            )
+        return old_ahead, new_ahead
 
     def rollback_copy_change(
         self, engine: str, version: str | None, key: list[str], since: int
-    ) -> str:
-        """Why the rollback copy holds a change the live table lacks, or ''. After the swap
-        the rollback copy is the source as writers left it: the live table must match it,
-        with no mutation since `since` (the gate saw none before the swap). Raises when the
-        checks cannot run (HostMoved, a failed sync)."""
+    ) -> tuple[str, bool]:
+        """Why the rollback copy and the live table differ, or '', and whether --rollback
+        restores the difference. After the swap the rollback copy is the source as writers
+        left it: the live table must match it, with no mutation since `since` (the gate saw
+        none before the swap). Raises when the checks cannot run."""
         self.sync_rollback_copy(engine)
-        cons = self.consistent(version, key, source=self.pre, copy=self.t)
-        mutations = self.mutations_since(self.pre, since)
-        log("consistency against the rollback copy:", cons, "mutations:", mutations)
-        if any(cons) or mutations:
+        old_ahead, new_ahead = self.differences(version, key, self.pre, self.t)
+        if new_ahead:
             return (
-                "the source changed after the last check (mismatched, source-only and "
-                f"twin-only keys {cons}, {mutations} mutation(s) on loom.{self.pre}), and "
-                "the new table may not hold the change"
-            )
+                f"loom.{self.t} holds a change loom.{self.pre} lacks ({new_ahead}): a write "
+                "after the swap, or other content at one version, which --rollback would "
+                "drop, since it copies back only newer versions and absent keys"
+            ), False
+        mutations = self.mutations_since(self.pre, since)
+        log("mutations on the rollback copy:", mutations)
+        if old_ahead or mutations:
+            return (
+                f"the source changed after the last check ({old_ahead or 'no key'}; "
+                f"{mutations} mutation(s) on loom.{self.pre}), and the new table may not "
+                "hold the change"
+            ), True
         # the hash zeroes a vector of another width on both sides, so an UPDATE to one
         # after the last width check reads as consistent; the width read shows it
         if why := self.width_refusal(self.ddl(self.pre), self.pre):
             return (
                 f"{why}. The change landed after the last check and the new table holds it zeroed"
-            )
-        return ""
+            ), True
+        return "", False
 
     def rollback(self) -> int:
         tr.print_target(self.ch, self.t)
@@ -1131,16 +1235,34 @@ class VectorRebuild:
         )
         return OK
 
-    def swapped_change(self) -> str:
-        """Why the rollback copy holds a change the live table lacks, read after a drain
-        as the postcondition reads it, or ''. Writers stay stopped until the copy is
-        dropped, so the two tables still match. Raises when the checks cannot run."""
-        engine, version, key = parse_engine(self.ddl(self.pre))
+    def drain_after_swap(self) -> tuple[str, str | None, list[str]]:
+        """Drain as the postcondition does and read as it reads: (engine, version column,
+        sorting key) of the live table."""
+        engine, version, key = parse_engine(self.ddl(self.t))
         self.fin = read_final(engine)
         self.drain(engine)
         self.reads = dict(tr.CONSISTENT)
+        return engine, version, key
+
+    def swapped_change(self) -> tuple[str, bool]:
+        """Why the rollback copy and the live table differ, read as the postcondition reads
+        them, or '', and whether --rollback restores the difference. Writers stay stopped
+        until the copy is dropped, so the two tables still match. Raises when the checks
+        cannot run."""
+        engine, version, key = self.drain_after_swap()
         # the live table is the run's twin, created when the copy started
         return self.rollback_copy_change(engine, version, key, self.metadata_time(self.t))
+
+    def rolled_back_change(self) -> str:
+        """Why the new-layout copy a rollback left holds a change the live table lacks (a
+        same-version change made in the new table, which the rollback did not copy back),
+        or ''. Raises when the checks cannot run."""
+        engine, version, key = self.drain_after_swap()
+        self.sync_rollback_copy(engine)
+        _, new_ahead = self.differences(version, key, self.t, self.pre)
+        if new_ahead:
+            return f"loom.{self.pre} holds a change loom.{self.t} lacks ({new_ahead})"
+        return ""
 
     def drop_pre(self) -> int:
         tr.print_target(self.ch, self.t)
@@ -1152,10 +1274,12 @@ class VectorRebuild:
         if not (live or pre):
             log(f"REFUSED: neither loom.{self.t} nor loom.{self.pre} has the target layout")
             return REFUSED
-        # swapped and not rolled back: the rollback copy may be the only copy of a change
-        if live and not pre:
+        # after a swap or a rollback the copy may be the only copy of a change
+        if bool(live) != bool(pre):
             try:
-                why = self.swapped_change()
+                why, rollback = (
+                    self.swapped_change() if live else (self.rolled_back_change(), False)
+                )
             except Exception as e:  # noqa: BLE001 - checks that cannot run keep the copy
                 self.recheck = True
                 log(
@@ -1165,8 +1289,7 @@ class VectorRebuild:
                 )
                 return REFUSED
             if why:
-                self.rollback_only = True
-                log(f"REFUSED: {why}; loom.{self.pre} is kept. {KEEP_AND_ROLL_BACK}")
+                log(f"REFUSED: {why}; loom.{self.pre} is kept. {self.keep_copy(rollback)}")
                 return REFUSED
         log(f"drop: loom.{self.pre} ({tr.row_count(self.ch, self.pre)} rows); cannot be undone")
         if not self.a.yes:

@@ -27,6 +27,7 @@ ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (org, namespace)
 SETTINGS index_granularity = 256"""
 DIM = 1536
+DRAINED_READ = f"SELECT hostName(), ({vcr.REPLICA_SYNCED_SQL}), groupArray(tuple(*)) FROM ("
 TWIN_CREATED, COPY_STARTED = 1_600_000_000, 1_700_000_000  # server Unix times
 
 
@@ -43,6 +44,7 @@ class _CH:
         self.patches: dict[str, int] = {}
         self.flushed: list[int] = []  # rows each async-queue flush lands, in order
         self.refuse_system = False  # this user lacks the SYSTEM grants
+        self.refuse_table = ""  # SYSTEM statements naming this table are refused
         self.uuids = iter(f"u{i}" for i in range(100))
         self.codec_rows = codec_rows("writable", "writable")
         self.delta = 0  # rows a delta finds above the destination's version
@@ -50,30 +52,29 @@ class _CH:
         self.widths_first: list[list[tuple[int, int]]] = []  # earlier reads, before self.widths
         self.cons = (0, 0, 0)  # (mismatched, source_only, twin_only) the gate reads
         self.cons_first: list[tuple[int, int, int]] = []  # earlier reads, before self.cons
+        self.newer = (0, 0)  # mismatched keys newer in the first table, in the second
+        self.all_widths = [(DIM, 5)]  # (width, rows) of every real vector, most first
         self.mutations = 0
         self.mutations_first: list[int] = []
         self.tied = 0  # keys with more than one row at their newest version
         self.queries: list[str] = []
         self.sequence: list[str] = []  # every query and command, in order
         self.query_settings: list[tuple[str, dict[str, Any]]] = []
-        self.read_hosts: dict[
-            str, str
-        ] = {}  # a replica other than "h" answers reads naming the key
+        self.params: list[dict[str, Any]] = []  # each query's parameters, in order
+        self.behind: set[str] = set()  # tables the replica answering a read has not caught up
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _R:
         self.queries.append(sql)
         self.sequence.append(sql)
         self.query_settings.append((sql, dict(settings or {})))
+        self.params.append(dict(parameters or {}))
         return self._answer(sql, parameters or {})
 
     def _answer(self, sql: str, p: dict[str, Any]) -> _R:
-        if sql == "SELECT hostName()":
-            return _R([("h",)])
-        wrap = "SELECT hostName(), groupArray(tuple(*)) FROM ("
-        if sql.startswith(wrap):
-            inner = sql.removeprefix(wrap).removesuffix(")")
-            host = next((h for k, h in self.read_hosts.items() if k in inner), "h")
-            return _R([(host, self._answer(inner, p).result_rows)])
+        if sql.startswith(DRAINED_READ):
+            inner = sql.removeprefix(DRAINED_READ).removesuffix(")")
+            synced = not self.behind & set(p["tables"])
+            return _R([("h2", synced, self._answer(inner, p).result_rows)])
         if sql == CODEC_SETTINGS_SQL:
             return _R(self.codec_rows)
         if "toUnixTimestamp(metadata_modification_time)" in sql:
@@ -98,8 +99,10 @@ class _CH:
         if "startsWith(name, 'patch')" in sql:
             name = re.search(r"table = '(\w+)'", sql).group(1)  # type: ignore[union-attr]
             return _R([(self.patches.get(name, 0),)])
-        if "topK(1)" in sql:
-            return _R([([DIM],)])
+        if "ORDER BY n DESC" in sql:
+            return _R(self.all_widths)
+        if "INNER JOIN" in sql:
+            return _R([self.newer])
         if "n_at_max" in sql:
             return _R([(self.tied,)])
         if "FULL OUTER JOIN" in sql:
@@ -127,7 +130,8 @@ class _CH:
         self.commands.append(s)
         self.sequence.append(s)
         self.sent.append((s, dict(settings or {})))
-        if self.refuse_system and s.startswith("SYSTEM"):
+        refused = self.refuse_system or (self.refuse_table and self.refuse_table in s.split())
+        if refused and s.startswith("SYSTEM"):
             raise RuntimeError("Not enough privileges")
         w = s.replace("loom.", "").split()
         if s.startswith("CREATE TABLE"):
@@ -172,7 +176,7 @@ def test_the_dimension_comes_from_the_live_table() -> None:
         vcr.parse(["--table", "memory_chunks", "--columns", "embedding"]),
     )
     assert job.find_dim() == DIM  # a plain column: the vectors' own length
-    read = next(q for q in job.ch.queries if "topK(1)" in q)
+    read = next(q for q in job.ch.queries if "ORDER BY n DESC" in q)
     assert "FROM loom.memory_chunks FINAL" in read  # the width of the rows Loom serves
 
 
@@ -436,7 +440,7 @@ def test_the_statement_timeout_caps_the_gate_reads_and_stays_within_the_read_tim
         "GROUP BY w",
         "FULL OUTER JOIN",
         "LEFT JOIN",
-        "topK(1)",
+        "ORDER BY n DESC",
         "round(cosineDistance",
         "ORDER BY rand()",
         "SELECT max(created_at)",
@@ -535,15 +539,20 @@ def test_a_user_without_the_drain_grants_is_refused_before_the_copy(capsys: Any)
     assert "SYSTEM FLUSH ASYNC INSERT QUEUE and SYSTEM SYNC REPLICA" in out
 
 
-def test_an_in_place_change_after_the_checks_fails_the_postcondition(capsys: Any) -> None:
+def test_an_in_place_change_after_the_checks_keeps_both_tables_without_a_rollback(
+    capsys: Any,
+) -> None:
     """A lightweight UPDATE after the last check keeps the row count and the version; the
     row hash of the rollback copy against the new table shows it, whether or not a merge
-    has moved its patch part."""
+    has moved its patch part. Either table may hold it, and --rollback copies back only
+    newer versions and absent keys, so the next step is inspection, not --rollback."""
     ch = _CH(memory_chunks=_live())
     ch.cons_first = [(0, 0, 0), (0, 0, 0)]  # the two gate reads before the swap
     ch.cons = (1, 0, 0)
     assert _run(ch, "--yes") == tr.POSTCONDITION
-    assert "mismatched, source-only and twin-only keys (1, 0, 0)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "1 with other content at one version" in out and "inspect the difference" in out
+    assert "--rollback --yes" not in json.loads(out.rsplit("summary ", 1)[1])["next"]
     last = ch.queries[_last(ch, "FULL OUTER JOIN")]
     src, twin = last.split("FULL OUTER JOIN")
     assert "FROM loom.memory_chunks_pre_rebuild FINAL" in src
@@ -572,7 +581,9 @@ def test_a_mutation_after_the_checks_fails_the_postcondition(capsys: Any) -> Non
     ch.mutations = 1
     assert _run(ch, "--yes") == tr.POSTCONDITION
     assert "1 mutation(s) on loom.memory_chunks_pre_rebuild" in capsys.readouterr().out
-    assert "table = 'memory_chunks_pre_rebuild'" in ch.queries[_last(ch, "system.mutations")]
+    last = _last(ch, "system.mutations")
+    assert "table = {t:String}" in ch.queries[last]
+    assert ch.params[last]["t"] == "memory_chunks_pre_rebuild"
 
 
 def test_a_duplicate_key_insert_on_a_plain_merge_tree_stops_the_swap(capsys: Any) -> None:
@@ -596,8 +607,27 @@ def test_the_target_width_comes_from_real_vectors_only() -> None:
         vcr.parse(["--table", "memory_chunks", "--columns", "embedding"]),
     )
     job.find_dim()
-    read = next(q for q in job.ch.queries if "topK(1)" in q)
+    read = next(q for q in job.ch.queries if "ORDER BY n DESC" in q)
     assert "WHERE arrayExists(x -> x != 0, embedding)" in read
+
+
+def test_the_target_width_counts_every_row_and_prefers_the_configured_width() -> None:
+    """A FINAL read streams in sort-key order, so a sample is the first orgs, not the
+    table: the width comes from a count of every real vector. LOOM_EMBEDDING_DIM wins
+    when the column holds it; otherwise the most frequent width does."""
+    from server.settings import settings
+
+    configured = int(settings.embedding_dim)
+    ch = _CH(memory_chunks=_live())
+    job = vcr.VectorRebuild(ch, vcr.parse(["--table", "memory_chunks", "--columns", "embedding"]))
+    ch.all_widths = [(DIM, 90), (configured, 10)]  # mostly old width, partly re-embedded
+    assert job.find_dim() == configured
+    ch.all_widths = [(768, 90), (DIM, 10)]  # the first org's width (DIM) is the minority
+    assert job.find_dim() == 768
+    ch.all_widths = []
+    assert job.find_dim() == configured
+    read = next(q for q in ch.queries if "ORDER BY n DESC" in q)
+    assert "GROUP BY w" in read and "LIMIT" not in read
 
 
 def test_the_recall_reads_rank_real_vectors_only() -> None:
@@ -705,7 +735,7 @@ def test_a_failed_postcondition_names_only_the_rollback_and_keeps_the_copy(capsy
     --rollback alone, and --drop-pre-rebuild refuses while the copy and the live table differ."""
     ch = _CH(memory_chunks=_live())
     ch.cons_first = [(0, 0, 0), (0, 0, 0)]  # the two gate reads before the swap
-    ch.cons = (1, 0, 0)
+    ch.cons = (0, 1, 0)  # a key only the rollback copy holds
     assert _run(ch, "--yes") == tr.POSTCONDITION
     summary = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])
     assert "--rollback --yes" in summary["next"] and "--drop-pre-rebuild" not in summary["next"]
@@ -725,24 +755,118 @@ REPLICATED = ARRAY.replace(
 )
 
 
-def test_a_gate_read_on_another_replica_stops_the_swap(capsys: Any) -> None:
-    """SYSTEM SYNC REPLICA syncs only the replica that answers it: on ReplicatedMergeTree a
-    consistency read that another replica answers fails the gate."""
+def test_a_gate_read_on_a_replica_that_has_not_fetched_every_part_stops_the_swap(
+    capsys: Any,
+) -> None:
+    """SYSTEM SYNC REPLICA syncs only the replica that answers it, and a load balancer can
+    send the next read elsewhere: each consistency read checks, in the same statement,
+    that its own replica has fetched every part, and fails the gate when it has not."""
     ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
-    ch.read_hosts = {"FULL OUTER JOIN": "h2"}
+    ch.behind = {"memory_chunks_rebuild"}
     assert _run(ch, "--yes") == tr.GATE_FAILED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     out = capsys.readouterr().out
-    assert "ran on h2, not on h" in out and "connect directly to one replica" in out
+    assert "ran on h2, which has not fetched every part of" in out
+    assert "connect directly to one replica" in out
 
 
-def test_a_postcondition_read_on_another_replica_fails_it(capsys: Any) -> None:
+def test_a_preflight_read_on_another_replica_than_the_sync_refuses(capsys: Any) -> None:
+    """The sync lands on one replica and the width read on another that has not caught
+    up; the host names alone would not tell, the read's own replica state does."""
     ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
-    ch.read_hosts = {"memory_chunks_pre_rebuild": "h2"}
+    ch.behind = {"memory_chunks"}
+    assert _run(ch, "--yes") == tr.REFUSED and _writes(ch) == []
+    assert "has not fetched every part of loom.memory_chunks" in capsys.readouterr().out
+
+
+def test_each_read_after_the_drain_checks_its_own_replica_in_the_same_statement() -> None:
+    ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
+    assert _run(ch, "--yes") == tr.OK
+    assert "SELECT hostName()" not in ch.queries  # no host is recorded apart from a read
+    for needle, tables in (
+        ("FULL OUTER JOIN", {"memory_chunks", "memory_chunks_rebuild"}),
+        ("GROUP BY w ORDER BY w", {"memory_chunks"}),
+    ):
+        reads = [(q, p) for q, p in zip(ch.queries, ch.params, strict=True) if needle in q]
+        assert reads and all(q.startswith(DRAINED_READ) for q, _ in reads), needle
+        assert tables <= {t for _, p in reads for t in p["tables"]}, needle
+    assert "log_pointer > log_max_index" in vcr.REPLICA_SYNCED_SQL
+    assert "system.replication_queue" in vcr.REPLICA_SYNCED_SQL
+
+
+def test_a_postcondition_read_on_a_lagging_replica_keeps_the_copy_without_a_rollback(
+    capsys: Any,
+) -> None:
+    """A read that cannot prove its replica is caught up says nothing about the tables:
+    the copy is kept and the next step is to rerun the checks, not to undo the rebuild."""
+    ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
+    ch.behind = {"memory_chunks_pre_rebuild"}
     assert _run(ch, "--yes") == tr.POSTCONDITION
     out = capsys.readouterr().out
-    assert "POSTCONDITION FAILED: a read after the drain ran on h2" in out
-    assert "--rollback --yes" in json.loads(out.rsplit("summary ", 1)[1])["next"]
+    assert "POSTCONDITION FAILED: the checks could not run (a read after the drain" in out
+    summary = json.loads(out.rsplit("summary ", 1)[1])
+    assert "--rollback" not in summary["next"] and "--drop-pre-rebuild" in summary["next"]
+
+
+def test_a_refused_rollback_copy_sync_after_the_swap_keeps_the_copy_without_a_rollback(
+    capsys: Any,
+) -> None:
+    """The preflight cannot check SYSTEM SYNC REPLICA on the rollback copy, which does not
+    exist yet: a refusal after the swap fails the postcondition as checks that could not
+    run, not as an exception with the generic next step."""
+    ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
+    ch.refuse_table = "loom.memory_chunks_pre_rebuild"
+    assert _run(ch, "--yes") == tr.POSTCONDITION
+    assert "memory_chunks_pre_rebuild" in ch.t
+    out = capsys.readouterr().out
+    assert "the checks could not run (Not enough privileges)" in out
+    summary = json.loads(out.rsplit("summary ", 1)[1])
+    assert "--rollback" not in summary["next"] and "--drop-pre-rebuild" in summary["next"]
+
+
+def test_a_write_into_the_new_table_after_the_swap_never_names_the_rollback(
+    capsys: Any,
+) -> None:
+    """Writers resume after the exit-0 swap and a quarantine UPDATE lands in the new table
+    at the key's version. --rollback would drop it, so --drop-pre-rebuild refuses without
+    naming --rollback and keeps both tables."""
+    ch = _CH(memory_chunks=_live())
+    assert _run(ch, "--yes") == tr.OK
+    out = capsys.readouterr().out
+    assert "next: keep writers and erasure stopped" in out and "--drop-pre-rebuild --yes" in out
+    for cons, newer in (((1, 0, 0), (0, 0)), ((1, 0, 0), (0, 1)), ((0, 0, 1), (0, 0))):
+        ch.cons, ch.newer = cons, newer
+        assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+        assert "memory_chunks_pre_rebuild" in ch.t
+        out = capsys.readouterr().out
+        assert "loom.memory_chunks holds a change loom.memory_chunks_pre_rebuild lacks" in out
+        assert "inspect the difference" in json.loads(out.rsplit("summary ", 1)[1])["next"]
+        assert "--rollback --yes" not in out
+    ch.cons, ch.newer = (1, 0, 0), (1, 0)  # the rollback copy holds the newer version
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+    assert "--rollback --yes" in capsys.readouterr().out
+
+
+def test_drop_pre_rebuild_after_a_rollback_keeps_a_change_only_the_new_layout_copy_holds(
+    capsys: Any,
+) -> None:
+    """A rollback copies back only newer versions and absent keys: a same-version change
+    made in the new table stays only in the new-layout copy, which is then not dropped."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    ch = _CH(
+        memory_chunks={"ddl": coded, "rows": 5, "uuid": "a"}, memory_chunks_pre_rebuild=_live()
+    )
+    assert _run(ch, "--rollback", "--yes") == tr.OK
+    ch.cons = (1, 0, 0)
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+    assert "memory_chunks_pre_rebuild" in ch.t
+    out = capsys.readouterr().out
+    assert "loom.memory_chunks_pre_rebuild holds a change loom.memory_chunks lacks" in out
+    last = ch.queries[_last(ch, "FULL OUTER JOIN")]
+    assert "FROM loom.memory_chunks FINAL" in last.split("FULL OUTER JOIN")[0]
+    ch.cons = (0, 2, 0)  # writes after the rollback reached only the live table
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.OK
+    assert "memory_chunks_pre_rebuild" not in ch.t
 
 
 def _synced_before_the_last_read(ch: _CH, start: int) -> None:

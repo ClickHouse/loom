@@ -285,19 +285,27 @@ def test_the_consistency_read_hashes_each_row_it_compares() -> None:
 
 
 def test_the_pre_swap_mutation_read_counts_finished_mutations_since_the_copy() -> None:
-    unfinished = vcr.mutations_sql("system.mutations", "t")
-    assert unfinished.startswith("SELECT count() FROM system.mutations WHERE database = '")
-    assert unfinished.endswith("AND table = 't' AND (NOT is_done)")
-    assert vcr.mutations_sql("system.mutations", "t", 1_700_000_000).endswith(
-        "AND (NOT is_done OR create_time >= toDateTime(1700000000))"
+    assert vcr.mutations_sql("system.mutations", 1_700_000_000) == (
+        "SELECT count() FROM system.mutations WHERE database = {db:String} "
+        "AND table = {t:String} AND (NOT is_done OR create_time >= toDateTime(1700000000))"
     )
 
 
-def test_the_dimension_read_samples_real_vectors() -> None:
-    assert vcr.dim_sql("memory_chunks", "embedding", " FINAL") == (
-        "SELECT topK(1)(w) FROM (SELECT length(embedding) AS w FROM loom.memory_chunks FINAL "
-        "WHERE arrayExists(x -> x != 0, embedding) "
-        f"LIMIT {vcr.DIM_SAMPLE_ROWS})"
+def test_the_dimension_read_counts_every_real_vector() -> None:
+    assert vcr.widths_sql("memory_chunks", "embedding", " FINAL") == (
+        "SELECT length(embedding) AS w, count() AS n FROM loom.memory_chunks FINAL "
+        "WHERE arrayExists(x -> x != 0, embedding) GROUP BY w ORDER BY n DESC, w"
+    )
+
+
+def test_the_newer_read_counts_each_side_of_a_mismatched_key() -> None:
+    assert vcr.newer_sql("a", "b", " FINAL", "created_at", ["org", "id"]) == (
+        "SELECT countIf(o.v > n.v), countIf(o.v < n.v) FROM "
+        "(SELECT org, id, created_at AS v FROM loom.a FINAL) AS o INNER JOIN "
+        "(SELECT org, id, created_at AS v FROM loom.b FINAL) AS n USING (org, id)"
+    )
+    assert "count() AS v FROM loom.a GROUP BY org, id" in vcr.newer_sql(
+        "a", "b", "", None, ["org", "id"]
     )
 
 

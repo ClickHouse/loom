@@ -258,7 +258,9 @@ def test_a_lightweight_update_after_the_last_check_fails_the_postcondition(
     ch: Any, table: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """An UPDATE between the last check and the swap keeps the row count and the version;
-    the rollback copy holds it and the new table does not."""
+    the rollback copy holds it and the new table does not. A same-version difference
+    could as well be a change in the new table, which --rollback would drop, so the run
+    keeps both tables for inspection instead of naming --rollback."""
     _with_patch_parts(ch, table)
     job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
     if why := job.codec_refusal():
@@ -272,7 +274,8 @@ def test_a_lightweight_update_after_the_last_check_fails_the_postcondition(
     monkeypatch.setattr(tr, "swap_in", update_then_swap)
     assert vcr.main([*args(table), "--yes"], ch=ch) == tr.POSTCONDITION
     out = capsys.readouterr().out
-    assert "the source changed after the last check" in out and "--rollback --yes" in out
+    assert "1 with other content at one version" in out and "inspect the difference" in out
+    assert "--rollback --yes" not in out.rsplit("summary ", 1)[1]
     pre = f"loom.{table}{tr.PRE_SUFFIX}"
     assert ch.query(f"SELECT note FROM {pre} FINAL WHERE id = 1").result_rows == [("late",)]
 
