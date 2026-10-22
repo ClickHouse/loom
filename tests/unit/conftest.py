@@ -662,17 +662,6 @@ def _trace_tasks_left_as_found() -> Iterator[None]:
     code_common._TRACE_TASKS.clear()
 
 
-def _reset_deferred_ledgers() -> None:
-    from server.core import namespace_write_marks
-    from server.memory.app import drops, graph_write_marks
-    from server.memory.store import usage as memory_repo_usage
-
-    memory_repo_usage._reset_for_tests()
-    drops._reset_for_tests()
-    namespace_write_marks._reset_for_tests()
-    graph_write_marks._reset_for_tests()
-
-
 @pytest.fixture(autouse=True)
 def _worker_cursors_left_empty() -> Iterator[None]:
     """A worker's next page must not depend on a previous test's pass."""
@@ -724,6 +713,17 @@ def _identity_caches_left_cold() -> Iterator[None]:
     summaries._SUMMARY_ENTITY_CACHE.clear()
 
 
+def _reset_deferred_ledgers() -> None:
+    from server.core import namespace_write_marks
+    from server.memory.app import drops, graph_write_marks
+    from server.memory.store import usage as memory_repo_usage
+
+    memory_repo_usage._reset_for_tests()
+    drops._reset_for_tests()
+    namespace_write_marks._reset_for_tests()
+    graph_write_marks._reset_for_tests()
+
+
 @pytest.fixture(autouse=True)
 async def _tasks_left_as_found() -> Any:
     """Cancel the tasks a test started on the session loop and left pending.
@@ -757,20 +757,17 @@ async def _tasks_left_as_found() -> Any:
     # end task, so the reset and the sweep repeat. A task still pending after
     # three passes is cancelled too, and fails the test unless something (the
     # ledger reset, for the usage flusher) was already cancelling it.
-    for _ in range(3):
+    unstopped: list[asyncio.Task[Any]] = []
+    for last in (False, False, False, True):
         _reset_deferred_ledgers()
         leaked = pending()
         if not leaked:
             return
+        if last:
+            unstopped = [t for t in leaked if not t.cancelling()]
         for t in leaked:
             t.cancel()
         await asyncio.gather(*leaked, return_exceptions=True)
-    _reset_deferred_ledgers()
-    left = pending()
-    unstopped = [t for t in left if not t.cancelling()]
-    for t in left:
-        t.cancel()
-    await asyncio.gather(*left, return_exceptions=True)
     _reset_deferred_ledgers()
     if unstopped:
         pytest.fail(f"cancelling the tasks a test left kept starting new ones: {unstopped}")
