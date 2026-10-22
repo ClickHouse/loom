@@ -404,15 +404,15 @@ How Loom uses ClickHouse is in [ClickHouse](../architecture/clickhouse.md).
 
 ### Recommended ClickHouse settings
 
-Loom runs without these, but vector search is faster and the vector tables are smaller with
-them on. Turn them on for Loom's ClickHouse user before Loom first starts (the server
-applies its migrations at boot) or runs `loom migrate`: a fresh install codes its vector
-columns only if the codec is on at that moment.
+Loom runs without these, but vector search is faster with them on. Turn them on for Loom's
+ClickHouse user before Loom first starts (the server applies its migrations at boot) or
+runs `loom migrate`: a fresh install codes its vector columns only if the codec is on at
+that moment.
 
 | Setting                   | Value | What it gives Loom                                                                                                                          |
 | ------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `enable_quantized_codec`  | `1`   | Vector columns stored with the `Quantized` codec (26.8+), so searches scan compact codes first and rescore the best rows at full precision. |
-| `allow_suspicious_codecs` | `1`   | `entity_vectors` keeps `LZ4` after `Quantized`. Without it that column is about four times larger.                                          |
+| `allow_suspicious_codecs` | `1`   | With `Quantized` on, `entity_vectors` keeps `LZ4` after it. Without this setting a coded `entity_vectors` is about four times larger.       |
 
 Check what Loom's user gets with:
 
@@ -443,20 +443,34 @@ the server does not change existing tables:
 1. Restart Loom, so each process reads the settings again. A process that found the codec
    unavailable keeps that answer until it restarts.
 2. Rebuild each coded table with `scripts/ops/vector_codec_rebuild.py`. The tool is not in
-   the image: run it from a clone of the repository at the deployed version, with `LOOM_CH_*`
-   pointing at the deployment's ClickHouse. Run each command with `--dry-run` first to see
-   the plan, then again with `--yes`:
+   the image: run it from a clone of the repository at the deployed version, installed with
+   `make install` (or `uv sync --locked`), with `LOOM_CH_*` pointing at the deployment's
+   ClickHouse. Run the block with `mode=--dry-run` to see each plan, then again with
+   `mode=--yes` to rebuild:
 
    ```bash
-   python -P -m scripts.ops.vector_codec_rebuild --table memory_embeddings --columns embedding,memory_key_embedding --dry-run
-   python -P -m scripts.ops.vector_codec_rebuild --table entity_vectors --columns entity_embedding --chain LZ4 --dry-run
-   python -P -m scripts.ops.vector_codec_rebuild --table code_summaries --columns embedding --index-granularity 256 --gate-fetch-multiplier 10 --dry-run
+   mode=--dry-run   # then mode=--yes
+   rebuild() { python -P -m scripts.ops.vector_codec_rebuild "$@" "$mode"; }
+   rebuild --table memory_embeddings --columns embedding,memory_key_embedding
+   rebuild --table memory_chunks --columns embedding
+   rebuild --table code_chunks --columns embedding
+   rebuild --table entity_vectors --columns entity_embedding --chain LZ4
+   rebuild --table session_summaries --columns summary_embedding
+   rebuild --table conversation_embeddings --columns embedding
+   rebuild --table chunks --columns embedding
+   rebuild --table entity_summaries --columns summary_embedding
+   rebuild --table code_answers --columns question_embedding
+   rebuild --table categories --columns embedding
+   rebuild --table code_summaries --columns embedding --index-granularity 256 --gate-fetch-multiplier 10
+   rebuild --table qa_item_embeddings --columns embedding
    ```
 
-   The tables and their vector columns are listed in `CODED_TABLES`
-   (`server/core/schema/vector_codec_ddl.py`). On a self-managed cluster whose name is not
-   `default`, pass `--cluster <name>` (`--cluster ''` checks this server only). `--rollback`
-   returns a table to its old copy until `--drop-pre-rebuild` removes it
+   These are the tables in `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`). Where
+   `allow_suspicious_codecs` cannot be on, the tool refuses `--chain`: leave `entity_vectors`
+   plain (skip its line), or rebuild it without `--chain` and accept a column about four
+   times larger. The preflight checks the replicas of the cluster `default`; pass
+   `--cluster <name>` for another cluster, or `--cluster ''` to check this server only.
+   `--rollback` returns a table to its old copy until `--drop-pre-rebuild` removes it
    ([table rebuilds](../development/migrations.md#changing-a-sort-key-or-a-partition-key)).
 
 How Loom reads these settings is in
