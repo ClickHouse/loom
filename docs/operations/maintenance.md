@@ -226,7 +226,8 @@ mutation since the reused twin was created, finished ones included: such a mutat
 makes the twin stale, and the rerun is `--restart --yes`, which copies again. An empty table is rebuilt too, at the width the Width bullet below
 gives (a coded column's own, else `LOOM_EMBEDDING_DIM`); the recall gate has no rows to probe there. Its ClickHouse user needs the
 `SYSTEM FLUSH ASYNC INSERT QUEUE` and `SYSTEM SYNC REPLICA` privileges on the table and,
-on `ReplicatedMergeTree`, `SYSTEM SYNC REPLICA` on the twin `loom.<table>_rebuild`, which
+on `ReplicatedMergeTree`, `SELECT` on `system.zookeeper` and `system.replication_queue`
+(which `loom ch-setup` does not grant) and `SYSTEM SYNC REPLICA` on the twin `loom.<table>_rebuild`, which
 the gates synchronize before each read of it, and on `loom.<table>_pre_rebuild`, the
 rollback copy the swap creates, which the checks after the swap and in
 `--drop-pre-rebuild` synchronize. The preflight runs the first two once and refuses
@@ -264,8 +265,9 @@ refuses, renames and drops nothing, and asks to compare the two tables' rows bef
 dropping either by hand. A twin never exchanged in is a leftover, whatever layout the
 rerun names: `--restart --yes` copies again, or drop it. The tool knows a twin was never
 exchanged in when its UUID is the one recorded in `$LOOM_REBUILD_DIR/<table>_rebuild.uuid`
-(the abort file's directory) when the tool created it, since an exchange moves that UUID
-to the live table's name, on any database engine. Without that record, it reads a twin
+(the abort file's directory) when the tool created it, on any database engine: the tool
+removes the record just before its exchange, and refuses the swap when it cannot, so the
+record names only a twin no exchange has moved to the live table's name. Without that record, it reads a twin
 whose `system.tables.metadata_modification_time` is later than the live table's as never
 exchanged in, which holds on Atomic and Replicated databases, where `EXCHANGE TABLES`
 keeps each table's own time. Equal times (the column has one second's precision), and any
@@ -311,8 +313,9 @@ The erasure saga does not cover these copies.
   no entry other than a merge or a mutation left in its queue. A replica that has not
   pulled a log of one entry reports the same zero log pointer as one with an empty log, so
   the run reads the log's entries in `system.zookeeper` and passes the zeros only for a
-  log with none; its user needs `SELECT` on `system.zookeeper`, and a run that cannot read
-  it refuses like a read on a replica behind. A read on a replica that
+  log with none; its user needs `SELECT` on `system.zookeeper` and on
+  `system.replication_queue`, and a run that cannot read either refuses like a read on a
+  replica behind. A read on a replica that
   has not caught up refuses the run in the preflight (exit 3), fails the gate before the
   swap (exit 5) and fails the postcondition after it (exit 7). Every later gate read and
   the last delta use `select_sequential_consistency = 1`. On `SharedMergeTree` this covers

@@ -51,8 +51,8 @@ cluster `--cluster` names (`default`; `''` checks this server only), `enable_qua
 settable or held at 1 for this user (`allow_suspicious_codecs` too with `--chain`; a setting held
 at 1 is never sent), every replica writable, the `SYSTEM FLUSH ASYNC INSERT QUEUE` and
 `SYSTEM SYNC REPLICA` privileges on the table (the preflight runs both once), `SELECT` on
-`system.zookeeper` on a ReplicatedMergeTree (each read after the drain reads the replication
-log there, and a run that cannot read it refuses), and no row
+`system.zookeeper` and `system.replication_queue` on a ReplicatedMergeTree (each read after
+the drain reads the replication log and queue there, and a run that cannot read them refuses), and no row
 written in the last hour with an empty vector in the named columns (writers'
 fixed-length placeholders must be deployed first: a coded column rejects an
 empty vector). ReplicatedMergeTree runs connect directly to one replica throughout
@@ -76,8 +76,9 @@ The twin is the run's lock: an existing twin refuses the run unless
 swap refuses when the twin is no longer the one this run created or reused.
 An `ABORT_REBUILD` file in `LOOM_REBUILD_DIR` (default `.`) stops the run
 before the copy and before the swap, leaving the twin. The UUID of each twin
-the tool creates goes to `<table>_rebuild.uuid` there: a later run names a twin
-with that UUID a leftover never exchanged in.
+the tool creates goes to `<table>_rebuild.uuid` there, and the swap removes it
+first (refusing when it cannot): a later run names a twin with that UUID a
+leftover never exchanged in.
 
 Exit codes (shared with table_rebuild): 0 done or nothing to do, 2 aborted,
 3 refused (widths among them), 4 needs `--yes`, 5 a gate failed (consistency,
@@ -568,6 +569,15 @@ class VectorRebuild:
             "WHERE database = currentDatabase() AND has({tables:Array(String)}, table)",
             parameters={"tables": tables},
         )
+        try:
+            self.q("SELECT count() FROM system.replication_queue WHERE 0")
+        except tr.Interrupted:
+            raise
+        except Exception as e:  # an unreadable queue refuses, never passes
+            raise ReplicaBehind(
+                f"could not read system.replication_queue ({str(e)[:160]}); the run needs "
+                "SELECT on system.replication_queue"
+            ) from e
         empty = []
         for table, path in paths:
             try:
@@ -1253,6 +1263,15 @@ class VectorRebuild:
                 "rerun with --restart"
             )
             return GATE_FAILED
+        # the record names only a twin never exchanged in: once this twin is the live
+        # table, a later twin under its name may be the old table
+        try:
+            self.twin_record.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            log(f"REFUSED: could not remove the twin's record {self.twin_record}: {e}; no swap")
+            return REFUSED
         tr.swap_in(self.ch, self.t)
         return self.check_swapped(engine, version, key, since)
 

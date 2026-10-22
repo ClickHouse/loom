@@ -400,6 +400,50 @@ def test_a_created_twin_is_recorded_by_its_uuid() -> None:
     assert Path("memory_chunks_rebuild.uuid").read_text() == ch.t["memory_chunks_rebuild"]["uuid"]
 
 
+def test_a_swap_removes_the_record_so_a_later_half_swap_keeps_the_old_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """A recorded twin that was exchanged in is the live table, and a later run's twin
+    may be the old table. Run A's swap removes A's record, so after run B, from another
+    directory, exchanges without its rename, a run from A's directory keeps B's twin."""
+
+    class _RenameLost(_CH):
+        lose_rename = False
+
+        def command(self, stmt: str, parameters: Any = None, settings: Any = None) -> None:
+            if self.lose_rename and stmt.startswith("RENAME TABLE"):
+                raise RuntimeError("session lost")
+            super().command(stmt, parameters, settings)
+
+    ch = _RenameLost(memory_chunks=_live())
+    ch.db_engine = "Shared"
+    assert _run(ch, "--yes") == tr.OK
+    assert not Path("memory_chunks_rebuild.uuid").exists()
+    ch.t.pop("memory_chunks_pre_rebuild")
+    other = tmp_path / "other"
+    other.mkdir()
+    monkeypatch.chdir(other)
+    ch.lose_rename = True
+    _run(ch, "--yes", "--require-patch-free")
+    assert not (other / "memory_chunks_rebuild.uuid").exists()
+    monkeypatch.chdir(tmp_path)
+    old = ch.t["memory_chunks_rebuild"]
+    ch.commands.clear()
+    capsys.readouterr()
+    assert _run(ch, "--yes", "--require-patch-free", "--restart") == tr.REFUSED
+    assert _writes(ch) == [] and ch.t["memory_chunks_rebuild"] is old
+    out = capsys.readouterr().out
+    assert "compare" in out and "leftover" not in out
+
+
+def test_a_record_that_cannot_be_removed_refuses_the_swap() -> None:
+    Path("memory_chunks_rebuild.uuid").mkdir()  # unlink() fails on a directory
+    ch = _CH(memory_chunks=_live())
+    assert _run(ch, "--yes") == tr.REFUSED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "memory_chunks_rebuild" in ch.t
+
+
 def test_a_twin_with_patch_parts_is_never_swapped() -> None:
     ch = _CH(memory_chunks=_live())
     ch.patches["memory_chunks_rebuild"] = 2
@@ -1229,6 +1273,21 @@ def test_a_user_who_cannot_read_system_zookeeper_is_refused(capsys: Any) -> None
     ch = _NoKeeper(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
     assert _run(ch, "--yes") == tr.REFUSED and _writes(ch) == []
     assert "the run needs SELECT on system.zookeeper" in capsys.readouterr().out
+
+
+def test_a_user_who_cannot_read_system_replication_queue_is_refused(capsys: Any) -> None:
+    """The drained reads on a ReplicatedMergeTree read system.replication_queue; without
+    that grant the preflight refuses (exit 3) and names it."""
+
+    class _NoQueue(_CH):
+        def _answer(self, sql: str, p: dict[str, Any]) -> _R:
+            if "system.replication_queue" in sql:
+                raise RuntimeError("Not enough privileges")
+            return super()._answer(sql, p)
+
+    ch = _NoQueue(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
+    assert _run(ch, "--yes") == tr.REFUSED and _writes(ch) == []
+    assert "the run needs SELECT on system.replication_queue" in capsys.readouterr().out
 
 
 def test_each_gate_read_of_a_replicated_twin_follows_its_sync() -> None:
