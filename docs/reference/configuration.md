@@ -94,7 +94,7 @@ Authentication, tokens and identity providers.
 | `LOOM_JWT_END_USER_MAX_TTL_SECONDS` | `int` | `300` |  | The longest an end-user token may live, from its `iat` to its `exp`. |
 | `LOOM_JWT_END_USER_JWKS_REFRESH_SECONDS` | `float` | `300.0` |  | Seconds between fetches of each end-user issuer's `jwks_url`; a key it rotates in is honoured from the next fetch. |
 | `LOOM_RESTRICTED_SERVE` | `bool` | `True` |  | Kill switch for restricted namespaces. True: served to a principal whose token names the namespace AND who holds a live direct grant. False: every read is refused while ingest continues. |
-| `LOOM_RESTRICTED_AUDIT_INLINE` | `bool` | `True` |  | Commit the `namespace.restricted_access` audit row every admitted read of a restricted namespace writes before answering (inline). True by default: a row written beside the request is lost when the process is killed before it lands. False trades that row for the seconds the awaited insert adds. |
+| `LOOM_RESTRICTED_AUDIT_INLINE` | `bool` | `True` |  | Wait for the `namespace.restricted_access` audit row of each admitted restricted read before answering; false writes it beside the answer, lost if the process dies first. |
 | `LOOM_CORS_ORIGINS` | `str` | `''` |  | Comma-separated origin list. "*" allows all (acceptable when auth_required=True). Empty disables CORS entirely. |
 | `LOOM_MAX_REQUEST_BYTES` | `int` | `33554432` |  | Request-body cap, bytes, enforced by ASGI middleware before any parser (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables. |
 | `LOOM_HSTS_MAX_AGE_SECONDS` | `int` | `31536000` |  | Strict-Transport-Security max-age, seconds; browsers ignore it over plain HTTP. 0 sends no header. |
@@ -125,13 +125,17 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_CH_SECURE` | `bool \| None` | `None` |  | Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off). |
 | `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST` | `bool` | `False` |  | Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment` ("<op> <request_id>"), so query_log rows group by shape. Off by default: readers that split log_comment on spaces gain tokens. |
 | `LOOM_CH_CAPTURE_STATEMENTS` | `str` | `''` |  | A file path: append one JSON line (`digest`, `sql`) per executed statement, to collect the shapes an acceptance run executes for the analyzer corpus. '' = off; never set it in production. |
-| `LOOM_CH_POOL_MAXSIZE` | `int` | `64` |  | HTTP connection pool size; the driver default (~8) exhausts under bulk writes plus workers. Size to expected request concurrency. |
+| `LOOM_CH_POOL_MAXSIZE` | `int` | `64` |  | HTTP connection pool size: request concurrency plus 3 x the batched-insert bound (inserts a second x wait / 1000; docs/architecture/clickhouse.md#batched-inserts). |
 | `LOOM_CH_KEEPALIVE_TIMEOUT` | `float` | `5.0` |  | Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled TLS connection is never reaped under uvloop (`LOOM_UVICORN_LOOP=uvloop`). |
 | `LOOM_CH_READ_YOUR_WRITES` | `bool` | `True` |  | A point lookup that MISSES right after a write (get after set, verify, update_by_id, delete) re-reads once with select_sequential_consistency=1. Costs only on a miss; a no-op on single-node MergeTree. |
 | `LOOM_CH_READ_YOUR_WRITES_WINDOW_S` | `float` | `20.0` |  | memory.search on a namespace this process wrote within this many seconds reads with select_sequential_consistency from the start. 0 = off (the empty-pool retry remains the backstop). |
 | `LOOM_CH_TIMEOUT_READ_S` | `float` | `30.0` |  | Deadline, seconds, for read statements, applied as `max_execution_time` and as a client-side bound that frees the pool slot. 0 = no bound for reads. |
 | `LOOM_CH_TIMEOUT_WRITE_S` | `float` | `60.0` |  | Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. |
 | `LOOM_CH_TIMEOUT_DDL_S` | `float` | `300.0` |  | Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. |
+| `LOOM_CH_BATCHED_INSERTS` | `bool` | `True` | live | Batch the inserts written on every request into shared parts; false commits them, and the waited async inserts keep their bounds (docs/architecture/clickhouse.md#batched-inserts). |
+| `LOOM_CH_BATCHED_INSERT_WAIT_MIN_MS` | `int` | `10` | live | Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when writes are sparse; capped at ch_batched_insert_wait_max_ms (or the background bound). |
+| `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` | `int` | `50` | live | Longest wait, ms, of a batched or waited async insert a request waits on; it holds a pooled connection meanwhile. |
+| `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` | `int` | `200` | live | Longest wait, ms, of the usage-event flusher's ticks and shutdown drain and the write-mark timer's flush, which no request waits on. |
 | `LOOM_CH_POOL_WAIT_MS` | `int` | `500` |  | Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot gate. |
 | `LOOM_CH_REPLICA_BOUND_RETRIES` | `int` | `2` |  | Fresh connections a statement tries after a replica-bound error (a replica that lost its Keeper session, a replica's read-only table). Behind a load balancer one reconnect can land on the replica that just failed, so a single retry is not enough. |
 

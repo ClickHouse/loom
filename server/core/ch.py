@@ -44,11 +44,7 @@ from server.core.ch_request_cost import note_result_summary, request_query_id
 from server.core.ch_schema_guard import guard_pending_schema
 from server.core.ch_statement_text import capture_statement, statement_digest
 from server.core.ch_target import connection_kwargs
-from server.core.ch_writes import (
-    dedup_settings,
-    insert_dedup_token,
-    normalize_insert_settings,
-)
+from server.core.ch_writes import dedup_settings, insert_dedup_token
 from server.core.traffic_context import traffic_class_var
 from server.settings import settings
 
@@ -677,10 +673,8 @@ class CHClient:
             # Close idle pooled connections before the Cloud load balancer
             # does, so the pool never holds a peer-closed TLS transport.
             keepalive_timeout=float(settings.ch_keepalive_timeout),
-            # Writes are committed: the INSERT returns after the part is
-            # written (at loom's write rates the async buffer does not batch and
-            # only adds queueing). Block dedup stays off: identical event rows
-            # (agent_events, audit_log) are legitimate and must all land.
+            # Committed by default; a call site passes ch_writes' async settings to batch.
+            # insert_deduplicate is 0 here: each insert turns dedup on with its token.
             settings={
                 "async_insert": 0,
                 "wait_for_async_insert": 1,
@@ -1095,9 +1089,8 @@ class CHClient:
         settings: dict[str, Any] | None = None,
     ) -> None:
         """Batch insert via the native typed insert path. `settings` forwards
-        CH query settings; fire-and-forget settings are normalised by
-        `normalize_insert_settings`. An `insert_deduplication_token` in
-        `settings` replaces the per-batch token.
+        CH query settings. An `insert_deduplication_token` in `settings`
+        replaces the per-batch token.
 
         For the ledger tables in `PROJECTED_TABLES`, columns the live table
         does not have are dropped from the statement — one WARNING per
@@ -1215,7 +1208,6 @@ class CHClient:
         type_names = await self._column_type_names(table, columns)
         data = _insert_data(rows, columns, type_names)
 
-        settings = normalize_insert_settings(settings)
         # One token per batch, drawn once here, so every
         # attempt below — loom's retry, the re-describe retries and the
         # driver's own retry after a peer close — names the same batch

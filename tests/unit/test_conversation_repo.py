@@ -7,14 +7,19 @@ from typing import Any
 
 import pytest
 
+from server.core.ch_writes import batched_insert_settings, committed_insert_settings
+from server.core.vectors import codes_state
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.knowledge.store import conversations
 from server.knowledge.store.conversations import (
     MessageInsert,
     MessageRow,
     append,
+    embedding_insert_settings,
     list_thread,
     search_substring,
 )
+from server.settings import settings
 
 
 class StubCH:
@@ -54,7 +59,9 @@ def _msg_row() -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_append_omits_ts_when_none() -> None:
+@pytest.mark.parametrize("switch", [True, False])
+async def test_append_omits_ts_when_none(monkeypatch: pytest.MonkeyPatch, switch: bool) -> None:
+    monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     ch = StubCH()
     msg = MessageInsert(
         org="clickhouse",
@@ -66,9 +73,122 @@ async def test_append_omits_ts_when_none() -> None:
         content="hi",
     )
     await append(msg, ch=ch)
-    _, rows, settings = ch.insert_calls[0]
+    _, rows, sent = ch.insert_calls[0]
     assert "ts" not in rows[0]  # CH defaults to now()
-    assert settings.get("async_insert") == 0
+    # With batching off, an append no identity names is committed.
+    assert sent == (batched_insert_settings() if switch else committed_insert_settings())
+
+
+@pytest.mark.asyncio
+async def test_an_append_once_per_identity_is_committed_with_the_identity_token() -> None:
+    """Every writer of one turn's identity sends it committed: a replicated table
+    deduplicates committed and buffered inserts separately."""
+    ch = StubCH()
+    msg = MessageInsert(
+        org="clickhouse",
+        namespace="ns",
+        agent="bot",
+        thread_id="t-1",
+        msg_id="m-1",
+        role="user",
+        content="hi",
+    )
+    await append(msg, once_per_identity=True, ch=ch)
+    await append(msg, once_per_identity=True, ch=ch)
+    (_, _, first), (_, _, second) = ch.insert_calls
+    assert first["async_insert"] == 0 and first["wait_for_async_insert"] == 1
+    assert first["insert_deduplication_token"].startswith("conversation-turn:")
+    assert first == second
+
+
+EMBEDDING = "loom.conversation_embeddings.embedding"
+
+
+def test_an_embedding_row_is_batched_only_when_its_width_cannot_fail_the_flush(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
+    monkeypatch.setattr(settings, "embedding_dim", 4)
+    # Never probed: ClickHouse judges the width, so the row goes alone.
+    assert embedding_insert_settings([0.1] * 4) == committed_insert_settings()
+    # A plain column takes any width.
+    codes_state.set_coded(set())
+    assert embedding_insert_settings([0.1] * 3) == batched_insert_settings()
+    # Coded at the served model's width: a full vector and an empty one (padded).
+    codes_state.set_coded({EMBEDDING})
+    monkeypatch.setattr(codes_state._state, "widths", {EMBEDDING: 4})
+    assert embedding_insert_settings([0.1] * 4) == batched_insert_settings()
+    assert embedding_insert_settings([]) == batched_insert_settings()
+    # A vector of another width, or a model change pending a rebuild.
+    assert embedding_insert_settings([0.1] * 3) == committed_insert_settings()
+    monkeypatch.setattr(settings, "embedding_dim", 8)
+    assert embedding_insert_settings([0.1] * 4) == committed_insert_settings()
+
+
+@pytest.mark.asyncio
+async def test_an_embedding_row_in_a_flush_another_width_failed_is_sent_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
+    monkeypatch.setattr(
+        conversations, "embedding_insert_settings", lambda _v: batched_insert_settings()
+    )
+
+    class FlushRefused(StubCH):
+        async def insert(self, table, rows, settings=None):
+            await super().insert(table, rows, settings)
+            if settings != committed_insert_settings():
+                raise RuntimeError("Code: 190. Elements of the vector have a different width")
+
+    ch = FlushRefused()
+    row: Any = {"org": "o", "msg_id": "m-1", "embedding": [0.1] * 4}
+    await conversations.insert_embedding(row, ch=ch)
+    assert [s for _, _, s in ch.insert_calls] == [
+        batched_insert_settings(),
+        committed_insert_settings(),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_batched_embedding_row_that_failed_for_another_reason_is_not_resent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
+    monkeypatch.setattr(
+        conversations, "embedding_insert_settings", lambda _v: batched_insert_settings()
+    )
+
+    class TooManyParts(StubCH):
+        async def insert(self, table, rows, settings=None):
+            await super().insert(table, rows, settings)
+            raise RuntimeError("Code: 252. Too many parts")
+
+    ch = TooManyParts()
+    row: Any = {"org": "o", "msg_id": "m-1", "embedding": [0.1] * 4}
+    with pytest.raises(RuntimeError, match="Code: 252"):
+        await conversations.insert_embedding(row, ch=ch)
+    assert [s for _, _, s in ch.insert_calls] == [batched_insert_settings()]
+
+
+@pytest.mark.asyncio
+async def test_a_committed_embedding_row_another_width_failed_is_not_resent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ch_batched_inserts", False)
+    monkeypatch.setattr(
+        conversations, "embedding_insert_settings", lambda _v: batched_insert_settings()
+    )
+
+    class WidthRefused(StubCH):
+        async def insert(self, table, rows, settings=None):
+            await super().insert(table, rows, settings)
+            raise RuntimeError("Code: 190. Elements of the vector have a different width")
+
+    ch = WidthRefused()
+    row: Any = {"org": "o", "msg_id": "m-1", "embedding": [0.1] * 4}
+    with pytest.raises(RuntimeError):
+        await conversations.insert_embedding(row, ch=ch)
+    assert [s for _, _, s in ch.insert_calls] == [committed_insert_settings()]
 
 
 @pytest.mark.asyncio

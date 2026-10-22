@@ -1,6 +1,11 @@
-"""What `CHClient.insert` applies to a write before it is sent: the
-fire-and-forget dedup rule (`normalize_insert_settings`) and the deduplication
-token that makes a retried batch land once.
+"""The deduplication settings `CHClient.insert` adds to every write
+(`dedup_settings`, `insert_dedup_token`), and the settings a call site passes
+for a batched insert (`batched_insert_settings`), a waited async insert
+(`async_insert_settings`) or a committed one (`committed_insert_settings`).
+Each returns a new dict the caller may change. A committed insert uses
+`committed_insert_settings` in a module that also batches, or where
+`tests/unit/test_read_your_write_inserts.py` pins its table committed; elsewhere the
+literal dict is the same.
 """
 
 from __future__ import annotations
@@ -8,18 +13,48 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from server.settings import settings
 
-def normalize_insert_settings(extra: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Fire-and-forget inserts (`async_insert = 1`) gain `async_insert_deduplicate
-    = 0` unless the call site set it: the Cloud profile defaults it to 1, which
-    would silently drop a byte-identical event row landing in the same flush
-    window. Committed writes (`async_insert = 0`) pass through unchanged."""
-    if not extra:
-        return extra
-    out = dict(extra)
-    if out.get("async_insert") == 1:
-        out.setdefault("async_insert_deduplicate", 0)
-    return out
+# not a setting: a ceiling above the wait windows' reach, so the live windows decide the flush
+_ASYNC_INSERT_MAX_QUERY_NUMBER = 10_000
+
+
+def committed_insert_settings() -> dict[str, Any]:
+    """Settings of an insert that commits its rows before it returns."""
+    return {"async_insert": 0, "wait_for_async_insert": 1}
+
+
+def batched_insert_settings() -> dict[str, Any]:
+    """Settings of a batched insert: `async_insert_settings` with
+    `ch_batched_inserts` on, the committed settings with it off. Why it is safe:
+    docs/architecture/clickhouse.md#batched-inserts."""
+    if not settings.ch_batched_inserts:
+        return committed_insert_settings()
+    return async_insert_settings()
+
+
+def async_insert_settings(*, background: bool = False) -> dict[str, Any]:
+    """Settings of an async insert answered once its shared part is written,
+    waiting between the live bounds for others to join it, whatever
+    `ch_batched_inserts` says: for a site that is a waited async insert either way.
+    `background` is for an insert no request waits on, which takes the longer
+    `ch_batched_insert_background_wait_max_ms`."""
+    if background:
+        wait_max = int(settings.ch_batched_insert_background_wait_max_ms)
+    else:
+        wait_max = int(settings.ch_batched_insert_wait_max_ms)
+    return {
+        "async_insert": 1,
+        "wait_for_async_insert": 1,
+        # Sent so the min bound applies whatever the server profile says; with it
+        # off, every flush waits the full max.
+        "async_insert_use_adaptive_busy_timeout": 1,
+        "async_insert_busy_timeout_min_ms": min(
+            int(settings.ch_batched_insert_wait_min_ms), wait_max
+        ),
+        "async_insert_busy_timeout_max_ms": wait_max,
+        "async_insert_max_query_number": _ASYNC_INSERT_MAX_QUERY_NUMBER,
+    }
 
 
 # Bytes of a str or bytes value the token reads.
@@ -81,7 +116,9 @@ def dedup_settings(token: str, base: dict[str, Any] | None) -> dict[str, Any]:
 
 
 __all__ = [
+    "async_insert_settings",
+    "batched_insert_settings",
+    "committed_insert_settings",
     "dedup_settings",
     "insert_dedup_token",
-    "normalize_insert_settings",
 ]

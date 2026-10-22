@@ -19,6 +19,7 @@ from server.knowledge.api.models_conversations import (
     ConversationUnsaveMessageInput,
 )
 from server.knowledge.store.conversations import StoredEmbedding, StoredMessage
+from server.observability.budget_shape import current_budget_shape, note_budget_shape
 from tests.unit._fake_credentials import OPENAI_KEY
 
 
@@ -134,7 +135,9 @@ async def test_save_message_bypasses_namespace_transcript_logging(
     from server.knowledge.app import conversations
 
     store = _Store(monkeypatch, [None, _MINE], _embedding(current=0))
+    note_budget_shape("")
     out = await conversations.handle_conversation_save_message(_save_input())
+    assert current_budget_shape() == ""  # one write: the base budget
 
     ((msg, once_per_identity),) = store.appends
     assert once_per_identity is True
@@ -157,10 +160,12 @@ async def test_a_save_whose_block_was_dropped_writes_the_turn_again(
     from server.knowledge.app import conversations
 
     store = _Store(monkeypatch, [None, None, _MINE], _embedding(current=0))
+    note_budget_shape("")
     out = await conversations.handle_conversation_save_message(_save_input())
 
     assert [once for _, once in store.appends] == [True, False]
     assert out.indexed is True
+    assert current_budget_shape() == "rewrite"  # + the rewritten row's wait
 
 
 @pytest.mark.parametrize("stored_owner", ["-", "u-1"])

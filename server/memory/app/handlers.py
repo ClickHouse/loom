@@ -56,6 +56,7 @@ from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import Identity, next_version
 from server.observability import degradations
+from server.observability.budget_shape import note_budget_shape
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -265,6 +266,7 @@ async def _get_chunk_with_neighbors(input: MemoryGetInput) -> MemoryGetOutput:
     if held(target):
         from server.observability import audit as _audit
 
+        note_budget_shape("audited")
         await _audit.emit(
             "memory.sensitive_read",
             org=input.org,
@@ -453,6 +455,7 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
         # each one is an audit row. Never raises.
         from server.observability import audit as _audit
 
+        note_budget_shape("audited")
         await _audit.emit(
             "memory.sensitive_read",
             org=input.org,
@@ -661,7 +664,8 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     finally:
         # The tombstone is in: a retry finds no live row and returns found=False, so the
         # event is recorded whatever fails while retiring what was derived from it.
-        await webhooks.announce([("memory.tombstoned", memory_change(existing, version))])
+        if await webhooks.announce([("memory.tombstoned", memory_change(existing, version))]):
+            note_budget_shape("webhook")
     return MemoryDeleteOutput(
         tombstoned=True,
         version=version,
@@ -828,7 +832,8 @@ async def finish_delete_check(
         )
         # Here, where every finish of the delete passes (the call itself, a retry of
         # a deferred one, the delete_version_check worker).
-        await webhooks.announce([("memory.tombstoned", memory_change(existing, tombstone))])
+        if await webhooks.announce([("memory.tombstoned", memory_change(existing, tombstone))]):
+            note_budget_shape("webhook")
     try:
         await memory_repo.record_delete_check(check, done=True)
     except Exception as e:  # noqa: BLE001 — a check left open runs again, harmlessly
@@ -1370,6 +1375,7 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
         # Key-only read of a 'high' row: audited. Never raises.
         from server.observability import audit as _audit
 
+        note_budget_shape("audited")
         await _audit.emit(
             "memory.sensitive_read",
             org=input.org,

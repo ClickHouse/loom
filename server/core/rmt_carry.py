@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.ch_names import database, logical, split_table
+from server.core.ch_writes import async_insert_settings
 from server.core.errors import BackendUnavailableError
 
 log = logging.getLogger(__name__)
@@ -52,8 +53,6 @@ _ADMIT_S = _ACK_LIVE_S / 2
 _ACK_REFRESH_S = _ADMIT_S / 2
 # How long a booting process waits for every live process to acknowledge.
 ACK_WAIT_S = 120.0
-# Durable when it returns; the processes' refreshes share parts.
-_ACK_INSERT = {"async_insert": 1, "wait_for_async_insert": 1}
 _STORED_SQL = """
     SELECT database, table, name FROM system.columns
     WHERE (database, table) IN {keys:Array(Tuple(String, String))}
@@ -234,7 +233,8 @@ async def _publish(ch: Any, *, force: bool = False) -> bool:
         await ch.insert(
             ACK_TABLE,
             [{"process": process_id(), "fingerprints": value}],
-            settings=_ACK_INSERT,
+            # Durable when it returns; the processes' refreshes share parts.
+            settings=async_insert_settings(),
         )
     except Exception as e:  # noqa: BLE001 — re-published next poll; writes wait for it
         log.warning("rmt carry: acknowledgement not written (%s)", e)
@@ -585,7 +585,7 @@ async def withdraw(ch: Any) -> None:
         await ch.insert(
             ACK_TABLE,
             [{"process": process_id(), "fingerprints": "{}"}],
-            settings=_ACK_INSERT,
+            settings=async_insert_settings(),
         )
 
 

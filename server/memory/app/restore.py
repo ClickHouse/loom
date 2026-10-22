@@ -24,6 +24,7 @@ from server.memory.domain.temporal_sql import SERVED_STATUSES
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version, version_time
+from server.observability.budget_shape import note_budget_shape
 
 if TYPE_CHECKING:
     from server.memory.store import MemoryRow
@@ -214,6 +215,7 @@ async def _write_restore(
     # The conflict resolver honours the Undo by this record, so it is written first,
     # under the lock, and its failure fails the Undo: no restore it would not see. A
     # record whose restore then fails names a version no row holds.
+    note_budget_shape("undo")
     try:
         await audit.emit_strict(
             "memory.unsupersede",
@@ -597,7 +599,8 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
                 ) from e
         # The row is live: announce it before anything below can fail, since a retry finds
         # the key live and restores (and announces) nothing.
-        await webhooks.announce([("memory.restored", restore_row)])
+        if await webhooks.announce([("memory.restored", restore_row)]):
+            note_budget_shape("webhook")
         if existing.sensitivity == "high":
             # The key is high again: a plain write still embedding lands below the fence.
             from server.memory.app.high_fence import fence_high

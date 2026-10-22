@@ -459,7 +459,7 @@ async def test_usage_event_carries_the_consumer_column(monkeypatch: pytest.Monke
         finally:
             consumer_mod.set_current_consumer("", "")
         await mru.record_usage_event(memory_id="m1", org="o", namespace="n", event_type="acted")
-        await mru._flush_usage_buffer_now()
+        await mru._flush_usage_buffer_now(background=True)
     finally:
         mru._reset_for_tests()
     rows = [r for table, batch in ch.inserted if table == "loom.memory_usage_events" for r in batch]

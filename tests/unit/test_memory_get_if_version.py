@@ -14,6 +14,7 @@ from server.core.errors import AuthInsufficientError
 from server.memory.api.models_crud import MemoryGetInput
 from server.memory.app import handlers as mem
 from server.memory.store.rows import MemoryRow
+from server.observability.budget_shape import current_budget_shape, note_budget_shape
 
 
 def _row(version: int = 7, sensitivity: str = "") -> MemoryRow:
@@ -94,11 +95,13 @@ def _input(**kw: Any) -> MemoryGetInput:
 @pytest.mark.asyncio
 async def test_matching_version_returns_unchanged_without_body_audit_or_exposure(env) -> None:
     env.row = _row(version=7, sensitivity="high")
+    note_budget_shape("")
     out = await mem.handle_memory_get(_input(if_version=7))
     assert out.found and out.unchanged and out.value is None and out.version == 7
     assert out.version_text == "7"  # exact for a JavaScript caller on this path too
     assert out.memory_id == env.row.memory_id
     assert env.audits == [] and env.exposures == []
+    assert current_budget_shape() == ""  # no audit row, so the base budget
 
 
 @pytest.mark.asyncio
@@ -205,3 +208,46 @@ async def test_a_high_read_by_id_is_audited_as_the_tokens_principal(
         set_current_auth(None)
     assert env.audits == ["memory.sensitive_read"]
     assert env.actor == actor_for("reader", is_service_account=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("sensitivity", "shape"), [("high", "audited"), ("", "")])
+async def test_a_get_is_held_to_the_audited_budget_only_when_it_audits(
+    env, sensitivity: str, shape: str
+) -> None:
+    env.row = _row(sensitivity=sensitivity)
+    note_budget_shape("")
+    await mem.handle_memory_get(_input())
+    assert current_budget_shape() == shape
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sensitivity", "omit_high_value", "shape"),
+    [("high", False, "audited"), ("", False, ""), ("high", True, "")],
+)
+async def test_a_get_by_id_is_held_to_the_audited_budget_only_when_it_audits(
+    env, monkeypatch: pytest.MonkeyPatch, sensitivity: str, omit_high_value: bool, shape: str
+) -> None:
+    import server.memory.store as memory_repo
+    from server.memory.api.models_crud import MemoryGetByIdInput
+
+    async def by_id(*_a: Any, **_k: Any) -> Any:
+        return _row(sensitivity=sensitivity)
+
+    async def in_scope(*_a: Any, **_k: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(memory_repo, "get_by_id", by_id)
+    monkeypatch.setattr("server.auth.authz.row_in_scope", in_scope)
+    note_budget_shape("")
+    await mem.handle_memory_get_by_id(
+        MemoryGetByIdInput(
+            org="acme",
+            memory_id="11111111-1111-1111-1111-111111111111",
+            omit_high_value=omit_high_value,
+        )
+    )
+    assert current_budget_shape() == shape
+    # the caller that only names the row reads no high value, so nothing is audited
+    assert env.audits == (["memory.sensitive_read"] if shape else [])

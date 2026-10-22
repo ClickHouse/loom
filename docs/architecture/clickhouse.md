@@ -90,20 +90,133 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   event kinds.
 - **Append, then collapse.** Mutable state is a `ReplacingMergeTree`; writers insert a new
   row with a higher version and reads use `FINAL`. Mutations stay off the request path.
-- **Committed inserts.** A write that a later read depends on is sent with
-  `async_insert = 0, wait_for_async_insert = 1`, the client's session default. Fire-and-forget
-  telemetry (`async_insert = 1, wait_for_async_insert = 0`) adds `async_insert_deduplicate = 0`
-  (`server/core/ch_writes.py`, `normalize_insert_settings`),
-  because identical telemetry rows in one flush window are legitimate.
+- **Waited inserts.** A write that a later read depends on is sent with
+  `wait_for_async_insert = 1`, so it is written when the insert returns: committed
+  (`async_insert = 0`, the client's session default) or batched
+  ([batched inserts](#batched-inserts)). Fire-and-forget
+  telemetry is sent with `async_insert = 1, wait_for_async_insert = 0`.
 - **Times are UTC.** `DateTime` columns carry no zone of their own, so the server
   client and the migration runner pin `session_timezone = 'UTC'` and bind aware params
   in UTC: a server whose `<timezone>` is something else reads and writes the same
   instants.
 - **Retries never duplicate.** Every insert carries an `insert_deduplication_token` from
   the batch and a per-batch nonce (`insert_dedup_token`), so a retry after a dropped socket
-  lands the batch once. A caller that passes its own token names the row's identity
-  instead, so two writers of one row land it once: `conversation.save_message` writes a
-  new transcript row this way.
+  lands the batch once. An async insert is deduplicated by that token only, never by
+  content, so two identical rows in one flush window both land. A caller that passes its
+  own token names the row's identity instead, so two writers of one row land it once:
+  `conversation.save_message` writes a new transcript row this way.
+
+### Batched inserts
+
+A committed insert makes one part, so a table written on every request makes parts at
+the request rate, and merges fall behind ("too many parts"). The rows written on every
+request or by every process on a short interval are batched inserts, sent with
+`async_insert = 1, wait_for_async_insert = 1` (`server/core/ch_writes.py`). They fall in
+two groups:
+
+- **Switched by `ch_batched_inserts`** (`batched_insert_settings`): `audit_log`, the
+  `conversations` turns of `conversation.append` and `conversation.compact`'s summary
+  turn, the turn `conversation.save_message` rewrites when deduplication dropped its
+  first write, the `conversation_embeddings` rows (`conversation.append`,
+  `conversation.save_message`, `conversation.compact`; under the width rule below), the
+  `agent_events` flush, `memory_webhook_outbox`, `memory_evidence` and
+  `memory_belief_sources`. `memory_webhook_attempts` stays committed: one worker writes it
+  twice a pass, one insert after the other, so batching would save no parts.
+- **Waited async inserts either way** (`async_insert_settings`): `auth_attempts`, the
+  policy witness's `agent_events` and `memory_exposures` rows,
+  `memory_projection_failures`, the graph Undo markers, the `namespace_write_marks`
+  flush, the usage-event flush, the carry-acknowledgement publish and withdraw, every
+  waited entity-graph insert (`memory.set`, `memory.bulk_set`; `graph_insert_settings`
+  with `wait=True`), and a follow plan's successor inserts (`entity_triple_memories`,
+  `entity_triple_rows`, `entity_triples`).
+
+ClickHouse collects the concurrent inserts into one table in one part per partition and
+answers each once those parts are written. On return the row is as durable and as
+visible as a committed insert's, and a caller's next insert lands in a later part, so
+the order of one caller's writes holds. The buffer is ClickHouse's, so a Loom process
+that stops loses nothing it acknowledged. A flush that fails as a whole fails every
+insert waiting on it; a retry of any of them lands once, under its own token. Each
+insert waits between `ch_batched_insert_wait_min_ms` (writes are sparse) and
+`ch_batched_insert_wait_max_ms` (under load) for others to join it, and holds its pooled
+connection for the wait. The insert sends `async_insert_use_adaptive_busy_timeout = 1`
+so these bounds hold whatever the server profile sets; with it off, every flush waits
+the full maximum. Under steady load a table gets about 1000 /
+`ch_batched_insert_wait_max_ms` parts a second per ClickHouse node, insert shape
+(ClickHouse keeps one buffer per column list and settings) and partition written: more
+when a buffer fills before the wait ends, at most one per insert when writes are sparse.
+The insert also sends `async_insert_max_query_number = 10000`, so at high rates the
+window, not ClickHouse's default of 450 statements, decides the flush.
+
+Two windows: the usage-event flusher and shutdown drain and the write-mark flush wait up
+to `ch_batched_insert_background_wait_max_ms` (200 ms, ClickHouse's own default), so they
+collect more rows per part. Every other batched or waited async insert waits at most
+`ch_batched_insert_wait_max_ms` (50 ms), the `agent_events` timer flush included
+(`flush_now` waits for a flush in flight), and so does a usage-event flush a request
+makes because the buffer is full. The two windows are two insert shapes, so they fill
+separate buffers.
+
+ClickHouse's own target is about one insert, one part, a second per table, with 1,000
+rows or more per insert. These windows stay well short of it; they cut the part rate
+from one per insert to the rate above. Batching trades latency for parts: each waited
+insert adds up to its window, and holds its pooled connection meanwhile. A sustained
+R_request request-path and R_background background batched inserts a second therefore
+hold at least R_request × `ch_batched_insert_wait_max_ms` / 1000 + R_background ×
+`ch_batched_insert_background_wait_max_ms` / 1000 connections: 100 `conversation.append`
+a second, two batched inserts each, hold at least 100 × 2 × 50 / 1000 = 10. That is a
+lower bound: a waiting insert holds its connection for the window and then the flush
+and part write, which queue up and grow under load. A `memory.set` waits on six or
+more: the audit row, the outbox row (webhook namespaces), the `entity_edges` and
+`entity_edge_memories` inserts, the `entity_triples` and `entity_triple_memories`
+inserts, plus `carry_acks` on a carried write; `memory.set_from_messages` waits on
+about ten. The entity-graph inserts of both are waited async inserts, so
+`ch_batched_inserts = false` leaves them holding connections: a process taking mostly
+memory or bulk writes sizes its pool for them either way, or lowers
+`ch_batched_insert_wait_max_ms`. One process taking 200 writes a second, two batched
+inserts each (`bench/write_rate.py --target client`), refused 3,367 of 12,000 writes
+with 503 `OVERLOADED` at `ch_pool_maxsize = 20`, the formula's bound, and none at 40 or
+64; that is one run on one host, so read it as an order of magnitude. Size
+`ch_pool_maxsize` at three times the bound or more, plus the process's other
+statements: the default 64 holds three times the bound for about 300 request-path
+batched inserts a second, with about 20 connections left for other statements. A
+process above that rate either raises `ch_pool_maxsize` or sets
+`ch_batched_inserts = false`; lowering `ch_batched_insert_wait_max_ms` also frees
+connections ([troubleshooting](../operations/troubleshooting.md)).
+
+`ch_batched_inserts` (live, on by default) switches batching off for the first group
+above: off, those inserts are committed, one part each. The second group waits on the
+same bounds either way, and fire-and-forget inserts are unchanged. Turn it off
+(`LOOM_CH_BATCHED_INSERTS=false`) on a process whose write rate exhausts the pool as
+above and whose pool cannot grow, or on a deployment with little traffic where latency
+matters more than parts: with writes too sparse to share a part, each insert still waits
+`ch_batched_insert_wait_min_ms`.
+
+ClickHouse keys the async buffer by table, statement shape, settings and user, so one
+flush can hold rows from several orgs, and one row that fails (a vector of the wrong
+width, code 190) fails the flush for every caller in it. An embedding row is batched only
+when its coded width equals `embedding_dim`, and a `conversation_embeddings` row whose
+shared flush failed with code 190 is sent again, committed; the other batched tables
+carry no coded vector.
+
+These tables stay committed:
+
+- **Version rows** of `memory`, `memory_embeddings`, `shared`, `session_summaries` and
+  `entity_summaries`: their fenced `INSERT … SELECT FROM input()` ([rolling
+  upgrades](rolling-upgrades.md)) cannot be buffered.
+- **`entity_canonical_map`**: it is partitioned by `org`, so a shared flush that spans
+  more than `max_partitions_per_insert_block` orgs would fail every insert waiting on it.
+- **Rows with a `Quantized`-coded vector** (`entity_vectors`, `memory_chunks`): the codec
+  refuses a vector of another width when the part is written (code 190), so one
+  mis-sized row would fail every other insert in its flush.
+- **A `conversation_embeddings` row that could be mis-sized**
+  (`embedding_insert_settings`): the row is batched when the column is plain, or when it
+  is coded at the served model's `embedding_dim` and the vector has that width (an empty
+  vector is padded to it). Without a reading of the column, or while the width the
+  column was coded at differs from `embedding_dim` (a model change before its rebuild,
+  or a rebuild this process has not read yet), the row is committed. A batched row
+  whose flush another process's stale-width row failed is sent again, committed.
+- **A write whose token names the row's identity** (`conversation.save_message`): a
+  replicated table keeps the tokens of committed and of buffered inserts apart, so every
+  writer of one identity sends it the same way.
 
 ## Engines and why
 
@@ -348,9 +461,9 @@ on), so BM25 scores are exact.
 `server/observability/events_stream.py` queues them and writes one committed insert per
 flush. Every other telemetry writer (audit rows, exposures, search traces, query nodes,
 code-search outcomes) inserts into its own table directly; no view fans `events` out. The
-op ledger (`agent_events`) is batched the same way as the stream
-(`server/observability/events.py`). A failed flush never fails a request; a crash loses the
-queue.
+op ledger (`agent_events`) is queued the same way, and each flush is a batched insert
+(`server/observability/events.py`), so the flushes of every process share parts. A failed
+flush never fails a request; a crash loses the queue.
 
 ## Vector storage
 
@@ -648,7 +761,7 @@ the request went without. The pending set is re-read at most once a minute.
 
 ## Read-your-writes
 
-On a single self-hosted server a committed insert is visible to the next read. On
+On a single self-hosted server a committed or batched insert is visible to the next read. On
 ClickHouse Cloud replicas may lag and the HTTP pool spreads requests over replicas, so Loom
 adds `select_sequential_consistency = 1` where it matters:
 
@@ -770,7 +883,7 @@ Supported server versions are in
 | Area                               | Self-hosted (single node)                                                                 | ClickHouse Cloud                                                                                                                                                   |
 | ---------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Connection                         | HTTP on 8123                                                                              | TLS on 8443 (`LOOM_CH_PORT=8443` or `LOOM_CH_SECURE=true`). Keep `LOOM_CH_KEEPALIVE_TIMEOUT` below the load balancer's idle cutoff.                                |
-| Read-your-writes                   | A committed insert is visible to the next read.                                           | Replicas may lag; see [Read-your-writes](#read-your-writes).                                                                                                       |
+| Read-your-writes                   | A waited insert is visible to the next read.                                              | Replicas may lag; see [Read-your-writes](#read-your-writes).                                                                                                       |
 | Rolling upgrades                   | One version.                                                                              | Replicas can differ for a while; setting support is probed per replica, and a rejected setting is dropped and the read retried.                                    |
 | NLP functions                      | `stem()` available.                                                                       | `allow_experimental_nlp_functions` is read-only; migrations run without it. The lemma column is filled by the application on both.                                 |
 | Codecs                             | `Quantized` needs 26.8+; both codec settings are writable.                                | Read-only: `enable_quantized_codec` at its default 0 until the operator enables it (plain install), then 1 (coded); `allow_suspicious_codecs` at 0 (no LZ4 chain). |
@@ -808,8 +921,9 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 ## Source entry points
 
 - `server/core/ch.py`: `set_query_tag`, `statement_class`, `statement_settings`,
-  `sequential_reads`, `own_write_reads`; `server/core/ch_writes.py`: `normalize_insert_settings`,
-  `insert_dedup_token`; `server/core/ch_schema_guard.py`: `pending_tables`.
+  `sequential_reads`, `own_write_reads`; `server/core/ch_writes.py`: `batched_insert_settings`,
+  `async_insert_settings`, `committed_insert_settings`, `dedup_settings`, `insert_dedup_token`;
+  `server/core/ch_schema_guard.py`: `pending_tables`.
 - `server/core/schema/journal.py`: the journal as data (file order, baselines, statements, the
   objects each file creates or drops).
 - `server/core/schema/migrate.py`, `server/core/schema/migrate_lease.py`: the runner, ledger, locks and gated

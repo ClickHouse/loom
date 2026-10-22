@@ -12,10 +12,12 @@ import pytest
 
 from server.core import namespace_write_marks, request_tail
 from server.core.ch import sequential_reads_active
+from server.core.ch_writes import async_insert_settings
 from server.identity.app import namespace_autoregister as autoreg
 from server.identity.app import policy_witness
 from server.identity.domain import policy_rules as R
 from server.observability.events import AgentEvent
+from server.settings import settings
 from tests.unit.cross_replica_fake import FakeCluster, in_request
 
 
@@ -108,7 +110,6 @@ def witness(monkeypatch: pytest.MonkeyPatch) -> tuple[_Recorder, list[AgentEvent
     import server.core.ch as ch_mod
     from server.identity.app import history_policy
     from server.observability import events
-    from server.settings import settings
 
     ch, queued = _Recorder(), []
     monkeypatch.setattr(settings, "policy_mode", "shadow")
@@ -132,14 +133,17 @@ def _in_request(event: AgentEvent) -> bool:
     return asyncio.run(run())
 
 
-def test_a_rule_named_event_is_committed_with_the_server_clock_before_the_answer(
-    witness: tuple[_Recorder, list[AgentEvent]],
+@pytest.mark.parametrize("switch", [True, False])
+def test_a_rule_named_event_is_written_with_the_server_clock_before_the_answer(
+    witness: tuple[_Recorder, list[AgentEvent]], monkeypatch: pytest.MonkeyPatch, switch: bool
 ) -> None:
+    monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     ch, queued = witness
     assert _in_request(_event("memory.get"))
-    ((table, rows, settings),) = ch.inserts
+    ((table, rows, sent),) = ch.inserts
     assert table == "loom.agent_events" and "ts" not in rows[0]
-    assert settings == {"async_insert": 1, "wait_for_async_insert": 1} and queued == []
+    # A waited async insert on the batched bounds whatever the switch says.
+    assert sent == async_insert_settings() and queued == []
 
 
 def test_an_event_no_rule_names_is_queued_as_usual(

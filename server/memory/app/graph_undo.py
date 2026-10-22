@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any, NamedTuple
 
+from server.core.ch_writes import async_insert_settings
 from server.memory.app import graph_holders
 from server.memory.app.projection_errors import TriplesRepairFailed
 from server.memory.app.projections import (
@@ -173,7 +174,7 @@ async def restate_facts(
     # This Undo's markers are the rows carrying its id: a replay finds them and adds
     # none, and no other Undo takes them for its own.
     fresh = [m for m in markers if not m.row["restored"]]
-    settings = {"async_insert": 1, "wait_for_async_insert": 1}
+    settings = async_insert_settings()
     # Edges first: if the triple markers then fail to land, a replay finds these edges
     # and adds none.
     await _insert_edge_markers(

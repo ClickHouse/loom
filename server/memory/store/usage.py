@@ -13,6 +13,7 @@ import asyncio
 import logging
 from typing import Any
 
+from server.core.ch_writes import async_insert_settings
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
 
@@ -43,12 +44,11 @@ _USAGE_FLUSH_INTERVAL_S = 0.5
 _USAGE_FLUSH_TASK: asyncio.Task[None] | None = None
 
 
-async def _flush_usage_buffer_now(ch: _CHClient | None = None) -> None:
-    """Drain the usage-event buffer in one CH insert. No-op when empty."""
+async def _flush_usage_buffer_now(ch: _CHClient | None = None, *, background: bool) -> None:
+    """Drain the usage-event buffer in one CH insert. No-op when empty.
+    `background=False` for the flush a request waits on (the buffer is full)."""
     global _USAGE_BUFFER
-    if _USAGE_BUFFER_LOCK is None:
-        return
-    async with _USAGE_BUFFER_LOCK:
+    async with _buffer_lock():
         if not _USAGE_BUFFER:
             return
         batch = _USAGE_BUFFER
@@ -59,7 +59,7 @@ async def _flush_usage_buffer_now(ch: _CHClient | None = None) -> None:
             "loom.memory_usage_events",
             batch,
             # wait=1: a rejected insert raises here and is re-queued, not lost unseen.
-            settings={"async_insert": 1, "wait_for_async_insert": 1},
+            settings=async_insert_settings(background=background),
         )
     except Exception as e:  # noqa: BLE001 — requeue on any flush failure
         # Re-queue on failure, but bounded: drop rather than OOM if CH stays down.
@@ -68,7 +68,7 @@ async def _flush_usage_buffer_now(ch: _CHClient | None = None) -> None:
             len(batch),
             e,
         )
-        async with _USAGE_BUFFER_LOCK:
+        async with _buffer_lock():
             if len(_USAGE_BUFFER) + len(batch) <= _USAGE_BUFFER_MAX * 10:
                 _USAGE_BUFFER = batch + _USAGE_BUFFER
 
@@ -76,7 +76,7 @@ async def _flush_usage_buffer_now(ch: _CHClient | None = None) -> None:
 async def drain() -> None:
     """Shutdown: the buffered labels land before the ClickHouse client goes
     (`boot.drain_writes`); the flush loop's own cancel-path flush runs too late."""
-    await _flush_usage_buffer_now()
+    await _flush_usage_buffer_now(background=True)
 
 
 # The flush loop runs in a detached (empty) context; the tag names its inserts
@@ -92,33 +92,34 @@ async def _usage_flush_loop() -> None:
     while True:
         try:
             await asyncio.sleep(_USAGE_FLUSH_INTERVAL_S)
-            await _flush_usage_buffer_now()
+            await _flush_usage_buffer_now(background=True)
         except asyncio.CancelledError:
             # Drain on shutdown so we don't lose events.
-            await _flush_usage_buffer_now()
+            await _flush_usage_buffer_now(background=True)
             raise
         except Exception:  # noqa: BLE001 — one failure must not kill the loop
             # Don't let one transient failure kill the flush loop.
             continue
 
 
+def _buffer_lock() -> asyncio.Lock:
+    """The buffer's lock, created on first use."""
+    global _USAGE_BUFFER_LOCK
+    if _USAGE_BUFFER_LOCK is None:
+        _USAGE_BUFFER_LOCK = asyncio.Lock()
+    return _USAGE_BUFFER_LOCK
+
+
 def _ensure_usage_flusher_started() -> None:
     """Lazily start the background flush task on first use. Called from
     record_usage_event so we don't need a server-startup hook."""
-    global _USAGE_FLUSH_TASK, _USAGE_BUFFER_LOCK
-    if _USAGE_BUFFER_LOCK is None:
-        _USAGE_BUFFER_LOCK = asyncio.Lock()
+    global _USAGE_FLUSH_TASK
     if _USAGE_FLUSH_TASK is None or _USAGE_FLUSH_TASK.done():
-        try:
-            # Started by whichever request first records usage; it must not
-            # carry that request's tag for the rest of the process.
-            from server.core.background import detached_task
+        # Started by whichever request first records usage; it must not
+        # carry that request's tag for the rest of the process.
+        from server.core.background import detached_task
 
-            _USAGE_FLUSH_TASK = detached_task(_usage_flush_loop(), name="loom-usage-flush")
-        except RuntimeError:
-            # No running loop (sync caller); the periodic flush will
-            # take over once a loop is running.
-            pass
+        _USAGE_FLUSH_TASK = detached_task(_usage_flush_loop(), name="loom-usage-flush")
 
 
 def _reset_for_tests() -> None:
@@ -167,8 +168,9 @@ async def record_usage_event(
     ch: _CHClient | None = None,
 ) -> None:
     """Append a usage event for the AggregatingMergeTree totals. Buffered and
-    flushed by the background loop; falls back to a direct insert with no
-    running loop. Best-effort: never blocks the caller, drops after the bound.
+    flushed by the background loop; the call that fills the buffer waits for its
+    flush (the short batched window). A failed flush requeues its batch, dropping it
+    when the buffer would pass 10x the bound.
 
     `agent` carries which client triggered the event (for per-agent recall
     breakdown); empty string is valid for paths without a clear agent.
@@ -189,25 +191,14 @@ async def record_usage_event(
         "consumer": _event_consumer(consumer),
         "ts": naive_utc_now(),
     }
-    if _USAGE_BUFFER_LOCK is None:
-        # Fall back to direct insert if we couldn't start the flusher
-        # (no running loop — sync callers, tests).
-        ch = ch or _default_client()
-        await ch.insert(
-            "loom.memory_usage_events",
-            [event],
-            settings={"async_insert": 0, "wait_for_async_insert": 1},
-        )
-        return
-
     should_flush = False
-    async with _USAGE_BUFFER_LOCK:
+    async with _buffer_lock():
         _USAGE_BUFFER.append(event)
         if len(_USAGE_BUFFER) >= _USAGE_BUFFER_MAX:
             should_flush = True
     if should_flush:
         # Back-pressure: caller waits for the drain so the buffer can't grow unbounded.
-        await _flush_usage_buffer_now(ch=ch)
+        await _flush_usage_buffer_now(ch=ch, background=False)
 
 
 async def record_usage_for_keys(

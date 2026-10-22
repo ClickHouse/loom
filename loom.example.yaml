@@ -71,8 +71,9 @@ settings:
   # never set it in production. [restart]
   # ch_capture_statements: ""
 
-  # HTTP connection pool size; the driver default (~8) exhausts under bulk writes plus
-  # workers. Size to expected request concurrency. [restart]
+  # HTTP connection pool size: request concurrency plus 3 x the batched-insert bound
+  # (inserts a second x wait / 1000; docs/architecture/clickhouse.md#batched-inserts).
+  # [restart]
   # ch_pool_maxsize: 64
 
   # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load balancer's
@@ -99,6 +100,24 @@ settings:
 
   # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. [restart]
   # ch_timeout_ddl_s: 300.0
+
+  # Batch the inserts written on every request into shared parts; false commits them,
+  # and the waited async inserts keep their bounds
+  # (docs/architecture/clickhouse.md#batched-inserts). [live]
+  # ch_batched_inserts: true
+
+  # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits
+  # when writes are sparse; capped at ch_batched_insert_wait_max_ms (or the background
+  # bound). [live]
+  # ch_batched_insert_wait_min_ms: 10
+
+  # Longest wait, ms, of a batched or waited async insert a request waits on; it holds a
+  # pooled connection meanwhile. [live]
+  # ch_batched_insert_wait_max_ms: 50
+
+  # Longest wait, ms, of the usage-event flusher's ticks and shutdown drain and the
+  # write-mark timer's flush, which no request waits on. [live]
+  # ch_batched_insert_background_wait_max_ms: 200
 
   # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot
   # gate. [restart]
@@ -725,10 +744,9 @@ settings:
   # ingest continues. [restart]
   # restricted_serve: true
 
-  # Commit the `namespace.restricted_access` audit row every admitted read of a
-  # restricted namespace writes before answering (inline). True by default: a row
-  # written beside the request is lost when the process is killed before it lands. False
-  # trades that row for the seconds the awaited insert adds. [restart]
+  # Wait for the `namespace.restricted_access` audit row of each admitted restricted
+  # read before answering; false writes it beside the answer, lost if the process dies
+  # first. [restart]
   # restricted_audit_inline: true
 
   # Comma-separated origin list. "*" allows all (acceptable when auth_required=True).

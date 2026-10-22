@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import pytest
 
+from server.settings.catalog import OP_BUDGETS_P99_MS
+
 
 @pytest.mark.asyncio
 async def test_health(control_plane_url: str) -> None:
@@ -38,8 +40,8 @@ async def test_operations_listed(control_plane_url: str) -> None:
         assert "memory.set" in ops
         assert ops["memory.get"]["idempotent"] is True
         assert ops["memory.set"]["idempotent"] is True
-        assert ops["memory.get"]["budget_p99_ms"] == 25
-        assert ops["memory.set"]["budget_p99_ms"] == 200
+        assert ops["memory.get"]["budget_p99_ms"] == OP_BUDGETS_P99_MS["memory.get"]
+        assert ops["memory.set"]["budget_p99_ms"] == OP_BUDGETS_P99_MS["memory.set"]
 
 
 @pytest.mark.asyncio

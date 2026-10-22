@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.ch_writes import batched_insert_settings
 from server.observability.instance import stamp_row
 
 log = logging.getLogger(__name__)
@@ -229,8 +230,9 @@ class EventEmitter:
         waits for a batch the timer already popped and is still inserting —
         otherwise an empty queue would say "history" while the witness row is
         mid-flight.
-        Cross-replica lag remains the flush interval; the ledger shows it as a
-        shadow miss. Never raises: a failed flush is logged by `_flush_once`.
+        Cross-replica lag remains the flush interval plus the batched-insert
+        wait; the ledger shows it as a shadow miss. Never raises: a failed flush
+        is logged by `_flush_once`.
         """
         while True:
             if not self.queue.empty():
@@ -255,16 +257,13 @@ class EventEmitter:
             return
         self._inflight += 1
         try:
-            # We batch client-side already; force synchronous visibility so
-            # CH Cloud's default async_insert buffering doesn't hide rows
-            # from SELECTs (tests, live event streams). The client projects
-            # the rows onto the table's live columns, so a
-            # column this build stamps and the service lacks costs the
-            # column, not the batch.
+            # With ch_batched_inserts on, every process's flushes share parts; visible on return.
+            # The client projects rows onto the live columns: a column the service lacks costs
+            # that column, not the batch.
             await get_client().insert(
                 "loom.agent_events",
                 [e.to_row() for e in batch],
-                settings={"async_insert": 0, "wait_for_async_insert": 1},
+                settings=batched_insert_settings(),
             )
         except Exception as e:  # fail open: a lost batch never fails a request
             self.dropped_flush_failed += len(batch)

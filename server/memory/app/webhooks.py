@@ -187,15 +187,17 @@ async def announce(
     *,
     actor: str | None = None,
     request_id: str | None = None,
-) -> None:
+) -> bool:
     """Leave one outbox row per (event, change) and webhook that takes the event,
-    in one insert. A change is a mapping with the memory's org, namespace, agent,
-    user_id, session_id, memory_key, memory_id and version (a memory version row
-    is one). The event's actor and request id come from the call, never from the
-    row: a version row's `actor` is its writer's, which a background pass or a
+    in one insert; True when a webhook took any change (outbox rows were built),
+    whether or not their insert landed. A change is a mapping with the memory's org,
+    namespace, agent, user_id, session_id, memory_key, memory_id and version (a memory
+    version row is one). The event's actor and request id come from the call, never
+    from the row: a version row's `actor` is its writer's, which a background pass or a
     restore carries forward. `actor` and `request_id` override them. Never raises."""
     if not changes:
-        return
+        return False
+    rows: list[dict[str, Any]] = []
     try:
         now = naive_utc_now()
         if actor is None:
@@ -213,6 +215,7 @@ async def announce(
     except Exception as e:  # noqa: BLE001 — the write is in; its announcement must not fail it
         degradations.note("memory.webhook", "not_announced", e)
         log.warning("memory webhooks: %d changes not announced: %s", len(changes), e)
+    return bool(rows)
 
 
 async def announce_erasure(org: str, namespaces: Sequence[str] | None, erasure_id: str) -> None:

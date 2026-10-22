@@ -426,7 +426,8 @@ async def render_all(cases: Sequence[Case] | None = None) -> tuple[list[CaseRun]
 def _flushers_held() -> Iterator[None]:
     """A handler driven here would start the usage-event flusher — a
     detached 0.5 s task that resolves the real client at fire time and logs
-    a failure per tick; hold it off for the render."""
+    a failure per tick; hold it off for the render. Events still buffer, and
+    `_drop_detached_flushers` drops them."""
     try:
         from server.memory.store import usage as usage
     except Exception:  # noqa: BLE001 — nothing to hold

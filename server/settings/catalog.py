@@ -459,10 +459,8 @@ class AuthSettings(BaseModel):
     # token names the namespace AND who holds a live direct grant. False: every
     # read is refused while ingest continues.
     restricted_serve: bool = True
-    # Commit the `namespace.restricted_access` audit row every admitted read of a
-    # restricted namespace writes before answering (inline). True by default: a
-    # row written beside the request is lost when the process is killed before it
-    # lands. False trades that row for the seconds the awaited insert adds.
+    # Wait for the `namespace.restricted_access` audit row of each admitted restricted read
+    # before answering; false writes it beside the answer, lost if the process dies first.
     restricted_audit_inline: bool = True
     # Comma-separated origin list. "*" allows all (acceptable when
     # auth_required=True). Empty disables CORS entirely.
@@ -538,8 +536,8 @@ class ClickHouseSettings(BaseModel):
     # collect the shapes an acceptance run executes for the analyzer corpus. '' = off;
     # never set it in production.
     ch_capture_statements: str = ""
-    # HTTP connection pool size; the driver default (~8) exhausts under bulk
-    # writes plus workers. Size to expected request concurrency.
+    # HTTP connection pool size: request concurrency plus 3 x the batched-insert bound
+    # (inserts a second x wait / 1000; docs/architecture/clickhouse.md#batched-inserts).
     ch_pool_maxsize: int = 64
     # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load
     # balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled
@@ -560,6 +558,20 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
+    # Batch the inserts written on every request into shared parts; false commits them, and the
+    # waited async inserts keep their bounds (docs/architecture/clickhouse.md#batched-inserts).
+    ch_batched_inserts: Annotated[bool, LIVE] = True
+    # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when
+    # writes are sparse; capped at ch_batched_insert_wait_max_ms (or the background bound).
+    ch_batched_insert_wait_min_ms: Annotated[int, LIVE] = Field(default=10, gt=0, le=1000)
+    # Longest wait, ms, of a batched or waited async insert a request waits on; it holds a
+    # pooled connection meanwhile.
+    ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0, le=1000)
+    # Longest wait, ms, of the usage-event flusher's ticks and shutdown drain and the
+    # write-mark timer's flush, which no request waits on.
+    ch_batched_insert_background_wait_max_ms: Annotated[int, LIVE] = Field(
+        default=200, gt=0, le=5000
+    )
     # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED.
     # 0 = no slot gate.
     ch_pool_wait_ms: int = 500
@@ -5071,7 +5083,13 @@ class TrackerSettings(BaseModel):
 # registered op has an entry (tests/unit/test_op_budgets.py). A deployment tunes them
 # without editing this table: `latency_budget_overrides` (one op, in ms or "<n>x"),
 # `latency_budget_overrides_by_consumer` (one consumer), `latency_budget_multiplier`
-# (all of them), and `POST /v1/admin/budget.set` while Loom runs.
+# (all of them), and `POST /v1/admin/budget.set` while Loom runs. Each batched or
+# waited async insert an op awaits adds up to `ch_batched_insert_wait_max_ms`; the
+# budgets assume its default. A budget is raised where one such wait is a large share
+# of it ("+ ... wait" below names those waits); budgets of 400 ms or more absorb it. A wait
+# the op's usual call does not make is priced as a shape in OP_SHAPE_BUDGETS_P99_MS. The
+# restricted-access audit row's wait sits in the transport's admission gate, before
+# the handler time a budget measures.
 
 OP_BUDGETS_P99_MS: dict[str, int] = {
     "admin.users": 300,
@@ -5199,7 +5217,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "context.fetch": 150,
     "context.offload": 300,
     "context.pack": 600,
-    "conversation.append": 30,
+    # ~30 ms of writes + message and embedding-row waits.
+    "conversation.append": 130,
     # Dominated by the LLM round-trip.
     "conversation.compact": 3500,
     "conversation.create": 30,
@@ -5208,7 +5227,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "conversation.get": 100,
     "conversation.list": 80,
     "conversation.list_saved_messages": 150,
-    "conversation.save_message": 250,
+    # + the embedding-row wait of a save that embeds the turn.
+    "conversation.save_message": 300,
     "conversation.saved_status": 100,
     "conversation.search": 120,
     "conversation.search_saved_messages": 200,
@@ -5290,7 +5310,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.backlinks": 200,
     "memory.brief": 4000,
     "memory.bulk_get": 80,
-    # One CH insert + N embeds.
+    # One CH insert + N embeds; the audit-row wait runs beside the graph legs.
     "memory.bulk_set": 300,
     # 6 ALTER UPDATEs against bounded scopes.
     "memory.clear": 600,
@@ -5342,7 +5362,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.outcome_run": 500,
     "memory.outline": 250,
     "memory.owner_report": 800,
-    "memory.pin": 30,
+    # memory.set's write path (handle_memory_set).
+    "memory.pin": 200,
     "memory.promote": 100,
     "memory.proposal_decide": 800,
     "memory.proposals": 400,
@@ -5368,12 +5389,11 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.search": 200,
     "memory.search_trace": 200,
     "memory.search_trace_log": 200,
-    # A set is five committed inserts plus the conflict and dedup reads: p50
-    # 1,062 ms and p99 3.7 s on ClickHouse Cloud. 200 ms at the x20 multiplier
-    # = 4 s sits at that p99, so a violation is a signal.
+    # Version inserts + conflict/dedup reads + audit, outbox and graph-insert waits
+    # (the graph legs run concurrently).
     "memory.set": 200,
-    # LLM extraction dominates (~7K-token prompt); downstream bulk_set adds ~200ms.
-    "memory.set_from_messages": 2500,
+    # LLM extraction (~7K-token prompt) + bulk_set (~200 ms) + ~4 batched-insert waits.
+    "memory.set_from_messages": 2700,
     # Profile + pinned + score-ordered recall (+ optional knowledge.search),
     # each identity-scoped point-lookups.
     "memory.stack": 200,
@@ -5444,7 +5464,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "policy.delete": 400,
     "policy.list": 200,
     "policy.set": 400,
-    "procedure.add": 120,
+    # memory.set's write path (handle_memory_set).
+    "procedure.add": 200,
     "procedure.evolve": 200,
     "procedure.fork": 400,
     "procedure.list": 100,
@@ -5453,11 +5474,13 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "procedure.record_run": 150,
     "procedure.revise": 300,
     "profile.activity": 80,
-    # 2-3 round-trips under contention.
-    "profile.append": 80,
+    # memory.get, then memory.set's write path (handle_memory_set).
+    "profile.append": 225,
     "profile.render": 60,
-    "profile.replace": 80,
-    "profile.set": 30,
+    # memory.get, then memory.set's write path (handle_memory_set).
+    "profile.replace": 225,
+    # memory.set's write path (handle_memory_set).
+    "profile.set": 200,
     # The schema, the profile row and one user's digest aggregate.
     "profile.structured": 60,
     # A point read, then one synchronous insert.
@@ -5559,6 +5582,24 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
         "ranked": 3000,
         "uses_brief": 1500,
     },
+    # The batched-insert shapes below are the base + the default
+    # ch_batched_insert_wait_max_ms (50 ms), not a measured p99.
+    # "audited": a high-sensitivity row was read, + its audit-row wait.
+    # "webhook": a webhook took the event (announce sent outbox rows), + its outbox-row wait.
+    # "undo": memory.restore's Undo, + its audit-record wait.
+    # "rewrite": deduplication dropped the saved turn, + the rewritten row's wait.
+    "conversation.save_message": {"rewrite": 350},
+    "memory.bulk_get": {"audited": 130},
+    "memory.bulk_set": {"webhook": 350},
+    "memory.delete": {"webhook": 80},
+    "memory.delete_version": {"webhook": 130},
+    "memory.evidence": {"audited": 200},
+    "memory.get": {"audited": 75},
+    "memory.get_by_id": {"audited": 100},
+    "memory.history": {"audited": 130},
+    "memory.restore": {"undo": 130, "webhook": 130},
+    "memory.update": {"webhook": 170},
+    "memory.update_by_id": {"webhook": 130},
     "session.brief_save": {
         "model": 90000,
     },

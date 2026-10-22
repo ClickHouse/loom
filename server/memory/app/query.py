@@ -43,6 +43,7 @@ from server.memory.domain import trust as _trust
 from server.memory.domain.entity_sentinels import public_entities
 from server.memory.store.rows import MemoryRow
 from server.observability import audit as _audit
+from server.observability.budget_shape import note_budget_shape
 
 log = logging.getLogger(__name__)
 
@@ -866,6 +867,8 @@ async def handle_memory_bulk_get(
         if r.sensitivity == "high"
     ]
     # A key read of a 'high' row is audited, as memory.get audits it.
+    if high:
+        note_budget_shape("audited")
     await _audit.emit_many(
         "memory.sensitive_read",
         org=input.org,

@@ -155,6 +155,32 @@ def test_delete_looks_namespace_wide_after_an_exact_miss_and_tombstones_the_rows
     assert rows[0]["agent"] == "claude-code" and rows[0]["session_id"] == "sess-65187490"
 
 
+@pytest.mark.parametrize(("wrote", "shape"), [(True, "webhook"), (False, "")])
+def test_a_delete_is_held_to_the_webhook_budget_only_when_it_wrote_outbox_rows(
+    world, monkeypatch: pytest.MonkeyPatch, wrote: bool, shape: str
+) -> None:
+    from server.memory.api.models_crud import MemoryDeleteInput
+    from server.observability.budget_shape import current_budget_shape
+
+    async def _announce(changes: Any) -> bool:
+        return wrote
+
+    monkeypatch.setattr(hm.webhooks, "announce", _announce)
+
+    async def _run() -> str:
+        await hm.handle_memory_delete(
+            MemoryDeleteInput(
+                org="clickhouse",
+                namespace="jdoe",
+                agent="claude-desktop",
+                memory_key="user_home_location",
+            )
+        )
+        return current_budget_shape()
+
+    assert asyncio.run(_run()) == shape
+
+
 def test_delete_says_when_no_live_row_exists_anywhere(world, monkeypatch) -> None:
     from server.memory.api.models_crud import MemoryDeleteInput
 

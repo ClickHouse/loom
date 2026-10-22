@@ -40,6 +40,7 @@ from server.memory.domain.webhook_events import (
 from server.memory.store import MemoryRow
 from server.memory.store import webhooks as store
 from server.memory.workers import webhook_deliver as worker
+from server.observability.budget_shape import current_budget_shape, note_budget_shape
 from server.settings import settings
 from server.settings.catalog import parse_backoff_steps
 from server.workers import pass_context
@@ -317,7 +318,8 @@ async def test_announce_writes_one_row_per_subscribed_webhook(
         ("wh2", frozenset({"memory.tombstoned"})),
     )
     ch = RecordingCH().install(monkeypatch)
-    await app.announce([("memory.written", _change(session_id="s1", value="secret text"))])
+    wrote = await app.announce([("memory.written", _change(session_id="s1", value="secret text"))])
+    assert wrote is True
     rows = ch.inserted("memory_webhook_outbox")
     assert [r["webhook_id"] for r in rows] == ["wh1"]
     row = rows[0]
@@ -370,7 +372,7 @@ async def test_a_namespace_without_webhooks_pays_no_insert(
     monkeypatch: pytest.MonkeyPatch, registry: dict[tuple[str, str], Any]
 ) -> None:
     ch = RecordingCH().install(monkeypatch)
-    await app.announce([("memory.written", _change())])
+    assert await app.announce([("memory.written", _change())]) is False
     assert ch.calls == []
 
 
@@ -384,7 +386,17 @@ async def test_a_failed_outbox_insert_never_fails_the_write(
         raise RuntimeError("ClickHouse is away")
 
     monkeypatch.setattr(store, "insert_outbox", broken)
-    await app.announce([("memory.written", _change())])
+    # a webhook took the change, so the call waited on its insert
+    assert await app.announce([("memory.written", _change())]) is True
+
+
+@pytest.mark.asyncio
+async def test_a_failed_registry_read_sends_no_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def broken() -> Any:
+        raise RuntimeError("ClickHouse is away")
+
+    monkeypatch.setattr(app, "_fresh_hooks", broken)
+    assert await app.announce([("memory.written", _change())]) is False
 
 
 @pytest.mark.asyncio
@@ -474,13 +486,19 @@ async def test_a_receivers_token_cannot_turn_a_users_erasure_id_into_the_user(
 
 
 @pytest.fixture
-def announced(monkeypatch: pytest.MonkeyPatch) -> list[list[tuple[str, dict[str, Any]]]]:
-    """Each `announce` call with changes: its (event, change) pairs."""
+def announced(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> list[list[tuple[str, dict[str, Any]]]]:
+    """Each `announce` call with changes: its (event, change) pairs. A call with changes
+    sent outbox rows unless the test parametrizes the fixture with False (no webhook
+    took the events)."""
     calls: list[list[tuple[str, dict[str, Any]]]] = []
+    sends = getattr(request, "param", True)
 
-    async def record(changes: Any) -> None:
+    async def record(changes: Any) -> bool:
         if changes:
             calls.append([(event, dict(c)) for event, c in changes])
+        return sends and bool(changes)
 
     monkeypatch.setattr(app, "announce", record)
     return calls
@@ -565,8 +583,11 @@ async def test_memory_set_restatement_compares_at_the_stored_precision(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("announced", "shape"), [(True, "webhook"), (False, "")], indirect=["announced"]
+)
 async def test_bulk_set_splits_written_and_revised_and_a_repeated_key_is_revised(
-    announced: list[Any],
+    announced: list[Any], shape: str
 ) -> None:
     from server.memory.app import bulk_set
 
@@ -578,7 +599,10 @@ async def test_bulk_set_splits_written_and_revised_and_a_repeated_key_is_revised
             {"memory_key": "new", "version": 3},
         ],
     )
+    note_budget_shape("")
     await bulk_set._bulk_announce(state)  # type: ignore[arg-type]
+    # held to the budget with the outbox-row wait only when outbox rows were sent
+    assert current_budget_shape() == shape
     (call,) = announced  # one insert for the batch
     assert [(e, c["version"]) for e, c in call] == [
         ("memory.written", 1),
@@ -592,8 +616,9 @@ async def test_bulk_set_announces_nothing_for_an_unchanged_batch(announced: list
     from server.memory.app import bulk_set
 
     # Unchanged restatements write no row: the batch's memory_rows are empty.
+    note_budget_shape("")
     await bulk_set._bulk_announce(SimpleNamespace(existing_ids={"k": "m"}, memory_rows=[]))  # type: ignore[arg-type]
-    assert announced == []
+    assert announced == [] and current_budget_shape() == ""
 
 
 def _memory_row(key: str, version: int = 10, **over: Any) -> MemoryRow:
@@ -618,8 +643,11 @@ def _memory_row(key: str, version: int = 10, **over: Any) -> MemoryRow:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("announced", "shape"), [(True, "webhook"), (False, "")], indirect=["announced"]
+)
 async def test_a_finished_delete_version_is_announced_with_its_tombstone(
-    monkeypatch: pytest.MonkeyPatch, announced: list[Any]
+    monkeypatch: pytest.MonkeyPatch, announced: list[Any], shape: str
 ) -> None:
     from server.memory.app import handlers
 
@@ -635,9 +663,12 @@ async def test_a_finished_delete_version_is_announced_with_its_tombstone(
     monkeypatch.setattr(handlers, "_key_moved_on", not_moved)
     monkeypatch.setattr(handlers, "_retire_derived", retire)
     monkeypatch.setattr(memory_repo, "record_delete_check", record)
+    note_budget_shape("")
     out = await handlers.finish_delete_check(_memory_row("k"), {"checked": 5, "tombstone": 9})
     assert out.tombstoned is True
     assert [(e, c["version"]) for call in announced for e, c in call] == [("memory.tombstoned", 9)]
+    # held to the budget with the outbox-row wait only when outbox rows were sent
+    assert current_budget_shape() == shape
 
 
 @pytest.mark.asyncio
@@ -655,8 +686,9 @@ async def test_a_delete_version_whose_key_moved_on_is_not_announced(
 
     monkeypatch.setattr(handlers, "_key_moved_on", moved)
     monkeypatch.setattr(memory_repo, "record_delete_check", record)
+    note_budget_shape("")
     await handlers.finish_delete_check(_memory_row("k"), {"checked": 5, "tombstone": 9})
-    assert announced == []
+    assert announced == [] and current_budget_shape() == ""
 
 
 @pytest.mark.asyncio

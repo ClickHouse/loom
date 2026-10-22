@@ -96,15 +96,30 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 - **Cause:** a ClickHouse statement ran past its class deadline (504
   `BACKEND_TIMEOUT`), or every pooled ClickHouse connection of the process stayed busy
-  (503 `OVERLOADED`). From `conversation.delete` or `conversation.compact`, `OVERLOADED`
-  can also mean writes to the thread's embeddings kept landing for 8 reconcile rounds;
-  resend once the thread's writes settle.
+  (503 `OVERLOADED`). Under a sustained write rate, batched inserts (audit rows,
+  transcript turns, the agent_events flush) hold their connection for up to
+  `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` and then the flush, and background ones (the
+  usage-event and write-mark flushes) for up to
+  `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` and the flush
+  ([batched inserts](../architecture/clickhouse.md#batched-inserts)).
+  From `conversation.delete` or `conversation.compact`, `OVERLOADED` can also mean writes
+  to the thread's embeddings kept landing for 8 reconcile rounds; resend once the
+  thread's writes settle.
 - **Check:** the slowest sources in `system.query_log` by `log_comment`
   ([monitoring](./monitoring.md#logs-traces-and-query-attribution)); `ops.health` for part
   pressure.
 - **Fix:** the query or worker that dominates. A Loom far from its ClickHouse (a WAN)
   needs `LOOM_LATENCY_BUDGET_MULTIPLIER` near 20 so its latency budgets do not fire on
-  every call. The [errors reference](../reference/errors.md) lists every code.
+  every call. For `OVERLOADED` under a sustained write rate, size the pool for the
+  connections batched inserts hold
+  ([batched inserts](../architecture/clickhouse.md#batched-inserts)): raise
+  `LOOM_CH_POOL_MAXSIZE` (a restart), switch batching off for the switched group with
+  `loom settings set ch_batched_inserts false` (`LOOM_CH_BATCHED_INSERTS=false` at
+  startup; the waited async inserts still wait), or lower the insert waits live with
+  `loom settings set ch_batched_insert_wait_max_ms <ms>` (and
+  `ch_batched_insert_background_wait_max_ms`).
+  [Runtime settings](./runtime-settings.md) covers live overrides.
+  The [errors reference](../reference/errors.md) lists every code.
 
 ## Providers and search quality
 

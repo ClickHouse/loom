@@ -281,6 +281,15 @@ Latency, throughput and storage at scale.
   with the per-stage breakdown and event-loop lag every response carries.
   Point it at an isolated server from the branch under test, never at a
   shared process.
+- **`write_rate.py`** — writes at a fixed rate (`memory.set` and
+  `conversation.append` against a server, or the append's inserts in-process:
+  batched by default, as `ch_batched_inserts` sends them, and committed with
+  `--committed`, which sets the switch off) and reports latency and the ClickHouse
+  parts each table got from `system.part_log`, with the `async_insert` value
+  each conversation insert carried from `system.query_log`. Free with the fake
+  providers. Writes go under a per-run org (`write-rate-<run>`); the in-process
+  run deletes its conversation rows at the end, the server run keeps its rows,
+  so point it at a private ClickHouse.
 - **`ch_cost_by_op.py`** — ClickHouse cost per loom operation from
   `system.query_log`, joined through the `log_comment` tag every loom query
   carries (`"<op> <request_id>"` / `"worker.<name>"`).

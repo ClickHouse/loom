@@ -79,13 +79,62 @@ async def test_an_unbounded_pool_leaves_the_connector_unbounded(
     assert captured["connector_limit"] == captured["connector_limit_per_host"] == 0
 
 
-def test_committed_idiom_passes_through_and_fire_and_forget_turns_dedup_off() -> None:
-    """A committed insert is sent as the call site wrote it; fire-and-forget
-    gains `async_insert_deduplicate = 0` unless the call site set it."""
+def test_async_inserts_are_deduplicated_by_token_only() -> None:
+    """Fire-and-forget and batched inserts both turn the async dedup switch on
+    with the batch's token, so the check is by token, never by content."""
+    ff = ch_writes.dedup_settings("t", {"async_insert": 1, "wait_for_async_insert": 0})
+    assert ff == {
+        "async_insert": 1,
+        "wait_for_async_insert": 0,
+        "insert_deduplication_token": "t",
+        "async_insert_deduplicate": 1,
+    }
+    batched = ch_writes.dedup_settings("t", {"async_insert": 1, "wait_for_async_insert": 1})
+    assert batched["async_insert_deduplicate"] == 1
+    assert batched["insert_deduplication_token"] == "t"
+    assert "insert_deduplicate" not in batched
+
+
+def test_batched_inserts_wait_for_their_part_and_read_the_wait_bounds_per_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batched insert is answered once its part is written, and its wait bounds
+    are read at call time (live settings); a minimum above the maximum is capped."""
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
+    monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 10)
+    monkeypatch.setattr(settings, "ch_batched_insert_wait_max_ms", 50)
+    assert ch_writes.batched_insert_settings() == {
+        "async_insert": 1,
+        "wait_for_async_insert": 1,
+        "async_insert_use_adaptive_busy_timeout": 1,
+        "async_insert_busy_timeout_min_ms": 10,
+        "async_insert_busy_timeout_max_ms": 50,
+        "async_insert_max_query_number": 10_000,
+    }
+    monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 80)
+    s = ch_writes.batched_insert_settings()
+    assert s["async_insert_busy_timeout_min_ms"] == 50 == s["async_insert_busy_timeout_max_ms"]
+    # A retried batch still lands once: the token goes through the async switch.
+    token = ch_writes.dedup_settings("t", s)
+    assert token["async_insert_deduplicate"] == 1 and token["insert_deduplication_token"] == "t"
+
+
+def test_background_inserts_take_the_longer_wait_and_ignore_the_switch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An insert no request waits on waits up to the background bound; with
+    `ch_batched_inserts` off a batched insert is sent committed, read per call, and
+    `async_insert_settings` keeps its bounds either way."""
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
+    monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 10)
+    monkeypatch.setattr(settings, "ch_batched_insert_wait_max_ms", 50)
+    monkeypatch.setattr(settings, "ch_batched_insert_background_wait_max_ms", 200)
+    s = ch_writes.async_insert_settings(background=True)
+    assert s["async_insert"] == 1 and s["async_insert_busy_timeout_max_ms"] == 200
+    assert s["async_insert_busy_timeout_min_ms"] == 10
+    assert ch_writes.batched_insert_settings() == ch_writes.async_insert_settings() != s
+    monkeypatch.setattr(settings, "ch_batched_inserts", False)
     committed = {"async_insert": 0, "wait_for_async_insert": 1}
-    assert ch_writes.normalize_insert_settings(committed) == committed
-    ff = ch_writes.normalize_insert_settings({"async_insert": 1, "wait_for_async_insert": 0})
-    assert ff == {"async_insert": 1, "wait_for_async_insert": 0, "async_insert_deduplicate": 0}
-    pinned = {"async_insert": 1, "wait_for_async_insert": 0, "async_insert_deduplicate": 1}
-    assert ch_writes.normalize_insert_settings(pinned) == pinned
-    assert ch_writes.normalize_insert_settings(None) is None
+    assert ch_writes.batched_insert_settings() == committed
+    assert ch_writes.async_insert_settings(background=True) == s
+    assert ch_writes.async_insert_settings()["async_insert_busy_timeout_max_ms"] == 50

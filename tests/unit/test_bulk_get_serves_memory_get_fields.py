@@ -9,11 +9,13 @@ from typing import Any
 import pytest
 
 import server.memory.store as memory_repo
+from server.core.ch_writes import batched_insert_settings
 from server.memory.api.models_bulk import MemoryBulkGetInput
 from server.memory.api.models_crud import MemoryListInput
 from server.memory.app import query
 from server.memory.store.rows import MemoryRow, _hydrate
 from server.observability import audit
+from server.observability.budget_shape import current_budget_shape, note_budget_shape
 
 
 def _row(key: str, **over: Any) -> MemoryRow:
@@ -93,6 +95,18 @@ async def test_bulk_get_serves_sensitivity_and_usage_and_audits_high_rows(served
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("key", "shape"), [("secret", "audited"), ("plain", "")])
+async def test_bulk_get_is_held_to_the_audited_budget_only_when_it_audits(
+    served, key: str, shape: str
+) -> None:
+    note_budget_shape("")
+    await query.handle_memory_bulk_get(
+        MemoryBulkGetInput(org="o", namespace="n", agent="a", memory_keys=[key])
+    )
+    assert current_budget_shape() == shape
+
+
+@pytest.mark.asyncio
 async def test_bulk_get_reads_usage_only_when_the_projection_serves_it(served) -> None:
     await query.handle_memory_bulk_get(
         MemoryBulkGetInput(
@@ -122,10 +136,14 @@ async def test_list_reads_usage_only_when_the_projection_serves_it(served) -> No
 @pytest.mark.asyncio
 async def test_emit_many_writes_rows_that_verify_like_emit_rows(monkeypatch) -> None:
     inserts: list[list[dict[str, Any]]] = []
+    settings_seen: list[dict[str, Any]] = []
 
     class _CH:
-        async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
+        async def insert(
+            self, table: str, rows: list[dict[str, Any]], settings: dict[str, Any]
+        ) -> None:
             inserts.append(rows)
+            settings_seen.append(settings)
 
     monkeypatch.setattr(audit, "get_client", lambda: _CH())
     subjects = [{"memory_key": "a", "memory_id": "1"}, {"memory_key": "b", "memory_id": "2"}]
@@ -137,6 +155,8 @@ async def test_emit_many_writes_rows_that_verify_like_emit_rows(monkeypatch) -> 
     )
     many, one = inserts
     assert len(many) == 2 and all(audit.row_matches_hash(r) for r in many + one)
+    # Written on every request, so both share parts with concurrent writers.
+    assert settings_seen == [batched_insert_settings(), batched_insert_settings()]
 
 
 @pytest.mark.asyncio
@@ -255,7 +275,10 @@ async def test_history_audits_every_served_version_of_a_row_with_a_high_version(
     monkeypatch.setattr(memory_repo, "list_history", _history)
     monkeypatch.setattr(memory_repo, "high_memory_ids", _high_ids)
     monkeypatch.setattr(audit, "emit_many", _emit_many)
+    note_budget_shape("")
     out = await curation.handle_memory_history(
         MemoryHistoryInput(org="o", namespace="n", agent="*", memory_key="k")
     )
     assert len(out.rows) == len(served) and audits == [audited]
+    # only a history that writes audit rows is held to the budget with their wait
+    assert current_budget_shape() == ("audited" if audited else "")

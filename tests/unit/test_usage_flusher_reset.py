@@ -49,7 +49,7 @@ async def test_next_recorder_starts_a_fresh_flusher(monkeypatch: pytest.MonkeyPa
     usage._reset_for_tests()
     await usage.record_usage_event(memory_id="m2", org="o", namespace="n", event_type="recall")
     assert usage._USAGE_FLUSH_TASK is not None and not usage._USAGE_FLUSH_TASK.done()
-    await usage._flush_usage_buffer_now()
+    await usage._flush_usage_buffer_now(background=True)
     assert [r["memory_id"] for _, rows in ch.inserted for r in rows] == ["m2"]
     usage._reset_for_tests()
 

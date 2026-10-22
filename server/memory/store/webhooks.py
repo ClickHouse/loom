@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import own_write_reads
+from server.core.ch_writes import batched_insert_settings, committed_insert_settings
 from server.core.repo_base import _CHClient, _default_client
 
 WEBHOOKS = "loom.memory_webhooks"
@@ -75,7 +76,6 @@ KEY_COLS = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
 # sort-key prefix.
 Hook = tuple[str, str, str]
 
-_COMMITTED = {"async_insert": 0, "wait_for_async_insert": 1}
 _HOOKS = "{hooks:Array(Tuple(String, String, String))}"
 # An event announced twice has two outbox rows of its webhook: keep the earliest.
 _EARLIEST = "ORDER BY org, namespace, webhook_id, occurred_at LIMIT 1 BY event_id"
@@ -105,7 +105,7 @@ def _whole(row: dict[str, Any], cols: tuple[str, ...]) -> dict[str, Any]:
 
 async def insert_webhook(row: dict[str, Any], *, ch: _CHClient | None = None) -> None:
     ch = ch or _default_client()
-    await ch.insert(WEBHOOKS, [_whole(row, WEBHOOK_COLS)], settings=_COMMITTED)
+    await ch.insert(WEBHOOKS, [_whole(row, WEBHOOK_COLS)], settings=committed_insert_settings())
 
 
 async def namespace_webhooks(
@@ -163,18 +163,24 @@ async def webhook_removed_since(
 
 
 async def insert_outbox(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> None:
-    """Outbox rows, committed before the call returns."""
+    """Outbox rows, written before the call returns."""
     if not rows:
         return
     ch = ch or _default_client()
-    await ch.insert(OUTBOX, [_whole(r, OUTBOX_COLS) for r in rows], settings=_COMMITTED)
+    await ch.insert(
+        OUTBOX, [_whole(r, OUTBOX_COLS) for r in rows], settings=batched_insert_settings()
+    )
 
 
 async def insert_attempts(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> None:
+    """Delivery attempts, committed: one worker writes them twice a pass, one insert
+    after the other, so they never share a part."""
     if not rows:
         return
     ch = ch or _default_client()
-    await ch.insert(ATTEMPTS, [_whole(r, ATTEMPT_COLS) for r in rows], settings=_COMMITTED)
+    await ch.insert(
+        ATTEMPTS, [_whole(r, ATTEMPT_COLS) for r in rows], settings=committed_insert_settings()
+    )
 
 
 async def due_events(
@@ -282,7 +288,7 @@ async def mark_dead(
             "ON a.event_id = o.event_id "
             "WHERE ifNull(a.event_id, '') = '' OR a.status IN ('pending', 'leased')",
             params=params,
-            settings=_COMMITTED,
+            settings=committed_insert_settings(),
         )
 
 

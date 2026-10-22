@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.ch_writes import async_insert_settings
 from server.core.datetimes import as_aware_utc, naive_utc_now, parse_iso_dt, to_naive_utc
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
@@ -82,9 +83,9 @@ FOLLOW_ROWS = "triples_follow_rows"
 # FOLLOW_ROWS. Its own name, since an older build replays FOLLOW_ROWS without checking
 # that the loser is still retired, and leaves a name it does not know active.
 FOLLOW_OWED = "triples_follow_owed"
-# A FOLLOW_OWED intent is committed right before its supersede, and its writer records
-# and follows the retirement itself: the repair leaves it this long, so the two never
-# write the record side by side.
+# A FOLLOW_OWED intent is written (a waited async insert) right before its supersede,
+# and its writer records and follows the retirement itself: the repair leaves it this
+# long, so the two never write the record side by side.
 FOLLOW_OWED_GRACE_S = 600  # not a setting: protocol timing between writer and repair
 # Triples a follow closed but could not re-check for a live row holding them.
 TRIPLES_REOPEN = "triples_reopen"
@@ -145,16 +146,16 @@ def projection_failure_row(
 
 
 async def insert_projection_failures(rows: list[dict[str, Any]], *, ch: Any | None = None) -> None:
-    """Append `projection_failure_row`s in one committed insert. Callers wrap this
+    """Append `projection_failure_row`s in one waited async insert. Callers wrap this
     helper in their own fail-open guard."""
     if not rows:
         return
     await (ch or get_client()).insert(
         "loom.memory_projection_failures",
         rows,
-        # Committed: the row is the only record of the lost projection, and a
+        # Waited for: the row is the only record of the lost projection, and a
         # fire-and-forget buffer dies with the replica that holds it.
-        settings={"async_insert": 1, "wait_for_async_insert": 1},
+        settings=async_insert_settings(),
     )
 
 

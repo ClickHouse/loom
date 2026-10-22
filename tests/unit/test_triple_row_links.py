@@ -8,9 +8,11 @@ from typing import Any
 
 import pytest
 
+from server.core.ch_writes import async_insert_settings
 from server.core.hashing import sha256_value
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
 from server.memory.app.projections import write_entity_triples
+from server.settings import settings
 
 # What ClickHouse reads back as a fact's newest open row when it has none.
 _NO_OPEN_ROW = (None, datetime(1970, 1, 1))
@@ -19,9 +21,11 @@ _NO_OPEN_ROW = (None, datetime(1970, 1, 1))
 class _CH:
     def __init__(self) -> None:
         self.inserts: dict[str, list[dict[str, Any]]] = {}
+        self.settings: dict[str, Any] = {}
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         self.inserts[table] = rows
+        self.settings[table] = settings
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         return []
@@ -329,13 +333,18 @@ async def test_a_bulk_write_reconciles_only_the_rows_it_revised(monkeypatch) -> 
     assert asked == ["id-old"] and closed == ["id-old"]
 
 
-async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypatch) -> None:
+@pytest.mark.parametrize("switch", [True, False])
+async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(
+    monkeypatch, switch: bool
+) -> None:
     # A retirement's closes are mutations: the Undo's two weight reads apply them on
     # the fly instead of waiting for them, and its markers keep a stated end still
     # to come. Rome was stored before Berlin, so Berlin's marker is the later.
     from types import SimpleNamespace
 
     from server.memory.app import graph_holders, graph_undo
+
+    monkeypatch.setattr(settings, "ch_batched_inserts", switch)
 
     restored = datetime(2026, 10, 15, 9, 0, 0, 123456)
     stored = datetime(2026, 10, 1)
@@ -403,6 +412,9 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
     ]
     assert all(m["adapter_name"] == "row-restore" and m["co_occur"] == 0 for m in markers)
     assert [e["valid_to"] for e in ch.inserts["loom.entity_edges"]] == [until]
+    # The Undo markers are waited async inserts on the batched bounds whatever the switch.
+    expected = async_insert_settings()
+    assert ch.settings == {"loom.entity_triples": expected, "loom.entity_edges": expected}
     # The repair runs the normal rule, each value seen at its marker.
     ((restated, at),) = repaired
     assert at == restored
@@ -410,6 +422,39 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
         ("rome", restored),
         ("berlin", later),
     ]
+
+
+@pytest.mark.parametrize("switch", [True, False])
+async def test_a_follow_plans_successors_are_waited_inserts_on_the_batched_bounds(
+    monkeypatch, switch: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.app.triple_projections import write_follow_plan
+    from server.memory.domain import triples_follow_rows as tfr
+
+    monkeypatch.setattr(settings, "ch_batched_inserts", switch)
+    successor = tfr.Successor(
+        subject="user",
+        relation="live_in",
+        object="berlin",
+        memory_key="home",
+        valid_from=None,
+        confidence=1.0,
+        provenance="extracted",
+        memory_id="m2",
+        content_sha256="sha",
+        user_id="u",
+    )
+    ch = _CH()
+    scope = SimpleNamespace(org="o", namespace="ns")
+    await write_follow_plan(scope, tfr.FollowPlan(closes=[], inserts=[successor]), ch=ch)
+    expected = async_insert_settings()
+    assert ch.settings == {
+        "loom.entity_triple_memories": expected,
+        "loom.entity_triple_rows": expected,
+        "loom.entity_triples": expected,
+    }
 
 
 async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeypatch) -> None:

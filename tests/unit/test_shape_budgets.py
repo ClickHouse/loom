@@ -40,7 +40,7 @@ def test_an_unpriced_shape_falls_back_to_the_base_budget():
 
 def test_an_operation_without_shapes_is_unaffected():
     note_budget_shape("ranked")
-    assert declared_budget_ms("memory.get", 400) == 400
+    assert declared_budget_ms("memory.search", 400) == 400
     assert declared_budget_ms("no.such.op", 400) == 400
 
 
@@ -54,6 +54,37 @@ def test_note_is_bounded_and_clears():
 def test_code_symbol_prices_the_ranked_and_brief_shapes():
     op = next(o for o in ALL_OPERATIONS if o.name == "code.symbol")
     assert op.shape_budgets_p99_ms == {"ranked": 3000, "uses_brief": 1500}
+
+
+@pytest.mark.parametrize(
+    ("op_name", "shape"),
+    [
+        ("memory.get", "audited"),
+        ("memory.get_by_id", "audited"),
+        ("memory.bulk_get", "audited"),
+        ("memory.history", "audited"),
+        ("memory.evidence", "audited"),
+        ("memory.delete", "webhook"),
+        ("memory.delete_version", "webhook"),
+        ("memory.update", "webhook"),
+        ("memory.update_by_id", "webhook"),
+        ("memory.bulk_set", "webhook"),
+        ("memory.restore", "webhook"),
+        ("memory.restore", "undo"),
+        ("conversation.save_message", "rewrite"),
+    ],
+)
+def test_a_memory_op_prices_its_conditional_insert_wait_as_a_shape(op_name, shape):
+    # one waited insert only some calls make (an audit row of a high read or an Undo,
+    # an outbox row of a webhook namespace, a rewritten turn) adds
+    # ch_batched_insert_wait_max_ms to the calls that make it
+    from server.settings import Settings
+
+    op = next(o for o in ALL_OPERATIONS if o.name == op_name)
+    wait_ms = Settings.model_fields["ch_batched_insert_wait_max_ms"].default
+    assert op.shape_budgets_p99_ms[shape] == op.budget_p99_ms + wait_ms
+    note_budget_shape(shape)
+    assert declared_budget_ms(op_name, op.budget_p99_ms) == op.budget_p99_ms + wait_ms
 
 
 def test_every_shape_budget_is_at_least_the_base_budget():
@@ -70,7 +101,7 @@ async def test_catalogue_lists_shape_budgets():
 
     rows = {r["name"]: r for r in await list_operations()}
     assert rows["code.symbol"]["shape_budgets_p99_ms"] == {"ranked": 3000, "uses_brief": 1500}
-    assert rows["memory.get"]["shape_budgets_p99_ms"] == {}
+    assert rows["memory.search"]["shape_budgets_p99_ms"] == {}
 
 
 @pytest.mark.asyncio

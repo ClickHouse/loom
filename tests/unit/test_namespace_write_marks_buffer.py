@@ -13,6 +13,7 @@ import pytest
 
 from server.core import namespace_write_marks as m
 from server.core import request_tail
+from server.core.ch_writes import committed_insert_settings
 from tests.unit.cross_replica_fake import in_request
 
 
@@ -265,7 +266,7 @@ def test_a_process_start_moves_the_all_orgs_mark_committed() -> None:
     ch = _CH()
     asyncio.run(m.mark_process_start(ch=ch))
     ((table, rows, settings),) = ch.inserts
-    assert table == m.TABLE and settings == {"async_insert": 0, "wait_for_async_insert": 1}
+    assert table == m.TABLE and settings == committed_insert_settings()
     assert [(r["org"], r["namespace"], r["plane"]) for r in rows] == [("*", "*", "restart")]
 
 

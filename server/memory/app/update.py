@@ -47,6 +47,7 @@ from server.memory.domain.memory_types import is_embedded
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
+from server.observability.budget_shape import note_budget_shape
 
 if TYPE_CHECKING:
     from server.memory.store import MemoryRow
@@ -618,6 +619,14 @@ async def _update_live_row(
         return await _write_revision(input, head, ch, op=op)
 
 
+# Its own function: _write_revision is at the function-length gate's 50 statements.
+async def _announce_revised(memory_row: dict[str, Any]) -> None:
+    """The `memory.revised` event, noted as the "webhook" budget shape when it sent
+    outbox rows."""
+    if await webhooks.announce([("memory.revised", memory_row)]):
+        note_budget_shape("webhook")
+
+
 async def _write_revision(
     input: Any, existing: MemoryRow, ch: Any, *, op: str
 ) -> MemoryUpdateByIdOutput:
@@ -751,7 +760,7 @@ async def _write_revision(
         if not isinstance(memory_done, BaseException):
             # The row is in: announce it even when the rest of the write fails; a retry
             # writes and announces a new version.
-            await webhooks.announce([("memory.revised", memory_row)])
+            await _announce_revised(memory_row)
         for done in [memory_done, *others_done]:
             if isinstance(done, BaseException):
                 raise done

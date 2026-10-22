@@ -27,7 +27,8 @@ def test_an_op_reads_its_budget_from_the_table() -> None:
     by_name = {op.name: op for op in ALL_OPERATIONS}
     assert by_name["memory.search"].budget_p99_ms == OP_BUDGETS_P99_MS["memory.search"]
     assert by_name["code.symbol"].shape_budgets_p99_ms == OP_SHAPE_BUDGETS_P99_MS["code.symbol"]
-    assert by_name["memory.get"].shape_budgets_p99_ms == {}
+    assert by_name["memory.get"].shape_budgets_p99_ms == OP_SHAPE_BUDGETS_P99_MS["memory.get"]
+    assert by_name["memory.search"].shape_budgets_p99_ms == {}
 
 
 def test_a_long_poll_budget_is_its_wait_plus_three_seconds() -> None:

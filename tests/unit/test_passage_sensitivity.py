@@ -231,6 +231,7 @@ async def test_memory_get_leaves_a_vectorless_neighbour_out_and_audits_its_own_r
     from server.memory.api.models_crud import MemoryGetInput
     from server.memory.app import handlers
     from server.observability import audit
+    from server.observability.budget_shape import current_budget_shape, note_budget_shape
 
     tail = "Zq9" * 30 + " for the export job"
     rows = [
@@ -255,12 +256,13 @@ async def test_memory_get_leaves_a_vectorless_neighbour_out_and_audits_its_own_r
             MemoryGetInput(org="o", namespace="n", agent="a", memory_key=key)
         )
 
+    note_budget_shape("")
     plain = await read("chunk:s:0")
     assert plain.value["content"] == _PLAIN and plain.value["neighbor_count"] == 0
-    assert audits == []
+    assert audits == [] and current_budget_shape() == ""
     held = await read("chunk:s:1")
     assert tail in held.value["content"]
-    assert audits == ["memory.sensitive_read"]
+    assert audits == ["memory.sensitive_read"] and current_budget_shape() == "audited"
 
 
 def test_high_spans_map_an_escaped_match_back_to_the_text() -> None:

@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
+from server.core.ch_writes import async_insert_settings
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
 from server.memory.app import graph_holders
@@ -623,7 +624,7 @@ async def _insert_successors(
         for ins in successors
         if ins.memory_id
     ]
-    settings = {"async_insert": 1, "wait_for_async_insert": 1}
+    settings = async_insert_settings()
     if provenance:
         await ch.insert("loom.entity_triple_memories", provenance, settings=settings)
     if links:

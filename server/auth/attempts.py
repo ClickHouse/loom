@@ -29,12 +29,10 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import sequential_reads
+from server.core.ch_writes import async_insert_settings
 from server.core.repo_base import _default_client
 
 TABLE = "loom.auth_attempts"
-# Async inserts that answer once flushed: the recount sees the row, and a
-# burst shares parts instead of writing one per attempt.
-_INSERT_SETTINGS = {"async_insert": 1, "wait_for_async_insert": 1}
 # Seconds a key seen over its limit is refused here without a query.
 _KNOWN_OVER_S = 10.0
 # Keys remembered at most; a spray of distinct keys must not grow it unbounded.
@@ -220,7 +218,8 @@ async def _insert(kinds_keys: list[tuple[str, str]], at: datetime) -> None:
     await _default_client().insert(
         TABLE,
         [{"kind": kind, "key_sha256": _digest(key), "at": at} for kind, key in kinds_keys],
-        settings=_INSERT_SETTINGS,
+        # Answered once written: the recount sees the row, and a burst shares parts.
+        settings=async_insert_settings(),
     )
 
 

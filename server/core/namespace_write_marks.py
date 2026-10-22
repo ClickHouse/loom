@@ -16,6 +16,7 @@ from functools import partial
 from typing import Any
 
 from server.core.background import TaskSet
+from server.core.ch_writes import async_insert_settings, committed_insert_settings
 from server.core.datetimes import as_aware_utc as _utc
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
@@ -134,8 +135,8 @@ async def flush_now(*, ch: _CHClient | None = None) -> int:
     try:
         ch = ch or _default_client()
         # Batched server-side with every other process's marks: one part per
-        # busy interval, not one per flush.
-        await ch.insert(TABLE, rows, settings={"async_insert": 1, "wait_for_async_insert": 1})
+        # busy interval, not one per flush. No request waits on the timer's flush.
+        await ch.insert(TABLE, rows, settings=async_insert_settings(background=True))
     except Exception as e:  # noqa: BLE001 — telemetry-grade write; the marks stay buffered
         log.warning("namespace_write_marks flush failed (non-fatal, %d rows): %s", len(rows), e)
         _arm()
@@ -163,7 +164,7 @@ async def mark_process_start(*, ch: _CHClient | None = None) -> None:
     }
     tag = query_tag_var.set("namespace_write_marks.process_start")
     try:
-        await ch.insert(TABLE, [row], settings={"async_insert": 0, "wait_for_async_insert": 1})
+        await ch.insert(TABLE, [row], settings=committed_insert_settings())
     except Exception as e:  # noqa: BLE001 — a missed start mark never blocks boot
         log.warning("namespace_write_marks: process-start mark failed (non-fatal): %s", e)
     finally:
@@ -326,6 +327,7 @@ async def bump(
                     "last_write": naive_utc_now(),
                 }
             ],
+            settings=committed_insert_settings(),
         )
     except Exception as e:  # noqa: BLE001 — telemetry-grade write
         log.warning("namespace_write_marks bump failed (%s/%s/%s): %s", org, namespace, plane, e)
