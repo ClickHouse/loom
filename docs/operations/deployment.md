@@ -514,11 +514,11 @@ upgrading the server does not change existing tables:
 
    Start no erasure while a line runs with `mode=--yes` (`erasure.request`,
    `collection.delete`, a repository retire), and turn the namespace GC worker off
-   (`loom settings set namespace_gc_worker_enabled false`, back to `true` after the swap).
-   The copy is taken before the erasure and the swap puts it live, so the erased rows come
-   back. Before the first `--yes` line, note `SELECT now()` on the same ClickHouse as
-   `<start>`. After the swap, list the erasures that ran during it, wait for any still
-   running to finish, and request each one again:
+   (`LOOM_NAMESPACE_GC_WORKER_ENABLED=false` on the workers, read at start, until the
+   swap). The copy is taken before the erasure and the swap puts it live, so the erased
+   rows come back. Before the first `--yes` line, note `SELECT now()` on the same
+   ClickHouse as `<start>`. After the swap, list the erasures that ran during it, wait for
+   any still running to finish, and request each one again:
 
    ```sql
    SELECT id, org, scope_type, scope_value, status FROM loom.erasure_requests FINAL
