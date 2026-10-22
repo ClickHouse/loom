@@ -5,6 +5,7 @@ the sort-key tool's do."""
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -55,12 +56,24 @@ class _CH:
         self.queries: list[str] = []
         self.sequence: list[str] = []  # every query and command, in order
         self.query_settings: list[tuple[str, dict[str, Any]]] = []
+        self.read_hosts: dict[
+            str, str
+        ] = {}  # a replica other than "h" answers reads naming the key
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _R:
-        p = parameters or {}
         self.queries.append(sql)
         self.sequence.append(sql)
         self.query_settings.append((sql, dict(settings or {})))
+        return self._answer(sql, parameters or {})
+
+    def _answer(self, sql: str, p: dict[str, Any]) -> _R:
+        if sql == "SELECT hostName()":
+            return _R([("h",)])
+        wrap = "SELECT hostName(), groupArray(tuple(*)) FROM ("
+        if sql.startswith(wrap):
+            inner = sql.removeprefix(wrap).removesuffix(")")
+            host = next((h for k, h in self.read_hosts.items() if k in inner), "h")
+            return _R([(host, self._answer(inner, p).result_rows)])
         if sql == CODEC_SETTINGS_SQL:
             return _R(self.codec_rows)
         if "toUnixTimestamp(metadata_modification_time)" in sql:
@@ -292,7 +305,7 @@ def test_a_repair_names_the_diverged_keys_as_literals() -> None:
     cmds: list[str] = []
     job.q = lambda sql, **_: [("o", "n")] * (vcr.REPAIR_BATCH + 1)  # type: ignore[method-assign]
     job.cmd = lambda sql, **_: cmds.append(sql)  # type: ignore[method-assign]
-    n = job.repair_into("t_rebuild", "t", "SELECT *", "created_at", ["org", "namespace"])
+    n = job.repair_into("SELECT *", "created_at", ["org", "namespace"])
     assert n == vcr.REPAIR_BATCH + 1 and len(cmds) == 2
     assert all("IN (('o', 'n')" in c and "SELECT" not in c.split(" IN ", 1)[1] for c in cmds)
 
@@ -334,7 +347,8 @@ def test_a_chain_runs_only_where_suspicious_codecs_can_be_on(chain: str, capsys:
 
 @pytest.mark.parametrize("codec", STATES)
 def test_a_rollback_sends_the_codec_setting_only_where_it_is_writable(codec: str) -> None:
-    """The way back to the plain layout works wherever the setting stands now."""
+    """The way back to the plain layout works wherever the setting stands now, and its
+    catch-up copy runs under the full copy's limit, not the gate reads' timeout."""
     coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
     ch = _CH(
         memory_chunks={"ddl": coded, "rows": 5, "uuid": "a"}, memory_chunks_pre_rebuild=_live()
@@ -343,7 +357,11 @@ def test_a_rollback_sends_the_codec_setting_only_where_it_is_writable(codec: str
     assert _run(ch, "--rollback", "--yes") == tr.OK
     copies = [st for s, st in ch.sent if s.startswith("INSERT")]
     assert copies and all(
-        st == {"max_execution_time": 1800, **({"enable_quantized_codec": 1} if SENT[codec] else {})}
+        st
+        == {
+            "max_execution_time": vcr.COPY_EXECUTION_TIME_S,
+            **({"enable_quantized_codec": 1} if SENT[codec] else {}),
+        }
         for st in copies
     )
 
@@ -664,3 +682,48 @@ def test_an_existing_twin_lock_refuses_before_width_scans() -> None:
     ch = _CH(memory_chunks=_live(), memory_chunks_rebuild=_live())
     assert _run(ch, "--yes") == tr.REFUSED
     assert not any("GROUP BY w" in q for q in ch.queries)
+
+
+def test_a_failed_postcondition_names_only_the_rollback_and_keeps_the_copy(capsys: Any) -> None:
+    """After exit 7 the rollback copy is the only copy of the change: the next step names
+    --rollback alone, and --drop-pre-rebuild refuses while the copy and the live table differ."""
+    ch = _CH(memory_chunks=_live())
+    ch.cons_first = [(0, 0, 0), (0, 0, 0)]  # the two gate reads before the swap
+    ch.cons = (1, 0, 0)
+    assert _run(ch, "--yes") == tr.POSTCONDITION
+    summary = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])
+    assert "--rollback --yes" in summary["next"] and "--drop-pre-rebuild" not in summary["next"]
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+    assert "memory_chunks_pre_rebuild" in ch.t
+    assert not any(c.startswith("DROP TABLE") for c in ch.commands)
+    out = capsys.readouterr().out
+    assert "loom.memory_chunks_pre_rebuild is kept" in out and "--rollback --yes" in out
+    ch.cons = (0, 0, 0)  # the two tables match: the copy can go
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.OK
+    assert "memory_chunks_pre_rebuild" not in ch.t
+
+
+REPLICATED = ARRAY.replace(
+    "ReplacingMergeTree(created_at)",
+    "ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}', '{replica}', created_at)",
+)
+
+
+def test_a_gate_read_on_another_replica_stops_the_swap(capsys: Any) -> None:
+    """SYSTEM SYNC REPLICA syncs only the replica that answers it: on ReplicatedMergeTree a
+    consistency read that another replica answers fails the gate."""
+    ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
+    ch.read_hosts = {"FULL OUTER JOIN": "h2"}
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    out = capsys.readouterr().out
+    assert "ran on h2, not on h" in out and "connect directly to one replica" in out
+
+
+def test_a_postcondition_read_on_another_replica_fails_it(capsys: Any) -> None:
+    ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
+    ch.read_hosts = {"memory_chunks_pre_rebuild": "h2"}
+    assert _run(ch, "--yes") == tr.POSTCONDITION
+    out = capsys.readouterr().out
+    assert "POSTCONDITION FAILED: a read after the drain ran on h2" in out
+    assert "--rollback --yes" in json.loads(out.rsplit("summary ", 1)[1])["next"]

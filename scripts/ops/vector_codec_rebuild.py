@@ -54,7 +54,11 @@ at 1 is never sent), every replica writable, the `SYSTEM FLUSH ASYNC INSERT QUEU
 written in the last hour with an empty vector in the named columns (writers'
 fixed-length placeholders must be deployed first: a coded column rejects an
 empty vector). ReplicatedMergeTree runs connect directly to one replica throughout
-the run so the drain and later checks use the same replica.
+the run so the drain and later checks use the same replica: the drain records the
+replica that answers, and a consistency or width read on another one fails the run.
+
+`--drop-pre-rebuild` after a swap checks the rollback copy against the live table as
+the postcondition does, and refuses (keeping the copy) when the live table lacks a change.
 
 The twin is the run's lock: an existing twin refuses the run unless
 `--reuse` (continue from it) or `--restart` (drop it and copy again), and the
@@ -111,6 +115,8 @@ from server.core.schema.vector_codec_ddl import (
 # `product` take their own arguments and are not a rebuild target).
 CODEC_METHODS: tuple[str, ...] = ("rabitq", "turboquant", "int8")
 COPY_RECEIVE_TIMEOUT_S = 7200
+# The full copy and the rollback's catch-up copy run under this limit, below the read timeout.
+COPY_EXECUTION_TIME_S = 7000
 # How far above the exact 20th distance a twin hit may read and still count.
 DISTANCE_TOLERANCE = 1e-6
 COUNT_SETTLE_ATTEMPTS = 8
@@ -118,6 +124,10 @@ COUNT_SETTLE_SLEEP_S = 15
 # Mutation timestamps come from other replicas; allow up to one minute of clock skew.
 # not a setting: a bound on replica clock skew, not an operator knob
 CLOCK_SKEW_MARGIN_S = 60
+KEEP_AND_ROLL_BACK = (
+    "Keep writers stopped and run --rollback --yes, which puts the old table, the change "
+    "included, back in"
+)
 # A codec clause with one level of nested parentheses: CODEC(Quantized('rabitq', 3072, 0), LZ4).
 _CODEC = r"CODEC\((?:[^()]|\([^()]*\))*\)"
 
@@ -431,6 +441,10 @@ def replicas_source(cluster: str) -> Callable[[str], str]:
     return lambda t: f"clusterAllReplicas('{cluster}', system.{t})"
 
 
+class HostMoved(RuntimeError):
+    """A read after the drain was answered by another replica than the one it synchronized."""
+
+
 class VectorRebuild:
     def __init__(self, ch: Any, args: argparse.Namespace, client: Any = None) -> None:
         self.ch, self.a = ch, args
@@ -447,6 +461,8 @@ class VectorRebuild:
         self.fin = ""  # ' FINAL' where the live table is a ReplacingMergeTree
         self.since = 0  # the server's Unix time before the preflight's mutation check
         self.reads: dict[str, Any] = {}  # settings every read takes; sequential after the drain
+        self.host = ""  # the replica the drain synchronized, on a ReplicatedMergeTree engine
+        self.rollback_only = False  # a check found what only the rollback copy holds
 
     # -- small reads -------------------------------------------------------
     def q(self, sql: str, **st: Any) -> list[Any]:
@@ -459,6 +475,20 @@ class VectorRebuild:
 
     def cmd(self, sql: str, **st: Any) -> None:
         self.ch.command(sql, settings=st or None)
+
+    def q_drained(self, sql: str, **st: Any) -> list[Any]:
+        """The rows of `sql`, read with the replica that answers it; raise HostMoved when
+        it is not the replica the drain synchronized (only a ReplicatedMergeTree records one)."""
+        if not self.host:
+            return self.q(sql, **st)
+        ((host, rows),) = self.q(f"SELECT hostName(), groupArray(tuple(*)) FROM ({sql})", **st)
+        if host != self.host:
+            raise HostMoved(
+                f"a read after the drain ran on {host}, not on {self.host}, the replica "
+                "SYSTEM SYNC REPLICA synchronized; connect directly to one replica and rerun"
+            )
+        # a server that names tuple elements returns each row as a dict
+        return [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in rows]
 
     @cached_property
     def codec(self) -> CodecSettings:
@@ -523,9 +553,15 @@ class VectorRebuild:
         return self.abort.exists()
 
     def report_state(self) -> str:
+        run = f"python -P -m scripts.ops.vector_codec_rebuild --table {self.t} --columns {','.join(self.cols)}"
+        if self.rollback_only:
+            return (
+                f"loom.{self.pre} holds a change the new table lacks: keep writers stopped and "
+                f"run `{run} --rollback --yes`; do not drop loom.{self.pre}"
+            )
         return tr.guidance(
             self.t,
-            f"python -P -m scripts.ops.vector_codec_rebuild --table {self.t} --columns {','.join(self.cols)}",
+            run,
             self.target_state(self.t),
             self.exists(self.twin),
             self.target_state(self.pre),
@@ -574,7 +610,10 @@ class VectorRebuild:
             return why
         if why := self.drain_refusal(parse_engine(ddl)[0]):
             return why
-        return self.width_refusal(ddl)
+        try:
+            return self.width_refusal(ddl)
+        except HostMoved as e:
+            return str(e)
 
     def mutation_refusal(self) -> str:
         """A stopped writer can leave mutations running on ClickHouse."""
@@ -597,12 +636,12 @@ class VectorRebuild:
         """The server's Unix time."""
         return int(self.q("SELECT toUnixTimestamp(now())")[0][0])
 
-    def twin_metadata_time(self) -> int:
-        """The server's Unix time when the reused twin was created; source mutations since
-        then count against the swap."""
+    def metadata_time(self, name: str) -> int:
+        """The server's Unix time when `loom.<name>` was created (for the twin, before and
+        after the swap); source mutations since then count against it."""
         sql = (
             "SELECT toUnixTimestamp(metadata_modification_time) FROM system.tables "
-            f"WHERE database = currentDatabase() AND name = '{self.twin}'"
+            f"WHERE database = currentDatabase() AND name = '{name}'"
         )
         return int(self.q(sql)[0][0])
 
@@ -619,7 +658,7 @@ class VectorRebuild:
 
         # a coded column's codec rejects any other width, so only plain columns are scanned
         for c in [c for c in self.cols if vector_dim(ddl, c) is None]:
-            widths = self.q(mixed_width_sql(table or self.t, c, self.fin, dim=self.dim))
+            widths = self.q_drained(mixed_width_sql(table or self.t, c, self.fin, dim=self.dim))
             if widths:
                 found = ", ".join(f"width {w}: {n} row(s)" for w, n in widths)
                 return (
@@ -720,8 +759,11 @@ class VectorRebuild:
         row = tr.table_row(self.ch, self.twin)
         return row is not None and row[1] == self.twin_uuid
 
-    def delta_into(self, dst: str, src: str, sel: str, version: str | None, key: list[str]) -> int:
-        """Copy the rows of `src` that `dst` lacks: newer versions, or absent keys."""
+    def delta_into(
+        self, dst: str, src: str, sel: str, version: str | None, key: list[str], limit_s: float
+    ) -> int:
+        """Copy the rows of `src` that `dst` lacks (newer versions, or absent keys), the
+        INSERT under `limit_s` seconds."""
         if version:
             above = self.q(f"SELECT max({version}) FROM loom.{dst}")[0][0]
             if above is None:
@@ -736,15 +778,15 @@ class VectorRebuild:
                 f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE {cond}",
                 **self.codec_on(),
                 **self.reads,
-                max_execution_time=self.a.statement_timeout_s,
+                max_execution_time=limit_s,
             )
             self.rows_copied += n
         return n
 
-    def repair_into(self, dst: str, src: str, sel: str, version: str | None, key: list[str]) -> int:
-        """Copy the rows of `src` for every key `dst` lacks or holds at an older version; a
-        key that differs only by content or row count is left for the gate to fail.
-        `delta_into` takes the rows above `dst`'s highest version, which misses a row
+    def repair_into(self, sel: str, version: str | None, key: list[str]) -> int:
+        """Copy the live table's rows for every key the twin lacks or holds at an older
+        version; a key that differs only by content or row count is left for the gate to
+        fail. `delta_into` takes the rows above the twin's highest version, which misses a row
         written during a long copy with a version below a row the copy already took. The
         keys come back to the client and each INSERT names them as literals: on a shared
         cluster an `IN (subquery)` INSERT runs the subquery on other replicas, which a
@@ -753,8 +795,8 @@ class VectorRebuild:
         vsel = f", {version}" if version else ""
         newer = f"s.{version} > t.{version} OR t.__present = 0" if version else "t.__present = 0"
         diverged = (
-            f"SELECT {ident} FROM (SELECT {ident}{vsel} FROM loom.{src}{fin}) AS s "
-            f"LEFT JOIN (SELECT {ident}{vsel}, 1 AS __present FROM loom.{dst}{fin}) AS t "
+            f"SELECT {ident} FROM (SELECT {ident}{vsel} FROM loom.{self.t}{fin}) AS s "
+            f"LEFT JOIN (SELECT {ident}{vsel}, 1 AS __present FROM loom.{self.twin}{fin}) AS t "
             f"USING ({ident}) WHERE {newer}"
         )
         keys = self.q(diverged, join_use_nulls=0)
@@ -762,7 +804,7 @@ class VectorRebuild:
             batch = keys[i : i + REPAIR_BATCH]
             lits = ", ".join("(" + ", ".join(key_literal(v) for v in k) + ")" for k in batch)
             self.cmd(
-                f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE ({ident}) IN ({lits})",
+                f"INSERT INTO loom.{self.twin} {sel} FROM loom.{self.t} WHERE ({ident}) IN ({lits})",
                 **self.codec_on(),
                 max_execution_time=self.a.statement_timeout_s,
             )
@@ -788,15 +830,15 @@ class VectorRebuild:
                 log("monitor err", str(e)[:120])
 
     def consistent(
-        self, version: str | None, key: list[str], src: str | None = None, twin: str | None = None
+        self, version: str | None, key: list[str], source: str = "", copy: str = ""
     ) -> tuple[int, int, int]:
-        """(mismatched, source_only, twin_only) keys of `src` (the live table by default)
-        against `twin` (the twin by default), whose vectors are the rebuilt ones; `src`'s
-        vectors are hashed as the copy writes them."""
-        src, twin = src or self.t, twin or self.twin
+        """(mismatched, source_only, copy_only) keys of `source` (the live table by default)
+        against `copy` (the twin by default), whose vectors are the rebuilt ones; the
+        source's vectors are hashed as the copy writes them."""
+        source, copy = source or self.t, copy or self.twin
         hashed = [c for c in tr.insertable_columns(self.ch, self.t) if c not in self.cols]
-        sql = consistency_sql(src, twin, self.fin, version, key, hashed, self.cols, dim=self.dim)
-        row = self.q(sql, join_use_nulls=0)[0]
+        sql = consistency_sql(source, copy, self.fin, version, key, hashed, self.cols, dim=self.dim)
+        row = self.q_drained(sql, join_use_nulls=0)[0]
         return int(row[0]), int(row[1]), int(row[2])
 
     def gate_failure(
@@ -817,12 +859,16 @@ class VectorRebuild:
     def drain(self, engine: str) -> None:
         """Flush buffered inserts and synchronize this replica's parts.
 
-        ReplicatedMergeTree runs must stay on this replica; SharedMergeTree reads use
-        sequential consistency when a different replica serves a later request.
+        SYSTEM SYNC REPLICA syncs only the replica that answers it. On ReplicatedMergeTree
+        the run records that replica, and each later consistency and width read fails on
+        another one (HostMoved); SharedMergeTree reads use sequential consistency when a
+        different replica serves a later request.
         """
         self.cmd(f"SYSTEM FLUSH ASYNC INSERT QUEUE loom.{self.t}")
         if engine.startswith(("Replicated", "Shared")):
             self.cmd(f"SYSTEM SYNC REPLICA loom.{self.t}")
+        if engine.startswith("Replicated"):
+            self.host = str(self.q("SELECT hostName()")[0][0])
 
     def recall(self, ddl: str) -> list[float]:
         """Distance recall per probe: exact on the source vs the twin read as the legs read it."""
@@ -854,6 +900,13 @@ class VectorRebuild:
         return drec
 
     def copy_and_swap(self, ddl: str, twin_ddl: str) -> int:
+        try:
+            return self.copy_and_check(ddl, twin_ddl)
+        except HostMoved as e:
+            log(f"GATE FAILED: {e}; no swap")
+            return GATE_FAILED
+
+    def copy_and_check(self, ddl: str, twin_ddl: str) -> int:
         why, reused = self.create_twin(twin_ddl)
         if why:
             log("REFUSED:", why)
@@ -864,7 +917,7 @@ class VectorRebuild:
         sel = replace_select(self.cols, dim=self.dim)
         if self.aborted():
             raise Aborted("abort file present before the copy; the twin is left")
-        since = self.twin_metadata_time() if reused else self.since
+        since = self.metadata_time(self.twin) if reused else self.since
         if not reused:
             stop = threading.Event()
             threading.Thread(target=self.monitor, args=(stop,), daemon=True).start()
@@ -874,7 +927,7 @@ class VectorRebuild:
                     f"INSERT INTO loom.{self.twin} {sel} FROM loom.{self.t}",
                     **self.codec_on(),
                     max_insert_threads=4,
-                    max_execution_time=7000,
+                    max_execution_time=COPY_EXECUTION_TIME_S,
                     max_threads=8,
                 )
             finally:
@@ -894,11 +947,12 @@ class VectorRebuild:
         if not rows_settled(twin_n, src_final):
             log("GATE FAILED: the twin is short of rows")
             return GATE_FAILED
-        log("delta-1 rows into twin:", self.delta_into(self.twin, self.t, sel, version, key))
+        limit = self.a.statement_timeout_s
+        log("delta-1 rows into twin:", self.delta_into(self.twin, self.t, sel, version, key, limit))
         cons = self.consistent(version, key)
         log("consistency (mismatched, source_only, twin_only):", cons)
         if cons[0] or cons[1]:
-            log("repair keys:", self.repair_into(self.twin, self.t, sel, version, key))
+            log("repair keys:", self.repair_into(sel, version, key))
             cons = self.consistent(version, key)
             log("consistency after repair:", cons)
         diverged = (
@@ -931,7 +985,7 @@ class VectorRebuild:
         # the flush in swap_in then has nothing left to add after the checks below
         self.drain(engine)
         self.reads = dict(tr.CONSISTENT)
-        self.delta_into(self.twin, self.t, sel, version, key)
+        self.delta_into(self.twin, self.t, sel, version, key, limit)
         # writers and erasure must be stopped; check again that nothing landed during the gates
         if why := self.width_refusal(ddl):
             log(f"GATE FAILED: {why}; no swap")
@@ -973,34 +1027,38 @@ class VectorRebuild:
             log("POSTCONDITION FAILED: the names do not hold what the swap leaves")
             return POSTCONDITION
         if set(tr.columns(self.ch, self.t)) != set(tr.columns(self.ch, self.pre)):
+            self.rollback_only = True
             log("POSTCONDITION FAILED: the rollback copy's columns differ by name")
             return POSTCONDITION
         if self.a.require_patch_free:
             log("live patch parts after:", self.q(patch_parts_sql(self.t))[0][0])
-        # the rollback copy is the source as writers left it: the new table must match it,
-        # with no mutation since the copy (the gate saw none before the swap)
-        cons = self.consistent(version, key, src=self.pre, twin=self.t)
-        mutations = self.mutations_since(self.pre, since)
-        log("consistency after the swap:", cons, "mutations:", mutations)
-        if any(cons) or mutations:
-            log(
-                "POSTCONDITION FAILED: the source changed after the last check (mismatched, "
-                f"source-only and twin-only keys {cons}, {mutations} mutation(s) on "
-                f"loom.{self.pre}), and the new table may not hold the change. Keep writers "
-                "stopped and run --rollback --yes, which puts the old table, the change "
-                "included, back in"
-            )
-            return POSTCONDITION
-        # the hash zeroes a vector of another width on both sides, so an UPDATE to one
-        # after the last width check reads as consistent; the width read shows it
-        if why := self.width_refusal(self.ddl(self.pre), self.pre):
-            log(
-                f"POSTCONDITION FAILED: {why}. The change landed after the last check and the "
-                "new table holds it zeroed. Keep writers stopped and run --rollback --yes, "
-                "which puts the old table, the change included, back in"
-            )
+        if why := self.rollback_copy_change(version, key, since):
+            self.rollback_only = True
+            log(f"POSTCONDITION FAILED: {why}. {KEEP_AND_ROLL_BACK}")
             return POSTCONDITION
         return OK
+
+    def rollback_copy_change(self, version: str | None, key: list[str], since: int) -> str:
+        """Why the rollback copy may hold a change the live table lacks, or ''. After the
+        swap the rollback copy is the source as writers left it: the live table must match
+        it, with no mutation since `since` (the gate saw none before the swap)."""
+        try:
+            cons = self.consistent(version, key, source=self.pre, copy=self.t)
+            mutations = self.mutations_since(self.pre, since)
+            log("consistency against the rollback copy:", cons, "mutations:", mutations)
+            if any(cons) or mutations:
+                return (
+                    "the source changed after the last check (mismatched, source-only and "
+                    f"twin-only keys {cons}, {mutations} mutation(s) on loom.{self.pre}), and "
+                    "the new table may not hold the change"
+                )
+            # the hash zeroes a vector of another width on both sides, so an UPDATE to one
+            # after the last width check reads as consistent; the width read shows it
+            if why := self.width_refusal(self.ddl(self.pre), self.pre):
+                return f"{why}. The change landed after the last check and the new table holds it zeroed"
+        except HostMoved as e:
+            return str(e)
+        return ""
 
     def rollback(self) -> int:
         tr.print_target(self.ch, self.t)
@@ -1021,7 +1079,8 @@ class VectorRebuild:
         for i in range(2):  # the second pass: writes in flight at the exchange
             if i:
                 time.sleep(self.a.settle_s)
-            log("rows copied back:", self.delta_into(self.t, self.pre, sel, version, key))
+            n = self.delta_into(self.t, self.pre, sel, version, key, COPY_EXECUTION_TIME_S)
+            log("rows copied back:", n)
         try:
             self.cmd(f"SYSTEM START MERGES loom.{self.t}")
         except Exception as e:  # noqa: BLE001 - merges resume on the next restart anyway
@@ -1034,14 +1093,32 @@ class VectorRebuild:
         )
         return OK
 
+    def swapped_change(self) -> str:
+        """Why the rollback copy may hold a change the live table lacks, read after a drain
+        as the postcondition reads it, or ''. Writers stay stopped until the copy is
+        dropped, so the two tables still match."""
+        engine, version, key = parse_engine(self.ddl(self.pre))
+        self.fin = read_final(engine)
+        if why := self.drain_refusal(engine):
+            return why
+        self.reads = dict(tr.CONSISTENT)
+        # the live table is the run's twin, created when the copy started
+        return self.rollback_copy_change(version, key, self.metadata_time(self.t))
+
     def drop_pre(self) -> int:
         tr.print_target(self.ch, self.t)
         if not self.exists(self.pre):
             log(f"loom.{self.pre} is already gone")
             return OK
         self.dim = self.find_dim()
-        if not (self.target_state(self.t) or self.target_state(self.pre)):
+        live, pre = self.target_state(self.t), self.target_state(self.pre)
+        if not (live or pre):
             log(f"REFUSED: neither loom.{self.t} nor loom.{self.pre} has the target layout")
+            return REFUSED
+        # swapped and not rolled back: the rollback copy may be the only copy of a change
+        if live and not pre and (why := self.swapped_change()):
+            self.rollback_only = True
+            log(f"REFUSED: {why}; loom.{self.pre} is kept. {KEEP_AND_ROLL_BACK}")
             return REFUSED
         log(f"drop: loom.{self.pre} ({tr.row_count(self.ch, self.pre)} rows); cannot be undone")
         if not self.a.yes:
@@ -1092,7 +1169,10 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
     mode.add_argument(
         "--dry-run",
         action="store_true",
-        help="check preconditions, print the twin DDL, write nothing",
+        help=(
+            "check preconditions and print the twin DDL; runs the async-queue flush and "
+            "SYSTEM SYNC REPLICA once to check the grants, and writes nothing else"
+        ),
     )
     mode.add_argument("--rollback", action="store_true", help="exchange <t>_pre_rebuild back in")
     mode.add_argument("--drop-pre-rebuild", action="store_true", help="drop the rollback copy")

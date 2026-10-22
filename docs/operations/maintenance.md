@@ -220,13 +220,18 @@ in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-
 stopped and all in-flight writes drained. It refuses unfinished source mutations before
 copying, and never repairs the live table. Its ClickHouse user needs the
 `SYSTEM FLUSH ASYNC INSERT QUEUE` and `SYSTEM SYNC REPLICA` privileges on the table: the
-preflight runs both once and refuses (exit 3) without them. Where a gate fails (exit 5),
+preflight runs both once and refuses (exit 3) without them; `--dry-run` runs them too, so
+it lands queued rows in the table and, on a lagging replica, waits for the sync, and writes
+nothing else. Where a gate fails (exit 5),
 stop writes and erasures and rerun with `--restart`; a width refusal (exit 3) needs the
 re-embed below.
 Keep writers and erasure stopped until the rebuild finishes or is abandoned and
 every `<table>_rebuild` twin and `<table>_pre_rebuild` rollback copy is removed.
 Use `--drop-pre-rebuild --yes` to remove the rollback copy after validation or
-rollback, and `DROP TABLE loom.<table>_rebuild SYNC` to remove an abandoned twin.
+rollback, and `DROP TABLE loom.<table>_rebuild SYNC` to remove an abandoned twin. After a
+swap that was not rolled back, `--drop-pre-rebuild` first runs the postcondition's checks
+again (after the same drain) and refuses (exit 3), keeping the copy, when the live table
+lacks a change the rollback copy holds; `--rollback --yes` is then the next step.
 The erasure saga does not cover these copies.
 
 - **Width.** The target width of a plain column is the most frequent width among the
@@ -255,7 +260,10 @@ The erasure saga does not cover these copies.
 - **Before the swap.** The tool flushes the source's async insert queue (and, on a
   replicated engine, runs `SYSTEM SYNC REPLICA`, which syncs only the replica that answers
   it). For `ReplicatedMergeTree`, connect directly to one replica throughout the run so
-  all checks read that synchronized replica. Every later gate read and the last delta
+  all checks read that synchronized replica: the tool records the replica that answers
+  right after the sync, and a later consistency or width read that another replica
+  answers fails the gate (exit 5) or, after the swap, the postcondition (exit 7). Every
+  later gate read and the last delta
   use `select_sequential_consistency = 1`. On `SharedMergeTree` this covers acknowledged
   writes even if another replica serves the read. On `ReplicatedMergeTree` the setting
   only covers quorum inserts with `insert_quorum_parallel = 0`; it does not replace the
@@ -270,7 +278,7 @@ The erasure saga does not cover these copies.
   started (with `--reuse`, since the twin was created), less a minute for replica clocks.
 - **After the swap (exit 7).** The tool runs the consistency check again, the rollback
   copy as the source and the new table as the twin, with the same read settings and
-  replica as the last gate reads, and counts the rollback copy's mutations since the copy. A row added
+  replica check as the last gate reads, and counts the rollback copy's mutations since the copy. A row added
   or removed, a newer version, any change to a row's columns (a lightweight `UPDATE`
   included, merged or not) or an `ALTER UPDATE` after the last check is not in the new
   table, so the run fails its postcondition and names `--rollback --yes`, which puts the
@@ -278,13 +286,16 @@ The erasure saga does not cover these copies.
   sides, so the tool also reads the rollback copy's widths: an `UPDATE` that sets a vector
   of another width fails the postcondition the same way. A merge changes neither table's
   rows and passes. A write into the new table before the check reads as a key only there
-  and fails it too: keep writers stopped until the run ends.
+  and fails it too: keep writers stopped until the run ends. After exit 7 the next step
+  the tool prints names only `--rollback --yes`.
 
 `--statement-timeout-s` (default 1800, below 7200, the client's read timeout) caps each
-gate read, delta and repair; the copy itself runs under its own limit. Each width check,
-before the twin and again before the swap, reads every vector of a plain named column
-(under `FINAL` on a ReplacingMergeTree), and each consistency check reads every row of
-both tables, vectors included, so set the timeout to cover one full read of the table.
+gate read, delta and repair before the swap; the copy and the rollback's catch-up copy
+run under their own limit of 7000 seconds. Each width check (the preflight, before the
+swap, and on the rollback copy after it) reads every vector of a plain named column
+(under `FINAL` on a ReplacingMergeTree), and each consistency check (after the copy or
+the repair, before the swap, and after it) reads every row of both tables, vectors
+included, so set the timeout to cover one full read of the table.
 
 ## Disk pressure hygiene
 
