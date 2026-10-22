@@ -42,9 +42,13 @@ class _CH:
         self.uuids = iter(f"u{i}" for i in range(100))
         self.codec_rows = codec_rows("writable", "writable")
         self.delta = 0  # rows a delta finds above the destination's version
+        self.widths: list[tuple[int, int]] = []  # (width, rows) the width preflight finds
+        self.cons = (0, 0, 0)  # (mismatched, source_only, twin_only) the gate reads
+        self.queries: list[str] = []
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _R:
         p = parameters or {}
+        self.queries.append(sql)
         if sql == CODEC_SETTINGS_SQL:
             return _R(self.codec_rows)
         if sql.startswith("SHOW CREATE TABLE loom."):
@@ -68,7 +72,9 @@ class _CH:
         if "topK(1)" in sql:
             return _R([([DIM],)])
         if "FULL OUTER JOIN" in sql:
-            return _R([(0, 0, 0)])
+            return _R([self.cons])
+        if "GROUP BY w" in sql:
+            return _R(self.widths)
         if "ORDER BY rand()" in sql:
             return _R([("o", "n", [0.5] * DIM)])
         if "round(cosineDistance" in sql:
@@ -306,3 +312,42 @@ def test_a_rollback_sends_the_codec_setting_only_where_it_is_writable(codec: str
     assert copies and all(
         st == ({"enable_quantized_codec": 1} if SENT[codec] else {}) for st in copies
     )
+
+
+def test_vectors_of_another_width_refuse_before_the_twin_dry_run_included(capsys: Any) -> None:
+    """The copy turns a vector of another length into a zero vector, so the run refuses
+    while the rows Loom serves hold one; an empty vector stays a placeholder."""
+    ch = _CH(memory_chunks=_live())
+    ch.widths = [(768, 3), (3072, 1)]
+    assert _run(ch, "--dry-run") == tr.REFUSED and _writes(ch) == []
+    out = capsys.readouterr().out
+    assert f"embedding holds vectors of another width than {DIM}" in out
+    assert "3 rows of width 768, 1 rows of width 3072" in out and "re-embed" in out
+    preflight = [q for q in ch.queries if "GROUP BY w" in q]
+    assert preflight and all(" FINAL " in q and f"NOT IN (0, {DIM})" in q for q in preflight)
+    assert _run(ch, "--yes") == tr.REFUSED and _writes(ch) == []
+    ch.widths = []
+    assert _run(ch, "--yes") == tr.OK
+
+
+def test_rows_only_the_twin_holds_fail_the_gate(capsys: Any) -> None:
+    """A key erased from the source during the copy is still in the twin; the swap would
+    bring it back, so the run stops before the EXCHANGE and leaves the twin."""
+    ch = _CH(memory_chunks=_live())
+    ch.cons = (0, 0, 2)
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "memory_chunks_rebuild" in ch.t
+    out = capsys.readouterr().out
+    assert "2 keys are in the twin only" in out
+    assert "removed from the source during the copy" in out and "--restart" in out
+
+
+def test_the_recall_reads_rank_real_vectors_only() -> None:
+    """A zero placeholder's cosine distance is NaN and sorts last: left in, a namespace
+    with fewer than 20 real vectors would read recall 0."""
+    ch = _CH(memory_chunks=_live())
+    assert _run(ch, "--yes") == tr.OK
+    reads = [q for q in ch.queries if "round(cosineDistance" in q]
+    assert len(reads) == 2  # the exact read on the source and the twin read
+    assert all(f"length(embedding) = {DIM} AND embedding[1] != 0 ORDER BY" in q for q in reads)

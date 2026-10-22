@@ -488,7 +488,12 @@ flush never fails a request; a crash loses the queue.
   layout, and `scripts/ops/vector_codec_rebuild.py` applies the codec once the setting is on.
   ClickHouse Cloud holds the setting read-only at its default 0 until the operator enables
   it for the service with a settings-profile override; it then reads 1, still read-only,
-  and coded tables work. An existing table moves with the same tool.
+  and coded tables work. An existing table moves with the same tool. It refuses a table
+  whose served rows hold non-empty vectors of another width than the codec's (the copy
+  would zero them; re-embed them first), and it does not swap while the twin holds a key
+  the source no longer has (a row erased during the copy; rerun with `--restart` once
+  writes stop). Its recall gate ranks real vectors only, since a placeholder's cosine
+  distance is NaN.
 - **Codes-first reads.** When a column is coded and its table has no patch parts, reads
   send `vector_search_use_quantized_codes = 1` (`LOOM_VECTOR_SEARCH_QUANTIZED_CODES`): a
   pass over the codes keeps `LIMIT × LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER`

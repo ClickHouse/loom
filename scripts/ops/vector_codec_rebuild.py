@@ -33,6 +33,22 @@ The dimension comes from the live table: a coded column states it, a
 plain column's vectors show it (the most common length), and an empty table
 takes `LOOM_EMBEDDING_DIM`. Every named column must agree.
 
+The gates, each of which leaves the table as it is:
+
+- Widths (before the twin, `--dry-run` included): a named column holding
+  non-empty vectors of another length, among the rows Loom serves (under FINAL
+  on a ReplacingMergeTree), refuses the run with the widths and their row
+  counts, since the copy would replace them with zero vectors; re-embed those
+  rows first. An empty vector is copied as a zero placeholder.
+- Consistency: a key whose newest version differs, or that the source holds
+  and the twin lacks, is repaired key by key and fails the run if it remains.
+  A key only the twin holds fails it too: rows were removed from the source
+  during the copy (an erasure or delete) and the swap would bring them back;
+  stop writes and rerun with `--restart`.
+- Recall: both reads rank real vectors only (a zero placeholder's cosine
+  distance is NaN), and each probe's recall is over the exact neighbours it
+  found, at most 20.
+
 `--require-patch-free`: the twin-and-EXCHANGE also sheds the patch parts of
 past lightweight UPDATEs (`OPTIMIZE FINAL` / `APPLY PATCHES` do not). The flag
 logs the live table's active patch parts, refuses to EXCHANGE unless the twin
@@ -264,8 +280,24 @@ def parse_engine(ddl: str) -> tuple[str, str | None, list[str]]:
     return engine, version, [k.strip("`") for k in key]
 
 
+def read_final(engine: str) -> str:
+    """' FINAL' where the engine is a ReplacingMergeTree, so a read sees the rows Loom
+    serves; '' for a plain MergeTree. Pure."""
+    return " FINAL" if "Replacing" in engine else ""
+
+
+def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
+    """(width, rows) of the non-empty vectors in `column` whose length is not `dim`:
+    the copy would replace each with a zero vector. Pure."""
+    return (
+        f"SELECT length({column}) AS w, count() FROM loom.{table}{fin} "
+        f"WHERE length({column}) NOT IN (0, {int(dim)}) GROUP BY w ORDER BY w"
+    )
+
+
 def replace_select(columns: list[str], *, dim: int) -> str:
-    """The copy's SELECT: every named column padded to the fixed length."""
+    """The copy's SELECT: every named column padded to the fixed length (an empty vector
+    becomes a zero placeholder; the preflight refuses any other width)."""
 
     def vec(c: str) -> str:
         return f"if(length({c}) = {int(dim)}, {c}, {pad(dim)})"
@@ -284,8 +316,9 @@ def twin_read(column: str, lit: str, multiplier: float) -> tuple[str, dict[str, 
 
 
 def vector_filter(column: str, *, dim: int) -> str:
-    """The predicate that keeps placeholder rows out of a probe's top-20. Pure."""
-    return f"length({column}) = {int(dim)}"
+    """The predicate that keeps placeholder rows out of a probe's top-20: a placeholder
+    is all zeros, so its cosine distance is NaN and it would sort last. Pure."""
+    return f"length({column}) = {int(dim)} AND {column}[1] != 0"
 
 
 _CLUSTER_NAME = re.compile(r"[A-Za-z0-9_.-]+")
@@ -425,6 +458,15 @@ class VectorRebuild:
             log("rows written in the last hour with an empty vector:", n)
             if n:
                 return "recent rows carry an empty vector: add this table to placeholders.PLACEHOLDER_COLUMNS and deploy first"
+        fin = read_final(parse_engine(ddl)[0])
+        for c in self.cols:
+            widths = self.q(mixed_width_sql(self.t, c, fin, dim=self.dim), max_execution_time=1800)
+            if widths:
+                found = ", ".join(f"{n} rows of width {w}" for w, n in widths)
+                return (
+                    f"{c} holds vectors of another width than {self.dim} ({found}): the copy "
+                    "would zero them; re-embed those rows first"
+                )
         twin = tr.table_row(self.ch, self.twin)
         if twin is not None and not (self.a.reuse or self.a.restart):
             return (
@@ -607,8 +649,9 @@ class VectorRebuild:
         """Distance recall per probe: exact on the source vs the twin read as the legs read it."""
         vcol, dim = self.cols[0], self.dim
         # a fixed-length placeholder is all zeros: its cosine is NaN, never a probe
+        real = vector_filter(vcol, dim=dim)
         probes = self.q(
-            f"SELECT org, namespace, {vcol} FROM loom.{self.t} WHERE length({vcol}) = {dim} AND {vcol}[1] != 0 ORDER BY rand() LIMIT {self.a.probes}"
+            f"SELECT org, namespace, {vcol} FROM loom.{self.t} WHERE {real} ORDER BY rand() LIMIT {self.a.probes}"
         )
         src_v = exact_vector_expr(ddl, vcol)
         tol = DISTANCE_TOLERANCE
@@ -618,15 +661,16 @@ class VectorRebuild:
             scope = f"org='{org}' AND namespace='{ns}'"
             ex = self.q(
                 f"SELECT round(cosineDistance({src_v}, {lit}), 6) AS d FROM loom.{self.t}{fin} "
-                f"WHERE {scope} AND length({vcol}) = {dim} ORDER BY d LIMIT 20"
+                f"WHERE {scope} AND {real} ORDER BY d LIMIT 20"
             )
             dist, st = twin_read(vcol, lit, self.a.gate_fetch_multiplier)
             tw = self.q(
                 f"SELECT round({dist}, 6) FROM loom.{self.twin}{fin} "
-                f"WHERE {scope} AND {vector_filter(vcol, dim=dim)} ORDER BY {dist} LIMIT 20",
+                f"WHERE {scope} AND {real} ORDER BY {dist} LIMIT 20",
                 **st,
             )
             d20 = ex[-1][0] if ex else 0.0
+            # the denominator is the real neighbours the exact read found, at most 20
             drec.append(sum(1 for r in tw if r[0] <= d20 + tol) / max(1, len(ex)))
         return drec
 
@@ -637,7 +681,7 @@ class VectorRebuild:
             return REFUSED
         engine, version, key = parse_engine(ddl)
         log("engine", engine, "version column", version, "sorting key", key)
-        fin = " FINAL" if "Replacing" in engine else ""
+        fin = read_final(engine)
         sel = replace_select(self.cols, dim=self.dim)
         if self.aborted():
             raise Aborted("abort file present before the copy; the twin is left")
@@ -679,6 +723,13 @@ class VectorRebuild:
             log("consistency after repair:", cons)
         if cons[0] or cons[1]:
             log("GATE FAILED: the twin diverges; no swap")
+            return GATE_FAILED
+        if cons[2]:
+            log(
+                f"GATE FAILED: {cons[2]} keys are in the twin only: rows were removed from the "
+                "source during the copy (an erasure or delete), and the swap would bring them back; "
+                "no swap. Stop writes and rerun with --restart"
+            )
             return GATE_FAILED
         drec = self.recall(ddl, fin)
         if not drec:

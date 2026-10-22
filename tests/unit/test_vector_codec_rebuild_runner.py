@@ -207,7 +207,19 @@ def test_twin_read_is_the_codes_at_the_leg_multiplier() -> None:
         "vector_search_use_quantized_codes": 1,
         "vector_search_index_fetch_multiplier": 10.0,
     }
-    assert vcr.vector_filter("embedding", dim=3072) == "length(embedding) = 3072"
+    assert vcr.vector_filter("embedding", dim=3072) == (
+        "length(embedding) = 3072 AND embedding[1] != 0"
+    )
+
+
+def test_the_width_preflight_counts_other_non_empty_widths_as_loom_serves_them() -> None:
+    assert vcr.read_final(vcr.parse_engine(DDL)[0]) == " FINAL"
+    assert vcr.read_final("SharedMergeTree") == ""
+    assert vcr.mixed_width_sql("memory_chunks", "embedding", " FINAL", dim=3072) == (
+        "SELECT length(embedding) AS w, count() FROM loom.memory_chunks FINAL "
+        "WHERE length(embedding) NOT IN (0, 3072) GROUP BY w ORDER BY w"
+    )
+    assert "FINAL" not in vcr.mixed_width_sql("chunks", "embedding", "", dim=3072)
 
 
 def test_parse_engine_reads_the_version_of_a_non_replicated_or_is_deleted_engine() -> None:

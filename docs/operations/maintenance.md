@@ -215,6 +215,11 @@ compact it in an announced window. Bulk passes compact on their own after
 into a twin table, check it, swap with `EXCHANGE TABLES` and keep the old table for
 `--rollback`. Both print their plan and change nothing without `--yes`; the procedure is
 in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-key).
+`vector_codec_rebuild.py` refuses, `--dry-run` included, while a named column holds
+non-empty vectors of another width than the target's: re-embed those rows first, since the
+copy would replace them with zero vectors. It stops before the swap when the twin holds
+rows removed from the source during the copy (an erasure or delete); stop writes and rerun
+it with `--restart`.
 
 ## Disk pressure hygiene
 
