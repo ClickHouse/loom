@@ -50,12 +50,15 @@ class _CH:
         self.widths: list[list[tuple[int, int]]] = [[]]  # (width, rows) the width check finds
         self.cons = [(0, 0, 0)]  # (mismatched, source_only, twin_only) the gate reads
         self.gone: list[list[tuple[Any, ...]]] = [[]]  # the keys only the twin holds
-        # live keys the rollback copy lacks, each with its part's partition and highest block
+        # live rows (key and version) the rollback copy lacks, each with its part's
+        # partition and highest block
         self.erased: list[tuple[tuple[Any, ...], str, int]] = []
         self.blocks = [("all", 3)]  # the twin's highest block per partition
+        self.mutations = [0]  # mutations running on the source, one answer per read
         self.sync_writable = ["alter_sync", "mutations_sync", "lightweight_deletes_sync"]
         self.queries: list[str] = []
         self.reads_before_exchange = 0  # len(queries) when the EXCHANGE was sent
+        self.reads_at: dict[str, int] = {}  # each command: len(queries) when it was sent
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _R:
         p = parameters or {}
@@ -68,6 +71,11 @@ class _CH:
             return _R([(1,)])
         if sql.startswith("SHOW CREATE TABLE loom."):
             return _R([(self.t[sql.split("loom.", 1)[1]]["ddl"],)])
+        if "uuid = toUUID(" in sql:
+            u = re.search(r"toUUID\('([^']*)'\)", sql).group(1)  # type: ignore[union-attr]
+            return _R([(n,) for n, t in self.t.items() if t["uuid"] == u])
+        if "FROM system.mutations" in sql:
+            return _R([(_next(self.mutations),)])
         if "FROM system.tables" in sql:
             row = self.t.get(str(p.get("t")))
             return _R([("ReplacingMergeTree", row["uuid"], "2000-01-01")] if row else [])
@@ -89,7 +97,7 @@ class _CH:
         if "max(max_block_number)" in sql:
             return _R(self.blocks)
         if "WHERE s.__present = 0" in sql and "_pre_rebuild" in sql:
-            upto = dict(re.findall(r"_partition_id = '(\w+)' AND \S+ <= (\d+)", sql))
+            upto = dict(re.findall(r"_partition_id = '(\w+)' AND [^<]+ <= (\d+)", sql))
             return _R([k for k, p, b in self.erased if p in upto and b <= int(upto[p])])
         if "WHERE s.__present = 0" in sql:
             return _R(_next(self.gone))
@@ -115,6 +123,7 @@ class _CH:
         s = " ".join(stmt.split())
         self.commands.append(s)
         self.sent.append((s, dict(settings or {})))
+        self.reads_at.setdefault(s, len(self.queries))
         w = s.replace("loom.", "").split()
         if s.startswith("CREATE TABLE"):
             self.t[w[2]] = {"ddl": stmt, "rows": 0, "uuid": next(self.uuids)}
@@ -460,20 +469,64 @@ def _deletes_after_exchange(ch: _CH) -> list[str]:
     return [c for c in ch.commands[exchange:] if c.startswith("DELETE")]
 
 
-@pytest.mark.parametrize("engine", ["ReplacingMergeTree(created_at)", "MergeTree"])
-def test_a_row_erased_across_the_swap_is_deleted_from_the_live_table(engine: str) -> None:
+def test_a_row_erased_across_the_swap_is_deleted_from_the_live_table() -> None:
     """An erasure after the last twin-only read reaches only the old table. A live row in
     a part the twin held before the swap was copied before it, so the rollback copy's
-    lacking it means its writer deleted it: the run deletes it from those parts."""
-    ddl = ARRAY.replace("ReplacingMergeTree(created_at)", engine)
+    lacking it means its writer deleted it: the run deletes every version of it read
+    there, by key and version, since a merge may rename the parts once they start."""
+    ch = _CH(memory_chunks=_live())
+    ch.erased = [(("o", "n", 7), "all", 2), (("o", "n", 5), "all", 1)]
+    assert _run(ch, "--yes") == tr.OK
+    assert _deletes_after_exchange(ch) == [
+        "DELETE FROM loom.memory_chunks WHERE (org, namespace, created_at) IN "
+        "(('o', 'n', 7), ('o', 'n', 5))"
+    ]
+    read = next(q for q in ch.queries if "_pre_rebuild" in q and "s.__present = 0" in q)
+    assert read.startswith("SELECT org, namespace, created_at FROM (SELECT org, namespace, ")
+    assert f"FROM loom.memory_chunks WHERE {PRE_SWAP})" in read  # every version, no FINAL
+
+
+def test_a_plain_merge_tree_deletes_a_row_erased_across_the_swap_by_key() -> None:
+    ddl = ARRAY.replace("ReplacingMergeTree(created_at)", "MergeTree")
     ch = _CH(memory_chunks={"ddl": ddl, "rows": 5, "uuid": "live"})
     ch.erased = [(("o", "n"), "all", 2)]
     assert _run(ch, "--yes") == tr.OK
     assert _deletes_after_exchange(ch) == [
-        f"DELETE FROM loom.memory_chunks WHERE (org, namespace) IN (('o', 'n')) AND {PRE_SWAP}"
+        "DELETE FROM loom.memory_chunks WHERE (org, namespace) IN (('o', 'n'))"
     ]
-    read = next(q for q in ch.queries if "_pre_rebuild" in q and "s.__present = 0" in q)
-    assert f"FROM loom.memory_chunks{vcr.read_final(engine)} WHERE {PRE_SWAP})" in read
+
+
+def test_the_twin_merges_stop_from_its_block_read_to_the_erased_read() -> None:
+    """A merge of a copied part with a part written after the swap would hide its rows
+    from the erased read, and a delete on the live table would show the post-swap
+    passes a missing key to copy back: the twin's merges stop before its blocks are
+    read and start again after the erased rows are read, before they are deleted."""
+    ch = _CH(memory_chunks=_live())
+    ch.erased = [(("o", "n", 7), "all", 2)]
+    assert _run(ch, "--yes") == tr.OK
+    stop = "SYSTEM STOP MERGES loom.memory_chunks_rebuild"
+    start = "SYSTEM START MERGES loom.memory_chunks"
+    exchange = next(c for c in ch.commands if c.startswith("EXCHANGE"))
+    delete = next(c for c in ch.commands if c.startswith("DELETE"))
+    order = [ch.commands.index(c) for c in (stop, exchange, start, delete)]
+    assert order == sorted(order)
+    blocks = ch.queries.index(vcr.last_blocks_sql("memory_chunks_rebuild"))
+    erased = max(
+        i for i, q in enumerate(ch.queries) if "_pre_rebuild" in q and "s.__present = 0" in q
+    )
+    assert ch.reads_at[stop] <= blocks < ch.reads_at[exchange] <= erased < ch.reads_at[start]
+
+
+def test_a_failed_swap_starts_the_twin_merges_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    ch = _CH(memory_chunks=_live())
+
+    def fail(*_: Any) -> None:
+        raise RuntimeError("exchange refused")
+
+    monkeypatch.setattr(vcr.tr, "swap_in", fail)
+    with pytest.raises(RuntimeError, match="exchange refused"):
+        _run(ch, "--yes")
+    assert ch.commands[-1] == "SYSTEM START MERGES loom.memory_chunks_rebuild"
 
 
 @pytest.mark.parametrize("engine", ["ReplacingMergeTree(created_at)", "MergeTree"])
@@ -483,7 +536,7 @@ def test_a_write_after_the_swap_is_kept_whatever_its_version(engine: str) -> Non
     first turn's time), lands in a new part: it is kept, and the run succeeds."""
     ddl = ARRAY.replace("ReplacingMergeTree(created_at)", engine)
     ch = _CH(memory_chunks={"ddl": ddl, "rows": 5, "uuid": "live"})
-    ch.erased = [(("o", "new"), "all", 4), (("o", "fresh-partition"), "202610", 1)]
+    ch.erased = [(("o", "new", 1), "all", 4), (("o", "fresh-partition", 1), "202610", 1)]
     assert _run(ch, "--yes") == tr.OK
     assert _deletes_after_exchange(ch) == []
 
@@ -496,3 +549,61 @@ def test_a_write_of_another_width_during_the_run_stops_the_swap(capsys: Any) -> 
     assert _run(ch, "--yes") == tr.GATE_FAILED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     assert "width 768: 2 row(s)" in capsys.readouterr().out
+
+
+def test_a_key_gone_from_the_source_during_the_repair_is_deleted_before_the_recheck() -> None:
+    """The first read shows only a mismatch; an erasure during the repair leaves a key only
+    the twin holds. The delete pass runs before the recheck, so a failure that names it
+    is true."""
+    ch = _CH(memory_chunks=_live())
+    ch.cons = [(1, 0, 0), (0, 0, 0)]
+    ch.gone = [[("o", "n")], []]
+    assert _run(ch, "--yes") == tr.OK
+    deletes = [c for c in ch.commands if c.startswith("DELETE")]
+    assert deletes == [
+        "DELETE FROM loom.memory_chunks_rebuild WHERE (org, namespace) IN (('o', 'n'))"
+    ]
+
+
+TOMBSTONED = ARRAY.replace(
+    "`created_at` DateTime\n", "`created_at` DateTime,\n    `tombstoned_at` Nullable(DateTime)\n"
+)
+
+
+def test_a_tombstone_set_in_place_during_the_run_is_compared_and_repaired() -> None:
+    """An erasure tombstones a row with an ALTER UPDATE that keeps its version: the
+    gate compares `tombstoned_at` too, and the repair copies a newer one."""
+    ch = _CH(memory_chunks={"ddl": TOMBSTONED, "rows": 5, "uuid": "live"})
+    assert _run(ch, "--yes") == tr.OK
+    tomb = vcr.tombstone
+    gate = next(q for q in ch.queries if "FULL OUTER JOIN" in q)
+    assert f"countIf(s.created_at != t.created_at OR {tomb('s')} != {tomb('t')})" in gate
+    assert "SELECT org, namespace, created_at, tombstoned_at, 1 AS __present" in gate
+    repair = next(q for q in ch.queries if "t.__present = 0" in q and "LEFT JOIN" in q)
+    assert f"OR t.__present = 0 OR {tomb('s')} > {tomb('t')}" in repair
+    assert tomb("s") == "ifNull(toUInt32(s.tombstoned_at), 0)"
+
+
+def test_a_table_without_tombstones_compares_versions_only() -> None:
+    ch = _CH(memory_chunks=_live())
+    assert _run(ch, "--yes") == tr.OK
+    assert not any("tombstoned_at" in q for q in ch.queries)
+
+
+def test_a_mutation_still_running_on_the_source_stops_the_swap(capsys: Any) -> None:
+    """A tombstone or delete still being applied would reach only the old table, whose
+    merges and mutations stop at the swap: the run waits for it, then fails."""
+    ch = _CH(memory_chunks=_live())
+    ch.mutations = [1]
+    assert _run(ch, "--yes", "--statement-timeout-s", "0.01") == tr.GATE_FAILED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "1 mutations on loom.memory_chunks still running" in capsys.readouterr().out
+    reads = [q for q in ch.queries if "FROM system.mutations" in q]
+    assert reads[0] == vcr.mutations_running_sql("memory_chunks")
+
+
+def test_the_run_waits_for_a_mutation_on_the_source_to_finish() -> None:
+    ch = _CH(memory_chunks=_live())
+    ch.mutations = [2, 1, 0]
+    assert _run(ch, "--yes") == tr.OK
+    assert sum("FROM system.mutations" in q for q in ch.queries) == 3

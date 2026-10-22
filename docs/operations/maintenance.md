@@ -221,16 +221,24 @@ brings one back): re-embed or erase those rows first, since the copy would repla
 zero vectors, and every writer must produce the target width until the run ends. A row
 removed from the source during the run (an erasure or delete) is deleted from the twin too,
 in one pass; the run stops before the swap if any such key remains after it: pause erasures
-and rerun with `--reuse`. It also stops when a vector of another width was written before
-the width scan: re-embed those rows, then rerun with `--restart`. Both checks run again
-before the swap. The last read before the `EXCHANGE` is the twin-only check, or, when it
-deleted keys, the consistency recheck that follows, and then the twin's highest block number
-per partition. A delete after that read, or one still running at the `EXCHANGE`, reaches
-only `<t>_pre_rebuild`. After the swap the run deletes from the live table every row in a
-part within those blocks whose key `<t>_pre_rebuild` lacks: it was copied before the swap,
-so its writer deleted it. A write after the swap lands in a new part and is kept, whatever
-its version. `--statement-timeout-s` (default 1800) caps each check, repair and delete
-statement; raise it for a table whose full scans take longer.
+and rerun with `--reuse`. The consistency gate compares `tombstoned_at` as well as the
+version, since an erasure tombstones a row in place, and repairs a newer tombstone. The run
+also stops when a vector of another width was written before the width scan: re-embed
+those rows, then rerun with `--restart`. Both checks run again before the swap, after the
+run waits for the source's running mutations, up to `--statement-timeout-s`, and stops if
+one remains. The last read before the `EXCHANGE` is the twin-only check, or, when it deleted
+keys, the consistency recheck that follows; the run then stops the twin's merges and reads
+its highest block number per partition. A delete or tombstone after that read reaches only
+`<t>_pre_rebuild`. With the merges stopped, no part folds a copied row into a later one, and
+a delete or tombstone on the live table waits, so the post-swap passes, which copy the writes
+in flight at the `EXCHANGE`, never see its key missing and copy it back. They copy a newer
+tombstone from `<t>_pre_rebuild`; the run then starts the merges and deletes from the live
+table every row in a part within those blocks whose key `<t>_pre_rebuild` lacks, by key and
+version: it was copied before the swap, so its writer deleted it. A write after the swap is
+kept unless it has the key and version of such a row. A mutation still running on the old
+table at the `EXCHANGE` stays there, since its merges stop at the swap: pause erasures over
+the swap to be sure. `--statement-timeout-s` (default 1800) caps each check, repair and
+delete statement and the mutation wait; raise it for a table whose full scans take longer.
 
 ## Disk pressure hygiene
 
