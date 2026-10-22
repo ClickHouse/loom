@@ -9,10 +9,9 @@ ReplacingMergeTree version column (or an anti-join on the sorting key for a
 plain MergeTree), a FULL OUTER JOIN consistency gate on the sorting key (with
 a hash of every column, the rebuilt vectors as the twin stores them), a
 distance-based recall gate, then `EXCHANGE TABLES`; the old table stays as
-`loom.<t>_pre_rebuild` for
-`--rollback` until `--drop-pre-rebuild`, as with scripts/ops/table_rebuild.py
-(the swap, the signals held over it, the next step and the summary line are
-shared in server/core/schema/table_rebuild.py).
+`loom.<t>_pre_rebuild` for `--rollback` until `--drop-pre-rebuild`, as with
+scripts/ops/table_rebuild.py (the swap, the signals held over it, the next
+step and the summary line are shared in server/core/schema/table_rebuild.py).
 
     python -P -m scripts.ops.vector_codec_rebuild --table memory_chunks --columns embedding --dry-run
     python -P -m scripts.ops.vector_codec_rebuild --table memory_chunks --columns embedding --yes
@@ -50,10 +49,11 @@ has none, and logs the count after.
 Preconditions: one ClickHouse version (26.7+) on every replica of the
 cluster `--cluster` names (`default`; `''` checks this server only), `enable_quantized_codec`
 settable or held at 1 for this user (`allow_suspicious_codecs` too with `--chain`; a setting held
-at 1 is never sent), every replica writable,
-and no row written in the last hour with an empty vector in the named columns
-(writers' fixed-length placeholders must be deployed first: a coded column
-rejects an empty vector).
+at 1 is never sent), every replica writable, the `SYSTEM FLUSH ASYNC INSERT QUEUE` and
+`SYSTEM SYNC REPLICA` privileges on the table (the preflight runs both once), and no row
+written in the last hour with an empty vector in the named columns (writers'
+fixed-length placeholders must be deployed first: a coded column rejects an
+empty vector).
 
 The twin is the run's lock: an existing twin refuses the run unless
 `--reuse` (continue from it) or `--restart` (drop it and copy again), and the
@@ -114,8 +114,10 @@ COPY_RECEIVE_TIMEOUT_S = 7200
 DISTANCE_TOLERANCE = 1e-6
 COUNT_SETTLE_ATTEMPTS = 8
 COUNT_SETTLE_SLEEP_S = 15
-# How far before the run's start the pre-swap check counts mutations from: a mutation's
-# create_time comes from the replica that took it, whose clock can run behind this one.
+# How far before the mutation baseline (the preflight's server time, or a reused twin's
+# creation) the pre-swap check counts mutations from: a mutation's create_time comes from
+# the replica that took it, whose clock can run behind this one.
+# not a setting: a bound on replica clock skew, not an operator knob
 CLOCK_SKEW_MARGIN_S = 60
 # A codec clause with one level of nested parentheses: CODEC(Quantized('rabitq', 3072, 0), LZ4).
 _CODEC = r"CODEC\((?:[^()]|\([^()]*\))*\)"
@@ -450,12 +452,14 @@ class VectorRebuild:
         self.dim = 0
         self.fin = ""  # ' FINAL' where the live table is a ReplacingMergeTree
         self.since = 0  # the server's Unix time before the preflight's mutation check
+        self.reads: dict[str, Any] = {}  # settings every read takes; sequential after the drain
 
     # -- small reads -------------------------------------------------------
     def q(self, sql: str, **st: Any) -> list[Any]:
         return list(
             self.ch.query(
-                sql, settings={"max_execution_time": self.a.statement_timeout_s, **st}
+                sql,
+                settings={"max_execution_time": self.a.statement_timeout_s, **self.reads, **st},
             ).result_rows
         )
 
@@ -574,12 +578,26 @@ class VectorRebuild:
             )
         if why := self.mutation_refusal():
             return why
+        if why := self.drain_refusal(parse_engine(ddl)[0]):
+            return why
         return self.width_refusal(ddl)
 
     def mutation_refusal(self) -> str:
         """A stopped writer can leave mutations running on ClickHouse."""
         pending = self.q(mutations_sql(self.replicas("mutations"), self.t))[0][0]
         return f"loom.{self.t} has unfinished mutations; wait for them to finish" if pending else ""
+
+    def drain_refusal(self, engine: str) -> str:
+        """Why this user cannot run the pre-swap drain, or '': it runs once here, so a
+        missing grant refuses before the copy rather than failing after the gates."""
+        try:
+            self.drain(engine)
+        except Exception as e:  # noqa: BLE001 - any refusal of the drain refuses the run
+            return (
+                f"the pre-swap drain needs SYSTEM FLUSH ASYNC INSERT QUEUE and SYSTEM SYNC "
+                f"REPLICA on loom.{self.t}: {str(e)[:160]}"
+            )
+        return ""
 
     def server_now(self) -> int:
         """The server's Unix time."""
@@ -722,20 +740,20 @@ class VectorRebuild:
             self.cmd(
                 f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE {cond}",
                 **self.codec_on(),
+                **self.reads,
                 max_execution_time=self.a.statement_timeout_s,
             )
             self.rows_copied += n
         return n
 
     def repair_into(self, dst: str, src: str, sel: str, version: str | None, key: list[str]) -> int:
-        """Copy the rows of `src` for every key whose newest version `dst` lacks: a newer
-        version in `src`, or a key `dst` does not have. `delta_into` takes the rows above
-        `dst`'s highest version, which misses a row written during a long copy with a
-        version below a row the copy already took; this compares key by key, the way
-        `consistent` does, and copies exactly the keys that diverge. The keys come back to
-        the client and each INSERT names them as literals: on a shared cluster an
-        `IN (subquery)` INSERT runs the subquery on other replicas, which a user
-        without cluster-wide grants is refused."""
+        """Copy the rows of `src` for every key `dst` lacks or holds at an older version; a
+        key that differs only by content or row count is left for the gate to fail.
+        `delta_into` takes the rows above `dst`'s highest version, which misses a row
+        written during a long copy with a version below a row the copy already took. The
+        keys come back to the client and each INSERT names them as literals: on a shared
+        cluster an `IN (subquery)` INSERT runs the subquery on other replicas, which a
+        user without cluster-wide grants is refused."""
         ident, fin = ", ".join(key), self.fin
         vsel = f", {version}" if version else ""
         newer = f"s.{version} > t.{version} OR t.__present = 0" if version else "t.__present = 0"
@@ -799,18 +817,25 @@ class VectorRebuild:
         return why
 
     def drain(self, engine: str) -> None:
-        """Land the writes ClickHouse has acknowledged but not yet shows this replica: the
-        async insert queue, and on a replicated engine the parts other replicas took."""
+        """Land the writes ClickHouse has acknowledged: the async insert queue, and on a
+        replicated engine the parts other replicas took into the replica that answers. The
+        sync covers that one replica, so the reads after the drain are sequentially
+        consistent (`self.reads`), whichever replica serves them."""
         self.cmd(f"SYSTEM FLUSH ASYNC INSERT QUEUE loom.{self.t}")
         if engine.startswith(("Replicated", "Shared")):
             self.cmd(f"SYSTEM SYNC REPLICA loom.{self.t}")
 
-    def mark(self, name: str, version: str | None) -> tuple[int, Any]:
-        """(rows served, highest version) of `loom.<name>`: the swap's postcondition
-        compares the rollback copy with the source as the last gate read it."""
+    def mark(self, name: str, version: str | None, since: int) -> tuple[int, Any, int, int]:
+        """(rows served, highest version, active patch parts, mutations since `since`) of
+        `loom.<name>`: the swap's postcondition compares the rollback copy with the source
+        as the last gate read it, so an in-place change (an ALTER UPDATE, a lightweight
+        UPDATE or DELETE) counts as well as a new row. The patch parts and mutations follow
+        the rename."""
         top = f"max({version})" if version else "0"
         row = self.q(f"SELECT count(), {top} FROM loom.{name}{self.fin}")[0]
-        return int(row[0]), row[1]
+        patches = int(self.q(patch_parts_sql(name))[0][0])
+        sql = mutations_sql(self.replicas("mutations"), name, since - CLOCK_SKEW_MARGIN_S)
+        return int(row[0]), row[1], patches, int(self.q(sql)[0][0])
 
     def recall(self, ddl: str) -> list[float]:
         """Distance recall per probe: exact on the source vs the twin read as the legs read it."""
@@ -918,15 +943,21 @@ class VectorRebuild:
             return REFUSED
         # the flush in swap_in then has nothing left to add after the checks below
         self.drain(engine)
+        self.reads = dict(tr.CONSISTENT)
         self.delta_into(self.twin, self.t, sel, version, key)
         # writers and erasure must be stopped; check again that nothing landed during the gates
         if why := self.width_refusal(ddl):
             log(f"GATE FAILED: {why}; no swap")
             return GATE_FAILED
         # read first: a row that lands after it shows in the rollback copy after the swap
-        checked = self.mark(self.t, version)
+        checked = self.mark(self.t, version, since)
         cons = self.consistent(version, key)
-        log("consistency before the swap:", cons, "rows and highest version:", checked)
+        log(
+            "consistency before the swap:",
+            cons,
+            "rows, highest version, patch parts, mutations:",
+            checked,
+        )
         why = (
             "GATE FAILED: the source changed during the gates (a write, an update or a "
             "delete), and the twin no longer matches it; no swap. Stop writes and erasures "
@@ -944,9 +975,11 @@ class VectorRebuild:
             )
             return GATE_FAILED
         tr.swap_in(self.ch, self.t)
-        return self.check_swapped(version, checked)
+        return self.check_swapped(version, checked, since)
 
-    def check_swapped(self, version: str | None, checked: tuple[int, Any]) -> int:
+    def check_swapped(
+        self, version: str | None, checked: tuple[int, Any, int, int], since: int
+    ) -> int:
         live = self.target_state(self.t)
         log(
             "live rows",
@@ -964,12 +997,12 @@ class VectorRebuild:
         if set(tr.columns(self.ch, self.t)) != set(tr.columns(self.ch, self.pre)):
             log("POSTCONDITION FAILED: the rollback copy's columns differ by name")
             return POSTCONDITION
-        if (now := self.mark(self.pre, version)) != checked:
+        if (now := self.mark(self.pre, version, since)) != checked:
             log(
-                f"POSTCONDITION FAILED: rows reached the source after the last check (rows and "
-                f"highest version {checked} then, {now} in loom.{self.pre}), and the new table "
-                "does not hold them. Keep writers stopped and run --rollback --yes, which puts the "
-                "old table, those rows included, back in"
+                "POSTCONDITION FAILED: the source changed after the last check (rows, highest "
+                f"version, patch parts and mutations {checked} then, {now} in loom.{self.pre}), "
+                "and the new table may not hold the change. Keep writers stopped and run "
+                "--rollback --yes, which puts the old table, the change included, back in"
             )
             return POSTCONDITION
         return OK

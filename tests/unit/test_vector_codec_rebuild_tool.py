@@ -42,6 +42,7 @@ class _CH:
         self.patches: dict[str, int] = {}
         self.patches_first: dict[str, list[int]] = {}  # earlier reads, before self.patches
         self.flushed: list[int] = []  # rows each async-queue flush lands, in order
+        self.refuse_system = False  # this user lacks the SYSTEM grants
         self.uuids = iter(f"u{i}" for i in range(100))
         self.codec_rows = codec_rows("writable", "writable")
         self.delta = 0  # rows a delta finds above the destination's version
@@ -118,6 +119,8 @@ class _CH:
         self.commands.append(s)
         self.sequence.append(s)
         self.sent.append((s, dict(settings or {})))
+        if self.refuse_system and s.startswith("SYSTEM"):
+            raise RuntimeError("Not enough privileges")
         w = s.replace("loom.", "").split()
         if s.startswith("CREATE TABLE"):
             self.t[w[2]] = {"ddl": stmt, "rows": 0, "uuid": next(self.uuids)}
@@ -469,11 +472,11 @@ def test_rows_flushed_into_the_source_after_the_checks_fail_the_postcondition(
     """The swap's own async-queue flush lands a row after every check: the rollback copy
     then holds a row the new table lacks, and the run says so and names --rollback."""
     ch = _CH(memory_chunks=_live())
-    ch.flushed = [0, 1]  # the drain before the last delta, then the swap's flush
+    ch.flushed = [0, 0, 1]  # the preflight's drain, the drain before the last delta, the swap's
     assert _run(ch, "--yes") == tr.POSTCONDITION
     assert any(c.startswith("EXCHANGE") for c in ch.commands)
     out = capsys.readouterr().out
-    assert "rows reached the source after the last check" in out
+    assert "the source changed after the last check" in out
     assert "--rollback --yes" in out
     assert not any(c.startswith("INSERT INTO loom.memory_chunks ") for c in ch.commands)
 
@@ -486,11 +489,45 @@ def test_the_queue_and_the_replica_are_drained_before_the_last_delta() -> None:
     ch = _CH(memory_chunks={"ddl": ddl, "rows": 5, "uuid": "live"})
     assert _run(ch, "--yes") == tr.OK
     seq = ch.sequence
-    flush = seq.index("SYSTEM FLUSH ASYNC INSERT QUEUE loom.memory_chunks")
-    sync = seq.index("SYSTEM SYNC REPLICA loom.memory_chunks")
     recall = max(i for i, q in enumerate(seq) if "round(cosineDistance" in q)
+    flush = seq.index("SYSTEM FLUSH ASYNC INSERT QUEUE loom.memory_chunks", recall)
+    sync = seq.index("SYSTEM SYNC REPLICA loom.memory_chunks", recall)
     delta = max(i for i, q in enumerate(seq) if "FROM loom.memory_chunks WHERE created_at >" in q)
     assert recall < flush < sync < delta
+
+
+def test_the_reads_after_the_drain_are_sequentially_consistent() -> None:
+    """The sync lands other replicas' parts on the replica that answers it only; every
+    later read and the last delta take select_sequential_consistency, so a request served
+    by another replica still sees every acknowledged write."""
+    ch = _CH(memory_chunks=_live())
+    ch.delta = 1
+    assert _run(ch, "--yes") == tr.OK
+    recall = max(i for i, (q, _) in enumerate(ch.query_settings) if "round(cosineDistance" in q)
+    before, after = ch.query_settings[:recall], ch.query_settings[recall + 1 :]
+    assert not any("select_sequential_consistency" in st for _, st in before)
+    for needle in ("FULL OUTER JOIN", "GROUP BY w", "SELECT count(), ", "system.mutations"):
+        reads = [st for q, st in after if needle in q]
+        assert reads and all(st["select_sequential_consistency"] == 1 for st in reads), needle
+    delta = [st for s, st in ch.sent if s.startswith("INSERT") and "created_at >" in s][-1]
+    assert delta["select_sequential_consistency"] == 1
+
+
+def test_a_user_without_the_drain_grants_is_refused_before_the_copy(capsys: Any) -> None:
+    ch = _CH(memory_chunks=_live())
+    ch.refuse_system = True
+    assert _run(ch, "--yes") == tr.REFUSED and _writes(ch) == []
+    out = capsys.readouterr().out
+    assert "SYSTEM FLUSH ASYNC INSERT QUEUE and SYSTEM SYNC REPLICA" in out
+
+
+def test_an_in_place_change_after_the_checks_fails_the_postcondition(capsys: Any) -> None:
+    """A lightweight UPDATE after the last check keeps the row count and the version; its
+    patch part on the rollback copy fails the postcondition."""
+    ch = _CH(memory_chunks=_live())
+    ch.patches["memory_chunks_pre_rebuild"] = 1
+    assert _run(ch, "--yes") == tr.POSTCONDITION
+    assert "patch parts and mutations" in capsys.readouterr().out
 
 
 def test_a_duplicate_key_insert_on_a_plain_merge_tree_stops_the_swap(capsys: Any) -> None:
