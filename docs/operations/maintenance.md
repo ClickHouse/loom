@@ -285,6 +285,10 @@ old table: run the tool from the same `LOOM_REBUILD_DIR` each time.
 postcondition, also when both are on the target layout (a `--require-patch-free`
 rebuild of a table already on it), and refuses (exit 3) and keeps the copy on any
 difference in [what the checks after a swap find](#what-the-checks-after-a-swap-find).
+When both are on the target layout, `--rollback` and `--drop-pre-rebuild` take the table
+with the later metadata time as the new one, on Atomic and Replicated databases only:
+on equal times or any other engine both refuse (exit 3) and keep both tables for a
+comparison by hand.
 The erasure saga does not cover these copies.
 
 - **Width.** The target width of a plain column is `LOOM_EMBEDDING_DIM`, so run the tool
@@ -360,9 +364,8 @@ reads of a table's row count, columns and catalog row run without it, and the co
 the rollback's catch-up copy, the reads that find its rows included, run under their own
 limit of 7000 seconds. A read that
 times out after the swap fails the postcondition (exit 7) with the rollback copy kept,
-and one in `--drop-pre-rebuild` keeps the copy. The width read that sets the target, and
-each width check (the preflight, before the swap, and on the rollback copy after it),
-reads every vector of a plain named column (under `FINAL` on a ReplacingMergeTree), and
+and one in `--drop-pre-rebuild` keeps the copy. Each width check (the preflight, before the swap, and on the rollback
+copy after it) reads every vector of a plain named column (under `FINAL` on a ReplacingMergeTree), and
 each consistency check (after the copy or the repair, before the swap, and after it)
 reads every row of both tables, vectors included, so set the timeout to cover one full
 read of the table.

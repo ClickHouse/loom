@@ -1621,6 +1621,27 @@ def test_drop_pre_rebuild_on_the_target_layout_keeps_both_tables_created_in_the_
     assert not any(c.startswith("DROP TABLE") for c in ch.commands)
 
 
+def test_rollback_on_the_target_layout_keeps_both_tables_on_a_shared_database(
+    capsys: Any,
+) -> None:
+    """EXCHANGE TABLES may not keep each table's own metadata time on a Shared database,
+    so the times do not show which table is the new one: --rollback and
+    --drop-pre-rebuild keep both tables."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    ch = _CH(memory_chunks={"ddl": coded, "rows": 5, "uuid": "live"})
+    assert _run(ch, "--yes", "--require-patch-free") == tr.OK
+    capsys.readouterr()
+    ch.db_engine = "Shared"
+    swap_commands = len(ch.commands)
+    assert _run(ch, "--rollback", "--yes") == tr.REFUSED
+    assert "other than Atomic or Replicated" in capsys.readouterr().out
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+    assert "other than Atomic or Replicated" in capsys.readouterr().out
+    assert "memory_chunks_pre_rebuild" in ch.t
+    after_swap = ch.commands[swap_commands:]
+    assert not any(c.startswith(("DROP TABLE", "EXCHANGE")) for c in after_swap)
+
+
 def _synced_before_the_last_read(ch: _CH, start: int) -> None:
     """The rollback copy's own replication queue is synchronized, LIGHTWEIGHT, after
     `start` and before the last comparison of the copy with the new table."""

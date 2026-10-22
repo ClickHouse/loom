@@ -161,6 +161,11 @@ KEEP_BOTH = (
     "Keep writers and erasure stopped and both tables as they are, and inspect the "
     "difference by hand before any --rollback or --drop-pre-rebuild"
 )
+# Why the tool cannot tell which of two tables on the target layout is the new one.
+SAME_LAYOUT = (
+    "are both on the target layout and their metadata times do not show which is the new "
+    "one: created in the same second, or on a database engine other than Atomic or Replicated"
+)
 # The UUID system.tables shows for a table on a database without table UUIDs.
 ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 # A codec clause with one level of nested parentheses: CODEC(Quantized('rabitq', 3072, 0), LZ4).
@@ -726,10 +731,15 @@ class VectorRebuild:
             and [twin[1], live[1]] == self.created_twin()
         ):
             return True
-        engine = self.q("SELECT engine FROM system.databases WHERE name = currentDatabase()")[0][0]
-        if engine not in ("Atomic", "Replicated"):
+        if not self.exchange_keeps_times():
             return False
         return self.metadata_time(self.twin) > self.metadata_time(self.t)
+
+    def exchange_keeps_times(self) -> bool:
+        """Whether EXCHANGE TABLES keeps each table's own metadata time: on the Atomic and
+        Replicated databases the live tests run it on; unknown on any other engine."""
+        engine = self.q("SELECT engine FROM system.databases WHERE name = currentDatabase()")[0][0]
+        return engine in ("Atomic", "Replicated")
 
     def created_twin(self) -> list[str]:
         """The UUIDs of the last twin this tool created for the table and of the live
@@ -1485,9 +1495,7 @@ class VectorRebuild:
         self.dim = self.find_dim()
         swapped = self.live_is_new()
         if swapped is None:
-            self.next_step = (
-                f"loom.{self.t} and loom.{self.pre} were created in the same second. {KEEP_BOTH}"
-            )
+            self.next_step = f"loom.{self.t} and loom.{self.pre} {SAME_LAYOUT}. {KEEP_BOTH}"
             log(f"REFUSED: {self.next_step}")
             return REFUSED
         if not swapped:
@@ -1547,11 +1555,14 @@ class VectorRebuild:
         """Whether the live table is the new layout, the rollback copy the old: after a
         swap and before a rollback. When both are on the target layout (a
         --require-patch-free run rebuilds a table already on it) the run's twin is the
-        newer table; None when both were created in the same second (one second's
-        precision shows neither)."""
+        newer table; None when the metadata times show neither: both created in the same
+        second (one second's precision), or a database engine EXCHANGE TABLES may not keep
+        them on."""
         live, pre = self.target_state(self.t), self.target_state(self.pre)
         if not (live and pre):
             return bool(live)
+        if not self.exchange_keeps_times():
+            return None
         live_time, pre_time = self.metadata_time(self.t), self.metadata_time(self.pre)
         if live_time == pre_time:
             return None
@@ -1624,10 +1635,7 @@ class VectorRebuild:
                 return REFUSED
             swapped = self.live_is_new()
             if swapped is None:
-                self.next_step = (
-                    f"loom.{self.t} and loom.{self.pre} were created in the same second. "
-                    f"{KEEP_BOTH}"
-                )
+                self.next_step = f"loom.{self.t} and loom.{self.pre} {SAME_LAYOUT}. {KEEP_BOTH}"
                 log(f"REFUSED: {self.next_step}")
                 return REFUSED
             why, rollback = self.swapped_change() if swapped else (self.rolled_back_change(), False)
