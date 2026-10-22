@@ -470,9 +470,10 @@ flush never fails a request; a crash loses the queue.
 - Vector columns are `Array(BFloat16)`, mostly `CODEC(NONE)`;
   `entity_vectors.entity_embedding` keeps `LZ4` because its vectors repeat (LZ4 compresses
   them about 4x). Coded, it keeps the `LZ4` after `Quantized` only where
-  `allow_suspicious_codecs` can be on; where it is held at 0, as on ClickHouse Cloud, the
-  column is stored without it, in about four times the space; how to add the chain back is
-  in [recommended settings](../operations/deployment.md#recommended-clickhouse-settings).
+  `allow_suspicious_codecs` can be on; where it is held at 0, as on a ClickHouse Cloud
+  service by default, the column is stored without it, in about four times the space; how
+  to add the chain back is in
+  [recommended settings](../operations/deployment.md#recommended-clickhouse-settings).
   Query vectors bind as `Array(Float32)`. A memory carries up to two vectors (value and
   key), so at 3072 dimensions up to 12 KiB of vectors.
 - **No table has a vector-similarity (HNSW) index.** Search is an exact `cosineDistance`

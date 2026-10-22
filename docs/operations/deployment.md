@@ -404,9 +404,8 @@ How Loom uses ClickHouse is in [ClickHouse](../architecture/clickhouse.md).
 
 ### Recommended ClickHouse settings
 
-Loom runs without these. With them on, vector reads scan compact codes first and rescore
-only the best rows at full precision, and `entity_vectors` stays about four times smaller
-than it would be coded without its chain. Make sure Loom's ClickHouse user can have both on
+Loom runs without these; the table says what each gives it. Make sure Loom's ClickHouse
+user can have both on
 before the first `loom migrate` or the first server start (a server with boot migrations on
 applies them when it starts): a fresh install codes its vector columns only if the codec
 can be on at that moment.
@@ -482,13 +481,22 @@ the server does not change existing tables:
    A table with no real vectors yet (no rows, or only the zero placeholder vectors of rows
    without an embedding) cannot pass the rebuild's recall gate, and the dry run does not
    show that. The dry run prints the width it will code (`target <table> dimension <n>`);
-   skip the line while this query, with the line's first column, returns 0:
+   skip the line while this query, with the line's first column, returns 0 (`loom` in these
+   statements is your `LOOM_CH_DATABASE`):
    `SELECT countIf(length(<column>) = <n> AND <column>[1] != 0) FROM loom.<table>`.
-   The gate can also fail where one `(org, namespace)` holds fewer than 20 real vectors
-   next to placeholder rows of the same width: their distance is NaN, which sorts last, so
-   the gate reads that namespace's recall as 0. Some rows never get a vector
-   (`code_summaries` structural rows, `code_answers` stubs), so such a table stays plain
-   until every namespace that has placeholders also has 20 real vectors.
+
+   A run can also fail the gate where one `(org, namespace)` holds placeholder rows and
+   between 1 and 19 real vectors of the same width: a probe drawn there reads recall 0,
+   because a placeholder's distance is NaN and sorts last. Tables with rows that never get
+   a vector (`code_summaries` structural rows, `code_answers` stubs) can hit this. This
+   finds such namespaces:
+
+   ```sql
+   SELECT org, namespace FROM loom.<table>
+   WHERE length(<column>) = <n>
+   GROUP BY org, namespace
+   HAVING countIf(<column>[1] != 0) BETWEEN 1 AND 19 AND countIf(<column>[1] = 0) > 0
+   ```
 
    A run that stops before its swap (a failed gate, an abort file, an interrupt) leaves its
    twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not fully
