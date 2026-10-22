@@ -131,9 +131,9 @@ mutation (dropping, renaming or retyping a column, dropping an index, a TTL), ex
 one that only moves its metadata time (an index, a setting, a column's default or codec).
 An added column fails the copy (exit 1, no swap), or the run exits 3 after the last verify
 pass. A rebuild does not carry an `ALTER` over: restate it in the target statement, then
-rerun with `--restart`. It also refuses a table no migration declares. `loom migrate
---dry-run --strict` fails while a declared table still holds rows in the old layout, so
-the deploy preflight catches a skipped step.
+rerun with `--restart`. It also refuses a table no migration declares.
+`loom migrate --dry-run --strict` fails while a declared table still holds rows in the old
+layout, so the deploy preflight catches a skipped step.
 
 The target keeps the table's columns (so the swap is additive), and its sort key keeps
 the old key's columns, reordered: that key is also what a `ReplacingMergeTree` merges on.
