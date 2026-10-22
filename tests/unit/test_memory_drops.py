@@ -12,6 +12,7 @@ CH-free: the flush target and every downstream leg are stubbed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -501,8 +502,6 @@ def test_drops_cli_is_registered_and_runs(monkeypatch: pytest.MonkeyPatch, capsy
 
 @pytest.mark.asyncio
 async def test_reset_stops_an_armed_flush_from_writing(monkeypatch: pytest.MonkeyPatch) -> None:
-    import asyncio
-
     import server.core.ch as chmod
 
     inserts: list[str] = []
