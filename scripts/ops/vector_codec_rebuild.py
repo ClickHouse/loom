@@ -143,9 +143,8 @@ def key_literal(v: Any) -> str:
 
 
 REPAIR_BATCH = 500  # keys per repair INSERT: a literal list the statement carries
-DIM_SAMPLE_ROWS = (
-    100_000  # not a setting: the width read's sample shape, documented in maintenance.md
-)
+# not a setting: the width read's sample size, a sampling shape
+DIM_SAMPLE_ROWS = 100_000
 
 
 def patch_parts_sql(name: str) -> str:
@@ -301,9 +300,14 @@ def read_final(engine: str) -> str:
     return " FINAL" if "Replacing" in engine else ""
 
 
+def nonzero(column: str) -> str:
+    """The predicate for a vector that is not an all-zero placeholder. Pure."""
+    return f"arrayExists(x -> x != 0, {column})"
+
+
 def real_vector(column: str) -> str:
     """The predicate for a real vector: not empty and not an all-zero placeholder. Pure."""
-    return f"length({column}) > 0 AND arrayExists(x -> x != 0, {column})"
+    return f"length({column}) > 0 AND {nonzero(column)}"
 
 
 def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
@@ -347,6 +351,27 @@ def consistency_sql(
     )
 
 
+def tied_keys_sql(src: str, version: str, key: list[str]) -> str:
+    """Count the keys whose newest version has more than one row. FINAL keeps the last
+    one inserted, and the copy's parallel INSERT can insert them in another order, so
+    such a key can differ between the source and the twin however often it is copied. Pure."""
+    ident = ", ".join(key)
+    return (
+        f"SELECT countIf(n_at_max > 1) FROM (SELECT {ident}, argMax(n, {version}) AS n_at_max "
+        f"FROM (SELECT {ident}, {version}, count() AS n FROM loom.{src} GROUP BY {ident}, {version}) "
+        f"GROUP BY {ident})"
+    )
+
+
+def tied_failure(table: str, n: int) -> str:
+    """The gate's message for keys with more than one row at their newest version. Pure."""
+    return (
+        f"GATE FAILED: {n} key(s) of loom.{table} hold more than one row at their newest "
+        "version, and FINAL can keep a different one of them in the twin; no swap. Inside the "
+        f"window run OPTIMIZE TABLE loom.{table} FINAL, then rerun with --restart"
+    )
+
+
 def twin_only_failure(n: int) -> str:
     """The gate's message for keys only the twin holds. Pure."""
     return (
@@ -379,7 +404,7 @@ def twin_read(column: str, lit: str, multiplier: float) -> tuple[str, dict[str, 
 def vector_filter(column: str, *, dim: int) -> str:
     """The predicate that keeps placeholder rows out of a probe's top-20: a placeholder
     is all zeros, so its cosine distance is NaN and it would sort last. Pure."""
-    return f"length({column}) = {int(dim)} AND arrayExists(x -> x != 0, {column})"
+    return f"length({column}) = {int(dim)} AND {nonzero(column)}"
 
 
 _CLUSTER_NAME = re.compile(r"[A-Za-z0-9_.-]+")
@@ -409,6 +434,7 @@ class VectorRebuild:
         self.rows_copied = 0
         self.dim = 0
         self.fin = ""  # ' FINAL' where the live table is a ReplacingMergeTree
+        self.since = 0  # the server's Unix time before the preflight's mutation check
 
     # -- small reads -------------------------------------------------------
     def q(self, sql: str, **st: Any) -> list[Any]:
@@ -540,16 +566,16 @@ class VectorRebuild:
         pending = self.q(mutations_sql(self.replicas("mutations"), self.t))[0][0]
         return f"loom.{self.t} has unfinished mutations; wait for them to finish" if pending else ""
 
-    def copy_start(self, reused: bool) -> int:
-        """The server's Unix time the twin's rows date from: now for a fresh copy, the
-        twin's creation for a reused one (a mutation between runs counts too)."""
-        if reused:
-            sql = (
-                "SELECT toUnixTimestamp(metadata_modification_time) FROM system.tables "
-                f"WHERE database = currentDatabase() AND name = '{self.twin}'"
-            )
-        else:
-            sql = "SELECT toUnixTimestamp(now())"
+    def server_now(self) -> int:
+        """The server's Unix time."""
+        return int(self.q("SELECT toUnixTimestamp(now())")[0][0])
+
+    def twin_created(self) -> int:
+        """The server's Unix time a reused twin was created (a mutation between runs counts too)."""
+        sql = (
+            "SELECT toUnixTimestamp(metadata_modification_time) FROM system.tables "
+            f"WHERE database = currentDatabase() AND name = '{self.twin}'"
+        )
         return int(self.q(sql)[0][0])
 
     def mutations_since(self, since: int) -> int:
@@ -617,8 +643,9 @@ class VectorRebuild:
         if self.aborted():
             raise Aborted(f"abort file {self.abort} present before start")
         if self.a.require_patch_free:
-            before = self.q(patch_parts_sql(self.t))
-            log("live patch parts before:", before[0][0])
+            log("live patch parts before:", self.q(patch_parts_sql(self.t))[0][0])
+        # read before the preflight's mutation check, so no mutation falls between the two checks
+        self.since = self.server_now()
         why = self.refusal(ddl)
         if why:
             log("REFUSED:", why)
@@ -736,6 +763,13 @@ class VectorRebuild:
         row = self.q(sql, join_use_nulls=0)[0]
         return int(row[0]), int(row[1]), int(row[2])
 
+    def divergence(self, version: str | None, key: list[str], why: str) -> str:
+        """The gate's message for keys that still differ: `why`, unless the source holds
+        keys with more than one row at their newest version, which no copy can match."""
+        if version and (n := int(self.q(tied_keys_sql(self.t, version, key))[0][0])):
+            return tied_failure(self.t, n)
+        return why
+
     def patch_blocks(self) -> dict[str, int]:
         """The highest block number of the live table's active patch parts, per partition."""
         rows = self.q(patch_blocks_sql(self.t))
@@ -781,9 +815,9 @@ class VectorRebuild:
         sel = replace_select(self.cols, dim=self.dim)
         if self.aborted():
             raise Aborted("abort file present before the copy; the twin is left")
-        # a lightweight UPDATE keeps a key and its version, so only its patch part shows it
+        # the hash leaves out the rebuilt vectors, so an UPDATE of one shows only in its patch part
         live_patches = self.patch_blocks()
-        since = self.copy_start(reused)
+        since = self.twin_created() if reused else self.since
         if not reused:
             stop = threading.Event()
             threading.Thread(target=self.monitor, args=(stop,), daemon=True).start()
@@ -821,10 +855,11 @@ class VectorRebuild:
             cons = self.consistent(version, key)
             log("consistency after repair:", cons)
         if cons[0] or cons[1]:
-            log(
+            why = (
                 "GATE FAILED: the twin diverges (a key's version, row count or content); no "
                 "swap. Stop writes and erasures and rerun with --restart"
             )
+            log(self.divergence(version, key, why))
             return GATE_FAILED
         if cons[2]:
             log(twin_only_failure(cons[2]))
@@ -860,11 +895,12 @@ class VectorRebuild:
             log(twin_only_failure(cons[2]))
             return GATE_FAILED
         if cons[0] or cons[1]:
-            log(
+            why = (
                 "GATE FAILED: the source changed during the gates (a write, an update or a "
                 "delete), and the twin no longer matches it; no swap. Stop writes and erasures "
                 "and rerun with --restart"
             )
+            log(self.divergence(version, key, why))
             return GATE_FAILED
         new_patches = sorted(
             p for p, block in self.patch_blocks().items() if block > live_patches.get(p, -1)
@@ -1031,9 +1067,9 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
         ap.error(f"--cluster: not a cluster name: {a.cluster!r}")
     if not math.isfinite(a.statement_timeout_s) or a.statement_timeout_s <= 0:
         ap.error("--statement-timeout-s must be finite and above 0")
-    if a.statement_timeout_s > COPY_RECEIVE_TIMEOUT_S:
+    if a.statement_timeout_s >= COPY_RECEIVE_TIMEOUT_S:
         ap.error(
-            f"--statement-timeout-s must be at most {COPY_RECEIVE_TIMEOUT_S}, the client's read timeout"
+            f"--statement-timeout-s must be below {COPY_RECEIVE_TIMEOUT_S}, the client's read timeout"
         )
     return a
 

@@ -458,7 +458,7 @@ def test_rebuild_runner_sets_the_twin_granularity() -> None:
     )
 
 
-def test_rebuild_gate_reads_the_served_multiplier_and_skips_placeholders() -> None:
+def test_rebuild_gate_reads_the_served_multiplier() -> None:
     from scripts.ops import vector_codec_rebuild as vcr
 
     _, st = vcr.twin_read("embedding", "[1]", 10.0)

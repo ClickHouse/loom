@@ -266,3 +266,24 @@ def test_an_update_of_another_column_during_recall_stops_the_swap(
     assert vcr.main([*args(table), "--yes"], ch=ch) == tr.GATE_FAILED
     assert "the source changed during the gates" in capsys.readouterr().out
     assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
+
+
+def test_rows_sharing_a_key_and_its_version_are_counted_until_optimized(
+    ch: Any, table: str
+) -> None:
+    """FINAL keeps the last inserted of such rows, and the copy may insert them in another
+    order; the gate counts them so its message can name OPTIMIZE ... FINAL."""
+    ch.command(f"SYSTEM STOP MERGES loom.{table}")
+    try:
+        for note in ("first", "second"):
+            ch.command(
+                f"INSERT INTO loom.{table} (org, namespace, id, embedding, version, note) "
+                f"VALUES ('o', 'n', 1, {[1.0] * 8}, 1, '{note}')"
+            )
+        insert(ch, table, 2, [1.0] * 8)
+        key = ["org", "namespace", "id"]
+        assert ch.query(vcr.tied_keys_sql(table, "version", key)).result_rows == [(1,)]
+    finally:
+        ch.command(f"SYSTEM START MERGES loom.{table}")
+    ch.command(f"OPTIMIZE TABLE loom.{table} FINAL")
+    assert ch.query(vcr.tied_keys_sql(table, "version", key)).result_rows == [(0,)]

@@ -218,12 +218,13 @@ in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-
 
 `vector_codec_rebuild.py` needs a maintenance window with every writer and erasure
 stopped and all in-flight writes drained. It refuses unfinished source mutations before
-copying, and never repairs the live table. Where a check below fails, stop writes and
-erasures and rerun with `--restart`.
+copying, and never repairs the live table. Where a gate fails (exit 5), stop writes and
+erasures and rerun with `--restart`; a width refusal (exit 3) needs the re-embed below.
 Keep writers and erasure stopped until the rebuild finishes or is abandoned and
 every `<table>_rebuild` twin and `<table>_pre_rebuild` rollback copy is removed.
 Use `--drop-pre-rebuild --yes` to remove the rollback copy after validation or
-rollback. The erasure saga does not cover these copies.
+rollback, and `DROP TABLE loom.<table>_rebuild SYNC` to remove an abandoned twin.
+The erasure saga does not cover these copies.
 
 - **Width.** The target width of a plain column is the most frequent width among the
   first 100,000 real vectors (not all zeros) read, approximate, or `LOOM_EMBEDDING_DIM`
@@ -240,6 +241,13 @@ rollback. The erasure saga does not cover these copies.
   it: rows were removed from the source after the copy, and the swap would bring them
   back. The recall gate ranks real vectors only, since a placeholder's cosine distance is
   NaN.
+- **Rows that share a key and a version.** Under `FINAL` a ReplacingMergeTree keeps the
+  last row inserted among a key's rows at its newest version, and the copy's parallel
+  `INSERT` can insert them in another order, so the twin can keep a different row however
+  often it is copied (two writes of one key in the same second, on a table versioned by a
+  `DateTime`, are enough). When a key still differs, the gate counts such keys on the source
+  and names them in its message. Run `OPTIMIZE TABLE loom.<table> FINAL` on the source
+  inside the window, which leaves one row per key, then rerun with `--restart`.
 - **Before the swap.** A last delta copies in the rows written during the run, then the
   width and consistency checks run again. They fail the gate on a delete, a write of
   another width, a write the delta cannot pick up (a version below the twin's highest, or
@@ -252,7 +260,7 @@ rollback. The erasure saga does not cover these copies.
   `ALTER UPDATE` that keeps the key and its version. It fails too when a source patch part
   reports a higher block number than before the copy.
 
-`--statement-timeout-s` (default 1800, at most 7200) caps each gate read, delta, repair
+`--statement-timeout-s` (default 1800, below 7200, the client's read timeout) caps each gate read, delta, repair
 and patch-part read; the copy itself runs under its own limit. Each width check, before
 the twin and again before the swap, reads every vector of a plain named column (under
 `FINAL` on a ReplacingMergeTree), and each consistency check reads every row of both

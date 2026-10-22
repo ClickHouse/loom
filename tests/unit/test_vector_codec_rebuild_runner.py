@@ -297,3 +297,12 @@ def test_the_patch_check_reads_the_highest_block_per_partition() -> None:
         "WHERE database = currentDatabase() AND table = 'memory_embeddings' AND active "
         "AND startsWith(name, 'patch') GROUP BY partition_id"
     )
+
+
+def test_the_tie_read_counts_keys_with_more_than_one_row_at_their_newest_version() -> None:
+    sql = vcr.tied_keys_sql("memory_chunks", "created_at", ["org", "id"])
+    assert sql == (
+        "SELECT countIf(n_at_max > 1) FROM (SELECT org, id, argMax(n, created_at) AS n_at_max "
+        "FROM (SELECT org, id, created_at, count() AS n FROM loom.memory_chunks "
+        "GROUP BY org, id, created_at) GROUP BY org, id)"
+    )

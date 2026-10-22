@@ -55,6 +55,7 @@ class _CH:
         self.cons_first: list[tuple[int, int, int]] = []  # earlier reads, before self.cons
         self.mutations = 0
         self.mutations_first: list[int] = []
+        self.tied = 0  # keys with more than one row at their newest version
         self.queries: list[str] = []
         self.query_settings: list[tuple[str, dict[str, Any]]] = []
 
@@ -94,6 +95,8 @@ class _CH:
             return _R([(first.pop(0) if first else self.patches.get(name, 0),)])
         if "topK(1)" in sql:
             return _R([([DIM],)])
+        if "n_at_max" in sql:
+            return _R([(self.tied,)])
         if "FULL OUTER JOIN" in sql:
             return _R([self.cons_first.pop(0) if self.cons_first else self.cons])
         if "GROUP BY w" in sql:
@@ -426,7 +429,7 @@ def test_the_statement_timeout_caps_the_gate_reads_and_stays_within_the_read_tim
     ):
         reads = [st for q, st in ch.query_settings if needle in q]
         assert reads and all(st["max_execution_time"] == 60 for st in reads), needle
-    for bad in ("0", "-1", "nan", "inf", str(vcr.COPY_RECEIVE_TIMEOUT_S + 1)):
+    for bad in ("0", "-1", "nan", "inf", str(vcr.COPY_RECEIVE_TIMEOUT_S)):
         with pytest.raises(SystemExit):
             vcr.parse(["--table", "t", "--columns", "embedding", "--statement-timeout-s", bad])
 
@@ -561,6 +564,33 @@ def test_a_mutation_since_the_copy_stops_the_swap_even_when_done(
     assert "--restart" in out
     last = ch.queries[_last(ch, "system.mutations")]
     assert f"(NOT is_done OR create_time >= toDateTime({since}))" in last
+
+
+def test_the_mutation_baseline_is_read_before_the_preflight_mutation_check() -> None:
+    """A mutation submitted after the preflight and before the copy started must still
+    count, so the time the pre-swap check counts from is read first."""
+    ch = _CH(memory_chunks=_live())
+    assert _run(ch, "--yes") == tr.OK
+    now = ch.queries.index("SELECT toUnixTimestamp(now())")
+    assert now < min(i for i, q in enumerate(ch.queries) if "system.mutations" in q)
+
+
+@pytest.mark.parametrize("first", [True, False])
+def test_keys_tied_at_their_newest_version_name_the_optimize_remedy(
+    first: bool, capsys: Any
+) -> None:
+    """Two rows of one key at one version: FINAL keeps the last inserted, the parallel copy
+    may insert them in another order, and a rerun can match no better; the message names
+    OPTIMIZE ... FINAL instead of a plain --restart."""
+    ch = _CH(memory_chunks=_live())
+    ch.cons_first = [] if first else [(0, 0, 0)]
+    ch.cons = (1, 0, 0)
+    ch.tied = 2
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    out = capsys.readouterr().out
+    assert "2 key(s) of loom.memory_chunks hold more than one row at their newest version" in out
+    assert "OPTIMIZE TABLE loom.memory_chunks FINAL, then rerun with --restart" in out
 
 
 def test_the_rebuild_writes_only_to_the_twin() -> None:
