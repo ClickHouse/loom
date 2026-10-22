@@ -454,8 +454,14 @@ SELECT table, mutation_id, command FROM system.mutations
 WHERE database = 'loom' AND NOT is_done
 ```
 
-A `<table>_pre_rebuild` copy left by an earlier run blocks that table's rebuild. Remove it
-with that table's line and `mode="--drop-pre-rebuild --yes"`, as in step 3. A mutation on
+A `<table>_pre_rebuild` copy left by an earlier run blocks that table's rebuild. A copy
+from the current window is removed with that table's line and
+`mode="--drop-pre-rebuild --yes"`, as in step 3. Once writers have run since the copy
+was made, `--drop-pre-rebuild` refuses it: the live table holds changes the copy lacks
+(new rows, erasure tombstones, quarantine updates, a re-embed delete). Remove such a copy
+with the read in
+[what the checks after a swap find](./maintenance.md#what-the-checks-after-a-swap-find),
+then `DROP TABLE loom.<table>_pre_rebuild SYNC` by hand. A mutation on
 the copy since the copy started does not finish while the tool keeps its merges stopped,
 and while there is one, `--drop-pre-rebuild` refuses and names `--rollback`. To keep the
 new layout, run the read in

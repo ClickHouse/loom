@@ -393,6 +393,28 @@ def test_a_twin_this_tool_created_is_a_leftover_on_any_database_engine(capsys: A
     assert _writes(ch)[0] == "DROP TABLE loom.memory_chunks_rebuild SYNC"
 
 
+class _AlteredDuringGates(_CH):
+    """An ALTER of the live table (ADD INDEX, MODIFY SETTING) right after the twin is
+    created moves the live table's metadata time past the twin's."""
+
+    def command(self, stmt: str, parameters: Any = None, settings: Any = None) -> None:
+        super().command(stmt, parameters, settings)
+        if stmt.lstrip().startswith("CREATE TABLE"):
+            self.t["memory_chunks"]["created"] = COPY_STARTED + 60
+
+
+def test_a_live_table_altered_after_the_twin_was_created_is_never_exchanged(
+    capsys: Any,
+) -> None:
+    """A half swap would leave the old table, now newer, at the twin's name, where it would
+    read as a leftover never exchanged in: the swap refuses and keeps the twin."""
+    ch = _AlteredDuringGates(memory_chunks=_live())
+    assert _run(ch, "--yes") == tr.REFUSED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "memory_chunks_rebuild" in ch.t and "memory_chunks_pre_rebuild" not in ch.t
+    assert "was altered after loom.memory_chunks_rebuild was created" in capsys.readouterr().out
+
+
 def test_a_created_twin_is_recorded_by_its_uuid() -> None:
     ch = _CH(memory_chunks=_live())
     ch.cons = (1, 0, 0)  # the gate fails, so the twin stays
@@ -715,6 +737,7 @@ def test_a_width_refusal_names_loom_reembed_only_for_the_tables_it_re_embeds(
     out = capsys.readouterr().out
     assert "re-embed to LOOM_EMBEDDING_DIM (`loom reembed --delete-old` re-embeds" in out
     assert "a width change with the same model goes through Settings -> Models & keys" in out
+    assert "set LOOM_EMBEDDING_DIM to 768 and rerun" in out  # one other width: the model's
 
 
 def test_an_empty_source_is_rebuilt_without_probes(capsys: Any) -> None:

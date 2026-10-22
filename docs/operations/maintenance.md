@@ -272,7 +272,10 @@ behind. The tool also removes the record just before its own exchange, and refus
 swap when it cannot. Without a matching record, it reads a twin
 whose `system.tables.metadata_modification_time` is later than the live table's as never
 exchanged in, which holds on Atomic and Replicated databases, where `EXCHANGE TABLES`
-keeps each table's own time. Equal times (the column has one second's precision), and any
+keeps each table's own time, because the swap refuses (exit 3, twin kept) a live table
+whose metadata time is later than the twin's: an `ADD INDEX` or `MODIFY SETTING` on the
+live table during the gates creates no mutation but would make the old table the newer
+one after a half swap. Rerun with `--restart` after such an ALTER. Equal times (the column has one second's precision), and any
 other database engine, show nothing, so there the tool treats the twin as possibly the
 old table: run the tool from the same `LOOM_REBUILD_DIR` each time.
 `--drop-pre-rebuild` first compares the two tables again, after the same drain as the
@@ -281,13 +284,17 @@ rebuild of a table already on it), and refuses (exit 3) and keeps the copy on an
 difference in [what the checks after a swap find](#what-the-checks-after-a-swap-find).
 The erasure saga does not cover these copies.
 
-- **Width.** The target width of a plain column is `LOOM_EMBEDDING_DIM`, the width every
-  writer produces, so run the tool with the deployment's env; a coded column states its
-  own. The tool refuses (exit 3), `--dry-run` included, while a plain named column holds
-  real vectors (not all zeros) of another width: the copy would replace them with zero
-  vectors, and a coded column rejects writes of any other width. The message names each
-  width and `LOOM_EMBEDDING_DIM`. Re-embed to `LOOM_EMBEDDING_DIM`
-  and rerun: `loom reembed --delete-old` for `memory_embeddings`, `entity_vectors` and
+- **Width.** The target width of a plain column is `LOOM_EMBEDDING_DIM`, so run the tool
+  with the deployment's env; a coded column states its own. `LOOM_EMBEDDING_DIM` must
+  equal the served model's width: writers use the width the server probes from the model
+  at boot, and a stale `LOOM_EMBEDDING_DIM` only gets an `embedding dim mismatch` line in
+  the server log. The tool refuses (exit 3), `--dry-run` included, while a plain named
+  column holds real vectors (not all zeros) of another width: the copy would replace them
+  with zero vectors, and a coded column rejects writes of any other width. The message
+  names each width and `LOOM_EMBEDDING_DIM`. When every real vector has one other width
+  and the server log names it as the model's, set `LOOM_EMBEDDING_DIM` to that width and
+  rerun; do not re-embed. Otherwise re-embed to `LOOM_EMBEDDING_DIM` and rerun:
+  `loom reembed --delete-old` for `memory_embeddings`, `entity_vectors` and
   `conversation_embeddings`, which re-embeds only rows of another `embedding_model`, so a
   width change with the same model goes through Settings → Models & keys; any other
   table, such as `memory_chunks`, `code_chunks` or `code_summaries`, is re-embedded by

@@ -32,9 +32,11 @@ The twin's vector columns are `Array(BFloat16) CODEC(Quantized(<method>, dim, 0)
 `--gate-fetch-multiplier`, as the search legs do.
 
 The dimension: a coded column of the live table states it, a plain column
-takes `LOOM_EMBEDDING_DIM`, the width every writer produces, and
-the tool refuses while it holds real vectors of another width. Every named
-column must agree.
+takes `LOOM_EMBEDDING_DIM`, which must equal the served model's width (the width
+the server probes and logs at boot, and writes at), and the tool refuses while
+it holds real vectors of another width. When every such vector has one other
+width and the server logs it as the model's, the fix is to set
+`LOOM_EMBEDDING_DIM` to it, not to re-embed. Every named column must agree.
 
 Run it in a maintenance window with every writer and erasure stopped and
 in-flight writes drained: it fails closed and never repairs the live table.
@@ -73,7 +75,8 @@ table holds a change the copy back would lose.
 
 The twin is the run's lock: an existing twin refuses the run unless
 `--reuse` (continue from it) or `--restart` (drop it and copy again), and the
-swap refuses when the twin is no longer the one this run created or reused.
+swap refuses when the twin is no longer the one this run created or reused,
+or when the live table was altered after the twin was created.
 An `ABORT_REBUILD` file in `LOOM_REBUILD_DIR` (default `.`) stops the run
 before the copy and before the swap, leaving the twin. The UUIDs of each twin
 the tool creates and of the live table then go to `<table>_rebuild.uuid` there,
@@ -642,8 +645,9 @@ class VectorRebuild:
 
     def find_dim(self) -> int:
         """The width the twin codes. A coded column states its own. A plain column takes
-        LOOM_EMBEDDING_DIM, the width every writer produces: a coded column rejects any
-        other width, and the width refusal stops the run while it holds one."""
+        LOOM_EMBEDDING_DIM, which must equal the served model's width (writers use the
+        width the server probes at boot): a coded column rejects any other width, and the
+        width refusal stops the run while the column holds one."""
         from server.settings import settings
 
         ddl = self.ddl(self.t if self.exists(self.t) else self.pre)
@@ -703,7 +707,9 @@ class VectorRebuild:
         table's name another UUID, including a --reuse swap run from another directory,
         which leaves this record behind. Or its metadata time is later than the live
         table's: EXCHANGE TABLES keeps each table's own time on the Atomic and Replicated
-        databases the live tests run it on. Without the record, on any other database
+        databases the live tests run it on, and the swap refuses a live table altered
+        after its twin was created, so an old table left there is never the newer one.
+        Without the record, on any other database
         engine and on equal times (one second's precision), neither shows anything."""
         twin, live = tr.table_row(self.ch, self.twin), tr.table_row(self.ch, self.t)
         if (
@@ -879,9 +885,19 @@ class VectorRebuild:
                     )
                 else:
                     how = f"`loom reembed` does not cover loom.{self.t}; its own writer must"
+                # LOOM_EMBEDDING_DIM may be stale: the server writes at the width it probes
+                # from the model at boot and only logs the mismatch
+                fix = ""
+                if len(widths) == 1:
+                    w = widths[0][0]
+                    fix = (
+                        f"if the served model emits width {w} (the server logs an embedding "
+                        f"dim mismatch at boot), set LOOM_EMBEDDING_DIM to {w} and rerun; else "
+                    )
                 return (
                     f"{c} holds vectors of a width other than the target {self.dim} ({found}; "
-                    f"LOOM_EMBEDDING_DIM {settings.embedding_dim}): the copy would zero them; "
+                    f"LOOM_EMBEDDING_DIM {settings.embedding_dim}, which must equal the served "
+                    f"model's width): the copy would zero them; {fix}"
                     f"re-embed to LOOM_EMBEDDING_DIM ({how}) and rerun"
                 )
         return ""
@@ -1272,6 +1288,16 @@ class VectorRebuild:
                 "rerun with --restart"
             )
             return GATE_FAILED
+        # twin_never_exchanged reads a twin newer than the live table as one never
+        # exchanged in; an ALTER of the live table after the twin was created would make
+        # the old table the newer one once a half swap leaves it at the twin's name
+        if self.metadata_time(self.t) > self.metadata_time(self.twin):
+            log(
+                f"REFUSED: loom.{self.t} was altered after loom.{self.twin} was created "
+                "(an ALTER such as ADD INDEX or MODIFY SETTING, which the twin does not "
+                "hold); no swap. Rerun with --restart"
+            )
+            return REFUSED
         # the record names only a twin never exchanged in: once this twin is the live
         # table, a later twin under its name may be the old table
         try:
