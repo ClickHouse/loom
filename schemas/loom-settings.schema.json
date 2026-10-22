@@ -259,7 +259,7 @@
         "ch_pool_maxsize": {
           "default": 64,
           "type": "integer",
-          "description": "HTTP connection pool size: request concurrency plus about 3 x batched inserts a second x ch_batched_insert_wait_max_ms / 1000 (docs/architecture/clickhouse.md#batched-inserts)."
+          "description": "HTTP connection pool size: request concurrency plus 3 x the connections waited async inserts hold (the rule in docs/architecture/clickhouse.md#batched-inserts)."
         },
         "ch_pool_wait_ms": {
           "default": 500,

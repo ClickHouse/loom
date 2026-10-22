@@ -68,39 +68,30 @@ checkout.
 1. Read the release's [GitHub Release](https://github.com/ClickHouse/loom/releases) notes
    for operator steps (new settings, backfills a deployment must run) and the
    client-visible wire changes.
-2. Size the ClickHouse pool for batched inserts, which are on by default and hold a
-   pooled connection while they wait. Compute R_request and R_background for each process
-   and keep `LOOM_CH_POOL_MAXSIZE` at three times the bound plus the process's other
-   statements, or start with `LOOM_CH_BATCHED_INSERTS=false`; the rule and what each op
-   counts are in [batched inserts](../architecture/clickhouse.md#batched-inserts). After
-   the rollout, watch `loom.ch.pool.in_use`, `loom.ch.pool.waiters` and
-   `loom.ch.pool.overloaded_total`; if `waiters` stays above zero or `overloaded_total`
-   climbs, raise `LOOM_CH_POOL_MAXSIZE` or set `ch_batched_inserts` to `false` (live, no
-   restart).
-3. From the new build's checkout, against the production ClickHouse, run
+2. From the new build's checkout, against the production ClickHouse, run
    `loom migrate --dry-run --strict`. It lists what the boot will apply and stops on
    ledger problems ([troubleshooting](./troubleshooting.md#migrations-pending-or-checksum-drift)).
    If the release declares a table rebuild, run `scripts/ops/table_rebuild.py` for that
    table now.
-4. Deploy the new image. The first container to boot applies the migrations; the others
+3. Deploy the new image. The first container to boot applies the migrations; the others
    wait for it and then find nothing pending.
-5. Wait for `/v1/health` to report `status: ok` and an empty `schema.pending` before
+4. Wait for `/v1/health` to report `status: ok` and an empty `schema.pending` before
    routing traffic to it. The [zero-downtime pair](./deployment.md#zero-downtime-pair)
-   does steps 3 to 5 for you: `redeploy.sh` runs the strict dry run in its preflight and
+   does steps 2 to 4 for you: `redeploy.sh` runs the strict dry run in its preflight and
    swaps only after the new colour is ready.
-6. Run the release's backfills, if any ([maintenance](./maintenance.md#backfills-and-repairs)).
-7. Update client plugins when the release mentions a plugin change: hooks run on the
+5. Run the release's backfills, if any ([maintenance](./maintenance.md#backfills-and-repairs)).
+6. Update client plugins when the release mentions a plugin change: hooks run on the
    client machine and change only through the client's plugin manager
    (`claude plugin update loom@loom` for Claude Code), never through a server deploy.
-8. Once the last old replica has stopped, re-verify the erasures completed during the
-   rollout: `loom erasure-re-verify --completed-since <when step 4 began> --resume`. An
+7. Once the last old replica has stopped, re-verify the erasures completed during the
+   rollout: `loom erasure-re-verify --completed-since <when step 3 began> --resume`. An
    old replica's saga does not know the tables the new build added
    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 14). The command
    deletes only orphan row links: rows of `entity_triple_rows` and `entity_edge_rows`
    in each erasure's scope whose memory has no live row and no row written since the
    erasure's census. Without `--resume` it counts them and exits 1 if any are left.
    Data written after the erasure stays.
-9. Turn on a feature the previous build cannot honour only once every replica runs
+8. Turn on a feature the previous build cannot honour only once every replica runs
    the new build: `memory_extract_agent_learnings`, since the previous build does not
    erase `loom.learnings_supporters`
    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 23).

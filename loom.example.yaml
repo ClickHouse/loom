@@ -71,9 +71,9 @@ settings:
   # never set it in production. [restart]
   # ch_capture_statements: ""
 
-  # HTTP connection pool size: request concurrency plus about 3 x batched inserts a
-  # second x ch_batched_insert_wait_max_ms / 1000
-  # (docs/architecture/clickhouse.md#batched-inserts). [restart]
+  # HTTP connection pool size: request concurrency plus 3 x the connections waited async
+  # inserts hold (the rule in docs/architecture/clickhouse.md#batched-inserts).
+  # [restart]
   # ch_pool_maxsize: 64
 
   # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load balancer's

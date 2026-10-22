@@ -230,8 +230,9 @@ class EventEmitter:
         waits for a batch the timer already popped and is still inserting —
         otherwise an empty queue would say "history" while the witness row is
         mid-flight.
-        Cross-replica lag remains the flush interval; the ledger shows it as a
-        shadow miss. Never raises: a failed flush is logged by `_flush_once`.
+        Cross-replica lag remains the flush interval plus the batched-insert
+        wait; the ledger shows it as a shadow miss. Never raises: a failed flush
+        is logged by `_flush_once`.
         """
         while True:
             if not self.queue.empty():

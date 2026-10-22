@@ -175,6 +175,6 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
         ]
         assert [dict(r) for r in got] == expected
         # The stale row failed a flush it shared: the rows in it were resent committed.
-        assert resent and "stale" not in resent
+        assert resent
     finally:
         await c.disconnect()

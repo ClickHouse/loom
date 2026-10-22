@@ -536,8 +536,8 @@ class ClickHouseSettings(BaseModel):
     # collect the shapes an acceptance run executes for the analyzer corpus. '' = off;
     # never set it in production.
     ch_capture_statements: str = ""
-    # HTTP connection pool size: request concurrency plus about 3 x batched inserts a second x
-    # ch_batched_insert_wait_max_ms / 1000 (docs/architecture/clickhouse.md#batched-inserts).
+    # HTTP connection pool size: request concurrency plus 3 x the connections waited async
+    # inserts hold (the rule in docs/architecture/clickhouse.md#batched-inserts).
     ch_pool_maxsize: int = 64
     # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load
     # balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled
@@ -5238,7 +5238,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.search_trace": 200,
     "memory.search_trace_log": 200,
     # Version inserts plus the conflict and dedup reads (p99 3.7 s on ClickHouse Cloud, 4 s
-    # at x20), + the audit, outbox and concurrent graph-insert waits (~150 ms).
+    # at x20), + audit and outbox waits (up to 100 ms), offset by bounding the waited graph
+    # inserts at 50 ms (ClickHouse's default is 200 ms).
     "memory.set": 200,
     # LLM extraction dominates (~7K-token prompt); bulk_set adds ~200 ms + ~4 insert waits
     # (audit, evidence, belief sources twice) before it.

@@ -888,7 +888,7 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 
 - `server/core/ch.py`: `set_query_tag`, `statement_class`, `statement_settings`,
   `sequential_reads`, `own_write_reads`; `server/core/ch_writes.py`: `batched_insert_settings`,
-  `async_insert_settings`, `dedup_settings`, `insert_dedup_token`;
+  `async_insert_settings`, `committed_insert_settings`, `dedup_settings`, `insert_dedup_token`;
   `server/core/ch_schema_guard.py`: `pending_tables`.
 - `server/core/schema/journal.py`: the journal as data (file order, baselines, statements, the
   objects each file creates or drops).
