@@ -98,7 +98,7 @@ def server(monkeypatch: pytest.MonkeyPatch):
     for name in ("begin", "end", "note_writes", "snapshot"):
         monkeypatch.setattr(gp, name, getattr(s, name))
     monkeypatch.setattr(facts_handler, "_memo", facts_handler._WalkMemo())
-    yield s
+    return s
 
 
 def _walk_counter(monkeypatch: pytest.MonkeyPatch, server: _Server) -> dict[str, Any]:
