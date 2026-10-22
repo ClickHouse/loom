@@ -40,8 +40,9 @@ async def test_an_identity_provider_call_waits_its_setting(monkeypatch: pytest.M
     seen: list[Any] = []
 
     class _Client:
-        def __init__(self, *, timeout: float) -> None:
+        def __init__(self, *, timeout: float, follow_redirects: bool) -> None:
             seen.append(timeout)
+            assert follow_redirects is False
 
         async def __aenter__(self) -> _Client:
             return self
@@ -62,7 +63,7 @@ async def test_an_identity_provider_call_waits_its_setting(monkeypatch: pytest.M
         await oidc._token_request({"grant_type": "authorization_code"})
 
     class _Jwk:
-        def __init__(self, uri: str, *, timeout: float) -> None:
+        def __init__(self, uri: str, *, timeout: float, headers: dict[str, str]) -> None:
             seen.append(timeout)
 
         def get_signing_key_from_jwt(self, token: str) -> Any:

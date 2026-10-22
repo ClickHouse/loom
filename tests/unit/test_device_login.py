@@ -931,10 +931,28 @@ def test_dashboard_sso_hands_back_a_short_token_in_the_fragment(sso, _world) -> 
     state = r.headers["location"].split("state=")[1]
     back = c.get("/oauth/callback", params={"code": "c", "state": state}, follow_redirects=False)
     assert back.status_code == 302 and back.headers["location"].startswith("/me#token=")
+    # The sign-in landing page: the dashboard served without the aggregator
+    # redirect, which would carry the fragment to another origin
+    # (tests/unit/test_dashboard_routes.py).
+    target = back.headers["location"].split("#", 1)[0]
+    assert target == "/me"
     token = back.headers["location"].split("#token=")[1]
     claims = pyjwt.decode(token, options={"verify_signature": False})
     assert claims["exp"] - claims["iat"] == 3600 and claims["sid"]
     assert [n for n, _ in _world["events"]] == ["auth.sso_signin"]
+
+
+def test_a_revoked_person_gets_no_dashboard_token(sso, _world, monkeypatch) -> None:
+    """Like every mint, the dashboard's reads revocations: a person revoked
+    since gets a refusal, never a token."""
+    from server.auth import revocation
+
+    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset({_USER[0]}))
+    c = _client()
+    state = c.get("/oauth/sso", follow_redirects=False).headers["location"].split("state=")[1]
+    back = c.get("/oauth/callback", params={"code": "c", "state": state}, follow_redirects=False)
+    assert back.status_code == 403 and "revoked" in back.text and "#token=" not in back.text
+    assert [n for n, _ in _world["events"]] == ["auth.signin_denied"]
 
 
 def test_password_login_is_closed_under_sso(monkeypatch) -> None:
@@ -1252,7 +1270,8 @@ def test_a_refreshed_loom_login_and_the_dashboards_sso_stay_first_party(_world) 
     assert verify_token(tokens["access_token"]).first_party
     rotated = _refresh(c, tokens["refresh_token"]).json()
     assert verify_token(rotated["access_token"]).first_party
-    signed_in = asyncio.run(oauth._dashboard_signed_in(("ann", "acme", ["ann"], ["writer"])))
+    ann = ("ann", "acme", ["ann"], ["writer"])
+    signed_in = asyncio.run(oauth._dashboard_signed_in(ann, {"kind": "dashboard"}))
     token = signed_in.headers["location"].split("#token=", 1)[1]
     assert verify_token(token).first_party and verify_token(token).session_id
 

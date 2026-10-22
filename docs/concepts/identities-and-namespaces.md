@@ -125,18 +125,18 @@ caller cannot read, and each admitted request is audited. The step-by-step setup
 Roles are ordered, and a higher role satisfies every check for a lower one. Each
 operation declares the minimum role it needs (`GET /v1/operations` lists it).
 
-| Role             | Grants                                                                                            | How it is held                                                                                 |
-| ---------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `viewer`         | Read.                                                                                             | Token claim or namespace grant.                                                                |
-| `writer`         | Read, and write memory, knowledge and the other data planes.                                      | Token claim or namespace grant.                                                                |
-| `admin`          | Administer one namespace: grants, configuration, policy, restores, promotion to the shared layer. | Token claim or namespace grant; registering a namespace makes you its admin.                   |
-| `org_admin`      | Org-wide views (for example cost without a namespace).                                            | A recognised gate with no in-product assignment path.                                          |
-| `platform_admin` | Cross-org operator views.                                                                         | Conferred at login to the handles and verified emails in `LOOM_PLATFORM_ADMINS`; never minted. |
+| Role             | Grants                                                                                            | How it is held                                                                                                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `viewer`         | Read.                                                                                             | Token claim or namespace grant.                                                                                                                                                               |
+| `writer`         | Read, and write memory, knowledge and the other data planes.                                      | Token claim or namespace grant.                                                                                                                                                               |
+| `admin`          | Administer one namespace: grants, configuration, policy, restores, promotion to the shared layer. | Token claim or namespace grant; registering a namespace makes you its admin.                                                                                                                  |
+| `org_admin`      | Org-wide views (for example cost without a namespace).                                            | A recognised gate with no in-product assignment path.                                                                                                                                         |
+| `platform_admin` | Cross-org operator views.                                                                         | Conferred at login to the handles and verified emails in `LOOM_PLATFORM_ADMINS`, and to the tokens of a bot registered `--platform-admin`; minted only for a service account, with an expiry. |
 
-Tokens and grants carry only `viewer`, `writer` or `admin`: a role above a namespace
-cannot be minted, so org-wide power is an operator decision in configuration, not
-something a token can carry away. Code namespaces have readers (`viewer`) and maintainers
-(`admin`) and no `writer`.
+Grants carry only `viewer`, `writer` or `admin`, and so do the tokens Loom mints, but for a
+`platform_admin` one: org-wide power is an operator decision in configuration or at bot
+registration, not something a token can carry away. Code namespaces have readers
+(`viewer`) and maintainers (`admin`) and no `writer`.
 
 ## Who may call what
 

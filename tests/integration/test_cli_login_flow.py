@@ -313,7 +313,7 @@ def sso_server(ch_client) -> Iterator[tuple[str, str, FakeIdP]]:
 
 def test_dashboard_sign_in_goes_straight_to_the_identity_provider(sso_server) -> None:
     base, email, _idp = sso_server
-    page = httpx.get(f"{base}/me")
+    page = httpx.get(f"{base}/")
     if page.status_code == 200:  # the dashboard is built
         assert "window.__LOOM_SSO = true" in page.text
     password = httpx.post(f"{base}/v1/auth/login", json={"identifier": email, "password": "x"})

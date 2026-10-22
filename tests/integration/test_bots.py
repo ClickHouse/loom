@@ -39,7 +39,13 @@ def base() -> Iterator[str]:
 
 def _admin(base: str, path: str, body: dict, *, roles: list[str]) -> httpx.Response:
     # Signed with the secret this process and the server both read.
-    token = mint_token(subject="ops@example.com", org="ops", namespaces=["*"], roles=roles)
+    token = mint_token(
+        subject="ops@example.com",
+        org="ops",
+        namespaces=["*"],
+        roles=roles,
+        is_service_account=False,
+    )
     # A replace or disable waits out its revocation cutoff before it answers.
     return httpx.post(
         f"{base}{path}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=30.0
@@ -94,3 +100,41 @@ def test_a_bot_signs_in_with_its_key_and_is_cut_off_when_disabled(
     assert gone["authenticated"] is False and "revoked" in gone["reason"]
     with pytest.raises(AuthInvalid):
         MachineLogin(base, name, key_file=str(key)).token()
+
+
+def test_a_platform_admin_bot_exchanges_its_key_without_namespace_grants(
+    base: str, ch_client: Any, tmp_path: Path
+) -> None:
+    org, name = unique_org("bots"), f"admin{uuid.uuid4().hex[:6]}"
+    body = {
+        "name": name,
+        "org": org,
+        "namespace_roles": [],
+        "generate_key": True,
+        "platform_admin": True,
+    }
+    registered = _admin(base, "/v1/admin/bots.create", body, roles=["platform_admin"])
+    assert registered.status_code == 200, registered.text
+    [saved] = ch_client.query(
+        "SELECT name, org, ns_roles, platform_admin, active FROM loom.machine_identities FINAL "
+        "WHERE name = {name:String}",
+        parameters={"name": name},
+    ).result_rows
+    assert saved == (name, org, [], 1, 1)
+    key = tmp_path / "admin.pem"
+    key.write_text(registered.json()["private_key_pem"])
+    token = MachineLogin(base, name, key_file=str(key)).token()
+    headers = {"Authorization": f"Bearer {token}"}
+    whoami = httpx.get(f"{base}/v1/whoami", headers=headers).json()
+    assert whoami["authenticated"] is True
+    assert whoami["subject"] == f"sa:{name}"
+    listed = httpx.post(f"{base}/v1/admin/bots.list", headers=headers)
+    assert listed.status_code == 200, listed.text
+    [bot] = [row for row in listed.json()["bots"] if row["name"] == name]
+    assert bot["platform_admin"] is True and bot["namespace_roles"] == []
+    successor = httpx.post(
+        f"{base}/v1/admin/bots.create",
+        json={**body, "name": f"next{uuid.uuid4().hex[:6]}"},
+        headers=headers,
+    )
+    assert successor.status_code == 403, successor.text
