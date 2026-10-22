@@ -218,6 +218,10 @@ in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-
 `vector_codec_rebuild.py` needs a maintenance window with every writer and erasure
 stopped and all in-flight writes drained. It refuses unfinished source mutations before
 copying and swapping, and never repairs the live table.
+Keep writers and erasure stopped until the rebuild finishes or is abandoned and
+every `<table>_rebuild` twin and `<table>_pre_rebuild` rollback copy is removed.
+Use `--drop-pre-rebuild --yes` to remove the rollback copy after validation or
+rollback. The erasure saga does not cover these copies.
 
 - **Width.** The target width of a plain column is the most common width of its real
   vectors (not all zeros), or `LOOM_EMBEDDING_DIM` when it holds none; a coded column
