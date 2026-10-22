@@ -188,14 +188,14 @@
           "exclusiveMinimum": 0,
           "maximum": 5000,
           "type": "integer",
-          "description": "Longest wait, ms, of a batched or waited async insert no request waits on (the usage and write-mark flushes; docs/architecture/clickhouse.md#batched-inserts)."
+          "description": "Longest wait, ms, of the usage-event and write-mark flushes, which no request waits on; every other insert takes the bound above (docs/architecture/clickhouse.md#batched-inserts)."
         },
         "ch_batched_insert_wait_max_ms": {
           "default": 50,
           "exclusiveMinimum": 0,
           "maximum": 1000,
           "type": "integer",
-          "description": "Longest wait, ms, of a batched or waited async insert a request waits on; it holds a pooled connection meanwhile."
+          "description": "Longest wait, ms, of a batched or waited async insert (but the two flushes below); it holds a pooled connection meanwhile."
         },
         "ch_batched_insert_wait_min_ms": {
           "default": 10,

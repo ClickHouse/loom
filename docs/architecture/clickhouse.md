@@ -148,14 +148,13 @@ when a buffer fills before the wait ends, at most one per insert when writes are
 The insert also sends `async_insert_max_query_number = 10000`, so at high rates the
 window, not ClickHouse's default of 450 statements, decides the flush.
 
-Two windows: an insert a request waits on (the `conversation.append` turn and embedding
-row, an audit row, the outbox row of a write, a ledger flush the history-policy gate
-waits for) waits at most `ch_batched_insert_wait_max_ms` (50 ms). An insert no request
-waits on (the usage-event flusher, the write-mark flush) waits up to
-`ch_batched_insert_background_wait_max_ms` (200 ms, ClickHouse's own default), so it
-collects more rows per part. A usage-event flush a
-request waits on because the buffer is full takes the short window; the two windows are
-two insert shapes, so they fill separate buffers.
+Two windows: the usage-event flusher and shutdown drain and the write-mark flush wait up
+to `ch_batched_insert_background_wait_max_ms` (200 ms, ClickHouse's own default), so they
+collect more rows per part. Every other batched or waited async insert waits at most
+`ch_batched_insert_wait_max_ms` (50 ms), the `agent_events` timer flush included
+(`flush_now` waits for a flush in flight), and so does a usage-event flush a request
+makes because the buffer is full. The two windows are two insert shapes, so they fill
+separate buffers.
 
 ClickHouse's own target is about one insert, one part, a second per table, with 1,000
 rows or more per insert. These windows stay well short of it; they cut the part rate

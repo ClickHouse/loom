@@ -564,11 +564,11 @@ class ClickHouseSettings(BaseModel):
     # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits
     # when writes are sparse; capped at the insert's longest wait (the two below).
     ch_batched_insert_wait_min_ms: Annotated[int, LIVE] = Field(default=10, gt=0, le=1000)
-    # Longest wait, ms, of a batched or waited async insert a request waits on; it holds a
-    # pooled connection meanwhile.
+    # Longest wait, ms, of a batched or waited async insert (but the two flushes below); it
+    # holds a pooled connection meanwhile.
     ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0, le=1000)
-    # Longest wait, ms, of a batched or waited async insert no request waits on (the usage
-    # and write-mark flushes; docs/architecture/clickhouse.md#batched-inserts).
+    # Longest wait, ms, of the usage-event and write-mark flushes, which no request waits on;
+    # every other insert takes the bound above (docs/architecture/clickhouse.md#batched-inserts).
     ch_batched_insert_background_wait_max_ms: Annotated[int, LIVE] = Field(
         default=200, gt=0, le=5000
     )
@@ -5167,8 +5167,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.dedup_resolve": 400,
     # + outbox-row wait (webhook namespaces).
     "memory.delete": 80,
-    # memory.delete's work, two committed check inserts and the read after the
-    # tombstone, + audit-row and outbox-row waits.
+    # memory.delete's work + two committed check inserts + audit-row and outbox-row waits.
     "memory.delete_version": 180,
     "memory.demonstrate": 400,
     "memory.demote": 100,
@@ -5226,8 +5225,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # Two point-lookups + one bounded arrayIntersect scan (entities bloom index).
     "memory.related": 120,
     "memory.resolve_orphan_duplicates": 5000,
-    # + one batched-insert wait: the Undo's audit record (every namespace) or the
-    # undelete's outbox row (webhook namespaces).
+    # + one wait: the Undo's audit record or the undelete's outbox row.
     "memory.restore": 130,
     # Covers semantic / hybrid / all_mine fan-out (auto_touch is async, no
     # contribution). Reranker hop is EXCLUDED — the operator endpoint owns its
@@ -5237,12 +5235,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.search": 200,
     "memory.search_trace": 200,
     "memory.search_trace_log": 200,
-    # Version inserts plus the conflict and dedup reads (p99 3.7 s on ClickHouse Cloud, 4 s
-    # at x20), + audit and outbox waits, offset by the waited graph inserts taking the
-    # batched-insert bound rather than ClickHouse's longer default.
+    # Version inserts + conflict/dedup reads; audit/outbox waits offset by shorter graph waits.
     "memory.set": 200,
-    # LLM extraction dominates (~7K-token prompt); bulk_set adds ~200 ms + ~4 insert waits
-    # (audit, evidence, belief sources twice) before it.
+    # LLM extraction (~7K-token prompt) + bulk_set (~200 ms) + ~4 batched-insert waits.
     "memory.set_from_messages": 2700,
     # Profile + pinned + score-ordered recall (+ optional knowledge.search),
     # each identity-scoped point-lookups.
