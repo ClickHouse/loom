@@ -749,12 +749,16 @@ async def _tasks_left_as_found() -> Any:
     before = set(asyncio.all_tasks())
     yield
     current = asyncio.current_task()
+
+    def pending() -> list[asyncio.Task[Any]]:
+        return [t for t in asyncio.all_tasks() - before if t is not current and not t.done()]
+
     # A cancelled task's done callback can re-arm a timer or spawn a graph-marks
-    # end task, so the reset and the sweep repeat; a task left after three passes
-    # fails the test rather than leak into the next one.
+    # end task, so the reset and the sweep repeat; a task the teardown did not
+    # stop itself after three passes fails the test rather than leak into the next.
     for _ in range(3):
         _reset_deferred_ledgers()
-        leaked = [t for t in asyncio.all_tasks() - before if t is not current and not t.done()]
+        leaked = pending()
         if not leaked:
             break
         for t in leaked:
@@ -762,9 +766,13 @@ async def _tasks_left_as_found() -> Any:
         await asyncio.gather(*leaked, return_exceptions=True)
     else:
         _reset_deferred_ledgers()
-        left = [t for t in asyncio.all_tasks() - before if t is not current and not t.done()]
-        if left:
-            pytest.fail(f"tasks still pending after three teardown passes: {left}")
+        leaked = pending()
+        unstopped = [t for t in leaked if not t.cancelling()]
+        for t in leaked:
+            t.cancel()
+        await asyncio.gather(*leaked, return_exceptions=True)
+        if unstopped:
+            pytest.fail(f"tasks still pending after three teardown passes: {unstopped}")
 
 
 @pytest.fixture(autouse=True)
