@@ -255,6 +255,21 @@ def test_a_reused_twin_of_another_layout_refuses(
     assert step in capsys.readouterr().out
 
 
+def test_a_recorded_twin_of_another_sorting_key_refuses_reuse(capsys: Any) -> None:
+    """A twin this tool recorded is never another tool's old table, so its key is
+    compared in the reuse check: a live table re-keyed after the twin was created (an
+    ALTER keeps its UUID) refuses --reuse and names --restart."""
+    rekeyed = _twin()["ddl"].replace("ORDER BY (org, namespace)", "ORDER BY org")
+    twin = {**_twin(), "ddl": rekeyed}
+    Path("memory_chunks_rebuild.uuid").write_text("twin live")
+    ch = _CH(memory_chunks=_live(), memory_chunks_rebuild=twin)
+    assert _run(ch, "--yes", "--reuse") == tr.REFUSED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert ch.t["memory_chunks_rebuild"] is twin and _writes(ch) == []
+    out = capsys.readouterr().out
+    assert "--restart --yes" in out and "scripts.ops.table_rebuild" not in out
+
+
 def test_a_reused_twin_of_this_layout_swaps() -> None:
     ch = _CH(memory_chunks=_live(), memory_chunks_rebuild=_twin())
     assert _run(ch, "--yes", "--reuse") == tr.OK
