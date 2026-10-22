@@ -12,10 +12,12 @@ from typing import Any
 import pytest
 
 from server.core import ch as _ch
+from server.core.schema.vector_codec_ddl import CODEC_SETTINGS_SQL
 from server.core.vectors import codes_state as vector_codes_state
 from server.core.vectors import patch_parts, quantized_setting
 from server.core.vectors import search_settings as search_sql
 from server.settings import settings
+from tests.unit.codec_states import SHAPES, STATES, USABLE, dict_rows
 
 ROOT = Path(__file__).resolve().parents[2]
 _FLAG = "vector_search_use_quantized_codes = 1"
@@ -39,10 +41,10 @@ class _FakeCH:
         patches: dict[str, int],
         fail: bool = False,
         width: int = 1024,
-        codec: bool = True,
+        codec: str = "writable",
     ):
         self.coded, self.patches, self.fail, self.width = coded, patches, fail, width
-        self.codec = codec
+        self.codec = codec  # the state of enable_quantized_codec (tests/unit/codec_states.py)
         self.calls: list[str] = []
 
     async def query_all(
@@ -51,8 +53,10 @@ class _FakeCH:
         self.calls.append(sql)
         if self.fail:
             raise RuntimeError("boom")
-        if "system.settings" in sql:
-            return [{"n": int(self.codec)}]
+        if sql == CODEC_SETTINGS_SQL:
+            return dict_rows(enable_quantized_codec=self.codec)
+        if "clusterAllReplicas" in sql:
+            return [{"replicas": 3, "with_setting": 3}]
         if "system.columns" in sql:
             return [
                 {
@@ -63,8 +67,6 @@ class _FakeCH:
                 }
                 for t, c in self.coded
             ]
-        if "clusterAllReplicas" in sql:
-            return [{"replicas": 3, "with_setting": 3}]
         return []
 
 
@@ -509,8 +511,17 @@ async def test_no_reading_counts_as_coded_unless_the_codec_is_missing() -> None:
     await vector_codes_state.probe(_FakeCH(coded=[], patches={}, fail=True))
     assert await vector_codes_state.served_model_writes_coded()
     vector_codes_state.reset()
-    await vector_codes_state.probe(_FakeCH(coded=[], patches={}, codec=False))
+    await vector_codes_state.probe(_FakeCH(coded=[], patches={}, codec="absent"))
     assert not await vector_codes_state.served_model_writes_coded()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", STATES + SHAPES)
+async def test_the_codec_counts_as_available_only_where_it_can_be_on(state: str) -> None:
+    """Listed is not enough: a setting held at 0, by `<readonly/>` (ClickHouse Cloud until
+    the operator enables the codec) or by a constraint that refuses 1, keeps the install plain."""
+    await vector_codes_state.probe(_FakeCH(coded=[], patches={}, codec=state))
+    assert vector_codes_state._state.codec_available is USABLE[state]
 
 
 def test_a_vector_its_coded_column_cannot_take_is_refused_by_name(

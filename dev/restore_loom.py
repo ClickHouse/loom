@@ -29,6 +29,10 @@ Steps, in order; nothing is written before the last:
          a table that already holds rows in scope needs --into-nonempty —
            inserts append, so the plain MergeTree tables (audit_log,
            agent_events) would hold every row twice;
+       and refuse a backup with coded vector tables (`Quantized(` in a recorded
+       CREATE) where the target's codec settings cannot be read or the codec
+       cannot be on; where it can, a general codec after Quantized is dropped
+       if `allow_suspicious_codecs` cannot be on (`CodecSettings`);
     6. create the database and missing tables, then insert into
        `<database>.<table>` through a staging table whose parts attach to it,
        so no materialized view fires on a restored row (not with --dry-run);
@@ -59,8 +63,8 @@ Exit codes:
     1   a create or insert failed; the report names the tables already inserted
     2   refused: bad arguments, no target, missing or incomplete manifest, a
         file that fails verification, a selection that splits a view, a
-        destructive case without its flag, or another run holding the
-        database's restore lock past its wait
+        destructive case without its flag, coded tables the target cannot
+        create, or another run holding the database's restore lock past its wait
 """
 
 from __future__ import annotations
@@ -74,14 +78,19 @@ import secrets
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import cache, partial
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dev._ch_target import TargetError, add_target_args, resolve_target
 from dev.backup_loom import BACKUP_VERSION, MANIFEST, in_load_order
+
+if TYPE_CHECKING:
+    from server.core.schema.vector_codec_ddl import CodecSettings
 
 
 class Refused(ValueError):
@@ -460,14 +469,54 @@ def staging_engine_ddl(create_query: str, staging: str) -> str | None:
     return _REPLICATED.sub(lambda m: f"{m.group(1)}(", head, 1)
 
 
-def create_settings(ddl: str) -> dict[str, int]:
-    """What a CREATE of a coded vector table (ClickHouse 26.8+) must send."""
-    from server.core.schema.vector_codec_ddl import statement_settings
+_NO_CODEC = (
+    "need the Quantized codec, which this user cannot have on here "
+    "(enable_quantized_codec absent, or held at 0)"
+)
 
-    return statement_settings(ddl)
+
+def codec_settings(client: Any) -> CodecSettings:
+    """How the target takes the codec settings, read before any is sent."""
+    from server.core.schema.vector_codec_ddl import CODEC_SETTINGS_SQL, CodecSettings
+
+    return CodecSettings.from_rows(client.query(CODEC_SETTINGS_SQL).result_rows)
 
 
-def staging_ddl(client: Any, database: str, table: str, staging: str) -> tuple[str, dict[str, int]]:
+def check_codec(client: Any, plans: list[TablePlan]) -> CodecSettings | None:
+    """The target's codec settings when the backup holds coded vector tables, None
+    when it holds none. Refused, before anything is written, where those tables
+    cannot be created: the settings could not be read, or the codec cannot be on."""
+    coded = [p.name for p in plans if "Quantized(" in p.ddl]
+    if not coded:
+        return None
+    try:
+        codec = codec_settings(client)
+    except Exception as e:  # a failed read-only probe writes nothing: a refusal
+        raise Refused(
+            f"could not read the codec settings the coded tables {coded} need: {e}"
+        ) from e
+    if not codec.codec:
+        raise Refused(f"the coded tables {coded} {_NO_CODEC}")
+    return codec
+
+
+def create_statement(ddl: str, codec: Callable[[], CodecSettings]) -> tuple[str, dict[str, int]]:
+    """`ddl` as the target can run it, and the settings it is sent with
+    (`CodecSettings.statement`, ClickHouse 26.8+): a general codec after
+    Quantized is dropped where the target refuses it. `codec` is asked only for a
+    coded table; a target table coded already, where the codec can no longer be
+    on, fails its staging copy here."""
+    if "Quantized(" not in ddl:
+        return ddl, {}
+    settings = codec()
+    if not settings.codec:
+        raise RuntimeError(f"a coded vector table and its staging copy {_NO_CODEC}")
+    return settings.statement(ddl)
+
+
+def staging_ddl(
+    client: Any, database: str, table: str, staging: str, codec: Callable[[], CodecSettings]
+) -> tuple[str, dict[str, int]]:
     """The statement that creates `table`'s staging copy, and its settings (an
     `AS` copy carries the source's codecs). A Replicated database names each
     table's Keeper path itself, so a copy there is safe as it is."""
@@ -481,8 +530,8 @@ def staging_ddl(client: Any, database: str, table: str, staging: str) -> tuple[s
     if row and row[0][0] != "Replicated":
         local = staging_engine_ddl(source, staging)
         if local is not None:
-            return local, create_settings(source)
-    return f"CREATE TABLE {staging} AS `{database}`.`{table}`", create_settings(source)
+            return create_statement(local, codec)
+    return f"CREATE TABLE {staging} AS `{database}`.`{table}`", create_statement(source, codec)[1]
 
 
 def staging_prefix(run_id: str) -> str:
@@ -554,17 +603,27 @@ def execute(
     state: TargetState,
     run_id: str,
     identity: ReplicaIdentity | None = None,
+    known: CodecSettings | None = None,
 ) -> tuple[list[str], str | None]:
     """Create what is missing, then insert each file in order; stop at the
-    first failure. Returns (tables inserted, error or None)."""
+    first failure. Returns (tables inserted, error or None). `known` is the
+    codec settings `check_codec` read; without it they are read when a coded
+    table first needs them."""
     done: list[str] = []
+    probe = cache(partial(codec_settings, client))
+
+    def codec() -> CodecSettings:
+        return known if known is not None else probe()
+
     try:
         if not state.database_exists:
             client.command(f"CREATE DATABASE IF NOT EXISTS `{database}`")
         for p in plans:
             if p.name in state.missing:
-                ddl = target_ddl(p.ddl, database, p.name, identity)
-                client.command(ddl, settings=create_settings(ddl) or None)
+                ddl, settings = create_statement(
+                    target_ddl(p.ddl, database, p.name, identity), codec
+                )
+                client.command(ddl, settings=settings or None)
                 print(f"+ created {database}.{p.name}")
     except Exception as e:  # noqa: BLE001 — reported as a failed create, nothing inserted yet
         return done, f"create failed: {e}"
@@ -577,7 +636,7 @@ def execute(
             continue
         staging = f"`{database}`.`{staging_prefix(run_id)}{p.name}`"
         try:
-            ddl, ddl_settings = staging_ddl(client, database, p.name, staging)
+            ddl, ddl_settings = staging_ddl(client, database, p.name, staging, codec)
             client.command(ddl, settings=ddl_settings or None)
             # A merge in staging would collapse rows before the attach, so the
             # restored count would not match the manifest's (a FINAL read sees
@@ -693,6 +752,7 @@ def main(argv: list[str] | None = None) -> int:
             replica_identity(
                 client, target.database, str(manifest.get("source_database") or ""), plans, state
             )
+            check_codec(client, plans)
         except Refused as e:
             print(f"✗ {e}", file=sys.stderr)
             return 2
@@ -728,7 +788,8 @@ def main(argv: list[str] | None = None) -> int:
             identity = replica_identity(
                 client, target.database, str(manifest.get("source_database") or ""), plans, state
             )
-            done, error = execute(client, target.database, plans, state, run_id, identity)
+            codec = check_codec(client, plans)
+            done, error = execute(client, target.database, plans, state, run_id, identity, codec)
         except Refused as e:
             print(f"✗ {e}", file=sys.stderr)
             return 2

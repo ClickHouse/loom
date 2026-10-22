@@ -437,7 +437,7 @@ def test_apply_stops_when_the_lock_is_lost_between_files(monkeypatch, tmp_path, 
         (d / n).write_text("CREATE TABLE IF NOT EXISTS loom.x (a UInt8) ENGINE = Memory;\n")
     ran: list[str] = []
     monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
-    monkeypatch.setattr(mig, "_codec_supported", lambda ch: False)
+    monkeypatch.setattr(mig, "_codec_settings", lambda ch: mig.NO_CODEC)
     monkeypatch.setattr(mig, "_sync_settings_accepted", lambda ch: frozenset())
     monkeypatch.setattr(mig, "_run_file", lambda ch, f, **kw: ran.append(f.name))
     monkeypatch.setattr(mig, "_record", lambda ch, name, cs: None)

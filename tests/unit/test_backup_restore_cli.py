@@ -22,6 +22,8 @@ sys.path.insert(0, str(ROOT))
 
 from dev import backup_loom, restore_loom  # noqa: E402
 from dev._ch_target import CHTarget  # noqa: E402
+from server.core.schema.vector_codec_ddl import CODEC_SETTINGS_SQL  # noqa: E402
+from tests.unit.codec_states import PAIRS, SENT, USABLE, codec_rows, settings  # noqa: E402
 
 TARGET = CHTarget(host="ch.test", port=8123, user="loom", database="loom", secure=False)
 # The tables the fake server lists (TABLES_SQL), with whether each has an `org` column.
@@ -689,19 +691,158 @@ def test_a_restore_waits_for_the_run_that_holds_the_database(
 
 def test_a_coded_vector_table_is_created_with_the_codec_setting() -> None:
     """ClickHouse 26.8+ refuses a Quantized column unless the CREATE enables the
-    codec; a staging `AS` copy carries the source's codecs, so it needs it too."""
+    codec; a staging `AS` copy carries the source's codecs, so it needs it too.
+    A plain table never reads the codec settings."""
     from types import SimpleNamespace
 
     coded = "CREATE TABLE t (v Array(Float32) CODEC(Quantized(8, 'b1'))) ENGINE = MergeTree"
-    assert restore_loom.create_settings(coded) == {"enable_quantized_codec": 1}
-    assert restore_loom.create_settings("CREATE TABLE t (x UInt8) ENGINE = MergeTree") == {}
+    assert restore_loom.create_statement(coded, settings) == (coded, {"enable_quantized_codec": 1})
+    plain = "CREATE TABLE t (x UInt8) ENGINE = MergeTree"
+    assert restore_loom.create_statement(plain, lambda: pytest.fail("asked")) == (plain, {})
 
     class _Client:
         def query(self, sql: str, parameters: Any = None) -> Any:
             return SimpleNamespace(result_rows=[("Replicated", coded)])
 
-    ddl, settings = restore_loom.staging_ddl(_Client(), "db", "t", "`db`.`_restore_x_t`")
-    assert ddl.endswith("AS `db`.`t`") and settings == {"enable_quantized_codec": 1}
+    ddl, sent = restore_loom.staging_ddl(_Client(), "db", "t", "`db`.`_restore_x_t`", settings)
+    assert ddl.endswith("AS `db`.`t`") and sent == {"enable_quantized_codec": 1}
+
+
+class _CodecTarget:
+    """A target that answers the codec settings read and records each command."""
+
+    def __init__(self, codec: str, chain: str) -> None:
+        self.rows = codec_rows(codec, chain)
+        self.reads = 0
+        self.commands: list[tuple[str, Any]] = []
+
+    def query(self, sql: str, parameters: Any = None) -> _Result:
+        assert sql == CODEC_SETTINGS_SQL, sql
+        self.reads += 1
+        return _Result(self.rows)
+
+    def command(self, sql: str, settings: Any = None) -> None:
+        self.commands.append((sql, settings))
+
+
+_CHAINED_DDL = (
+    "CREATE TABLE loom.entity_vectors (`entity_text` String, `entity_embedding` "
+    "Array(BFloat16) CODEC(Quantized('rabitq', 8, 0), LZ4)) ENGINE = MergeTree ORDER BY entity_text"
+)
+
+
+@pytest.mark.parametrize(("codec", "chain"), PAIRS)
+def test_a_coded_table_is_created_as_the_target_takes_it(codec: str, chain: str) -> None:
+    """Refused by name, before anything is written, where the codec cannot be on; the
+    LZ4 chain dropped where allow_suspicious_codecs cannot be; a setting sent only
+    where it is settable."""
+    client = _CodecTarget(codec, chain)
+    plan = restore_loom.TablePlan(name="entity_vectors", path=Path("e"), rows=0, ddl=_CHAINED_DDL)
+    state = restore_loom.TargetState(
+        database_exists=True, missing=("entity_vectors",), rows_in_scope={}
+    )
+    if not USABLE[codec]:
+        with pytest.raises(restore_loom.Refused, match="need the Quantized codec"):
+            restore_loom.check_codec(client, [plan])
+        assert client.commands == []
+        return
+    known = restore_loom.check_codec(client, [plan])
+    done, error = restore_loom.execute(client, "scratch", [plan], state, "0a1b2c3d", None, known)
+    assert done == [] and error is None and client.reads == 1
+    ((ddl, sent),) = client.commands
+    kept = USABLE[chain]
+    assert "CODEC(Quantized('rabitq', 8, 0)" + (", LZ4)" if kept else ")") in ddl
+    want = {"enable_quantized_codec": 1} if SENT[codec] else {}
+    want |= {"allow_suspicious_codecs": 1} if kept and SENT[chain] else {}
+    assert sent == (want or None)
+
+
+def test_a_backup_without_coded_tables_never_reads_the_codec_settings() -> None:
+    plan = restore_loom.TablePlan(name="memory", path=Path("m"), rows=0, ddl="CREATE TABLE t")
+    assert restore_loom.check_codec(_CodecTarget("off", "off"), [plan]) is None
+
+
+class _CodecRestore(RestoreClient):
+    """A target that answers each codec settings read with the next of `answers`
+    (rows, or an exception to raise), the last one from then on."""
+
+    def __init__(self, databases: dict[str, dict[str, int]], *answers: Any) -> None:
+        super().__init__(databases)
+        self.answers = list(answers)
+        self.reads = 0
+
+    def query(self, sql: str, parameters: dict[str, Any] | None = None) -> _Result:
+        if sql != CODEC_SETTINGS_SQL:
+            return super().query(sql, parameters)
+        answer = self.answers[min(self.reads, len(self.answers) - 1)]
+        self.reads += 1
+        if isinstance(answer, Exception):
+            raise answer
+        return _Result(answer)
+
+
+def _coded_backup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """A backup whose `memory` was dumped from a coded table with the LZ4 chain."""
+    b = _backup(monkeypatch, tmp_path)
+    manifest = json.loads((b / "manifest.json").read_text())
+    for entry in manifest["tables"]:
+        if entry["name"] == "memory":
+            entry["create_table_query"] = (
+                "CREATE TABLE loom.memory (`org` String, `embedding` Array(BFloat16) "
+                "CODEC(Quantized('rabitq', 8, 0), LZ4)) ENGINE = MergeTree ORDER BY org"
+            )
+    (b / "manifest.json").write_text(json.dumps(manifest))
+    return b
+
+
+def _without_memory() -> dict[str, dict[str, int]]:
+    return {"drill": {t: 0 for t in SCHEMA if t != "memory"}}
+
+
+@pytest.mark.parametrize(
+    ("answer", "said"),
+    [
+        (codec_rows("off", "writable"), "the coded tables ['memory'] need the Quantized codec"),
+        (codec_rows("absent", "absent"), "the coded tables ['memory'] need the Quantized codec"),
+        (RuntimeError("Code: 497. Not enough privileges"), "could not read the codec settings"),
+    ],
+    ids=["held-at-0", "absent", "probe-failed"],
+)
+def test_a_dry_run_refuses_coded_tables_the_target_cannot_create(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any, answer: Any, said: str
+) -> None:
+    """Refused before anything is written, and a failed read is told apart from a codec
+    that cannot be on."""
+    b = _coded_backup(monkeypatch, tmp_path)
+    client = _CodecRestore(_without_memory(), answer)
+    assert _restore(monkeypatch, client, ["--in-dir", str(b), "--dry-run"]) == 2
+    assert said in capsys.readouterr().err
+    assert client.commands == [] and client.inserted == {}
+
+
+def test_the_codec_is_checked_again_under_the_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    """A setting held at 0 between the plan and the lock: nothing but the lock is written."""
+    b = _coded_backup(monkeypatch, tmp_path)
+    client = _CodecRestore(_without_memory(), codec_rows("on", "on"), codec_rows("off", "on"))
+    assert _restore(monkeypatch, client, ["--in-dir", str(b)]) == 2
+    assert "need the Quantized codec" in capsys.readouterr().err
+    lock, release = client.commands
+    assert lock.startswith(f"CREATE TABLE {LOCK} ")
+    assert release == f"DROP TABLE IF EXISTS {LOCK} SYNC"
+    assert client.inserted == {} and client.reads == 2
+
+
+def test_a_coded_table_is_restored_without_a_chain_the_target_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    b = _coded_backup(monkeypatch, tmp_path)
+    client = _CodecRestore(_without_memory(), codec_rows("on", "off"))
+    assert _restore(monkeypatch, client, ["--in-dir", str(b), "--skip-idempotency"]) == 0
+    (create,) = [c for c in client.commands if "`drill`.`memory` (" in c]
+    assert "CODEC(Quantized('rabitq', 8, 0))" in create and "LZ4" not in create
+    assert "`drill`.`memory`" in client.inserted and client.reads == 2
 
 
 # A replicated table restored somewhere new must not take the source's Keeper path.

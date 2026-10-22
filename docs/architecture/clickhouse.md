@@ -468,17 +468,27 @@ flush never fails a request; a crash loses the queue.
 ## Vector storage
 
 - Vector columns are `Array(BFloat16)`, mostly `CODEC(NONE)`;
-  `entity_vectors.entity_embedding` keeps `LZ4` because its vectors repeat. Query vectors
-  bind as `Array(Float32)`. A memory carries up to two vectors (value and key), so at 3072
-  dimensions up to 12 KiB of vectors.
+  `entity_vectors.entity_embedding` keeps `LZ4` because its vectors repeat (LZ4 compresses
+  them about 4x). Coded, it keeps the `LZ4` after `Quantized` only where
+  `allow_suspicious_codecs` can be on; where it is held at 0, as on ClickHouse Cloud, the
+  column is stored without it, in about four times the space. The operator either enables
+  `allow_suspicious_codecs` for Loom's user and adds the chain back with
+  `scripts/ops/vector_codec_rebuild.py --table entity_vectors --columns entity_embedding --chain LZ4`,
+  or accepts the larger column. Query vectors bind as `Array(Float32)`. A memory carries up
+  to two vectors (value and key), so at 3072 dimensions up to 12 KiB of vectors.
 - **No table has a vector-similarity (HNSW) index.** Search is an exact `cosineDistance`
   scan over the rows the identity predicates leave. The bytes a read scans therefore
   grow with namespace size, not corpus size.
   [Why there is no vector index](#why-there-is-no-vector-index) has the measurements.
 - **Quantized codes.** On ClickHouse 26.8+, a fresh install creates the vector columns of
   `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`) with `CODEC(Quantized('rabitq', <dim>, 0))`
-  whenever the server supports it. The runner rewrites the `CREATE` at apply time. An
-  existing table moves with `scripts/ops/vector_codec_rebuild.py`.
+  where `enable_quantized_codec` is on, or Loom's ClickHouse user may turn it on. The runner
+  rewrites the `CREATE` at apply time ([Gated ClickHouse settings](#gated-clickhouse-settings)).
+  On a server that holds `enable_quantized_codec` at 0, a fresh install creates the plain
+  layout, and `scripts/ops/vector_codec_rebuild.py` applies the codec once the setting is on.
+  ClickHouse Cloud holds the setting read-only at its default 0 until the operator enables
+  it for the service with a settings-profile override; it then reads 1, still read-only,
+  and coded tables work. An existing table moves with the same tool.
 - **Codes-first reads.** When a column is coded and its table has no patch parts, reads
   send `vector_search_use_quantized_codes = 1` (`LOOM_VECTOR_SEARCH_QUANTIZED_CODES`): a
   pass over the codes keeps `LIMIT × LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER`
@@ -836,29 +846,53 @@ carries it (`server/core/schema/migrate.py`, `_stmt_experimental_settings`):
 | `allow_experimental_nlp_functions`                  | Statements calling `stem(` or `lemmatize(`, and any `ALTER` on `memory_embeddings`. Dropped where read-only, as on ClickHouse Cloud, which runs `stem()` without it. |
 | `allow_experimental_vector_similarity_index`        | Statements naming a `vector_similarity` / HNSW index.                                                                                                                |
 | `allow_experimental_statistics`                     | Statements with `STATISTICS`.                                                                                                                                        |
-| `enable_quantized_codec`, `allow_suspicious_codecs` | A coded `CREATE` on 26.8+; `allow_suspicious_codecs` only when a codec is chained after `Quantized`.                                                                 |
+| `enable_quantized_codec`, `allow_suspicious_codecs` | A coded `CREATE` on 26.8+, where the user may set it to 1 (below); `allow_suspicious_codecs` only when a codec is chained after `Quantized`.                         |
 
-Applying `schemas/schema.sql` by hand with `clickhouse-client --multiquery` needs the same
-flags; the file's header lists them.
+The two codec settings decide the vector layout, so the runner reads their `value`,
+`readonly`, `min`, `max` and `disallowed_values` from `system.settings` before it sends
+either (`CodecSettings` in `server/core/schema/vector_codec_ddl.py`). A setting is held
+when this user may not set it to 1: `readonly = 1` (a `<readonly/>` constraint), or a
+`<max>0</max>` or `<disallowed>1</disallowed>` constraint, which `system.settings` shows
+with `readonly = 0`. A held setting is never sent: at 1 it needs no change, and at 0 the
+server refuses it (code 452).
+
+| State in `system.settings` | `enable_quantized_codec`                           | `allow_suspicious_codecs`                                                                              |
+| -------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| settable                   | vector tables coded; sent with each coded `CREATE` | `entity_vectors` keeps its `LZ4` chain; sent with that `CREATE`                                        |
+| held at 1                  | vector tables coded; not sent                      | `entity_vectors` keeps its `LZ4` chain; not sent                                                       |
+| held at 0, or absent       | vector tables plain                                | `entity_vectors` coded with `Quantized` alone, since the server refuses the chain without it (code 36) |
+
+The provider rebuild's candidate table and `dev/restore_loom.py` follow the same table,
+but refuse a coded table where the codec cannot be on instead of creating it plain: the
+restore before it writes anything, the provider rebuild before the candidate's `CREATE`
+(an owned stale candidate is dropped first). On 26.7 the provider rebuild takes
+`allow_experimental_codecs` in place of `enable_quantized_codec`.
+`scripts/ops/vector_codec_rebuild.py` refuses to run where the codec cannot be on, and
+refuses `--chain` where `allow_suspicious_codecs` cannot be; run with `--chain LZ4` once it
+can, it adds the chain back.
+
+`schemas/schema.sql` is a reference dump, not an install path (its header says to install
+with `loom migrate`): applied by hand with `clickhouse-client --multiquery`, it needs these
+flags set in the session first.
 
 ## Cloud and self-hosted differences
 
 Supported server versions are in
 [ClickHouse requirements](../operations/deployment.md#clickhouse-requirements).
 
-| Area                               | Self-hosted (single node)                                                                 | ClickHouse Cloud                                                                                                                    |
-| ---------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Connection                         | HTTP on 8123                                                                              | TLS on 8443 (`LOOM_CH_PORT=8443` or `LOOM_CH_SECURE=true`). Keep `LOOM_CH_KEEPALIVE_TIMEOUT` below the load balancer's idle cutoff. |
-| Read-your-writes                   | A waited insert is visible to the next read.                                              | Replicas may lag; see [Read-your-writes](#read-your-writes).                                                                        |
-| Rolling upgrades                   | One version.                                                                              | Replicas can differ for a while; setting support is probed per replica, and a rejected setting is dropped and the read retried.     |
-| NLP functions                      | `stem()` available.                                                                       | `allow_experimental_nlp_functions` is read-only; migrations run without it. The lemma column is filled by the application on both.  |
-| Codecs                             | `Quantized` needs 26.8+.                                                                  | `allow_suspicious_codecs` is read-only, so it is sent only for the `entity_vectors` LZ4 chain.                                      |
-| `MODIFY SETTING index_granularity` | Rejected by OSS `ReplacingMergeTree` (code 472); tolerated.                               | Accepted.                                                                                                                           |
-| Lightweight updates                | Supported on recent versions; `ALTER UPDATE` fallback otherwise.                          | Each `UPDATE` is a patch part plus a Keeper entry; statements are batched and back off while mutations are pending.                 |
-| `OPTIMIZE … FINAL`                 | Returns after the merge.                                                                  | Returns before the merge completes; code compaction polls `system.merges` on every replica.                                         |
-| Filesystem cache                   | No effect on a local disk.                                                                | The client sends `enable_filesystem_cache = 1` on every session.                                                                    |
-| Keeper                             | Required: the bundled stack runs an embedded one (`deploy/clickhouse-config/keeper.xml`). | Keeper is available.                                                                                                                |
-| Durability                         | A single node has no replication or backups unless you add them.                          | Replication and backups are managed by the service.                                                                                 |
+| Area                               | Self-hosted (single node)                                                                 | ClickHouse Cloud                                                                                                                                                   |
+| ---------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Connection                         | HTTP on 8123                                                                              | TLS on 8443 (`LOOM_CH_PORT=8443` or `LOOM_CH_SECURE=true`). Keep `LOOM_CH_KEEPALIVE_TIMEOUT` below the load balancer's idle cutoff.                                |
+| Read-your-writes                   | A waited insert is visible to the next read.                                              | Replicas may lag; see [Read-your-writes](#read-your-writes).                                                                                                       |
+| Rolling upgrades                   | One version.                                                                              | Replicas can differ for a while; setting support is probed per replica, and a rejected setting is dropped and the read retried.                                    |
+| NLP functions                      | `stem()` available.                                                                       | `allow_experimental_nlp_functions` is read-only; migrations run without it. The lemma column is filled by the application on both.                                 |
+| Codecs                             | `Quantized` needs 26.8+; both codec settings are writable.                                | Read-only: `enable_quantized_codec` at its default 0 until the operator enables it (plain install), then 1 (coded); `allow_suspicious_codecs` at 0 (no LZ4 chain). |
+| `MODIFY SETTING index_granularity` | Rejected by OSS `ReplacingMergeTree` (code 472); tolerated.                               | Accepted.                                                                                                                                                          |
+| Lightweight updates                | Supported on recent versions; `ALTER UPDATE` fallback otherwise.                          | Each `UPDATE` is a patch part plus a Keeper entry; statements are batched and back off while mutations are pending.                                                |
+| `OPTIMIZE … FINAL`                 | Returns after the merge.                                                                  | Returns before the merge completes; code compaction polls `system.merges` on every replica.                                                                        |
+| Filesystem cache                   | No effect on a local disk.                                                                | The client sends `enable_filesystem_cache = 1` on every session.                                                                                                   |
+| Keeper                             | Required: the bundled stack runs an embedded one (`deploy/clickhouse-config/keeper.xml`). | Keeper is available.                                                                                                                                               |
+| Durability                         | A single node has no replication or backups unless you add them.                          | Replication and backups are managed by the service.                                                                                                                |
 
 Before 26.8, a vector-search read with a `WHERE` clause can record wrong entries in the
 query condition cache, and a later plain `SELECT` with the same condition can return fewer

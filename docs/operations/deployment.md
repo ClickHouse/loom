@@ -368,13 +368,22 @@ user with SQL.
 | Version 26.4 or later     | the oldest server that applies every migration (26.3 still gates `stem()`); boot refuses an older one                                                                                                                                                                      | the service's version; the oldest replica counts | upgrade the server. CI tests only the latest release (`dev/clickhouse_release.sh`); a release bundle names the one that was latest when it was built                                                    |
 | Grants                    | everything on `loom.*` and `loom_telemetry.*` (`GRANT ALL`, or `GRANT CURRENT GRANTS` on Cloud): the migrations create, alter and drop tables and views, and Loom rebuilds tables and refreshes views at runtime; `SELECT` on the system tables it reads; `READ ON REMOTE` | the user `ch-setup --print-sql` grants           | an admin, or the same SQL                                                                                                                                                                               |
 | Keeper                    | required: every lease and claim is a KeeperMap key (the migration lock, the workers lease, the task-inbox leases, the sign-in state, and the sign-up, account, grant change and run id claims); Loom refuses to start without one                                          | present                                          | the bundled stack runs an embedded Keeper (`deploy/clickhouse-config/keeper.xml`); for your own server, add that file to its `config.d/` (or a `<zookeeper>` section naming your Keeper) and restart it |
-| `Quantized` codec (26.8+) | codes-first vector search: a fresh install creates its vector columns coded when `LOOM_EMBEDDING_DIM` is a multiple of 8                                                                                                                                                   | where the service version has it                 | nothing to configure; an older server gets plain vectors and full-precision scans                                                                                                                       |
+| `Quantized` codec (26.8+) | codes-first vector search: a fresh install creates its vector columns coded when `LOOM_EMBEDDING_DIM` is a multiple of 8                                                                                                                                                   | with `enable_quantized_codec` on (below)         | nothing to configure; an older server gets plain vectors and full-precision scans                                                                                                                       |
 | `aiEmbed` (26.7+)         | only `loom reembed --in-database`                                                                                                                                                                                                                                          | where the service version has it                 | needs a named collection (`named_collections.xml.template`)                                                                                                                                             |
 
 - **Newer servers.** Features past the floor are probed where they are used: the
   `Quantized` codec, `aiEmbed`, lightweight `UPDATE` (Loom falls back to a mutation where
   it is off). Before 26.8 a vector read can leave wrong entries in the query condition
   cache, so every Loom session on an older server turns the cache off when it connects.
+- **The `Quantized` codec on ClickHouse Cloud.** A service holds `enable_quantized_codec`
+  read-only at its default 0 until the operator enables it for the service with a
+  settings-profile override. Until then a fresh install creates its vector tables plain;
+  `scripts/ops/vector_codec_rebuild.py` codes them once the setting is on.
+  `allow_suspicious_codecs` stays read-only at 0, so `entity_vectors` is coded without its
+  `LZ4` chain and that column takes about four times the space. Enable
+  `allow_suspicious_codecs` for Loom's user and rebuild `entity_vectors` with `--chain LZ4`
+  to keep the chain, or accept the larger column
+  ([gated settings](../architecture/clickhouse.md#gated-clickhouse-settings)).
 - **Run id claims.** A claim key lives only while a `run.begin` runs; one
   left by a begin that failed or died before writing its row stays until the same user
   and session re-begin and complete that id, or an erasure of its namespace or user.
