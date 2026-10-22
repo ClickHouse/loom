@@ -1940,6 +1940,7 @@ CREATE TABLE IF NOT EXISTS loom.machine_identities
     `jwks_uri` String DEFAULT '',
     `max_token_s` UInt32 DEFAULT 3600,
     `max_agents` UInt32 DEFAULT 1000,
+    `platform_admin` UInt8 DEFAULT 0,
     `max_access_token_s` UInt32 DEFAULT 3600
 )
 ENGINE = ReplacingMergeTree(version)

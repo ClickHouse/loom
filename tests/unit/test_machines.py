@@ -26,6 +26,11 @@ CI = "https://ci.example"
 
 @pytest.fixture
 def bots(monkeypatch, auth_attempts) -> dict[str, Any]:
+    # Exchange tests run after every replica protects human-admin credentials.
+    async def live(*a, **kw):
+        return [{"schema_version": 76}]
+
+    monkeypatch.setattr("server.core.instances.read_live", live)
     monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
     monkeypatch.setattr(oauth.settings, "oauth_issuer", "http://testserver")
     private, public = machines.generate_key()
@@ -66,6 +71,7 @@ def bots(monkeypatch, auth_attempts) -> dict[str, Any]:
         m.setdefault("max_token_s", 3600)
         m.setdefault("max_agents", 1000)
         m.setdefault("max_access_token_s", 3600)
+        m.setdefault("platform_admin", False)
     made: list[tuple[str, str, str]] = []
 
     async def ensure_namespace(m: machines.Machine, agent: str) -> str:
@@ -314,7 +320,8 @@ def test_metadata_names_both_machine_grants() -> None:
     assert "private_key_jwt" in meta["token_endpoint_auth_methods_supported"]
 
 
-async def test_a_saved_bot_writes_every_column(monkeypatch) -> None:
+@pytest.mark.parametrize("platform_admin", [False, True])
+async def test_a_saved_bot_writes_every_column(monkeypatch, platform_admin: bool) -> None:
     from tests.unit.schema_ddl import column_names
 
     rows: list[dict[str, Any]] = []
@@ -332,7 +339,7 @@ async def test_a_saved_bot_writes_every_column(monkeypatch) -> None:
     bot: machines.Machine = {
         "name": "triage",
         "org": "acme",
-        "ns_roles": [("triage", "writer")],
+        "ns_roles": [] if platform_admin else [("triage", "writer")],
         "public_keys": "",
         "issuer": "",
         "audience": "",
@@ -342,11 +349,16 @@ async def test_a_saved_bot_writes_every_column(monkeypatch) -> None:
         "max_token_s": 3600,
         "max_agents": 1000,
         "max_access_token_s": 86400,
+        "platform_admin": platform_admin,
     }
     await machines.save(bot, by="cli:root")
     await machines.save(bot, by="cli:root", active=False)
     assert [sorted(r) for r in rows] == [sorted(column_names("machine_identities"))] * 2
     assert [r["version"] for r in rows] == [1, 2]  # what next_version answered
+    assert all(r["platform_admin"] == int(platform_admin) for r in rows)
+    assert all(r["max_access_token_s"] == 86400 for r in rows)
+    assert machines._machine(rows[-1])["platform_admin"] is platform_admin
+    assert machines._machine(rows[-1])["max_access_token_s"] == 86400
 
 
 def test_a_bot_disabled_while_its_token_is_made_gets_a_dead_one(bots, monkeypatch) -> None:
@@ -679,6 +691,7 @@ def test_a_control_planes_per_agent_token_is_taken_as_issued(bots, monkeypatch) 
         "max_token_s": 3600,
         "max_agents": 1000,
         "max_access_token_s": 3600,
+        "platform_admin": False,
     }
     monkeypatch.setattr(oidc, "signing_key", lambda uri, token: key.public_key())
     now = int(time.time())
@@ -1137,3 +1150,105 @@ def test_logging_out_a_day_long_token_keeps_its_revocation_until_it_expires(
     assert [w["jti"] for w in written] == [claims["jti"]]
     assert written[0]["expires_at"] == datetime.fromtimestamp(claims["exp"], UTC)
     assert claims["exp"] - claims["iat"] == 86400
+
+
+# ── a platform-admin bot ──────────────────────────────────────────────────
+
+
+def _platform_admin_trust(bots: dict[str, Any]) -> None:
+    """A control plane's own trust: one identity whose tokens hold platform_admin."""
+    bots["registered"]["cp"] = {
+        **bots["registered"]["deploy"],
+        "name": "cp",
+        "ns_roles": [],
+        "claims": {"sub": "controlplane"},
+        "platform_admin": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("asked", "proof_lives", "lives"),
+    [(None, 300, 300), ("86400", 86400, 86400), ("86400", 300, 300)],
+)
+def test_an_exchange_carries_platform_admin_only_for_a_trust_registered_so(
+    bots, asked: str | None, proof_lives: int, lives: int
+) -> None:
+    from server.auth.jwt import verify_token
+    from server.operations.base import Role
+
+    _platform_admin_trust(bots)
+    _day_long(bots, "cp")
+    now = int(time.time())
+    c = TestClient(oauth_app())
+    r = _exchange(
+        c,
+        _ci_token(bots, sub="controlplane", iat=now, exp=now + proof_lives),
+        client_id="cp",
+        expires_in=asked,
+    )
+    assert r.status_code == 200, r.text
+    assert lives - 5 <= r.json()["expires_in"] <= lives
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert claims["exp"] == now + lives
+    assert claims["sub"] == "sa:cp" and claims["roles"] == ["platform_admin"]
+    assert claims["namespaces"] == ["*"] and "ns_roles" not in claims
+    info = verify_token(r.json()["access_token"])
+    assert info.has_role(Role.PLATFORM_ADMIN) and not info.has_ns_roles()  # what admin gates ask
+    # The same issuer's other trust gets its namespace roles, never the role.
+    other = _exchange(c, _ci_token(bots), client_id="deploy").json()["access_token"]
+    plain = pyjwt.decode(other, options={"verify_signature": False})
+    assert "platform_admin" not in plain.get("roles", []) and plain["ns_roles"]
+    assert not verify_token(other).has_role(Role.PLATFORM_ADMIN)
+
+
+@pytest.mark.parametrize(
+    ("maximum", "asked", "lives"),
+    [(3600, None, 3600), (86400, "86400", 86400), (600, None, 600)],
+)
+def test_a_key_bot_registered_platform_admin_gets_the_role_too(
+    bots, maximum: int, asked: str | None, lives: int
+) -> None:
+    bots["registered"]["triage"] |= {
+        "ns_roles": [],
+        "platform_admin": True,
+        "max_access_token_s": maximum,
+    }
+    r = _with_key(TestClient(oauth_app()), _assertion(bots["key"]), expires_in=asked)
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert r.status_code == 200 and claims["roles"] == ["platform_admin"]
+    assert claims["exp"] - claims["iat"] == lives
+    assert lives - 2 <= r.json()["expires_in"] <= lives
+
+
+def test_a_revoked_platform_admin_bot_gets_nothing(bots, monkeypatch) -> None:
+    """Disabling the bot cuts off `sa:cp`: its exchange is refused from then on."""
+    _platform_admin_trust(bots)
+
+    async def revoked(subjects: list[str], *, issued_at: int) -> bool:
+        return "sa:cp" in subjects
+
+    monkeypatch.setattr(revocation, "subjects_revoked", revoked)
+    r = _exchange(TestClient(oauth_app()), _ci_token(bots, sub="controlplane"), client_id="cp")
+    assert r.status_code == 401 and "revoked" in r.text
+
+
+def test_a_bot_without_the_flag_is_one_without_the_role(bots, monkeypatch) -> None:
+    """A row or dict from a build before the flag carries no `platform_admin`:
+    it saves as 0 and its exchange is an ordinary bot's, never a KeyError."""
+    del bots["registered"]["deploy"]["platform_admin"]
+    r = _exchange(TestClient(oauth_app()), _ci_token(bots))
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert r.status_code == 200 and claims["ns_roles"] and claims["roles"] == []
+    saved: list[dict[str, Any]] = []
+
+    class _CH:
+        async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any]:
+            return {"v": 1}
+
+        async def insert(self, table: str, batch: list[dict[str, Any]]) -> None:
+            saved.extend(batch)
+
+    monkeypatch.setattr(machines, "get_client", lambda: _CH())
+    asyncio.run(machines.save(bots["registered"]["deploy"], by="op"))
+    assert saved[0]["platform_admin"] == 0
+    assert machines._machine({**saved[0], "platform_admin": None})["platform_admin"] is False

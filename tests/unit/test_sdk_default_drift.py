@@ -63,7 +63,15 @@ class _Recorder:
 
     async def post(self, path: str, payload: dict[str, Any], *a: Any, **k: Any) -> Any:
         self.calls.append((path, dict(payload)))
-        return {"found": True, "rows": [], "repos": [], "schemas": [], "briefs": [], "task": {}}
+        return {
+            "found": True,
+            "rows": [],
+            "truncated": False,
+            "repos": [],
+            "schemas": [],
+            "briefs": [],
+            "task": {},
+        }
 
 
 def _value_for(p: inspect.Parameter) -> Any:

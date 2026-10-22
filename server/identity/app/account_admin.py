@@ -339,11 +339,13 @@ def bot_from(
     max_token_s: int = 3600,
     max_agents: int = 1000,
     max_access_token_s: int = machines.TOKEN_TTL,
+    platform_admin: bool = False,
 ) -> machines.Machine:
     """A bot from what an operator gave; ValueError says what is wrong. With
     `agent_claim`, a trust whose agents each get their own subject and
     namespace (server/auth/agents.py); its namespace roles are what they share.
-    `max_access_token_s` is the longest token an exchange may ask it for."""
+    `max_access_token_s` caps the requested lifetime. A platform-admin bot
+    names no namespace and cannot provision individual agents."""
     from server.auth.authz import GRANT_ROLES
 
     if not _BOT_NAME.fullmatch(name):
@@ -364,14 +366,11 @@ def bot_from(
             raise ValueError(f"a namespace role names one namespace, got {item!r}")
         ns_roles[ns] = role
     agent_claim = agent_claim.strip()
-    if not ns_roles and not agent_claim:
+    wanted = _wanted_claims(claims or [])
+    if platform_admin:
+        _check_platform_admin(ns_roles, agent_claim, wanted)
+    elif not ns_roles and not agent_claim:
         raise ValueError("a bot needs at least one namespace role")
-    wanted: dict[str, str] = {}
-    for item in claims or []:
-        claim, sep, value = item.partition("=")
-        if not sep or not claim.strip() or not value or value == "*":
-            raise ValueError(f"a claim is NAME=VALUE (a bare * matches anything), got {item!r}")
-        wanted[claim.strip()] = value
     issuer = issuer.strip()  # compared exactly with a token's `iss`, slash and all
     trust = bool(issuer or audience or wanted)
     if trust and not (issuer.startswith("https://") and audience and wanted):
@@ -424,7 +423,34 @@ def bot_from(
         "max_token_s": max_token_s,
         "max_agents": max_agents,
         "max_access_token_s": max_access_token_s,
+        "platform_admin": platform_admin,
     }
+
+
+def _wanted_claims(claims: list[str]) -> dict[str, str]:
+    """A trust's `NAME=VALUE` claims; ValueError for one that is not."""
+    wanted: dict[str, str] = {}
+    for item in claims:
+        claim, sep, value = item.partition("=")
+        if not sep or not claim.strip() or not value or value == "*":
+            raise ValueError(f"a claim is NAME=VALUE (a bare * matches anything), got {item!r}")
+        wanted[claim.strip()] = value
+    return wanted
+
+
+def _check_platform_admin(
+    ns_roles: dict[str, str], agent_claim: str, wanted: dict[str, str]
+) -> None:
+    """A platform-admin bot is one identity reaching every namespace, and as a
+    trust it takes only the tokens it names exactly."""
+    if agent_claim:
+        # One identity: an agent's token would carry the role for every agent.
+        raise ValueError("a platform-admin bot is one identity: it takes no agent claim")
+    if ns_roles:
+        raise ValueError("a platform-admin bot reaches every namespace: give it no namespace role")
+    if any(v.endswith("*") for v in wanted.values()):
+        # A prefix matches tokens of workloads yet to exist: each would hold the role.
+        raise ValueError("a platform-admin trust names every claim exactly, no prefix (*)")
 
 
 async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
@@ -475,6 +501,7 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
                 "key": bool(bot["public_keys"]),
                 "issuer": bot["issuer"],
                 "max_access_token_s": bot["max_access_token_s"],
+                "platform_admin": bool(bot.get("platform_admin", False)),
             },
         )
     except Exception as e:  # noqa: BLE001 — the bot is saved; its caller must keep the key

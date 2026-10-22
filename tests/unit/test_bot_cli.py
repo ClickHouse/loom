@@ -31,6 +31,7 @@ def _args(key: Path) -> argparse.Namespace:
         max_agents=1000,
         max_access_token_ttl=3600,
         agent_claim="",
+        platform_admin=False,
         replace=False,
     )
 

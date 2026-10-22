@@ -61,6 +61,7 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
                 "max_token_s": 3600,
                 "max_agents": 1000,
                 "max_access_token_s": 86400,
+                "platform_admin": 0,
                 "updated_by": "cli:root",
             }
         ]
@@ -286,3 +287,47 @@ def test_a_link_points_one_account_at_the_providers_address(calls) -> None:
     }
     refused = c.post("/v1/admin/sso.link", json={**body, "email": "taken@acme.io"})
     assert refused.status_code == 422 and "release that one first" in refused.text
+
+
+# The calls that change how an account signs in: the link points the admin
+# account `ops` at an address someone else holds at the provider.
+_REBINDS = [
+    ("/v1/admin/sso.link", {"email": "attacker@idp.example", "org": "acme", "namespace": "ops"}),
+    ("/v1/admin/sso.password_link", {"email": "ops@acme.io"}),
+    ("/v1/admin/sso.unlink", {"email": "ops@acme.io"}),
+    ("/v1/admin/sso.adopt", {"domain": "acme.io", "apply": True}),
+]
+
+
+@pytest.mark.parametrize(
+    ("subject", "service_account", "session", "status"),
+    [
+        ("sa:cp", True, {}, 403),  # a platform-admin bot's own token
+        ("ops", False, {"session_id": "s-1", "first_party": False}, 403),  # a third-party client's
+        ("ops", False, {"session_id": "s-1", "first_party": True}, 200),  # a person's `loom login`
+    ],
+)
+def test_only_a_person_rebinds_how_an_account_signs_in(
+    calls, monkeypatch, subject: str, service_account: bool, session: Any, status: int
+) -> None:
+    """A token refused a lasting platform-admin bot must not link an admin's account
+    to an address it holds either: signed in there as the admin, it would register one."""
+    from server.insights.app import admin_routes
+
+    monkeypatch.setattr(type(admin_routes.settings), "auth_actually_required", lambda self: True)
+    token = mint_token(
+        subject, "acme", ["*"], ["platform_admin"], is_service_account=service_account, **session
+    )
+    c, auth = _client(), {"Authorization": f"Bearer {token}"}
+    bot = {"name": "cp", "org": "acme", "namespace_roles": [], "generate_key": True}
+    for path, body in [*_REBINDS, ("/v1/admin/bots.create", {**bot, "platform_admin": True})]:
+        r = c.post(path, json=body, headers=auth)
+        assert r.status_code == status, r.text
+        if status == 403:  # the same refusal as the bot's
+            assert r.json()["detail"]["code"] == "AUTH_INSUFFICIENT"
+    # Refused, nothing is linked, so the provider's address signs in as no one.
+    expected = ["link", "unlink", "plan", "adopt", "create"] if status == 200 else []
+    assert [name for name, _ in calls] == expected
+    # The gate passes the token: a dry-run adoption, which writes nothing, still answers.
+    dry = c.post("/v1/admin/sso.adopt", json={"domain": "acme.io"}, headers=auth)
+    assert dry.status_code == 200 and dry.json()["applied"] is False

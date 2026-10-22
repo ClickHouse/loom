@@ -14,7 +14,8 @@ for another lifetime (`expires_in`), which the identity's own maximum
   audience, with every listed claim matching (RFC 8693 token exchange).
 
 Disabling one (`loom bot disable`) refuses every later proof and revokes the
-tokens it already has.
+tokens it already has. One registered `--platform-admin` names no namespace:
+each of its tokens holds the platform_admin role, which spans every org.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ TOKEN_TTL = 3600
 MAX_TOKEN_TTL = 86400
 # not a setting: a shorter one would run out before its first use (verify's leeway)
 MIN_TOKEN_TTL = 60
+_PLATFORM_ADMIN_MIGRATION = 76  # schemas/migrations/076_machine_platform_admin.sql
 ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
 SUBJECT_TOKEN_TYPES = frozenset(
@@ -72,6 +74,23 @@ class Machine(TypedDict):
     # The longest token a proof may be issued when the request asks for one
     # (`expires_in`); without one it gets an hour, or this when shorter.
     max_access_token_s: int
+    # Its tokens carry the platform_admin role, which spans every org; such a
+    # bot names no namespace and tells no agents apart (`account_admin.bot_from`).
+    platform_admin: bool
+
+
+async def platform_admin_tokens_ready(ch: Any) -> bool:
+    """Older replicas accept admin JWTs without protecting human sign-in changes."""
+    from server.core import instances
+
+    try:
+        live = await instances.read_live(ch, all_deployments=True)
+        return bool(live) and all(
+            int(row["schema_version"] or 0) >= _PLATFORM_ADMIN_MIGRATION for row in live
+        )
+    except Exception as e:  # noqa: BLE001 — an unread fleet refuses an admin token
+        log.warning("admin token fleet check failed: %s", type(e).__name__)
+        return False
 
 
 class Refused(Exception):
@@ -113,6 +132,7 @@ def _machine(row: dict[str, Any]) -> Machine:
         "max_token_s": int(row["max_token_s"]),
         "max_agents": int(row["max_agents"]),
         "max_access_token_s": int(row.get("max_access_token_s", TOKEN_TTL)),
+        "platform_admin": bool(row.get("platform_admin", 0)),  # a row of a build before it
     }
 
 
@@ -190,8 +210,8 @@ async def listed() -> list[dict[str, Any]]:
     with own_write_reads():  # a trust another replica saved a moment ago counts
         return await get_client().query_all(
             f"SELECT name, org, ns_roles, public_keys != '' AS has_key, issuer, audience, claims, "
-            f"agent_claim, jwks_uri, max_token_s, max_agents, max_access_token_s, active, "
-            f"updated_by, updated_at FROM {TABLE} FINAL "
+            f"agent_claim, jwks_uri, max_token_s, max_agents, max_access_token_s, "
+            f"platform_admin, active, updated_by, updated_at FROM {TABLE} FINAL "
             "ORDER BY name"
         )
 
@@ -206,6 +226,7 @@ async def save(m: Machine, *, by: str, active: bool = True, ch: Any = None) -> N
         [
             {
                 **m,
+                "platform_admin": int(m.get("platform_admin", False)),
                 "active": int(active),
                 "updated_by": by,
                 "updated_at": datetime.now(UTC),

@@ -201,7 +201,21 @@ Each op declares `required_role`.
   `LOOM_PLATFORM_ADMINS` (`platform_roles` in `server/auth/login.py`). A handle matches a
   password account; an email matches only an OIDC-verified sign-in. Self-signup emails are
   unverified and never confer a role. An OAuth refresh re-derives the role and never
-  promotes.
+  promotes. A bot registered `--platform-admin` gets it in every machine token, as a flat
+  token over every namespace (`_machine_tokens` in `server/auth/oauth.py`); such a bot
+  names no namespace, tells no agents apart and, as a trust, matches every claim exactly.
+  Only a person signed in as a platform admin, or an operator on the host, registers one:
+  `/v1/admin/bots.create` refuses the flag to every service account's token and to a
+  third-party client's session, so a token holding the role cannot mint itself a lasting
+  successor.
+  `loom mint-token --platform-admin` mints it only for a non-agent `sa:` subject, for at
+  most 90 days, and audits each mint.
+  Both token issuance paths require a fresh fleet view with every replica protecting
+  human credentials, including processes outside the deployment on the same ClickHouse;
+  an older replica could accept the token on an unprotected SSO route. Both checks read
+  ClickHouse directly and leave the kind-filtered replica cache unchanged.
+  Before a rollback starts an older replica, disable admin bots and revoke standalone
+  CLI-minted admin subjects or tokens.
 
 ### The gate
 

@@ -1,6 +1,7 @@
 """One person is one principal — a login handle and its
-contact email read as one subject in the grant reads, fold to one reader
-row, and a new human grant is written under the login handle."""
+contact email read as one subject in the grant reads, and a new human grant
+is written under the login handle. `grants.list`'s one row per person is in
+test_grants_list_pages.py."""
 
 from __future__ import annotations
 
@@ -109,28 +110,6 @@ async def test_invalidate_drops_every_read_naming_the_spellings() -> None:
     await al.subject_aliases("other", "jdoe", ch=ch)
     al.invalidate("acme", ["Avery@Example.com", "new@example.com"])
     assert set(al._CACHE) == {("other", "jdoe")}  # found by its spelling, or asked under it
-
-
-def test_fold_by_alias_makes_one_row_per_person_with_the_highest_role() -> None:
-    rows = [
-        {
-            "subject": "avery@example.com",
-            "role": "admin",
-            "status": "active",
-            "granted_by": "bootstrap",
-        },
-        {"subject": "jdoe", "role": "viewer", "status": "active", "granted_by": "registrar"},
-        {"subject": "sa:clickgap", "role": "viewer", "status": "active", "granted_by": "ops"},
-    ]
-    aliases = {
-        "avery@example.com": ["avery@example.com", "jdoe"],
-        "jdoe": ["jdoe", "avery@example.com"],
-        "sa:clickgap": ["sa:clickgap"],
-    }
-    out = al.fold_by_alias(rows, aliases)
-    assert [r["subject"] for r in out] == ["avery@example.com", "sa:clickgap"]
-    assert out[0]["role"] == "admin" and out[0]["also"] == ["jdoe"]
-    assert out[1]["also"] == []
 
 
 @pytest.mark.asyncio

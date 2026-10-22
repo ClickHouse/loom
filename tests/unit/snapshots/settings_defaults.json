@@ -850,6 +850,7 @@
  "observe_extract_max_pass_seconds": 900.0,
  "observe_extract_notes_min_observations": 15,
  "observe_skip_tools": "mcp__loom__*,mcp__plugin_loom*,loom_memory_*,loom_knowledge_*,loom_search,loom_observe*,loom_procedure_*,loom_context_*,loom_ask,ToolSearch,ListAgents,ListMcpResourcesTool,ReadMcpResourceTool,ReadMcpResourceDirTool,AskUserQuestion,TodoWrite,Skill,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree",
+ "oidc_backchannel_base_url": "",
  "oidc_client_id": "",
  "oidc_issuer": "",
  "oidc_jit_email_domains": "",

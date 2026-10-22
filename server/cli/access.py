@@ -117,6 +117,16 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
         # Before the keyring read: no such token can be minted, connected or not.
         print(f"  ✗ {RESERVED_SUBJECT}: {args.subject!r}", file=sys.stderr)
         return 2
+    refused = _platform_admin_refusal(args) if args.platform_admin else None
+    if refused:
+        print(f"  ✗ {refused}", file=sys.stderr)
+        return 2
+    if args.platform_admin and not _platform_admin_rollout_ready():
+        print(
+            "  ✗ platform-admin tokens require a readable fleet with the rollout complete",
+            file=sys.stderr,
+        )
+        return 1
     try:
         keyring.load_for_offline_mint(run=run_connected)
     except ValueError as e:  # another root: no server would accept the token
@@ -188,17 +198,20 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
             "consumer": args.consumer or "",
         }
     else:
+        if args.platform_admin:  # the role reaches every namespace unless told otherwise
+            namespaces = namespaces or ["*"]
         if not namespaces:
             print(
                 "  ✗ one of --namespaces or --namespace-role is required",
                 file=sys.stderr,
             )
             return 2
+        roles = ["platform_admin"] if args.platform_admin else args.roles
         token = mint_token(
             subject=args.subject,
             org=args.org,
             namespaces=namespaces,
-            roles=args.roles,
+            roles=roles,
             ttl_seconds=ttl_seconds,
             is_service_account=args.service_account,
             read_scope=args.read_scope,
@@ -213,7 +226,7 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
             "subject": args.subject,
             "org": args.org,
             "namespaces": namespaces,
-            "roles": args.roles,
+            "roles": roles,
             "ttl_days": args.ttl_days,
             "is_service_account": args.service_account,
             "read_scope": args.read_scope or "namespace",
@@ -222,7 +235,76 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
             "consumer": args.consumer or "",
         }
 
+    if args.platform_admin and not _audit_platform_admin_mint(args, summary):
+        # Never handed out unrecorded: the role spans every org.
+        print("  ✗ the mint could not be recorded in the audit log; no token", file=sys.stderr)
+        return 1
     return _emit_minted_token(args, token, summary)
+
+
+# not a setting: the longest a minted platform-admin token may live; longer is a bot's job
+_PLATFORM_ADMIN_MAX_DAYS = 90
+
+
+def _platform_admin_refusal(args: argparse.Namespace) -> str | None:
+    """Why `--platform-admin` cannot mint as asked, or None. The role spans every
+    org, so it goes to a service account alone, as a flat token that expires."""
+    if not args.subject.startswith("sa:"):
+        return "--platform-admin mints a service account's token: pass --subject sa:<name>"
+    if not args.service_account:
+        return "--platform-admin mints a service account's token, never a --user-token"
+    if not args.ttl_days or args.ttl_days < 1:
+        return "--platform-admin needs --ttl-days: a token holding it may not live for ever"
+    if args.ttl_days > _PLATFORM_ADMIN_MAX_DAYS:
+        return (
+            f"--platform-admin mints for at most {_PLATFORM_ADMIN_MAX_DAYS} days; for longer, "
+            "register a bot (`loom bot create --platform-admin`)"
+        )
+    from server.auth import agents
+
+    if agents.parse(args.subject) is not None:
+        return "--platform-admin never mints an agent's token (sa:<trust>:<agent>)"
+    if args.namespace_role:
+        return "--platform-admin mints a flat token: pass no --namespace-role"
+    return None
+
+
+def _platform_admin_rollout_ready() -> bool:
+    from server.auth import machines
+
+    try:
+        return bool(run_connected(machines.platform_admin_tokens_ready))
+    except Exception as e:  # noqa: BLE001 — an unread fleet refuses an admin token
+        print(f"  ✗ fleet state could not be read: {type(e).__name__}", file=sys.stderr)
+        return False
+
+
+def _audit_platform_admin_mint(args: argparse.Namespace, summary: dict[str, Any]) -> bool:
+    """Record a platform-admin mint before it is handed out; False when the
+    audit row could not be written."""
+    import getpass
+
+    from server.observability import audit
+
+    async def _emit(ch: Any) -> str:
+        return await audit.emit(
+            "auth.platform_admin_minted",
+            org=args.org,
+            namespace="-",
+            actor=f"cli:{getpass.getuser()}",
+            subject={
+                "subject": args.subject,
+                "jti": summary["jti"],
+                "namespaces": summary["namespaces"],
+                "ttl_days": args.ttl_days,
+            },
+        )
+
+    try:
+        return bool(run_connected(_emit))
+    except Exception as e:  # noqa: BLE001 — an unrecorded mint is refused, never handed out
+        print(f"  ✗ audit log not reached: {type(e).__name__}: {e}", file=sys.stderr)
+        return False
 
 
 def _emit_minted_token(args: argparse.Namespace, token: str, summary: dict[str, Any]) -> int:
@@ -618,6 +700,14 @@ def _add_mint_token_parser(sub: Any) -> None:
     )
     p_mint.add_argument(
         "--roles", nargs="+", default=["writer"], choices=["viewer", "writer", "admin"]
+    )
+    p_mint.add_argument(
+        "--platform-admin",
+        action="store_true",
+        help="Mint the platform_admin role, which spans every org, instead of --roles: "
+        "for a service account (--subject sa:<name>, never an agent's) and with --ttl-days "
+        "(at most 90); each mint is audited, and the token covers every namespace unless "
+        "--namespaces names some.",
     )
     p_mint.add_argument(
         "--namespace-role",

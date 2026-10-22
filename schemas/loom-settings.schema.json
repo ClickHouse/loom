@@ -4757,6 +4757,11 @@
           "type": "string",
           "description": "Tool names (case-insensitive globs, comma-separated) whose observations are stored content-less and already distilled: loom's own MCP tools (observing one copies a memory outside the key the user can delete) and the harness's meta tools, which say nothing about the task. \"\" disables the skip."
         },
+        "oidc_backchannel_base_url": {
+          "default": "",
+          "type": "string",
+          "description": "Origin used for server-side sign-in calls to the issuer, preserving its Host header. Empty uses the issuer directly; browser redirects and bot-trust key fetches are unchanged."
+        },
         "oidc_client_id": {
           "default": "",
           "type": "string",

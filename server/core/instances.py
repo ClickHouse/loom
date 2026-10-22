@@ -122,9 +122,9 @@ async def beat(ch: Any, *, stopped: bool = False) -> None:
     await ch.insert(TABLE, [row(stopped=stopped)])
 
 
-async def read_live(ch: Any) -> list[dict[str, Any]]:
-    """The live rows of this process's kind (the deployment's, or the processes
-    outside it), newest beat per process. Updates the replica count."""
+async def read_live(ch: Any, *, all_deployments: bool = False) -> list[dict[str, Any]]:
+    """Newest live beat per process. Ordinary reads cache this process's kind;
+    security checks can include every process sharing the database."""
     global _live
     rows = await ch.query_all(
         f"""
@@ -142,15 +142,20 @@ async def read_live(ch: Any) -> list[dict[str, Any]]:
                toString(min(started_at)) AS started_at,
                toString(max(heartbeat_at)) AS last_beat
         FROM {TABLE}
-        WHERE deployment = {{dep:UInt8}}
+        WHERE ({{all_deployments:Bool}} OR deployment = {{dep:UInt8}})
           AND heartbeat_at > now64(3) - toIntervalMillisecond({{ms:UInt32}})
         GROUP BY instance_id
         HAVING last_stopped = 0
         """,
-        params={"dep": int(bool(settings.deployment)), "ms": int(live_window_s() * 1000)},
+        params={
+            "all_deployments": all_deployments,
+            "dep": int(bool(settings.deployment)),
+            "ms": int(live_window_s() * 1000),
+        },
     )
     out = [dict(r) for r in rows]
-    _live = (time.monotonic(), out)
+    if not all_deployments:
+        _live = (time.monotonic(), out)
     return out
 
 
