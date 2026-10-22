@@ -248,36 +248,41 @@ step that names a command carries the run's `--method`, `--chain`,
 `--drop-pre-rebuild --yes` to remove the rollback copy after validation or rollback, and
 `DROP TABLE loom.<table>_rebuild SYNC` to remove an abandoned twin only after a
 `--dry-run` of the table's line prints a next step that starts `not swapped` (a twin
-left for inspection, or a leftover newer than the live table). When it names
+left for inspection, or a leftover never exchanged in). When it names
 `RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild` or asks to compare the two
 tables, do that first and drop nothing: the rename step means the exchange ran without
 the rename, `<table>_rebuild` is the old table, and the tool refuses `--reuse`,
 `--restart` and `--drop-pre-rebuild` until the rename runs. The tool reads
 this from every vector column of the two tables, not from the run's flags, so a rerun
 with another `--method`, `--chain`, `--index-granularity` or `--columns` refuses too: a
-twin not newer than a live table with a coded vector column may be the old table. When
+twin not known to be a leftover, under a live table with a coded vector column, may be
+the old table. When
 each column coded on the live table is plain on the twin, the tool names the rename.
 When one is coded on the twin too (a `--require-patch-free` run, or a
 rebuild of a coded table), the codecs do not show whether an exchange ran: the tool
 refuses, renames and drops nothing, and asks to compare the two tables' rows before
-dropping either by hand. A twin newer than the live table was never exchanged in, so
-the tool names it a leftover, whatever layout the rerun names: `--restart --yes` copies
-again, or drop it. It reads "newer" from `system.tables.metadata_modification_time`,
-which `EXCHANGE TABLES` keeps per table on Atomic and Replicated databases. Equal times
-(the column has one second's precision), and any other database engine, show nothing,
-so there the tool treats the twin as possibly the old table.
+dropping either by hand. A twin never exchanged in is a leftover, whatever layout the
+rerun names: `--restart --yes` copies again, or drop it. The tool knows a twin was never
+exchanged in when its UUID is the one recorded in `$LOOM_REBUILD_DIR/<table>_rebuild.uuid`
+(the abort file's directory) when the tool created it, since an exchange moves that UUID
+to the live table's name, on any database engine. Without that record, it reads a twin
+whose `system.tables.metadata_modification_time` is later than the live table's as never
+exchanged in, which holds on Atomic and Replicated databases, where `EXCHANGE TABLES`
+keeps each table's own time. Equal times (the column has one second's precision), and any
+other database engine, show nothing, so there the tool treats the twin as possibly the
+old table: run the tool from the same `LOOM_REBUILD_DIR` each time.
 `--drop-pre-rebuild` first compares the two tables again, after the same drain as the
 postcondition, also when both are on the target layout (a `--require-patch-free`
 rebuild of a table already on it), and refuses (exit 3) and keeps the copy on any
 difference in [what the checks after a swap find](#what-the-checks-after-a-swap-find).
 The erasure saga does not cover these copies.
 
-- **Width.** The target width of a plain column is `LOOM_EMBEDDING_DIM` when the column
-  holds real vectors (not all zeros) of that width, else the most frequent width among
-  all of them, or `LOOM_EMBEDDING_DIM` when it holds none; a coded column states its own.
-  The tool refuses (exit 3), `--dry-run` included, while a plain named column holds real
-  vectors of another width, since the copy would replace them with zero vectors, and the
-  message names each width and `LOOM_EMBEDDING_DIM`. Re-embed to `LOOM_EMBEDDING_DIM`
+- **Width.** The target width of a plain column is `LOOM_EMBEDDING_DIM`, the width every
+  writer produces, so run the tool with the deployment's env; a coded column states its
+  own. The tool refuses (exit 3), `--dry-run` included, while a plain named column holds
+  real vectors (not all zeros) of another width: the copy would replace them with zero
+  vectors, and a coded column rejects writes of any other width. The message names each
+  width and `LOOM_EMBEDDING_DIM`. Re-embed to `LOOM_EMBEDDING_DIM`
   and rerun: `loom reembed --delete-old` for `memory_embeddings`, `entity_vectors` and
   `conversation_embeddings`, which re-embeds only rows of another `embedding_model`, so a
   width change with the same model goes through Settings → Models & keys; any other
@@ -353,15 +358,15 @@ The run after the swap fails its postcondition (exit 7) and `--drop-pre-rebuild`
 refuses (exit 3) on each finding below, and both keep the rollback copy. The summary
 line's `next` carries the step.
 
-| The checks find                                                                                                                                                                      | Next step printed                                                                                                |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| After a swap, a change only the rollback copy holds: a key only there, a newer version there, an unfinished `ALTER UPDATE` on it, or an `UPDATE` that sets a vector of another width | `--rollback --yes`, which puts the old table back with the change                                                |
-| After a swap, a key only the live table holds or a newer version there: a write to the new table after the swap, or a delete in the old table after the last check                   | keep both tables and inspect the difference by hand                                                              |
-| A key whose content differs at one version: a lightweight `UPDATE` in either table, merged or not, or an `ALTER UPDATE` that finished before the swap                                | keep both tables and inspect the difference by hand                                                              |
-| After a swap, a mutation on the live table since the copy started, such as the lightweight `DELETE` that `loom reembed --delete-old` runs                                            | keep both tables and inspect the difference by hand                                                              |
-| The two tables name other columns                                                                                                                                                    | keep both tables and inspect the difference by hand                                                              |
-| After a rollback, a change only the new-layout copy holds, or a mutation on it since its creation                                                                                    | keep both tables and inspect the difference by hand                                                              |
-| The checks could not run: a failed drain or sync, a read past the timeout, or a replica that has not caught up                                                                       | fix the grant, connect directly to one replica, or raise `--statement-timeout-s`, and rerun `--drop-pre-rebuild` |
+| The checks find                                                                                                                                                                      | Next step printed                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| After a swap, a change only the rollback copy holds: a key only there, a newer version there, an unfinished `ALTER UPDATE` on it, or an `UPDATE` that sets a vector of another width | `--rollback --yes`, which puts the old table back with the change                                                                                           |
+| After a swap, a key only the live table holds or a newer version there: a write to the new table after the swap, or a delete in the old table after the last check                   | keep both tables and inspect the difference by hand                                                                                                         |
+| A key whose content differs at one version: a lightweight `UPDATE` in either table, merged or not, or an `ALTER UPDATE` that finished before the swap                                | keep both tables and inspect the difference by hand                                                                                                         |
+| After a swap, a mutation on the live table since the copy started, such as the lightweight `DELETE` that `loom reembed --delete-old` runs                                            | keep both tables and inspect the difference by hand                                                                                                         |
+| The two tables name other columns                                                                                                                                                    | keep both tables and inspect the difference by hand                                                                                                         |
+| After a rollback, a change only the new-layout copy holds, or a mutation on it since its creation                                                                                    | keep both tables and inspect the difference by hand                                                                                                         |
+| The checks could not run: a failed drain or sync, a read past the timeout, or a replica that has not caught up                                                                       | fix the grant, connect directly to one replica, or raise `--statement-timeout-s`, and rerun the action that refused (`--drop-pre-rebuild`, or `--rollback`) |
 
 `--rollback` copies back only the rows the old table lacks: on a table with a version
 column, the versions above the old table's highest, and on `chunks`, which has none, the

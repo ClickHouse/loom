@@ -277,12 +277,6 @@ def test_the_pre_swap_mutation_read_counts_finished_mutations_since_the_copy() -
     assert "table = {t:String}" in sql
 
 
-def test_the_dimension_read_counts_every_real_vector() -> None:
-    sql = vcr.widths_sql("memory_chunks", "embedding", " FINAL")
-    assert "FROM loom.memory_chunks FINAL" in sql
-    assert "arrayExists(x -> x != 0, embedding)" in sql
-
-
 def test_the_newer_read_counts_each_side_of_a_mismatched_key() -> None:
     sql = vcr.newer_sql("a", "b", " FINAL", "created_at", ["org", "id"])
     assert "countIf(o.v > n.v), countIf(o.v < n.v)" in sql

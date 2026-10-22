@@ -511,8 +511,8 @@ the only holder of a change: drop it by hand only after the read in
    `SELECT countIf(length(<column>) = <n> AND arrayExists(x -> x != 0, <column>)) FROM loom.<table> FINAL`.
    Skip this table's line while the query returns 0 on a table with rows. Placeholders
    beside real vectors do not affect the gate. The tool refuses (exit 3), `--dry-run`
-   included, while a plain named column holds real vectors of another width than the one
-   it codes; the width it picks and the re-embed that clears the refusal are in
+   included, while a plain named column holds real vectors of a width other than
+   `LOOM_EMBEDDING_DIM`, the width it codes; the re-embed that clears the refusal is in
    [the maintenance guide](./maintenance.md#compaction-and-optimize).
 
    To stop the block, create `ABORT_REBUILD` in `$LOOM_REBUILD_DIR` as exported in the
@@ -564,9 +564,11 @@ names `RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild`, the excha
 without the rename and `<table>_rebuild` is the old table, the rollback copy: run that
 step instead of a drop. The tool refuses `--reuse`, `--restart` and `--drop-pre-rebuild`
 in that state, whatever layout or columns the rerun names. When `next` asks to compare `<table>` and
-`<table>_rebuild`, both are coded and the twin is not newer: compare their rows
-before dropping either. When `next` names the twin a leftover newer than `<table>`, no
-exchange ran: rerun with `--restart --yes` or drop it. Otherwise drop the twin with
+`<table>_rebuild`, both are coded and either may be the old table: compare their rows
+before dropping either. When `next` names the twin a leftover never exchanged in, no
+exchange ran: rerun with `--restart --yes` or drop it. The tool tells a leftover by the
+twin's UUID, which it records in `$LOOM_REBUILD_DIR`, so run every line from the same
+directory. Otherwise drop the twin with
 `DROP TABLE IF EXISTS loom.<table>_rebuild SYNC`.
 
 Start Loom again after cleanup; each process reads the codec settings when it starts.

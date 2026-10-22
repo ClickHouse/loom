@@ -31,10 +31,10 @@ The twin's vector columns are `Array(BFloat16) CODEC(Quantized(<method>, dim, 0)
 `int8`; the recall gate reads the twin through the quantized codes at
 `--gate-fetch-multiplier`, as the search legs do.
 
-The dimension comes from the live table: a coded column states it, a
-plain column's real (not all-zero) vectors show it (`LOOM_EMBEDDING_DIM` when
-it is one of their widths, else the most frequent width), and a column with
-none takes `LOOM_EMBEDDING_DIM`. Every named column must agree.
+The dimension: a coded column of the live table states it, a plain column
+takes `LOOM_EMBEDDING_DIM`, the width every writer produces, and
+the tool refuses while it holds real vectors of another width. Every named
+column must agree.
 
 Run it in a maintenance window with every writer and erasure stopped and
 in-flight writes drained: it fails closed and never repairs the live table.
@@ -75,7 +75,9 @@ The twin is the run's lock: an existing twin refuses the run unless
 `--reuse` (continue from it) or `--restart` (drop it and copy again), and the
 swap refuses when the twin is no longer the one this run created or reused.
 An `ABORT_REBUILD` file in `LOOM_REBUILD_DIR` (default `.`) stops the run
-before the copy and before the swap, leaving the twin.
+before the copy and before the swap, leaving the twin. The UUID of each twin
+the tool creates goes to `<table>_rebuild.uuid` there: a later run names a twin
+with that UUID a leftover never exchanged in.
 
 Exit codes (shared with table_rebuild): 0 done or nothing to do, 2 aborted,
 3 refused (widths among them), 4 needs `--yes`, 5 a gate failed (consistency,
@@ -154,6 +156,8 @@ KEEP_BOTH = (
     "Keep writers and erasure stopped and both tables as they are, and inspect the "
     "difference by hand before any --rollback or --drop-pre-rebuild"
 )
+# The UUID system.tables shows for a table on a database without table UUIDs.
+ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 # A codec clause with one level of nested parentheses: CODEC(Quantized('rabitq', 3072, 0), LZ4).
 _CODEC = r"CODEC\((?:[^()]|\([^()]*\))*\)"
 
@@ -349,15 +353,6 @@ def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
     )
 
 
-def widths_sql(table: str, column: str, fin: str) -> str:
-    """Count every real vector by width, the most frequent first; zero placeholders are
-    left out. Pure."""
-    return (
-        f"SELECT length({column}) AS w, count() AS n FROM loom.{table}{fin} "
-        f"WHERE {nonzero(column)} GROUP BY w ORDER BY n DESC, w"
-    )
-
-
 def stored_vector(column: str, *, dim: int) -> str:
     """A source vector as the twin stores it: BFloat16 at the fixed length, an empty or
     all-zero vector of another width as the zero placeholder. Pure."""
@@ -519,6 +514,8 @@ class VectorRebuild:
         self.cols = [x.strip() for x in args.columns.split(",") if x.strip()]
         self.chain = args.chain or None
         self.abort = Path(args.abort_file)
+        # the UUID of the twin this tool created, which a later run reads
+        self.twin_record = self.abort.parent / f"{self.twin}.uuid"
         self.twin_uuid = ""
         self.replicas = replicas_source(args.cluster)
         self.rows_copied = 0
@@ -632,22 +629,13 @@ class VectorRebuild:
         )
 
     def find_dim(self) -> int:
+        """The width the twin codes. A coded column states its own. A plain column takes
+        LOOM_EMBEDDING_DIM, the width every writer produces: a coded column rejects any
+        other width, and the width refusal stops the run while it holds one."""
         from server.settings import settings
 
-        name = self.t if self.exists(self.t) else self.pre
-        ddl = self.ddl(name)
-        fin = read_final(parse_engine(ddl)[0])  # the width of the rows Loom serves
-        dims: set[int] = set()
-        for c in self.cols:
-            d = vector_dim(ddl, c)
-            if d is None:
-                # every real vector counted, the configured width first: a read that
-                # stops early would see only the first orgs in sort-key order
-                widths = [int(w) for w, _ in self.q(widths_sql(name, c, fin))]
-                d = int(settings.embedding_dim)
-                if widths and d not in widths:
-                    d = widths[0]
-            dims.add(d)
+        ddl = self.ddl(self.t if self.exists(self.t) else self.pre)
+        dims = {vector_dim(ddl, c) or int(settings.embedding_dim) for c in self.cols}
         if len(dims) != 1:
             raise SystemExit(f"the named columns disagree on the dimension: {sorted(dims)}")
         return dims.pop()
@@ -683,12 +671,12 @@ class VectorRebuild:
         """Whether the twin may be the old table an exchange without its rename left,
         read from every vector column of the two tables rather than this run's flags (a
         rerun may name another layout or other columns). None when it is not: absent,
-        newer than the live table, or under a live table with no coded vector column.
+        never exchanged in, or under a live table with no coded vector column.
         Else whether a column coded on the live table is coded on the twin too: False
         means the twin is the old table, True means either table may be the old one."""
         if not (self.exists(self.t) and self.exists(self.twin)):
             return None
-        if self.twin_is_newer():
+        if self.twin_never_exchanged():
             return None
         live = self.ddl(self.t)
         coded = [c for c in vector_columns(live) if vector_dim(live, c) is not None]
@@ -697,15 +685,28 @@ class VectorRebuild:
         twin = self.ddl(self.twin)
         return any(vector_dim(twin, c) is not None for c in coded)
 
-    def twin_is_newer(self) -> bool:
-        """Whether the twin's metadata time is later than the live table's, which shows it
-        was never exchanged in. EXCHANGE TABLES keeps each table's own time on the Atomic
-        and Replicated databases the live tests run it on; on any other database engine,
-        and on equal times (one second's precision), the order shows nothing."""
+    def twin_never_exchanged(self) -> bool:
+        """Whether the twin was never exchanged in. Its UUID is the one this tool recorded
+        when it created the twin: an exchange moves that UUID to the live table's name. Or
+        its metadata time is later than the live table's: EXCHANGE TABLES keeps each
+        table's own time on the Atomic and Replicated databases the live tests run it on.
+        Without the record, on any other database engine and on equal times (one second's
+        precision), neither shows anything."""
+        row = tr.table_row(self.ch, self.twin)
+        if row is not None and row[1] not in ("", ZERO_UUID) and row[1] == self.created_twin():
+            return True
         engine = self.q("SELECT engine FROM system.databases WHERE name = currentDatabase()")[0][0]
         if engine not in ("Atomic", "Replicated"):
             return False
         return self.metadata_time(self.twin) > self.metadata_time(self.t)
+
+    def created_twin(self) -> str:
+        """The UUID of the last twin this tool created for the table, from its record
+        beside the abort file, or ''."""
+        try:
+            return self.twin_record.read_text().strip()
+        except OSError:
+            return ""
 
     def report_state(self) -> str:
         if self.next_step:
@@ -714,11 +715,11 @@ class VectorRebuild:
             twin = self.twin_after_exchange()
             if twin is not None:
                 return tr.guidance(self.t, self.run_line, True, twin, None)
-            if self.twin_is_newer():
-                # a twin newer than the live table was never exchanged, so it is not the
-                # old table, whatever layout this run names
+            if self.twin_never_exchanged():
+                # a twin never exchanged in is not the old table, whatever layout this
+                # run names
                 return (
-                    f"not swapped; loom.{self.twin} is a leftover newer than loom.{self.t}: "
+                    f"not swapped; loom.{self.twin} is a leftover never exchanged in: "
                     f"`{self.run_line} --restart --yes` copies again, or "
                     f"DROP TABLE loom.{self.twin} SYNC"
                 )
@@ -861,9 +862,9 @@ class VectorRebuild:
                 else:
                     how = f"`loom reembed` does not cover loom.{self.t}; its own writer must"
                 return (
-                    f"{c} holds vectors of more than one width (target {self.dim}; {found}; "
-                    f"LOOM_EMBEDDING_DIM {settings.embedding_dim}): the copy would zero all but "
-                    f"width {self.dim}; re-embed to LOOM_EMBEDDING_DIM ({how}) and rerun"
+                    f"{c} holds vectors of a width other than the target {self.dim} ({found}; "
+                    f"LOOM_EMBEDDING_DIM {settings.embedding_dim}): the copy would zero them; "
+                    f"re-embed to LOOM_EMBEDDING_DIM ({how}) and rerun"
                 )
         return ""
 
@@ -950,6 +951,10 @@ class VectorRebuild:
             return f"could not create loom.{self.twin} (another run?): {str(e)[:160]}", False
         row = tr.table_row(self.ch, self.twin)
         self.twin_uuid = row[1] if row else ""
+        try:
+            self.twin_record.write_text(self.twin_uuid)
+        except OSError as e:
+            log(f"could not record the twin's UUID in {self.twin_record}:", e)
         log(
             "twin created:",
             self.q(
@@ -1298,11 +1303,11 @@ class VectorRebuild:
         may have changed, so neither --rollback nor the drop keeps it whole."""
         return set(tr.columns(self.ch, self.t)) != set(tr.columns(self.ch, self.pre))
 
-    def recheck_step(self) -> str:
-        """The next step when the checks after the swap could not run."""
+    def recheck_step(self, action: str = "--drop-pre-rebuild") -> str:
+        """The next step when the checks before `action` could not run."""
         return (
             "the checks could not run: fix the grant, connect directly to one replica, "
-            f"or raise --statement-timeout-s, and rerun `{self.run_line} --drop-pre-rebuild "
+            f"or raise --statement-timeout-s, and rerun `{self.run_line} {action} "
             f"--yes`; loom.{self.pre} is kept"
         )
 
@@ -1407,7 +1412,7 @@ class VectorRebuild:
         except tr.Interrupted:
             raise
         except Exception as e:  # noqa: BLE001 - checks that cannot run refuse the rollback
-            self.next_step = KEEP_BOTH
+            self.next_step = self.recheck_step("--rollback")
             log(f"REFUSED: the checks could not run ({str(e)[:160]}); {self.next_step}")
             return REFUSED
         if why and not restores:

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,6 +15,7 @@ import pytest
 from scripts.ops import vector_codec_rebuild as vcr
 from server.core.schema import table_rebuild as tr
 from server.core.schema.vector_codec_ddl import CODEC_SETTINGS_SQL
+from server.settings import settings as loom_settings
 from tests.unit.codec_states import SENT, STATES, USABLE, codec_rows, settings
 
 ARRAY = """CREATE TABLE loom.memory_chunks
@@ -53,7 +55,6 @@ class _CH:
         self.cons = (0, 0, 0)  # (mismatched, source_only, twin_only) the gate reads
         self.cons_first: list[tuple[int, int, int]] = []  # earlier reads, before self.cons
         self.newer = (0, 0)  # mismatched keys newer in the first table, in the second
-        self.all_widths = [(DIM, 5)]  # (width, rows) of every real vector, most first
         self.mutations = 0
         self.mutations_first: list[int] = []
         self.tied = 0  # keys with more than one row at their newest version
@@ -104,8 +105,6 @@ class _CH:
         if "startsWith(name, 'patch')" in sql:
             name = re.search(r"table = '(\w+)'", sql).group(1)  # type: ignore[union-attr]
             return _R([(self.patches.get(name, 0),)])
-        if "ORDER BY n DESC" in sql:
-            return _R(self.all_widths)
         if "INNER JOIN" in sql:
             return _R([self.newer])
         if "n_at_max" in sql:
@@ -179,6 +178,14 @@ def _live(rows: int = 5) -> dict[str, Any]:
     return {"ddl": ARRAY, "rows": rows, "uuid": "live"}
 
 
+@pytest.fixture(autouse=True)
+def _run_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """A plain column's target width is LOOM_EMBEDDING_DIM; each test keeps its own
+    abort file and twin record."""
+    monkeypatch.setattr(loom_settings, "embedding_dim", DIM)
+    monkeypatch.chdir(tmp_path)
+
+
 def test_the_dimension_comes_from_the_live_table() -> None:
     coded = ARRAY.replace("CODEC(NONE)", "CODEC(Quantized('rabitq', 768, 0))")
     assert vcr.vector_dim(coded, "embedding") == 768
@@ -187,9 +194,7 @@ def test_the_dimension_comes_from_the_live_table() -> None:
         _CH(memory_chunks=_live()),
         vcr.parse(["--table", "memory_chunks", "--columns", "embedding"]),
     )
-    assert job.find_dim() == DIM  # a plain column: the vectors' own length
-    read = next(q for q in job.ch.queries if "ORDER BY n DESC" in q)
-    assert "FROM loom.memory_chunks FINAL" in read  # the width of the rows Loom serves
+    assert job.find_dim() == DIM  # a plain column: LOOM_EMBEDDING_DIM
 
 
 def test_without_yes_nothing_changes_and_the_plan_names_the_dimension(capsys: Any) -> None:
@@ -345,7 +350,7 @@ def test_a_twin_newer_than_a_coded_live_table_is_named_a_leftover(flag: str, cap
     assert _writes(ch) == [] and ch.t["memory_chunks_rebuild"] is twin
     step = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])["next"]
     assert "RENAME TABLE" not in step and "compare" not in step
-    assert "leftover newer than loom.memory_chunks" in step and "--restart --yes" in step
+    assert "leftover never exchanged in" in step and "--restart --yes" in step
 
 
 @pytest.mark.parametrize(
@@ -367,6 +372,32 @@ def test_a_twin_not_shown_newer_is_never_named_a_leftover(
     out = capsys.readouterr().out
     assert "leftover" not in out
     assert "RENAME TABLE loom.memory_chunks_rebuild TO loom.memory_chunks_pre_rebuild" in out
+
+
+def test_a_twin_this_tool_created_is_a_leftover_on_any_database_engine(capsys: Any) -> None:
+    """Metadata times show nothing on a Shared database, but the twin's UUID is the one
+    the tool recorded when it created it, so no exchange ran: the run names it a
+    leftover, and --restart drops it and copies again."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    live = {"ddl": coded, "rows": 5, "uuid": "live", "created": COPY_STARTED}
+    twin = {"ddl": coded, "rows": 3, "uuid": "ours", "created": TWIN_CREATED}
+    ch = _CH(memory_chunks=live, memory_chunks_rebuild=twin)
+    ch.db_engine = "Shared"
+    assert _run(ch, "--dry-run", "--require-patch-free") == tr.REFUSED
+    assert "compare" in capsys.readouterr().out  # no record: either may be the old table
+    Path("memory_chunks_rebuild.uuid").write_text("ours")
+    assert _run(ch, "--dry-run", "--require-patch-free") == tr.REFUSED
+    step = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])["next"]
+    assert "leftover never exchanged in" in step and "compare" not in step
+    assert _run(ch, "--yes", "--require-patch-free", "--restart") == tr.OK
+    assert _writes(ch)[0] == "DROP TABLE loom.memory_chunks_rebuild SYNC"
+
+
+def test_a_created_twin_is_recorded_by_its_uuid() -> None:
+    ch = _CH(memory_chunks=_live())
+    ch.cons = (1, 0, 0)  # the gate fails, so the twin stays
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    assert Path("memory_chunks_rebuild.uuid").read_text() == ch.t["memory_chunks_rebuild"]["uuid"]
 
 
 def test_a_twin_with_patch_parts_is_never_swapped() -> None:
@@ -581,7 +612,7 @@ def test_vectors_of_another_width_refuse_before_the_twin_dry_run_included(capsys
     ch.widths = [(768, 3), (3072, 1)]
     assert _run(ch, "--dry-run") == tr.REFUSED and _writes(ch) == []
     out = capsys.readouterr().out
-    assert f"embedding holds vectors of more than one width (target {DIM};" in out
+    assert f"embedding holds vectors of a width other than the target {DIM} (" in out
     assert "LOOM_EMBEDDING_DIM" in out
     assert "`loom reembed` does not cover loom.memory_chunks; its own writer must" in out
     assert "width 768: 3 row(s), width 3072: 1 row(s)" in out and "re-embed" in out
@@ -713,7 +744,7 @@ def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:
     assert _run(ch, "--yes") == tr.GATE_FAILED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     out = capsys.readouterr().out
-    assert "GATE FAILED: embedding holds vectors of more than one width" in out
+    assert "GATE FAILED: embedding holds vectors of a width other than the target" in out
     assert "width 768: 2 row(s)" in out
     delta = _last(ch, "SELECT count() FROM loom.memory_chunks WHERE created_at >")
     assert delta < _last(ch, "GROUP BY w")
@@ -821,7 +852,7 @@ def test_an_off_width_update_after_the_checks_fails_the_postcondition(capsys: An
     ch.widths = [(768, 1)]
     assert _run(ch, "--yes") == tr.POSTCONDITION
     out = capsys.readouterr().out
-    assert "POSTCONDITION FAILED: embedding holds vectors of more than one width" in out
+    assert "POSTCONDITION FAILED: embedding holds vectors of a width other than the target" in out
     assert "--rollback --yes" in out
     assert "FROM loom.memory_chunks_pre_rebuild" in ch.queries[_last(ch, "GROUP BY w")]
 
@@ -901,33 +932,16 @@ def test_a_duplicate_key_insert_on_a_plain_merge_tree_stops_the_swap(capsys: Any
     assert all("GROUP BY org, namespace" in q and "FINAL" not in q for q in reads)
 
 
-def test_the_target_width_comes_from_real_vectors_only() -> None:
-    job = vcr.VectorRebuild(
-        _CH(memory_chunks=_live()),
-        vcr.parse(["--table", "memory_chunks", "--columns", "embedding"]),
-    )
-    job.find_dim()
-    read = next(q for q in job.ch.queries if "ORDER BY n DESC" in q)
-    assert "WHERE arrayExists(x -> x != 0, embedding)" in read
-
-
-def test_the_target_width_counts_every_row_and_prefers_the_configured_width() -> None:
-    """A FINAL read streams in sort-key order, so a sample is the first orgs, not the
-    table: the width comes from a count of every real vector. LOOM_EMBEDDING_DIM wins
-    when the column holds it; otherwise the most frequent width does."""
-    from server.settings import settings
-
-    configured = int(settings.embedding_dim)
+def test_a_plain_column_of_another_width_refuses_rather_than_coding_it(capsys: Any) -> None:
+    """Every stored vector is 768 wide and LOOM_EMBEDDING_DIM is DIM: coding 768 would make
+    the column reject every write Loom makes, so the run codes DIM and refuses."""
     ch = _CH(memory_chunks=_live())
-    job = vcr.VectorRebuild(ch, vcr.parse(["--table", "memory_chunks", "--columns", "embedding"]))
-    ch.all_widths = [(DIM, 90), (configured, 10)]  # mostly old width, partly re-embedded
-    assert job.find_dim() == configured
-    ch.all_widths = [(768, 90), (DIM, 10)]  # the first org's width (DIM) is the minority
-    assert job.find_dim() == 768
-    ch.all_widths = []
-    assert job.find_dim() == configured
-    read = next(q for q in ch.queries if "ORDER BY n DESC" in q)
-    assert "GROUP BY w" in read and "LIMIT" not in read
+    ch.widths = [(768, 90)]  # every real vector is of another width
+    assert _run(ch, "--dry-run") == tr.REFUSED
+    assert not any("_rebuild" in c for c in ch.commands)
+    out = capsys.readouterr().out
+    assert f"target {DIM} (width 768: 90 row(s)" in out
+    assert f"LOOM_EMBEDDING_DIM {DIM}" in out
 
 
 def test_the_recall_reads_rank_real_vectors_only() -> None:
@@ -1272,6 +1286,25 @@ def test_a_refused_rollback_copy_sync_after_the_swap_keeps_the_copy_without_a_ro
     assert "the checks could not run (Not enough privileges)" in out
     summary = json.loads(out.rsplit("summary ", 1)[1])
     assert "--rollback" not in summary["next"] and "--drop-pre-rebuild" in summary["next"]
+
+
+def test_a_rollback_whose_rollback_copy_sync_is_refused_names_the_rerun(capsys: Any) -> None:
+    """Checks that could not run found no difference: the rollback keeps both tables and
+    names the grant fix and a rerun of --rollback, not an inspection by hand."""
+    coded = REPLICATED.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    ch = _CH(
+        memory_chunks={"ddl": coded, "rows": 5, "uuid": "a"},
+        memory_chunks_pre_rebuild={"ddl": REPLICATED, "rows": 5, "uuid": "live"},
+    )
+    ch.refuse_table = "loom.memory_chunks_pre_rebuild"
+    assert _run(ch, "--rollback", "--yes") == tr.REFUSED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "memory_chunks_pre_rebuild" in ch.t
+    out = capsys.readouterr().out
+    assert "the checks could not run (Not enough privileges)" in out
+    summary = json.loads(out.rsplit("summary ", 1)[1])
+    assert "fix the grant" in summary["next"] and "--rollback --yes" in summary["next"]
+    assert "by hand" not in summary["next"]
 
 
 def test_a_write_into_the_new_table_after_the_swap_never_names_the_rollback(

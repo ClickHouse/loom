@@ -17,6 +17,14 @@ from server.settings import settings
 from tests.integration._resources import ch_client_from_env
 
 
+@pytest.fixture(autouse=True)
+def _run_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """The tables below hold 8-wide vectors, LOOM_EMBEDDING_DIM here; each test keeps
+    its own abort file and twin record."""
+    monkeypatch.setattr(settings, "embedding_dim", 8)
+    monkeypatch.chdir(tmp_path)
+
+
 @pytest.fixture
 def ch() -> Iterator[Any]:
     client = ch_client_from_env(settings={"session_timezone": "UTC"}, tz_source="server")
@@ -579,11 +587,11 @@ def test_an_exchange_leaves_the_twin_the_older_metadata_time(
     time.sleep(1.1)  # metadata times have one second's precision
     ch.command(f"CREATE TABLE loom.{twin} AS loom.{table}")
     job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
-    assert job.twin_is_newer()
+    assert job.twin_never_exchanged()
     time.sleep(1.1)  # an exchange that rewrote both times would make them equal
     ch.command(f"EXCHANGE TABLES loom.{table} AND loom.{twin}")
     assert job.metadata_time(twin) < job.metadata_time(table)
-    assert not job.twin_is_newer()
+    assert not job.twin_never_exchanged()
     # --drop-pre-rebuild reads the same order after the rename that completes a swap
     pre = f"{table}{tr.PRE_SUFFIX}"
     ch.command(f"RENAME TABLE loom.{twin} TO loom.{pre}")
