@@ -255,7 +255,9 @@ schema. These rules keep that safe. The operator procedure is in
     bot made before it. N-1 refuses an admin bot's exchange but accepts a flat admin JWT
     issued by N, and its SSO account routes lack the human-only check. Both OAuth admin
     exchanges and `loom mint-token --platform-admin` therefore refuse until a fresh,
-    nonempty fleet view shows every replica at migration 76 or later. OAuth answers 503
+    nonempty fleet view shows every replica at migration 76 or later, including processes
+    outside the deployment on the same ClickHouse. Neither path uses the kind-filtered
+    replica cache. OAuth answers 503
     `temporarily_unavailable`; the CLI refreshes the fleet before minting and prints no
     token when it is unreadable or contains an older replica. Register and use such bots
     only after the rollout. Before starting any N-1 replica for a rollback, disable admin

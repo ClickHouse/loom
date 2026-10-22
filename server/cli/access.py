@@ -271,13 +271,9 @@ def _platform_admin_refusal(args: argparse.Namespace) -> str | None:
 
 def _platform_admin_rollout_ready() -> bool:
     from server.auth import machines
-    from server.core import instances
-
-    async def ready(ch: Any) -> bool:
-        return machines.platform_admin_tokens_ready(await instances.read_live(ch))
 
     try:
-        return bool(run_connected(ready))
+        return bool(run_connected(machines.platform_admin_tokens_ready))
     except Exception as e:  # noqa: BLE001 — an unread fleet refuses an admin token
         print(f"  ✗ fleet state could not be read: {type(e).__name__}", file=sys.stderr)
         return False

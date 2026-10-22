@@ -27,7 +27,10 @@ CI = "https://ci.example"
 @pytest.fixture
 def bots(monkeypatch, auth_attempts) -> dict[str, Any]:
     # Exchange tests run after every replica protects human-admin credentials.
-    monkeypatch.setattr("server.core.instances.live_rows", lambda: [{"schema_version": 76}])
+    async def live(*a, **kw):
+        return [{"schema_version": 76}]
+
+    monkeypatch.setattr("server.core.instances.read_live", live)
     monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
     monkeypatch.setattr(oauth.settings, "oauth_issuer", "http://testserver")
     private, public = machines.generate_key()

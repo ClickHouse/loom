@@ -70,11 +70,18 @@ class Machine(TypedDict):
     platform_admin: bool
 
 
-def platform_admin_tokens_ready(live: list[dict[str, Any]]) -> bool:
+async def platform_admin_tokens_ready(ch: Any) -> bool:
     """Older replicas accept admin JWTs without protecting human sign-in changes."""
-    return bool(live) and all(
-        int(row["schema_version"] or 0) >= _PLATFORM_ADMIN_MIGRATION for row in live
-    )
+    from server.core import instances
+
+    try:
+        live = await instances.read_live(ch, all_deployments=True)
+        return bool(live) and all(
+            int(row["schema_version"] or 0) >= _PLATFORM_ADMIN_MIGRATION for row in live
+        )
+    except Exception as e:  # noqa: BLE001 — an unread fleet refuses an admin token
+        log.warning("admin token fleet check failed: %s", type(e).__name__)
+        return False
 
 
 class Refused(Exception):

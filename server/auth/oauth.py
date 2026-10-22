@@ -1585,9 +1585,9 @@ async def _machine_tokens(
         raise OAuthError("invalid_client", 401, description="this bot is revoked")
     admin = bool(m.get("platform_admin", False)) and not agent  # never an agent's
     if admin:
-        from server.core import instances
+        from server.core.ch import get_client
 
-        if not machines.platform_admin_tokens_ready(instances.live_rows()):
+        if not await machines.platform_admin_tokens_ready(get_client()):
             raise OAuthError(
                 "temporarily_unavailable",
                 503,
