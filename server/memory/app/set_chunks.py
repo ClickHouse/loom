@@ -26,6 +26,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from server.core.ch_writes import committed_insert_settings
 from server.core.datetimes import naive_utc_now
 from server.memory.app.chunk_projection import chunk_text_with_ranges, chunk_text_with_truncation
 from server.memory.app.sensitive_passages import embed_chunks_of
@@ -224,7 +225,7 @@ async def _insert_chunk_states(ch: Any, rows: list[dict[str, Any]]) -> None:
     await ch.insert(
         "loom.memory_chunks",
         rows,
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+        settings=committed_insert_settings(),
     )
 
 
@@ -477,7 +478,7 @@ async def write_set_chunks(
     await ch.insert(
         "loom.memory_chunks",
         rows,
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+        settings=committed_insert_settings(),
     )
     # A newer write may have made the key 'high' (or unsearchable) or deleted it while
     # these chunks were embedding. It inserts its row before tombstoning the key's

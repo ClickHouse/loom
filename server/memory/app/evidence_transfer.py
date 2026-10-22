@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.ch_writes import committed_insert_settings
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.core.naming import named
 from server.memory.api.models_evidence_transfer import (
@@ -380,9 +381,7 @@ async def handle_memory_import_evidence(
                 )
             )
         if rows:
-            await ch.insert(
-                "loom.memory_chunks", rows, settings={"async_insert": 0, "wait_for_async_insert": 1}
-            )
+            await ch.insert("loom.memory_chunks", rows, settings=committed_insert_settings())
             out.chunks_written = len(rows)
         from server.memory.app.chunk_links import SOURCES_TABLE, import_link_rows
 

@@ -9,6 +9,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from server.core.ch_writes import committed_insert_settings
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.temporal_sql import SERVED_STATUSES
@@ -720,7 +721,7 @@ async def tombstone_entity_vectors_for_keys(
             await ch.insert(
                 "loom.entity_vectors",
                 rows,
-                settings={"async_insert": 0, "wait_for_async_insert": 1},
+                settings=committed_insert_settings(),
             )
             written += len(rows)
     return written

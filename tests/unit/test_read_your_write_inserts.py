@@ -82,7 +82,10 @@ def _module_insert_settings(tree: ast.Module, table: str) -> list[dict[str, int]
         )
         if not names_table:
             continue
-        if not any(kw.arg == "settings" for kw in node.keywords):
+        if len(node.args) > 2 or any(kw.arg is None for kw in node.keywords):
+            # Settings passed by position or through **kw: unknown here, so it fails.
+            found.append({"unresolved": 1})
+        elif not any(kw.arg == "settings" for kw in node.keywords):
             # The client's session defaults: a committed insert.
             found.append({"async_insert": 0, "wait_for_async_insert": 1})
         for kw in node.keywords:
