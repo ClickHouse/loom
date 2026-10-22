@@ -157,7 +157,7 @@ class MemorySearchInput(BaseModel):
     # Default ON so MCP callers, which wouldn't otherwise set it, still get telemetry.
     auto_touch: bool = True
     user_id: str | None = None  # filter by user_id (for preference recall)
-    run_id: str | None = None  # filter by run_id (task scope)
+    run_id: str | None = None  # only rows written under this run; unset or "-" reads every run
     # Filter by session_id. None = no session filter. Also the identity that
     # read_scope="own_session" binds to.
     session_id: str | None = None
@@ -914,6 +914,7 @@ class SearchTraceLogInput(BaseModel):
     # Look-back window in hours, 1 to 8760 (one year).
     since_hours: int = Field(default=24, ge=1, le=8760)
     agent: str = ""
+    # Only searches made under this run; "" or "-" = every run.
     run_id: str = ""
     # At most this many rows, newest first; capped at 1000.
     limit: int = Field(default=100, ge=1, le=1000)

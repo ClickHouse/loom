@@ -21,6 +21,7 @@ from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
 from server.core import llm_free
 from server.core.errors import LoomServerError
+from server.core.naming import named
 from server.identity.app.caller_home import home_namespace
 from server.operations.base import Operation
 from server.operations.toolsets import _MCP_HIDDEN_OPS
@@ -337,7 +338,7 @@ def _stamp_session_run(
         # namespace a call names, so every web process files it under one key.
         caller = _mcp_runs.Caller.of_call(current_auth(), arguments)
         run_id = _mcp_runs.run_id_for(mcp_session_id, defaults, caller)
-        if run_id and _mcp_runs.stamps_run(op) and str(arguments.get("run_id") or "") in ("", "-"):
+        if run_id and _mcp_runs.stamps_run(op) and not named(str(arguments.get("run_id") or "")):
             arguments["run_id"] = run_id
             return caller, True
         return caller, False

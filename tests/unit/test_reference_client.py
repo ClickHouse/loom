@@ -34,6 +34,7 @@ class FakeTransport:
         self.closed = False
         self.consumer = consumer
         self.attempts = 1
+        self.headers: list[dict[str, str]] = []
 
     async def post_with_meta(
         self,
@@ -42,9 +43,11 @@ class FakeTransport:
         idempotency_key: str | None = None,
         *,
         timeout_s: float | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> WireResult:
         if self.consumer and "consumer" not in payload:
             payload = {**payload, "consumer": self.consumer}
+        self.headers.append(dict(extra_headers or {}))
         self.calls.append((op_path, dict(payload), idempotency_key, timeout_s))
         op = op_path.removeprefix("/v1/")
         scripted = self.responses.get(op)
@@ -321,24 +324,50 @@ async def test_outcome_and_code_outcome_default_source_to_the_consumer() -> None
     assert t.payloads("code.outcome")[2]["reason"] == "abstained"
 
 
-async def test_run_scope_threads_run_id_into_memory_calls() -> None:
+async def test_an_open_run_stamps_writes_and_leaves_reads_unfiltered() -> None:
+    """A body run_id on a read filters it to the run's own rows, so only writes carry it."""
     c, t = client(
         {
             "run.begin": {"run_id": "r1", "status": "active", "started_at": "x"},
+            "memory.set": {"version": 1},
             "memory.search": {"results": []},
+            "memory.ask": {"answer": "", "abstained": True},
             "run.complete": {"run_id": "r1", "status": "completed"},
         }
     )
     await c.run_begin("fix CI")
     assert c.run_id == "r1"
+    await c.set("k1", "v")
     await c.search("q")
-    assert t.payloads("memory.search")[0]["run_id"] == "r1"
+    await c.ask("q")
+    assert t.payloads("memory.set")[0]["run_id"] == "r1"
+    assert "run_id" not in t.payloads("memory.search")[0]
+    assert "run_id" not in t.payloads("memory.ask")[0]
+    # The reads are labelled with the run instead, so the ledger counts them.
+    by_op = {call[0]: h for call, h in zip(t.calls, t.headers, strict=True)}
+    assert by_op["/v1/memory.search"] == {"X-Loom-Run-Id": "r1"}
+    assert by_op["/v1/memory.ask"] == {"X-Loom-Run-Id": "r1"}
+    assert by_op["/v1/memory.set"] == {}
     r = await c.run_complete(memories_used=["k1"], outcome="positive")
     assert r.ok and c.run_id is None
     p = t.payloads("run.complete")[0]
     assert p["run_id"] == "r1" and p["memories_used"] == ["k1"] and p["outcome"] == "positive"
     r2 = await c.run_complete()
     assert not r2.ok and r2.code == "NO_RUN"
+
+
+async def test_an_injected_transport_without_extra_headers_still_works() -> None:
+    """The label goes only on a recall read under an open run; every other call keeps the
+    plain `post_with_meta` signature a caller's own transport may have."""
+
+    class _Plain:
+        async def post_with_meta(self, op_path: str, payload: dict[str, Any], *, timeout_s=None):
+            return WireResult({"results": []}, 200, "rid", "", None, None, 1)
+
+    c = ReferenceClient("o", "ns", consumer="test", agent="ag", transport=_Plain())
+    assert (await c.search("q")).ok
+    c.run_id = "r1"  # an open run: the read goes out unlabelled rather than failing
+    assert (await c.search("q")).ok
 
 
 async def test_stats_and_close() -> None:

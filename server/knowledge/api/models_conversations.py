@@ -202,6 +202,7 @@ class ConversationUpdateInput(BaseModel):
     title: str | None = None
     # New metadata JSON, replacing the old object whole; None leaves it unchanged.
     metadata: dict[str, Any] | None = None
+    # The thread's new run; None or "-" leaves it unchanged, "" detaches it from its run.
     run_id: str | None = None
 
 
@@ -310,7 +311,7 @@ class ConversationListInput(BaseModel):
     agent: str
     # The thread to page through, oldest message first.
     thread_id: str
-    run_id: str | None = None  # optional filter
+    run_id: str | None = None  # optional filter; None or "-" = every run
     # At most this many messages per page (1-1000).
     limit: int = Field(default=100, ge=1, le=1000)
     cursor: str | None = None  # opaque (ts, msg_id)
@@ -343,12 +344,12 @@ class ConversationSearchInput(BaseModel):
     # when the embedder is unavailable.
     query: str
     thread_id: str | None = None  # optional: scope to one thread
-    run_id: str | None = None  # optional: filter by run_id
+    run_id: str | None = None  # optional: filter by run_id; None or "-" = every run
     # Filter by speaker; system turns other than compaction summaries, and tool turns,
     # are not embedded, so they match only on the substring fallback.
     role: ConversationRole | None = None
-    # Optional owner filter. Integrations that serve many users from one
-    # namespace set it so a search cannot cross their user boundary.
+    # Optional owner filter; None or "-" = every user. Integrations that serve many
+    # users from one namespace set it so a search cannot cross their user boundary.
     user_id: str | None = None
     # At most this many hits (1-200). Across agents ("*" or "-") a turn several agents
     # logged is one hit: the embeddings hold one row per turn, and the substring path

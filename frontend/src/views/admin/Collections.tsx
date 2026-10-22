@@ -52,7 +52,7 @@ const HEADERS = [
   { label: "Inside" },
   { label: "Your role" },
   // The row menus' column: named for a screen reader, blank on screen.
-  { label: <span className="sr-only">Actions</span>, width: "48px" },
+  { label: <span className="sr-only">Actions</span>, width: "52px" },
 ];
 
 /** How many of a collection's documents its details list. */

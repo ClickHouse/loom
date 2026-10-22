@@ -147,9 +147,10 @@ class ConversationsClient:
         """Rename / relabel one thread.
 
         Updates `title` and/or `metadata` and/or `run_id` on an existing
-        thread. At least one must be passed (no-op calls 400). Returns
-        `{updated: bool, thread_id, updated_at}` — `updated=False`
-        means the thread doesn't exist.
+        thread. At least one must be passed (no-op calls 400). `run_id=""`
+        detaches the thread from its run; `"-"` keeps it, as an unset field
+        does. Returns `{updated: bool, thread_id, updated_at}` —
+        `updated=False` means the thread doesn't exist.
         """
         payload: dict[str, Any] = self._identity(agent_id)
         payload["thread_id"] = thread_id

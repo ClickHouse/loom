@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.naming import named
 from server.insights.api.models_cost import (
     BudgetStatusInput,
     BudgetStatusOutput,
@@ -63,6 +64,7 @@ def _summary_row(r: dict[str, Any], *, scan: bool) -> CostSummaryRow:
 
 async def handle_cost_summary(input: CostSummaryInput) -> CostSummaryOutput:
     ch = get_client()
+    user_id = named(input.user_id)
 
     dim_cols = list(input.group_by)
     # memory_key, user_id, model, traffic_class, instance_label and build_commit are
@@ -75,7 +77,7 @@ async def handle_cost_summary(input: CostSummaryInput) -> CostSummaryOutput:
         or "traffic_class" in dim_cols
         or "instance_label" in dim_cols  # the process that served the event
         or "build_commit" in dim_cols
-        or input.user_id is not None
+        or user_id is not None
         or input.traffic_class is not None
         or input.instance_label is not None
     )
@@ -101,7 +103,7 @@ async def handle_cost_summary(input: CostSummaryInput) -> CostSummaryOutput:
         filters={
             "agent": input.agent,
             "operation": input.operation,
-            "user_id": input.user_id,
+            "user_id": user_id,
             "traffic_class": input.traffic_class,
             "instance_label": input.instance_label,
         },
