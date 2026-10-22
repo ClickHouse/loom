@@ -490,8 +490,9 @@ because its merges are stopped: drop that copy first
    Check the list against `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`), which
    names every coded table and its vector columns, before you run it. The
    `--gate-fetch-multiplier` values are the defaults the search legs serve. Where the
-   deployment changes one, in its environment or as a live override, pass that value on
-   its line: `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER` on `memory_embeddings`,
+   deployment sets one (its environment, `.env`, the settings file, or a live override for
+   `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER`), pass that value on its line:
+   `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER` on `memory_embeddings`,
    `LOOM_CODE_SEARCH_CARDS_FETCH_MULTIPLIER` on `code_summaries`,
    `LOOM_TRACKER_EMBED_FETCH_MULTIPLIER` on `qa_item_embeddings`, and
    `LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER` on the rest. Where
