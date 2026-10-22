@@ -423,8 +423,8 @@ WHERE name IN ('enable_quantized_codec', 'allow_suspicious_codecs')
 ```
 
 A setting is fine at `value = 1`, read-only or not, and blocked at `value = 0` when this
-user may not set it to 1 (the rules are in [gated
-settings](../architecture/clickhouse.md#gated-clickhouse-settings)). No row for
+user may not set it to 1 (the rules are in
+[gated settings](../architecture/clickhouse.md#gated-clickhouse-settings)). No row for
 `enable_quantized_codec` means the server is older than 26.8, which Loom never codes.
 
 - **Self-managed ClickHouse 26.8 or later.** Both settings are user-settable by default
@@ -485,9 +485,10 @@ upgrading the server does not change existing tables:
 
    A run can also fail the gate where one `(org, namespace)` holds placeholder rows and
    between 1 and 19 real vectors of the same width: a probe drawn there reads recall 0,
-   because a placeholder's distance is NaN and sorts last. Tables with rows that never get
-   a vector (`code_summaries` structural rows, `code_answers` stubs) can hit this. This
-   finds such namespaces (drop `FINAL` for `chunks`, the one plain `MergeTree`):
+   because a placeholder's distance is NaN and sorts last. Any table can hold
+   placeholders, for rows whose embedding never arrived or failed (`code_summaries`
+   structural rows, `code_answers` stubs, failed embeds), so run this for each table
+   before its line (drop `FINAL` for `chunks`, the one plain `MergeTree`):
 
    ```sql
    SELECT org, namespace FROM loom.<table> FINAL
@@ -501,29 +502,37 @@ upgrading the server does not change existing tables:
    Skip that table's line while this returns rows: the table stays plain and Loom serves
    it as before.
 
+   To stop the block, create `ABORT_REBUILD` in `LOOM_REBUILD_DIR` (default: the directory
+   you run from): each later line then stops before it starts. Ctrl-C stops only the line
+   that is running, and bash goes on to the next. Remove the file before the next run.
+
    A run that stops before its swap (a failed gate, an abort file, an interrupt) leaves
    its twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not
    fully cover (a namespace erasure purges only the `code_*` copies). Drop it with
    `DROP TABLE loom.<table>_rebuild SYNC`, or pass `--restart` when you run that line
    again.
 
-   Run no `erasure.request` while a line runs with `mode=--yes`. The copy is taken before
-   the erasure and the swap puts it live, so the erased rows come back. If one completed
-   during a run, request it again after the swap; this lists the ones requested since the
-   run started:
+   Start no erasure while a line runs with `mode=--yes` (`erasure.request`,
+   `collection.delete`, a repository retire), and turn the namespace GC worker off
+   (`loom settings set namespace_gc_worker_enabled false`, back to `true` after the swap).
+   The copy is taken before the erasure and the swap puts it live, so the erased rows come
+   back. Before the first `--yes` line, note `SELECT now()` on the same ClickHouse as
+   `<start>`. After the swap, list the erasures that ran during it, wait for any still
+   running to finish, and request each one again:
 
    ```sql
-   SELECT id, scope_type, scope_value FROM loom.erasure_requests FINAL
-   WHERE status = 'completed' AND requested_at >= '<start>'
+   SELECT id, org, scope_type, scope_value, status FROM loom.erasure_requests FINAL
+   WHERE completed_at >= '<start>' OR status IN ('queued', 'in_progress')
    ```
 
 3. Once search looks right, drop the old copies soon: run the lines of the tables you
    rebuilt again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table
    keeps its old copy as `loom.<table>_pre_rebuild`, a full second copy with its merges
-   stopped, which erasure does not fully cover either. To go back instead, run that
-   table's line with `mode="--rollback --yes"`; the coded copy then sits in
-   `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the table was
-   rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
+   stopped, which erasure does not fully cover either: a namespace erasure that reaches a
+   `code_*` copy waits until it is dropped, because a stopped table runs no mutation. To
+   go back instead, run that table's line with `mode="--rollback --yes"`; the coded copy
+   then sits in `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the
+   table was rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
    `--chain LZ4` only if its rebuild had it.
 
 ## Providers
