@@ -42,12 +42,12 @@ import json
 import math
 import time
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
 from server.core.ch import get_client
+from server.core.datetimes import naive_utc_now
 from server.knowledge.store import conversations
 from server.settings import settings
 
@@ -111,7 +111,7 @@ async def _client_write(i: int, run: str, args: argparse.Namespace) -> None:
     # The two store calls conversation.append makes, so the run sends what the
     # store sends, the committed resend of a failed shared flush included.
     ch = get_client()
-    ts = datetime.now(UTC).replace(tzinfo=None)
+    ts = naive_utc_now()
     content = f"Turn {i} of run {run}: the delivery for order {i} moved to day {i % 28}."
     msg = conversations.MessageInsert(
         org=_org(i, args),
