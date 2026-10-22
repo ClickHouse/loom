@@ -217,13 +217,15 @@ into a twin table, check it, swap with `EXCHANGE TABLES` and keep the old table 
 in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-key).
 `vector_codec_rebuild.py` needs a maintenance window with every writer and erasure
 stopped; it fails closed and never repairs the live table. It refuses (exit 3),
-`--dry-run` included, while a named column holds non-empty vectors of more than one width,
-since the copy would replace all but the target's with zero vectors. The target of a plain
-column is its most common width, which may not be `LOOM_EMBEDDING_DIM`; the message names
-both. Re-embed until one width remains: `loom reembed` moves rows to the configured model.
-Just before the swap it checks the widths again and that the twin holds no rows removed
-from the source after they were copied (an erasure or delete), and fails the gate (exit 5)
-if either finds rows; stop writes and rerun it with `--restart`.
+`--dry-run` included, while a plain named column holds vectors of more than one width that
+are not all zeros, since the copy would replace all but the target's with zero vectors. The
+target of a plain column is its most common width, which may not be `LOOM_EMBEDDING_DIM`;
+the message names both. Re-embed or delete the rows of other widths until one width
+remains; for `memory_embeddings`, `entity_vectors` and `conversation_embeddings`,
+`loom reembed --delete-old` does this. Just before the swap it checks the widths again and
+that every key of the twin still matches the source, and fails the gate (exit 5) if a write
+or a delete (an erasure among them) landed during the run; stop writes and rerun it with
+`--restart`. `--statement-timeout-s` (default 1800) caps each gate read and repair.
 
 ## Disk pressure hygiene
 

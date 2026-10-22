@@ -465,7 +465,6 @@ def test_rebuild_gate_reads_the_served_multiplier_and_skips_placeholders() -> No
     assert st["vector_search_index_fetch_multiplier"] == 10.0
     src = (ROOT / "scripts/ops/vector_codec_rebuild.py").read_text()
     assert "twin_read(vcol, lit, self.a.gate_fetch_multiplier)" in src
-    assert "real = vector_filter(vcol, dim=dim)" in src
 
 
 def test_each_serving_column_is_held_to_the_width_its_writes_carry(

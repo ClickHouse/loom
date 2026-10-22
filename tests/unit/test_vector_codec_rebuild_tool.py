@@ -136,6 +136,8 @@ def test_the_dimension_comes_from_the_live_table() -> None:
         vcr.parse(["--table", "memory_chunks", "--columns", "embedding"]),
     )
     assert job.find_dim() == DIM  # a plain column: the vectors' own length
+    read = next(q for q in job.ch.queries if "topK(1)" in q)
+    assert "FROM loom.memory_chunks FINAL" in read  # the width of the rows Loom serves
 
 
 def test_without_yes_nothing_changes_and_the_plan_names_the_dimension(capsys: Any) -> None:
@@ -243,6 +245,7 @@ def test_a_granularity_rebuild_reports_and_checks_the_granularity(capsys: Any) -
     )
     assert job.target_state("memory_chunks") is False
     assert _run(ch, "--index-granularity", "64", "--yes") == tr.OK
+    assert not any("GROUP BY w" in q for q in ch.queries)  # the codec holds one width
     assert "index_granularity = 64" in ch.t["memory_chunks"]["ddl"]
     assert job.target_state("memory_chunks") is True
     ch.commands.clear()
@@ -329,7 +332,7 @@ def test_vectors_of_another_width_refuse_before_the_twin_dry_run_included(capsys
     assert _run(ch, "--dry-run") == tr.REFUSED and _writes(ch) == []
     out = capsys.readouterr().out
     assert f"embedding holds vectors of more than one width (target {DIM};" in out
-    assert "LOOM_EMBEDDING_DIM" in out and "loom reembed" in out
+    assert "LOOM_EMBEDDING_DIM" in out and "loom reembed --delete-old" in out
     assert "width 768: 3 row(s), width 3072: 1 row(s)" in out and "re-embed" in out
     preflight = [q for q in ch.queries if "GROUP BY w" in q]
     assert preflight and all(" FINAL " in q and f"NOT IN (0, {DIM})" in q for q in preflight)
@@ -362,6 +365,29 @@ def test_a_delete_during_the_gates_stops_the_swap(capsys: Any) -> None:
     assert "1 key(s) only in the twin" in capsys.readouterr().out
     delta = _last(ch, "SELECT count() FROM loom.memory_chunks WHERE created_at >")
     assert delta < _last(ch, "FULL OUTER JOIN") and delta < _last(ch, "GROUP BY w")
+
+
+def test_a_key_that_changed_during_the_gates_stops_the_swap(capsys: Any) -> None:
+    """A delete of a key's newest version leaves the source serving an older one while
+    the twin keeps the deleted row: the key reads as mismatched before the swap, and
+    the run stops instead of serving it."""
+    ch = _CH(memory_chunks=_live())
+    ch.cons_first = [(0, 0, 0)]
+    ch.cons = (1, 0, 0)
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    out = capsys.readouterr().out
+    assert "the source changed during the gates" in out and "--restart" in out
+
+
+def test_the_statement_timeout_caps_the_gate_reads_and_must_be_positive() -> None:
+    ch = _CH(memory_chunks=_live())
+    ch.cons_first = [(1, 0, 0)]
+    assert _run(ch, "--statement-timeout-s", "60", "--yes") == tr.OK
+    repairs = [st for s, st in ch.sent if "WHERE (org, namespace) IN" in s]
+    assert repairs and all(st["max_execution_time"] == 60 for st in repairs)
+    with pytest.raises(SystemExit):
+        vcr.parse(["--table", "t", "--columns", "embedding", "--statement-timeout-s", "0"])
 
 
 def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:

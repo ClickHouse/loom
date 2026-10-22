@@ -39,9 +39,11 @@ included, while a named column holds non-empty vectors of another length among
 the rows Loom serves (under FINAL on a ReplacingMergeTree), printing each width,
 its row count and `LOOM_EMBEDDING_DIM`, since the copy would replace them with
 zero vectors. The target width of a plain column is its most common length, not
-necessarily the configured one: re-embed until one width remains (`loom reembed`
-moves rows to the configured model). An empty vector is copied as a zero
-placeholder.
+necessarily the configured one: re-embed or delete the rows of other widths until
+one width remains (for memory_embeddings, entity_vectors and
+conversation_embeddings, `loom reembed --delete-old` does this). A coded column
+holds one width by construction and is not scanned. An empty vector, or an
+all-zero placeholder of any width, is copied as a zero placeholder.
 
 The gates (exit 5), each of which leaves the table as it is:
 
@@ -53,9 +55,9 @@ The gates (exit 5), each of which leaves the table as it is:
 - Recall: both reads rank real vectors only (a zero placeholder's cosine
   distance is NaN), and each probe's recall is over the exact neighbours it
   found, at most 20.
-- Before the swap, after the last delta: the twin-only check and the width
-  check run again, so a delete or an off-width write that landed during the
-  gates stops the swap.
+- Before the swap, after the last delta: the consistency check and the width
+  check run again, and any key that differs fails the run, so a write or a
+  delete that landed during the gates stops the swap.
 
 `--require-patch-free`: the twin-and-EXCHANGE also sheds the patch parts of
 past lightweight UPDATEs (`OPTIMIZE FINAL` / `APPLY PATCHES` do not). The flag
@@ -124,7 +126,6 @@ from server.core.schema.vector_codec_ddl import (
 # `product` take their own arguments and are not a rebuild target).
 CODEC_METHODS: tuple[str, ...] = ("rabitq", "turboquant", "int8")
 COPY_RECEIVE_TIMEOUT_S = 7200
-GATE_READ_TIMEOUT_S = 1800  # not a setting: an operator tool's per-statement cap, sized to a full FINAL scan of the largest vector table
 # How far above the exact 20th distance a twin hit may read and still count.
 DISTANCE_TOLERANCE = 1e-6
 COUNT_SETTLE_ATTEMPTS = 8
@@ -296,11 +297,13 @@ def read_final(engine: str) -> str:
 
 
 def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
-    """(width, rows) of the non-empty vectors in `column` whose length is not `dim`:
-    the copy would replace each with a zero vector. Pure."""
+    """(width, rows) of the vectors in `column` whose length is not `dim` and that are
+    not all zeros: the copy would replace each with a zero vector. A placeholder of
+    any width is a zero vector after the copy too, so it is not counted. Pure."""
     return (
         f"SELECT length({column}) AS w, count() FROM loom.{table}{fin} "
-        f"WHERE length({column}) NOT IN (0, {int(dim)}) GROUP BY w ORDER BY w"
+        f"WHERE length({column}) NOT IN (0, {int(dim)}) AND arrayExists(x -> x != 0, {column}) "
+        "GROUP BY w ORDER BY w"
     )
 
 
@@ -479,7 +482,7 @@ class VectorRebuild:
             log("rows written in the last hour with an empty vector:", n)
             if n:
                 return "recent rows carry an empty vector: add this table to placeholders.PLACEHOLDER_COLUMNS and deploy first"
-        if why := self.width_refusal(read_final(parse_engine(ddl)[0])):
+        if why := self.width_refusal(ddl, read_final(parse_engine(ddl)[0])):
             return why
         twin = tr.table_row(self.ch, self.twin)
         if twin is not None and not (self.a.reuse or self.a.restart):
@@ -489,22 +492,24 @@ class VectorRebuild:
             )
         return ""
 
-    def width_refusal(self, fin: str) -> str:
+    def width_refusal(self, ddl: str, fin: str) -> str:
         """Why a named column holds vectors the copy would zero, or ''."""
         from server.settings import settings
 
-        for c in self.cols:
+        # a coded column's codec rejects any other width, so only plain columns are scanned
+        for c in [c for c in self.cols if vector_dim(ddl, c) is None]:
             widths = self.q(
                 mixed_width_sql(self.t, c, fin, dim=self.dim),
-                max_execution_time=GATE_READ_TIMEOUT_S,
+                max_execution_time=self.a.statement_timeout_s,
             )
             if widths:
                 found = ", ".join(f"width {w}: {n} row(s)" for w, n in widths)
                 return (
                     f"{c} holds vectors of more than one width (target {self.dim}; {found}; "
                     f"LOOM_EMBEDDING_DIM {settings.embedding_dim}): the copy would zero all but "
-                    f"width {self.dim}; re-embed until one width remains (loom reembed moves "
-                    "rows to the configured model)"
+                    f"width {self.dim}; re-embed or delete the rows of other widths until one "
+                    "width remains (for memory_embeddings, entity_vectors and "
+                    "conversation_embeddings, loom reembed --delete-old does this)"
                 )
         return ""
 
@@ -631,14 +636,14 @@ class VectorRebuild:
             f"LEFT JOIN (SELECT {ident}{vsel}, 1 AS __present FROM loom.{dst}{fin}) AS t "
             f"USING ({ident}) WHERE {newer}"
         )
-        keys = self.q(diverged, join_use_nulls=0, max_execution_time=GATE_READ_TIMEOUT_S)
+        keys = self.q(diverged, join_use_nulls=0, max_execution_time=self.a.statement_timeout_s)
         for i in range(0, len(keys), REPAIR_BATCH):
             batch = keys[i : i + REPAIR_BATCH]
             lits = ", ".join("(" + ", ".join(key_literal(v) for v in k) + ")" for k in batch)
             self.cmd(
                 f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE ({ident}) IN ({lits})",
                 **self.codec_on(),
-                max_execution_time=GATE_READ_TIMEOUT_S,
+                max_execution_time=self.a.statement_timeout_s,
             )
         self.rows_copied += len(keys)
         return len(keys)
@@ -674,7 +679,7 @@ class VectorRebuild:
           FULL OUTER JOIN (SELECT {ident}{vsel}, 1 AS __present FROM loom.{self.twin}{fin}) AS t USING ({ident})
         """,
             join_use_nulls=0,
-            max_execution_time=GATE_READ_TIMEOUT_S,
+            max_execution_time=self.a.statement_timeout_s,
         )[0]
         return int(row[0]), int(row[1]), int(row[2])
 
@@ -782,13 +787,19 @@ class VectorRebuild:
             return REFUSED
         self.delta_into(self.twin, self.t, sel, version, key)
         # writers and erasure must be stopped; check again that nothing landed during the gates
-        if why := self.width_refusal(fin):
+        if why := self.width_refusal(ddl, fin):
             log(f"GATE FAILED: {why}; no swap")
             return GATE_FAILED
         cons = self.consistent(fin, version, key)
         log("consistency before the swap:", cons)
         if cons[2]:
             log(twin_only_failure(cons[2]))
+            return GATE_FAILED
+        if cons[0] or cons[1]:
+            log(
+                "GATE FAILED: the source changed during the gates (a write or a delete), and the "
+                "twin no longer matches it; no swap. Stop writes and rerun with --restart"
+            )
             return GATE_FAILED
         tr.swap_in(self.ch, self.t)
         for _ in range(2):  # writes in flight at the exchange landed in the old table
@@ -927,12 +938,20 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
     )
     ap.add_argument("--settle-s", type=float, default=15.0, help="wait before each post-swap delta")
     ap.add_argument(
+        "--statement-timeout-s",
+        type=float,
+        default=1800.0,
+        help="cap on each gate read and repair INSERT, a full FINAL scan of the table",
+    )
+    ap.add_argument(
         "--abort-file", default=str(Path(os.environ.get("LOOM_REBUILD_DIR", ".")) / "ABORT_REBUILD")
     )
     a = ap.parse_args(argv)
     a.table = a.table.removeprefix("loom.")
     if a.cluster and not _CLUSTER_NAME.fullmatch(a.cluster):
         ap.error(f"--cluster: not a cluster name: {a.cluster!r}")
+    if a.statement_timeout_s <= 0:
+        ap.error("--statement-timeout-s must be above 0")
     return a
 
 

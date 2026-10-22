@@ -217,7 +217,8 @@ def test_the_width_preflight_counts_other_non_empty_widths_as_loom_serves_them()
     assert vcr.read_final("SharedMergeTree") == ""
     assert vcr.mixed_width_sql("memory_chunks", "embedding", " FINAL", dim=3072) == (
         "SELECT length(embedding) AS w, count() FROM loom.memory_chunks FINAL "
-        "WHERE length(embedding) NOT IN (0, 3072) GROUP BY w ORDER BY w"
+        "WHERE length(embedding) NOT IN (0, 3072) AND arrayExists(x -> x != 0, embedding) "
+        "GROUP BY w ORDER BY w"
     )
     assert "FINAL" not in vcr.mixed_width_sql("chunks", "embedding", "", dim=3072)
 
