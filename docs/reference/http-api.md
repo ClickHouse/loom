@@ -70,13 +70,13 @@ These routes serve the dashboard: the page itself and the caller API (`/v1/me/*`
 authenticated caller). They are not an integration surface. They are not registry ops and can
 change in any release.
 
-| Method and path                                                                 | Auth   | What it is                                                                                                                                                                                            |
-| ------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /`, `/{page}`, `/assets/*`, `/favicon.svg`                                 | none   | The dashboard single-page app and its assets, served from `frontend/dist/` (503 when not built). A path under `/v1`, `/mcp`, `/oauth`, `/.well-known` or any other route never answers with the page. |
-| `GET /v1/me/service_accounts`, `POST /v1/me/service_accounts.create`, `.revoke` | bearer | The caller's service accounts and their tokens.                                                                                                                                                       |
-| `POST /v1/me/setup/mcp_config`                                                  | bearer | A per-client MCP configuration block with a fresh token, for **Settings → Tokens**.                                                                                                                   |
-| `POST /v1/me/set-default-namespace`                                             | bearer | Set the caller's default workspace.                                                                                                                                                                   |
-| `GET /v1/me/sharing-summary`                                                    | bearer | Memory sharing across the namespaces the caller can read, as one dashboard payload.                                                                                                                   |
+| Method and path                                                                 | Auth   | What it is                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /`, `/{page}`, `/me`, `/assets/*`, `/favicon.svg`                          | none   | The dashboard single-page app and its assets, served from `frontend/dist/` (503 when not built). `/me` is where a sign-in lands with its token in the URL fragment: it serves the page even when `LOOM_DASHBOARD_REDIRECT_URL` sends the others away. A path under `/v1`, `/mcp`, `/oauth`, `/.well-known` or any other route never answers with the page. |
+| `GET /v1/me/service_accounts`, `POST /v1/me/service_accounts.create`, `.revoke` | bearer | The caller's service accounts and their tokens.                                                                                                                                                                                                                                                                                                            |
+| `POST /v1/me/setup/mcp_config`                                                  | bearer | A per-client MCP configuration block with a fresh token, for **Settings → Tokens**.                                                                                                                                                                                                                                                                        |
+| `POST /v1/me/set-default-namespace`                                             | bearer | Set the caller's default workspace.                                                                                                                                                                                                                                                                                                                        |
+| `GET /v1/me/sharing-summary`                                                    | bearer | Memory sharing across the namespaces the caller can read, as one dashboard payload.                                                                                                                                                                                                                                                                        |
 
 ### Operator routes
 
@@ -86,7 +86,8 @@ the role the table names: `platform_admin` for the deployment-wide routes
 act inside the one org their body names (a platform admin passes for any org). With
 auth off, every gate passes, but `settings.set` and the model routes still refuse a
 non-loopback Host and a cross-site Origin, so a web page cannot reach them through DNS
-rebinding. The Python SDK has one method per route,
+rebinding. A bot registered with `--platform-admin` holds that role in every token it gets
+([Bots and CI](../operations/sso.md#bots-and-ci)). The Python SDK has one method per route,
 `agent.deployment.routes.<name>(body)` (`sdk/python/loom/admin_routes.py`, generated from
 the same routes), and the curated `agent.deployment` methods over them.
 

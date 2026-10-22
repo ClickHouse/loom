@@ -620,6 +620,11 @@ settings:
   # [restart]
   # oidc_client_id: ""
 
+  # Origin used for server-side sign-in calls to the issuer, preserving its Host header.
+  # Empty uses the issuer directly; browser redirects and bot-trust key fetches are
+  # unchanged. [restart]
+  # oidc_backchannel_base_url: ""
+
   # JIT provisioning: a first OIDC sign-in with no account creates a personal namespace
   # in oidc_jit_org instead of being rejected. Off = fail closed. oidc_jit_email_domains
   # (comma-separated) restricts it; empty admits any verified email the IdP

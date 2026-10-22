@@ -2407,7 +2407,8 @@
           "replace"
         ],
         "list": [
-          "limit"
+          "limit",
+          "max_pages"
         ],
         "revoke": [
           "subject"

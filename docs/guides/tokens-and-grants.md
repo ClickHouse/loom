@@ -143,15 +143,18 @@ Verification accepts only `HS256` and `RS256`; `alg=none` is rejected. The
 Roles are ordered; a higher role satisfies every check for a lower one. Each op declares its
 `required_role` (`GET /v1/operations`, and the [operations reference](../reference/operations.md)).
 
-| Role             | Grants                                                                                                                                                 |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `viewer`         | Read.                                                                                                                                                  |
-| `writer`         | Read and write memory, knowledge and the other data planes.                                                                                            |
-| `admin`          | Administer the namespace: grants, configuration, policy, restore into it. Not org-wide visibility.                                                     |
-| `org_admin`      | Org-wide views (for example `cost.summary` without a namespace). A recognised gate with no in-product assignment path.                                 |
-| `platform_admin` | Cross-org operator views. Conferred at login to the handles in `LOOM_PLATFORM_ADMINS`, and to its emails only when an IdP verified them; never minted. |
+| Role             | Grants                                                                                                                                                                                                                                             |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `viewer`         | Read.                                                                                                                                                                                                                                              |
+| `writer`         | Read and write memory, knowledge and the other data planes.                                                                                                                                                                                        |
+| `admin`          | Administer the namespace: grants, configuration, policy, restore into it. Not org-wide visibility.                                                                                                                                                 |
+| `org_admin`      | Org-wide views (for example `cost.summary` without a namespace). A recognised gate with no in-product assignment path.                                                                                                                             |
+| `platform_admin` | Cross-org operator views. Conferred at login to the handles in `LOOM_PLATFORM_ADMINS`, and to its emails only when an IdP verified them; to every token of a bot registered `--platform-admin`; minted only for a service account, with an expiry. |
 
-Tokens and grants carry only `viewer`, `writer` or `admin`.
+Grants carry only `viewer`, `writer` or `admin`, and so do tokens, except a
+`platform_admin` one: a bot's ([Bots and CI](../operations/sso.md#bots-and-ci)) or
+`loom mint-token --platform-admin --subject sa:<name> --ttl-days <n>`, which refuses a token
+that never expires. The role spans every org.
 
 ## Namespace access
 
@@ -253,6 +256,35 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
   exception. Tokens minted since delegation landed do this through their `creator` claim
   ([delegated tokens](#delegated-tokens)).
 - **Pending grants do nothing** until approved.
+
+### List every grant
+
+`grants.list` answers one row per person, newest grant first: a login handle and the
+contact email tied to it fold into one row, the other spelling in `also`. A person with an
+active grant reads `active` at their highest active role, with any request of theirs in
+`pending_role`. A page holds up to `limit` rows (default 100, at most 500). When more people
+follow, the answer carries `truncated: true` and a `next_cursor`; send it back as `cursor`,
+with the same `org` and `namespace`, until `next_cursor` is null. A person is folded before
+the page is cut, so no page splits one. The cursor names the namespace it was issued for
+under a MAC keyed by `LOOM_JWT_SECRET`: on another namespace, edited, or after the secret is
+rotated, it is refused with 422. `agent.grants.list` in the Python SDK walks every page, up
+to `max_pages`.
+
+- **A cursor is a place in the list, not a snapshot.** A grant written during a walk (a new
+  grant, a role change, an approval) moves to the front of the list, which the walk has
+  passed, and a revoked one drops out; revoking a person's newest spelling can bring them
+  back later under an older one. A tie between a login and an email made between pages can
+  hide the person it joins, not even listed in `also`, and a tie removed can list them twice.
+  Everyone else comes back exactly once; a walk started after the change sees it.
+- **A failed read fails the call.** The answer is 503 `BACKEND_UNAVAILABLE` when ClickHouse
+  is unreachable and 504 `BACKEND_TIMEOUT` past the read deadline, never a list with people
+  unfolded. Retry with the same cursor: it holds only a position.
+- **A server without paging cannot say the list is whole.** An answer without `truncated`,
+  or one that names `cursor` in `ignored_args`, comes from a server that does not page
+  `grants.list`; a client walking the pages stops there with an error, as the SDK does.
+- **Every page reads the whole namespace.** A page groups all of the namespace's live grants
+  and scans the org's account directory for their ties, so a late page costs what the first
+  does.
 
 ## Delegated tokens
 

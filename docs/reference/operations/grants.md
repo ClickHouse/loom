@@ -63,12 +63,15 @@ List active grants on a namespace — who has access, at which role.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `limit` | `int` | `100` | At most this many grants, newest first; 1 to 500. |
+| `limit` | `int` | `100` | Rows per page, one per person, newest grant first; 1 to 500. |
+| `cursor` | `str \| None` | `None` | Resume the previous page on the same namespace; unset for the first page. |
 | `fields` | `list[str] \| None` | `None` | The output fields the caller reads (a whitelist resolved against the row model; an unknown name is a 422); unset, every field. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `rows` | `list[_GrantEntry]` | Live grants on the namespace, active and pending (revoked ones excluded), newest first; one row per person, their other spellings in `also`. |
+| `next_cursor` | `str \| None` | Pass as `cursor` for the next page; None when this page is the last. |
+| `truncated` | `bool` | True when more people follow this page (`next_cursor` is set). |
 
 ## `grants.pending_for_me`
 

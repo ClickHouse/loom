@@ -26,6 +26,11 @@ CI = "https://ci.example"
 
 @pytest.fixture
 def bots(monkeypatch, auth_attempts) -> dict[str, Any]:
+    # Exchange tests run after every replica protects human-admin credentials.
+    async def live(*a, **kw):
+        return [{"schema_version": 76}]
+
+    monkeypatch.setattr("server.core.instances.read_live", live)
     monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
     monkeypatch.setattr(oauth.settings, "oauth_issuer", "http://testserver")
     private, public = machines.generate_key()
@@ -65,6 +70,7 @@ def bots(monkeypatch, auth_attempts) -> dict[str, Any]:
         m.setdefault("jwks_uri", "")
         m.setdefault("max_token_s", 3600)
         m.setdefault("max_agents", 1000)
+        m.setdefault("platform_admin", False)
     made: list[tuple[str, str, str]] = []
 
     async def ensure_namespace(m: machines.Machine, agent: str) -> str:
@@ -332,6 +338,7 @@ async def test_a_saved_bot_writes_every_column(monkeypatch) -> None:
         "jwks_uri": "",
         "max_token_s": 3600,
         "max_agents": 1000,
+        "platform_admin": False,
     }
     await machines.save(bot, by="cli:root")
     await machines.save(bot, by="cli:root", active=False)
@@ -668,6 +675,7 @@ def test_a_control_planes_per_agent_token_is_taken_as_issued(bots, monkeypatch) 
         "jwks_uri": "https://keys.example/jwks.json",
         "max_token_s": 3600,
         "max_agents": 1000,
+        "platform_admin": False,
     }
     monkeypatch.setattr(oidc, "signing_key", lambda uri, token: key.public_key())
     now = int(time.time())
@@ -985,3 +993,79 @@ def test_a_release_that_fails_leaves_the_exchange_charged(auth_attempts, monkeyp
     with pytest.raises(oauth.OAuthError) as refused:
         asyncio.run(oauth._admit_exchange("fleet", "a1"))
     assert refused.value.status_code == 429
+
+
+# ── a platform-admin bot ──────────────────────────────────────────────────
+
+
+def _platform_admin_trust(bots: dict[str, Any]) -> None:
+    """A control plane's own trust: one identity whose tokens hold platform_admin."""
+    bots["registered"]["cp"] = {
+        **bots["registered"]["deploy"],
+        "name": "cp",
+        "ns_roles": [],
+        "claims": {"sub": "controlplane"},
+        "platform_admin": True,
+    }
+
+
+def test_an_exchange_carries_platform_admin_only_for_a_trust_registered_so(bots) -> None:
+    from server.auth.jwt import verify_token
+    from server.operations.base import Role
+
+    _platform_admin_trust(bots)
+    c = TestClient(oauth_app())
+    r = _exchange(c, _ci_token(bots, sub="controlplane"), client_id="cp")
+    assert r.status_code == 200 and r.json()["expires_in"] <= 3600
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert claims["sub"] == "sa:cp" and claims["roles"] == ["platform_admin"]
+    assert claims["namespaces"] == ["*"] and "ns_roles" not in claims
+    info = verify_token(r.json()["access_token"])
+    assert info.has_role(Role.PLATFORM_ADMIN) and not info.has_ns_roles()  # what admin gates ask
+    # The same issuer's other trust gets its namespace roles, never the role.
+    other = _exchange(c, _ci_token(bots), client_id="deploy").json()["access_token"]
+    plain = pyjwt.decode(other, options={"verify_signature": False})
+    assert "platform_admin" not in plain.get("roles", []) and plain["ns_roles"]
+    assert not verify_token(other).has_role(Role.PLATFORM_ADMIN)
+
+
+def test_a_key_bot_registered_platform_admin_gets_the_role_too(bots) -> None:
+    bots["registered"]["triage"] |= {"ns_roles": [], "platform_admin": True}
+    r = _with_key(TestClient(oauth_app()), _assertion(bots["key"]))
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert r.status_code == 200 and claims["roles"] == ["platform_admin"]
+    assert r.json()["expires_in"] == 3600  # the bot's hour, as any bot's
+
+
+def test_a_revoked_platform_admin_bot_gets_nothing(bots, monkeypatch) -> None:
+    """Disabling the bot cuts off `sa:cp`: its exchange is refused from then on."""
+    _platform_admin_trust(bots)
+
+    async def revoked(subjects: list[str], *, issued_at: int) -> bool:
+        return "sa:cp" in subjects
+
+    monkeypatch.setattr(revocation, "subjects_revoked", revoked)
+    r = _exchange(TestClient(oauth_app()), _ci_token(bots, sub="controlplane"), client_id="cp")
+    assert r.status_code == 401 and "revoked" in r.text
+
+
+def test_a_bot_without_the_flag_is_one_without_the_role(bots, monkeypatch) -> None:
+    """A row or dict from a build before the flag carries no `platform_admin`:
+    it saves as 0 and its exchange is an ordinary bot's, never a KeyError."""
+    del bots["registered"]["deploy"]["platform_admin"]
+    r = _exchange(TestClient(oauth_app()), _ci_token(bots))
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert r.status_code == 200 and claims["ns_roles"] and claims["roles"] == []
+    saved: list[dict[str, Any]] = []
+
+    class _CH:
+        async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any]:
+            return {"v": 1}
+
+        async def insert(self, table: str, batch: list[dict[str, Any]]) -> None:
+            saved.extend(batch)
+
+    monkeypatch.setattr(machines, "get_client", lambda: _CH())
+    asyncio.run(machines.save(bots["registered"]["deploy"], by="op"))
+    assert saved[0]["platform_admin"] == 0
+    assert machines._machine({**saved[0], "platform_admin": None})["platform_admin"] is False

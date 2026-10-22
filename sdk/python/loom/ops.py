@@ -9297,6 +9297,7 @@ class GrantsListInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
     limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
     fields: NotRequired[Optional[list[str]]]
 
 
@@ -9304,11 +9305,14 @@ class GrantsListBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
     limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
     fields: NotRequired[Optional[list[str]]]
 
 
 class GrantsListOutput(TypedDict, total=False):
     rows: Required[list["GrantEntry"]]
+    next_cursor: NotRequired[Optional[str]]
+    truncated: NotRequired[bool]
 
 
 class GrantEntry(TypedDict, total=False):
