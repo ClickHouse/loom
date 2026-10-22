@@ -1,12 +1,13 @@
 """Knowledge sharing end to end (docs/architecture/sharing.md), against a live
 server: a gateway's end users, collections and their inheritance, SCIM groups,
-saved items and memories in `@me`, revocation, and a user's erasure.
+documents, saved messages and memories in `@me`, revocation, and a user's erasure.
 
 Skips without LOOM_BASE_URL."""
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -150,14 +151,14 @@ def test_cycles_and_depth_are_refused(gw: Gateway) -> None:
     assert r.status_code == 422 and "cannot hold itself" in r.text
 
 
-def test_no_request_field_makes_a_saved_item_or_widens_a_grant(
+def test_no_request_field_reaches_another_users_personal_collection_or_widens_a_grant(
     gw: Gateway, control_plane_url: str, mint_test_token: Any
 ) -> None:
     nonce = _nonce()
     gw.ok(
         "alice",
         "knowledge.upsert",
-        {"namespace": "@me", "source_uri": "chat/c1/m1", "content": nonce},
+        {"namespace": "@me", "source_uri": "doc/mine", "content": nonce},
     )
     alices = _personal(gw, "alice")
     # Bob names Alice's personal collection: refused, read and write.
@@ -227,16 +228,16 @@ def test_no_request_field_makes_a_saved_item_or_widens_a_grant(
     assert r.status_code == 403
 
 
-def test_a_long_saved_message_is_chunked_whole_and_its_tail_is_found(gw: Gateway) -> None:
+def test_a_long_document_is_chunked_whole_and_its_tail_is_found(gw: Gateway) -> None:
     tail = _nonce()
     body = ("The renewal clause covers notice periods and pricing. " * 380) + f"Final note {tail}."
     assert len(body) > 20_000
     gw.ok(
         "alice",
         "knowledge.upsert",
-        {"namespace": "@me", "source_uri": "chat/c9/m9", "content": body},
+        {"namespace": "@me", "source_uri": "doc/long", "content": body},
     )
-    rows = gw.ok("alice", "knowledge.list", {"namespace": "@me", "uri_prefix": ["chat/c9/"]})[
+    rows = gw.ok("alice", "knowledge.list", {"namespace": "@me", "uri_prefix": ["doc/long"]})[
         "rows"
     ]
     assert rows and rows[0]["chunk_count"] > 10
@@ -246,7 +247,66 @@ def test_a_long_saved_message_is_chunked_whole_and_its_tail_is_found(gw: Gateway
             "knowledge.search",
             {"namespace": "@me", "query": tail, "search_mode": mode, "namespace_scope": "this"},
         )["results"]
-        assert hits and hits[0]["source_uri"] == "chat/c9/m9" and tail in hits[0]["content"], mode
+        assert hits and hits[0]["source_uri"] == "doc/long" and tail in hits[0]["content"], mode
+
+
+def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gateway) -> None:
+    nonce = _nonce()
+    turn = {"conversation_id": "c9", "message_id": "m9"}
+    content = f"The renewal note {nonce}."
+    body = {**turn, "role": "assistant", "content": content, "user_id": "alice"}
+    saved = _chat_ok(gw, "alice", "conversation.save_message", body)
+    assert saved["indexed"] is True, saved
+    mine = {"user_id": "alice", "conversation_id": "c9"}
+    rows = _chat_ok(gw, "alice", "conversation.list_saved_messages", mine)["rows"]
+    assert [(r["conversation_id"], r["message_id"], r["role"]) for r in rows] == [
+        ("c9", "m9", "assistant")
+    ], rows
+    assert rows[0]["content_excerpt"] == content, rows
+    # A saved-only row is written with its save time as its turn time, so the
+    # listing's saved_at matches the turn ts the save answers (both from the
+    # server's clock, not this host's).
+    listed_at = datetime.fromisoformat(rows[0]["ts"]).replace(tzinfo=None)
+    saved_at = datetime.fromisoformat(saved["ts"]).replace(tzinfo=None)
+    assert abs(listed_at - saved_at) < timedelta(seconds=1), (rows, saved)
+    status = {**mine, "message_ids": ["m9", "m8"]}
+    assert _chat_ok(gw, "alice", "conversation.saved_status", status)["saved"] == ["m9"]
+    search = {"user_id": "alice", "query": nonce}
+    hits = _chat_ok(gw, "alice", "conversation.search_saved_messages", search)["hits"]
+    assert [h["message_id"] for h in hits] == ["m9"], hits
+    # The transcript ops refuse an end-user token: `@me` holds saved messages only.
+    append = {"thread_id": "c9", "role": "user", "content": "hi", "user_id": "alice"}
+    assert _chat(gw, "alice", "conversation.append", append).status_code == 403
+    assert _chat(gw, "alice", "conversation.get", {"thread_id": "c9"}).status_code == 403
+    # Bob's `@me` is his own; naming Alice's collection or Alice is refused.
+    bobs = {"user_id": "bob", "query": nonce}
+    assert _chat_ok(gw, "bob", "conversation.search_saved_messages", bobs)["hits"] == []
+    r = _chat(gw, "bob", "conversation.search_saved_messages", search)
+    assert r.status_code == 403 and nonce not in r.text, r.text
+    bobs_status = {"user_id": "bob", "conversation_id": "c9", "message_ids": ["m9"]}
+    assert _chat_ok(gw, "bob", "conversation.saved_status", bobs_status)["saved"] == []
+    assert _chat(gw, "bob", "conversation.saved_status", status).status_code == 403
+    bobs_list = {"user_id": "bob", "conversation_id": "c9"}
+    assert _chat_ok(gw, "bob", "conversation.list_saved_messages", bobs_list)["rows"] == []
+    r = _chat(gw, "bob", "conversation.list_saved_messages", mine)
+    assert r.status_code == 403 and nonce not in r.text, r.text
+    r = gw.call(
+        "bob",
+        "conversation.search_saved_messages",
+        {"namespace": _personal(gw, "alice"), "agent": "chat", **bobs},
+        agent="chat",
+    )
+    assert r.status_code == 403 and nonce not in r.text, r.text
+    # Bob's writes naming Alice are refused and leave her saved message in place.
+    assert _chat(gw, "bob", "conversation.save_message", body).status_code == 403
+    unsave = {**turn, "user_id": "alice"}
+    assert _chat(gw, "bob", "conversation.unsave_message", unsave).status_code == 403
+    rows = _chat_ok(gw, "alice", "conversation.list_saved_messages", mine)["rows"]
+    assert [row["message_id"] for row in rows] == ["m9"], rows
+    # A personal collection records no transcript, so unsaving removes the turn.
+    unsaved = _chat_ok(gw, "alice", "conversation.unsave_message", unsave)
+    assert unsaved["removed"] is True, unsaved
+    assert _chat_ok(gw, "alice", "conversation.list_saved_messages", mine)["rows"] == []
 
 
 def _chat(gw: Gateway, user: str, op: str, payload: dict[str, Any]) -> httpx.Response:
@@ -399,8 +459,11 @@ def test_a_users_erasure_leaves_no_trace_and_keeps_others_documents(
         {"namespace": col, "source_uri": bobs, "title": "t", "reindex": True},
     )
     gw.ok(
-        "bob", "knowledge.upsert", {"namespace": "@me", "source_uri": "chat/c1/m1", "content": mine}
+        "bob", "knowledge.upsert", {"namespace": "@me", "source_uri": "doc/mine", "content": mine}
     )
+    saved = {"conversation_id": "c1", "message_id": "m1", "user_id": "bob"}
+    r = _chat_ok(gw, "bob", "conversation.save_message", {**saved, "role": "user", "content": mine})
+    assert r["indexed"] is True, r
     admin = mint_test_token(
         org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="ops"
     )
@@ -418,9 +481,9 @@ def test_a_users_erasure_leaves_no_trace_and_keeps_others_documents(
 
     # The org admin may erase bob's rows in collections it cannot read, not read
     # them; bob's own personal collection is his to have exported.
-    assert {u for _, u in _exported(admin)} == {"chat/c1/m1"}
+    assert {u for _, u in _exported(admin)} == {"doc/mine"}
     everything = _exported(root)
-    assert (col, bobs) in everything and {u for _, u in everything} == {bobs, "chat/c1/m1"}
+    assert (col, bobs) in everything and {u for _, u in everything} == {bobs, "doc/mine"}
     r = httpx.post(
         f"{control_plane_url}/v1/erasure.request",
         json={
@@ -467,12 +530,19 @@ def test_a_users_erasure_leaves_no_trace_and_keeps_others_documents(
     gw.ok(
         "bob",
         "knowledge.upsert",
-        {"namespace": "@me", "source_uri": "chat/c2/m1", "content": "new"},
+        {"namespace": "@me", "source_uri": "doc/new", "content": "new"},
     )
     left = gw.ok(
         "bob", "knowledge.search", {"namespace": "@me", "query": mine, "namespace_scope": "this"}
     )
     assert not any(mine in h["content"] for h in left["results"])
+    listed = {"user_id": "bob", "conversation_id": "c1"}
+    assert _chat_ok(gw, "bob", "conversation.list_saved_messages", listed)["rows"] == []
+    # The erasure tombstoned the saved turn, so saving it again is refused.
+    again = _chat_ok(
+        gw, "bob", "conversation.save_message", {**saved, "role": "user", "content": mine}
+    )
+    assert (again["indexed"], again["reason"]) == (False, "deleted"), again
 
 
 def test_a_create_cut_short_is_finished_by_its_creator_alone(gw: Gateway, ch_client: Any) -> None:
@@ -500,7 +570,7 @@ def test_a_grant_row_on_a_personal_collection_opens_nothing(gw: Gateway, ch_clie
     gw.ok(
         "alice",
         "knowledge.upsert",
-        {"namespace": "@me", "source_uri": "chat/c/m", "content": nonce},
+        {"namespace": "@me", "source_uri": "doc/mine", "content": nonce},
     )
     alices = personal_name(gw.org, "user:alice")
     ch_client.insert(

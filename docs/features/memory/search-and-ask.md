@@ -110,7 +110,7 @@ namespace reranker (a reranker is a model call, so only one the request names ru
 | `category` / `category_soft`                                   | The same for a registered category.                                                                                                      |
 | `demote_tags`                                                  | Sinks matching rows to the bottom without dropping them.                                                                                 |
 | `entity_filter`                                                | Rows naming these entities.                                                                                                              |
-| `user_id`, `session_id`, `run_id`                              | Narrow to one end user, session or run.                                                                                                  |
+| `user_id`, `session_id`, `run_id`                              | Narrow to one end user, session or run; `-` means no filter.                                                                             |
 | `read_scope`                                                   | `own_user` or `own_session`. A token's `read_scope` claim is a ceiling a request can only narrow.                                        |
 | `namespace_scope`                                              | `this` (default) or `all_mine` (also the caller's own namespaces, up to the fan-out cap; the rest come back in `namespaces_skipped`).    |
 | `exclude_keys`                                                 | Up to 200 keys the caller already holds, removed before the window is cut.                                                               |
@@ -334,9 +334,9 @@ Per namespace, `namespace.register` sets `retrieval_defaults` (`search_mode`, `t
 - **Writes are eventually consistent.** Deferred extraction reports `pending_extraction`.
 - **Hidden by default:** duplicates (the canonical takes the slot), superseded rows,
   proposals, `reflection` rows, expired rows, `high` sensitivity rows (never embedded,
-  readable by key only), and `chunk` and `summary` hits whose text reads as a credential
-  (a `chunk:` key still reads by `memory.get`, with an audit row;
-  [sensitivity](../../architecture/security.md#sensitivity)).
+  readable by key only), and `chunk` and `summary` hits whose text reads as high (a
+  credential, card number, SSN or stated PIN). A `chunk:` key still reads by
+  `memory.get`, with an audit row ([sensitivity](../../architecture/security.md#sensitivity)).
 - **Degraded providers are reported** in `degraded` (a reranker timeout, a skipped HyDE
   call).
 - **Off-model vectors are invisible** until `loom reembed` runs.

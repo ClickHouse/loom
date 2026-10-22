@@ -7,6 +7,19 @@ from __future__ import annotations
 # The most peers a conflict check weighs per fact.
 PEER_LIMIT = 10
 
+
+def vector_param(i: int) -> str:
+    """The placeholder for fact `i`'s vector (1-based). Each vector is its own
+    parameter: ClickHouse caps one HTTP parameter at 128 KiB, which four 3072-d
+    vectors in one array already exceed."""
+    return f"{{emb{i}:Array(Float32)}}"
+
+
+def vector_params(vectors: list[list[float]]) -> dict[str, list[float]]:
+    """The values for `vector_param(1..n)`."""
+    return {f"emb{i}": v for i, v in enumerate(vectors, start=1)}
+
+
 _CANDIDATE_JOIN = """
         FROM loom.memory m FINAL
         JOIN loom.memory_embeddings e FINAL
@@ -31,8 +44,7 @@ def candidate_sql_many(n: int, in_scope: str = "") -> str:
     if n < 1:
         raise ValueError("candidate_sql_many needs at least one fact")
     terms = ", ".join(
-        f"({i}, cosineDistance(e.embedding, {{embs:Array(Array(Float32))}}[{i}]))"
-        for i in range(1, n + 1)
+        f"({i}, cosineDistance(e.embedding, {vector_param(i)}))" for i in range(1, n + 1)
     )
     return f"""
         SELECT
@@ -156,8 +168,7 @@ def pinned_sql_many(n: int) -> str:
     if n < 1:
         raise ValueError("pinned_sql_many needs at least one fact")
     terms = ", ".join(
-        f"({i}, cosineDistance(embedding, {{embs:Array(Array(Float32))}}[{i}]))"
-        for i in range(1, n + 1)
+        f"({i}, cosineDistance(embedding, {vector_param(i)}))" for i in range(1, n + 1)
     )
     # Each fact's own type and key are matched per fact in the ARRAY JOIN below.
     row_filter = _pinned_row_filter("m.memory_type IN {types:Array(String)}")

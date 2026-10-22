@@ -18,6 +18,7 @@ Handlers own the state machine; this module owns the statements.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -28,13 +29,16 @@ from typing import Any, cast
 
 from server.core.grant_sql import LIVE_GRANT
 from server.core.repo_base import _CHClient, _default_client
+from server.tasks.domain.cursors import BACKFILLED
 from server.tasks.store.rows import (
     GrantSubjectRow,
     InboxCountRow,
     InboxRow,
+    MissingLeaseRow,
     PolicyRow,
     ServiceAccountRow,
     StaleTriageRow,
+    StrayLeaseRow,
     SweepCandidates,
     TaskEventRow,
     TaskRow,
@@ -334,6 +338,7 @@ async def fetch_task_by_idempotency_key(
             f"SELECT {TASK_COLS} FROM loom.tasks FINAL "
             "WHERE org = {org:String} AND inbox = {inbox:String} "
             "AND idempotency_key = {key:String} AND is_deleted = 0 "
+            "ORDER BY created_at, task_id "
             "LIMIT 1 SETTINGS select_sequential_consistency = 1",
             params={"org": org, "inbox": inbox, "key": key},
         ),
@@ -344,12 +349,29 @@ async def insert_task_version(
     row: TaskRow, *, dedup_token: str = "", ch: _CHClient | None = None
 ) -> None:
     """One new version row. Every persisted column rides along, or FINAL
-    serves a default over it; ``dedup_token`` makes a retried create land once."""
+    serves a default over it; storage drops a second insert with the same
+    ``dedup_token``."""
     ch = ch or _default_client()
     settings: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
     if dedup_token:
         settings["insert_deduplication_token"] = dedup_token
     await ch.insert("loom.tasks", [dict(row)], settings=settings)
+
+
+async def insert_created_task(row: TaskRow, *, ch: _CHClient | None = None) -> TaskRow:
+    """Insert a task with an idempotency key; answer this row, or the one stored first.
+    Why the dedup token and its retry: docs/architecture/rolling-upgrades.md, rule 10."""
+    org, inbox, key = row["org"], row["inbox"], row["idempotency_key"]
+    token = f"task.create:{org}:{inbox}:{key}"
+    await insert_task_version(row, dedup_token=token, ch=ch)
+    if await fetch_task(org, str(row["task_id"]), ch=ch) is not None:
+        return row
+    # The token dropped this row.
+    stored = await fetch_task_by_idempotency_key(org, inbox, key, ch=ch)
+    if stored is not None:
+        return stored
+    await insert_task_version(row, dedup_token=f"{token}:{uuid.uuid4().hex}", ch=ch)
+    return row
 
 
 async def list_tasks(
@@ -484,6 +506,64 @@ async def sweep_candidates(
     return {"expired": expired, "resume": resume, "stale_triage": stale_triage}
 
 
+async def lease_strays(
+    *, before: datetime, terminal: list[str], limit: int, ch: _CHClient | None = None
+) -> tuple[list[MissingLeaseRow], list[StrayLeaseRow]]:
+    """What the lease reconcile acts on, org-wide, among rows last written before
+    `before` (a transition still in flight keeps its own rows): todo and triage tasks
+    with no lease row, and idle or expired rows whose task is gone, ended or at another
+    fence. One statement each, bounded in SQL by `limit`; each reads the other table
+    server-side, so a task created after `before` is in neither."""
+    ch = ch or _default_client()
+    missing = await ch.query_all(
+        "SELECT toString(task_id) AS task_id, org, inbox, fence FROM loom.tasks FINAL "
+        "WHERE is_deleted = 0 AND status IN ('todo', 'triage') AND updated_at < {before:DateTime} "
+        "AND toString(task_id) NOT IN (SELECT task_id FROM loom.task_leases) "
+        "ORDER BY updated_at LIMIT {limit:UInt32} "
+        "SETTINGS select_sequential_consistency = 1",
+        params={"before": before, "limit": int(limit)},
+    )
+    # A row is stray when no live task holds its id (the join's empty `found`), or its
+    # task ended or is at another fence. Only the tasks the lease rows name are read.
+    stray = await ch.query_all(
+        "SELECT l.task_id AS task_id, l.owner AS owner, l.fence AS lease_fence, "
+        "t.id AS found, t.task_status AS status, t.fence AS fence "
+        "FROM loom.task_leases AS l "
+        "LEFT JOIN (SELECT toString(task_id) AS id, toString(status) AS task_status, fence "
+        "FROM loom.tasks FINAL WHERE is_deleted = 0 "
+        "AND toString(task_id) IN (SELECT task_id FROM loom.task_leases)) AS t "
+        "ON l.task_id = t.id "
+        "WHERE (l.owner = '' OR l.lease_until < {before:DateTime}) "
+        "AND l.updated_at < {before:DateTime} "
+        "AND (t.id = '' OR t.task_status IN {terminal:Array(String)} OR t.fence != l.fence) "
+        "ORDER BY l.task_id LIMIT {limit:UInt32} "
+        "SETTINGS select_sequential_consistency = 1, join_use_nulls = 0",
+        params={"before": before, "terminal": list(terminal), "limit": int(limit)},
+    )
+    return (
+        [
+            MissingLeaseRow(
+                task_id=str(t["task_id"]),
+                org=str(t["org"]),
+                inbox=str(t["inbox"]),
+                fence=int(t["fence"]),
+            )
+            for t in missing
+        ],
+        [
+            StrayLeaseRow(
+                task_id=str(r["task_id"]),
+                owner=str(r["owner"]),
+                lease_fence=int(r["lease_fence"]),
+                found=str(r["found"]),
+                status=str(r["status"]),
+                fence=int(r["fence"]),
+            )
+            for r in stray
+        ],
+    )
+
+
 async def inbox_counts(
     org: str,
     *,
@@ -516,25 +596,81 @@ async def inbox_counts(
 
 async def insert_event(row: TaskEventRow, *, ch: _CHClient | None = None) -> None:
     ch = ch or _default_client()
-    await ch.insert(
-        "loom.task_events", [dict(row)], settings={"async_insert": 0, "wait_for_async_insert": 1}
+    settings: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
+    if row["event"] == "created":
+        # One identity per task's creation: the create's own event and the one its
+        # retry backfills insert under one token, so storage keeps whichever landed
+        # first (docs/architecture/rolling-upgrades.md, rule 10).
+        settings["insert_deduplication_token"] = f"task.created:{row['org']}:{row['task_id']}"
+    await ch.insert("loom.task_events", [dict(row)], settings=settings)
+
+
+def _first_created_only(history: list[TaskEventRow]) -> list[TaskEventRow]:
+    """A task's `history` in seq order, without any created event after its first: past
+    the dedup window, a create's own event and its backfill can both be stored."""
+    out = []
+    created = False
+    for r in history:
+        if r["event"] == "created":
+            if created:
+                continue
+            created = True
+        out.append(r)
+    return out
+
+
+def _backfilled(row: TaskEventRow) -> bool:
+    return row["event"] == "created" and bool(json.loads(row.get("patch") or "{}").get(BACKFILLED))
+
+
+async def _drop_second_creations(
+    org: str, rows: list[TaskEventRow], *, ch: _CHClient
+) -> list[TaskEventRow]:
+    """`rows` without a backfilled created event whose task has an earlier one: a
+    cursor reader that delivered that one must not deliver a second creation."""
+    backfills = [r for r in rows if _backfilled(r)]
+    if not backfills:
+        return rows
+    firsts = await ch.query_all(
+        "SELECT toString(task_id) AS tid, min(seq) AS first_seq FROM loom.task_events "
+        "WHERE org = {org:String} AND inbox IN {inboxes:Array(String)} "
+        "AND event = 'created' AND task_id IN {ids:Array(UUID)} GROUP BY tid "
+        "SETTINGS select_sequential_consistency = 1",
+        params={
+            "org": org,
+            "inboxes": sorted({str(r["inbox"]) for r in backfills}),
+            "ids": sorted({str(r["task_id"]) for r in backfills}),
+        },
     )
+    first = {str(f["tid"]): int(f["first_seq"]) for f in firsts}
+    return [
+        r
+        for r in rows
+        if not (_backfilled(r) and int(r["seq"]) > first.get(str(r["task_id"]), int(r["seq"])))
+    ]
 
 
 async def task_history(
-    org: str, task_id: str, *, limit: int = 500, ch: _CHClient | None = None
+    org: str,
+    task_id: str,
+    *,
+    limit: int = 500,
+    consistent: bool = False,
+    ch: _CHClient | None = None,
 ) -> list[TaskEventRow]:
+    """The task's events in order. `consistent` reads every acknowledged insert, for a
+    caller that writes an event only when the read finds none."""
     if not is_uuid(task_id):
         return []
     ch = ch or _default_client()
-    return cast(
-        "list[TaskEventRow]",
-        await ch.query_all(
-            f"SELECT {EVENT_COLS} FROM loom.task_events "
-            "WHERE org = {org:String} AND task_id = {tid:UUID} ORDER BY seq LIMIT {limit:UInt32}",
-            params={"org": org, "tid": task_id, "limit": int(limit)},
-        ),
+    sql = (
+        f"SELECT {EVENT_COLS} FROM loom.task_events "
+        "WHERE org = {org:String} AND task_id = {tid:UUID} ORDER BY seq LIMIT {limit:UInt32}"
     )
+    if consistent:
+        sql += " SETTINGS select_sequential_consistency = 1"
+    rows = await ch.query_all(sql, params={"org": org, "tid": task_id, "limit": int(limit)})
+    return _first_created_only(cast("list[TaskEventRow]", rows))
 
 
 async def events_since(
@@ -569,14 +705,20 @@ async def events_since(
     if from_subject:
         where.append("from_subject = {subj:String}")
         params["subj"] = from_subject
-    return cast(
-        "list[TaskEventRow]",
-        await ch.query_all(
-            f"SELECT {EVENT_COLS} FROM loom.task_events WHERE {' AND '.join(where)} "
-            "ORDER BY seq LIMIT {limit:UInt32} SETTINGS select_sequential_consistency = 1",
-            params=params,
-        ),
+    sql = (
+        f"SELECT {EVENT_COLS} FROM loom.task_events WHERE {' AND '.join(where)} "
+        "ORDER BY seq LIMIT {limit:UInt32} SETTINGS select_sequential_consistency = 1"
     )
+    # A dropped second creation is read but not returned. A page that lost rows to it
+    # is read on from its last seq, so a cursor that sits before one moves past it:
+    # callers advance to the last row returned.
+    kept: list[TaskEventRow] = []
+    while True:
+        rows = cast("list[TaskEventRow]", await ch.query_all(sql, params=params))
+        kept += await _drop_second_creations(org, rows, ch=ch)
+        if len(rows) < int(limit) or len(kept) >= int(limit):
+            return kept[: int(limit)]
+        params["since"] = int(rows[-1]["seq"])
 
 
 # ---------------------------------------------------------------- webhooks
@@ -627,15 +769,23 @@ class ClaimResult:
     owner: str
 
 
+def _lost_race(e: Exception) -> bool:
+    """A strict-mode write that lost to a concurrent one: Keeper's version check failed,
+    or the row was deleted under it. A lost connection is neither. Every write here
+    addresses one row by its own key, so a missing node can only be that row."""
+    return "Bad version" in str(e) or "No node" in str(e)
+
+
 class KeeperLeases:
     """Claims arbitrated in ClickHouse Keeper.
 
     One row per live task. The conditional ``ALTER … UPDATE`` under
     ``keeper_map_strict_mode = 1`` is executed as a Keeper multi-op with a
     version check, so of two concurrent claimers exactly one row change
-    lands: the loser either raises ``KEEPER_EXCEPTION`` ("Bad version") or
+    lands: the loser either raises ``KEEPER_EXCEPTION`` ("Bad version", or "No node"
+    when a terminal transition deleted the row under it) or
     matches zero rows because the winner landed first. Either way the caller
-    reads the row back and owns the task only if it says so. The three
+    reads the row back and owns the task only if it says so. The six
     statements below are the only mutations in this module; they address a
     Keeper znode, not a MergeTree part (mutation inventory: task_leases).
     """
@@ -649,9 +799,14 @@ class KeeperLeases:
     def ch(self) -> _CHClient:
         return self._ch or _default_client()
 
-    async def ensure_row(self, task_id: str, org: str, inbox: str, fence: int) -> None:
-        """Insert the lease row for a new task (owner empty). A retry that
-        finds the key present is fine: the row is the same."""
+    async def ensure_row(
+        self, task_id: str, org: str, inbox: str, fence: int, *, reset_idle: bool = False
+    ) -> bool:
+        """Insert the lease row for a new task (owner empty); True when this call wrote
+        it. A retry that finds the key present is fine: the row is the same. `reset_idle`
+        (a reopen): a row already present with no owner and an older fence takes `fence`,
+        so a stray row a late write left behind cannot keep every claim losing. A reset
+        never lowers a fence."""
         try:
             await self.ch.execute(
                 "INSERT INTO loom.task_leases "
@@ -664,6 +819,70 @@ class KeeperLeases:
         except Exception as e:  # the key exists: a retried create
             if "Node exists" not in str(e):
                 raise
+            if reset_idle:
+                await self._reset_idle_fence(task_id, fence)
+            return False
+        return True
+
+    async def _reset_idle_fence(self, task_id: str, fence: int) -> None:
+        """Move an idle row at an older fence to `fence`. A claim that took the row
+        meanwhile wins the race and keeps its own fence."""
+        try:
+            await self.ch.execute(
+                "ALTER TABLE loom.task_leases UPDATE fence = {fence:UInt32}, updated_at = now() "
+                "WHERE task_id = {tid:String} AND owner = '' AND fence < {fence:UInt32} "
+                "SETTINGS keeper_map_strict_mode = 1",
+                params={"tid": task_id, "fence": int(fence)},
+            )
+        except Exception as e:
+            if not _lost_race(e):
+                raise
+
+    async def give_back(self, task_id: str, holder: str, *, held_fence: int, fence: int) -> bool:
+        """Put the row `holder` holds at `held_fence` back idle (todo) at `fence`: a claim
+        that backs out undoes its own bump, and the lease reconcile moves an idle or
+        dead-owner row to its task's fence. Changes nothing when the row has moved on.
+        True when the row ends as wanted (read back idle at `fence`), whoever wrote it."""
+        try:
+            await self.ch.execute(
+                "ALTER TABLE loom.task_leases UPDATE owner = '', lease_until = toDateTime(0), "
+                "fence = {fence:UInt32}, status = 'todo', updated_at = now() "
+                "WHERE task_id = {tid:String} AND owner = {who:String} "
+                "AND fence = {held:UInt32} SETTINGS keeper_map_strict_mode = 1",
+                params={
+                    "tid": task_id,
+                    "who": holder,
+                    "held": int(held_fence),
+                    "fence": int(fence),
+                },
+            )
+        except Exception as e:
+            if not _lost_race(e):
+                raise
+        row = await self._lease_row(task_id)
+        return row is not None and row["owner"] == "" and int(row["fence"]) == int(fence)
+
+    async def delete_held(self, task_id: str, holder: str, *, fence: int) -> bool:
+        """Drop the row only while `holder` ('' for an idle row) still holds it at
+        `fence`: the lease reconcile never removes a row a claim took since its read.
+        True when the row ends as wanted (none is left), whoever removed it."""
+        try:
+            await self.ch.execute(
+                "ALTER TABLE loom.task_leases DELETE WHERE task_id = {tid:String} "
+                "AND owner = {who:String} AND fence = {fence:UInt32} "
+                "SETTINGS keeper_map_strict_mode = 1",
+                params={"tid": task_id, "who": holder, "fence": int(fence)},
+            )
+        except Exception as e:
+            if not _lost_race(e):
+                raise
+        return await self._lease_row(task_id) is None
+
+    async def _lease_row(self, task_id: str) -> dict[str, Any] | None:
+        return await self.ch.query_one(
+            "SELECT owner, fence FROM loom.task_leases WHERE task_id = {tid:String}",
+            params={"tid": task_id},
+        )
 
     async def try_claim(
         self, task_id: str, claimant: str, *, expected_fence: int, lease_until: datetime
@@ -684,10 +903,9 @@ class KeeperLeases:
                 },
             )
         except Exception as e:
-            if "KEEPER_EXCEPTION" in str(e) or "Bad version" in str(e):
-                log.info("task lease race lost task=%s claimant=%s", task_id, claimant)
-            else:
+            if not _lost_race(e):
                 raise
+            log.info("task lease race lost task=%s claimant=%s", task_id, claimant)
         row = await self.ch.query_one(
             "SELECT owner, fence FROM loom.task_leases WHERE task_id = {tid:String}",
             params={"tid": task_id},
@@ -719,9 +937,9 @@ class KeeperLeases:
                 },
             )
         except Exception as e:
-            if "KEEPER_EXCEPTION" in str(e) or "Bad version" in str(e):
-                return False
-            raise
+            if not _lost_race(e):
+                raise
+            return False
         row = await self.ch.query_one(
             "SELECT owner, fence FROM loom.task_leases WHERE task_id = {tid:String}",
             params={"tid": task_id},

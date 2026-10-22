@@ -8,6 +8,7 @@ from __future__ import annotations
 import functools
 import importlib
 import inspect
+from datetime import datetime
 from typing import Any
 
 from tests.analyzer.cases._common import ORG, rows_by_substring
@@ -30,6 +31,17 @@ _ROWS = rows_by_substring(
             {"mutation_id": "m1", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}
         ],
         "count()": [{"n": 1}],
+        # The conversation export's size pass finds one turn, so its text read renders.
+        "AS bytes_before_previous": [
+            {
+                "namespace": "n",
+                "thread_id": "t",
+                "ts": datetime(2026, 1, 1),
+                "msg_id": "m",
+                "row_bytes": 1,
+                "bytes_before": 0,
+            }
+        ],
     }
 )
 
@@ -73,6 +85,7 @@ async def _census_and_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.erasure.store import health as erasure_health
     from server.erasure.store import ledger as erasure_ledger
     from server.erasure.store import mutations as erasure_mutations
+    from server.erasure.store import steps_graph
 
     scope_value: Any = (
         ["n", "n2"]
@@ -81,8 +94,13 @@ async def _census_and_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
     scope_type = "user_id" if c["scope"] == "user_id" else "namespace"
     await erasure_census.residue_census(ORG, scope_type, scope_value, ch=ch)
+    cut = datetime(2026, 1, 1)
+    await steps_graph.count_orphan_row_links(ORG, scope_type, scope_value, verified_at=cut, ch=ch)
+    await steps_graph.delete_orphan_row_links(ORG, scope_type, scope_value, verified_at=cut, ch=ch)
     await erasure_ledger.list_failed_requests(org=ORG, ch=ch)
     await erasure_ledger.list_failed_requests(ch=ch)
+    await erasure_ledger.list_completed_requests(since=datetime(2026, 1, 1), org=ORG, ch=ch)
+    await erasure_ledger.list_completed_requests(since=datetime(2026, 1, 1), ch=ch)
     await erasure_ledger.list_stuck_in_progress(
         stale_threshold_seconds=300, max_attempts=5, batch_size=10, ch=ch
     )
@@ -102,6 +120,19 @@ async def _exports(ch: RecordingCH, c: dict[str, Any]) -> None:
     scope_type = c["scope_type"]
     value = "alice" if scope_type == "user_id" else "n"
     await erasure_exports.export_memory(
+        ORG, scope_type, value, include_tombstoned=c["include_tombstoned"], limit=100, ch=ch
+    )
+    await erasure_exports.export_conversations(
+        ORG,
+        scope_type,
+        value,
+        include_tombstoned=c["include_tombstoned"],
+        limit=100,
+        max_bytes=1000,
+        as_of=datetime(2026, 1, 2),
+        ch=ch,
+    )
+    await erasure_exports.export_conversation_threads(
         ORG, scope_type, value, include_tombstoned=c["include_tombstoned"], limit=100, ch=ch
     )
     await erasure_exports.export_agent_events(ORG, scope_type, value, limit=100, ch=ch)

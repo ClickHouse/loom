@@ -23,19 +23,18 @@ from __future__ import annotations
 
 from contextvars import ContextVar, Token
 
+from server.core.naming import named
+
 # 128 chars: the bound RunBeginInput applies too.
 RUN_ID_MAX_CHARS = 128
-_SENTINELS = ("", "-")
 
 ledger_run_var: ContextVar[str] = ContextVar("loom_ledger_run", default="")
 
 
 def clean_run_id(value: object) -> str:
     """A run id as the ledger stores it: stripped, bounded, sentinel → ''."""
-    raw = str(value or "").strip()
-    if raw in _SENTINELS:
-        return ""
-    return raw[:RUN_ID_MAX_CHARS]
+    raw = named(str(value or "").strip())
+    return raw[:RUN_ID_MAX_CHARS] if raw else ""
 
 
 def current_ledger_run() -> str:

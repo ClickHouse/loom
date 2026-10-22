@@ -181,6 +181,7 @@ OpName = Literal[
     "memory.apply",
     "memory.ask",
     "memory.assign_category",
+    "memory.auto_retirements",
     "memory.backlinks",
     "memory.brief",
     "memory.bulk_get",
@@ -240,6 +241,7 @@ OpName = Literal[
     "memory.set",
     "memory.set_from_messages",
     "memory.stack",
+    "memory.statuses",
     "memory.sweep_expired",
     "memory.timeline",
     "memory.touch",
@@ -253,11 +255,15 @@ OpName = Literal[
     "memory_schema.propose",
     "memory_schema.register",
     "mentor.brief",
+    "mentor.guide",
     "namespace.audit",
     "namespace.browse",
     "namespace.cancel_request",
     "namespace.delete",
     "namespace.get",
+    "namespace.guide_get",
+    "namespace.guide_history",
+    "namespace.guide_set",
     "namespace.join",
     "namespace.leave",
     "namespace.list",
@@ -512,6 +518,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.apply",
     "memory.ask",
     "memory.assign_category",
+    "memory.auto_retirements",
     "memory.backlinks",
     "memory.brief",
     "memory.bulk_get",
@@ -571,6 +578,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.set",
     "memory.set_from_messages",
     "memory.stack",
+    "memory.statuses",
     "memory.sweep_expired",
     "memory.timeline",
     "memory.touch",
@@ -584,11 +592,15 @@ OP_NAMES: tuple[str, ...] = (
     "memory_schema.propose",
     "memory_schema.register",
     "mentor.brief",
+    "mentor.guide",
     "namespace.audit",
     "namespace.browse",
     "namespace.cancel_request",
     "namespace.delete",
     "namespace.get",
+    "namespace.guide_get",
+    "namespace.guide_history",
+    "namespace.guide_set",
     "namespace.join",
     "namespace.leave",
     "namespace.list",
@@ -2405,6 +2417,18 @@ OPS: dict[str, OpSpec] = {
         True,
         False,
     ),
+    "memory.auto_retirements": OpSpec(
+        "memory.auto_retirements",
+        "MemoryAutoRetirementsInput",
+        "MemoryAutoRetirementsBody",
+        "MemoryAutoRetirementsOutput",
+        True,
+        "viewer",
+        "experimental",
+        200,
+        False,
+        True,
+    ),
     "memory.backlinks": OpSpec(
         "memory.backlinks",
         "MemoryBacklinksInput",
@@ -3113,6 +3137,18 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
+    "memory.statuses": OpSpec(
+        "memory.statuses",
+        "MemoryStatusesInput",
+        "MemoryStatusesBody",
+        "MemoryStatusesOutput",
+        True,
+        "viewer",
+        "experimental",
+        80,
+        False,
+        True,
+    ),
     "memory.sweep_expired": OpSpec(
         "memory.sweep_expired",
         "MemorySweepExpiredInput",
@@ -3269,6 +3305,18 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
+    "mentor.guide": OpSpec(
+        "mentor.guide",
+        "MentorGuideInput",
+        "MentorGuideBody",
+        "MentorGuideOutput",
+        True,
+        "viewer",
+        "experimental",
+        20,
+        False,
+        True,
+    ),
     "namespace.audit": OpSpec(
         "namespace.audit",
         "NamespaceAuditInput",
@@ -3328,6 +3376,42 @@ OPS: dict[str, OpSpec] = {
         30,
         False,
         True,
+    ),
+    "namespace.guide_get": OpSpec(
+        "namespace.guide_get",
+        "NamespaceGuideGetInput",
+        "NamespaceGuideGetBody",
+        "NamespaceGuideGetOutput",
+        True,
+        "viewer",
+        "experimental",
+        40,
+        False,
+        True,
+    ),
+    "namespace.guide_history": OpSpec(
+        "namespace.guide_history",
+        "NamespaceGuideHistoryInput",
+        "NamespaceGuideHistoryBody",
+        "NamespaceGuideHistoryOutput",
+        True,
+        "viewer",
+        "experimental",
+        60,
+        False,
+        True,
+    ),
+    "namespace.guide_set": OpSpec(
+        "namespace.guide_set",
+        "NamespaceGuideSetInput",
+        "NamespaceGuideSetBody",
+        "NamespaceGuideSetOutput",
+        True,
+        "writer",
+        "experimental",
+        250,
+        True,
+        False,
     ),
     "namespace.join": OpSpec(
         "namespace.join",
@@ -7778,6 +7862,7 @@ class ContextPackInput(TypedDict, total=False):
                 "conversations",
                 "runs",
                 "namespace_health",
+                "namespace_guide",
                 "mentor",
             ]
         ]
@@ -7820,6 +7905,7 @@ class ContextPackBody(TypedDict, total=False):
                 "conversations",
                 "runs",
                 "namespace_health",
+                "namespace_guide",
                 "mentor",
             ]
         ]
@@ -8138,7 +8224,7 @@ class ConversationSaveMessageOutput(TypedDict, total=False):
             "deleted",
             "unsupported_role",
             "embed_failed",
-            "reads_as_credential",
+            "high_sensitivity",
         ]
     ]
     ts: Required[str]  # date-time as ISO-8601 text
@@ -8749,6 +8835,8 @@ class ErasureExportOutput(TypedDict, total=False):
     counts: Required[dict[str, int]]
     memory: Required["ErasureExportSection"]
     knowledge: Required["ErasureExportSection"]
+    conversations: Required["ErasureExportSection"]
+    conversation_threads: Required["ErasureExportSection"]
     agent_events: Required["ErasureExportSection"]
     audit_log: Required["ErasureExportSection"]
 
@@ -10556,6 +10644,49 @@ class MemoryAssignCategoryOutput(TypedDict, total=False):
     category_id: Required[str]
 
 
+class MemoryAutoRetirementsInput(TypedDict, total=False):
+    "The memories Loom retired on its own (the conflict resolver, `newest_wins`),"
+
+    org: Required[str]
+    namespace: Required[str]
+    since: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+
+
+class MemoryAutoRetirementsBody(TypedDict, total=False):
+    "The memories Loom retired on its own (the conflict resolver, `newest_wins`),"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    since: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+
+
+class MemoryAutoRetirementsOutput(TypedDict, total=False):
+    rows: NotRequired[list["MemoryAutoRetirement"]]
+    next_cursor: NotRequired[Optional[str]]
+
+
+class MemoryAutoRetirement(TypedDict, total=False):
+    ts: Required[str]  # date-time as ISO-8601 text
+    reason: Required[str]
+    memory_id: Required[str]
+    memory_key: Required[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    superseded_by: NotRequired[str]
+    superseded_by_key: NotRequired[str]
+    label: NotRequired[str]
+    unconfirmed: NotRequired[bool]
+    judge_verdict: NotRequired[str]
+    judge_confidence: NotRequired[Optional[float]]
+    judge_model: NotRequired[str]
+    judge_prompt_version: NotRequired[str]
+
+
 class MemoryBacklinksInput(TypedDict, total=False):
     "What points at one memory: its version chain, the"
 
@@ -10718,6 +10849,8 @@ class MemoryGetOutput(TypedDict, total=False):
     actor: NotRequired[str]
     source_class: NotRequired[str]
     agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
     status: NotRequired[Optional[str]]
     code: NotRequired[list["CodeLink"]]
     superseded_by: NotRequired[str]
@@ -10818,6 +10951,7 @@ class MemoryBulkSetOutput(TypedDict, total=False):
     written: Required[list["BulkSetResult"]]
     skipped_pinned: NotRequired[list[str]]
     skipped_locked: NotRequired[list[str]]
+    skipped_blacklisted: NotRequired[list[str]]
     merged: NotRequired[list[str]]
     value_updates_linked: NotRequired[int]
     rejected_pinned: NotRequired[list[str]]
@@ -10832,9 +10966,11 @@ class MemoryBulkSetOutput(TypedDict, total=False):
 class BulkSetResult(TypedDict, total=False):
     memory_key: Required[str]
     version: Required[int]
+    memory_id: NotRequired[str]
     conflict_verdict: NotRequired[str]
     peers: NotRequired[list["MemorySetPeer"]]
     next: NotRequired[str]
+    pinned_blocker_id: NotRequired[str]
 
 
 class MemorySetPeer(TypedDict, total=False):
@@ -11548,12 +11684,14 @@ class MemoryGetByIdInput(TypedDict, total=False):
     org: Required[str]
     memory_id: Required[str]
     as_of: NotRequired[Optional[str]]
+    omit_high_value: NotRequired[bool]
 
 
 class MemoryGetByIdBody(TypedDict, total=False):
     org: NotRequired[str]
     memory_id: Required[str]
     as_of: NotRequired[Optional[str]]
+    omit_high_value: NotRequired[bool]
 
 
 class MemoryGetByIdOutput(TypedDict, total=False):
@@ -12321,6 +12459,7 @@ class MemorySetInput(TypedDict, total=False):
     value: Required[Union[dict[str, Any], list[Any], str, int, float, bool]]
     tags: NotRequired[list[str]]
     entities: NotRequired[list[str]]
+    relations: NotRequired[list[tuple[str, str, str]]]
     files: NotRequired[Optional[list[str]]]
     confidence: NotRequired[float]
     source_trace: NotRequired[str]
@@ -12338,7 +12477,6 @@ class MemorySetInput(TypedDict, total=False):
     char_limit: NotRequired[Optional[int]]
     sensitivity: NotRequired[Literal["", "low", "medium", "high"]]
     dry_run: NotRequired[bool]
-    await_verdict: NotRequired[bool]
     proposed: NotRequired[bool]
 
 
@@ -12354,6 +12492,7 @@ class MemorySetBody(TypedDict, total=False):
     value: Required[Union[dict[str, Any], list[Any], str, int, float, bool]]
     tags: NotRequired[list[str]]
     entities: NotRequired[list[str]]
+    relations: NotRequired[list[tuple[str, str, str]]]
     files: NotRequired[Optional[list[str]]]
     confidence: NotRequired[float]
     source_trace: NotRequired[str]
@@ -12371,7 +12510,6 @@ class MemorySetBody(TypedDict, total=False):
     char_limit: NotRequired[Optional[int]]
     sensitivity: NotRequired[Literal["", "low", "medium", "high"]]
     dry_run: NotRequired[bool]
-    await_verdict: NotRequired[bool]
     proposed: NotRequired[bool]
 
 
@@ -12390,7 +12528,6 @@ class MemorySetOutput(TypedDict, total=False):
     conflict_verdict: NotRequired[str]
     peers: NotRequired[list["MemorySetPeer"]]
     next: NotRequired[str]
-    verdict_at: NotRequired[str]
     noop: NotRequired[bool]
     dry_run: NotRequired[bool]
     advisories: NotRequired[list[str]]
@@ -12936,7 +13073,7 @@ class MemoryResolveOrphanDuplicatesOutput(TypedDict, total=False):
 
 
 class MemoryRestoreInput(TypedDict, total=False):
-    "Restore a tombstoned memory within its 14-day grace window."
+    "Bring back a deleted memory (within 14 days) or one Loom retired on its own."
 
     org: Required[str]
     namespace: Required[str]
@@ -12945,10 +13082,12 @@ class MemoryRestoreInput(TypedDict, total=False):
     session_id: NotRequired[str]
     run_id: NotRequired[str]
     memory_key: Required[str]
+    if_superseded_by: NotRequired[str]
+    only_if_superseded: NotRequired[bool]
 
 
 class MemoryRestoreBody(TypedDict, total=False):
-    "Restore a tombstoned memory within its 14-day grace window."
+    "Bring back a deleted memory (within 14 days) or one Loom retired on its own."
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -12957,6 +13096,8 @@ class MemoryRestoreBody(TypedDict, total=False):
     session_id: NotRequired[str]
     run_id: NotRequired[str]
     memory_key: Required[str]
+    if_superseded_by: NotRequired[str]
+    only_if_superseded: NotRequired[bool]
 
 
 class MemoryRestoreOutput(TypedDict, total=False):
@@ -13504,6 +13645,7 @@ class MemorySetFromMessagesOutput(TypedDict, total=False):
     "One entry per extracted fact that was written. `tokens_in` /"
 
     written: NotRequired[list["BulkSetResult"]]
+    refused: NotRequired[list["RefusedFact"]]
     tokens_in: NotRequired[int]
     tokens_out: NotRequired[int]
     llm_provider: NotRequired[str]
@@ -13535,6 +13677,11 @@ class MemorySetFromMessagesOutput(TypedDict, total=False):
     extract_prompt_keys: NotRequired[list[str]]
     llm_cache_hits: NotRequired[int]
     llm_cache_misses: NotRequired[int]
+
+
+class RefusedFact(TypedDict, total=False):
+    memory_key: Required[str]
+    verdict: Required[str]
 
 
 class MemoryStackInput(TypedDict, total=False):
@@ -13591,6 +13738,32 @@ class StackEntry(TypedDict, total=False):
     recall_count: NotRequired[int]
     last_recalled_at: NotRequired[Optional[str]]
     actor: NotRequired[str]
+
+
+class MemoryStatusesInput(TypedDict, total=False):
+    "The current status of some memories, by id: which automatic retirements still"
+
+    org: Required[str]
+    namespace: Required[str]
+    memory_ids: Required[list[str]]
+
+
+class MemoryStatusesBody(TypedDict, total=False):
+    "The current status of some memories, by id: which automatic retirements still"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    memory_ids: Required[list[str]]
+
+
+class MemoryStatusesOutput(TypedDict, total=False):
+    rows: NotRequired[list["MemoryStatus"]]
+
+
+class MemoryStatus(TypedDict, total=False):
+    memory_id: Required[str]
+    status: Required[str]
+    superseded_by: NotRequired[str]
 
 
 class MemorySweepExpiredInput(TypedDict, total=False):
@@ -13801,6 +13974,7 @@ class MemoryUpdateInput(TypedDict, total=False):
     if_match_sha256: NotRequired[str]
     char_limit: NotRequired[Optional[int]]
     revive: NotRequired[bool]
+    relations: NotRequired[list[tuple[str, str, str]]]
 
 
 class MemoryUpdateBody(TypedDict, total=False):
@@ -13821,6 +13995,7 @@ class MemoryUpdateBody(TypedDict, total=False):
     if_match_sha256: NotRequired[str]
     char_limit: NotRequired[Optional[int]]
     revive: NotRequired[bool]
+    relations: NotRequired[list[tuple[str, str, str]]]
 
 
 class MemoryUpdateOutput(TypedDict, total=False):
@@ -13854,6 +14029,7 @@ class MemoryUpdateByIdInput(TypedDict, total=False):
     if_match_sha256: NotRequired[str]
     char_limit: NotRequired[Optional[int]]
     revive: NotRequired[bool]
+    relations: NotRequired[list[tuple[str, str, str]]]
 
 
 class MemoryUpdateByIdBody(TypedDict, total=False):
@@ -13865,6 +14041,7 @@ class MemoryUpdateByIdBody(TypedDict, total=False):
     if_match_sha256: NotRequired[str]
     char_limit: NotRequired[Optional[int]]
     revive: NotRequired[bool]
+    relations: NotRequired[list[tuple[str, str, str]]]
 
 
 class MemoryUpdateByIdOutput(TypedDict, total=False):
@@ -14073,6 +14250,26 @@ class MentorAdoption(TypedDict, total=False):
     followed_sessions: NotRequired[int]
 
 
+class MentorGuideInput(TypedDict, total=False):
+    "The agent guide this server ships; the same for every caller."
+
+    org: NotRequired[str]
+    part: NotRequired[Literal["skill", "reference", "all"]]
+
+
+class MentorGuideBody(TypedDict, total=False):
+    "The agent guide this server ships; the same for every caller."
+
+    org: NotRequired[str]
+    part: NotRequired[Literal["skill", "reference", "all"]]
+
+
+class MentorGuideOutput(TypedDict, total=False):
+    version: Required[str]
+    part: Required[Literal["skill", "reference", "all"]]
+    text: Required[str]
+
+
 class NamespaceAuditInput(TypedDict, total=False):
     "Usage report for one namespace: is it being used as a memory, or as an"
 
@@ -14163,6 +14360,8 @@ class BrowseEntry(TypedDict, total=False):
     my_role: NotRequired[str]
     repo: NotRequired[str]
     branch: NotRequired[str]
+    guide_revision: NotRequired[int]
+    guide_summary: NotRequired[str]
 
 
 class NamespaceCancelRequestInput(TypedDict, total=False):
@@ -14242,8 +14441,82 @@ class NamespaceGetOutput(TypedDict, total=False):
     code_change_policy: NotRequired[Optional[Literal["retire_removed", "flag", "revise"]]]
     tag_registry: NotRequired[Optional[list[dict[str, Any]]]]
     classification: NotRequired[Optional[Literal["standard", "restricted"]]]
+    guide_revision: NotRequired[Optional[int]]
+    guide_summary: NotRequired[Optional[str]]
     created_at: NotRequired[Optional[str]]
     updated_at: NotRequired[Optional[str]]
+
+
+class NamespaceGuideGetInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    revision: NotRequired[int]
+
+
+class NamespaceGuideGetBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    revision: NotRequired[int]
+
+
+class NamespaceGuideGetOutput(TypedDict, total=False):
+    found: Required[bool]
+    revision: NotRequired[int]
+    content: NotRequired[str]
+    summary: NotRequired[str]
+    note: NotRequired[str]
+    updated_by: NotRequired[str]
+    updated_at: NotRequired[Optional[str]]
+
+
+class NamespaceGuideHistoryInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    limit: NotRequired[int]
+
+
+class NamespaceGuideHistoryBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    limit: NotRequired[int]
+
+
+class NamespaceGuideHistoryOutput(TypedDict, total=False):
+    revisions: Required[list["GuideRevision"]]
+
+
+class GuideRevision(TypedDict, total=False):
+    revision: Required[int]
+    summary: Required[str]
+    note: Required[str]
+    updated_by: Required[str]
+    updated_at: Required[str]  # date-time as ISO-8601 text
+    chars: Required[int]
+
+
+class NamespaceGuideSetInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    content: Required[str]
+    summary: NotRequired[Optional[str]]
+    expected_revision: Required[int]
+    note: NotRequired[str]
+
+
+class NamespaceGuideSetBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    content: Required[str]
+    summary: NotRequired[Optional[str]]
+    expected_revision: Required[int]
+    note: NotRequired[str]
+
+
+class NamespaceGuideSetOutput(TypedDict, total=False):
+    written: Required[bool]
+    conflict: NotRequired[bool]
+    revision: Required[int]
+    current: NotRequired[Optional["NamespaceGuideGetOutput"]]
 
 
 class NamespaceJoinInput(TypedDict, total=False):
@@ -15065,7 +15338,7 @@ class OpsProjectionFailuresListInput(TypedDict, total=False):
     org: Required[str]
     namespace: NotRequired[Optional[str]]
     projection: NotRequired[str]
-    status: NotRequired[Literal["active", "resolved", ""]]
+    status: NotRequired[Literal["active", "resolved", "abandoned", ""]]
     limit: NotRequired[int]
 
 
@@ -15073,7 +15346,7 @@ class OpsProjectionFailuresListBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[Optional[str]]
     projection: NotRequired[str]
-    status: NotRequired[Literal["active", "resolved", ""]]
+    status: NotRequired[Literal["active", "resolved", "abandoned", ""]]
     limit: NotRequired[int]
 
 
@@ -15131,6 +15404,7 @@ class OpsProjectionFailuresRetryOutput(TypedDict, total=False):
     results: NotRequired[list["ProjectionFailureRetryRow"]]
     retried: Required[int]
     resolved: Required[int]
+    abandoned: NotRequired[int]
 
 
 class ProjectionFailureRetryRow(TypedDict, total=False):
@@ -15138,6 +15412,7 @@ class ProjectionFailureRetryRow(TypedDict, total=False):
     projection: Required[str]
     retried: Required[bool]
     resolved: Required[bool]
+    abandoned: NotRequired[bool]
     reason: NotRequired[str]
     error: NotRequired[str]
 

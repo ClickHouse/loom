@@ -128,6 +128,39 @@ class ChunkExportRow(TypedDict):
     embedding_dim: int
 
 
+class ConversationExportRow(TypedDict):
+    org: str
+    namespace: str
+    agent: str
+    user_id: str
+    thread_id: str
+    msg_id: str
+    role: str
+    content: str
+    reasoning: str
+    metadata: str
+    tokens: int
+    run_id: str
+    ts: datetime
+    is_saved: bool
+    saved_at: datetime | None
+    tombstoned_at: datetime | None
+
+
+class ConversationThreadExportRow(TypedDict):
+    org: str
+    namespace: str
+    agent: str
+    user_id: str
+    thread_id: str
+    title: str
+    metadata: str
+    run_id: str
+    created_at: datetime
+    updated_at: datetime
+    tombstoned_at: datetime | None
+
+
 class AgentEventExportRow(TypedDict):
     ts: datetime
     org: str

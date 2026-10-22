@@ -185,6 +185,7 @@ _LATE_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("delete_version_checks.delete", ledger_steps.delete_delete_version_checks_by_namespace),
     ("memory_webhook_outbox.delete", ledger_steps.delete_memory_webhook_outbox_by_namespace),
     ("learnings_queue.delete", ledger_steps.delete_learnings_queue_by_namespace),
+    ("namespace_guides.delete", ledger_steps.delete_namespace_guides_by_namespace),
     ("tasks.delete", ledger_steps.delete_tasks_by_namespace),
     ("agent_runs.delete", ledger_steps.delete_agent_runs_by_namespace),
     ("curation.tombstone", ledger_steps.tombstone_curation_by_namespace),
@@ -205,6 +206,7 @@ _LATE_STEPS_USER: tuple[UserStep, ...] = (
     ("agent_runs.delete", ledger_steps.delete_agent_runs_by_user),
     ("learnings_queue.delete", ledger_steps.delete_learnings_queue_by_user),
     ("consolidation_runs.delete", ledger_steps.delete_consolidation_runs_by_user),
+    ("projection_failures.delete", ledger_steps.delete_projection_failures_by_user),
     # Org-wide, not by the stamped subject: a replay a service account stored
     # while acting for the user carries the user's text under the account's
     # subject. A cache, so deleting more costs only misses.

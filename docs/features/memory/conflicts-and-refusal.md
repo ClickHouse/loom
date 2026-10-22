@@ -3,10 +3,12 @@
 Every memory write is judged against the facts the namespace already holds. A close but
 different value is stored and flagged as a conflict, and the namespace owner decides
 which fact stands: in the dashboard's Review queue, or with `conflicts.resolve`. Loom
-never picks the winner. Refusal works the other way: `blacklist.add` registers a pattern,
-and every later write whose value matches it is refused. This page owns the write
-verdicts and the namespace conflict policies; the model behind them is in
-[memory concepts](../../concepts/memory.md).
+picks a winner only where a policy or the conflict resolver says one row replaces another (see
+[automatic retirements](#automatic-retirements)), and then records it so it can be
+undone. Refusal works the other way: `blacklist.add` registers a pattern, and every
+later write whose value matches it is refused. This page owns the write verdicts and the
+namespace conflict policies; the model behind them is in [memory
+concepts](../../concepts/memory.md).
 
 ![The review queue: a conflicting fact with Keep, Drop and Allow both](../../images/dashboard-review-queue.png)
 
@@ -20,10 +22,11 @@ compare the new value with the active rows of the same `memory_type` in the name
 - Cosine at or above the conflict threshold with a different value is a **conflict**:
   the new row and each peer get `status='conflicted'` and are cross-linked through
   `conflict_with`.
-- With the LLM judge on (`LOOM_MEMORY_CONFLICT_JUDGE`, off by default), one call labels
-  the closest peers as contradiction, elaboration, restatement or unrelated. The judge
-  also reads peers down to `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY` (0.7), which
-  catches an update filed under a different key.
+- Under `newest_wins`, a value of the same shape with a different fill ("The office
+  lease ends in 2025" → "... 2027") is an update: the older row retires (`refines`).
+
+No verdict on the write calls an LLM. The [conflict resolver](#the-conflict-resolver)
+judges flagged and nearby pairs afterwards.
 
 A pair on the namespace's allowlist is not flagged.
 
@@ -38,20 +41,16 @@ duplicate threshold follows the same order without the type step, ending at
 Every write answers with `conflict_verdict`, the `peers` it was judged against (closest
 first, at most five) and a `next` hint such as `memory.update(memory_key=<peer>, ...)`.
 
-| Verdict     | Meaning                                                      | Row written                                                        |
-| ----------- | ------------------------------------------------------------ | ------------------------------------------------------------------ |
-| `clear`     | Nothing close.                                               | Yes, `active`.                                                     |
-| `merge`     | The same fact after canonicalisation is already stored.      | No. The stored row is reinforced; `noop=true`, `merged_into_key`.  |
-| `duplicate` | Near-identical to a peer but not canonically equal.          | Yes, `status='duplicate'` with `duplicate_of`.                     |
-| `conflict`  | Close to a peer but different.                               | Yes; both rows `conflicted` and cross-linked.                      |
-| `refines`   | The LLM judge read it as an elaboration of a peer.           | Yes; the refined peer is superseded.                               |
-| `rejected`  | Close to a pinned peer, or a changed value for a pinned key. | No. 409 `PINNED_CONFLICT` (a dry run returns the verdict instead). |
-| `pending`   | The LLM judge runs after the write.                          | Yes, `active`; the settled verdict lands on the row later.         |
+| Verdict     | Meaning                                                                               | Row written                                                        |
+| ----------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `clear`     | Nothing close.                                                                        | Yes, `active`.                                                     |
+| `merge`     | The same fact after canonicalisation is already stored.                               | No. The stored row is reinforced; `noop=true`, `merged_into_key`.  |
+| `duplicate` | Near-identical to a peer but not canonically equal.                                   | Yes, `status='duplicate'` with `duplicate_of`.                     |
+| `conflict`  | Close to a peer but different.                                                        | Yes; both rows `conflicted` and cross-linked.                      |
+| `refines`   | Under `newest_wins`, the same statement with a different fill: an update of the peer. | Yes; the replaced peer is superseded.                              |
+| `rejected`  | Close to a pinned peer, or a changed value for a pinned key.                          | No. 409 `PINNED_CONFLICT` (a dry run returns the verdict instead). |
 
-- `merge`, `duplicate` and `rejected` are deterministic and settled inline.
-- `refines` and `pending` need the judge. It runs after the write unless the request
-  passes `await_verdict=true`.
-- `verdict_at` is `inline` or `deferred`.
+- Every verdict is deterministic and settled in the response.
 - `dry_run=true` runs the whole check and writes nothing.
 - The verdict is empty when no check ran: a non-searchable type or a `high` sensitivity
   row.
@@ -60,15 +59,15 @@ first, at most five) and a `next` hint such as `memory.update(memory_key=<peer>,
 
 `namespace.register` takes `default_conflict_policy`:
 
-| Policy                     | Behaviour                                                                                                                                                    |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `auto_reinforce` (default) | Conflicts are flagged; both facts stay live until resolved.                                                                                                  |
-| `manual_review`            | The same: both stay live and the pair waits for review.                                                                                                      |
-| `newest_wins`              | A judged contradiction retires the older row as `superseded` (history kept). A write for a key retires every older live row with that key, whoever wrote it. |
-| `append_only`              | Every write is an event: no merge, duplicate or conflict verdict. A same-key rewrite stays last-writer-wins. The writer owns dedup.                          |
+| Policy                     | Behaviour                                                                                                                                                                                                                  |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto_reinforce` (default) | A contradiction is flagged for review; an update the conflict resolver is sure of retires the older row as `superseded` (history kept), and a less sure one is flagged. Two sessions' rows of one key are judged as peers. |
+| `manual_review`            | Both stay live and the pair waits for review: the conflict resolver flags or clears, never retires.                                                                                                                        |
+| `newest_wins`              | A templated substitution, or an update the conflict resolver is sure of, retires the older row as `superseded` (history kept). A write for a key retires every older live row with that key, whoever wrote it.             |
+| `append_only`              | Every write is an event: no merge, duplicate or conflict verdict. A same-key rewrite stays last-writer-wins. The writer owns dedup.                                                                                        |
 
-Superseded rows are served only to reads that pass `include_superseded=true`, and a
-served one names its successor.
+Superseded rows are served only to reads that pass `include_superseded=true` (or an
+`as_of` read of a time they held), and a served one names its successor.
 
 ### Pinned facts
 
@@ -80,7 +79,9 @@ ranking hint:
 - A changed value for a pinned key is refused the same way unless the write itself pins.
 - A byte-identical restatement passes and keeps the pin.
 - In `memory.bulk_set`, an entry for a pinned key is skipped (`skipped_pinned`); one
-  close to a pinned peer is listed in `rejected_pinned`.
+  close to a pinned peer is listed in `rejected_pinned`. Entries for one key settle in
+  order, as separate `memory.set` calls would: an entry that is refused or merged leaves
+  no value or pin for the next one, and repeating it gets the same verdict.
 
 To change a pinned value, call `memory.update` (keeps the pin) or `memory.pin` (re-pins).
 
@@ -119,12 +120,127 @@ async with Agent(org="acme", namespace="support", agent="curator") as agent:
     )
 ```
 
+### The conflict resolver
+
+With `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` on (the default wherever neither
+`LOOM_LLM_PROVIDER` nor the provider of `LOOM_CONFLICT_RESOLVER_MODEL` is `fake`), a
+leader-only worker judges each write that has a live peer of its type at cosine
+0.60 or more, or was flagged `conflicted`, against up to eight such peers in one call to
+`LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`). Per pair:
+
+- an update it is sure of (confidence 0.98 or more) under `auto_reinforce` (the default)
+  or `newest_wins` retires the older row, recorded for Undo (reason `conflict_resolver`),
+  when the older row's value was asserted first (to the nanosecond) and the two facts are
+  not dated the same day; otherwise the pair is flagged. Under `manual_review` it is
+  flagged;
+- a contradiction at 0.95 or more, and an update between 0.95 and 0.98, flag both rows
+  for review;
+- a compatible pair (elaboration, restatement, related, unrelated) at 0.90 or more has its
+  flag cleared;
+- anything less sure changes nothing, and so does an update or a contradiction between
+  two sessions of the anonymous user `-` (an agent's sessions are separate tasks).
+
+The judge sees when each note's statement holds and which session it comes from.
+
+It also re-checks pairs flagged before it judged them, so a false flag is cleared once.
+A pinned row is never touched, a row that changed since it was judged is left to its
+next judgement, and each written version is judged once. A judgement costs about $0.005,
+and the resolver spends at most a quarter of a namespace's daily cost cap
+(`LOOM_MEMORY_CONFLICT_RESOLVER_CAP_SHARE`), leaving the rest for requests; past it the
+namespace waits. The design is in [memory
+architecture](../../architecture/memory-architecture.md#the-conflict-resolver).
+
 ### The Review queue
 
 The dashboard's Review queue (`<server>/admin/review_queue`, `g r`) lists conflicted pairs and
-applies `conflicts.resolve`. Two more tabs appear when they have content: **Learnings**
-([learnings](./procedures-and-learnings.md#learnings-review-queue)) and **Exceptions**
-(the allowlist). See [the dashboard](../dashboard.md).
+applies `conflicts.resolve`. Three more tabs appear when they have content: **Learnings**
+([learnings](./procedures-and-learnings.md#learnings-review-queue)), **Auto-resolved**
+(below) and **Exceptions** (the allowlist). See [the dashboard](../dashboard.md).
+
+### Automatic retirements
+
+When Loom retires memories on its own, each path that retired rows records them as
+`memory.auto_supersede` audit rows (`reason` in brackets):
+
+- the conflict resolver, for an update it is sure of (`conflict_resolver`);
+- `newest_wins` on a key written again (`same_key_newest_wins`);
+- a templated substitution under `newest_wins` (`newest_wins_contradiction`);
+- `newest_wins` inside one bulk batch, or behind a repaired single-valued triple
+  (`newest_wins_contradiction`);
+- a value update (`value_update`).
+
+A write that retires rows through several paths leaves one record per path, and a path
+that retires more than 200 rows splits them across several records. A record names each
+retired memory, the row it retired behind and the reason; it holds ids, keys and
+identity, never value text. On every path listed, a locked or pinned row, or one
+already retired since it was read, is left as it is.
+
+A row is listed once a re-read after the write finds its superseded version at the head;
+one a later write overtook is not. One the re-read could not see is listed with
+`unconfirmed`: a write's result never counts it among the rows it retired, recall is
+left as it was, and `loom reconcile-status` finds and mirrors any divergence. A point
+write (`memory.set`, `memory.update_by_id`) writes its record and closes the retired
+rows' graph facts before it answers, and a record that fails is owed to the projection
+repair, which writes it once; the conflict resolver writes its own after the retirement,
+owed the same way.
+
+[`memory.auto_retirements`](../../reference/operations/memory.md#memoryauto_retirements)
+lists the records of the last 30 days (or since `since`), one row per retired memory,
+newest record first: its ids, keys and identity, the reason, `unconfirmed` and the
+conflict resolver's `judge_*` fields. A caller whose read is narrowed to one user or
+session gets only that user's or session's rows. A page holds about `limit` rows (50 by
+default): a record is never split across pages, and one whose rows the read scope leaves
+out still moves `next_cursor`. `memory.statuses` reads which retirements still stand.
+
+#### The Auto-resolved tab
+
+The Review queue's **Auto-resolved** tab lists the last 30 days through
+`memory.auto_retirements`, 50 retired memories a page. A row the re-read could not
+confirm is marked "may not have taken effect". To mark rows already restored, the tab
+reads up to 2,500 `memory.unsupersede` records (5 pages of 500) back to the oldest
+retirement it shows. Past that, an older row still offers Undo: undoing a row an Undo
+already restored shows it restored, and one written or retired since shows "Changed
+since". A row shows as restored only while
+`memory.statuses` reads it no longer retired behind that memory, so the record of an
+Undo whose restore failed still offers Undo, and so does a row whose state could not be
+read: a repeat Undo of a restored row answers restored.
+
+#### Undo
+
+The tab's Undo calls `memory.restore` with `if_superseded_by`: the row comes back, and
+`memory.unsupersede` is recorded, only while it is still retired behind the memory the
+record names; a row deleted, revived or retired again since shows "Changed since". When
+the record cannot be written, the Undo fails and nothing is restored. When the restore's
+answer is lost (503, outcome unknown), retrying the Undo finishes it and answers
+restored. It comes back `active`, or `conflicted` when it was under review when it
+retired: it still lists its peers, as they list it. A retired duplicate comes back
+`duplicate` while its original is still served, and `active` once it is not.
+
+The Undo holds the key's write lock from its read of the row to its insert, as a
+conditional write (`if_match_sha256`) and every conflict resolver write do: a
+conditional revision or a resolver write made meanwhile lands first and the Undo shows
+"Changed since", or waits for the Undo. An unconditional write takes no lock, and the
+later of the two wins. When another conditional write holds the lock past its wait, the
+Undo answers 409 PRECONDITION_FAILED ("this memory is being written right now; retry the
+Undo"), and while the lease store (Keeper) does not answer, 503 BACKEND_UNAVAILABLE.
+Retry either.
+
+An Undo opens again the graph facts the restored row still holds (see the
+[entity graph](../entity-graph.md)). The resolver does not retire the row behind the same
+memory again, or flag the pair, while the row holds the value it had at the Undo and the
+other memory's value predates it; a new value of either is judged afresh.
+
+#### Restore from the memory inspector
+
+The memory inspector's **Restore** on a superseded row sends `only_if_superseded`, and
+`if_superseded_by` when it can see the successor: a read narrowed below the namespace
+shows none for a successor outside its scope, and either way a delete since is never
+undone. When it finds nothing to restore, the inspector re-reads the row and shows it as
+it is now. Either way the list behind the drawer is refreshed, even if the drawer has
+moved to another memory; a failed re-read is reported and leaves the restore's own
+message standing. A restore that answers after the drawer has moved to another memory or
+closed is still reported, with its key named, and leaves the drawer on the memory it
+moved to; if the drawer has come back to the restored memory, it re-reads the row.
 
 ## Duplicates
 
@@ -199,15 +315,19 @@ not erasing: to remove a person's data, use [erasure](./retention-and-erasure.md
 
 ## Settings
 
-| Setting                                         | Default | Effect                                            |
-| ----------------------------------------------- | ------- | ------------------------------------------------- |
-| `LOOM_CONFLICT_THRESHOLD`                       | 0.85    | Fallback conflict cosine; 1.0 disables flagging.  |
-| `LOOM_DUPLICATE_THRESHOLD`                      | 0.97    | Fallback duplicate cosine.                        |
-| `LOOM_ADAPTIVE_THRESHOLDS`                      | true    | Calibrate both thresholds from the live embedder. |
-| `LOOM_MEMORY_CONFLICT_JUDGE`                    | false   | LLM labelling of close peers.                     |
-| `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY`     | 0.7     | Lowest cosine the judge reads.                    |
-| `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`          | 200     | Entries per `memory.bulk_set` checked; 0 = none.  |
-| `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS` | 2.0     | Cross-replica pattern refresh bound.              |
+| Setting                                           | Default                                                               | Effect                                                                                               |
+| ------------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `LOOM_CONFLICT_THRESHOLD`                         | 0.85                                                                  | Fallback conflict cosine; 1.0 disables flagging.                                                     |
+| `LOOM_DUPLICATE_THRESHOLD`                        | 0.97                                                                  | Fallback duplicate cosine.                                                                           |
+| `LOOM_ADAPTIVE_THRESHOLDS`                        | true                                                                  | Calibrate both thresholds from the live embedder.                                                    |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED`           | true unless the LLM provider or the resolver model's provider is fake | The background conflict resolver; an explicit value wins. Without its model's key, writes wait owed. |
+| `LOOM_CONFLICT_RESOLVER_MODEL`                    | gpt-6.1-sol                                                           | The resolver's judge.                                                                                |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY`    | 0.60                                                                  | Lowest cosine that marks a write and joins its cluster.                                              |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` | 0.98                                                                  | An update retires its predecessor (`auto_reinforce`, `newest_wins`) at this confidence.              |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_FLAG_CONFIDENCE`   | 0.95                                                                  | An update or a contradiction flags the pair (or retires, as above) only at this confidence.          |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE`  | 0.90                                                                  | Below it nothing changes; at it a compatible pair clears.                                            |
+| `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`            | 200                                                                   | Entries per `memory.bulk_set` checked; 0 = none.                                                     |
+| `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS`   | 2.0                                                                   | Cross-replica pattern refresh bound.                                                                 |
 
 See the [configuration reference](../../reference/configuration.md#conflict-detection).
 

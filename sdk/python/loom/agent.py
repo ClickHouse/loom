@@ -13,7 +13,7 @@ import sys
 import time
 from collections.abc import Mapping
 from types import TracebackType
-from typing import Any
+from typing import Any, Literal
 
 from loom._logging import logger
 from loom.account import AccountClient
@@ -238,7 +238,8 @@ class Agent:
     def run_scope(self, **begin_kwargs: Any) -> Any:
         """One agent execution as an `async with` block:
         begins a run, credits the memories the block's recalls cited on
-        exit, stamps the run_id on memory calls inside. See loom.run.RunScope."""
+        exit, stamps the run_id on the writes inside and labels the reads with
+        it. See loom.run.RunScope."""
         return self.run.scope(**begin_kwargs)
 
     async def __aenter__(self) -> Agent:
@@ -362,6 +363,14 @@ class Agent:
                     h["text"],
                 )
         return brief if isinstance(brief, dict) else {}
+
+    async def guide(self, part: Literal["skill", "reference", "all"] = "skill") -> str:
+        """How to use Loom, as Markdown — `mentor.guide`: the loop, where
+        each kind of state goes and how to read answers (`part="skill"`),
+        every plane with its ops (`"reference"`), or both (`"all"`). Put it
+        in the system prompt of an agent that has no plugin to carry it."""
+        out = await self.call("mentor.guide", {"part": part}, timeout_s=10.0)
+        return str(out["text"])
 
     def _start_mentor_brief(self) -> None:
         """With `mentor_brief=True`, the first call also runs `mentor()` in

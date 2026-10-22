@@ -115,6 +115,55 @@ Snapshots and point-in-time rollback (`namespace.snapshot`, `namespace.restore`,
 `namespace.rollback`) are covered in
 [history and provenance](memory/history-and-provenance.md).
 
+## A namespace's guide
+
+A namespace's guide is a Markdown README for it: what the namespace holds, its key
+layout, what each tag means and which ops to call. Agents read it before their first
+write and update it when they change one of those conventions; people read the same
+text. It holds conventions about the data, never the facts themselves, which stay in
+memory where search and erasure cover them.
+
+| Operation                 | Role   | Does                                                                                                                          |
+| ------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `namespace.guide_get`     | viewer | The current guide (or a past `revision`): its text, one-line summary, revision, writer and note.                              |
+| `namespace.guide_set`     | writer | Writes the next revision when `expected_revision` is the current one; otherwise refuses with the current guide to merge into. |
+| `namespace.guide_history` | viewer | The newest revisions with their summary, note, writer and length.                                                             |
+
+Every save names the revision it was made from. Of two agents editing from one revision,
+the first save lands and the second is answered `conflict: true` with the guide as it
+now stands; the agent merges its change into that text and saves again with the returned
+revision. The server never merges the text itself. A retry of a save that landed finds
+its own text current and writes nothing. A save that leaves out `summary` keeps the
+current one, and an empty `content` clears the guide. An end user's personal collection
+(`col-me-…`) takes no guide. Every revision is kept, so `namespace.guide_get` with a
+`revision` reads any of them.
+
+The guide reaches agents without being asked for:
+
+- **At session start,** `context.pack` renders a `namespace_guide` section: the guide's
+  revision, writer and summary, then its text cut to the section budget (200 tokens).
+  The text is recalled data, escaped and indented under one item like any other
+  writer's text.
+- **In the directory,** each `namespace.browse` row of a public namespace carries its
+  `guide_revision` and `guide_summary`, and `query` also matches the guide's summary,
+  so an agent looking through many public namespaces finds the one whose guide
+  describes what it needs. A private row shows no guide to someone who is not a member,
+  and a restricted row shows none at all.
+- **`namespace.get`** carries `guide_revision` and `guide_summary`.
+
+Reading a guide takes read access to its namespace, since a public row's visibility
+widens no read: `namespace.browse` shows the org each public namespace's summary, and
+the whole guide is for its members (`namespace.join`). In the dashboard, the Memories
+page header has a **Guide** button beside **Add memory**, described by the guide's
+revision and summary; on a namespace with no guide it opens a writer straight into the
+editor. A first guide, from there or from Spaces, starts on an outline of what a
+newcomer asks (what the namespace holds, its keys, its tags, how to use it) that cannot
+be saved unchanged. Spaces shows a public namespace's guide summary under its
+description; for a namespace you belong to, the summary opens the guide, or the
+**Guide** menu item where no summary is shown. A writer edits it from either place,
+saving from the revision they opened, as an agent does. A namespace erasure deletes
+every revision of its guide.
+
 ## The mentor
 
 `mentor.brief` returns advice for one agent with the evidence behind it: its calls over a window (default 7 days),
@@ -122,6 +171,10 @@ the planes the namespace offers, and each hint with the counts that fired it. `c
 at session start, and a successful response carries at most one (`hint` on MCP, `X-Loom-Hint` on HTTP), capped by
 `LOOM_MENTOR_MAX_HINTS_PER_SESSION`. `loom mentor --org … --namespace … --agent …` prints the whole brief. See the
 [mentor ops](../reference/operations/mentor.md).
+
+[`mentor.guide`](../reference/operations/mentor.md#mentorguide) returns how to use Loom, written for a model: the
+`loom` skill in `skills/loom/`, as `part` `skill` (the loop and the rules), `reference` (every plane with its ops) or
+`all`. It is the same for every caller, so any viewer token may read it, including one narrowed to a user, and an end user's over HTTP.
 
 ## Throwaway namespaces
 

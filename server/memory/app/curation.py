@@ -19,6 +19,7 @@ from fastapi import HTTPException
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
+from server.core.naming import named
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
     WHOLE_NAMESPACE,
@@ -125,13 +126,13 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
 
     A digest is the one derived row loom writes on every ingest; serving it on the wire lets a
     caller audit its fidelity to the turns it compresses without database access.
-    `session_id` "*" lists all."""
+    `session_id` "*" or "-" lists all."""
     from server.core.ch import get_client as _get_client
 
     ch = _get_client()
     where = "org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL"
     params: dict[str, Any] = {"o": input.org, "n": input.namespace, "lim": int(input.limit) + 1}
-    if input.session_id and input.session_id != "*":
+    if named(input.session_id, wildcard=True):
         where += " AND session_id = {s:String}"
         params["s"] = input.session_id
     where += scope_and(request_scope(), params)
@@ -155,7 +156,7 @@ def _digest_rows(page: list[dict[str, Any]]) -> list[_DigestRow]:
         _DigestRow(
             session_id=str(r.get("session_id") or ""),
             summary_text=listed_text(r.get("summary_text")),
-            # a digest an earlier build wrote may still hold a credential as a key fact
+            # a digest an earlier build wrote may still hold a high shape as a key fact
             key_facts=[str(k) for k in (r.get("key_facts") or []) if not value_reads_high(k)],
             derived_from=[str(k) for k in (r.get("derived_from") or [])],
             valid_at=r.get("valid_at"),
@@ -255,7 +256,7 @@ async def handle_memory_outline(input: MemoryOutlineInput) -> MemoryOutlineOutpu
             for r in comms
         ]
     profile_chars = 0
-    if str(getattr(input, "user_id", "") or "-") != "-":
+    if named(input.user_id):
         prof = await ch.query_all(
             "SELECT length(value) AS chars FROM loom.memory FINAL "
             "WHERE org = {o:String} AND namespace = {n:String} AND user_id = {u:String} "
@@ -873,7 +874,7 @@ async def handle_memory_import_curated(
 def _version_time(version: Any) -> Any:
     """A version's write time: versions are epoch nanoseconds (`time.time_ns()`); anything
     outside a sane range is None."""
-    from datetime import UTC, datetime
+    from server.memory.store.rows import version_time
 
     try:
         ns = int(version)
@@ -881,4 +882,4 @@ def _version_time(version: Any) -> Any:
         return None
     if not 10**18 <= ns < 4 * 10**18:  # 2001..2096
         return None
-    return datetime.fromtimestamp(ns / 1e9, UTC).replace(tzinfo=None)
+    return version_time(ns)

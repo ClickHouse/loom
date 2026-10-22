@@ -7,6 +7,7 @@ import argparse
 import json
 import sys
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
 
 from server.cli._apply import add_apply_flags
@@ -453,9 +454,11 @@ async def _gc_run(
 
 
 def _cmd_erasure_re_verify(args: argparse.Namespace) -> int:
-    """Re-verify the sagas the ledger holds as `failed`.
+    """Re-verify the sagas the ledger holds as `failed`, or with `--completed-since`
+    instead the `completed` ones verified since then (after a rollout, rule 14 of
+    docs/architecture/rolling-upgrades.md).
 
-    Read-only by default: for every failed saga, print the last step-named
+    Read-only by default: for every such saga, print the last step-named
     reason and a fresh residue census over its scope. `--resume` re-runs each
     from its checkpoint (the recovery worker stops at `max_attempts`; an
     operator does not) — `--skip-external` for a `namespace_list` saga whose
@@ -470,6 +473,17 @@ def _cmd_erasure_re_verify(args: argparse.Namespace) -> int:
         return await _re_verify_run(ch, args)
 
     return run_connected(_run)
+
+
+def _utc_instant(text: str) -> datetime:
+    """An ISO timestamp as naive UTC, the ledger's own form; one without an offset is UTC."""
+    try:
+        at = datetime.fromisoformat(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"not an ISO timestamp: {text!r}") from e
+    if at.tzinfo is not None:
+        at = at.astimezone(UTC).replace(tzinfo=None)
+    return at
 
 
 def _re_verify_scope(row: Mapping[str, Any]) -> tuple[str, str | list[str], bool, bool]:
@@ -522,6 +536,37 @@ def _re_verify_input(row: Mapping[str, Any], *, skip_external: bool) -> Any:
     )
 
 
+async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool) -> int:
+    """A completed saga gets no second run: everything in its scope now may have
+    been written after it finished. Only the row links an older build's erasure
+    did not know, and whose memory has no live row and no row written since the
+    census, are counted (and with `resume`, deleted). 1 while any are left, else 0."""
+    from server.erasure.store import steps_graph
+
+    org = str(row["org"])
+    scope_type, scope_value, _purge, _external = _re_verify_scope(row)
+    # Memories written since the census are not the saga's, even soft-deleted.
+    cut = row["verified_at"]
+    print(f"  {row['id']} {org}/{row['scope_type']} completed")
+    orphans = await steps_graph.count_orphan_row_links(
+        org, scope_type, scope_value, verified_at=cut, ch=ch
+    )
+    found = {t.split(".", 1)[-1]: n for t, n in orphans.items() if n}
+    print(f"    orphan row links: {sum(found.values())} {json.dumps(found, sort_keys=True)}")
+    if not found:
+        return 0
+    if not resume:
+        return 1
+    deleted = await steps_graph.delete_orphan_row_links(
+        org, scope_type, scope_value, verified_at=cut, ch=ch
+    )
+    left = await steps_graph.count_orphan_row_links(
+        org, scope_type, scope_value, verified_at=cut, ch=ch
+    )
+    print(f"    deleted {deleted}; left {sum(left.values())}")
+    return 1 if any(left.values()) else 0
+
+
 async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
     from server.erasure.store import census as erasure_census
     from server.erasure.store import health as erasure_health
@@ -529,13 +574,31 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
     from server.erasure.store import mutations as erasure_mutations
 
     rc = 0
-    rows = await erasure_ledger.list_failed_requests(org=args.org or None, ch=ch)
+    # --completed-since takes the completed sagas instead of the failed ones.
+    completed = bool(args.completed_since)
+    if completed and args.skip_external:
+        # A completed saga is not resumed, so the flag would be ignored.
+        print(
+            "--skip-external applies to failed sagas only, not --completed-since", file=sys.stderr
+        )
+        return 2
+    if completed:
+        rows = await erasure_ledger.list_completed_requests(
+            since=args.completed_since, org=args.org or None, ch=ch
+        )
+        label = f"saga(s) completed since {args.completed_since}"
+    else:
+        rows = await erasure_ledger.list_failed_requests(org=args.org or None, ch=ch)
+        label = "failed saga(s)"
     wanted = set(args.id or ())
     if wanted:
         rows = [r for r in rows if str(r["id"]) in wanted]
     if not args.orphan_graph or rows or wanted:
-        print(f"{len(rows)} failed saga(s)" + (f" in org {args.org!r}" if args.org else ""))
+        print(f"{len(rows)} {label}" + (f" in org {args.org!r}" if args.org else ""))
     for row in rows:
+        if completed:
+            rc = max(rc, await _re_verify_completed(ch, row, resume=bool(args.resume)))
+            continue
         scope_type, scope_value, purge, _external = _re_verify_scope(row)
         names = scope_value if isinstance(scope_value, list) else [scope_value]
         with erasure_mutations.purge_scope(purge):
@@ -742,6 +805,17 @@ def _add_namespace_hygiene_parsers(sub: Any) -> None:
         action="store_true",
         help="With --resume, on namespace_list sagas: loom tables only, skip the external "
         "backends whose step kept failing (the ledger's scope object is rewritten)",
+    )
+    p_erv.add_argument(
+        "--completed-since",
+        type=_utc_instant,
+        metavar="ISO_TIMESTAMP",
+        help="Re-verify the completed sagas whose census ran at or after this time, not "
+        "the failed ones (UTC unless it names an offset): after a rollout, the erasures "
+        "the previous build ran. "
+        "Only their orphan row links are counted (entity_triple_rows and entity_edge_rows "
+        "rows whose memory has no live row and no row written since the census); --resume "
+        "deletes them",
     )
     p_erv.add_argument(
         "--orphan-graph",

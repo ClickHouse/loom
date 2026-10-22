@@ -333,8 +333,9 @@ def _add_sensitivity_sweep_parser(sub: Any) -> None:
         "--only-shape",
         action="append",
         choices=["credential", "email", "phone", "other"],
-        help="Select only rows of this probe shape (repeatable); the phone shape is "
-        "a ten-digit run and the noisiest, so apply credential + email first",
+        help="Select only rows of this probe shape (repeatable); credential is every row "
+        "the detector reads as high (a credential, card number, SSN or stated PIN); the "
+        "phone shape is a ten-digit run and the noisiest, so apply credential + email first",
     )
     add_apply_flags(p_ssw, writes="write the labels")
     p_ssw.set_defaults(func=_cmd_sensitivity_sweep)

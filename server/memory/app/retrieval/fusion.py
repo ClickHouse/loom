@@ -136,8 +136,8 @@ def _rerank_fact_pool(hits: list[SearchHit], q: SearchQuery) -> list[SearchHit]:
     """Phase 11 of `vector_search`: order the fused pool — by the SQL's
     composite rank_score for the cosine-ordered modes, by reciprocal-rank
     fusion for rrf; lexical and related keep the SQL order."""
-    # ANN-eligible modes ordered by the bare value-embedding cosine in
-    # SQL (so the HNSW index can fire); re-rank in Python by the
+    # Vector modes ordered by the bare value-embedding cosine in
+    # SQL (so the codes-first read applies); re-rank in Python by the
     # composite rank_score the SQL computed. Lexical mode is already
     # composite-ordered in SQL.
     if q.search_mode in ("semantic", "hybrid", "bm25_hybrid", "graph", "temporal"):

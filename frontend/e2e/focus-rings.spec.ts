@@ -454,6 +454,24 @@ for (const phone of [false, true]) {
       });
     }
 
+    test("Spaces with a member's guide summary: every focus ring is drawn whole", async ({ page }) => {
+      // A member of team-002, the last row, which carries a guide summary: its link sits
+      // above the row's open button and truncates its own text. The walk arrows down the
+      // rows and tabs into the last one's controls.
+      await installApi(page, {
+        browseRows: 3,
+        mine: [
+          { namespace: NAMESPACE, role: "writer", status: "active", visibility: "private", kind: "memory" },
+          { namespace: "team-002", role: "writer", status: "active", visibility: "public", kind: "memory" },
+        ],
+        claims: [NAMESPACE, "team-002"],
+      });
+      await page.goto("/spaces");
+      await expect(page.getByRole("button", { name: /^Guide: One runbook per service/ })).toBeVisible();
+      await page.waitForLoadState("networkidle");
+      await expectWhole(page, "/spaces guide", { targets: [ROW, "[data-guide-link]"] });
+    });
+
     test("the Explorer with a walk: every focus ring is drawn whole", async ({ page }) => {
       await open(page, `/graph?seed=${SMALL_SEED}`);
       await expect(page.getByRole("tree", { name: "Walk outline" }).getByRole("treeitem").first()).toBeVisible();

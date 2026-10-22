@@ -10151,6 +10151,7 @@
         "id",
         "resume",
         "skip_external",
+        "completed_since",
         "orphan_graph",
         "erase",
         "batch",
@@ -10236,6 +10237,21 @@
        "required": false,
        "help": "With --resume, on namespace_list sagas: loom tables only, skip the external backends whose step kept failing (the ledger's scope object is rewritten)",
        "metavar": null
+      },
+      {
+       "option_strings": [
+        "--completed-since"
+       ],
+       "dest": "completed_since",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": "server.cli.hygiene:_utc_instant",
+       "required": false,
+       "help": "Re-verify the completed sagas whose census ran at or after this time, not the failed ones (UTC unless it names an offset): after a rollout, the erasures the previous build ran. Only their orphan row links are counted (entity_triple_rows and entity_edge_rows rows whose memory has no live row and no row written since the census); --resume deletes them",
+       "metavar": "ISO_TIMESTAMP"
       },
       {
        "option_strings": [
@@ -11051,7 +11067,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Select only rows of this probe shape (repeatable); the phone shape is a ten-digit run and the noisiest, so apply credential + email first",
+       "help": "Select only rows of this probe shape (repeatable); credential is every row the detector reads as high (a credential, card number, SSN or stated PIN); the phone shape is a ten-digit run and the noisiest, so apply credential + email first",
        "metavar": null
       },
       {

@@ -80,7 +80,6 @@ only. The full table is in [memory concepts](../../concepts/memory.md).
 | `conflict_verdict` | The verdict ([table](./conflicts-and-refusal.md#verdicts)). Empty when no check ran.                       |
 | `peers`            | Rows the verdict was reached against, closest first, at most five: key, 200-character excerpt, similarity. |
 | `next`             | A hint naming the call to make, such as `memory.update(memory_key=...)` on a conflict.                     |
-| `verdict_at`       | `inline`, or `deferred` when the verdict is `pending`.                                                     |
 | `noop`             | True when nothing was written: a merge or a dry run.                                                       |
 | `merged_into_key`  | On a merge, the key that already holds the fact. Your key holds no row.                                    |
 | `advisories`       | Value-shape advice.                                                                                        |
@@ -169,7 +168,7 @@ key then answers `conflict_verdict: "conflict"`, `peers[0].memory_key:
 
 | Op                    | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory.update`       | Resolves `memory_key` across the namespace when no identity is given. One live row: updated. None: `updated=false, reason="not_found"`. Several: 409 `AMBIGUOUS_KEY` with `candidates`. Runs the conflict check and keeps a pin. An expired row answers 409 `EXPIRED` unless `revive=true`.                                                                                                                                                                            |
+| `memory.update`       | Resolves `memory_key` across the namespace when no identity is given (`"-"` counts as none, and `"*"` for `agent`). One live row: updated. None: `updated=false, reason="not_found"`. Several: 409 `AMBIGUOUS_KEY` with `candidates`. Runs the conflict check and keeps a pin. An expired row answers 409 `EXPIRED` unless `revive=true`.                                                                                                                              |
 | `memory.update_by_id` | One row by `(org, memory_id)`. The namespace is checked after the fetch; a refusal answers `updated=false`, not 403.                                                                                                                                                                                                                                                                                                                                                   |
 | `memory.delete`       | Writes a tombstone, looking past the caller's identity for the key (`found=false` when no live row exists). `memory.delete_version` instead reads only the caller's exact identity (a concrete agent) and, under the key's write lock, deletes only the version it names, else `tombstoned=false, reason="version_changed"`. Consolidated summaries lose the row: retired when no source survives, else `conflicted`. `memory.restore` revives the key within 14 days. |
 | `memory.move`         | Renames a key, carrying value, type, tags, entities, validity and provenance. The source becomes a redirect (`canonical_key`, `follow=true`) or, with `keep_redirect=false`, a tombstone. See [optimize a namespace](../../guides/optimize-namespace.md).                                                                                                                                                                                                              |
@@ -223,7 +222,8 @@ edit to other fields keeps a live expiry. See
 
 `memory.set(proposed=true)` writes a fact on trial (`status='proposed'`). It is served
 only to reads that pass `include_proposed`, and never retires, supersedes or flags an
-established fact. A key that already holds a fact answers 409 `KEY_HOLDS_FACT`.
+established fact. The `relations` it names stay out of the fact graph, and accepting it
+does not add them: state them again once it is established. A key that already holds a fact answers 409 `KEY_HOLDS_FACT`.
 `memory.proposals` lists proposals with the graded runs that relied on each, and
 `memory.proposal_decide` accepts or rejects them. Loom decides only when the owner set
 `proposal_policy.mode` to `auto` (`min_passes`, `max_fails`, `reject_after_fails`). See
@@ -313,15 +313,20 @@ These writes send no event:
 - the supersessions a write makes of other rows: the older same-key rows the `newest_wins`
   conflict policy retires, and the peers a `refines` verdict supersedes. The new row's own
   event is sent.
-- the status a conflict verdict lands after the write, inline or from the deferred judge
-  (`conflicted` on the row and its peers, `duplicate` on the row). The write's own event is
-  sent.
+- what the conflict resolver lands later: the rows it retires (`superseded`, under another
+  key too), and the `conflicted` flags it sets or clears. The write's own event was sent
+  before.
+- the `conflicted` and `duplicate` status the write's own check lands. The write's own event
+  is sent.
 - the undo of an automatic supersession through `memory.restore`
 - copies into another namespace (`memory.copy_to`, `memory.cross_promote`)
 - `namespace.restore` from a snapshot
 - entity backfills
 - typed records (`memory.record.*`) and saved chat messages (`conversation.*`). Neither is
   a memory row.
+
+A receiver that mirrors what Loom serves reads `memory.auto_retirements` for the rows the
+supersessions above retired: a write's own and the conflict resolver's.
 
 Accepting a proposal, by `memory.proposal_decide` or the namespace's `auto` proposal
 policy, sends `memory.written`.
@@ -475,6 +480,10 @@ Conflict and duplicate settings are in
 - **Writes are eventually consistent and not transactional across tables.** A bulk write
   is not atomic.
 - **A merge writes nothing at your key.** Read `merged_into_key`.
+- **A `memory.set` that names no `sensitivity` drops the stored label.** Re-writing a
+  `high` row without it stores the new version with only the detected level, embedded
+  unless that is `high`, so restate `sensitivity` on a re-write. A `memory.bulk_set`
+  entry that names none and repeats the stored value keeps its label.
 - **Fake providers give string-similarity verdicts.** Judge verdicts only with real
   providers.
 - **A misspelled argument is refused** (422 `UNKNOWN_ARGUMENT`); an unknown one with no

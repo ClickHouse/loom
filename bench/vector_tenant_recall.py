@@ -1,13 +1,13 @@
-"""Does the HNSW index return the same top-k as brute force for SMALL tenants?
+"""Do skip indexes change a SMALL tenant's nearest neighbours?
 
-loom.memory_embeddings is one table, one `vector_similarity` index, many org/namespace
-tenants. The identity tuple is a PREWHERE filter, so a tenant holding 0.1% of the rows
-depends on ClickHouse's filter strategy (auto: prefilter when selective, else postfilter
-with `vector_search_index_fetch_multiplier`) to get its own neighbours back rather than
-the table's. Loom relies on the engine rather than partitioning the index per tenant; on
-CH 26.7.1 a tenant at 0.13% share agreed 100%. This bench keeps that a standing
-assertion so a CH upgrade or a 10× larger table cannot silently turn small tenants'
-recall into noise.
+loom.memory_embeddings is one table holding many org/namespace tenants, and the
+identity tuple is a PREWHERE filter. The bench compares a tenant-filtered nearest-
+neighbour read (no FINAL) with skip indexes on against the same read with
+`use_skip_indexes = 0`. A disagreement means some skip index changed which rows a
+tenant read returns. With no vector index on the table they agree by construction, and
+docs/architecture/clickhouse.md#why-there-is-no-vector-index measures why a
+`vector_similarity` index would not even be searched by such a read. This bench keeps
+the agreement a standing assertion against a live deployment.
 
     python bench/vector_tenant_recall.py --tenants 3 --probes 6 --min-agreement 0.95
 
@@ -99,7 +99,7 @@ async def main_async(args: argparse.Namespace) -> int:
         share = t["c"] / total_rows
         print(
             f"  {t['org']}/{t['namespace']:<32} rows={t['c']:>7} share={share:6.2%} "
-            f"index∩brute={agree}/{total} ({rate:.0%})"
+            f"skip-indexes∩brute={agree}/{total} ({rate:.0%})"
         )
     if worst < args.min_agreement:
         print(

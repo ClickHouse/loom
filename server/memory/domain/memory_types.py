@@ -43,9 +43,9 @@ def is_embedded(memory_type: str, sensitivity: str = "") -> bool:
     """True iff a row of this type AND sensitivity gets an embedding row.
 
     A 'high' sensitivity row never does: the absence of the
-    embedding row is what keeps a credential out of every search leg —
+    embedding row is what keeps a high row out of every search leg —
     vector, lexical and graph seed all read loom.memory_embeddings — without
-    a WHERE the ANN index would have to post-filter."""
+    a WHERE every search leg would have to carry."""
     return is_searchable_type(memory_type) and (sensitivity or "") != "high"
 
 

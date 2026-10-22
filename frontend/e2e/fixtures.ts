@@ -932,6 +932,15 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
           agents: [],
           agent_namespaces: [],
         });
+      // Two collections, one inside the other, so the Collections page draws its rows.
+      case "/v1/collection.list":
+        return json({
+          collections: [
+            { namespace: "col-handbook", parent: "", personal: false, role: "admin" },
+            { namespace: "col-handbook-oncall", parent: "col-handbook", personal: false, role: "writer" },
+          ],
+          next_cursor: null,
+        });
       case "/v1/admin.users":
         return json({ users: [], platform_admins_configured: [] });
       case "/v1/cost.budget_status":
@@ -1367,6 +1376,13 @@ function browseRowsFixture(n: number): Record<string, unknown>[] {
     join_policy: i % 2 === 0 ? "approval" : "open",
     visibility: "public",
     my_status: "none",
+    // The last row has a guide whose summary is longer than a row's name column.
+    ...(i === n - 1
+      ? {
+          guide_revision: 4,
+          guide_summary: "One runbook per service under runbook/<service>; tag stale marks a superseded one",
+        }
+      : {}),
   }));
 }
 
@@ -1571,6 +1587,7 @@ export const ROUTES = [
   "/admin/activity",
   "/admin/usage",
   "/admin/agents",
+  "/admin/collections",
   "/admin/users",
 ];
 

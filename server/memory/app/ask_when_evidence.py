@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from server.memory.domain.sensitivity import without_credentials
+from server.memory.domain.sensitivity import without_high
 
 log = logging.getLogger(__name__)
 
@@ -226,9 +226,9 @@ async def _recall_turns(kwargs: dict[str, Any]) -> list[DatedTurn]:
         turns.append(
             DatedTurn(day=observed[:10], role=str(getattr(t, "role", "") or ""), content=content)
         )
-    # A turn that reads as a credential never reaches the synthesis prompt. A turn can be
+    # A turn that reads as high never reaches the synthesis prompt. A turn can be
     # as long as the request cap allows, so the check runs in a worker thread.
-    return await asyncio.to_thread(without_credentials, turns, lambda t: t.content)
+    return await asyncio.to_thread(without_high, turns, lambda t: t.content)
 
 
 _CUE_WINDOW_MAX_DAYS = 45

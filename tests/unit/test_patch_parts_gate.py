@@ -102,16 +102,13 @@ async def test_fact_codes_first_follows_the_mode_and_the_probe() -> None:
 
 def test_vector_search_settings_quantized_override() -> None:
     assert "vector_search_use_quantized_codes = 1" in vector_search_settings()
-    off = vector_search_settings(quantized=False, fetch_multiplier=10.0)
-    assert "vector_search_use_quantized_codes" not in off
-    assert "vector_search_index_fetch_multiplier = 10.0" in off
-    on = vector_search_settings(quantized=True, fetch_multiplier=1.0, ef_search=256)
+    assert vector_search_settings(quantized=False, fetch_multiplier=10.0) == ""
+    on = vector_search_settings(quantized=True, fetch_multiplier=1.0)
     assert on == (
-        "SETTINGS hnsw_candidate_list_size_for_search = 256, "
-        "vector_search_index_fetch_multiplier = 1.0, vector_search_use_quantized_codes = 1"
+        "SETTINGS vector_search_index_fetch_multiplier = 1.0, vector_search_use_quantized_codes = 1"
     )
     set_quantized_codes_supported(False)
-    assert "vector_search_use_quantized_codes" not in vector_search_settings(quantized=True)
+    assert vector_search_settings(quantized=True) == ""
 
 
 def _fact_sql(ch: StubCH) -> str:
@@ -138,14 +135,25 @@ async def test_main_leg_carries_the_codes_flag_only_on_a_patch_free_table() -> N
     ch = _CH(5)
     await vector_search(_q(execution_planes=["fact"]), ch=ch)
     tail = _settings_tail(_fact_sql(ch))
-    assert "vector_search_use_quantized_codes" not in tail  # patch parts: the codes-free fragment
-    assert "vector_search_index_fetch_multiplier = 10.0" in tail
-    assert "hnsw_candidate_list_size_for_search = 256" in tail
+    assert "vector_search_use_quantized_codes" not in tail  # patch parts: an exact scan
+    assert "vector_search_index_fetch_multiplier" not in tail
+    assert "query_plan_direct_read_from_text_index = 0" in tail
 
     P.reset()
     ch = _CH(fail=True)
     await vector_search(_q(execution_planes=["fact"]), ch=ch)
     assert "vector_search_use_quantized_codes" not in _settings_tail(_fact_sql(ch))
+
+
+@pytest.mark.asyncio
+async def test_exact_scan_opens_its_own_settings_block_before_the_thread_pin(monkeypatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_search_fact_leg_max_threads", 4)
+    ch = _CH(5)
+    await vector_search(_q(execution_planes=["fact"]), ch=ch)
+    sql = _fact_sql(ch)
+    assert _settings_tail(sql).lstrip().startswith("max_threads = 4,")
 
 
 @pytest.mark.asyncio

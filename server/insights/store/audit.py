@@ -72,6 +72,15 @@ async def list_by_request_id(
     return [_hydrate(r) for r in rows]
 
 
+def _ts_sql(ts: datetime) -> str:
+    """`ts` as an explicit UTC literal rather than a bound param, to dodge
+    clickhouse-connect's naive-datetime TZ binding."""
+    if ts.tzinfo is not None:
+        ts = ts.astimezone(UTC).replace(tzinfo=None)
+    literal = ts.strftime("%Y-%m-%d %H:%M:%S.") + f"{ts.microsecond // 1000:03d}"
+    return f"toDateTime64('{literal}', 3, 'UTC')"
+
+
 async def list_page(
     org: str,
     *,
@@ -79,14 +88,19 @@ async def list_page(
     scope_params: dict[str, Any],
     event_type: str | None = None,
     since: datetime | None = None,
-    before: tuple[datetime, str] | None = None,
+    before: tuple[datetime, str, str | None] | None = None,
+    write: tuple[datetime, str] | None = None,
     limit: int,
     ch: _CHClient | None = None,
 ) -> list[AuditRow]:
     """One page of an org's events, newest first: at most `limit` rows
     inside the caller-visible `scope_where` (built by the handler's
     visibility decision), strictly older than the keyset `before` =
-    (ts, request_id) of the previous page's last row."""
+    (ts, request_id, row_hash) of the previous page's last row. Two rows can share
+    a millisecond and a request id (one write's several audit rows), so the per-row
+    hash breaks the tie; a cursor without the hash (row_hash None) keysets on
+    (ts, request_id), and the handler then never ends a page inside one write.
+    `write` = (ts, request_id) keeps only that one write's rows."""
     ch = ch or _default_client()
     where = scope_where
     params: dict[str, Any] = {**scope_params, "org": org, "lim": int(limit)}
@@ -98,16 +112,20 @@ async def list_page(
         where += " AND ts >= {since:DateTime64(3)}"
         params["since"] = since if since.tzinfo is not None else since.replace(tzinfo=UTC)
     if before is not None:
-        cur_ts, cur_rid = before
-        # Keyset via tuple comparison. ts is an explicit UTC literal rather than
-        # a bound param to dodge clickhouse-connect's naive-datetime TZ binding.
-        if cur_ts.tzinfo is not None:
-            cur_ts = cur_ts.astimezone(UTC).replace(tzinfo=None)
-        ts_literal = cur_ts.strftime("%Y-%m-%d %H:%M:%S.") + f"{cur_ts.microsecond // 1000:03d}"
-        where += (
-            f" AND (ts, request_id) < (toDateTime64('{ts_literal}', 3, 'UTC'), {{c_rid:String}})"
-        )
+        cur_ts, cur_rid, cur_hash = before
+        # Keyset via tuple comparison.
+        if cur_hash is not None:
+            where += (
+                f" AND (ts, request_id, row_hash) < "
+                f"({_ts_sql(cur_ts)}, {{c_rid:String}}, {{c_hash:FixedString(64)}})"
+            )
+            params["c_hash"] = cur_hash
+        else:
+            where += f" AND (ts, request_id) < ({_ts_sql(cur_ts)}, {{c_rid:String}})"
         params["c_rid"] = cur_rid
+    if write is not None:
+        where += f" AND ts = {_ts_sql(write[0])} AND request_id = {{w_rid:String}}"
+        params["w_rid"] = write[1]
     rows = await ch.query_all(
         f"""
         SELECT ts, event_type, org, namespace, actor, subject,
@@ -115,7 +133,7 @@ async def list_page(
         FROM loom.audit_log
         WHERE org = {{org:String}}
               {where}
-        ORDER BY ts DESC, request_id DESC
+        ORDER BY ts DESC, request_id DESC, row_hash DESC
         LIMIT {{lim:UInt32}}
         """,
         params=params,

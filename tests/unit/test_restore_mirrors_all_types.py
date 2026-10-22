@@ -24,9 +24,16 @@ from server.memory.app import restore as restore_mod
 from server.memory.app import stack as _stack_mod
 from server.memory.domain.memory_types import is_searchable_type
 from server.memory.store import EMBEDDING_PERSISTED_COLS, MemoryRow
+from tests.unit.claims_fake import fake_key_locks
 
 _NOW = datetime.now(UTC).replace(tzinfo=None)
 _TYPES = ("episodic", "profile", "semantic")
+
+
+@pytest.fixture(autouse=True)
+def _key_locks(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The Undo holds the key's write lock, a Keeper lease: here over a fake lease table.
+    fake_key_locks(monkeypatch)
 
 
 def _row(memory_type: str, **over: Any) -> MemoryRow:
@@ -139,6 +146,7 @@ def _wire(monkeypatch: pytest.MonkeyPatch, existing: MemoryRow, ch: _CH) -> None
         return None
 
     monkeypatch.setattr("server.observability.audit.emit", _audit)
+    monkeypatch.setattr("server.observability.audit.emit_strict", _audit)
     ch.query_one_result = _query_one_row(existing)
 
 
@@ -297,3 +305,29 @@ def test_the_restore_paths_carry_no_type_guard() -> None:
     src += inspect.getsource(restore_mod._restore_superseded)
     assert "is_searchable_type" not in src
     assert '.get("embedding")' not in src  # no non-empty-vector guard either
+
+
+@pytest.mark.asyncio
+async def test_a_restore_inside_an_erasure_records_who_restored_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.auth.context import set_current_auth
+
+    class _ErasureCH(_CH):
+        async def query_all(self, sql: str, params: Any = None, **kw: Any) -> list[dict[str, Any]]:
+            if "FROM loom.erasure_requests" in sql:
+                return [{"erasure_id": "e1", "scope_type": "namespace", "scope_value": "ns"}]
+            return await super().query_all(sql, params, **kw)
+
+    existing = _row("semantic", tombstoned_at=_NOW - timedelta(days=2))
+    ch = _ErasureCH([])
+    _wire(monkeypatch, existing, ch)
+    set_current_auth(SimpleNamespace(org="ops-org", subject="alice", is_service_account=False))
+    try:
+        assert (await restore_mod.handle_memory_restore(_restore_input())).restored
+    finally:
+        set_current_auth(None)
+    (reversal,) = ch.rows_for("loom.erasure_reversals")
+    assert reversal["restored_by"] == "human:alice"

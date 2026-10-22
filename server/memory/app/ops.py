@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.core.naming import named
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_admin import (
@@ -512,13 +513,14 @@ async def _open_conflict_for_edge(org: str, namespace: str, from_key: str, to_ke
     if str(a.memory_id) == str(b.memory_id):
         return False
     try:
-        await mark_peers_conflicted(
+        # A superseded or retired endpoint is not flagged: no conflict opened then.
+        verdict = await mark_peers_conflicted(
             org=org, new_memory_id=str(a.memory_id), peer_ids=[str(b.memory_id)]
         )
     except Exception as e:  # noqa: BLE001 — the edge is kept
         log.warning("memory.link contradicts: mark_peers_conflicted failed: %s", e)
         return False
-    return True
+    return verdict == "conflict"
 
 
 async def handle_memory_link(input: MemoryLinkInput) -> MemoryLinkOutput:
@@ -656,7 +658,7 @@ async def handle_memory_outcome_run(input: MemoryOutcomeRunInput) -> MemoryOutco
     # Prefer the explicit key set the caller recalled; fall back to the run's
     # recorded keys in the trace log when only a run_id is given.
     keys = [str(k) for k in (getattr(input, "memory_keys", None) or []) if k]
-    if not keys and input.run_id:
+    if not keys and named(input.run_id):
         key_rows = await ch.query_all(
             """
             SELECT DISTINCT arrayJoin(returned_keys) AS memory_key

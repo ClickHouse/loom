@@ -17,6 +17,9 @@ import { sharedMine } from "../lib/sharedReads";
 import { pendingKey } from "../lib/pendingKey";
 import { MembersDialog } from "../flows/MembersDialog";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
+import { GuideDialog } from "../flows/GuideDialog";
+import { isPersonalCollection } from "../lib/namespace";
+import { canEditGuide, roleOnNamespace } from "../lib/namespaceRole";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
 import { RowSkeleton } from "../components/Skeleton";
@@ -90,6 +93,7 @@ export function Browse() {
   // Per-namespace current role so the row can offer "Request upgrade"
   // when the caller is already a member but at a role below admin.
   const [myRole, setMyRole] = useState<Record<string, "viewer" | "writer" | "admin" | "jwt">>({});
+  const [mineRows, setMineRows] = useState<MyNamespaceEntry[] | null>(null);
   const [pending, setPending] = useState<Set<string>>(new Set());
   // Namespaces I can invite to (admin, active), memory ones and code / tracker ones apart.
   const [adminNs, setAdminNs] = useState<MyNamespaceEntry[]>([]);
@@ -99,6 +103,7 @@ export function Browse() {
   const [joinDialog, setJoinDialog] = useState<{ ns: string; row: BrowseEntry } | null>(null);
   const [manageNs, setManageNs] = useState<string | null>(null);
   const [settingsNs, setSettingsNs] = useState<string | null>(null);
+  const [guideNs, setGuideNs] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [repoCount, setRepoCount] = useState(0);
   const setView = useStore((s) => s.setView);
@@ -114,18 +119,19 @@ export function Browse() {
       }),
       // The shared membership read, not a second list_mine
       sharedMine(identity.org).catch(() => [] as MyNamespaceEntry[]),
-    ]).then(([browseRows, mineRows]) => {
+    ]).then(([browseRows, mineRead]) => {
       if (!live()) return;
       setRefreshing(false);
       setError(failed);
       // Code namespaces are surfaced in the Code section, not as joinable memory.
       setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
       setRepoCount(browseRows.filter((r) => r.kind === "code").length);
-      setMine(new Set(mineRows.map((r) => r.namespace)));
-      setMyRole(Object.fromEntries(mineRows.map((r) => [r.namespace, r.role])));
-      setPending(new Set(mineRows.filter((r) => r.pending_role || r.status === "pending").map((r) => r.namespace)));
+      setMineRows(mineRead);
+      setMine(new Set(mineRead.map((r) => r.namespace)));
+      setMyRole(Object.fromEntries(mineRead.map((r) => [r.namespace, r.role])));
+      setPending(new Set(mineRead.filter((r) => r.pending_role || r.status === "pending").map((r) => r.namespace)));
       // Excludes pending-admin requests — until approved I can't act.
-      setAdminNs(mineRows.filter((r) => r.role === "admin" && r.status === "active"));
+      setAdminNs(mineRead.filter((r) => r.role === "admin" && r.status === "active"));
       const map: Record<string, boolean> = {};
       for (const b of browseRows) map[b.namespace] = !!b.requires_approval;
       setRequireMap(map);
@@ -260,6 +266,7 @@ export function Browse() {
     () => ({
       withdraw: (ns) => void handlers.current.withdraw(ns),
       settings: setSettingsNs,
+      guide: setGuideNs,
       join: (row) => setJoinDialog({ ns: row.namespace, row }),
       invite: setManageNs,
       leave: (ns) => void handlers.current.leave(ns),
@@ -395,6 +402,7 @@ export function Browse() {
                   visibility={r.visibility ?? "public"}
                   kind={isSystemKind(r.kind) ? r.kind : undefined}
                   description={r.description}
+                  guideSummary={r.guide_summary}
                   members={r.member_count}
                   standing={standingOf(r.namespace)}
                   role={myRole[r.namespace]}
@@ -456,6 +464,19 @@ export function Browse() {
           namespace={settingsNs}
         />
       )}
+      {guideNs && (
+        <GuideDialog
+          open={true}
+          onOpenChange={(v) => {
+            if (!v) setGuideNs(null);
+          }}
+          org={identity.org}
+          namespace={guideNs}
+          // The Memories header's rule, from the same rows: one answer for one caller.
+          canEdit={canEditGuide(roleOnNamespace(whoami, mineRows, guideNs), guideNs)}
+          onSaved={load}
+        />
+      )}
     </PageContainer>
   );
 }
@@ -469,6 +490,8 @@ type SpaceStanding = "none" | "pending" | "member" | "admin";
 interface SpaceActions {
   withdraw: (ns: string) => void;
   settings: (ns: string) => void;
+  /** The namespace's guide: read it, or edit it as a writer. */
+  guide: (ns: string) => void;
   /** The join dialog: Join, or Request upgrade for a member. */
   join: (row: BrowseEntry) => void;
   invite: (ns: string) => void;
@@ -477,8 +500,10 @@ interface SpaceActions {
 
 /**
  * One space: line 1 the namespace in mono and its visibility, line 2 its
- * description; at the right its member count, the one inline action and the More menu.
- * The name is the row's open button (`data-row-open`), stretched over the row.
+ * description, line 3 its guide's summary when it has one (a link to the guide for a
+ * member, raised above the open button); at the right its member count, the one inline
+ * action and the More menu. The name is the row's open button (`data-row-open`), stretched
+ * over the row.
  * Memoised: two hundred rows of badges, buttons and menus rendered again on every
  * keystroke in the search.
  */
@@ -487,6 +512,7 @@ const SpaceRow = memo(function SpaceRow({
   visibility,
   kind,
   description,
+  guideSummary,
   members,
   standing,
   role,
@@ -498,6 +524,8 @@ const SpaceRow = memo(function SpaceRow({
   visibility: string;
   kind?: string;
   description?: string;
+  /** The one-line summary of the namespace's guide, when it has one. */
+  guideSummary?: string;
   members?: number;
   standing: SpaceStanding;
   role?: string;
@@ -513,9 +541,18 @@ const SpaceRow = memo(function SpaceRow({
   const settings = () => actions.settings(namespace);
   const open = standing === "pending" ? withdraw : standing === "admin" ? settings : join;
   const member = standing === "member" || standing === "admin";
-  /** The More menu: Settings where you manage it, Copy name, Leave where you belong. */
+  // Reading a guide takes a role on the namespace (a public row's visibility widens no
+  // read); a viewer waiting on an upgrade still holds one.
+  const canReadGuide = member || !!role;
+  /** The More menu: Settings where you manage it, Guide where no summary is shown, Copy name,
+   *  Leave where you belong. */
   const menu: RowMenuItem[] = [
     ...(standing === "admin" ? [{ label: "Settings", icon: "gear" as const, onSelect: settings }] : []),
+    // A row whose summary is shown opens the guide from it: one way in, not two. A personal
+    // collection takes no guide, so it offers none.
+    ...(canReadGuide && !guideSummary && !isPersonalCollection(namespace)
+      ? [{ label: "Guide", icon: "info-in-circle" as const, onSelect: () => actions.guide(namespace) }]
+      : []),
     {
       label: "Copy name",
       icon: "copy",
@@ -578,6 +615,25 @@ const SpaceRow = memo(function SpaceRow({
             {kind && <Badge text={sentenceCase(kind)} state="neutral" size="sm" />}
           </div>
           {description && <p className="mt-0.5 truncate text-xs text-text-muted">{description}</p>}
+          {guideSummary &&
+            (canReadGuide ? (
+              // Above the row's stretched open button, so it takes its own click; the link
+              // truncates its own text, so nothing clips its ring.
+              <span className="list-row-control mt-0.5 inline-flex max-w-full min-w-0 align-top">
+                <Link
+                  component="button"
+                  type="button"
+                  size="xs"
+                  className="min-w-0 max-w-full"
+                  data-guide-link=""
+                  onClick={() => actions.guide(namespace)}
+                >
+                  <span className="truncate">Guide: {guideSummary}</span>
+                </Link>
+              </span>
+            ) : (
+              <p className="mt-0.5 truncate text-xs text-text-muted">Guide: {guideSummary}</p>
+            ))}
         </div>
         <div className="list-row-control ml-auto flex shrink-0 items-center gap-2">
           {members !== undefined && (

@@ -30,7 +30,7 @@ Retention is in [Partitioning and TTL](#partitioning-and-ttl).
 | Write-path state             | `memory_extraction_queue`, `memory_projection_failures`, `memory_drops`, `blacklist`, `blacklist_version`, `conflict_allowlist`, `learnings_queue`, `consolidation_runs`, `memory_ask_precedents`                                                                                                      | Deferred extraction, fail-open projections, `blacklist.*`, `conflicts.resolve`, `memory.consolidate`, `memory.ask`     |
 | Knowledge                    | `documents`, `document_blobs` (uploaded originals), `chunks`, `chunk_supersessions`, `chunk_term_freq`                                                                                                                                                                                                 | `knowledge.add`; `chunk_term_freq_mv`                                                                                  |
 | Conversations                | `conversations`, `conversation_threads`, `conversation_embeddings`                                                                                                                                                                                                                                     | `conversation.*`; `conversation_titler`                                                                                |
-| Entity graph                 | `entity_edges`, `entity_degree`, `entity_triples`, `entity_edge_memories`, `entity_triple_memories`, `entity_vectors`, `entity_summaries`, `entity_canonical_map`, `entity_communities`, `operator_edges`                                                                                              | The `memory.set` after-write projection, `entity_extractor`, `entity_communities`; `entity_degree_mv`                  |
+| Entity graph                 | `entity_edges`, `entity_degree`, `entity_triples`, `entity_edge_memories`, `entity_edge_rows`, `entity_triple_memories`, `entity_triple_rows`, `entity_vectors`, `entity_summaries`, `entity_canonical_map`, `entity_communities`, `operator_edges`                                                    | The `memory.set` after-write projection, `entity_extractor`, `entity_communities`; `entity_degree_mv`                  |
 | Code index                   | `code_files`, `code_chunks`, `code_symbols`, `code_edges`, `code_pr_history` and the other `code_*` tables                                                                                                                                                                                             | `code_ingest`, the `code_scip_*` workers, `code_pr_history`, `code_embed_recovery`, `code_summary`, `code_graph_stats` |
 | Tracker                      | `qa_sources`, `qa_item_embeddings`, `qa_link_candidates`, `qa_test_daily`, `qa_rollup_days`, `qa_fail_hours`                                                                                                                                                                                           | `tracker.source.add`, `tracker_embed`, `tracker_links`, `tracker_test_daily`                                           |
 | Runs, tasks, briefs          | `agent_runs`, `agent_turn_usage`, `session_outcomes_by_user`, `procedure_runs`, `tasks`, `task_events`, `task_leases`, `agent_run_claims`, `task_inboxes`, `session_briefs`, `context_blobs` and neighbours                                                                                            | `run.*`, `task.*` / `inbox.*`, `session.brief_*`, `context.offload`, `reflection_distill`                              |
@@ -245,12 +245,16 @@ with `LOOM_TIERING_<TABLE>_WARM_DAYS` plus `LOOM_TIERING_WARM_VOLUME_NAME`. Per-
 A part count that keeps rising almost always means merges are failing. A skip index a
 merge cannot build fails every merge of that table until inserts get `TOO_MANY_PARTS`.
 Loom keeps such indexes out of merges with `exclude_materialize_skip_indexes_on_merge`
-(the text index `content_text` on `chunks`, the vector-index name on `memory_embeddings`):
-inserted parts still build the index, merged parts do without it. The `clickhouse_parts`
-check of `ops.health` (`_clickhouse_parts_check`) reads `system.part_log` for failed
-`MergeParts` events in the last quarter hour and reports the exception and this repair.
-For the same reason memory-content tables carry no rows TTL. The runbook is in
+(the text index `content_text` on `chunks`): inserted parts still build the index, merged
+parts do without it. The `clickhouse_parts` check of `ops.health`
+(`_clickhouse_parts_check`) reads `system.part_log` for failed `MergeParts` events in the
+last quarter hour and reports the exception and this repair. For the same reason
+memory-content tables carry no rows TTL. The runbook is in
 [troubleshooting](../operations/troubleshooting.md).
+
+`memory_embeddings` also names `embedding_hnsw_idx` in that setting, an index no migration
+declares. The setting does nothing unless an operator adds a vector index of that name by
+hand, and then keeps merges from rebuilding its graph, so no migration resets it.
 
 ## The write → derive loop
 
@@ -354,10 +358,9 @@ queue.
   bind as `Array(Float32)`. A memory carries up to two vectors (value and key), so at 3072
   dimensions up to 12 KiB of vectors.
 - **No table has a vector-similarity (HNSW) index.** Search is an exact `cosineDistance`
-  scan over the rows the identity predicates leave. Every read filters on
-  `(org, namespace)`, so ClickHouse pre-filters and almost never opens the index, while
-  every insert and merge would pay to build it.
-  Read latency therefore grows with namespace size, not corpus size.
+  scan over the rows the identity predicates leave. The bytes a read scans therefore
+  grow with namespace size, not corpus size.
+  [Why there is no vector index](#why-there-is-no-vector-index) has the measurements.
 - **Quantized codes.** On ClickHouse 26.8+, a fresh install creates the vector columns of
   `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`) with `CODEC(Quantized('rabitq', <dim>, 0))`
   whenever the server supports it. The runner rewrites the `CREATE` at apply time. An
@@ -387,6 +390,82 @@ that is a bare distance call. `ORDER BY 1 - cosineDistance(…) DESC`, a second 
 queries order by a bare distance alias and compute similarity in Python. The chunk leg
 reads candidates with no `FINAL` or `JOIN`, then looks them up by primary key under
 `FINAL`. `tests/unit/test_vector_search_query_shape.py` guards the shape.
+
+### Why there is no vector index
+
+A `vector_similarity` index is one HNSW graph per part. It does not fit Loom's reads, for
+four reasons. Unless a paragraph says otherwise, the figures come from ClickHouse 26.9
+with 1M synthetic 1536-dimension vectors in tables shaped like `memory_embeddings` (its
+sort key, `ReplacingMergeTree`, `index_granularity = 256`, one merged part per
+partition), an index built as
+`vector_similarity('hnsw', 'cosineDistance', 1536, 'bf16', 16, 128)`, and 30 queries per
+filter; the command is in `bench/vector_index_vs_exact.py`.
+
+**A tenant read never uses it.** ClickHouse searches the graph only when the primary-key
+condition keeps every granule of the part. Every Loom vector read filters on
+`(org, namespace)`, the prefix of every vector table's sort key. In every vector table
+but `code_chunks` a part holds many tenants (`memory_embeddings` is partitioned by
+month), so the read takes the tenant's granules and sorts them exactly: no index search
+runs (`ProfileEvents['USearchSearchCount'] = 0`) and the read costs what the plain table
+costs.
+MiB read and p50 per query, every read under `FINAL`:
+
+| Tenant share | Rows | Exact scan        | With the index    | Codes-first, LIMIT 60 |
+| ------------ | ---- | ----------------- | ----------------- | --------------------- |
+| 50%          | 500k | 1,478 MiB, 141 ms | 1,478 MiB, 140 ms | 134 MiB, 55 ms        |
+| 10%          | 100k | 295 MiB, 491 ms   | 295 MiB, 476 ms   | 49 MiB, 44 ms         |
+| 1%           | 10k  | 30 MiB, 57 ms     | 30 MiB, 55 ms     | 21 MiB, 18 ms         |
+| 0.1%         | 1k   | 3.2 MiB, 12 ms    | 3.2 MiB, 13 ms    | 3.4 MiB, 9 ms         |
+
+Compare the bytes: the 10% tenant's read was slower than the 50% tenant's in both runs,
+so the milliseconds do not rank by size. The `vector_search_filter_strategy`,
+`vector_search_index_fetch_multiplier` and `hnsw_candidate_list_size_for_search`
+settings change nothing here: the index is never opened. The codes-first column reads
+the fact leg's 60 rows at codes multiplier 1 (the leg's default is 3); recall@10 of those
+60 rows against the exact top 10 was 0.95-1.00.
+
+**Where it does run, a selective filter loses recall.** With a predicate outside the sort
+key the graph runs first and the predicate drops its candidates afterwards. recall@10
+against the exact answer, by `vector_search_index_fetch_multiplier`:
+
+| Rows the filter admits | x1    | x10   | x100  |
+| ---------------------- | ----- | ----- | ----- |
+| all                    | 0.783 | 0.783 | 0.783 |
+| 10%                    | 0.200 | 0.820 | 0.933 |
+| 1%                     | 0.080 | 0.163 | 0.723 |
+
+The unfiltered row is this graph's own recall on this data at
+`hnsw_candidate_list_size_for_search = 256` (0.847 at 1024). A partition per tenant
+makes the index run for tenant reads: the 50% tenant's read under `FINAL` then takes
+76 ms instead of 141 ms, at recall@10 0.757, and the 10% and 1% tenants get 0.747 and
+0.843. `code_chunks` is partitioned by `(org, namespace)`, so an index there would run
+and read this way; the recall loss and the stale versions below are what rule it out.
+For `memory_embeddings`, a partition per namespace is not a layout a table with
+thousands of namespaces can hold.
+
+**Under `FINAL` it serves superseded versions.** The graph returns rows of every version
+before `FINAL` collapses them, so a key's newest version or tombstone loses to an older
+row. `bench/ann_final_staleness.py` (30k keys, 3 versions each, 18 parts, 128
+dimensions, 5 queries) on 26.9: recall@10 0.38 with 6.2 of 10 rows stale, against 1.00
+and none for the `prefilter` arm, which leaves the index unused. Its `reread` arm, which
+takes candidate keys from the graph and reads them again under `FINAL` with skip indexes
+off, removes the stale rows (recall 0.90-0.98) and takes twice as long as `prefilter`
+(37-39 ms against 20 ms), so the index then costs more than the scan it replaces.
+
+**It doubles storage and slows writes.** The graph took 2.27 GiB beside 2.25 GiB of table
+data. Copying the 1M rows into the indexed table took 135-166 s over two runs, against
+17-51 s into a coded table without an index. With
+`exclude_materialize_skip_indexes_on_merge` naming the index, a merged part carries no
+graph at all; without it every merge rebuilds the graph. A graph also has to stay
+in the vector similarity index cache, or a read loads it from disk. On this server
+(`vector_similarity_index_cache_size` 5 GiB, `SLRU`), once the partitioned table's
+graphs had been loaded, all 30 reads of the single-part graph missed the cache
+(`VectorSimilarityIndexCacheMisses`), reloaded it and took 4.8 s instead of 9 ms.
+
+The codes-first read is what cuts a large namespace's scan instead: at 100k rows and
+more it reads 6-11x fewer bytes than the exact scan, inside the tenant's granules and
+under `FINAL`. An index becomes worth revisiting when ClickHouse searches it within the
+primary-key ranges a read selects and resolves versions under `FINAL`.
 
 ## Text indexes and lexical search
 
@@ -578,10 +657,12 @@ self-hosted ReplicatedMergeTree it waits only for inserts written with `insert_q
 and `insert_quorum_parallel = 0`, which ClickHouse refuses for async inserts (and which
 serializes every insert into a table), so a read on one replica can still miss a row
 another replica acknowledged a moment ago. The guarantees built on it, the sign-in attempt
-recounts and the single signing-key retire among them, hold exactly on Cloud and a
-single server. A self-hosted replicated cluster must send every Loom process to one
-replica; `loom doctor`'s `replica_consistency` line warns while `loom.auth_attempts` or
-`loom.signing_keys` has more than one.
+recounts, the single signing-key retire, `task.create`'s idempotency key (a retry finds
+the task the first call stored) and the single `code.coverage.ready` event among them,
+hold exactly on Cloud and a single server. A self-hosted replicated cluster must send
+every Loom process to one replica; `loom doctor`'s `replica_consistency` line warns while
+`loom.auth_attempts`, `loom.signing_keys`, `loom.tasks` or `loom.task_events` has more
+than one.
 
 **Keeper reads.** The Keeper keys that carry state between replicas (the namespace write
 keys, graph projections and writes, claims and leases) are read through each replica's own

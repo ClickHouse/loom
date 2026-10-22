@@ -1,8 +1,8 @@
 """A memory search is a function of its inputs.
 
 Every ranked list of hits sorts by (−rank_score, distance, memory_key); the
-non-ANN SQL legs carry a key tie-breaker after their score; the two ANN
-legs keep the bare `ORDER BY distance` shape the vector index requires and
+non-vector SQL legs carry a key tie-breaker after their score; the two vector
+legs keep the bare `ORDER BY distance` shape the codes-first read requires and
 leave determinism to the Python sort over their over-fetched candidates.
 """
 
@@ -58,7 +58,9 @@ async def test_lexical_union_and_trace_legs_carry_a_key_tie_breaker() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chunk_stage_two_carries_a_tie_breaker_and_stage_one_stays_index_shaped() -> None:
+async def test_chunk_stage_two_carries_a_tie_breaker_and_stage_one_stays_codes_first_shaped() -> (
+    None
+):
     from server.memory.app.retrieval.chunks import _search_memory_chunks
 
     ch = StubCH()
@@ -70,12 +72,12 @@ async def test_chunk_stage_two_carries_a_tie_breaker_and_stage_one_stays_index_s
     sql2, _ = ch.query_all_calls[1]
     assert (
         "ORDER BY distance ASC\n" in sql1 and "session_id ASC" not in sql1
-    )  # bare: the index shape
+    )  # bare: the codes-first shape
     assert "ORDER BY distance ASC, c.session_id ASC, c.chunk_index ASC" in sql2  # PK re-read: free
 
 
 @pytest.mark.asyncio
-async def test_main_ann_leg_keeps_the_bare_order(
+async def test_main_vector_leg_keeps_the_bare_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.memory.app.retrieval import vector_search
@@ -99,9 +101,9 @@ async def test_main_ann_leg_keeps_the_bare_order(
     )
     await vector_search(_q(scope="private", agent="a", execution_planes=["fact"]), ch=ch)
     sqls = [s for s, _ in ch.query_all_calls]
-    ann = [s for s in sqls if "hnsw_candidate_list_size_for_search" in s]
-    assert ann and "ORDER BY value_distance ASC\n" in ann[0]
-    assert "value_distance ASC, e.memory_key" not in ann[0]  # the index shape is not negotiable
+    main = [s for s in sqls if "{internal_limit:UInt32}" in s]
+    assert main and "ORDER BY value_distance ASC\n" in main[0]
+    assert "value_distance ASC, e.memory_key" not in main[0]  # the codes-first shape
 
 
 def test_python_fusion_sorts_use_the_shared_key() -> None:

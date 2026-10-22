@@ -114,7 +114,7 @@ def test_decisive_read_fires_only_for_bug_questions_and_only_when_on(monkeypatch
         recent=0,
     )
     marker_calls = [c for c in repo.calls if c["fn"] == "chunks" and c.get("markers")]
-    # A chunk lookup is asked for spare rows, for the chunks held back as credentials.
+    # A chunk lookup is asked for spare rows, for the chunks held back for reading as high.
     assert len(marker_calls) == 1 and marker_calls[0]["limit"] == 6 + _HELD_MARGIN
     assert "root cause" in marker_calls[0]["markers"]
     assert any(k.memory_key == f"chunk:s:m_{6 + _HELD_MARGIN}" for k in out)

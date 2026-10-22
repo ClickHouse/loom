@@ -44,10 +44,10 @@ flowchart LR
    projects entities.
 
 The conversation is also kept as verbatim chunks, which search returns as `chunk` hits. A
-chunk or digest whose text reads as a credential (a pasted API key, an access key id, a
-`password=` assignment) is stored as written but never embedded, so search and `memory.ask`
-never serve it; `memory.get` on its `chunk:` key does, with a `memory.sensitive_read` audit
-row ([sensitivity](../../architecture/security.md#sensitivity)).
+chunk or digest whose text reads as high (a pasted API key, a `password=` assignment,
+a card number, an SSN or a stated PIN) is stored as written but never embedded, so search
+and `memory.ask` never serve it; `memory.get` on its `chunk:` key does, with a
+`memory.sensitive_read` audit row ([sensitivity](../../architecture/security.md#sensitivity)).
 
 `pipeline_steps` reorders or skips steps, or names an in-process step an operator
 registered (at most 16; an HTTP `hook.*` step is refused). See the
@@ -122,7 +122,7 @@ request's `(org, namespace, agent)`:
   it, else that assistant turn (up to 400). A rule whose `source_message_indices` name no
   assistant turn is not something the assistant said: it is never filed, and the drop is
   counted in `loom.memory_drops` (stage `learnings.file`, reason `no_assistant_turn`).
-  A rule that reads as a credential is never filed either, and the drop is counted
+  A rule that reads as high is never filed either, and the drop is counted
   under reason `sensitive`; nor is one that matches a blacklist pattern. A quote that
   does either is stored blank. The supporter row is written first, then the candidate
   row again, at version 1, with every new supporter. So an erasure that deletes a

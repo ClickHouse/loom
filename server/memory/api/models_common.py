@@ -11,7 +11,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from server.core.naming import SENTINEL
+from server.core.naming import SENTINEL, named
 
 # Open string at the wire so operators can register custom taxonomies via
 # tag_registry. Core four (semantic/procedural/preference = searchable+embedded,
@@ -41,8 +41,8 @@ def run_next_hint(run_id: str | None) -> str:
     tokens). Names the exact op and field so the agent can act without
     reading a description: the `used` signal only exists if it is reported.
     """
-    rid = (run_id or "").strip()
-    if not rid or rid == SENTINEL:
+    rid = named((run_id or "").strip())
+    if rid is None:
         return ""
     return (
         f"run_id={rid}: when you rely on a result, keep its memory_key and pass "
@@ -90,6 +90,7 @@ def set_next_hint(
     peers: list[MemorySetPeer],
     *,
     repeated_merge: bool = False,
+    relations_unlinked: bool = False,
 ) -> str:
     """The `next` nudge on a write response: the same shape as
     `run_next_hint` — the exact op and field the agent should reach for, or
@@ -99,7 +100,9 @@ def set_next_hint(
     keyed by that peer's key; a third copy of the fact would not settle it.
     A `merge` the store has seen before (the row was already reinforced) names
     `memory.pin`: the fact keeps arriving, so the agent may want it to outrank
-    its neighbours. A first merge, a duplicate, a clear write: empty.
+    its neighbours. A merge into another writer's row says the write's `relations`
+    were not linked (`relations_unlinked`). A first merge, a duplicate, a clear write:
+    empty.
     """
     if verdict == "conflict" and peers:
         p = peers[0]
@@ -116,19 +119,17 @@ def set_next_hint(
             f"Revise it explicitly with memory.update(memory_key={p.memory_key!r}, value=...) "
             "or unpin it first; a plain memory.set will answer 409."
         )
-    if verdict == "pending":
-        # The row is in; the judge runs after this call.
-        return (
-            "verdict=pending: written; the conflict judge settles after this call. "
-            "memory.get(memory_key=<this key>) shows the settled status "
-            "(active | conflicted | duplicate); await_verdict=true waits inline."
-        )
-    if verdict == "merge" and repeated_merge and peers:
+    if verdict != "merge":
+        return ""
+    hints = []
+    if relations_unlinked:
+        hints.append("relations not linked: this merged into a row that is not yours.")
+    if repeated_merge and peers:
         p = peers[0]
-        return (
-            f"verdict=merge: loom already holds this fact as {p.memory_key!r} and has now "
+        hints.append(
+            f"loom already holds this fact as {p.memory_key!r} and has now "
             "heard it more than once; nothing was written. If it should outrank its "
             f"neighbours, memory.pin(memory_key={p.memory_key!r}, value=...) makes it a "
             "write-time invariant."
         )
-    return ""
+    return "verdict=merge: " + " ".join(hints) if hints else ""

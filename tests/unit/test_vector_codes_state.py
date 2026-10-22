@@ -93,13 +93,8 @@ def test_plain_column_gets_no_flag_and_coded_one_does() -> None:
 def test_a_patched_table_gets_no_flag_until_its_patches_merge_away() -> None:
     vector_codes_state.set_coded({"loom.chunks.embedding"})
     patch_parts.set_reading(1, "loom.chunks")
-    frag = search_sql.vector_search_settings(table="loom.chunks")
-    assert _FLAG not in frag
-    # without the flag the multiplier is the (inert) HNSW one, not the codes x3
-    assert (
-        f"vector_search_index_fetch_multiplier = {float(settings.vector_search_index_fetch_multiplier)}"
-        in frag
-    )
+    # without the flag the read is a plain exact scan and carries no settings
+    assert search_sql.vector_search_settings(table="loom.chunks") == ""
     patch_parts.set_reading(0, "loom.chunks")
     assert _FLAG in search_sql.vector_search_settings(table="loom.chunks")
     # a failed patch probe (None) is unknown, not "patched"

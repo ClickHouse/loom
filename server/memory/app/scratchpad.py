@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from server.core.naming import SENTINEL
+from server.core.naming import SENTINEL, named
 
 TRUNCATED_MARK = "\n(truncated)"
 
@@ -41,8 +41,7 @@ class ScratchpadBlocks:
 
 
 def _real(value: Any) -> str:
-    v = str(value or "").strip()
-    return "" if v in ("", SENTINEL, "*") else v
+    return named(str(value or "").strip(), wildcard=True) or ""
 
 
 def render(blocks: list[dict[str, Any]], *, max_chars: int) -> ScratchpadBlocks:

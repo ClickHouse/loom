@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import Counter
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
+from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.vectors import codes_state
@@ -28,28 +30,45 @@ from server.memory.app.bulk_rows import (
     _bulk_build_rows,
     _bulk_embed_rows,
     _BulkWriteState,
+    copy_restated_verdicts,
+    drop_built_rows,
+    land_restated_merges,
+    settle_batch_rows,
 )
-from server.memory.app.bulk_verdicts import BulkVerdictPlan, apply_bulk_verdicts
-from server.memory.app.entity_projections import (
-    _write_derived_facts,
+from server.memory.app.bulk_verdicts import (
+    BulkVerdictPlan,
+    apply_bulk_verdicts,
 )
+from server.memory.app.edge_links import drop_undeclared_edges_beside, owes_undeclared_drop
+from server.memory.app.edge_repair import EdgeClose, end_overtaken_edges, record_edges_closes
+from server.memory.app.graph_holders import edge_holders
 from server.memory.app.high_fence import fence_high
 from server.memory.app.projection_errors import (
     bulk_projection_payload,
     bulk_source_resource_id,
+    failed_projection,
     record_input_projection_failure,
+    restated_repair_payload,
 )
+from server.memory.app.projection_failures import FOLLOW_ROWS
 from server.memory.app.projections import (
+    edge_nodes,
+    value_sha256,
     write_entity_edges,
     write_entity_triples,
     write_entity_vectors,
 )
 from server.memory.app.provenance import writer_actor
+from server.memory.app.set_commit import set_next
+from server.memory.app.set_entities import declared_entities
+from server.memory.app.triple_projections import reconcile_row_facts, write_derived_facts
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
+from server.memory.domain.conflicts import kept_versions
 from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.webhook_events import EventType
 
 if TYPE_CHECKING:
+    from server.memory.app.auto_resolution import Follow
     from server.memory.app.search.clock import StageClock
 
 log = logging.getLogger(__name__)
@@ -193,7 +212,7 @@ async def _bulk_resolve_entities(ch: Any, input: MemoryBulkSetInput) -> dict[str
 
 
 def _bulk_log_skips(state: _BulkWriteState) -> None:
-    """Phase 7: one log line per kind of entry the batch did not write."""
+    """Phase 8a, after the verdicts: one log line per kind of entry the batch did not write."""
     if state.skipped_unchanged:
         log.info(
             "bulk_set: re-ingest skip-gate skipped %d unchanged entr%s",
@@ -203,8 +222,8 @@ def _bulk_log_skips(state: _BulkWriteState) -> None:
     if state.skipped_blacklisted:
         log.warning(
             "bulk_set: Refuse dropped %d blacklisted entr%s",
-            state.skipped_blacklisted,
-            "y" if state.skipped_blacklisted == 1 else "ies",
+            len(state.skipped_blacklisted),
+            "y" if len(state.skipped_blacklisted) == 1 else "ies",
         )
     if state.skipped_pinned:
         log.warning(
@@ -238,12 +257,75 @@ async def _bulk_verdicts(
         input, state.memory_rows, state.entry_metas, state.pending, value_vectors
     )
     clock.mark("verdicts")
+    plan = _apply_verdicts(state, emb_idx_of, verdicts)
+    state.key_of = {
+        str(r.get("memory_id") or ""): str(r.get("memory_key") or "") for r in state.memory_rows
+    }
+    return plan
+
+
+def _apply_verdicts(
+    state: _BulkWriteState, emb_idx_of: list[int], verdicts: dict[int, Any]
+) -> BulkVerdictPlan:
+    """Settle which batch rows land now that the verdicts are known (a row an earlier
+    entry's landed pin refuses, or one its key already holds, is dropped), then fold the
+    verdicts into the rows that are left."""
+    replay = settle_batch_rows(state, verdicts)
+    emb_idx_of, verdicts = drop_built_rows(state, emb_idx_of, verdicts, replay.drop)
+    # Verdicts are keyed by row; skipped entries have results but no row.
+    row_results = [state.results[i] for i in state.row_results]
     plan = apply_bulk_verdicts(
-        state.memory_rows, state.embedding_rows, emb_idx_of, state.results, verdicts
+        state.memory_rows,
+        state.embedding_rows,
+        emb_idx_of,
+        row_results,
+        verdicts,
+        stale_rows=replay.stale,
+        landed_rows=replay.landed,
     )
+    land_restated_merges(state, plan, replay, verdicts)
+    copy_restated_verdicts(state, plan, replay.copies)
     state.memory_rows = plan.memory_rows
     state.embedding_rows = plan.embedding_rows
     return plan
+
+
+async def _bulk_mark_same_key(ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState) -> None:
+    """Phase 8b: with the conflict resolver on, a row is owed a judgement when an
+    earlier row of the batch of its type sits at the resolver floor (the verdicts
+    never compare siblings), or when another session of the same subject holds its
+    key live (outside `newest_wins`, which retires the older row itself after the
+    insert; `keys_held_elsewhere`). Not under `append_only`. Fail-open."""
+    from server.memory.app.conflicts import namespace_conflict_policy
+    from server.memory.app.key_supersession import keys_held_elsewhere
+    from server.memory.domain.conflict_resolution import later_close_siblings
+    from server.memory.store.conflict_resolver import OWED_MARK
+    from server.settings import settings
+
+    if not settings.memory_conflict_resolver_enabled or not state.embedding_rows:
+        return
+    try:
+        policy = await namespace_conflict_policy(input.org, input.namespace, ch=ch)
+        if policy == "append_only":
+            return
+        rows = state.embedding_rows
+        for i in later_close_siblings(
+            [list(r.get("embedding") or []) for r in rows],
+            [str(r.get("memory_type") or "") for r in rows],
+            float(settings.memory_conflict_resolver_min_similarity),
+        ):
+            rows[i]["conflict_checked_at"] = OWED_MARK
+        if policy == "newest_wins":
+            return
+        held = await keys_held_elsewhere(
+            org=input.org, namespace=input.namespace, memory_rows=state.memory_rows, ch=ch
+        )
+    except Exception as e:  # noqa: BLE001 — the rows land unmarked; the write stands
+        log.warning("bulk_set: same-key mark skipped (non-fatal): %s", e)
+        return
+    for row in state.embedding_rows:
+        if str(row.get("memory_key") or "") in held:
+            row["conflict_checked_at"] = OWED_MARK
 
 
 async def _bulk_intra_batch_pairs(
@@ -263,20 +345,24 @@ async def _bulk_intra_batch_pairs(
             from server.memory.app.conflicts import namespace_conflict_policy
 
             if await namespace_conflict_policy(input.org, input.namespace, ch=ch) == "newest_wins":
-                from datetime import UTC as _UTC
-                from datetime import datetime as _dt
-
                 from server.memory.domain.conflicts import (
                     intra_batch_supersessions,
                     stamp_intra_batch_supersessions,
                 )
 
-                _ib = intra_batch_supersessions(
-                    [str(r.get("value") or "") for r in state.memory_rows],
-                    [str(r.get("memory_type") or "") for r in state.memory_rows],
-                )
+                # Only versions FINAL keeps pair: one the batch replaced says nothing now.
+                rows = state.memory_rows
+                kept = {id(r) for r in kept_versions(rows).values()}
+                _ib = [
+                    (i, j)
+                    for i, j in intra_batch_supersessions(
+                        [str(r.get("value") or "") for r in rows],
+                        [str(r.get("memory_type") or "") for r in rows],
+                    )
+                    if id(rows[i]) in kept and id(rows[j]) in kept
+                ]
                 _intra_pairs = stamp_intra_batch_supersessions(
-                    state.memory_rows, state.embedding_rows, _ib, _dt.now(_UTC).replace(tzinfo=None)
+                    state.memory_rows, state.embedding_rows, _ib, naive_utc_now()
                 )
                 if _intra_pairs:
                     log.info(
@@ -287,6 +373,25 @@ async def _bulk_intra_batch_pairs(
         except Exception as e:  # noqa: BLE001 — the rows still land; the pair goes to review
             log.warning("bulk_set: intra-batch supersession skipped (non-fatal): %s", e)
     return _intra_pairs
+
+
+def _settle_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
+    """Bring each result and the plan's lists in line with the marks that landed: a
+    key left without a conflict mark or refine answers `clear`."""
+    key_of = state.key_of
+    still_marked = {key_of.get(n, "") for n, _p in plan.conflict_marks}
+    still_refined = {key_of.get(r[0], "") for r in plan.refines}
+    unmarked = {k for k in plan.conflicted if k not in still_marked}
+    unrefined = {k for k in plan.refined if k not in still_refined}
+    plan.conflicted = [k for k in plan.conflicted if k not in unmarked]
+    plan.refined = [k for k in plan.refined if k not in unrefined]
+    for res in state.results:
+        cleared = (res.conflict_verdict == "conflict" and res.memory_key in unmarked) or (
+            res.conflict_verdict == "refines" and res.memory_key in unrefined
+        )
+        if cleared:
+            res.conflict_verdict = "clear"
+            res.next = set_next(res.conflict_verdict, res.peers)
 
 
 async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
@@ -345,14 +450,21 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         await _bulk_announce(state)  # the rows are in, whatever failed after them
 
 
-def _winners(state: _BulkWriteState) -> dict[str, dict[str, Any]]:
-    """memory_key -> the batch's highest-version row of it."""
-    winners: dict[str, dict[str, Any]] = {}
-    for r in state.memory_rows:
-        key = str(r.get("memory_key"))
-        if key not in winners or int(r["version"]) >= int(winners[key]["version"]):
-            winners[key] = r
-    return winners
+async def _drop_undeclared_of_rows_made_high(
+    input: MemoryBulkSetInput, state: _BulkWriteState
+) -> None:
+    """Each key the batch wrote 'high' over a row it already held: what its text gave the
+    graph goes, after the response; the edges of the entities its row names stay."""
+    versions: dict[str, int] = {}
+    for key, row in kept_versions(state.memory_rows).items():
+        if str(row.get("sensitivity") or "") != "high" or key not in state.existing_rows:
+            continue
+        declared = declared_entities(row.get("entities"))
+        if owes_undeclared_drop(state.existing_rows[key], declared):
+            versions[str(row["memory_id"])] = int(row["version"])
+    # One intent and one drop for the whole batch: a row each would cost a committed
+    # insert per row before the response.
+    await drop_undeclared_edges_beside(input, versions, op="memory.bulk_set")
 
 
 def _high_winners(state: _BulkWriteState) -> list[tuple[Any, int]]:
@@ -362,7 +474,7 @@ def _high_winners(state: _BulkWriteState) -> list[tuple[Any, int]]:
 
     return [
         (memory_repo.embedding_key(r), int(r["version"]))
-        for r in _winners(state).values()
+        for r in kept_versions(state.memory_rows).values()
         if str(r.get("sensitivity") or "") == "high"
     ]
 
@@ -372,7 +484,7 @@ def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
     highest version in the batch) lands unembedded and may have a live vector: the
     batch embedded an earlier entry of it, the replaced version was embedded, or the
     lookup failed and nobody knows."""
-    winners = _winners(state)
+    winners = kept_versions(state.memory_rows)
     batch_embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
     out: dict[str, tuple[Any, int]] = {}
     for key, r in winners.items():
@@ -389,31 +501,41 @@ def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
 
 
 async def _bulk_post_insert_links(
-    ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState
+    ch: Any,
+    input: MemoryBulkSetInput,
+    state: _BulkWriteState,
+    same_key_pairs: list[Follow],
 ) -> list[Any]:
-    """Phase 11, after the insert so the new ids exist: same-key supersession,
-    then value-update linking; returns the value-update links the triple
-    plane follows."""
+    """Phase 11, after the insert so the new ids exist: same-key supersession (its pairs
+    into `same_key_pairs`), then value-update linking; returns the value-update links
+    the triple plane follows."""
     # Same-key supersession: under `newest_wins` the rows just written retire every older
     # live row sharing their key, from any session. After the insert so the new ids are
     # visible; fail-open.
-    _n_key_superseded = 0
     if state.memory_rows:
         from server.memory.app.key_supersession import supersede_same_key_rows
 
-        _n_key_superseded = await supersede_same_key_rows(
+        await supersede_same_key_rows(
             org=input.org,
             namespace=input.namespace,
             new_rows=state.memory_rows,
             ch=ch,
+            follows=same_key_pairs,
+            agent=input.agent,
         )
 
     # Value-update supersession (memory.app.value_updates). Runs after the
     # insert so the new row's id exists for the cross-link; fail-open; off by
-    # default. Only rows this batch actually wrote (memory_rows) are checked.
+    # default. Only rows this batch actually wrote (memory_rows) and left live are checked:
+    # a row that landed superseded must not retire anything behind itself.
     _n_value_links = 0
     _value_links: list[Any] = []
-    if state.memory_rows and value_updates_enabled(input.detect_updates):
+    _live_rows = [
+        r
+        for r in kept_versions(state.memory_rows).values()
+        if str(r.get("status") or "") != "superseded"
+    ]
+    if _live_rows and value_updates_enabled(input.detect_updates):
         try:
             from server.memory.app.value_updates import link_value_updates
             from server.settings import settings
@@ -421,7 +543,8 @@ async def _bulk_post_insert_links(
             _report = await link_value_updates(
                 org=input.org,
                 namespace=input.namespace,
-                rows=state.memory_rows,
+                rows=_live_rows,
+                agent=input.agent,
                 embeddings_by_key={
                     str(e.get("memory_key") or ""): list(e.get("embedding") or [])
                     for e in state.embedding_rows
@@ -430,11 +553,43 @@ async def _bulk_post_insert_links(
                 ch=ch,
             )
             _n_value_links = len(_report.links)
-            _value_links = list(_report.links)
+            _value_links = list(_report.follow_links)
         except Exception as e:  # noqa: BLE001 — never block an ingest
             log.warning("bulk_set: value-update linking failed (non-fatal): %s", e)
     last_value_updates_linked.set(_n_value_links)
     return _value_links
+
+
+async def _record_intra_batch_retirements(
+    input: MemoryBulkSetInput, state: _BulkWriteState, pairs: list[tuple[str, str]]
+) -> None:
+    """After the insert: one `memory.auto_supersede` row for the earlier rows of the
+    batch's templated pairs, which `newest_wins` landed superseded."""
+    if not pairs:
+        return
+    from server.memory.app.auto_resolution import (
+        NEWEST_WINS_CONTRADICTION,
+        record_or_owe,
+    )
+
+    # A key sent twice is two versions of one row, under one id: only a kept
+    # version that landed superseded retired its row.
+    kept = kept_versions(state.memory_rows)
+    # The kept version names the row it retired behind: one id can be the older row of
+    # two pairs.
+    older = {o for o, _n in pairs}
+    retired = [
+        {**r, "superseded_by_key": state.key_of.get(str(r.get("superseded_by") or ""))}
+        for r in kept.values()
+        if str(r.get("memory_id") or "") in older and r.get("status") == "superseded"
+    ]
+    await record_or_owe(
+        org=input.org,
+        namespace=input.namespace,
+        retired=retired,
+        reason=NEWEST_WINS_CONTRADICTION,
+        agent=input.agent,
+    )
 
 
 async def _bulk_settle_verdicts(
@@ -446,15 +601,29 @@ async def _bulk_settle_verdicts(
     if plan.conflict_marks:
         from server.memory.app.conflicts import mark_peers_conflicted
 
+        clear: set[str] = set()
         for new_id, peer_ids in plan.conflict_marks:
             try:
-                await mark_peers_conflicted(org=input.org, new_memory_id=new_id, peer_ids=peer_ids)
+                landed = await mark_peers_conflicted(
+                    org=input.org, new_memory_id=new_id, peer_ids=peer_ids
+                )
             except Exception as e:  # noqa: BLE001 — the rows are in; the link is best-effort
                 log.warning("bulk_set: mark_peers_conflicted failed for %s: %s", new_id, e)
+            else:
+                if landed != "conflict":
+                    clear.add(new_id)
+        if clear:
+            # Nothing was flagged (every peer retired, or the row moved on since the
+            # verdict): the row stays active, unflagged, as memory.set leaves it.
+            plan.conflict_marks = [(n, p) for n, p in plan.conflict_marks if n not in clear]
+            _settle_results(state, plan)
     if plan.refines:
+        from server.memory.app.auto_resolution import record_or_owe
         from server.memory.app.conflicts import apply_refines
 
-        for new_id, new_key, refined, relation, new_value in plan.refines:
+        # One record per reason for the whole write, not one per verdict.
+        refined_out: dict[str, list[dict[str, Any]]] = {}
+        for new_id, new_key, refined in plan.refines:
             try:
                 await apply_refines(
                     org=input.org,
@@ -463,17 +632,35 @@ async def _bulk_settle_verdicts(
                     new_memory_key=new_key,
                     refined_peers=refined,
                     ch=ch,
-                    relation=relation,
-                    new_value=new_value,
+                    record_into=refined_out,
                 )
             except Exception as e:  # noqa: BLE001 — the write stands
                 log.warning("bulk_set: apply_refines failed for %s: %s", new_id, e)
-    from server.memory.store.usage import record_usage_event as _record_usage_event
+        for reason, retired in refined_out.items():
+            await record_or_owe(
+                org=input.org,
+                namespace=input.namespace,
+                retired=retired,
+                reason=reason,
+                agent=input.agent,
+            )
+    # Merges and identity duplicates reinforce the row that already holds the fact. A
+    # restatement is the same fact said again under the same key: the usage fold turns the
+    # evidence event into memory_embeddings.reinforcement_count, the search-side boost; the
+    # row itself is not rewritten or re-embedded.
+    await _record_evidence(input, plan.reinforce_ids, "auto_reinforce bump")
+    await _record_evidence(input, state.identity_dup_ids, "identity-dedup reinforcement")
+    await _record_evidence(input, state.restated_ids, "restatement reinforcement")
 
-    for existing_id in plan.reinforce_ids:
+
+async def _record_evidence(input: MemoryBulkSetInput, memory_ids: list[str], what: str) -> None:
+    """One `evidence` usage event per id, each fail-open."""
+    from server.memory.store.usage import record_usage_event
+
+    for memory_id in memory_ids:
         try:
-            await _record_usage_event(
-                memory_id=existing_id,
+            await record_usage_event(
+                memory_id=memory_id,
                 org=input.org,
                 namespace=input.namespace,
                 event_type="evidence",
@@ -481,34 +668,18 @@ async def _bulk_settle_verdicts(
                 agent=input.agent,
             )
         except Exception as e:  # noqa: BLE001 — a usage bump; the write stands
-            log.warning("bulk_set: auto_reinforce bump failed (non-fatal): %s", e)
-    for existing_id in state.identity_dup_ids:
-        try:
-            await _record_usage_event(
-                memory_id=existing_id,
-                org=input.org,
-                namespace=input.namespace,
-                event_type="evidence",
-                event_count=1,
-                agent=input.agent,
-            )
-        except Exception as e:  # noqa: BLE001 — a usage bump; the write stands
-            log.warning("bulk_set: identity-dedup reinforcement failed (non-fatal): %s", e)
-    # The same fact said again under the same key. The usage fold turns the evidence event
-    # into memory_embeddings.reinforcement_count, the search-side boost; the row itself is not
-    # rewritten or re-embedded.
-    for existing_id in state.restated_ids:
-        try:
-            await _record_usage_event(
-                memory_id=existing_id,
-                org=input.org,
-                namespace=input.namespace,
-                event_type="evidence",
-                event_count=1,
-                agent=input.agent,
-            )
-        except Exception as e:  # noqa: BLE001 — a usage bump; the write stands
-            log.warning("bulk_set: restatement reinforcement failed (non-fatal): %s", e)
+            log.warning("bulk_set: %s failed (non-fatal): %s", what, e)
+
+
+async def _bulk_settle_then_audit(
+    ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState, plan: BulkVerdictPlan
+) -> None:
+    """Settle the verdicts, then write the audit row: a conflict whose mark did not land
+    is clear in the response, and the audit counts what the response says."""
+    try:
+        await _bulk_settle_verdicts(ch, input, state, plan)
+    finally:
+        await _bulk_audit(input, state, plan)
 
 
 async def _bulk_audit(
@@ -540,7 +711,7 @@ def _bulk_record_write_metrics(input: MemoryBulkSetInput, state: _BulkWriteState
             ("created", state.n_created),
             ("updated", state.n_updated),
             ("unknown", state.n_unknown),
-            ("blacklisted", state.skipped_blacklisted),
+            ("blacklisted", len(state.skipped_blacklisted)),
             ("rejected", len(state.skipped_pinned) + len(state.skipped_locked)),
             # NOT the point path's `merged` (a canonical-form conflict merge).
             # This is a byte-identical restatement, so it gets its own label
@@ -555,6 +726,42 @@ def _bulk_record_write_metrics(input: MemoryBulkSetInput, state: _BulkWriteState
         pass
 
 
+def _projected(
+    input: MemoryBulkSetInput, state: _BulkWriteState, *, declared_high: bool = False
+) -> tuple[MemoryBulkSetInput, list[Any]]:
+    """The entries and results the graph projections see: only entries that wrote a
+    live row that may hold graph facts. An entry that wrote nothing (refused, pinned,
+    locked, a byte-identical restatement, an identity duplicate, a merge, a pinned
+    reject), or whose row is 'high' projects nothing, and so records nothing for a
+    replay; a re-ingest of a fact already stored no longer re-counts its edges.
+    `declared_high` (the edges leg): a 'high' entry stays with only the entities its
+    writer declared and no facet nodes, as memory.set projects a high row."""
+    # A row is its id and version: two entries of one key share the id.
+    high = {
+        (str(r["memory_id"]), int(r["version"]))
+        for r in state.memory_rows
+        if r.get("sensitivity") == "high"
+    }
+    kept = []
+    for entry, res in zip(input.entries, state.results, strict=True):
+        if not res.version:
+            continue
+        if (res.memory_id, res.version) not in high:
+            kept.append((entry, res))
+        elif declared_high:
+            declared = {
+                "entities": declared_entities(entry.entities),
+                "topics": [],
+                "files": [],
+                "concepts": [],
+            }
+            kept.append((entry.model_copy(update=declared), res))
+    return (
+        input.model_copy(update={"entries": [e for e, _r in kept]}),
+        [r for _e, r in kept],
+    )
+
+
 async def _bulk_run_projections(
     ch: Any,
     input: MemoryBulkSetInput,
@@ -566,6 +773,12 @@ async def _bulk_run_projections(
 ) -> None:
     """Phase 13: the post-insert legs — settle verdicts, the audit row and the
     four graph projections — gathered."""
+    # An entry whose key landed superseded writes no current graph facts; the input and
+    # its results are filtered together (the writers zip them), and so is the replay.
+    p_input, p_results = _projected(input, state)
+    # The edges leg also sees the high rows, with their declared entities only.
+    e_input, e_results = _projected(input, state, declared_high=True)
+    await _drop_undeclared_of_rows_made_high(input, state)
 
     # Graph/entity projections (entity_vectors / edges / triples / derived).
     # Each leg is fail-open + records a replayable projection_failure.
@@ -576,51 +789,117 @@ async def _bulk_run_projections(
             except Exception as e:  # noqa: BLE001 — a projection; the write stands
                 log.warning("%s write failed (non-fatal): %s", name, e)
                 await record_input_projection_failure(
-                    input,
-                    projection=name,
+                    p_input,
+                    projection=failed_projection(name, e),
                     error=e,
-                    memory_keys=[r.memory_key for r in state.results],
-                    payload=bulk_projection_payload(input, state.results),
+                    memory_keys=[r.memory_key for r in p_results],
+                    payload=bulk_projection_payload(p_input, p_results, error=e),
                     source_operation="memory.bulk_set",
                     source_resource_id=bulk_source_resource_id(input),
                 )
 
         return _run
 
-    # The settlement of verdicts (peer conflict marks, reinforcement events), the audit row
-    # and the four graph projections all read this batch's result and write different tables;
-    # none reads another's output, so they are awaited together, each
+    # The settlement of verdicts (peer conflict marks, reinforcement events) then the audit
+    # row, and the four graph projections, all read this batch's result and write different
+    # tables; none reads another's output, so they are awaited together, each
     # with its own fail-open handler. Still awaited before the response: rrf search routes
     # across the entity/graph/temporal planes and may query immediately after ingest, so
     # backgrounding would starve those planes.
     _legs = [
-        lambda: _bulk_settle_verdicts(ch, input, state, plan),
-        lambda: _bulk_audit(input, state, plan),
+        lambda: _bulk_settle_then_audit(ch, input, state, plan),
         _projection(
             "entity_vectors",
             lambda: write_entity_vectors(
-                input,
-                state.results,
+                p_input,
+                p_results,
                 embedder,
                 ch=ch,
                 entity_map=entity_resolution,
                 entity_embeddings=entity_embeddings,
             ),
         ),
+        # Recorded without the high entries, as memory.set records nothing for a high
+        # row's edges: a failure payload never holds a high value, so a failed declared
+        # edge of a high row is not replayed.
         _projection(
             "entity_edges",
-            lambda: write_entity_edges(input, state.results, ch=ch, entity_map=entity_resolution),
+            lambda: write_entity_edges(e_input, e_results, ch=ch, entity_map=entity_resolution),
         ),
         _projection(
             "entity_triples",
-            lambda: write_entity_triples(input, state.results, ch=ch, entity_map=entity_resolution),
+            lambda: write_entity_triples(p_input, p_results, ch=ch, entity_map=entity_resolution),
         ),
         _projection(
             "derived_facts",
-            lambda: _write_derived_facts(input, state.results, ch=ch, entity_map=entity_resolution),
+            lambda: write_derived_facts(p_input, p_results, ch=ch, entity_map=entity_resolution),
         ),
     ]
     await asyncio.gather(*(leg() for leg in _legs))
+    # A row revised in place keeps its id: what it held before is judged against its
+    # new value, once its new links are in ('high' and judged-superseded included: it
+    # now holds none). A brand-new row held nothing, unless this batch wrote it twice.
+    written = Counter(r.memory_id for r in state.results if r.version)
+    existed = set(state.existing_ids.values())
+    revised = [m for m, n in written.items() if m in existed or n > 1]
+    if revised:
+        # The versions of high rows: their edge closes are recorded without content.
+        high = {
+            (str(r["memory_id"]), str(r["content_sha256"]))
+            for r in state.memory_rows
+            if r.get("sensitivity") == "high"
+        }
+        await _close_overtaken_edges(
+            e_input, e_results, set(revised), high=high, entity_map=entity_resolution, ch=ch
+        )
+        await reconcile_row_facts(p_input, revised, reopen=False, op="memory.bulk_set", ch=ch)
+
+
+async def _close_overtaken_edges(
+    input: MemoryBulkSetInput,
+    results: list[Any],
+    revised: set[str],
+    *,
+    high: set[tuple[str, str]],
+    entity_map: dict[str, str],
+    ch: Any,
+) -> None:
+    """The revised rows' edges end with their value if another write revised it
+    again while they were written (`end_overtaken_edges`). An entry with fewer than
+    two graph nodes wrote no edge. One read for all of them: a row holds its edges
+    while it holds the value, and a 'high' one only while it names every node paired.
+    A failed read is recorded for the projection repair, which ends them; `high` (the
+    (memory_id, content_sha256) versions of high rows) are recorded without content."""
+    paired: dict[tuple[str, str, str], list[str]] = {}
+    for entry, res in zip(input.entries, results, strict=True):
+        nodes = edge_nodes(entry, entity_map)
+        if res.memory_id in revised and len(nodes) >= 2:
+            paired[(res.memory_id, res.memory_key, value_sha256(entry))] = nodes
+    if not paired:
+        return
+    try:
+        current = await edge_holders(
+            input.org, input.namespace, [(mid, sha) for mid, _, sha in paired], ch=ch
+        )
+    except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
+        closes = [
+            EdgeClose(memory_id, memory_key, sha, nodes, high=(memory_id, sha) in high)
+            for (memory_id, memory_key, sha), nodes in paired.items()
+        ]
+        await record_edges_closes(input, closes, e, op="memory.bulk_set", ch=ch)
+        return
+    overtaken = []
+    for version, nodes in paired.items():
+        memory_id, _, sha = version
+        found = current.get((memory_id, sha))
+        if found is None:
+            overtaken.append(version)
+            continue
+        sensitivity, entities = found
+        if sensitivity == "high" and not set(nodes) <= entities:
+            overtaken.append(version)
+    if overtaken:
+        await end_overtaken_edges(input, sorted(overtaken), op="memory.bulk_set", ch=ch, high=high)
 
 
 async def _bulk_follow_row_supersessions(
@@ -635,17 +914,35 @@ async def _bulk_follow_row_supersessions(
     # The triple plane follows the rows this write retired. The predecessor's open triples
     # close and the successor triple is written under the predecessor's relation name, after
     # the projections, so a successor the extractor did emit is seen and not repeated.
-    # Fail-open.
+    # Up to `memory_bulk_follow_max_pairs` pairs are followed in the request; the rest,
+    # those whose chain was too long or circular to read, or all of them if the follow
+    # fails, are recorded for the projection repair to follow later.
     _pairs: list[tuple[str, str]] = _supersede_pairs(plan)
     _pairs += [(str(ln.older_id), str(ln.newer_id)) for ln in value_links]
     _pairs += intra_pairs
     if _pairs:
-        try:
-            from server.memory.app.entity_projections import follow_row_supersessions
+        from server.memory.app.triple_follow import follow_row_supersessions
+        from server.settings import settings
 
-            await follow_row_supersessions(input, _pairs[:64], ch=ch)
-        except Exception as e:  # noqa: BLE001 — the rows are in; the triple plane is best effort
-            log.warning("bulk_set: triples follow rows failed (non-fatal): %s", e)
+        cap = settings.memory_bulk_follow_max_pairs
+        first, later = _pairs[:cap], _pairs[cap:]
+        restated: dict[str, Any] = {}
+        try:
+            later += (await follow_row_supersessions(input, first, ch=ch)).unfollowed
+        except Exception as e:  # noqa: BLE001 — the rows are in; the repair follows them later
+            log.warning("bulk_set: triples follow rows failed (recorded for repair): %s", e)
+            later = _pairs
+            # A fallback's markers whose repair failed: the closes it made.
+            restated = restated_repair_payload(e)
+        if later:
+            await record_input_projection_failure(
+                input,
+                projection=FOLLOW_ROWS,
+                error=f"supersession pairs left for the repair to follow: {len(later)}",
+                payload={"pairs": [list(p) for p in later], **restated},
+                source_operation="memory.bulk_set",
+                source_resource_id=bulk_source_resource_id(input),
+            )
     clock.mark("triples_follow_rows")
 
 
@@ -680,16 +977,21 @@ async def handle_memory_bulk_set(
         input, state, embedder, entity_resolution, _bulk_clock, now_utc
     )
 
+    plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)
+    # After the verdicts: settling the batch moves entries to unchanged or pinned.
     _bulk_log_skips(state)
 
-    plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)
-
+    await _bulk_mark_same_key(ch, input, state)
     _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
 
     await _bulk_insert(ch, state)
     _bulk_clock.mark("insert")
+    await _record_intra_batch_retirements(input, state, _intra_pairs)
 
-    _value_links = await _bulk_post_insert_links(ch, input, state)
+    # A bulk write's retirement intents are left to the repair, which resolves them.
+    _same_key_follows: list[Follow] = []
+    _value_links = await _bulk_post_insert_links(ch, input, state, _same_key_follows)
+    _same_key_pairs = [(f.loser, f.winner) for f in _same_key_follows]
 
     _bulk_clock.mark("value_updates")
 
@@ -699,7 +1001,14 @@ async def handle_memory_bulk_set(
         ch, input, state, plan, embedder, entity_resolution, entity_embeddings
     )
     _bulk_clock.mark("projections")
-    await _bulk_follow_row_supersessions(ch, input, plan, _value_links, _intra_pairs, _bulk_clock)
+    await _bulk_follow_row_supersessions(
+        ch,
+        input,
+        plan,
+        _value_links,
+        _intra_pairs + _same_key_pairs,
+        _bulk_clock,
+    )
     _bulk_clock.finish()
 
     return MemoryBulkSetOutput(
@@ -716,6 +1025,7 @@ async def handle_memory_bulk_set(
         conflicted=plan.conflicted,
         unchecked=plan.unchecked,
         identity_duplicates=state.identity_duplicates,
+        skipped_blacklisted=state.skipped_blacklisted,
         stage_ms=dict(_bulk_work.get("stage_ms", {})),
     )
 
@@ -736,18 +1046,13 @@ async def _bulk_announce(state: _BulkWriteState) -> None:
 
 
 def _supersede_pairs(plan: BulkVerdictPlan) -> list[tuple[str, str]]:
-    """(retired peer, new row) pairs of the plan's `supersedes` verdicts, for
-    the triple plane to follow — minus the peers `apply_refines` kept because
-    the new row would truncate them."""
-    from server.memory.app.conflicts import truncating_refinement
-
+    """(retired peer, new row) pairs of the plan's `refines` verdicts, for
+    the triple plane to follow."""
     return [
         (str(getattr(p, "memory_id", "") or ""), str(new_id))
-        for new_id, _new_key, refined, relation, new_value in plan.refines
-        if relation == "supersedes"
+        for new_id, _new_key, refined in plan.refines
         for p in refined
         if getattr(p, "memory_id", "")
-        and not truncating_refinement(new_value, str(getattr(p, "value", "") or ""))
     ]
 
 

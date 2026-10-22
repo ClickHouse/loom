@@ -1,8 +1,9 @@
 """Run ledger — one agent execution as a first-class object.
 
 `run.begin` opens a run (goal, original request, expected outcome) and hands
-back a `run_id` the agent threads through `memory.set`, `memory.ask`,
-`memory.search` and `observe.record`. `run.complete` closes it with the
+back a `run_id` the agent passes on its writes (`memory.set`, `memory.update`,
+`observe.record`); its reads are labelled through `X-Loom-Run-Id` or the MCP
+session's run, since a body `run_id` on a read filters. `run.complete` closes it with the
 terminal status, the memories the agent RELIED on (`memories_used` → a `used`
 usage event, distinct from `recall` = returned) and an outcome that feeds the
 evidence counters. `run.get` / `run.list` render the story: goal → recalled →
@@ -15,7 +16,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from server.core.naming import SENTINEL, names_session
+from server.core.naming import SENTINEL, named, names_session
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 from server.tasks.domain.budgets import BudgetKind
@@ -32,10 +33,11 @@ class RunBeginInput(BaseModel):
     # session — cost per run comes from here without another write. Kept on a
     # re-sent begin of the same run_id that names none.
     session_id: str = Field(default=SENTINEL)
-    # Caller-supplied for end-to-end tracing (re-sending the same id is a
-    # replace, not a duplicate). Empty = the server mints one. The shape of an
-    # MCP session's implicit run (`mcp-` and 40 hex digits) is the transport's:
-    # a begin naming one is answered with an id of its own.
+    # The run's id; empty or "-" = the server mints one. A caller-supplied id
+    # serves end-to-end tracing (re-sending the same id is a replace, not a
+    # duplicate). The shape of an MCP session's implicit run (`mcp-` and 40 hex
+    # digits) is the transport's: a begin naming one is answered with an id of
+    # its own.
     run_id: str = Field(default="", max_length=128)
     # What the run sets out to do, in the agent's words; stored on the run row.
     goal: str = Field(min_length=1, max_length=2000)
@@ -267,7 +269,9 @@ class RunGradeInput(BaseModel):
 
     org: str
     namespace: str
+    # The run to grade; "" or "-" = none. Name exactly one of run_id and session_id.
     run_id: str = Field(default="", max_length=128)
+    # Every closed run of this session; "" or "-" = none.
     session_id: str = Field(default="", max_length=256)
     # The verdict: `pass` (the result held up) or `fail`.
     grade: Literal["pass", "fail"]
@@ -279,8 +283,11 @@ class RunGradeInput(BaseModel):
     ref: str = Field(default="", max_length=512)
 
     @model_validator(mode="after")
-    def _one_target(self) -> RunGradeInput:
-        if bool(self.run_id.strip()) == bool(self.session_id.strip()):
+    def _at_most_one_target(self) -> RunGradeInput:
+        # Naming neither is refused by the handler, after the read-scope gate.
+        self.run_id = named(self.run_id.strip()) or ""
+        self.session_id = named(self.session_id.strip()) or ""
+        if self.run_id and self.session_id:
             raise ValueError("pass exactly one of run_id or session_id")
         return self
 
@@ -349,7 +356,9 @@ class RunGetOutput(BaseModel):
 class RunListInput(BaseModel):
     org: str
     namespace: str
+    # Only this agent's runs; "", "*" or "-" = every agent.
     agent: str = ""
+    # Only this session's runs; "", "*" or "-" = every session.
     session_id: str = ""
     # Only runs in this status; "" lists every status.
     status: Literal["", "active", "completed", "failed", "cancelled"] = ""

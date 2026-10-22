@@ -14,9 +14,14 @@ from server.auth.jwt import READ_SCOPES, AuthInfo, mint_token, validate_read_sco
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError
 from server.identity.domain.read_scope import (
     _NARROWNESS,
+    REFUSED_READ_SCOPE,
+    WHOLE_NAMESPACE,
+    ReadFilters,
     effective_read_scope,
     narrower,
+    replayed_read_scope,
     resolve_read_filters,
+    stored_read_scope,
 )
 from server.memory.domain.search_sql import _build_where
 from server.memory.domain.search_types import SearchQuery
@@ -288,3 +293,34 @@ def test_search_handler_applies_scope_from_token(monkeypatch):
 def test_the_claim_values_and_the_narrowness_order_are_one_set() -> None:
     # The token validator and the resolver read the same values, widest first.
     assert tuple(sorted(_NARROWNESS, key=_NARROWNESS.__getitem__)) == READ_SCOPES
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        WHOLE_NAMESPACE,
+        ReadFilters(scope="own_user", user_id="alice", session_id=None),
+        ReadFilters(scope="own_session", user_id="alice", session_id="s1"),
+    ],
+)
+def test_a_stored_scope_replays_as_itself(scope):
+    assert replayed_read_scope(stored_read_scope(scope)) == scope
+
+
+def test_a_payload_stored_before_scopes_replays_namespace_wide():
+    assert replayed_read_scope(None) == WHOLE_NAMESPACE
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "own_user",
+        {"scope": REFUSED_READ_SCOPE},
+        {"scope": "own_user", "user_id": None},
+        {"scope": "own_session", "user_id": "alice", "session_id": None},
+        {"scope": ""},
+    ],
+)
+def test_a_stored_scope_that_is_not_complete_never_replays(stored):
+    with pytest.raises(ValueError):
+        replayed_read_scope(stored)

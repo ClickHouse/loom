@@ -35,6 +35,7 @@ TRANSIENT_TABLES = {
     "consolidation_runs": "the consolidation worker's run ledger",
     "delete_version_checks": "memory.delete_version's owed checks (identity and key only)",
     "memory_webhook_outbox": "memory webhook events to send (identity, key and id only)",
+    "memory_projection_failures": "the repair queue; a resolved entry is done",
 }
 
 # Objects that are gone and must not come back.
@@ -116,6 +117,14 @@ def test_the_journal_files() -> None:
         "062_extraction_policies.sql",
         "063_memory_webhooks.sql",
         "064_learnings_agent_and_supporters.sql",
+        "065_entity_triple_rows.sql",
+        "066_projection_failure_abandoned.sql",
+        "067_entity_triple_seen_at.sql",
+        "068_graph_restore_id.sql",
+        "069_entity_edge_rows.sql",
+        "070_entity_edge_close_id.sql",
+        "071_projection_failure_ttl.sql",
+        "072_namespace_guides.sql",
     ]
 
 
