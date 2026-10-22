@@ -4930,7 +4930,7 @@ class TrackerSettings(BaseModel):
 # waited async insert an op awaits adds up to `ch_batched_insert_wait_max_ms`; the
 # budgets assume its default. A budget is raised where one such wait is a large share
 # of it ("+ ... wait" below names those waits); budgets of 400 ms or more absorb it. A wait
-# only some calls make is priced as a shape in OP_SHAPE_BUDGETS_P99_MS. The
+# the op's usual call does not make is priced as a shape in OP_SHAPE_BUDGETS_P99_MS. The
 # restricted-access audit row's wait sits in the transport's admission gate, before
 # the handler time a budget measures.
 
