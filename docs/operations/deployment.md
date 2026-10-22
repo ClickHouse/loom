@@ -534,8 +534,7 @@ aborted run or rollback. Run as Loom's user, this lists them:
 
 ```sql
 SELECT name FROM system.tables
-WHERE database = currentDatabase()
-  AND (endsWith(name, '_rebuild') OR endsWith(name, '_pre_rebuild'))
+WHERE database = 'loom' AND endsWith(name, '_rebuild')
 ```
 
 Restart Loom after cleanup, so each process reads the settings again. A process that found
