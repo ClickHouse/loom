@@ -540,14 +540,14 @@ first (`DROP TABLE IF EXISTS loom.<table>_pre_rebuild SYNC`).
    Skip the line while this shows any width other than `<n>`, or while `<n>` is not the
    served model's width: the rebuild would zero those vectors. Bringing a table to one
    width is re-embedding work
-   ([re-embed and re-extract](./maintenance.md#re-embed-and-re-extract)); run this check
-   again after it.
+   ([re-embed and re-extract](./maintenance.md#re-embed-and-re-extract)); run this check again after it.
 
-   To stop the block, create `ABORT_REBUILD` in `LOOM_REBUILD_DIR` (default: the directory
-   you run from): the running line stops before its copy or its swap, and each later
-   rebuild line stops before it starts. `--drop-pre-rebuild` and `--rollback` lines do not
-   read it. Ctrl-C stops only the line that is running, and bash goes on to the next.
-   Remove the file before the next run.
+   To stop the block, create `ABORT_REBUILD` in `$LOOM_REBUILD_DIR` as exported in the
+   shell that runs it (the tool does not read it from `.env`; default: the directory you
+   run from): the running line stops before its copy or its swap, and each later rebuild
+   line stops before it starts. `--drop-pre-rebuild` and `--rollback` lines do not read
+   it. Ctrl-C stops only the line that is running, and bash goes on to the next. Remove
+   the file before the next run.
 
    A run that stops before its swap (a failed gate, an abort file, an interrupt) can leave
    its twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not
