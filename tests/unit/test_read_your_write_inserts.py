@@ -47,11 +47,18 @@ def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
     the session defaults for an insert that passes none, and `{"unresolved": 1}` for any
     other value."""
     files = sorted(path.rglob("*.py")) if path.is_dir() else [path]
-    trees = [ast.parse(f.read_text()) for f in files]
-    # A module-level name bound to the table, like `OUTBOX = "loom.memory_webhook_outbox"`.
+    found: list[dict[str, int]] = []
+    for f in files:
+        tree = ast.parse(f.read_text())
+        found.extend(_module_insert_settings(tree, table))
+    return found
+
+
+def _module_insert_settings(tree: ast.Module, table: str) -> list[dict[str, int]]:
+    # A module-level name bound to the table, like `OUTBOX = "loom.memory_webhook_outbox"`,
+    # matched only within its own module.
     table_names = {
         target.id
-        for tree in trees
         for stmt in tree.body
         if isinstance(stmt, ast.Assign)
         and isinstance(stmt.value, ast.Constant)
@@ -59,9 +66,8 @@ def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
         for target in stmt.targets
         if isinstance(target, ast.Name)
     }
-    nodes = [n for tree in trees for n in ast.walk(tree)]
     found: list[dict[str, int]] = []
-    for node in nodes:
+    for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func

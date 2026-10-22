@@ -536,8 +536,8 @@ class ClickHouseSettings(BaseModel):
     # collect the shapes an acceptance run executes for the analyzer corpus. '' = off;
     # never set it in production.
     ch_capture_statements: str = ""
-    # HTTP connection pool size: request concurrency plus 3 x the connections waited async
-    # inserts hold (the rule in docs/architecture/clickhouse.md#batched-inserts).
+    # HTTP connection pool size: request concurrency plus 3 x the batched-insert bound
+    # (inserts a second x wait / 1000; docs/architecture/clickhouse.md#batched-inserts).
     ch_pool_maxsize: int = 64
     # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load
     # balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled
@@ -561,14 +561,14 @@ class ClickHouseSettings(BaseModel):
     # Batch the inserts written on every request as waited async inserts that share parts; each
     # holds a pooled connection while it waits, so size ch_pool_maxsize. False commits them.
     ch_batched_inserts: Annotated[bool, LIVE] = True
-    # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits
-    # when writes are sparse; capped at the insert's longest wait (the two below).
+    # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when
+    # writes are sparse; capped at ch_batched_insert_wait_max_ms (or the background bound).
     ch_batched_insert_wait_min_ms: Annotated[int, LIVE] = Field(default=10, gt=0, le=1000)
-    # Longest wait, ms, of a batched or waited async insert (but the two flushes below); it
-    # holds a pooled connection meanwhile.
+    # Longest wait, ms, of a batched or waited async insert a request waits on; it holds a
+    # pooled connection meanwhile.
     ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0, le=1000)
-    # Longest wait, ms, of the usage-event and write-mark flushes, which no request waits on;
-    # every other insert takes the bound above (docs/architecture/clickhouse.md#batched-inserts).
+    # Longest wait, ms, of the usage-event flusher's ticks and shutdown drain and the
+    # write-mark timer's flush, which no request waits on.
     ch_batched_insert_background_wait_max_ms: Annotated[int, LIVE] = Field(
         default=200, gt=0, le=5000
     )

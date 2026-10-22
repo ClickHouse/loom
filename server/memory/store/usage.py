@@ -44,7 +44,7 @@ _USAGE_FLUSH_INTERVAL_S = 0.5
 _USAGE_FLUSH_TASK: asyncio.Task[None] | None = None
 
 
-async def _flush_usage_buffer_now(ch: _CHClient | None = None, *, background: bool = True) -> None:
+async def _flush_usage_buffer_now(ch: _CHClient | None = None, *, background: bool) -> None:
     """Drain the usage-event buffer in one CH insert. No-op when empty.
     `background=False` for the flush a request waits on (the buffer is full)."""
     global _USAGE_BUFFER
@@ -76,7 +76,7 @@ async def _flush_usage_buffer_now(ch: _CHClient | None = None, *, background: bo
 async def drain() -> None:
     """Shutdown: the buffered labels land before the ClickHouse client goes
     (`boot.drain_writes`); the flush loop's own cancel-path flush runs too late."""
-    await _flush_usage_buffer_now()
+    await _flush_usage_buffer_now(background=True)
 
 
 # The flush loop runs in a detached (empty) context; the tag names its inserts
@@ -92,10 +92,10 @@ async def _usage_flush_loop() -> None:
     while True:
         try:
             await asyncio.sleep(_USAGE_FLUSH_INTERVAL_S)
-            await _flush_usage_buffer_now()
+            await _flush_usage_buffer_now(background=True)
         except asyncio.CancelledError:
             # Drain on shutdown so we don't lose events.
-            await _flush_usage_buffer_now()
+            await _flush_usage_buffer_now(background=True)
             raise
         except Exception:  # noqa: BLE001 — one failure must not kill the loop
             # Don't let one transient failure kill the flush loop.

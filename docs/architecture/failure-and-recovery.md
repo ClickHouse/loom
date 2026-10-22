@@ -258,8 +258,8 @@ inserts, committed or batched, sequential re-reads), not process affinity.
 | `LOOM_CH_TIMEOUT_DDL_S`                         | 300     | DDL, `OPTIMIZE`, `SYSTEM` deadline.                                                                                    |
 | `LOOM_CH_BATCHED_INSERTS`                       | true    | Batch the inserts written on every request, each holding a connection for its wait; false commits them, one part each. |
 | `LOOM_CH_BATCHED_INSERT_WAIT_MIN_MS`            | 10      | Shortest wait of a batched or waited async insert, what a lone insert waits; the connection is held for the wait.      |
-| `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS`            | 50      | Longest wait of a batched or waited async insert but the two flushes below; the connection is held for it.             |
-| `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` | 200     | The same for the usage-event and write-mark flushes, which no request waits on.                                        |
+| `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS`            | 50      | Longest wait of a batched or waited async insert a request waits on; the connection is held for it.                    |
+| `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` | 200     | The same for the usage-event flusher's ticks and drain and the write-mark flush.                                       |
 
 **Why a bounded wait:** when ClickHouse slows, an unbounded queue turns every request into
 a client timeout after the work was queued anyway. A short wait fails fast with a retryable 503. The gauges `loom.ch.pool.in_use`, `waiters`, `overloaded_total` and `timeouts_total`
