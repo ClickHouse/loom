@@ -125,7 +125,7 @@ def test_the_journal_files() -> None:
         "070_entity_edge_close_id.sql",
         "071_projection_failure_ttl.sql",
         "072_namespace_guides.sql",
-        "073_machine_access_token_ttl.sql",
+        "075_machine_access_token_ttl.sql",
     ]
 
 

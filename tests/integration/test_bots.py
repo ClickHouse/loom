@@ -118,7 +118,7 @@ def test_a_bot_allowed_a_day_gets_one_when_asked_and_its_revocation_ends_it(
     key = tmp_path / "bot.pem"
     key.write_text(r.json()["private_key_pem"])
     listing = _admin(base, "/v1/admin/bots.list", {}, roles=["platform_admin"]).json()["bots"]
-    # Read back from loom.machine_identities: the column migration 073 added.
+    # Read back from loom.machine_identities: the column migration 075 added.
     assert [b["max_access_token_s"] for b in listing if b["name"] == name] == [86400]
     login = MachineLogin(base, name, key_file=str(key))
 
