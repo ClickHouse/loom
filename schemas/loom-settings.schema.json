@@ -202,7 +202,7 @@
           "exclusiveMinimum": 0,
           "maximum": 1000,
           "type": "integer",
-          "description": "Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when writes are sparse; capped at the insert's longest wait."
+          "description": "Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when writes are sparse; capped at the insert's longest wait (the two below)."
         },
         "ch_batched_inserts": {
           "default": true,

@@ -561,6 +561,9 @@ class ClickHouseSettings(BaseModel):
     # Batch the inserts written on every request as waited async inserts that share parts; each
     # holds a pooled connection while it waits, so size ch_pool_maxsize. False commits them.
     ch_batched_inserts: Annotated[bool, LIVE] = True
+    # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits
+    # when writes are sparse; capped at the insert's longest wait (the two below).
+    ch_batched_insert_wait_min_ms: Annotated[int, LIVE] = Field(default=10, gt=0, le=1000)
     # Longest wait, ms, of a batched or waited async insert a request waits on; it holds a
     # pooled connection meanwhile.
     ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0, le=1000)
@@ -569,9 +572,6 @@ class ClickHouseSettings(BaseModel):
     ch_batched_insert_background_wait_max_ms: Annotated[int, LIVE] = Field(
         default=200, gt=0, le=5000
     )
-    # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits
-    # when writes are sparse; capped at the insert's longest wait.
-    ch_batched_insert_wait_min_ms: Annotated[int, LIVE] = Field(default=10, gt=0, le=1000)
     # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED.
     # 0 = no slot gate.
     ch_pool_wait_ms: int = 500
@@ -4927,9 +4927,9 @@ class TrackerSettings(BaseModel):
 # without editing this table: `latency_budget_overrides` (one op, in ms or "<n>x"),
 # `latency_budget_overrides_by_consumer` (one consumer), `latency_budget_multiplier`
 # (all of them), and `POST /v1/admin/budget.set` while Loom runs. Each batched or
-# waited async insert an op awaits adds up to `ch_batched_insert_wait_max_ms` (50 ms).
-# A budget is raised where one such wait is a large share of it ("+ ... wait" below
-# names those waits); budgets of 400 ms or more absorb it.
+# waited async insert an op awaits adds up to `ch_batched_insert_wait_max_ms`; the
+# budgets assume its default. A budget is raised where one such wait is a large share
+# of it ("+ ... wait" below names those waits); budgets of 400 ms or more absorb it.
 
 OP_BUDGETS_P99_MS: dict[str, int] = {
     "admin.users": 300,
@@ -5238,8 +5238,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.search_trace": 200,
     "memory.search_trace_log": 200,
     # Version inserts plus the conflict and dedup reads (p99 3.7 s on ClickHouse Cloud, 4 s
-    # at x20), + audit and outbox waits (up to 100 ms), offset by bounding the waited graph
-    # inserts at 50 ms (ClickHouse's default is 200 ms).
+    # at x20), + audit and outbox waits, offset by the waited graph inserts taking the
+    # batched-insert bound rather than ClickHouse's longer default.
     "memory.set": 200,
     # LLM extraction dominates (~7K-token prompt); bulk_set adds ~200 ms + ~4 insert waits
     # (audit, evidence, belief sources twice) before it.

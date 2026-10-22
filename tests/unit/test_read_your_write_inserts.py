@@ -83,15 +83,15 @@ def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
                 continue
             value = kw.value
             name = getattr(value.func, "id", "") if isinstance(value, ast.Call) else ""
-            if name in ("batched_insert_settings", "async_insert_settings"):
+            if name == "batched_insert_settings":
+                found.append(batched_insert_settings())
+                continue
+            if name == "async_insert_settings":
                 background = any(
                     k.arg == "background" and isinstance(k.value, ast.Constant) and k.value.value
                     for k in value.keywords
                 )
-                if name == "batched_insert_settings":
-                    found.append(batched_insert_settings(background=background))
-                else:
-                    found.append(async_insert_settings(background=background))
+                found.append(async_insert_settings(background=background))
                 continue
             if (
                 isinstance(value, ast.Call)
@@ -168,13 +168,16 @@ def test_tables_written_on_every_request_are_batched(
     monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     settings_seen = _insert_settings(ROOT / rel_path, table)
     assert settings_seen, f"no `settings=` on any {table} insert in {rel_path}"
-    windows = [False, True] if background is None else [background]
-    expected_fn = async_insert_settings if always_async else batched_insert_settings
-    allowed = [expected_fn(background=b) for b in windows]
+    if always_async:
+        windows = [False, True] if background is None else [background]
+        allowed = [async_insert_settings(background=b) for b in windows]
+        expected = f"async_insert_settings(background={background})"
+    else:
+        allowed = [batched_insert_settings()]
+        expected = "batched_insert_settings()"
     for s in settings_seen:
         assert s in allowed, (
-            f"{table} in {rel_path} is written with {s}; pass "
-            f"`settings={expected_fn.__name__}(background={background})`."
+            f"{table} in {rel_path} is written with {s}; pass `settings={expected}`."
         )
 
 

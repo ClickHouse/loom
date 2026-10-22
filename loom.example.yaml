@@ -106,6 +106,10 @@ settings:
   # commits them. [live]
   # ch_batched_inserts: true
 
+  # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits
+  # when writes are sparse; capped at the insert's longest wait (the two below). [live]
+  # ch_batched_insert_wait_min_ms: 10
+
   # Longest wait, ms, of a batched or waited async insert a request waits on; it holds a
   # pooled connection meanwhile. [live]
   # ch_batched_insert_wait_max_ms: 50
@@ -113,10 +117,6 @@ settings:
   # Longest wait, ms, of a batched or waited async insert no request waits on (the usage
   # and write-mark flushes; docs/architecture/clickhouse.md#batched-inserts). [live]
   # ch_batched_insert_background_wait_max_ms: 200
-
-  # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits
-  # when writes are sparse; capped at the insert's longest wait. [live]
-  # ch_batched_insert_wait_min_ms: 10
 
   # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot
   # gate. [restart]

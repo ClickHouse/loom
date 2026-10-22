@@ -21,13 +21,13 @@ def committed_insert_settings() -> dict[str, Any]:
     return {"async_insert": 0, "wait_for_async_insert": 1}
 
 
-def batched_insert_settings(*, background: bool = False) -> dict[str, Any]:
+def batched_insert_settings() -> dict[str, Any]:
     """Settings of a batched insert: `async_insert_settings` with
     `ch_batched_inserts` on, the committed settings with it off. Why it is safe:
     docs/architecture/clickhouse.md#batched-inserts."""
     if not settings.ch_batched_inserts:
         return committed_insert_settings()
-    return async_insert_settings(background=background)
+    return async_insert_settings()
 
 
 def async_insert_settings(*, background: bool = False) -> dict[str, Any]:

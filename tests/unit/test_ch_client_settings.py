@@ -124,18 +124,17 @@ def test_background_inserts_take_the_longer_wait_and_the_switch_sends_them_commi
 ) -> None:
     """An insert no request waits on waits up to the background bound; with
     `ch_batched_inserts` off a batched insert is sent committed, read per call, and
-    `async_insert_settings` keeps its bounds."""
+    `async_insert_settings` keeps its bounds either way."""
     monkeypatch.setattr(settings, "ch_batched_inserts", True)
     monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 10)
     monkeypatch.setattr(settings, "ch_batched_insert_wait_max_ms", 50)
     monkeypatch.setattr(settings, "ch_batched_insert_background_wait_max_ms", 200)
-    s = ch_writes.batched_insert_settings(background=True)
+    s = ch_writes.async_insert_settings(background=True)
     assert s["async_insert"] == 1 and s["async_insert_busy_timeout_max_ms"] == 200
     assert s["async_insert_busy_timeout_min_ms"] == 10
-    assert ch_writes.batched_insert_settings() != s
+    assert ch_writes.batched_insert_settings() == ch_writes.async_insert_settings() != s
     monkeypatch.setattr(settings, "ch_batched_inserts", False)
     committed = {"async_insert": 0, "wait_for_async_insert": 1}
     assert ch_writes.batched_insert_settings() == committed
-    assert ch_writes.batched_insert_settings(background=True) == committed
     assert ch_writes.async_insert_settings(background=True) == s
     assert ch_writes.async_insert_settings()["async_insert_busy_timeout_max_ms"] == 50
