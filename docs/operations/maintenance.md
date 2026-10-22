@@ -222,8 +222,8 @@ stopped and all in-flight writes drained. It never repairs the live table. Befor
 copying it refuses while a source mutation is still running or was created in the last
 minute (with `--reuse`, since the reused twin was created); the minute covers replica
 clock skew, and the gate before the swap counts it too. Rerun a minute after the last
-mutation finishes. An empty table is rebuilt too, with the width `LOOM_EMBEDDING_DIM`
-sets; the recall gate has no rows to probe there. Its ClickHouse user needs the
+mutation finishes. An empty table is rebuilt too, at the width the Width bullet below
+gives (a coded column's own, else `LOOM_EMBEDDING_DIM`); the recall gate has no rows to probe there. Its ClickHouse user needs the
 `SYSTEM FLUSH ASYNC INSERT QUEUE` and `SYSTEM SYNC REPLICA` privileges on the table and,
 on `ReplicatedMergeTree`, `SYSTEM SYNC REPLICA` on the twin `loom.<table>_rebuild`, which
 the gates synchronize before each read of it, and on `loom.<table>_pre_rebuild`, the
@@ -350,8 +350,9 @@ A delete in the live table leaves its keys only in the rollback copy, so the fir
 names `--rollback` only while the live table has no mutation since the copy started.
 
 To inspect a difference by hand, keep writers and erasure stopped and list each key the
-two tables hold differently, with both sides' version column (`version` in Loom's
-tables). `<key>` is the table's sorting key and `<columns>` every column but the vector
+two tables hold differently, with both sides' version column. `<version>` is the
+table's ReplacingMergeTree version column: `version`, or `created_at` on `memory_chunks`
+and `entity_vectors` and `ts` on `conversation_embeddings`. `<key>` is the table's sorting key and `<columns>` every column but the vector
 columns. `<copy_vectors>` and `<live_vectors>` list each vector column of that table.
 On the new-layout side (the live table after a swap, the copy after a rollback) a column
 is named as it is. On the old-layout side it is written as the rebuild writes it,
@@ -360,18 +361,18 @@ where `<dim>` is the codec's width (`Quantized(<method>, <dim>, 0)` in the new
 layout's `SHOW CREATE TABLE`), so both layouts hash alike:
 
 ```sql
-SELECT <key>, s.version AS copy_version, t.version AS live_version,
+SELECT <key>, s.<version> AS copy_version, t.<version> AS live_version,
        s.__present AS in_copy, t.__present AS in_live
-FROM (SELECT <key>, version, cityHash64(tuple(<columns>, <copy_vectors>)) AS __hash,
+FROM (SELECT <key>, <version>, cityHash64(tuple(<columns>, <copy_vectors>)) AS __hash,
              1 AS __present FROM loom.<table>_pre_rebuild FINAL) AS s
 FULL OUTER JOIN
-     (SELECT <key>, version, cityHash64(tuple(<columns>, <live_vectors>)) AS __hash,
+     (SELECT <key>, <version>, cityHash64(tuple(<columns>, <live_vectors>)) AS __hash,
              1 AS __present FROM loom.<table> FINAL) AS t USING (<key>)
 WHERE s.__hash != t.__hash
 SETTINGS join_use_nulls = 0
 ```
 
-On a table without a version column, drop `FINAL` and `version`, and read
+On a table without a version column, drop `FINAL` and `<version>`, and read
 `count() AS n, sum(cityHash64(...)) AS __hash ... GROUP BY <key>` on each side. Read the
 full rows of each listed key in both tables, and check `system.mutations` for a mutation
 that has not applied yet. Then:

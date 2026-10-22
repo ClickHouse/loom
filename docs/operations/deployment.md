@@ -445,18 +445,19 @@ plain, and cannot be coded by a rebuild, when the width the dry run prints
 Apply rebuilds during a maintenance window. Every Loom server, worker and direct table
 writer must be stopped, and all in-flight writes, erasures and ClickHouse mutations must
 have finished before copying starts. Keep them stopped through rebuilding, read-only
-checks, rollback and cleanup. A copy or post-swap repair can restore erased rows, and
-erasure does not fully cover the rebuild and rollback copies. Before copying starts, this
-returns no rows (`loom` here and in every statement below is your `LOOM_CH_DATABASE`):
+checks, rollback and cleanup: a copy can restore erased rows, and erasure does not fully
+cover the rebuild and rollback copies. Before copying starts, this returns no rows (`loom`
+here and in every statement below is your `LOOM_CH_DATABASE`):
 
 ```sql
 SELECT table, mutation_id, command FROM system.mutations
 WHERE database = 'loom' AND NOT is_done
 ```
 
-A pending mutation on a `<table>_pre_rebuild` copy left by an earlier run does not finish
-while that copy's merges are stopped (the tool stops them after its swap): drop that copy
-first (`DROP TABLE IF EXISTS loom.<table>_pre_rebuild SYNC`).
+A `<table>_pre_rebuild` copy left by an earlier run blocks that table's rebuild, and a
+mutation pending on it does not finish while the tool keeps its merges stopped. Remove it
+with that table's line and `mode="--drop-pre-rebuild --yes"`, as in step 3, never with a
+hand `DROP TABLE`: the copy can be the only holder of a change.
 
 1. Check that Loom's ClickHouse user gets the settings above before starting the rebuild.
 2. Rebuild each coded table with `scripts/ops/vector_codec_rebuild.py`. The tool is not in
@@ -502,45 +503,14 @@ first (`DROP TABLE IF EXISTS loom.<table>_pre_rebuild SYNC`).
    where it is plain, rebuild it without `--chain` and keep quantization without the
    additional `LZ4` compression.
 
-   A table with no real vectors yet (no rows, or only the zero placeholder vectors of rows
-   without an embedding) cannot pass the rebuild's recall gate, and the dry run does not
-   show that. The dry run prints the width it will code (`target <table> dimension <n>`);
-   skip the line while this query, with the line's first column, returns 0:
-   `SELECT countIf(length(<column>) = <n> AND <column>[1] != 0) FROM loom.<table>`.
-
-   A run can also fail the gate where one `(org, namespace)` holds placeholder rows and
-   between 1 and 19 real vectors of the same width: a probe drawn there reads recall 0,
-   because a placeholder's distance is NaN and sorts last. Any table can hold
-   placeholders, for rows whose embedding never arrived or failed (`code_summaries`
-   structural rows, `code_answers` stubs, failed embeds), so run this for each table, with
-   the line's first column, before its line (drop `FINAL` for `chunks`, the one plain
-   `MergeTree`):
-
-   ```sql
-   SELECT org, namespace FROM loom.<table> FINAL
-   WHERE (org, namespace) IN (SELECT org, namespace FROM loom.<table>
-                              WHERE length(<column>) = <n> AND <column>[1] != 0)
-   GROUP BY org, namespace
-   HAVING countIf(length(<column>) = <n> AND <column>[1] != 0) < 20
-      AND (countIf(length(<column>) = <n> AND <column>[1] = 0) > 0
-           OR countIf(length(<column>) = <n> AND <column>[1] != 0) = 0)
-   ```
-
-   Skip that table's line while this returns rows: its layout stays as it is.
-
-   The copy replaces every vector whose width is not `<n>` with a zero vector, and no gate
-   reports it. `<n>` is the table's most common width. Before each line, check each named
-   column for other widths among the rows Loom serves (drop `FINAL` for `chunks`):
-
-   ```sql
-   SELECT length(<column>) AS width, count() FROM loom.<table> FINAL
-   WHERE length(<column>) > 0 GROUP BY width
-   ```
-
-   Skip the line while this shows any width other than `<n>`, or while `<n>` is not the
-   served model's width: the rebuild would zero those vectors. Bringing a table to one
-   width is re-embedding work
-   ([re-embed and re-extract](./maintenance.md#re-embed-and-re-extract)); run this check again after it.
+   An empty table is rebuilt too. A table with rows but no real vectors (only the zero
+   placeholders of rows without an embedding) fails the recall gate (exit 5) and keeps its
+   layout. This query, with the line's first column, counts its real vectors:
+   `SELECT countIf(arrayExists(x -> x != 0, <column>)) FROM loom.<table>`. Placeholders
+   beside real vectors do not affect the gate. The tool refuses (exit 3), `--dry-run`
+   included, while a plain named column holds real vectors of another width than the one
+   it codes; the width it picks and the re-embed that clears the refusal are in
+   [the maintenance guide](./maintenance.md#compaction-and-optimize).
 
    To stop the block, create `ABORT_REBUILD` in `$LOOM_REBUILD_DIR` as exported in the
    shell that runs it (the tool does not read it from `.env`; default: the directory you
@@ -564,7 +534,13 @@ first (`DROP TABLE IF EXISTS loom.<table>_pre_rebuild SYNC`).
    was rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
    `--chain LZ4` only if its rebuild had it.
 
-Before restarting Loom or resuming traffic, drop every leftover `<table>_rebuild` and
+   `--drop-pre-rebuild` compares the two tables before it drops the copy. When it refuses
+   (exit 3), or a rebuild fails its check after the swap (exit 7), keep writers and
+   erasure stopped and follow the step the run prints (`next` in its summary line), as
+   [what the checks after a swap find](./maintenance.md#what-the-checks-after-a-swap-find)
+   describes. Drop a `_pre_rebuild` copy by hand only after the read that section gives.
+
+Before restarting Loom or resuming traffic, remove every leftover `<table>_rebuild` and
 `<table>_pre_rebuild` copy for the tables you processed, including copies left by an
 aborted run or rollback. This lists them (the `_rebuild` suffix also matches
 `_pre_rebuild`):
@@ -573,6 +549,9 @@ aborted run or rollback. This lists them (the `_rebuild` suffix also matches
 SELECT name FROM system.tables
 WHERE database = 'loom' AND endsWith(name, '_rebuild')
 ```
+
+Drop a `<table>_rebuild` twin with `DROP TABLE IF EXISTS loom.<table>_rebuild SYNC`, and a
+`<table>_pre_rebuild` copy with `--drop-pre-rebuild --yes` as in step 3.
 
 Start Loom again after cleanup; each process reads the codec settings when it starts.
 
