@@ -33,39 +33,21 @@ The dimension comes from the live table: a coded column states it, a
 plain column's vectors show it (the most common length), and an empty table
 takes `LOOM_EMBEDDING_DIM`. Every named column must agree.
 
-The gates, each of which leaves the table as it is and exits 5:
+The gates, each of which leaves the table as it is:
 
-- Consistency: a key whose newest version or `tombstoned_at` differs (an
-  erasure tombstones in place, keeping the version), or that the source holds
+- Widths (before the twin, `--dry-run` included): a named column holding
+  non-empty vectors of another length, among the rows Loom serves (under FINAL
+  on a ReplacingMergeTree), refuses the run with the widths and their row
+  counts, since the copy would replace them with zero vectors; re-embed those
+  rows first. An empty vector is copied as a zero placeholder.
+- Consistency: a key whose newest version differs, or that the source holds
   and the twin lacks, is repaired key by key and fails the run if it remains.
-  A key only the twin holds was removed from the source during the run (an
-  erasure or delete): it is deleted from the twin too, and fails the run if
-  it remains, since the swap would bring it back.
+  A key only the twin holds fails it too: rows were removed from the source
+  during the copy (an erasure or delete) and the swap would bring them back;
+  stop writes and rerun with `--restart`.
 - Recall: both reads rank real vectors only (a zero placeholder's cosine
   distance is NaN), and each probe's recall is over the exact neighbours it
   found, at most 20.
-- Before the swap: the width check runs again, the run waits for the source's
-  running mutations (an erasure's tombstone or delete) up to
-  `--statement-timeout-s` and fails if one remains, then the last delta, then
-  the twin-only check. The last row read before the EXCHANGE is the twin-only
-  check, or, when it deleted keys, the consistency recheck that follows. A
-  vector of another width written before the width scan stops the swap; a key
-  deleted before the twin-only read is deleted from the twin, and the run fails
-  if one remains after that pass.
-- Over the swap: the run stops the twin's merges, reads its highest block
-  number per partition, and swaps. A live row in a part within those blocks was
-  copied before the swap, and with merges stopped no part folds a copied row
-  into one written since. A mutation on the live table (a delete or a
-  tombstone) waits for the merges too, so the post-swap passes, which copy the
-  writes in flight at the EXCHANGE from `<t>_pre_rebuild`, never see its key
-  missing and copy it back. A delete that reached the old table after the last
-  twin-only read leaves a copied live row whose key `<t>_pre_rebuild` lacks;
-  a tombstone there leaves a copied row with an older `tombstoned_at`, which
-  the passes copy over. The run then starts the merges and deletes those rows
-  by key and version (by key on a plain MergeTree), so a write after the swap
-  with another version is kept; one with the same key and version is deleted
-  with them. A mutation still running on the old table at the EXCHANGE stays
-  there (its merges are stopped): pause erasures over the swap to be sure.
 
 `--require-patch-free`: the twin-and-EXCHANGE also sheds the patch parts of
 past lightweight UPDATEs (`OPTIMIZE FINAL` / `APPLY PATCHES` do not). The flag
@@ -78,14 +60,7 @@ settable or held at 1 for this user (`allow_suspicious_codecs` too with `--chain
 at 1 is never sent), every replica writable,
 and no row written in the last hour with an empty vector in the named columns
 (writers' fixed-length placeholders must be deployed first: a coded column
-rejects an empty vector). The run also refuses (exit 3, `--dry-run` included)
-while a named column holds non-empty vectors of another width (counted under
-FINAL on a ReplacingMergeTree, tombstoned rows included, since a restore brings
-one back), and prints each width with its row count: the copy would replace
-them with zero vectors, so re-embed or erase those rows first. An empty vector
-is copied as a zero placeholder. Every writer must produce the target width
-for the whole run: the copy, the deltas and the post-swap passes zero any
-other width.
+rejects an empty vector).
 
 The twin is the run's lock: an existing twin refuses the run unless
 `--reuse` (continue from it) or `--restart` (drop it and copy again), and the
@@ -94,9 +69,8 @@ An `ABORT_REBUILD` file in `LOOM_REBUILD_DIR` (default `.`) stops the run
 before the copy and before the swap, leaving the twin.
 
 Exit codes (shared with table_rebuild): 0 done or nothing to do, 2 aborted,
-3 refused, 4 needs `--yes`, 5 a gate failed (consistency, twin-only rows,
-recall, patch parts, a width that arrived during the run, a mutation still
-running on the source), 7 postcondition failed, 130 interrupted.
+3 refused, 4 needs `--yes`, 5 a gate failed (consistency, recall, patch
+parts), 7 postcondition failed, 130 interrupted.
 """
 
 from __future__ import annotations
@@ -119,7 +93,6 @@ if (_ROOT := str(Path(__file__).resolve().parents[2])) not in sys.path:  # run a
     sys.path.insert(0, _ROOT)
 
 from server.core.ch_names import database, unqualify
-from server.core.schema import migrate
 from server.core.schema import table_rebuild as tr
 from server.core.schema.table_rebuild import (
     ABORTED,
@@ -174,18 +147,10 @@ def key_literal(v: Any) -> str:
     """A sorting-key value as a ClickHouse literal for a repair's key list. Pure."""
     if isinstance(v, uuid.UUID):
         return f"toUUID('{v}')"
-    if isinstance(v, bytes):  # a FixedString key, such as content_sha256, reads as bytes
-        return f"unhex('{v.hex()}')"
     return sql_literal(v)
 
 
-def key_literals(keys: list[Any]) -> str:
-    """Sorting keys as a tuple list for `(key) IN (...)`. Pure."""
-    return ", ".join("(" + ", ".join(key_literal(v) for v in k) + ")" for k in keys)
-
-
-REPAIR_BATCH = 500  # not a setting: the literal key list one statement carries
-KEYS_LOGGED = 20  # not a setting: how many keys one log line names
+REPAIR_BATCH = 500  # keys per repair INSERT: a literal list the statement carries
 
 
 def patch_parts_sql(name: str) -> str:
@@ -322,68 +287,12 @@ def read_final(engine: str) -> str:
 
 
 def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
-    """(width, rows) of the non-empty vectors in `column` whose length is not `dim`,
-    tombstoned rows included: the copy would replace each with a zero vector. Pure."""
+    """(width, rows) of the non-empty vectors in `column` whose length is not `dim`:
+    the copy would replace each with a zero vector. Pure."""
     return (
         f"SELECT length({column}) AS w, count() FROM loom.{table}{fin} "
         f"WHERE length({column}) NOT IN (0, {int(dim)}) GROUP BY w ORDER BY w"
     )
-
-
-def twin_only_keys_sql(
-    twin: str, source: str, key: list[str], fin: str, where: str = "", version: str | None = None
-) -> str:
-    """The sorting keys `twin` holds and `source` does not, among the `twin` rows
-    `where` selects (all when empty), each with its `version` when one is named. Pure."""
-    ident = ", ".join(key)
-    cols = f"{ident}, {version}" if version else ident
-    cond = f" WHERE {where}" if where else ""
-    return (
-        f"SELECT {cols} FROM (SELECT {cols} FROM loom.{twin}{fin}{cond}) AS t "
-        f"LEFT JOIN (SELECT {ident}, 1 AS __present FROM loom.{source}{fin}) AS s "
-        f"USING ({ident}) WHERE s.__present = 0"
-    )
-
-
-def twin_only_failure(n: int) -> str:
-    """The gate's message for `n` keys the twin holds and the source no longer has. Pure."""
-    return (
-        f"GATE FAILED: {n} keys the source no longer holds remain in the twin after the "
-        "delete pass: rows are still being removed from the source (an erasure or delete), "
-        "and the swap would bring them back; no swap. Pause erasures and rerun with --reuse"
-    )
-
-
-def tombstone(side: str) -> str:
-    """`side`'s `tombstoned_at` as seconds, 0 for a row never tombstoned (NULL). Pure."""
-    return f"ifNull(toUInt32({side}.tombstoned_at), 0)"
-
-
-def mutations_running_sql(name: str) -> str:
-    """How many mutations on one schema table have not finished. Pure."""
-    return (
-        "SELECT count() FROM system.mutations "
-        f"WHERE database = currentDatabase() AND table = '{name}' AND NOT is_done"
-    )
-
-
-def last_blocks_sql(name: str) -> str:
-    """(partition, highest block number) of the active parts of one schema table. Pure."""
-    return (
-        "SELECT partition_id, max(max_block_number) FROM system.parts "
-        f"WHERE database = currentDatabase() AND table = '{name}' AND active GROUP BY partition_id"
-    )
-
-
-def in_parts_before(blocks: list[tuple[str, int]]) -> str:
-    """The rows whose part holds only blocks up to each partition's number in `blocks`.
-    A part is named `<partition>_<min block>_<max block>_<level>[_<mutation>]` and block
-    numbers only grow, so a write after `blocks` was read never matches. A merge of a
-    part within `blocks` with a later one would hide the first's rows, so the run reads
-    this only while the table's merges are stopped. Pure."""
-    part_max = "toUInt64(splitByChar('_', _part)[3])"
-    cases = [f"(_partition_id = {sql_literal(p)} AND {part_max} <= {int(n)})" for p, n in blocks]
-    return "(" + (" OR ".join(cases) or "0") + ")"
 
 
 def replace_select(columns: list[str], *, dim: int) -> str:
@@ -438,7 +347,6 @@ class VectorRebuild:
         self.replicas = replicas_source(args.cluster)
         self.rows_copied = 0
         self.dim = 0
-        self.tombstones = False  # a versioned table with tombstoned_at: the gates compare it
 
     # -- small reads -------------------------------------------------------
     def q(self, sql: str, **st: Any) -> list[Any]:
@@ -446,11 +354,6 @@ class VectorRebuild:
 
     def cmd(self, sql: str, **st: Any) -> None:
         self.ch.command(sql, settings=st or None)
-
-    @cached_property
-    def sync(self) -> migrate.SyncPolicy:
-        """Which wait settings this user may send, probed once as the migration runner does."""
-        return migrate.sync_policy(self.ch)
 
     @cached_property
     def codec(self) -> CodecSettings:
@@ -503,10 +406,7 @@ class VectorRebuild:
         for c in self.cols:
             d = vector_dim(ddl, c)
             if d is None:
-                fin = read_final(parse_engine(ddl)[0])
-                seen = self.q(
-                    f"SELECT topK(1)(length({c})) FROM loom.{name}{fin} WHERE length({c}) > 0"
-                )
+                seen = self.q(f"SELECT topK(1)(length({c})) FROM loom.{name} WHERE length({c}) > 0")
                 d = int(seen[0][0][0]) if seen and seen[0][0] else int(settings.embedding_dim)
             dims.add(d)
         if len(dims) != 1:
@@ -558,29 +458,21 @@ class VectorRebuild:
             log("rows written in the last hour with an empty vector:", n)
             if n:
                 return "recent rows carry an empty vector: add this table to placeholders.PLACEHOLDER_COLUMNS and deploy first"
+        fin = read_final(parse_engine(ddl)[0])
+        for c in self.cols:
+            widths = self.q(mixed_width_sql(self.t, c, fin, dim=self.dim), max_execution_time=1800)
+            if widths:
+                found = ", ".join(f"{n} rows of width {w}" for w, n in widths)
+                return (
+                    f"{c} holds vectors of another width than {self.dim} ({found}): the copy "
+                    "would zero them; re-embed those rows first"
+                )
         twin = tr.table_row(self.ch, self.twin)
         if twin is not None and not (self.a.reuse or self.a.restart):
             return (
                 f"loom.{self.twin} (created {twin[2]}, {tr.row_count(self.ch, self.twin)} rows) is "
                 "another run's lock or its leftover: --reuse continues from it, --restart drops it"
             )
-        return self.mixed_widths(read_final(parse_engine(ddl)[0]))
-
-    def mixed_widths(self, fin: str) -> str:
-        """Which named column holds non-empty vectors of another width than the target's,
-        or ''. Tombstoned rows count: a restore would bring one back with a zero vector."""
-        for c in self.cols:
-            widths = self.q(
-                mixed_width_sql(self.t, c, fin, dim=self.dim),
-                max_execution_time=self.a.statement_timeout_s,
-            )
-            if widths:
-                found = ", ".join(f"width {w}: {n} row(s)" for w, n in widths)
-                return (
-                    f"{c} holds vectors of another width than {self.dim} ({found}): the copy "
-                    "would zero them; re-embed or erase those rows first (tombstoned rows "
-                    "count, since a restore brings them back)"
-                )
         return ""
 
     # -- the run ------------------------------------------------------------
@@ -701,79 +593,22 @@ class VectorRebuild:
         ident = ", ".join(key)
         vsel = f", {version}" if version else ""
         newer = f"s.{version} > t.{version} OR t.__present = 0" if version else "t.__present = 0"
-        if self.tombstones:  # an erasure's tombstone keeps the version
-            vsel += ", tombstoned_at"
-            newer += f" OR {tombstone('s')} > {tombstone('t')}"
         diverged = (
             f"SELECT {ident} FROM (SELECT {ident}{vsel} FROM loom.{src}{fin}) AS s "
             f"LEFT JOIN (SELECT {ident}{vsel}, 1 AS __present FROM loom.{dst}{fin}) AS t "
             f"USING ({ident}) WHERE {newer}"
         )
-        keys = self.q(diverged, join_use_nulls=0, max_execution_time=self.a.statement_timeout_s)
+        keys = self.q(diverged, join_use_nulls=0, max_execution_time=1800)
         for i in range(0, len(keys), REPAIR_BATCH):
-            lits = key_literals(keys[i : i + REPAIR_BATCH])
+            batch = keys[i : i + REPAIR_BATCH]
+            lits = ", ".join("(" + ", ".join(key_literal(v) for v in k) + ")" for k in batch)
             self.cmd(
                 f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE ({ident}) IN ({lits})",
                 **self.codec_on(),
-                max_execution_time=self.a.statement_timeout_s,
+                max_execution_time=1800,
             )
         self.rows_copied += len(keys)
         return len(keys)
-
-    def remove_twin_only(self, fin: str, key: list[str]) -> int:
-        """Delete from the twin every key the source no longer holds: rows their writer
-        removed during the run (an erasure or delete), which the swap would bring back.
-        """
-        gone = twin_only_keys_sql(self.twin, self.t, key, fin)
-        keys = self.q(gone, join_use_nulls=0, max_execution_time=self.a.statement_timeout_s)
-        self.delete_keys(self.twin, keys, key)
-        return len(keys)
-
-    def erased_across_swap(
-        self, key: list[str], version: str | None, blocks: list[tuple[str, int]]
-    ) -> list[Any]:
-        """The live rows erased from the old table after the last twin-only read, which
-        the swap brought back: every version of each key, so a delete leaves no older
-        one behind. `blocks` are the twin's highest block numbers just before the swap,
-        so only rows copied before it are compared; the caller reads this while the
-        live table's merges are still stopped."""
-        erased = twin_only_keys_sql(self.t, self.pre, key, "", in_parts_before(blocks), version)
-        return self.q(erased, join_use_nulls=0, max_execution_time=self.a.statement_timeout_s)
-
-    def wait_for_mutations(self) -> int:
-        """Wait for the source's mutations (an erasure's tombstone or delete) to finish, so
-        the last reads before the swap see them; how many still run after
-        `--statement-timeout-s`."""
-        deadline = time.monotonic() + self.a.statement_timeout_s
-        while (running := int(self.q(mutations_running_sql(self.t))[0][0])) and (
-            time.monotonic() < deadline
-        ):
-            log("mutations running on the source:", running)
-            time.sleep(self.a.settle_s)
-        return running
-
-    def start_twin_merges(self) -> None:
-        """Start the merges this run stopped on the twin, under the name it has now."""
-        try:
-            for (name,) in self.q(
-                "SELECT name FROM system.tables WHERE database = currentDatabase() "
-                f"AND uuid = toUUID('{self.twin_uuid}')"
-            ):
-                self.cmd(f"SYSTEM START MERGES loom.{name}")
-        except Exception as e:  # noqa: BLE001 - the swap is done; the operator starts them
-            log(f"could not start merges: run SYSTEM START MERGES loom.{self.t}:", str(e)[:120])
-
-    def delete_keys(self, table: str, keys: list[Any], key: list[str]) -> None:
-        """Delete `keys` from `table`, named as literals as in `repair_into`."""
-        ident = ", ".join(key)
-        for i in range(0, len(keys), REPAIR_BATCH):
-            lits = key_literals(keys[i : i + REPAIR_BATCH])
-            stmt = f"DELETE FROM loom.{table} WHERE ({ident}) IN ({lits})"
-            self.cmd(
-                stmt,
-                **self.sync.settings_for(stmt),
-                max_execution_time=self.a.statement_timeout_s,
-            )
 
     def monitor(self, stop: threading.Event) -> None:
         mc = self.client()
@@ -797,9 +632,6 @@ class VectorRebuild:
         ident = ", ".join(key)
         vsel = f", {version}" if version else ""
         vcmp = f"s.{version} != t.{version}" if version else "0"
-        if self.tombstones:  # an erasure's tombstone keeps the version
-            vsel += ", tombstoned_at"
-            vcmp += f" OR {tombstone('s')} != {tombstone('t')}"
         vnull_s = f"s.{version} = 0 OR s.{version} IS NULL" if version else "s.__present = 0"
         vnull_t = f"t.{version} = 0 OR t.{version} IS NULL" if version else "t.__present = 0"
         row = self.q(
@@ -809,13 +641,14 @@ class VectorRebuild:
           FULL OUTER JOIN (SELECT {ident}{vsel}, 1 AS __present FROM loom.{self.twin}{fin}) AS t USING ({ident})
         """,
             join_use_nulls=0,
-            max_execution_time=self.a.statement_timeout_s,
+            max_execution_time=1800,
         )[0]
         return int(row[0]), int(row[1]), int(row[2])
 
     def recall(self, ddl: str, fin: str) -> list[float]:
         """Distance recall per probe: exact on the source vs the twin read as the legs read it."""
         vcol, dim = self.cols[0], self.dim
+        # a fixed-length placeholder is all zeros: its cosine is NaN, never a probe
         real = vector_filter(vcol, dim=dim)
         probes = self.q(
             f"SELECT org, namespace, {vcol} FROM loom.{self.t} WHERE {real} ORDER BY rand() LIMIT {self.a.probes}"
@@ -837,6 +670,7 @@ class VectorRebuild:
                 **st,
             )
             d20 = ex[-1][0] if ex else 0.0
+            # the denominator is the real neighbours the exact read found, at most 20
             drec.append(sum(1 for r in tw if r[0] <= d20 + tol) / max(1, len(ex)))
         return drec
 
@@ -846,7 +680,6 @@ class VectorRebuild:
             log("REFUSED:", why)
             return REFUSED
         engine, version, key = parse_engine(ddl)
-        self.tombstones = bool(version) and "`tombstoned_at`" in ddl
         log("engine", engine, "version column", version, "sorting key", key)
         fin = read_final(engine)
         sel = replace_select(self.cols, dim=self.dim)
@@ -886,15 +719,17 @@ class VectorRebuild:
         log("consistency (mismatched, source_only, twin_only):", cons)
         if cons[0] or cons[1]:
             log("repair keys:", self.repair_into(self.twin, self.t, sel, fin, version, key))
-        if any(cons):  # a key may leave the source during the repair too
-            log("twin-only keys deleted:", self.remove_twin_only(fin, key))
             cons = self.consistent(fin, version, key)
             log("consistency after repair:", cons)
         if cons[0] or cons[1]:
             log("GATE FAILED: the twin diverges; no swap")
             return GATE_FAILED
         if cons[2]:
-            log(twin_only_failure(cons[2]))
+            log(
+                f"GATE FAILED: {cons[2]} keys are in the twin only: rows were removed from the "
+                "source during the copy (an erasure or delete), and the swap would bring them back; "
+                "no swap. Stop writes and rerun with --restart"
+            )
             return GATE_FAILED
         drec = self.recall(ddl, fin)
         if not drec:
@@ -916,45 +751,15 @@ class VectorRebuild:
         if not self.still_ours():
             log(f"REFUSED: loom.{self.twin} is no longer the twin this run created; no swap")
             return REFUSED
-        # a wrong-width write before this scan or a delete before the twin-only read would reach the swap
-        if why := self.mixed_widths(fin):
-            log(f"GATE FAILED: {why}; no swap")
-            return GATE_FAILED
-        if running := self.wait_for_mutations():
-            log(
-                f"GATE FAILED: {running} mutations on loom.{self.t} still running after "
-                f"{self.a.statement_timeout_s:.0f}s (an erasure?); no swap. Rerun with --reuse"
-            )
-            return GATE_FAILED
         self.delta_into(self.twin, self.t, sel, version, key)
-        if deleted := self.remove_twin_only(fin, key):
-            log("twin-only keys deleted:", deleted)
-            if twin_only := self.consistent(fin, version, key)[2]:
-                log(twin_only_failure(twin_only))
-                return GATE_FAILED
-        # Until the erased rows are read: no merge folds a copied part into a later one,
-        # and a delete on the live table waits, so the passes never copy its key back.
-        self.cmd(f"SYSTEM STOP MERGES loom.{self.twin}")
-        try:
-            blocks = [(str(p), int(n)) for p, n in self.q(last_blocks_sql(self.twin))]
-            tr.swap_in(self.ch, self.t)
-            for _ in range(2):  # writes in flight at the exchange landed in the old table
-                time.sleep(self.a.settle_s)
-                log("post-swap delta rows:", self.delta_into(self.t, self.pre, sel, version, key))
-                log(
-                    "post-swap repair keys:",
-                    self.repair_into(self.t, self.pre, sel, fin, version, key),
-                )
-            erased = self.erased_across_swap(key, version, blocks)
-        finally:
-            self.start_twin_merges()
-        # by key and version: a merge may rename the parts now, and a write since is kept
-        self.delete_keys(self.t, erased, [*key, version] if version else key)
-        log(
-            f"rows erased across the swap, deleted from the live table: {len(erased)}; "
-            f"the first {KEYS_LOGGED}:",
-            erased[:KEYS_LOGGED],
-        )
+        tr.swap_in(self.ch, self.t)
+        for _ in range(2):  # writes in flight at the exchange landed in the old table
+            time.sleep(self.a.settle_s)
+            log("post-swap delta rows:", self.delta_into(self.t, self.pre, sel, version, key))
+            log(
+                "post-swap repair keys:",
+                self.repair_into(self.t, self.pre, sel, fin, version, key),
+            )
         return self.check_swapped()
 
     def check_swapped(self) -> int:
@@ -1084,20 +889,12 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
     )
     ap.add_argument("--settle-s", type=float, default=15.0, help="wait before each post-swap delta")
     ap.add_argument(
-        "--statement-timeout-s",
-        type=float,
-        default=1800.0,
-        help="max_execution_time of each check, repair and delete statement (the copy has its own)",
-    )
-    ap.add_argument(
         "--abort-file", default=str(Path(os.environ.get("LOOM_REBUILD_DIR", ".")) / "ABORT_REBUILD")
     )
     a = ap.parse_args(argv)
     a.table = a.table.removeprefix("loom.")
     if a.cluster and not _CLUSTER_NAME.fullmatch(a.cluster):
         ap.error(f"--cluster: not a cluster name: {a.cluster!r}")
-    if a.statement_timeout_s <= 0:
-        ap.error("--statement-timeout-s must be > 0")
     return a
 
 
@@ -1113,6 +910,7 @@ def main(argv: list[str] | None = None, ch: Any = None) -> int:
     a = parse(argv)
     client = None
     if ch is None:
+        from server.core.schema import migrate
 
         def client() -> Any:
             return migrate.client(receive_timeout_s=COPY_RECEIVE_TIMEOUT_S)

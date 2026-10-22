@@ -216,29 +216,10 @@ into a twin table, check it, swap with `EXCHANGE TABLES` and keep the old table 
 `--rollback`. Both print their plan and change nothing without `--yes`; the procedure is
 in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-key).
 `vector_codec_rebuild.py` refuses, `--dry-run` included, while a named column holds
-non-empty vectors of another width than the target's, tombstoned rows included (a restore
-brings one back): re-embed or erase those rows first, since the copy would replace them with
-zero vectors, and every writer must produce the target width until the run ends. A row
-removed from the source during the run (an erasure or delete) is deleted from the twin too,
-in one pass; the run stops before the swap if any such key remains after it: pause erasures
-and rerun with `--reuse`. The consistency gate compares `tombstoned_at` as well as the
-version, since an erasure tombstones a row in place, and repairs a newer tombstone. The run
-also stops when a vector of another width was written before the width scan: re-embed
-those rows, then rerun with `--restart`. Both checks run again before the swap, after the
-run waits for the source's running mutations, up to `--statement-timeout-s`, and stops if
-one remains. The last read before the `EXCHANGE` is the twin-only check, or, when it deleted
-keys, the consistency recheck that follows; the run then stops the twin's merges and reads
-its highest block number per partition. A delete or tombstone after that read reaches only
-`<t>_pre_rebuild`. With the merges stopped, no part folds a copied row into a later one, and
-a delete or tombstone on the live table waits, so the post-swap passes, which copy the writes
-in flight at the `EXCHANGE`, never see its key missing and copy it back. They copy a newer
-tombstone from `<t>_pre_rebuild`; the run then starts the merges and deletes from the live
-table every row in a part within those blocks whose key `<t>_pre_rebuild` lacks, by key and
-version: it was copied before the swap, so its writer deleted it. A write after the swap is
-kept unless it has the key and version of such a row. A mutation still running on the old
-table at the `EXCHANGE` stays there, since its merges stop at the swap: pause erasures over
-the swap to be sure. `--statement-timeout-s` (default 1800) caps each check, repair and
-delete statement and the mutation wait; raise it for a table whose full scans take longer.
+non-empty vectors of another width than the target's: re-embed those rows first, since the
+copy would replace them with zero vectors. It stops before the swap when the twin holds
+rows removed from the source during the copy (an erasure or delete); stop writes and rerun
+it with `--restart`.
 
 ## Disk pressure hygiene
 

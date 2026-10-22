@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from scripts.ops import vector_codec_rebuild as vcr
 from server.core.schema.vector_codec_ddl import statement_settings
 from tests.unit.codec_states import settings
@@ -214,7 +212,7 @@ def test_twin_read_is_the_codes_at_the_leg_multiplier() -> None:
     )
 
 
-def test_the_width_preflight_counts_other_non_empty_widths_under_final() -> None:
+def test_the_width_preflight_counts_other_non_empty_widths_as_loom_serves_them() -> None:
     assert vcr.read_final(vcr.parse_engine(DDL)[0]) == " FINAL"
     assert vcr.read_final("SharedMergeTree") == ""
     assert vcr.mixed_width_sql("memory_chunks", "embedding", " FINAL", dim=3072) == (
@@ -222,33 +220,6 @@ def test_the_width_preflight_counts_other_non_empty_widths_under_final() -> None
         "WHERE length(embedding) NOT IN (0, 3072) GROUP BY w ORDER BY w"
     )
     assert "FINAL" not in vcr.mixed_width_sql("chunks", "embedding", "", dim=3072)
-
-
-def test_the_twin_only_read_keeps_the_twin_keys_the_source_lacks() -> None:
-    assert vcr.twin_only_keys_sql("t_rebuild", "t", ["org", "namespace"], " FINAL") == (
-        "SELECT org, namespace FROM (SELECT org, namespace FROM loom.t_rebuild FINAL) AS t "
-        "LEFT JOIN (SELECT org, namespace, 1 AS __present FROM loom.t FINAL) AS s "
-        "USING (org, namespace) WHERE s.__present = 0"
-    )
-    erased = vcr.twin_only_keys_sql("t", "t_pre_rebuild", ["org"], "", "version < 7")
-    assert erased.startswith("SELECT org FROM (SELECT org FROM loom.t WHERE version < 7) AS t ")
-    assert vcr.key_literal(b"\x3f\xa9") == "unhex('3fa9')"
-
-
-def test_the_post_swap_pass_reads_only_parts_written_before_the_swap() -> None:
-    assert vcr.in_parts_before([("all", 7), ("202610", 2)]) == (
-        "((_partition_id = 'all' AND toUInt64(splitByChar('_', _part)[3]) <= 7) OR "
-        "(_partition_id = '202610' AND toUInt64(splitByChar('_', _part)[3]) <= 2))"
-    )
-    assert vcr.in_parts_before([]) == "(0)"  # an empty twin had no rows to bring back
-
-
-def test_the_statement_timeout_is_an_argument_above_zero() -> None:
-    base = ["--table", "memory_chunks", "--columns", "embedding"]
-    assert vcr.parse(base).statement_timeout_s == 1800.0
-    assert vcr.parse([*base, "--statement-timeout-s", "7200"]).statement_timeout_s == 7200.0
-    with pytest.raises(SystemExit):
-        vcr.parse([*base, "--statement-timeout-s", "0"])
 
 
 def test_parse_engine_reads_the_version_of_a_non_replicated_or_is_deleted_engine() -> None:
