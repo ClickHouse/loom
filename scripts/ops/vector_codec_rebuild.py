@@ -415,11 +415,13 @@ def newer_sql(old: str, new: str, fin: str, version: str | None, key: list[str])
 # Whether the replica answering a read has fetched every part of the tables in
 # {tables:Array(String)} that their replication logs name: it has copied the whole log
 # into its queue, and the queue holds nothing but merges, which keep the rows. A
-# mutation fails the run through the mutation count instead. A table never written has
-# an empty log, which reads as log_pointer = log_max_index = 0 with an empty queue.
+# mutation fails the run through the mutation count instead. log_max_index comes from
+# the newest log entry's name, so a log of one entry this replica has not pulled reads
+# log_pointer = log_max_index = 0 as an empty log does; only the tables in
+# {empty:Array(String)}, whose log Keeper lists with no entry, pass on those zeros.
 REPLICA_SYNCED_SQL = (
     "(SELECT countIf(log_pointer > log_max_index "
-    "OR (log_max_index = 0 AND log_pointer = 0 AND queue_size = 0)) "
+    "OR (has({empty:Array(String)}, table) AND log_pointer = 0 AND queue_size = 0)) "
     "= length({tables:Array(String)}) "
     "FROM system.replicas WHERE database = currentDatabase() "
     "AND has({tables:Array(String)}, table)) "
@@ -540,7 +542,7 @@ class VectorRebuild:
             return self.q(sql, **st)
         ((host, synced, rows),) = self.q(
             f"SELECT hostName(), ({REPLICA_SYNCED_SQL}), groupArray(tuple(*)) FROM ({sql})",
-            parameters={"tables": tables},
+            parameters={"tables": tables, "empty": self.empty_logs(tables)},
             **st,
         )
         if not synced:
@@ -551,6 +553,24 @@ class VectorRebuild:
             )
         # a server that names tuple elements returns each row as a dict
         return [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in rows]
+
+    def empty_logs(self, tables: list[str]) -> list[str]:
+        """The tables in `tables` whose replication log in Keeper holds no entry. Keeper
+        is shared, so any replica's answer holds for the one that reads next."""
+        paths = self.q(
+            "SELECT table, zookeeper_path FROM system.replicas "
+            "WHERE database = currentDatabase() AND has({tables:Array(String)}, table)",
+            parameters={"tables": tables},
+        )
+        empty = []
+        for table, path in paths:
+            entries = self.q(
+                "SELECT count() FROM system.zookeeper WHERE path = {p:String}",
+                parameters={"p": path.rstrip("/") + "/log"},
+            )[0][0]
+            if not entries:
+                empty.append(table)
+        return empty
 
     @cached_property
     def codec(self) -> CodecSettings:
@@ -649,7 +669,7 @@ class VectorRebuild:
             self.t,
             self.run_line,
             self.target_state(self.t),
-            self.exists(self.twin),
+            self.target_state(self.twin),
             self.target_state(self.pre),
         )
 
@@ -687,9 +707,16 @@ class VectorRebuild:
             if n:
                 return "recent rows carry an empty vector: add this table to placeholders.PLACEHOLDER_COLUMNS and deploy first"
         twin = tr.table_row(self.ch, self.twin)
-        if twin is not None and self.metadata_time(self.twin) < self.metadata_time(self.t):
-            # older than the live table: an exchange ran without its rename, so the
-            # twin is the old table, the only rollback copy
+        if (
+            twin is not None
+            and self.metadata_time(self.twin) < self.metadata_time(self.t)
+            and self.target_state(self.t)
+        ):
+            # Any ALTER of the live table also moves its metadata time past the twin's, so
+            # the time alone does not show an exchange; the layouts do. A twin off the
+            # target layout under a live table on it is the old table, the only rollback
+            # copy; two tables on it (--require-patch-free) may be either, and the report
+            # says to compare them. Under a live table off it the twin is a leftover.
             return self.report_state()
         if twin is not None and not (self.a.reuse or self.a.restart):
             return (

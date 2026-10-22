@@ -260,13 +260,16 @@ def test_a_successful_rebuild_names_its_next_step_and_a_rollback_names_none(
 
 def test_the_next_step_follows_what_the_three_names_hold() -> None:
     g = lambda live, twin, pre: tr.guidance("t", "run", live, twin, pre)  # noqa: E731
-    assert "RENAME TABLE loom.t_rebuild TO loom.t_pre_rebuild" in g(True, True, None)
-    assert "`run --rollback --yes`" in g(True, False, False)
-    assert "nothing to do" in g(True, False, None)
-    assert "`run --drop-pre-rebuild --yes`" in g(False, False, True)
+    assert "RENAME TABLE loom.t_rebuild TO loom.t_pre_rebuild" in g(True, False, None)
+    both = g(True, True, None)
+    assert "compare" in both and "RENAME" not in both and "--restart" not in both
+    assert "`run --rollback --yes`" in g(True, None, False)
+    assert "nothing to do" in g(True, None, None)
+    assert "`run --drop-pre-rebuild --yes`" in g(False, None, True)
     assert "`run --restart --yes`" in g(False, True, None)
+    assert "`run --restart --yes`" in g(False, False, None)
     assert "by hand" in g(None, True, False)
-    assert "blocks a new run" in g(False, False, False)
+    assert "blocks a new run" in g(False, None, False)
 
 
 def test_the_tool_reports_the_layouts_as_on_or_off_target(capsys: Any) -> None:

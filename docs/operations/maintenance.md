@@ -246,7 +246,11 @@ step that names a command carries the run's `--method`, `--chain`,
 `DROP TABLE loom.<table>_rebuild SYNC` to remove an abandoned twin, unless the run's
 next step is `RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild`: there the
 exchange ran without the rename, `<table>_rebuild` is the old table, and the tool refuses
-`--reuse` and `--restart` until the rename runs.
+`--reuse` and `--restart` until the rename runs. The tool names the rename only when the
+live table is on the target layout and an older twin is not. When both are on it (a
+`--require-patch-free` run) and the twin is older, the layouts do not show whether an
+exchange ran: the tool refuses, renames and drops nothing, and asks to compare the two
+tables' rows before dropping either by hand.
 `--drop-pre-rebuild` first compares the two tables again, after the same drain as the
 postcondition, also when both are on the target layout (a `--require-patch-free`
 rebuild of a table already on it), and refuses (exit 3) and keeps the copy on any
@@ -284,7 +288,10 @@ The erasure saga does not cover these copies.
   merges). For `ReplicatedMergeTree`, connect directly to one replica throughout the run.
   Each later consistency and width read also reads, in the same statement, whether the
   replica answering it has copied the whole replication log of the tables it reads and has
-  no entry other than a merge or a mutation left in its queue; a read on a replica that
+  no entry other than a merge or a mutation left in its queue. A replica that has not
+  pulled a log of one entry reports the same zero log pointer as one with an empty log, so
+  the run reads the log's entries in `system.zookeeper` and passes the zeros only for a
+  log with none; its user needs read access to `system.zookeeper`. A read on a replica that
   has not caught up refuses the run in the preflight (exit 3), fails the gate before the
   swap (exit 5) and fails the postcondition after it (exit 7). Every later gate read and
   the last delta use `select_sequential_consistency = 1`. On `SharedMergeTree` this covers

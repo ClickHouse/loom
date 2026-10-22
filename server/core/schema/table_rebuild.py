@@ -345,17 +345,24 @@ def swap_in(ch: Any, table: str) -> None:
         log("could not stop merges on the rollback copy:", str(e)[:120])
 
 
-def guidance(table: str, run: str, live: bool | None, twin: bool, pre: bool | None) -> str:
-    """The next step from what the three names hold. `live` / `pre`: None when
-    the name is absent, else whether it holds the target layout; `run` is the
+def guidance(table: str, run: str, live: bool | None, twin: bool | None, pre: bool | None) -> str:
+    """The next step from what the three names hold. `live` / `twin` / `pre`: None
+    when the name is absent, else whether it holds the target layout; `run` is the
     tool's command line up to its flags. Pure."""
     tw, pr = f"loom.{table}{TWIN_SUFFIX}", f"loom.{table}{PRE_SUFFIX}"
     if live is None:
         return f"loom.{table} is absent: inspect {tw} and {pr} by hand before anything else"
-    if live and twin and pre is None:
+    if live and twin is False and pre is None:
+        # an exchange swaps the target layout in, so a twin off it is the old table
         return (
             f"the exchange ran but the rename did not: {tw} is the old table; run "
             f"`RENAME TABLE {tw} TO {pr}`, then `SYSTEM STOP MERGES {pr}`"
+        )
+    if live and twin and pre is None:
+        return (
+            f"loom.{table} and {tw} both hold the target layout, so their layouts do not "
+            f"show whether an exchange ran: compare the two tables' rows before dropping "
+            f"either by hand"
         )
     if live and pre is not None:
         return f"swapped: `{run} --rollback --yes` undoes it, `--drop-pre-rebuild --yes` keeps it"
@@ -367,7 +374,7 @@ def guidance(table: str, run: str, live: bool | None, twin: bool, pre: bool | No
         return (
             f"{pr} holds an earlier layout and blocks a new run: `{run} --drop-pre-rebuild --yes`"
         )
-    if twin:
+    if twin is not None:
         return f"not swapped; {tw} is left for inspection: `{run} --restart --yes` copies again"
     return f"not swapped and nothing left behind: `{run} --yes` runs it"
 

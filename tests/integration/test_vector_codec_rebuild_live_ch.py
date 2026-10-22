@@ -505,3 +505,35 @@ def test_a_read_on_a_replica_that_has_not_fetched_a_part_refuses_the_run(
         ch.command(f"SYSTEM START FETCHES loom.{table}")
         for name in (table, other):
             ch.command(f"DROP TABLE IF EXISTS loom.{name} SYNC")
+
+
+def test_a_replica_that_has_not_pulled_a_single_log_entry_refuses_the_run(
+    ch: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A log holding one entry reads log_pointer = log_max_index = 0 on a replica that has
+    not pulled it, as an empty log does. Here the replica the run reads stops pulling its
+    log before the other replica writes the table's only part: Keeper lists the entry, so
+    the width read's replica check refuses the run instead of reading the table as empty."""
+    table = f"vcr_it_{uuid.uuid4().hex[:8]}"
+    other = f"{table}_r2"
+    for name, replica in ((table, "r1"), (other, "r2")):
+        ch.command(
+            f"CREATE TABLE loom.{name} (org String, namespace String, id UInt64, "
+            "embedding Array(Float32), version UInt64, note String DEFAULT '') "
+            f"ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{table}', "
+            f"'{replica}', version) ORDER BY (org, namespace, id)"
+        )
+    try:
+        job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
+        if why := job.codec_refusal():
+            pytest.skip(why)
+        ch.command(f"SYSTEM STOP PULLING REPLICATION LOG loom.{table}")
+        insert(ch, other, 1, [1.0] * 8)
+        monkeypatch.setattr(vcr.VectorRebuild, "drain", lambda self, engine: None)
+        assert vcr.main([*args(table), "--yes"], ch=ch) == tr.REFUSED
+        assert "has not fetched every part" in capsys.readouterr().out
+        assert ch.query(f"EXISTS TABLE loom.{table}{tr.TWIN_SUFFIX}").result_rows == [(0,)]
+    finally:
+        ch.command(f"SYSTEM START PULLING REPLICATION LOG loom.{table}")
+        for name in (table, other):
+            ch.command(f"DROP TABLE IF EXISTS loom.{name} SYNC")

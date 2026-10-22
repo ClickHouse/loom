@@ -352,12 +352,12 @@ class Rebuild:
         )
 
     def report_state(self) -> str:
-        live, pre = tr.live_layout(self.ch, self.t), tr.live_layout(self.ch, self.pre)
+        live, twin, pre = (tr.live_layout(self.ch, n) for n in (self.t, self.twin, self.pre))
         return tr.guidance(
             self.t,
             f"python -P -m scripts.ops.table_rebuild --table {self.t}",
             None if live is None else live == self.target,
-            self.exists(self.twin),
+            None if twin is None else twin == self.target,
             None if pre is None else pre == self.target,
         )
 

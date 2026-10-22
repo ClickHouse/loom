@@ -233,6 +233,31 @@ def test_a_twin_older_than_the_live_table_is_the_old_table_and_is_kept(
     )
 
 
+def test_a_twin_older_than_a_plain_live_table_is_a_leftover() -> None:
+    """An ALTER of the live table after an aborted run moves its metadata time past the
+    twin's; with the live table still off the target layout no exchange ran, so
+    --restart drops the twin and copies again."""
+    altered = {**_live(), "created": COPY_STARTED}
+    ch = _CH(memory_chunks=altered, memory_chunks_rebuild={"ddl": ARRAY, "rows": 5, "uuid": "x"})
+    assert _run(ch, "--yes", "--restart") == tr.OK
+    assert _writes(ch)[0] == "DROP TABLE loom.memory_chunks_rebuild SYNC"
+    assert "Quantized('rabitq', 1536, 0)" in ch.t["memory_chunks"]["ddl"]
+
+
+def test_two_coded_tables_with_an_older_twin_are_refused_untouched(capsys: Any) -> None:
+    """A --require-patch-free run can leave a coded twin under a coded live table, so
+    the layouts do not show whether an exchange ran: the run neither renames nor drops,
+    and asks for the two tables to be compared."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    twin = {"ddl": coded, "rows": 3, "uuid": "partial", "created": TWIN_CREATED}
+    live = {"ddl": coded, "rows": 5, "uuid": "live", "created": COPY_STARTED}
+    ch = _CH(memory_chunks=live, memory_chunks_rebuild=twin)
+    assert _run(ch, "--yes", "--require-patch-free", "--restart") == tr.REFUSED
+    assert _writes(ch) == [] and "memory_chunks_rebuild" in ch.t
+    out = capsys.readouterr().out
+    assert "compare" in out and "RENAME TABLE" not in out and "--restart --yes" not in out
+
+
 def test_a_twin_with_patch_parts_is_never_swapped() -> None:
     ch = _CH(memory_chunks=_live())
     ch.patches["memory_chunks_rebuild"] = 2
@@ -999,8 +1024,26 @@ def test_each_read_after_the_drain_checks_its_own_replica_in_the_same_statement(
         assert reads and all(q.startswith(DRAINED_READ) for q, _ in reads), needle
         assert tables <= {t for _, p in reads for t in p["tables"]}, needle
     assert "log_pointer > log_max_index" in vcr.REPLICA_SYNCED_SQL
-    assert "log_max_index = 0 AND log_pointer = 0 AND queue_size = 0" in vcr.REPLICA_SYNCED_SQL
+    assert (
+        "has({empty:Array(String)}, table) AND log_pointer = 0 AND queue_size = 0"
+        in vcr.REPLICA_SYNCED_SQL
+    )
     assert "system.replication_queue" in vcr.REPLICA_SYNCED_SQL
+
+
+def test_only_a_log_keeper_lists_empty_passes_on_zero_log_pointers() -> None:
+    """A replica that has not pulled a log of one entry reads log_pointer = log_max_index
+    = 0, as an empty log does; Keeper's list of the log's entries tells them apart."""
+    entries = {"/t/a/log": 0, "/t/b/log": 1}
+
+    class _Job:
+        def q(self, sql: str, parameters: Any = None, **st: Any) -> list[Any]:
+            if "zookeeper_path" in sql:
+                return [("a", "/t/a/"), ("b", "/t/b")]
+            return [(entries[parameters["p"]],)]
+
+    job: Any = _Job()
+    assert vcr.VectorRebuild.empty_logs(job, ["a", "b"]) == ["a"]
 
 
 def test_each_gate_read_of_a_replicated_twin_follows_its_sync() -> None:

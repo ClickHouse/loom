@@ -555,7 +555,8 @@ Drop a `<table>_rebuild` twin with `DROP TABLE IF EXISTS loom.<table>_rebuild SY
 run printed `next` with `RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild`,
 its exchange ran without the rename and `<table>_rebuild` is the old table, the rollback
 copy: run that step instead of the drop. The tool refuses `--reuse` and `--restart` in
-that state.
+that state. When `next` instead asks to compare `<table>` and `<table>_rebuild`, both are on
+the target layout: compare their rows before dropping either.
 
 Start Loom again after cleanup; each process reads the codec settings when it starts.
 
