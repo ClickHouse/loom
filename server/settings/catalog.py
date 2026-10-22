@@ -4930,7 +4930,9 @@ class TrackerSettings(BaseModel):
 # waited async insert an op awaits adds up to `ch_batched_insert_wait_max_ms`; the
 # budgets assume its default. A budget is raised where one such wait is a large share
 # of it ("+ ... wait" below names those waits); budgets of 400 ms or more absorb it. A wait
-# only some calls make is priced as a shape in OP_SHAPE_BUDGETS_P99_MS.
+# only some calls make is priced as a shape in OP_SHAPE_BUDGETS_P99_MS. The
+# restricted-access audit row's wait sits in the transport's admission gate, before
+# the handler time a budget measures.
 
 OP_BUDGETS_P99_MS: dict[str, int] = {
     "admin.users": 300,
@@ -5313,11 +5315,13 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "procedure.record_run": 150,
     "procedure.revise": 300,
     "profile.activity": 80,
-    # 2-3 round-trips under contention.
-    "profile.append": 80,
+    # memory.set's write path (handle_memory_set), 2-3 round-trips under contention.
+    "profile.append": 200,
     "profile.render": 60,
-    "profile.replace": 80,
-    "profile.set": 30,
+    # memory.set's write path (handle_memory_set).
+    "profile.replace": 200,
+    # memory.set's write path (handle_memory_set).
+    "profile.set": 200,
     # The schema, the profile row and one user's digest aggregate.
     "profile.structured": 60,
     # A point read, then one synchronous insert.
@@ -5422,14 +5426,13 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
     # The batched-insert shapes below are the base + the default
     # ch_batched_insert_wait_max_ms (50 ms), not a measured p99.
     # "audited": a high-sensitivity row was read, + its audit-row wait.
-    # "webhook": the namespace has a webhook, + its outbox-row wait.
+    # "webhook": a webhook took the event (announce sent outbox rows), + its outbox-row wait.
     # "undo": memory.restore's Undo, + its audit-record wait.
     # "rewrite": deduplication dropped the saved turn, + the rewritten row's wait.
     "conversation.save_message": {"rewrite": 350},
     "memory.bulk_get": {"audited": 130},
     "memory.bulk_set": {"webhook": 350},
     "memory.delete": {"webhook": 80},
-    # memory.delete_version's base + outbox-row wait.
     "memory.delete_version": {"webhook": 130},
     "memory.evidence": {"audited": 200},
     "memory.get": {"audited": 75},

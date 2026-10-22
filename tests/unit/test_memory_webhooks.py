@@ -486,15 +486,19 @@ async def test_a_receivers_token_cannot_turn_a_users_erasure_id_into_the_user(
 
 
 @pytest.fixture
-def announced(monkeypatch: pytest.MonkeyPatch) -> list[list[tuple[str, dict[str, Any]]]]:
-    """Each `announce` call with changes: its (event, change) pairs. Every change has a
-    webhook: a call with changes wrote outbox rows."""
+def announced(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> list[list[tuple[str, dict[str, Any]]]]:
+    """Each `announce` call with changes: its (event, change) pairs. A call with changes
+    sent outbox rows unless the test parametrizes the fixture with False (no webhook
+    took the events)."""
     calls: list[list[tuple[str, dict[str, Any]]]] = []
+    sends = getattr(request, "param", True)
 
     async def record(changes: Any) -> bool:
         if changes:
             calls.append([(event, dict(c)) for event, c in changes])
-        return bool(changes)
+        return sends and bool(changes)
 
     monkeypatch.setattr(app, "announce", record)
     return calls
@@ -579,8 +583,11 @@ async def test_memory_set_restatement_compares_at_the_stored_precision(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("announced", "shape"), [(True, "webhook"), (False, "")], indirect=["announced"]
+)
 async def test_bulk_set_splits_written_and_revised_and_a_repeated_key_is_revised(
-    announced: list[Any],
+    announced: list[Any], shape: str
 ) -> None:
     from server.memory.app import bulk_set
 
@@ -594,7 +601,8 @@ async def test_bulk_set_splits_written_and_revised_and_a_repeated_key_is_revised
     )
     note_budget_shape("")
     await bulk_set._bulk_announce(state)  # type: ignore[arg-type]
-    assert current_budget_shape() == "webhook"  # held to the budget with the outbox-row wait
+    # held to the budget with the outbox-row wait only when outbox rows were sent
+    assert current_budget_shape() == shape
     (call,) = announced  # one insert for the batch
     assert [(e, c["version"]) for e, c in call] == [
         ("memory.written", 1),
@@ -635,8 +643,11 @@ def _memory_row(key: str, version: int = 10, **over: Any) -> MemoryRow:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("announced", "shape"), [(True, "webhook"), (False, "")], indirect=["announced"]
+)
 async def test_a_finished_delete_version_is_announced_with_its_tombstone(
-    monkeypatch: pytest.MonkeyPatch, announced: list[Any]
+    monkeypatch: pytest.MonkeyPatch, announced: list[Any], shape: str
 ) -> None:
     from server.memory.app import handlers
 
@@ -656,7 +667,8 @@ async def test_a_finished_delete_version_is_announced_with_its_tombstone(
     out = await handlers.finish_delete_check(_memory_row("k"), {"checked": 5, "tombstone": 9})
     assert out.tombstoned is True
     assert [(e, c["version"]) for call in announced for e, c in call] == [("memory.tombstoned", 9)]
-    assert current_budget_shape() == "webhook"  # held to the budget with the outbox-row wait
+    # held to the budget with the outbox-row wait only when outbox rows were sent
+    assert current_budget_shape() == shape
 
 
 @pytest.mark.asyncio

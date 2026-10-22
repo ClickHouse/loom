@@ -236,18 +236,26 @@ async def test_an_undelete_is_held_to_the_webhook_budget_only_when_it_wrote_outb
 
 
 @pytest.mark.asyncio
-async def test_an_undo_is_held_to_the_undo_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    # every Undo awaits its audit record before its restore version
+@pytest.mark.parametrize(("landed_late", "shape"), [(False, "undo"), (True, "")])
+async def test_an_undo_is_held_to_the_undo_budget_only_when_it_writes_its_record(
+    monkeypatch: pytest.MonkeyPatch, landed_late: bool, shape: str
+) -> None:
+    # an Undo awaits its audit record before its restore version; the retry of one
+    # whose restore landed late writes neither
     existing = _row("semantic", status="superseded", superseded_by="other-key")
     _wire(monkeypatch, existing, _CH([]))
 
     async def _unsupersede(*_: Any, **__: Any) -> int:
         return 1
 
+    async def _late(*_: Any, **__: Any) -> bool:
+        return landed_late
+
     monkeypatch.setattr(memory_repo, "unsupersede_embeddings", _unsupersede)
+    monkeypatch.setattr(restore_mod, "_landed_late", _late)
     note_budget_shape("")
     out = await restore_mod.handle_memory_restore(_restore_input())
-    assert out.from_status == "superseded" and current_budget_shape() == "undo"
+    assert out.from_status == "superseded" and current_budget_shape() == shape
 
 
 def test_the_types_cover_both_sides_of_the_old_guard() -> None:
