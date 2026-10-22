@@ -439,8 +439,8 @@ tables there and `vector_codec_rebuild.py` refuses to run.
 If Loom was installed before the settings were on, or before the server ran 26.8, its
 vector tables are plain (or `entity_vectors` lacks its chain). Turning the settings on or
 upgrading the server does not change existing tables; rebuilding them does. Tables stay
-plain, and cannot be coded by a rebuild, when the vector width (`LOOM_EMBEDDING_DIM`) is
-not a multiple of 8.
+plain, and cannot be coded by a rebuild, when the width the dry run prints
+(`dimension <n>`) is not a multiple of 8.
 
 Apply rebuilds during a maintenance window. Every Loom server, worker and direct table
 writer must be stopped, and all in-flight writes, erasures and ClickHouse mutations must
@@ -474,7 +474,7 @@ erasure does not fully cover the rebuild and rollback copies.
    rebuild --table categories --columns embedding
    rebuild --table code_summaries --columns embedding \
      --index-granularity 256 --gate-fetch-multiplier 10
-   rebuild --table qa_item_embeddings --columns embedding
+   rebuild --table qa_item_embeddings --columns embedding --gate-fetch-multiplier 10
    ```
 
    Check the list against `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`), which
@@ -495,8 +495,9 @@ erasure does not fully cover the rebuild and rollback copies.
    between 1 and 19 real vectors of the same width: a probe drawn there reads recall 0,
    because a placeholder's distance is NaN and sorts last. Any table can hold
    placeholders, for rows whose embedding never arrived or failed (`code_summaries`
-   structural rows, `code_answers` stubs, failed embeds), so run this for each table
-   before its line (drop `FINAL` for `chunks`, the one plain `MergeTree`):
+   structural rows, `code_answers` stubs, failed embeds), so run this for each table, with
+   the line's first column, before its line (drop `FINAL` for `chunks`, the one plain
+   `MergeTree`):
 
    ```sql
    SELECT org, namespace FROM loom.<table> FINAL
@@ -510,7 +511,8 @@ erasure does not fully cover the rebuild and rollback copies.
    Skip that table's line while this returns rows: its layout stays as it is.
 
    To stop the block, create `ABORT_REBUILD` in `LOOM_REBUILD_DIR` (default: the directory
-   you run from): each later line then stops before it starts. Ctrl-C stops only the line
+   you run from): each later rebuild line then stops before it starts.
+   `--drop-pre-rebuild` and `--rollback` lines do not read it. Ctrl-C stops only the line
    that is running, and bash goes on to the next. Remove the file before the next run.
 
    A run that stops before its swap (a failed gate, an abort file, an interrupt) can leave
@@ -530,15 +532,15 @@ erasure does not fully cover the rebuild and rollback copies.
 
 Before restarting Loom or resuming traffic, drop every leftover `<table>_rebuild` and
 `<table>_pre_rebuild` copy for the tables you processed, including copies left by an
-aborted run or rollback. Run as Loom's user, this lists them:
+aborted run or rollback. This lists them (`loom` is your `LOOM_CH_DATABASE`; the
+`_rebuild` suffix also matches `_pre_rebuild`):
 
 ```sql
 SELECT name FROM system.tables
 WHERE database = 'loom' AND endsWith(name, '_rebuild')
 ```
 
-Restart Loom after cleanup, so each process reads the settings again. A process that found
-the codec unavailable keeps that answer until it restarts.
+Start Loom again after cleanup; each process reads the codec settings when it starts.
 
 ## Providers
 
