@@ -39,6 +39,9 @@ class _CH:
         self.commands: list[str] = []
         self.sent: list[tuple[str, dict[str, Any]]] = []  # (statement, its settings)
         self.patches: dict[str, int] = {}
+        self.patches_first: dict[str, list[int]] = {}  # earlier reads, before self.patches
+        self.patch_names: list[str] = []  # the live table's active patch parts
+        self.patch_names_first: list[list[str]] = []  # earlier reads, before self.patch_names
         self.uuids = iter(f"u{i}" for i in range(100))
         self.codec_rows = codec_rows("writable", "writable")
         self.delta = 0  # rows a delta finds above the destination's version
@@ -72,9 +75,13 @@ class _CH:
             return _R(
                 [(c, "T", "", "", "") for c in ("org", "namespace", "embedding", "created_at")]
             )
+        if sql.startswith("SELECT name FROM system.parts"):
+            names = self.patch_names_first.pop(0) if self.patch_names_first else self.patch_names
+            return _R([(n,) for n in names])
         if "startsWith(name, 'patch')" in sql:
             name = re.search(r"table = '(\w+)'", sql).group(1)  # type: ignore[union-attr]
-            return _R([(self.patches.get(name, 0),)])
+            first = self.patches_first.get(name)
+            return _R([(first.pop(0) if first else self.patches.get(name, 0),)])
         if "topK(1)" in sql:
             return _R([([DIM],)])
         if "FULL OUTER JOIN" in sql:
@@ -187,9 +194,9 @@ def test_a_twin_replaced_by_another_run_is_never_swapped(monkeypatch: pytest.Mon
     ch = _CH(memory_chunks=_live())
     real = vcr.VectorRebuild.recall
 
-    def recall(job: vcr.VectorRebuild, ddl: str, fin: str) -> list[float]:
+    def recall(job: vcr.VectorRebuild, ddl: str) -> list[float]:
         ch.t["memory_chunks_rebuild"]["uuid"] = "someone-else"
-        return real(job, ddl, fin)
+        return real(job, ddl)
 
     monkeypatch.setattr(vcr.VectorRebuild, "recall", recall)
     assert _run(ch, "--yes") == tr.REFUSED
@@ -275,7 +282,7 @@ def test_a_repair_names_the_diverged_keys_as_literals() -> None:
     cmds: list[str] = []
     job.q = lambda sql, **_: [("o", "n")] * (vcr.REPAIR_BATCH + 1)  # type: ignore[method-assign]
     job.cmd = lambda sql, **_: cmds.append(sql)  # type: ignore[method-assign]
-    n = job.repair_into("t_rebuild", "t", "SELECT *", " FINAL", "created_at", ["org", "namespace"])
+    n = job.repair_into("t_rebuild", "t", "SELECT *", "created_at", ["org", "namespace"])
     assert n == vcr.REPAIR_BATCH + 1 and len(cmds) == 2
     assert all("IN (('o', 'n')" in c and "SELECT" not in c.split(" IN ", 1)[1] for c in cmds)
 
@@ -326,7 +333,8 @@ def test_a_rollback_sends_the_codec_setting_only_where_it_is_writable(codec: str
     assert _run(ch, "--rollback", "--yes") == tr.OK
     copies = [st for s, st in ch.sent if s.startswith("INSERT")]
     assert copies and all(
-        st == ({"enable_quantized_codec": 1} if SENT[codec] else {}) for st in copies
+        st == {"max_execution_time": 1800, **({"enable_quantized_codec": 1} if SENT[codec] else {})}
+        for st in copies
     )
 
 
@@ -341,7 +349,9 @@ def test_vectors_of_another_width_refuse_before_the_twin_dry_run_included(capsys
     assert "LOOM_EMBEDDING_DIM" in out and "loom reembed --delete-old" in out
     assert "width 768: 3 row(s), width 3072: 1 row(s)" in out and "re-embed" in out
     preflight = [q for q in ch.queries if "GROUP BY w" in q]
-    assert preflight and all(" FINAL " in q and f"NOT IN (0, {DIM})" in q for q in preflight)
+    assert preflight and all(
+        " FINAL " in q and f"length(embedding) != {DIM}" in q for q in preflight
+    )
     assert _run(ch, "--yes") == tr.REFUSED and _writes(ch) == []
     ch.widths = []
     assert _run(ch, "--yes") == tr.OK
@@ -386,32 +396,51 @@ def test_a_key_that_changed_during_the_gates_stops_the_swap(capsys: Any) -> None
     assert "the source changed during the gates" in out and "--restart" in out
 
 
-def test_the_statement_timeout_caps_the_gate_reads_and_must_be_positive() -> None:
+def test_the_statement_timeout_caps_the_gate_reads_and_stays_within_the_read_timeout() -> None:
     ch = _CH(memory_chunks=_live())
     ch.cons_first = [(1, 0, 0)]
     assert _run(ch, "--statement-timeout-s", "60", "--yes") == tr.OK
     repairs = [st for s, st in ch.sent if "WHERE (org, namespace) IN" in s]
     assert repairs and all(st["max_execution_time"] == 60 for st in repairs)
-    reads = [
-        st
-        for sql, st in ch.query_settings
-        if any(
-            marker in sql
-            for marker in (
-                "topK(1)",
-                "round(cosineDistance",
-                "GROUP BY w",
-                "system.mutations",
-                "FULL OUTER JOIN",
-                "ORDER BY rand()",
-            )
-        )
-    ]
-    assert len(reads) >= 7
-    assert all(st["max_execution_time"] == 60 for st in reads)
-    for value in ("0", "-1", "nan", "inf"):
+    for needle in (
+        "system.mutations",
+        "GROUP BY w",
+        "FULL OUTER JOIN",
+        "LEFT JOIN",
+        "topK(1)",
+        "round(cosineDistance",
+        "ORDER BY rand()",
+        "SELECT max(created_at)",
+        "SELECT name FROM system.parts",
+    ):
+        reads = [st for q, st in ch.query_settings if needle in q]
+        assert reads and all(st["max_execution_time"] == 60 for st in reads), needle
+    for bad in ("0", "-1", "nan", "inf", str(vcr.COPY_RECEIVE_TIMEOUT_S + 1)):
         with pytest.raises(SystemExit):
-            vcr.parse(["--table", "t", "--columns", "embedding", "--statement-timeout-s", value])
+            vcr.parse(["--table", "t", "--columns", "embedding", "--statement-timeout-s", bad])
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        (["patch-a"], ["patch-a", "patch-b"]),
+        # two patch parts merged into one while a new one landed: the count stays level
+        (["patch-a", "patch-b"], ["patch-ab", "patch-c"]),
+    ],
+)
+def test_a_lightweight_update_during_the_run_stops_the_swap(
+    before: list[str], after: list[str], capsys: Any
+) -> None:
+    """A quarantine keeps the key and its version, so the consistency reads match; the
+    patch part it writes on the source is what shows it, and the run stops."""
+    ch = _CH(memory_chunks=_live())
+    ch.patch_names_first = [before]
+    ch.patch_names = after
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    out = capsys.readouterr().out
+    assert "a lightweight UPDATE landed on the source during the run" in out
+    assert "--restart" in out
 
 
 def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:
@@ -427,6 +456,38 @@ def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:
     assert "width 768: 2 row(s)" in out
     delta = _last(ch, "SELECT count() FROM loom.memory_chunks WHERE created_at >")
     assert delta < _last(ch, "GROUP BY w")
+
+
+def test_patch_parts_that_were_there_before_the_copy_do_not_stop_the_swap() -> None:
+    ch = _CH(memory_chunks=_live())
+    ch.patch_names_first = [["patch-a", "patch-b"]]
+    ch.patch_names = ["patch-a"]  # one applied and dropped during the run
+    assert _run(ch, "--yes") == tr.OK
+
+
+def test_a_duplicate_key_insert_on_a_plain_merge_tree_stops_the_swap(capsys: Any) -> None:
+    """Without a version column a re-ingest adds rows under keys the twin already holds,
+    so the delta skips them and only the row count per key shows the change."""
+    plain = ARRAY.replace("ReplacingMergeTree(created_at)", "MergeTree")
+    ch = _CH(memory_chunks={"ddl": plain, "rows": 5, "uuid": "live"})
+    ch.cons_first = [(0, 0, 0)]
+    ch.cons = (1, 0, 0)  # the source holds one more row under a key than the twin
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "the source changed during the gates" in capsys.readouterr().out
+    reads = [q for q in ch.queries if "FULL OUTER JOIN" in q]
+    assert reads and all("count() AS n" in q and "s.n != t.n" in q for q in reads)
+    assert all("GROUP BY org, namespace" in q and "FINAL" not in q for q in reads)
+
+
+def test_the_target_width_comes_from_real_vectors_only() -> None:
+    job = vcr.VectorRebuild(
+        _CH(memory_chunks=_live()),
+        vcr.parse(["--table", "memory_chunks", "--columns", "embedding"]),
+    )
+    job.find_dim()
+    read = next(q for q in job.ch.queries if "topK(1)" in q)
+    assert "WHERE length(embedding) > 0 AND arrayExists(x -> x != 0, embedding)" in read
 
 
 def test_the_recall_reads_rank_real_vectors_only() -> None:

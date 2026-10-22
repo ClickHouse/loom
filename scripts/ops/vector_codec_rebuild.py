@@ -30,35 +30,14 @@ The twin's vector columns are `Array(BFloat16) CODEC(Quantized(<method>, dim, 0)
 `--gate-fetch-multiplier`, as the search legs do.
 
 The dimension comes from the live table: a coded column states it, a
-plain column's nonzero vectors show it (the most common length), and an empty table
-takes `LOOM_EMBEDDING_DIM`. Every named column must agree.
+plain column's vectors show it (the most common length among its real,
+not all-zero, vectors), and a column with none takes `LOOM_EMBEDDING_DIM`.
+Every named column must agree.
 
-Run it in a maintenance window with every writer and erasure stopped and all
-in-flight writes drained. It refuses unfinished source mutations before the
-copy and swap, fails closed and never repairs the live table. It refuses (exit 3), `--dry-run`
-included, while a named column holds non-empty vectors of another length among
-the rows Loom serves (under FINAL on a ReplacingMergeTree), printing each width,
-its row count and `LOOM_EMBEDDING_DIM`, since the copy would replace them with
-zero vectors. The target width of a plain column is its nonzero vectors' most common length, not
-necessarily the configured one: re-embed or delete the rows of other widths until
-one width remains (for memory_embeddings, entity_vectors and
-conversation_embeddings, `loom reembed --delete-old` does this). A coded column
-holds one width by construction and is not scanned. An empty vector, or an
-all-zero placeholder of any width, is copied as a zero placeholder.
-
-The gates (exit 5), each of which leaves the table as it is:
-
-- Consistency: a key whose newest version differs, or that the source holds
-  and the twin lacks, is repaired in the twin key by key and fails the run if
-  it remains. A key only the twin holds fails it too: rows were removed from
-  the source after they were copied (an erasure or delete) and the swap would
-  bring them back; stop writes and rerun with `--restart`.
-- Recall: both reads rank real vectors only (a zero placeholder's cosine
-  distance is NaN), and each probe's recall is over the exact neighbours it
-  found, at most 20.
-- Before the swap, after the last delta: the consistency check and the width
-  check run again, and any key that differs fails the run, so a write or a
-  delete that landed during the gates stops the swap.
+Run it in a maintenance window with every writer and erasure stopped and
+in-flight writes drained: it fails closed and never repairs the live table. Its width refusal, its gates and
+its pre-swap checks are in docs/operations/maintenance.md ("Changing a table's
+sort key, partition key or vector codec").
 
 `--require-patch-free`: the twin-and-EXCHANGE also sheds the patch parts of
 past lightweight UPDATEs (`OPTIMIZE FINAL` / `APPLY PATCHES` do not). The flag
@@ -170,6 +149,16 @@ def patch_parts_sql(name: str) -> str:
     return (
         "SELECT countIf(startsWith(name, 'patch')) FROM system.parts "
         f"WHERE database = currentDatabase() AND table = '{name}' AND active"
+    )
+
+
+def patch_part_names_sql(name: str) -> str:
+    """Names of the active patch parts of one schema table: the pre-swap check fails on
+    a name that was not there before the copy, since patch parts merge with each other
+    and a count can stay level while a new UPDATE lands. Pure."""
+    return (
+        "SELECT name FROM system.parts WHERE database = currentDatabase() "
+        f"AND table = '{name}' AND active AND startsWith(name, 'patch')"
     )
 
 
@@ -298,11 +287,16 @@ def read_final(engine: str) -> str:
     return " FINAL" if "Replacing" in engine else ""
 
 
+def real_vector(column: str) -> str:
+    """The predicate for a real vector: not empty and not an all-zero placeholder. Pure."""
+    return f"length({column}) > 0 AND arrayExists(x -> x != 0, {column})"
+
+
 def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
     """Count nonzero vectors of another width; zero placeholders can be resized."""
     return (
         f"SELECT length({column}) AS w, count() FROM loom.{table}{fin} "
-        f"WHERE length({column}) NOT IN (0, {int(dim)}) AND arrayExists(x -> x != 0, {column}) "
+        f"WHERE length({column}) != {int(dim)} AND {real_vector(column)} "
         "GROUP BY w ORDER BY w"
     )
 
@@ -368,6 +362,7 @@ class VectorRebuild:
         self.replicas = replicas_source(args.cluster)
         self.rows_copied = 0
         self.dim = 0
+        self.fin = ""  # ' FINAL' where the live table is a ReplacingMergeTree
 
     # -- small reads -------------------------------------------------------
     def q(self, sql: str, **st: Any) -> list[Any]:
@@ -432,9 +427,10 @@ class VectorRebuild:
         for c in self.cols:
             d = vector_dim(ddl, c)
             if d is None:
+                # real vectors only: a run of old zero placeholders never sets the target
                 seen = self.q(
-                    f"SELECT topK(1)(length({c})) FROM loom.{name}{fin} "
-                    f"WHERE arrayExists(x -> x != 0, {c})"
+                    f"SELECT topK(1)(length({c})) FROM loom.{name}{fin} WHERE {real_vector(c)}",
+                    max_execution_time=self.a.statement_timeout_s,
                 )
                 d = int(seen[0][0][0]) if seen and seen[0][0] else int(settings.embedding_dim)
             dims.add(d)
@@ -495,7 +491,7 @@ class VectorRebuild:
             )
         if why := self.mutation_refusal():
             return why
-        return self.width_refusal(ddl, read_final(parse_engine(ddl)[0]))
+        return self.width_refusal(ddl)
 
     def mutation_refusal(self) -> str:
         """A stopped writer can leave mutations running on ClickHouse."""
@@ -506,14 +502,14 @@ class VectorRebuild:
         )[0][0]
         return f"loom.{self.t} has unfinished mutations; wait for them to finish" if pending else ""
 
-    def width_refusal(self, ddl: str, fin: str) -> str:
+    def width_refusal(self, ddl: str) -> str:
         """Why a named column holds vectors the copy would zero, or ''."""
         from server.settings import settings
 
         # a coded column's codec rejects any other width, so only plain columns are scanned
         for c in [c for c in self.cols if vector_dim(ddl, c) is None]:
             widths = self.q(
-                mixed_width_sql(self.t, c, fin, dim=self.dim),
+                mixed_width_sql(self.t, c, self.fin, dim=self.dim),
                 max_execution_time=self.a.statement_timeout_s,
             )
             if widths:
@@ -535,6 +531,7 @@ class VectorRebuild:
             return REFUSED
         ddl = self.ddl(self.t)
         self.dim = self.find_dim()
+        self.fin = read_final(parse_engine(ddl)[0])
         log(
             "target",
             self.t,
@@ -569,7 +566,8 @@ class VectorRebuild:
         if self.aborted():
             raise Aborted(f"abort file {self.abort} present before start")
         if self.a.require_patch_free:
-            log("live patch parts before:", self.q(patch_parts_sql(self.t))[0][0])
+            before = self.q(patch_parts_sql(self.t), max_execution_time=self.a.statement_timeout_s)
+            log("live patch parts before:", before[0][0])
         why = self.refusal(ddl)
         if why:
             log("REFUSED:", why)
@@ -615,25 +613,28 @@ class VectorRebuild:
 
     def delta_into(self, dst: str, src: str, sel: str, version: str | None, key: list[str]) -> int:
         """Copy the rows of `src` that `dst` lacks: newer versions, or absent keys."""
+        limit = self.a.statement_timeout_s
         if version:
-            above = self.q(f"SELECT max({version}) FROM loom.{dst}")[0][0]
+            above = self.q(f"SELECT max({version}) FROM loom.{dst}", max_execution_time=limit)[0][0]
             if above is None:
                 return 0
             cond = f"{version} > {sql_literal(above)}"
         else:
             ident = ", ".join(key)
             cond = f"({ident}) NOT IN (SELECT {ident} FROM loom.{dst})"
-        n = int(self.q(f"SELECT count() FROM loom.{src} WHERE {cond}")[0][0])
+        n = int(
+            self.q(f"SELECT count() FROM loom.{src} WHERE {cond}", max_execution_time=limit)[0][0]
+        )
         if n:
             self.cmd(
-                f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE {cond}", **self.codec_on()
+                f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE {cond}",
+                **self.codec_on(),
+                max_execution_time=limit,
             )
             self.rows_copied += n
         return n
 
-    def repair_into(
-        self, dst: str, src: str, sel: str, fin: str, version: str | None, key: list[str]
-    ) -> int:
+    def repair_into(self, dst: str, src: str, sel: str, version: str | None, key: list[str]) -> int:
         """Copy the rows of `src` for every key whose newest version `dst` lacks: a newer
         version in `src`, or a key `dst` does not have. `delta_into` takes the rows above
         `dst`'s highest version, which misses a row written during a long copy with a
@@ -642,7 +643,7 @@ class VectorRebuild:
         the client and each INSERT names them as literals: on a shared cluster an
         `IN (subquery)` INSERT runs the subquery on other replicas, which a user
         without cluster-wide grants is refused."""
-        ident = ", ".join(key)
+        ident, fin = ", ".join(key), self.fin
         vsel = f", {version}" if version else ""
         newer = f"s.{version} > t.{version} OR t.__present = 0" if version else "t.__present = 0"
         diverged = (
@@ -680,30 +681,44 @@ class VectorRebuild:
             except Exception as e:  # noqa: BLE001 - the monitor only logs; the copy decides
                 log("monitor err", str(e)[:120])
 
-    def consistent(self, fin: str, version: str | None, key: list[str]) -> tuple[int, int, int]:
-        ident = ", ".join(key)
-        vsel = f", {version}" if version else ""
-        vcmp = f"s.{version} != t.{version}" if version else "0"
-        vnull_s = f"s.{version} = 0 OR s.{version} IS NULL" if version else "s.__present = 0"
-        vnull_t = f"t.{version} = 0 OR t.{version} IS NULL" if version else "t.__present = 0"
+    def consistent(self, version: str | None, key: list[str]) -> tuple[int, int, int]:
+        """(mismatched, source_only, twin_only) keys. Without a version column a key can
+        hold several rows (a re-ingest adds rows under the same key), so a key is
+        mismatched when its row count differs."""
+        ident, fin = ", ".join(key), self.fin
+        if version:
+            vsel, group = f", {version}", ""
+            vcmp = f"s.{version} != t.{version}"
+            vnull_s = f"s.{version} = 0 OR s.{version} IS NULL"
+            vnull_t = f"t.{version} = 0 OR t.{version} IS NULL"
+        else:
+            vsel, group = ", count() AS n", f" GROUP BY {ident}"
+            vcmp, vnull_s, vnull_t = "s.n != t.n", "s.__present = 0", "t.__present = 0"
         row = self.q(
             f"""
           SELECT countIf({vcmp}) AS mismatched, countIf({vnull_t}) AS source_only, countIf({vnull_s}) AS twin_only
-          FROM (SELECT {ident}{vsel}, 1 AS __present FROM loom.{self.t}{fin}) AS s
-          FULL OUTER JOIN (SELECT {ident}{vsel}, 1 AS __present FROM loom.{self.twin}{fin}) AS t USING ({ident})
+          FROM (SELECT {ident}{vsel}, 1 AS __present FROM loom.{self.t}{fin}{group}) AS s
+          FULL OUTER JOIN (SELECT {ident}{vsel}, 1 AS __present FROM loom.{self.twin}{fin}{group}) AS t USING ({ident})
         """,
             join_use_nulls=0,
             max_execution_time=self.a.statement_timeout_s,
         )[0]
         return int(row[0]), int(row[1]), int(row[2])
 
-    def recall(self, ddl: str, fin: str) -> list[float]:
+    def patch_names(self) -> set[str]:
+        """The live table's active patch parts, by name."""
+        rows = self.q(patch_part_names_sql(self.t), max_execution_time=self.a.statement_timeout_s)
+        return {str(r[0]) for r in rows}
+
+    def recall(self, ddl: str) -> list[float]:
         """Distance recall per probe: exact on the source vs the twin read as the legs read it."""
-        vcol, dim = self.cols[0], self.dim
+        vcol, dim, fin = self.cols[0], self.dim, self.fin
+        limit = self.a.statement_timeout_s
         # a fixed-length placeholder is all zeros: its cosine is NaN, never a probe
         real = vector_filter(vcol, dim=dim)
         probes = self.q(
-            f"SELECT org, namespace, {vcol} FROM loom.{self.t} WHERE {real} ORDER BY rand() LIMIT {self.a.probes}"
+            f"SELECT org, namespace, {vcol} FROM loom.{self.t} WHERE {real} ORDER BY rand() LIMIT {self.a.probes}",
+            max_execution_time=limit,
         )
         src_v = exact_vector_expr(ddl, vcol)
         tol = DISTANCE_TOLERANCE
@@ -713,13 +728,15 @@ class VectorRebuild:
             scope = f"org='{org}' AND namespace='{ns}'"
             ex = self.q(
                 f"SELECT round(cosineDistance({src_v}, {lit}), 6) AS d FROM loom.{self.t}{fin} "
-                f"WHERE {scope} AND {real} ORDER BY d LIMIT 20"
+                f"WHERE {scope} AND {real} ORDER BY d LIMIT 20",
+                max_execution_time=limit,
             )
             dist, st = twin_read(vcol, lit, self.a.gate_fetch_multiplier)
             tw = self.q(
                 f"SELECT round({dist}, 6) FROM loom.{self.twin}{fin} "
                 f"WHERE {scope} AND {real} ORDER BY {dist} LIMIT 20",
                 **st,
+                max_execution_time=limit,
             )
             d20 = ex[-1][0] if ex else 0.0
             # the denominator is the real neighbours the exact read found, at most 20
@@ -733,10 +750,12 @@ class VectorRebuild:
             return REFUSED
         engine, version, key = parse_engine(ddl)
         log("engine", engine, "version column", version, "sorting key", key)
-        fin = read_final(engine)
+        fin, limit = self.fin, self.a.statement_timeout_s
         sel = replace_select(self.cols, dim=self.dim)
         if self.aborted():
             raise Aborted("abort file present before the copy; the twin is left")
+        # a lightweight UPDATE keeps a key and its version, so only its patch part shows it
+        live_patches = self.patch_names()
         if not reused:
             stop = threading.Event()
             threading.Thread(target=self.monitor, args=(stop,), daemon=True).start()
@@ -755,10 +774,14 @@ class VectorRebuild:
             log(f"copy done in {time.time() - t0:.0f}s")
         # Compare under FINAL (the twin's merges already collapsed duplicate versions)
         # and let the count settle: a replica can lag a fresh table's part metadata.
-        src_final = int(self.q(f"SELECT count() FROM loom.{self.t}{fin}")[0][0])
+        src_final = int(
+            self.q(f"SELECT count() FROM loom.{self.t}{fin}", max_execution_time=limit)[0][0]
+        )
         twin_n = 0
         for attempt in range(COUNT_SETTLE_ATTEMPTS):
-            twin_n = int(self.q(f"SELECT count() FROM loom.{self.twin}{fin}")[0][0])
+            twin_n = int(
+                self.q(f"SELECT count() FROM loom.{self.twin}{fin}", max_execution_time=limit)[0][0]
+            )
             log(f"rows{fin or ''} — twin {twin_n} source {src_final}, attempt {attempt + 1}")
             if reused or rows_settled(twin_n, src_final):
                 break
@@ -767,11 +790,11 @@ class VectorRebuild:
             log("GATE FAILED: the twin is short of rows")
             return GATE_FAILED
         log("delta-1 rows into twin:", self.delta_into(self.twin, self.t, sel, version, key))
-        cons = self.consistent(fin, version, key)
+        cons = self.consistent(version, key)
         log("consistency (mismatched, source_only, twin_only):", cons)
         if cons[0] or cons[1]:
-            log("repair keys:", self.repair_into(self.twin, self.t, sel, fin, version, key))
-            cons = self.consistent(fin, version, key)
+            log("repair keys:", self.repair_into(self.twin, self.t, sel, version, key))
+            cons = self.consistent(version, key)
             log("consistency after repair:", cons)
         if cons[0] or cons[1]:
             log("GATE FAILED: the twin diverges; no swap")
@@ -779,7 +802,7 @@ class VectorRebuild:
         if cons[2]:
             log(twin_only_failure(cons[2]))
             return GATE_FAILED
-        drec = self.recall(ddl, fin)
+        drec = self.recall(ddl)
         if not drec:
             log("GATE FAILED: no probe rows with a full-length vector")
             return GATE_FAILED
@@ -788,7 +811,7 @@ class VectorRebuild:
             log("GATE FAILED: recall; the twin is left for inspection")
             return GATE_FAILED
         if self.a.require_patch_free:
-            patches = self.q(patch_parts_sql(self.twin))[0][0]
+            patches = self.q(patch_parts_sql(self.twin), max_execution_time=limit)[0][0]
             log("twin patch parts:", patches)
             if patches:
                 log("GATE FAILED: a lightweight UPDATE landed on the twin during the copy; no swap")
@@ -801,10 +824,10 @@ class VectorRebuild:
             return REFUSED
         self.delta_into(self.twin, self.t, sel, version, key)
         # writers and erasure must be stopped; check again that nothing landed during the gates
-        if why := self.width_refusal(ddl, fin):
+        if why := self.width_refusal(ddl):
             log(f"GATE FAILED: {why}; no swap")
             return GATE_FAILED
-        cons = self.consistent(fin, version, key)
+        cons = self.consistent(version, key)
         log("consistency before the swap:", cons)
         if cons[2]:
             log(twin_only_failure(cons[2]))
@@ -813,6 +836,15 @@ class VectorRebuild:
             log(
                 "GATE FAILED: the source changed during the gates (a write or a delete), and the "
                 "twin no longer matches it; no swap. Stop writes and rerun with --restart"
+            )
+            return GATE_FAILED
+        new_patches = self.patch_names() - live_patches
+        log("live patch parts new since the copy:", sorted(new_patches))
+        if new_patches:
+            log(
+                "GATE FAILED: a lightweight UPDATE landed on the source during the run (a "
+                "quarantine, say), which the twin does not hold; no swap. Stop writes and rerun "
+                "with --restart"
             )
             return GATE_FAILED
         if why := self.mutation_refusal():
@@ -953,7 +985,7 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
         "--statement-timeout-s",
         type=float,
         default=1800.0,
-        help="cap on each gate read and repair INSERT, a full FINAL scan of the table",
+        help="seconds each gate read, delta and repair INSERT may run",
     )
     ap.add_argument(
         "--abort-file", default=str(Path(os.environ.get("LOOM_REBUILD_DIR", ".")) / "ABORT_REBUILD")
@@ -964,6 +996,10 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
         ap.error(f"--cluster: not a cluster name: {a.cluster!r}")
     if not math.isfinite(a.statement_timeout_s) or a.statement_timeout_s <= 0:
         ap.error("--statement-timeout-s must be finite and above 0")
+    if a.statement_timeout_s > COPY_RECEIVE_TIMEOUT_S:
+        ap.error(
+            f"--statement-timeout-s must be at most {COPY_RECEIVE_TIMEOUT_S}, the client's read timeout"
+        )
     return a
 
 

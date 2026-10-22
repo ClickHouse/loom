@@ -26,12 +26,13 @@ def ch() -> Iterator[Any]:
 
 
 @pytest.fixture
-def table(ch: Any) -> Iterator[str]:
+def table(ch: Any, request: pytest.FixtureRequest) -> Iterator[str]:
     name = f"vcr_it_{uuid.uuid4().hex[:8]}"
+    engine = getattr(request, "param", "ReplacingMergeTree(version)")
     ch.command(
         f"CREATE TABLE loom.{name} (org String, namespace String, id UInt64, "
         "embedding Array(Float32), version UInt64) "
-        "ENGINE = ReplacingMergeTree(version) ORDER BY (org, namespace, id)"
+        f"ENGINE = {engine} ORDER BY (org, namespace, id)"
     )
     try:
         yield name
@@ -158,5 +159,58 @@ def test_unfinished_mutations_stop_copy_or_swap(
         assert ch.query(f"EXISTS TABLE loom.{table}{tr.TWIN_SUFFIX}").result_rows == [
             (int(during_run),)
         ]
+    finally:
+        ch.command(f"SYSTEM START MERGES loom.{table}")
+
+
+@pytest.mark.parametrize("table", ["MergeTree"], indirect=True)
+def test_removing_one_unversioned_row_under_a_shared_key_stops_the_swap(
+    ch: Any, table: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    insert(ch, table, 1, [1.0] * 8)
+    insert(ch, table, 1, [2.0] * 8, version=2)
+    job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
+    if why := job.codec_refusal():
+        pytest.skip(why)
+
+    def erase_during_recall(*_: Any) -> list[float]:
+        ch.command(
+            f"DELETE FROM loom.{table} WHERE id = 1 AND version = 2",
+            settings={"lightweight_deletes_sync": 2},
+        )
+        return [1.0]
+
+    monkeypatch.setattr(vcr.VectorRebuild, "recall", erase_during_recall)
+    assert vcr.main([*args(table), "--yes"], ch=ch) == tr.GATE_FAILED
+    assert ch.query(f"SELECT count() FROM loom.{table}").result_rows == [(1,)]
+    assert ch.query(f"SELECT count() FROM loom.{table}{tr.TWIN_SUFFIX}").result_rows == [(2,)]
+    assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
+
+
+def test_a_lightweight_update_during_recall_stops_the_swap(
+    ch: Any, table: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ch.command(
+        f"ALTER TABLE loom.{table} MODIFY SETTING "
+        "enable_block_number_column = 1, enable_block_offset_column = 1"
+    )
+    insert(ch, table, 1, [1.0] * 8)
+    job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
+    if why := job.codec_refusal():
+        pytest.skip(why)
+    ch.command(f"SYSTEM STOP MERGES loom.{table}")
+
+    def update_during_recall(self: Any, *_: Any) -> list[float]:
+        ch.command(
+            f"UPDATE loom.{table} SET embedding = [2., 2., 2., 2., 2., 2., 2., 2.] WHERE id = 1"
+        )
+        assert self.patch_names()
+        return [1.0]
+
+    try:
+        monkeypatch.setattr(vcr.VectorRebuild, "recall", update_during_recall)
+        assert vcr.main([*args(table), "--yes"], ch=ch) == tr.GATE_FAILED
+        assert ch.query(f"SELECT embedding FROM loom.{table} FINAL").result_rows == [([2.0] * 8,)]
+        assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
     finally:
         ch.command(f"SYSTEM START MERGES loom.{table}")
