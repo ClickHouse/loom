@@ -136,6 +136,9 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
             pytest.skip("conversation_embeddings is not coded at the served width here")
         org = unique_org("batched-width")
         query_ids = {msg: f"{org}:{msg}" for msg in ["stale", *(f"m{i}" for i in range(20))]}
+        # An adaptive queue can flush its first insert immediately after an idle period.
+        # Use a fixed window until the barrier confirms every request is buffered.
+        buffer_settings = {"async_insert_use_adaptive_busy_timeout": 0}
         calls: list[tuple[str, Any]] = []
         insert = c.insert
 
@@ -145,7 +148,7 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
             mode = (settings or {}).get("async_insert")
             calls.append((rows[0]["msg_id"], mode))
             # Only the batched send is tagged: the committed resend runs under its own id.
-            tag = {"query_id": query_ids[rows[0]["msg_id"]]} if mode == 1 else {}
+            tag = {"query_id": query_ids[rows[0]["msg_id"]], **buffer_settings} if mode == 1 else {}
             await insert(table, rows, settings={**(settings or {}), **tag})
 
         c.insert = recording_insert  # type: ignore[method-assign]
@@ -155,7 +158,9 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
             # reaches ClickHouse in the same flush as the others.
             row = _embedding_row(org, "stale", [0.5] * (width // 2))
             await c._insert_rows(
-                table, [row], {**batched_insert_settings(), "query_id": query_ids["stale"]}
+                table,
+                [row],
+                {**batched_insert_settings(), **buffer_settings, "query_id": query_ids["stale"]},
             )
 
         rows = [_embedding_row(org, f"m{i}", [0.5] * width) for i in range(20)]
