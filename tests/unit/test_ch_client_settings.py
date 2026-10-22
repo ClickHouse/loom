@@ -119,7 +119,7 @@ def test_batched_inserts_wait_for_their_part_and_read_the_wait_bounds_per_call(
     assert token["async_insert_deduplicate"] == 1 and token["insert_deduplication_token"] == "t"
 
 
-def test_background_inserts_take_the_longer_wait_and_the_switch_sends_them_committed(
+def test_background_inserts_take_the_longer_wait_and_ignore_the_switch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An insert no request waits on waits up to the background bound; with

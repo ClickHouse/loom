@@ -25,6 +25,7 @@ from __future__ import annotations
 import ast
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -99,10 +100,7 @@ def _module_insert_settings(tree: ast.Module, table: str) -> list[dict[str, int]
                 )
                 found.append(async_insert_settings(background=background))
                 continue
-            if (
-                isinstance(value, ast.Call)
-                and getattr(value.func, "id", "") == "committed_insert_settings"
-            ):
+            if name == "committed_insert_settings":
                 found.append(committed_insert_settings())
                 continue
             if not isinstance(value, ast.Dict):
@@ -268,7 +266,8 @@ async def test_usage_flush_of_the_timer_takes_the_background_window(
     monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     ch = _RecordingCH()
     monkeypatch.setattr(usage, "_default_client", lambda: ch)
-    monkeypatch.setattr(asyncio, "sleep", _one_tick)
+    # Only the flusher's sleep is replaced, not the event loop's.
+    monkeypatch.setattr(usage, "asyncio", SimpleNamespace(**{**vars(asyncio), "sleep": _one_tick}))
     usage._reset_for_tests()
     usage._USAGE_BUFFER.append({"memory_id": "m"})
     try:
