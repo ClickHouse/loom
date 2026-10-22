@@ -64,6 +64,8 @@ _CROSS_CHECKED = {
     # A template that must contain {org}, checked by a model validator
     # (test_model_call_customer.py).
     "inference_customer_format",
+    # A URL checked by a model validator (test_oidc_backchannel.py).
+    "oidc_backchannel_base_url",
 }
 
 

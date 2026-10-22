@@ -64,6 +64,7 @@ Authentication, tokens and identity providers.
 | `LOOM_OIDC_ISSUER` | `str` | `''` |  | External IdP issuer URL; its `/.well-known/openid-configuration` must name the same issuer. |
 | `LOOM_OIDC_CLIENT_ID` | `str` | `''` |  | Client id registered at the IdP; also the audience each id_token must carry. |
 | `LOOM_OIDC_CLIENT_SECRET` | `str` | *(unset)* |  | Client secret sent to the IdP token endpoint when exchanging the sign-in code. |
+| `LOOM_OIDC_BACKCHANNEL_BASE_URL` | `str` | `''` |  | Origin used for server-side sign-in calls to the issuer, preserving its Host header. Empty uses the issuer directly; browser redirects and bot-trust key fetches are unchanged. |
 | `LOOM_OIDC_JIT_PROVISION` | `bool` | `False` |  | JIT provisioning: a first OIDC sign-in with no account creates a personal namespace in oidc_jit_org instead of being rejected. Off = fail closed. oidc_jit_email_domains (comma-separated) restricts it; empty admits any verified email the IdP authenticates. |
 | `LOOM_OIDC_JIT_ORG` | `str` | `''` |  | Org that JIT-provisioned accounts are created in; required when `oidc_jit_provision` is on. |
 | `LOOM_OIDC_JIT_EMAIL_DOMAINS` | `str` | `''` |  | Comma-separated email domains JIT provisioning admits; empty admits any verified email. |

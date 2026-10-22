@@ -143,15 +143,18 @@ Verification accepts only `HS256` and `RS256`; `alg=none` is rejected. The
 Roles are ordered; a higher role satisfies every check for a lower one. Each op declares its
 `required_role` (`GET /v1/operations`, and the [operations reference](../reference/operations.md)).
 
-| Role             | Grants                                                                                                                                                 |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `viewer`         | Read.                                                                                                                                                  |
-| `writer`         | Read and write memory, knowledge and the other data planes.                                                                                            |
-| `admin`          | Administer the namespace: grants, configuration, policy, restore into it. Not org-wide visibility.                                                     |
-| `org_admin`      | Org-wide views (for example `cost.summary` without a namespace). A recognised gate with no in-product assignment path.                                 |
-| `platform_admin` | Cross-org operator views. Conferred at login to the handles in `LOOM_PLATFORM_ADMINS`, and to its emails only when an IdP verified them; never minted. |
+| Role             | Grants                                                                                                                                                                                                                                             |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `viewer`         | Read.                                                                                                                                                                                                                                              |
+| `writer`         | Read and write memory, knowledge and the other data planes.                                                                                                                                                                                        |
+| `admin`          | Administer the namespace: grants, configuration, policy, restore into it. Not org-wide visibility.                                                                                                                                                 |
+| `org_admin`      | Org-wide views (for example `cost.summary` without a namespace). A recognised gate with no in-product assignment path.                                                                                                                             |
+| `platform_admin` | Cross-org operator views. Conferred at login to the handles in `LOOM_PLATFORM_ADMINS`, and to its emails only when an IdP verified them; to every token of a bot registered `--platform-admin`; minted only for a service account, with an expiry. |
 
-Tokens and grants carry only `viewer`, `writer` or `admin`.
+Grants carry only `viewer`, `writer` or `admin`, and so do tokens, except a
+`platform_admin` one: a bot's ([Bots and CI](../operations/sso.md#bots-and-ci)) or
+`loom mint-token --platform-admin --subject sa:<name> --ttl-days <n>`, which refuses a token
+that never expires. The role spans every org.
 
 ## Namespace access
 

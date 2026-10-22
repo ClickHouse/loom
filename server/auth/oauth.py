@@ -815,7 +815,7 @@ async def _signed_in_as(
     if pending["kind"] == "device":
         return await device.signed_in(pending["user_code"], identity, upstream)
     if pending["kind"] == "dashboard":
-        return await _dashboard_signed_in(identity)
+        return await _dashboard_signed_in(identity, pending)
     return await _connect_consent(pending, identity, upstream)
 
 
@@ -1126,12 +1126,20 @@ async def _decide_connect(f: dict[str, str]) -> Response:
     return _back_to_client(client["redirect_uri"], {"error": "access_denied"}, pending["mcp_state"])
 
 
-async def _dashboard_signed_in(identity: Identity) -> Response:
-    """Hand the dashboard its token the way a sign-in link does: in the URL
-    fragment, which the browser never sends to a server. The token is short
-    because the dashboard cannot refresh it and only a refresh asks the IdP
-    whether the user is still active."""
+async def _dashboard_signed_in(identity: Identity, pending: dict[str, Any]) -> Response:
+    """Deliver a short-lived token at `/me`, which never redirects to another origin."""
+    from server.auth.revocation import subjects_revoked
+
     subject, org, namespaces, roles = identity
+    issued_at = int(time.time())  # before the read: a revocation after it postdates the token
+    try:
+        revoked = await subjects_revoked([subject], issued_at=issued_at)
+    except Exception as e:  # noqa: BLE001 — unchecked, nobody is signed in: the user retries
+        log.warning("dashboard sign-in: revocations not read: %s", e)
+        return _sign_in_unavailable(_restart_url(pending))
+    if revoked:
+        await _signin_denied(subject, "revoked")
+        return _denied_page("this account's tokens are revoked")
     family = new_jti()
     token = mint_token(
         subject=subject,
@@ -1144,6 +1152,7 @@ async def _dashboard_signed_in(identity: Identity) -> Response:
         # is bounded like the person, not by its access-token lifetime.
         session_id=family,
         first_party=True,
+        issued_at=issued_at,
     )
     await audit.emit(
         "auth.sso_signin",
@@ -1566,29 +1575,33 @@ async def _machine_tokens(
     this token. An agent's token names the trust as its parent: disabling the
     trust ends every agent's. It also names what the agent was granted
     (`agents.with_grants`); a revoked grant caps the claim at once
-    (`authz.claim_cap`)."""
+    (`authz.claim_cap`). A platform-admin bot's token carries that role and
+    every namespace, and no namespace roles, which the admin gates refuse."""
     from server.auth.revocation import subjects_revoked
 
     trust = machines.subject(m["name"])
     subject = agents.subject(m["name"], agent) if agent else trust
     if await subjects_revoked([trust, subject], issued_at=since):
         raise OAuthError("invalid_client", 401, description="this bot is revoked")
-    ns_roles = ([(own, "writer")] if own else []) + await machines.live_roles(m)
-    if agent:
-        ns_roles = await agents.with_grants(m, agent, ns_roles)
-    if not ns_roles:
-        raise OAuthError(
-            "invalid_client", 401, description="none of this bot's namespaces is active"
-        )
+    admin = bool(m.get("platform_admin", False)) and not agent  # never an agent's
+    ns_roles: list[tuple[str, str]] = []
+    if not admin:
+        ns_roles = ([(own, "writer")] if own else []) + await machines.live_roles(m)
+        if agent:
+            ns_roles = await agents.with_grants(m, agent, ns_roles)
+        if not ns_roles:
+            raise OAuthError(
+                "invalid_client", 401, description="none of this bot's namespaces is active"
+            )
     jti, now = new_jti(), int(time.time())
     if ends - now < 30:  # its proof runs out (verify's leeway, a slow lookup)
         raise OAuthError("invalid_grant", description="the proof has run out")
     token = mint_token(
         subject=subject,
         org=m["org"],
-        namespaces=[ns for ns, _ in ns_roles],
-        roles=[],
-        ns_roles=dict(ns_roles),
+        namespaces=["*"] if admin else [ns for ns, _ in ns_roles],
+        roles=["platform_admin"] if admin else [],
+        ns_roles=None if admin else dict(ns_roles),
         ttl_seconds=ends - since,  # dated `since`, it ends when its proof does
         is_service_account=True,
         jti=jti,
@@ -1601,7 +1614,7 @@ async def _machine_tokens(
         org=m["org"],
         namespace="-",
         actor=subject,
-        subject={"jti": jti, **how},
+        subject={"jti": jti, **how, **({"platform_admin": True} if admin else {})},
     )
     return {"access_token": token, "token_type": "Bearer", "expires_in": ends - now}
 
