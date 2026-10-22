@@ -568,7 +568,8 @@ def test_an_exchange_leaves_the_twin_the_older_metadata_time(
 ) -> None:
     """The tool names a twin newer than the live table a leftover only on the database
     engines where EXCHANGE TABLES keeps each table's own metadata time, so after an
-    exchange the twin, now the old table, reads older than the live table."""
+    exchange the twin, now the old table, reads older than the live table, and still
+    does after the RENAME to the rollback copy's name."""
     ch = request.getfixturevalue(f"{db_engine.lower()}_ch")
     assert ch.query(
         "SELECT engine FROM system.databases WHERE name = currentDatabase()"
@@ -583,3 +584,7 @@ def test_an_exchange_leaves_the_twin_the_older_metadata_time(
     ch.command(f"EXCHANGE TABLES loom.{table} AND loom.{twin}")
     assert job.metadata_time(twin) < job.metadata_time(table)
     assert not job.twin_is_newer()
+    # --drop-pre-rebuild reads the same order after the rename that completes a swap
+    pre = f"{table}{tr.PRE_SUFFIX}"
+    ch.command(f"RENAME TABLE loom.{twin} TO loom.{pre}")
+    assert job.metadata_time(pre) < job.metadata_time(table)

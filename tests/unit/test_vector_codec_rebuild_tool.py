@@ -587,8 +587,13 @@ def test_a_source_with_rows_but_no_probe_fails_the_gate(capsys: Any) -> None:
     ch = _CH(memory_chunks=_live())
     ch.no_probes = True
     assert _run(ch, "--yes") == tr.GATE_FAILED
-    assert "GATE FAILED: no probe rows with a full-length vector" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "GATE FAILED: no probe rows with a full-length vector" in out
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    step = json.loads(out.rsplit("summary ", 1)[1])["next"]
+    assert "DROP TABLE loom.memory_chunks_rebuild SYNC" in step
+    assert "skip its line" in step
+    assert "--restart" not in step
 
 
 def test_a_rollback_names_the_drop_as_its_next_step(capsys: Any) -> None:
@@ -1303,6 +1308,22 @@ def test_drop_pre_rebuild_after_a_rebuild_on_the_target_layout_keeps_a_change_on
     assert "memory_chunks_pre_rebuild" in ch.t
     out = capsys.readouterr().out
     assert "loom.memory_chunks_pre_rebuild holds a change loom.memory_chunks lacks" in out
+    assert not any(c.startswith("DROP TABLE") for c in ch.commands)
+
+
+def test_drop_pre_rebuild_on_the_target_layout_keeps_both_tables_created_in_the_same_second(
+    capsys: Any,
+) -> None:
+    """Metadata times have one second's precision, so equal times do not show whether the
+    tables were swapped or rolled back: --drop-pre-rebuild keeps the copy."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    ch = _CH(memory_chunks={"ddl": coded, "rows": 5, "uuid": "live"})
+    assert _run(ch, "--yes", "--require-patch-free") == tr.OK
+    capsys.readouterr()
+    ch.t["memory_chunks"]["created"] = ch.t["memory_chunks_pre_rebuild"]["created"] = COPY_STARTED
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+    assert "memory_chunks_pre_rebuild" in ch.t
+    assert "created in the same second" in capsys.readouterr().out
     assert not any(c.startswith("DROP TABLE") for c in ch.commands)
 
 

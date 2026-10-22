@@ -1183,7 +1183,12 @@ class VectorRebuild:
                 log("GATE FAILED: recall; the twin is left for inspection")
                 return GATE_FAILED
         elif tr.row_count(self.ch, self.t):
-            log("GATE FAILED: no probe rows with a full-length vector")
+            # a rerun fails the same way, so the table keeps its layout until it holds embeddings
+            self.next_step = (
+                f"not swapped; loom.{self.t} holds no real vectors to probe, so keep its layout: "
+                f"run DROP TABLE loom.{self.twin} SYNC and skip its line until it holds embeddings"
+            )
+            log(f"GATE FAILED: no probe rows with a full-length vector; {self.next_step}")
             return GATE_FAILED
         else:
             # the consistency gate found the twin as empty: there is nothing to probe
@@ -1492,7 +1497,16 @@ class VectorRebuild:
             if live and pre:
                 # a --require-patch-free run rebuilds a table already on the target layout;
                 # the run's twin is the newer table, after a swap and after a rollback
-                swapped = self.metadata_time(self.t) > self.metadata_time(self.pre)
+                live_time, pre_time = self.metadata_time(self.t), self.metadata_time(self.pre)
+                if live_time == pre_time:
+                    # one second's precision: equal times do not show which table is the twin
+                    self.next_step = (
+                        f"loom.{self.t} and loom.{self.pre} were created in the same second. "
+                        f"{KEEP_BOTH}"
+                    )
+                    log(f"REFUSED: {self.next_step}")
+                    return REFUSED
+                swapped = live_time > pre_time
             else:
                 swapped = bool(live)
             why, rollback = self.swapped_change() if swapped else (self.rolled_back_change(), False)

@@ -509,7 +509,7 @@ the only holder of a change: drop it by hand only after the read in
    layout. This query, with the line's first column and the dry run's `dimension <n>`,
    counts the real vectors the gate can probe (leave out `FINAL` for `chunks`):
    `SELECT countIf(length(<column>) = <n> AND arrayExists(x -> x != 0, <column>)) FROM loom.<table> FINAL`.
-   Placeholders
+   Skip this table's line while the query returns 0 on a table with rows. Placeholders
    beside real vectors do not affect the gate. The tool refuses (exit 3), `--dry-run`
    included, while a plain named column holds real vectors of another width than the one
    it codes; the width it picks and the re-embed that clears the refusal are in
@@ -522,11 +522,13 @@ the only holder of a change: drop it by hand only after the read in
    it. Ctrl-C stops only the line that is running, and bash goes on to the next. Remove
    the file before the next run.
 
-   A run that stops before its swap (a failed gate, an abort file, an interrupt) can leave
-   its twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not
-   fully cover (a namespace erasure purges only the `code_*` copies). Drop it with
-   `DROP TABLE IF EXISTS loom.<table>_rebuild SYNC`, or pass `--restart` when you run that
-   line again.
+   A run that stops (a failed gate, an abort file, an interrupt, a lost session) can leave
+   `loom.<table>_rebuild`, a copy of the table's rows that erasure does not fully cover (a
+   namespace erasure purges only the `code_*` copies). A run that stopped between its
+   exchange and its rename leaves the old table under that name. Run the table's line with
+   `mode=--dry-run` and follow the `next` it prints, as the cleanup below describes: drop
+   `loom.<table>_rebuild` by hand only when `next` starts `not swapped`, or pass
+   `--restart --yes` when you run that line again.
 
 3. After the tool's checks pass, inspect the tables with read-only ClickHouse queries and
    drop the old copies: run the lines of the tables you rebuilt again with

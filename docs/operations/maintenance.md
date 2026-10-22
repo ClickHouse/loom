@@ -234,7 +234,9 @@ rollback copy the swap creates, which the checks after the swap and in
 exists, and a refused twin sync fails the gate (exit 5).
 `--dry-run` runs the first two as well, so it lands queued rows in the table and, on a
 lagging replica, waits for the sync, and writes nothing else. Where a gate fails
-(exit 5), stop writes and erasures and rerun with `--restart`; a width refusal (exit 3)
+(exit 5), stop writes and erasures and rerun with `--restart`, except when the table has
+rows but no real vectors to probe: a rerun fails the same way, so drop the twin and skip
+the table until it holds embeddings, as the run's `next` says. A width refusal (exit 3)
 needs the re-embed below.
 
 Keep writers and erasure stopped until the rebuild finishes or is abandoned and every
