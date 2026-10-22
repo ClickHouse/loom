@@ -558,8 +558,10 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Send per-request inserts (audit, transcript, ledgers) as waited async inserts that share
-    # parts (docs/architecture/clickhouse.md#batched-inserts); false commits each as one part.
+    # Send the audit, transcript, op-ledger (agent_events), outbox and evidence inserts as
+    # waited async inserts that share parts (docs/architecture/clickhouse.md#batched-inserts);
+    # false commits them, one part each. Inserts that are waited async either way keep their
+    # windows.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched or waited async insert a request waits on; it holds a
     # pooled connection meanwhile.
@@ -5202,9 +5204,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.list": 150,
     "memory.lock": 40,
     # One memory.set (its budget is 200) plus the redirect version, its mirror
-    # restamp and the chunk tombstones, + the redirect's outbox-row wait
-    # (webhook namespaces).
-    "memory.move": 450,
+    # restamp and the chunk tombstones.
+    "memory.move": 400,
     "memory.outcome": 200,
     "memory.outcome_run": 500,
     "memory.outline": 250,
@@ -5227,7 +5228,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # Two point-lookups + one bounded arrayIntersect scan (entities bloom index).
     "memory.related": 120,
     "memory.resolve_orphan_duplicates": 5000,
-    # + outbox-row wait (webhook namespaces).
+    # + one batched-insert wait: the Undo's audit record (every namespace) or the
+    # undelete's outbox row (webhook namespaces).
     "memory.restore": 130,
     # Covers semantic / hybrid / all_mine fan-out (auto_touch is async, no
     # contribution). Reranker hop is EXCLUDED — the operator endpoint owns its

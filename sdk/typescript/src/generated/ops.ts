@@ -9738,7 +9738,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.link", group: "memory", method: "link", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 60, audit: true, readOnly: false },
   { name: "memory.list", group: "memory", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "memory.lock", group: "memory", method: "lock", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 40, audit: true, readOnly: false },
-  { name: "memory.move", group: "memory", method: "move", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 450, audit: true, readOnly: false },
+  { name: "memory.move", group: "memory", method: "move", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "memory.outcome", group: "memory", method: "outcome", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 200, audit: true, readOnly: false },
   { name: "memory.outcome_run", group: "memory", method: "outcomeRun", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 500, audit: true, readOnly: false },
   { name: "memory.outline", group: "memory", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: true },

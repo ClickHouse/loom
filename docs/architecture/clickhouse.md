@@ -126,8 +126,9 @@ two groups:
 - **Waited async inserts either way** (`async_insert_settings`): `auth_attempts`, the
   policy witness's `agent_events` and `memory_exposures` rows,
   `memory_projection_failures`, the graph Undo markers, the `namespace_write_marks`
-  flush, the usage-event and carry-acknowledgement flushes, and the waited entity-graph
-  inserts of `memory.set`.
+  flush, the usage-event flush, the carry-acknowledgement publish and withdraw, the
+  waited entity-graph inserts of `memory.set`, and a follow plan's successor inserts
+  (`entity_triple_memories`, `entity_triple_rows`, `entity_triples`).
 
 ClickHouse collects the concurrent inserts into one table in one part per partition and
 answers each once those parts are written. On return the row is as durable and as
