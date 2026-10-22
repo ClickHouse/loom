@@ -757,24 +757,18 @@ async def _tasks_left_as_found() -> Any:
     # end task, so the reset and the sweep repeat. After three passes, a task still
     # pending that the ledger reset did not just cancel fails the test rather
     # than leak into the next.
-    for _ in range(3):
+    for _ in range(4):
         _reset_deferred_ledgers()
         leaked = pending()
         if not leaked:
-            break
-        for t in leaked:
-            t.cancel()
-        await asyncio.gather(*leaked, return_exceptions=True)
-    else:
-        _reset_deferred_ledgers()
-        leaked = pending()
+            return
         unstopped = [t for t in leaked if not t.cancelling()]
         for t in leaked:
             t.cancel()
         await asyncio.gather(*leaked, return_exceptions=True)
-        _reset_deferred_ledgers()
-        if unstopped:
-            pytest.fail(f"tasks still pending after three teardown passes: {unstopped}")
+    _reset_deferred_ledgers()
+    if unstopped:
+        pytest.fail(f"tasks still pending after three teardown passes: {unstopped}")
 
 
 @pytest.fixture(autouse=True)
