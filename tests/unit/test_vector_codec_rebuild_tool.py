@@ -40,7 +40,6 @@ class _CH:
         self.commands: list[str] = []
         self.sent: list[tuple[str, dict[str, Any]]] = []  # (statement, its settings)
         self.patches: dict[str, int] = {}
-        self.patches_first: dict[str, list[int]] = {}  # earlier reads, before self.patches
         self.flushed: list[int] = []  # rows each async-queue flush lands, in order
         self.refuse_system = False  # this user lacks the SYSTEM grants
         self.uuids = iter(f"u{i}" for i in range(100))
@@ -83,13 +82,9 @@ class _CH:
             return _R(
                 [(c, "T", "", "", "") for c in ("org", "namespace", "embedding", "created_at")]
             )
-        if sql.startswith("SELECT count(), "):  # rows served and highest version
-            rows = self.t[sql.split("FROM loom.", 1)[1].split()[0]]["rows"]
-            return _R([(rows, rows)])
         if "startsWith(name, 'patch')" in sql:
             name = re.search(r"table = '(\w+)'", sql).group(1)  # type: ignore[union-attr]
-            first = self.patches_first.get(name)
-            return _R([(first.pop(0) if first else self.patches.get(name, 0),)])
+            return _R([(self.patches.get(name, 0),)])
         if "topK(1)" in sql:
             return _R([([DIM],)])
         if "n_at_max" in sql:
@@ -427,7 +422,6 @@ def test_the_statement_timeout_caps_the_gate_reads_and_stays_within_the_read_tim
         "round(cosineDistance",
         "ORDER BY rand()",
         "SELECT max(created_at)",
-        "SELECT count(), max(created_at)",
     ):
         reads = [st for q, st in ch.query_settings if needle in q]
         assert reads and all(st["max_execution_time"] == 60 for st in reads), needle
@@ -452,8 +446,8 @@ def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:
 
 
 def test_an_update_of_a_rebuilt_vector_stops_the_swap(capsys: Any) -> None:
-    """An UPDATE of the vector keeps the key and its version, and a merge can apply and drop
-    its patch part; the hash covers the vector as the twin stores it, so the key reads as
+    """An UPDATE of the vector keeps the key and its version, and a merge can apply its
+    patch; the hash covers the vector as the twin stores it, so the key reads as
     mismatched and the run stops."""
     ch = _CH(memory_chunks=_live())
     ch.cons_first = [(0, 0, 0)]
@@ -470,9 +464,11 @@ def test_rows_flushed_into_the_source_after_the_checks_fail_the_postcondition(
     capsys: Any,
 ) -> None:
     """The swap's own async-queue flush lands a row after every check: the rollback copy
-    then holds a row the new table lacks, and the run says so and names --rollback."""
+    then holds a key the new table lacks, and the run says so and names --rollback."""
     ch = _CH(memory_chunks=_live())
     ch.flushed = [0, 0, 1]  # the preflight's drain, the drain before the last delta, the swap's
+    ch.cons_first = [(0, 0, 0), (0, 0, 0)]  # the two gate reads before the swap
+    ch.cons = (0, 1, 0)  # the flushed key, only in the rollback copy
     assert _run(ch, "--yes") == tr.POSTCONDITION
     assert any(c.startswith("EXCHANGE") for c in ch.commands)
     out = capsys.readouterr().out
@@ -506,7 +502,7 @@ def test_the_reads_after_the_drain_are_sequentially_consistent() -> None:
     recall = max(i for i, (q, _) in enumerate(ch.query_settings) if "round(cosineDistance" in q)
     before, after = ch.query_settings[:recall], ch.query_settings[recall + 1 :]
     assert not any("select_sequential_consistency" in st for _, st in before)
-    for needle in ("FULL OUTER JOIN", "GROUP BY w", "SELECT count(), ", "system.mutations"):
+    for needle in ("FULL OUTER JOIN", "GROUP BY w", "system.mutations"):
         reads = [st for q, st in after if needle in q]
         assert reads and all(st["select_sequential_consistency"] == 1 for st in reads), needle
     delta = [st for s, st in ch.sent if s.startswith("INSERT") and "created_at >" in s][-1]
@@ -522,12 +518,30 @@ def test_a_user_without_the_drain_grants_is_refused_before_the_copy(capsys: Any)
 
 
 def test_an_in_place_change_after_the_checks_fails_the_postcondition(capsys: Any) -> None:
-    """A lightweight UPDATE after the last check keeps the row count and the version; its
-    patch part on the rollback copy fails the postcondition."""
+    """A lightweight UPDATE after the last check keeps the row count and the version; the
+    row hash of the rollback copy against the new table shows it, whether or not a merge
+    has moved its patch part."""
     ch = _CH(memory_chunks=_live())
-    ch.patches["memory_chunks_pre_rebuild"] = 1
+    ch.cons_first = [(0, 0, 0), (0, 0, 0)]  # the two gate reads before the swap
+    ch.cons = (1, 0, 0)
     assert _run(ch, "--yes") == tr.POSTCONDITION
-    assert "patch parts and mutations" in capsys.readouterr().out
+    assert "mismatched, source-only and twin-only keys (1, 0, 0)" in capsys.readouterr().out
+    last = ch.queries[_last(ch, "FULL OUTER JOIN")]
+    src, twin = last.split("FULL OUTER JOIN")
+    assert "FROM loom.memory_chunks_pre_rebuild FINAL" in src
+    assert "FROM loom.memory_chunks FINAL" in twin
+    assert vcr.stored_vector("embedding", dim=DIM) in src
+
+
+def test_a_mutation_after_the_checks_fails_the_postcondition(capsys: Any) -> None:
+    """A mutation created after the gate's last mutation check follows the rename onto the
+    rollback copy; the new table may not hold it."""
+    ch = _CH(memory_chunks=_live())
+    ch.mutations_first = [0, 0]  # the preflight and the gate before the swap
+    ch.mutations = 1
+    assert _run(ch, "--yes") == tr.POSTCONDITION
+    assert "1 mutation(s) on loom.memory_chunks_pre_rebuild" in capsys.readouterr().out
+    assert "table = 'memory_chunks_pre_rebuild'" in ch.queries[_last(ch, "system.mutations")]
 
 
 def test_a_duplicate_key_insert_on_a_plain_merge_tree_stops_the_swap(capsys: Any) -> None:

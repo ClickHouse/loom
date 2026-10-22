@@ -190,16 +190,12 @@ def test_removing_one_unversioned_row_under_a_shared_key_stops_the_swap(
     assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
 
 
-@pytest.mark.parametrize("merged", [False, True])
 def test_a_lightweight_update_of_the_vector_during_recall_stops_the_swap(
-    ch: Any,
-    table: str,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    merged: bool,
+    ch: Any, table: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The UPDATE keeps the key and its version; merged, its patch part is applied and
-    gone before the swap, and the vector in the row hash still shows the change."""
+    """The UPDATE keeps the key and its version, and the vector in the row hash shows the
+    change. A merge applies the patch but keeps its patch part active, so a change with no
+    patch part is the finished ALTER UPDATE below."""
     ch.command(
         f"ALTER TABLE loom.{table} MODIFY SETTING "
         "enable_block_number_column = 1, enable_block_offset_column = 1"
@@ -208,15 +204,12 @@ def test_a_lightweight_update_of_the_vector_during_recall_stops_the_swap(
     job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
     if why := job.codec_refusal():
         pytest.skip(why)
-    if not merged:
-        ch.command(f"SYSTEM STOP MERGES loom.{table}")
+    ch.command(f"SYSTEM STOP MERGES loom.{table}")
 
     def update_during_recall(*_: Any) -> list[float]:
         ch.command(
             f"UPDATE loom.{table} SET embedding = [2., 2., 2., 2., 2., 2., 2., 2.] WHERE id = 1"
         )
-        if merged:
-            ch.command(f"OPTIMIZE TABLE loom.{table} FINAL")
         return [1.0]
 
     try:
@@ -227,6 +220,61 @@ def test_a_lightweight_update_of_the_vector_during_recall_stops_the_swap(
         assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
     finally:
         ch.command(f"SYSTEM START MERGES loom.{table}")
+
+
+def _with_patch_parts(ch: Any, table: str) -> None:
+    """Two rows, each with a patch part from a lightweight UPDATE made before the run."""
+    ch.command(
+        f"ALTER TABLE loom.{table} MODIFY SETTING "
+        "enable_block_number_column = 1, enable_block_offset_column = 1"
+    )
+    insert(ch, table, 1, [1.0] * 8)
+    insert(ch, table, 2, [1.0] * 8)
+    for ident in (1, 2):
+        ch.command(f"UPDATE loom.{table} SET note = 'quarantined' WHERE id = {ident}")
+
+
+def test_a_merge_after_the_last_check_keeps_the_postcondition(
+    ch: Any, table: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A merge between the last check and the swap moves parts and patch parts but no row,
+    so a correct rebuild still passes."""
+    _with_patch_parts(ch, table)
+    job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
+    if why := job.codec_refusal():
+        pytest.skip(why)
+    swap_in = tr.swap_in
+
+    def merge_then_swap(client: Any, name: str) -> None:
+        ch.command(f"OPTIMIZE TABLE loom.{name} FINAL")
+        swap_in(client, name)
+
+    monkeypatch.setattr(tr, "swap_in", merge_then_swap)
+    assert vcr.main([*args(table), "--yes"], ch=ch) == tr.OK
+    assert ch.query(f"SELECT count() FROM loom.{table} FINAL").result_rows == [(2,)]
+
+
+def test_a_lightweight_update_after_the_last_check_fails_the_postcondition(
+    ch: Any, table: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An UPDATE between the last check and the swap keeps the row count and the version;
+    the rollback copy holds it and the new table does not."""
+    _with_patch_parts(ch, table)
+    job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
+    if why := job.codec_refusal():
+        pytest.skip(why)
+    swap_in = tr.swap_in
+
+    def update_then_swap(client: Any, name: str) -> None:
+        ch.command(f"UPDATE loom.{name} SET note = 'late' WHERE id = 1")
+        swap_in(client, name)
+
+    monkeypatch.setattr(tr, "swap_in", update_then_swap)
+    assert vcr.main([*args(table), "--yes"], ch=ch) == tr.POSTCONDITION
+    out = capsys.readouterr().out
+    assert "the source changed after the last check" in out and "--rollback --yes" in out
+    pre = f"loom.{table}{tr.PRE_SUFFIX}"
+    assert ch.query(f"SELECT note FROM {pre} FINAL WHERE id = 1").result_rows == [("late",)]
 
 
 def test_a_finished_alter_update_during_recall_stops_the_swap(

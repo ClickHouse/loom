@@ -604,18 +604,18 @@ class VectorRebuild:
         return int(self.q("SELECT toUnixTimestamp(now())")[0][0])
 
     def twin_metadata_time(self) -> int:
-        """The server's Unix time of the reused twin's last metadata change, its CREATE (a
-        mutation between runs counts too)."""
+        """The server's Unix time when the reused twin was created; source mutations since
+        then count against the swap."""
         sql = (
             "SELECT toUnixTimestamp(metadata_modification_time) FROM system.tables "
             f"WHERE database = currentDatabase() AND name = '{self.twin}'"
         )
         return int(self.q(sql)[0][0])
 
-    def mutations_since(self, since: int) -> int:
-        """Count the source's unfinished mutations and every one created since `since`,
-        less the clock-skew margin."""
-        sql = mutations_sql(self.replicas("mutations"), self.t, since - CLOCK_SKEW_MARGIN_S)
+    def mutations_since(self, name: str, since: int) -> int:
+        """Count the unfinished mutations of `loom.<name>` and every one created since
+        `since`, less the clock-skew margin."""
+        sql = mutations_sql(self.replicas("mutations"), name, since - CLOCK_SKEW_MARGIN_S)
         return int(self.q(sql)[0][0])
 
     def width_refusal(self, ddl: str) -> str:
@@ -792,12 +792,14 @@ class VectorRebuild:
             except Exception as e:  # noqa: BLE001 - the monitor only logs; the copy decides
                 log("monitor err", str(e)[:120])
 
-    def consistent(self, version: str | None, key: list[str]) -> tuple[int, int, int]:
-        """(mismatched, source_only, twin_only) keys of the live table against the twin."""
+    def consistent(
+        self, version: str | None, key: list[str], src: str = "", twin: str = ""
+    ) -> tuple[int, int, int]:
+        """(mismatched, source_only, twin_only) keys of `src` (the live table) against
+        `twin` (the twin), whose vectors are coded."""
+        src, twin = src or self.t, twin or self.twin
         hashed = [c for c in tr.insertable_columns(self.ch, self.t) if c not in self.cols]
-        sql = consistency_sql(
-            self.t, self.twin, self.fin, version, key, hashed, self.cols, dim=self.dim
-        )
+        sql = consistency_sql(src, twin, self.fin, version, key, hashed, self.cols, dim=self.dim)
         row = self.q(sql, join_use_nulls=0)[0]
         return int(row[0]), int(row[1]), int(row[2])
 
@@ -824,18 +826,6 @@ class VectorRebuild:
         self.cmd(f"SYSTEM FLUSH ASYNC INSERT QUEUE loom.{self.t}")
         if engine.startswith(("Replicated", "Shared")):
             self.cmd(f"SYSTEM SYNC REPLICA loom.{self.t}")
-
-    def mark(self, name: str, version: str | None, since: int) -> tuple[int, Any, int, int]:
-        """(rows served, highest version, active patch parts, mutations since `since`) of
-        `loom.<name>`: the swap's postcondition compares the rollback copy with the source
-        as the last gate read it, so an in-place change (an ALTER UPDATE, a lightweight
-        UPDATE or DELETE) counts as well as a new row. The patch parts and mutations follow
-        the rename."""
-        top = f"max({version})" if version else "0"
-        row = self.q(f"SELECT count(), {top} FROM loom.{name}{self.fin}")[0]
-        patches = int(self.q(patch_parts_sql(name))[0][0])
-        sql = mutations_sql(self.replicas("mutations"), name, since - CLOCK_SKEW_MARGIN_S)
-        return int(row[0]), row[1], patches, int(self.q(sql)[0][0])
 
     def recall(self, ddl: str) -> list[float]:
         """Distance recall per probe: exact on the source vs the twin read as the legs read it."""
@@ -949,15 +939,8 @@ class VectorRebuild:
         if why := self.width_refusal(ddl):
             log(f"GATE FAILED: {why}; no swap")
             return GATE_FAILED
-        # read first: a row that lands after it shows in the rollback copy after the swap
-        checked = self.mark(self.t, version, since)
         cons = self.consistent(version, key)
-        log(
-            "consistency before the swap:",
-            cons,
-            "rows, highest version, patch parts, mutations:",
-            checked,
-        )
+        log("consistency before the swap:", cons)
         why = (
             "GATE FAILED: the source changed during the gates (a write, an update or a "
             "delete), and the twin no longer matches it; no swap. Stop writes and erasures "
@@ -966,7 +949,7 @@ class VectorRebuild:
         if failure := self.gate_failure(cons, version, key, why):
             log(failure)
             return GATE_FAILED
-        if n := self.mutations_since(since):
+        if n := self.mutations_since(self.t, since):
             log(
                 f"GATE FAILED: {n} mutation(s) on loom.{self.t} since the copy started or still "
                 "running (an ALTER UPDATE such as an erasure tombstone or a quarantine, or a "
@@ -975,11 +958,9 @@ class VectorRebuild:
             )
             return GATE_FAILED
         tr.swap_in(self.ch, self.t)
-        return self.check_swapped(version, checked, since)
+        return self.check_swapped(version, key, since)
 
-    def check_swapped(
-        self, version: str | None, checked: tuple[int, Any, int, int], since: int
-    ) -> int:
+    def check_swapped(self, version: str | None, key: list[str], since: int) -> int:
         live = self.target_state(self.t)
         log(
             "live rows",
@@ -997,12 +978,20 @@ class VectorRebuild:
         if set(tr.columns(self.ch, self.t)) != set(tr.columns(self.ch, self.pre)):
             log("POSTCONDITION FAILED: the rollback copy's columns differ by name")
             return POSTCONDITION
-        if (now := self.mark(self.pre, version, since)) != checked:
+        if self.a.require_patch_free:
+            log("live patch parts after:", self.q(patch_parts_sql(self.t))[0][0])
+        # the rollback copy is the source as writers left it: the new table must match it,
+        # with no mutation since the copy (the gate saw none before the swap)
+        cons = self.consistent(version, key, src=self.pre, twin=self.t)
+        mutations = self.mutations_since(self.pre, since)
+        log("consistency after the swap:", cons, "mutations:", mutations)
+        if any(cons) or mutations:
             log(
-                "POSTCONDITION FAILED: the source changed after the last check (rows, highest "
-                f"version, patch parts and mutations {checked} then, {now} in loom.{self.pre}), "
-                "and the new table may not hold the change. Keep writers stopped and run "
-                "--rollback --yes, which puts the old table, the change included, back in"
+                "POSTCONDITION FAILED: the source changed after the last check (mismatched, "
+                f"source-only and twin-only keys {cons}, {mutations} mutation(s) on "
+                f"loom.{self.pre}), and the new table may not hold the change. Keep writers "
+                "stopped and run --rollback --yes, which puts the old table, the change "
+                "included, back in"
             )
             return POSTCONDITION
         return OK
