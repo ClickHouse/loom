@@ -110,9 +110,8 @@ settings:
   # pooled connection meanwhile. [live]
   # ch_batched_insert_wait_max_ms: 50
 
-  # Longest wait, ms, of a batched or waited async insert no request waits on
-  # (background flushes, webhook attempts;
-  # docs/architecture/clickhouse.md#batched-inserts). [live]
+  # Longest wait, ms, of a batched or waited async insert no request waits on (the usage
+  # and write-mark flushes; docs/architecture/clickhouse.md#batched-inserts). [live]
   # ch_batched_insert_background_wait_max_ms: 200
 
   # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits

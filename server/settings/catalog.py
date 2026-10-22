@@ -564,8 +564,8 @@ class ClickHouseSettings(BaseModel):
     # Longest wait, ms, of a batched or waited async insert a request waits on; it holds a
     # pooled connection meanwhile.
     ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0, le=1000)
-    # Longest wait, ms, of a batched or waited async insert no request waits on (background
-    # flushes, webhook attempts; docs/architecture/clickhouse.md#batched-inserts).
+    # Longest wait, ms, of a batched or waited async insert no request waits on (the usage
+    # and write-mark flushes; docs/architecture/clickhouse.md#batched-inserts).
     ch_batched_insert_background_wait_max_ms: Annotated[int, LIVE] = Field(
         default=200, gt=0, le=5000
     )

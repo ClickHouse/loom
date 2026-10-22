@@ -173,14 +173,13 @@ async def insert_outbox(rows: list[dict[str, Any]], *, ch: _CHClient | None = No
 
 
 async def insert_attempts(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> None:
-    """Delivery attempts, written by the delivery worker: no request waits on them."""
+    """Delivery attempts, committed: one worker writes them twice a pass, one insert
+    after the other, so they never share a part."""
     if not rows:
         return
     ch = ch or _default_client()
     await ch.insert(
-        ATTEMPTS,
-        [_whole(r, ATTEMPT_COLS) for r in rows],
-        settings=batched_insert_settings(background=True),
+        ATTEMPTS, [_whole(r, ATTEMPT_COLS) for r in rows], settings=committed_insert_settings()
     )
 
 

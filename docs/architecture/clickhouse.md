@@ -121,8 +121,9 @@ two groups:
   turn, the turn `conversation.save_message` rewrites when deduplication dropped its
   first write, the `conversation_embeddings` rows (`conversation.append`,
   `conversation.save_message`, `conversation.compact`; under the width rule below), the
-  `agent_events` flush, `memory_webhook_outbox`, `memory_webhook_attempts`,
-  `memory_evidence` and `memory_belief_sources`.
+  `agent_events` flush, `memory_webhook_outbox`, `memory_evidence` and
+  `memory_belief_sources`. `memory_webhook_attempts` stays committed: one worker writes it
+  twice a pass, one insert after the other, so batching would save no parts.
 - **Waited async inserts either way** (`async_insert_settings`): `auth_attempts`, the
   policy witness's `agent_events` and `memory_exposures` rows,
   `memory_projection_failures`, the graph Undo markers, the `namespace_write_marks`
@@ -150,9 +151,9 @@ window, not ClickHouse's default of 450 statements, decides the flush.
 Two windows: an insert a request waits on (the `conversation.append` turn and embedding
 row, an audit row, the outbox row of a write, a ledger flush the history-policy gate
 waits for) waits at most `ch_batched_insert_wait_max_ms` (50 ms). An insert no request
-waits on (the usage-event flusher, the write-mark flush, webhook
-delivery attempts) waits up to `ch_batched_insert_background_wait_max_ms` (200 ms,
-ClickHouse's own default), so it collects more rows per part. A usage-event flush a
+waits on (the usage-event flusher, the write-mark flush) waits up to
+`ch_batched_insert_background_wait_max_ms` (200 ms, ClickHouse's own default), so it
+collects more rows per part. A usage-event flush a
 request waits on because the buffer is full takes the short window; the two windows are
 two insert shapes, so they fill separate buffers.
 

@@ -126,14 +126,13 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
         if width is None or width != int(settings.embedding_dim):
             pytest.skip("conversation_embeddings is not coded at the served width here")
         org = unique_org("batched-width")
-        resent: list[str] = []
+        calls: list[tuple[str, Any]] = []
         insert = c.insert
 
         async def recording_insert(
             table: str, rows: list[dict[str, Any]], settings: dict[str, Any] | None = None
         ) -> None:
-            if (settings or {}).get("async_insert") == 0:
-                resent.append(rows[0]["msg_id"])
+            calls.append((rows[0]["msg_id"], (settings or {}).get("async_insert")))
             await insert(table, rows, settings=settings)
 
         c.insert = recording_insert  # type: ignore[method-assign]
@@ -174,7 +173,11 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
             for row in sorted(rows, key=lambda row: row["msg_id"])
         ]
         assert [dict(r) for r in got] == expected
-        # The stale row failed a flush it shared: the rows in it were resent committed.
-        assert resent
+        # Each good row went batched first; the stale row failed the flush it shared, and
+        # the rows in it were resent committed.
+        first = {msg_id: mode for msg_id, mode in reversed(calls)}
+        assert all(first[f"m{i}"] == 1 for i in range(20))
+        resent = [msg_id for msg_id, mode in calls if mode == 0]
+        assert resent and all(first[msg_id] == 1 for msg_id in resent)
     finally:
         await c.disconnect()

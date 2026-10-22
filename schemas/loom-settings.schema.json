@@ -188,7 +188,7 @@
           "exclusiveMinimum": 0,
           "maximum": 5000,
           "type": "integer",
-          "description": "Longest wait, ms, of a batched or waited async insert no request waits on (background flushes, webhook attempts; docs/architecture/clickhouse.md#batched-inserts)."
+          "description": "Longest wait, ms, of a batched or waited async insert no request waits on (the usage and write-mark flushes; docs/architecture/clickhouse.md#batched-inserts)."
         },
         "ch_batched_insert_wait_max_ms": {
           "default": 50,

@@ -141,7 +141,6 @@ BATCHED_TABLES = [
     ("server/observability/audit.py", "loom.audit_log", False, False),
     ("server/observability/events.py", "loom.agent_events", False, False),
     ("server/memory/store/webhooks.py", "loom.memory_webhook_outbox", False, False),
-    ("server/memory/store/webhooks.py", "loom.memory_webhook_attempts", True, False),
     ("server/memory/app/evidence.py", "loom.memory_evidence", False, False),
     ("server/memory/app/evidence.py", "loom.memory_belief_sources", False, False),
     ("server/core/rmt_carry.py", "loom.carry_acks", False, True),
@@ -282,13 +281,16 @@ COMMITTED_TABLES = [
     ("server", "loom.entity_vectors"),
     # PARTITION BY org: a flush across too many orgs exceeds max_partitions_per_insert_block.
     ("server", "loom.entity_canonical_map"),
+    # One worker writes it twice a pass, in sequence: batching would save no parts.
+    ("server/memory/store/webhooks.py", "loom.memory_webhook_attempts"),
 ]
 
 
 @pytest.mark.parametrize("rel_path,table", COMMITTED_TABLES)
 def test_tables_that_fail_a_whole_flush_stay_committed(rel_path: str, table: str) -> None:
-    """A block-level error in a shared flush fails every insert waiting on it, so
-    one tenant's bad row or org count would fail another tenant's write."""
+    """These tables stay committed. For most, a block-level error in a shared flush
+    fails every insert waiting on it, so one tenant's bad row or org count would fail
+    another tenant's write."""
     settings_seen = _insert_settings(ROOT / rel_path, table)
     assert settings_seen, f"no insert of {table} in {rel_path}"
     for s in settings_seen:

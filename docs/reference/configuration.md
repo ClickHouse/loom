@@ -133,7 +133,7 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_CH_TIMEOUT_DDL_S` | `float` | `300.0` |  | Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. |
 | `LOOM_CH_BATCHED_INSERTS` | `bool` | `True` | live | Batch the inserts written on every request as waited async inserts that share parts; each holds a pooled connection while it waits, so size ch_pool_maxsize. False commits them. |
 | `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` | `int` | `50` | live | Longest wait, ms, of a batched or waited async insert a request waits on; it holds a pooled connection meanwhile. |
-| `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` | `int` | `200` | live | Longest wait, ms, of a batched or waited async insert no request waits on (background flushes, webhook attempts; docs/architecture/clickhouse.md#batched-inserts). |
+| `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` | `int` | `200` | live | Longest wait, ms, of a batched or waited async insert no request waits on (the usage and write-mark flushes; docs/architecture/clickhouse.md#batched-inserts). |
 | `LOOM_CH_BATCHED_INSERT_WAIT_MIN_MS` | `int` | `10` | live | Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when writes are sparse; capped at the insert's longest wait. |
 | `LOOM_CH_POOL_WAIT_MS` | `int` | `500` |  | Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot gate. |
 | `LOOM_CH_REPLICA_BOUND_RETRIES` | `int` | `2` |  | Fresh connections a statement tries after a replica-bound error (a replica that lost its Keeper session, a replica's read-only table). Behind a load balancer one reconnect can land on the replica that just failed, so a single retry is not enough. |
