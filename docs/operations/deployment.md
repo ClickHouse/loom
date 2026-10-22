@@ -404,7 +404,7 @@ How Loom uses ClickHouse is in [ClickHouse](../architecture/clickhouse.md).
 
 ### Recommended ClickHouse settings
 
-Loom runs without these, but vector search is faster with them on. Make sure Loom's
+These settings let Loom store and search compact vector codes. Make sure Loom's
 ClickHouse user can have both on before the first `loom migrate` or the first server start
 (the server applies its migrations at boot): a fresh install codes its vector columns only
 if the codec can be on at that moment.
