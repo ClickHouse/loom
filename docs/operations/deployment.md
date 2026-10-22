@@ -528,16 +528,19 @@ first (`DROP TABLE IF EXISTS loom.<table>_pre_rebuild SYNC`).
    Skip that table's line while this returns rows: its layout stays as it is.
 
    The copy replaces every vector whose width is not `<n>` with a zero vector, and no gate
-   reports it, so check each named column for other widths before its line:
+   reports it. `<n>` is the table's most common width: if it is not the served model's
+   width, stop. Then check each named column for other widths among the rows Loom serves
+   (drop `FINAL` for `chunks`):
 
    ```sql
-   SELECT length(<column>) AS width, count() FROM loom.<table>
+   SELECT length(<column>) AS width, count() FROM loom.<table> FINAL
    WHERE length(<column>) > 0 GROUP BY width
    ```
 
-   Any width other than `<n>` (another model's rows, or rows written before a model change
-   that `loom reembed` has not reached) is lost in the rebuild. Re-embed those rows, or move
-   that model to its own `LOOM_CODE_VECTOR_TABLES` table, before the line; or skip it.
+   A width other than `<n>` is lost in the rebuild. `loom reembed --delete-old` re-embeds
+   `memory_embeddings`, `entity_vectors` and `conversation_embeddings` and removes the old
+   model's rows; the code plane's re-embed moves a `code_chunks` label into its own
+   `LOOM_CODE_VECTOR_TABLES` table. For any other table, skip its line.
 
    To stop the block, create `ABORT_REBUILD` in `LOOM_REBUILD_DIR` (default: the directory
    you run from): the running line stops before its copy or its swap, and each later
