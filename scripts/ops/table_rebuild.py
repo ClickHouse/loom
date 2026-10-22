@@ -43,7 +43,7 @@ and stops. The steps of a rebuild:
    a setting, a column's default or codec) moved the live table's
    metadata time since the twin's columns were checked: a rebuild does not
    carry it over either. An added column fails the next copy pass (exit 1, no
-   swap), or exit 3 once the last verify pass ran.
+   swap), or the run exits 3 once the last verify pass ran.
 6. A last delta pass, then `EXCHANGE TABLES`, then the old table becomes
    `loom.<t>_pre_rebuild`, and its merges are stopped. Two delta passes
    `--settle-s` apart copy what in-flight writers put into it after the swap.
