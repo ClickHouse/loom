@@ -486,9 +486,10 @@ the server does not change existing tables:
    again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its old
    copy as `loom.<table>_pre_rebuild`, a full second copy that erasure does not reach. To go
    back instead, run that table's line with `mode="--rollback --yes"`; the coded copy then
-   sits in `loom.<table>_pre_rebuild`, so drop it the same way. Use the table's own line in
-   every case: the tool checks the layout it built, so `entity_vectors` needs its
-   `--chain LZ4` ([vector storage](../architecture/clickhouse.md#vector-storage)).
+   sits in `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the table
+   was rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
+   `--chain LZ4` only if its rebuild had it, and `code_summaries` keeps its
+   `--index-granularity 256` ([vector storage](../architecture/clickhouse.md#vector-storage)).
 
 How Loom reads these settings is in
 [gated settings](../architecture/clickhouse.md#gated-clickhouse-settings), and how Loom uses
