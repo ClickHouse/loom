@@ -404,10 +404,10 @@ How Loom uses ClickHouse is in [ClickHouse](../architecture/clickhouse.md).
 
 ### Recommended ClickHouse settings
 
-These settings let Loom store and search compact vector codes. Make sure Loom's
-ClickHouse user can have both on before the first `loom migrate` or the first server start
-with boot migrations enabled: a fresh install codes its vector columns only if the codec
-can be on at that moment.
+These settings let Loom store and search compact vector codes. Make sure Loom's ClickHouse
+user can have both on before the first `loom migrate` or the first server start with
+`LOOM_BOOT_MIGRATE` on (the default): a fresh install codes its vector columns only if the
+codec can be on at that moment.
 
 | Setting                   | Value | What it gives Loom                                                                                                                          |
 | ------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -425,7 +425,8 @@ WHERE name IN ('enable_quantized_codec', 'allow_suspicious_codecs')
 A setting is fine at `value = 1`, read-only or not, and blocked at `value = 0` when this
 user may not set it to 1 (the rules are in
 [gated settings](../architecture/clickhouse.md#gated-clickhouse-settings)). No row for
-`enable_quantized_codec` means the server is older than 26.8, which Loom never codes.
+`enable_quantized_codec` means the server is older than 26.8: migrations create plain
+tables there and `vector_codec_rebuild.py` refuses to run.
 
 - **Self-managed ClickHouse 26.8 or later.** Both settings are user-settable by default
   and Loom sends them with each `CREATE` that needs them, so a fresh install needs
@@ -437,7 +438,9 @@ user may not set it to 1 (the rules are in
 
 If Loom was installed before the settings were on, or before the server ran 26.8, its
 vector tables are plain (or `entity_vectors` lacks its chain). Turning the settings on or
-upgrading the server does not change existing tables:
+upgrading the server does not change existing tables; rebuilding them does. Tables stay
+plain, and cannot be coded by a rebuild, when the vector width (`LOOM_EMBEDDING_DIM`) is
+not a multiple of 8.
 
 Apply rebuilds during a maintenance window. Every Loom server, worker and direct table
 writer must be stopped, and all in-flight writes, erasures and ClickHouse mutations must
@@ -477,9 +480,9 @@ erasure does not fully cover the rebuild and rollback copies.
    Check the list against `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`), which
    names every coded table and its vector columns, before you run it. Where
    `allow_suspicious_codecs` cannot be on, the tool refuses `--chain`. Skip the
-   `entity_vectors` line and it stays as it is, plain or coded without the chain; or, where
-   it is plain, rebuild it without `--chain` and keep quantization without the additional
-   `LZ4` compression.
+   `entity_vectors` line and it stays as it is, plain or coded without the chain; or,
+   where it is plain, rebuild it without `--chain` and keep quantization without the
+   additional `LZ4` compression.
 
    A table with no real vectors yet (no rows, or only the zero placeholder vectors of rows
    without an embedding) cannot pass the rebuild's recall gate, and the dry run does not
@@ -511,26 +514,32 @@ erasure does not fully cover the rebuild and rollback copies.
    that is running, and bash goes on to the next. Remove the file before the next run.
 
    A run that stops before its swap (a failed gate, an abort file, an interrupt) can leave
-   its twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not fully
-   cover (a namespace erasure purges only the `code_*` copies). Drop it with
+   its twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not
+   fully cover (a namespace erasure purges only the `code_*` copies). Drop it with
    `DROP TABLE IF EXISTS loom.<table>_rebuild SYNC`, or pass `--restart` when you run that
    line again.
 
-3. After the tool's checks pass, inspect the tables with read-only ClickHouse queries
-   and drop the old copies: run the lines of the tables you rebuilt
-   again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its
-   old copy as `loom.<table>_pre_rebuild`, a full second copy with its merges stopped. To
-   go back instead, run that table's line with `mode="--rollback --yes"`; the coded copy
-   then sits in `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the
-   table was rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
+3. After the tool's checks pass, inspect the tables with read-only ClickHouse queries and
+   drop the old copies: run the lines of the tables you rebuilt again with
+   `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its old copy as
+   `loom.<table>_pre_rebuild`, a full second copy with its merges stopped. To go back
+   instead, run that table's line with `mode="--rollback --yes"`; the coded copy then sits
+   in `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the table was
+   rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
    `--chain LZ4` only if its rebuild had it.
 
 Before restarting Loom or resuming traffic, drop every leftover `<table>_rebuild` and
 `<table>_pre_rebuild` copy for the tables you processed, including copies left by an
-aborted run or rollback.
+aborted run or rollback. Run as Loom's user, this lists them:
 
-Restart Loom after cleanup, so each process reads the settings again. A process that
-found the codec unavailable keeps that answer until it restarts.
+```sql
+SELECT name FROM system.tables
+WHERE database = currentDatabase()
+  AND (endsWith(name, '_rebuild') OR endsWith(name, '_pre_rebuild'))
+```
+
+Restart Loom after cleanup, so each process reads the settings again. A process that found
+the codec unavailable keeps that answer until it restarts.
 
 ## Providers
 
