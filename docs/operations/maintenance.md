@@ -216,21 +216,31 @@ into a twin table, check it, swap with `EXCHANGE TABLES` and keep the old table 
 `--rollback`. Both print their plan and change nothing without `--yes`; the procedure is
 in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-key).
 `vector_codec_rebuild.py` needs a maintenance window with every writer and erasure
-stopped; it fails closed and never repairs the live table. It refuses (exit 3),
-`--dry-run` included, while a plain named column holds vectors of more than one width that
-are not all zeros, since the copy would replace all but the target's with zero vectors. The
-target of a plain column is its most common width, which may not be `LOOM_EMBEDDING_DIM`;
-the message names both. Re-embed or delete the rows of other widths until one width
-remains; for `memory_embeddings`, `entity_vectors` and `conversation_embeddings`,
-`loom reembed --delete-old` does this. Just before the swap it checks the widths again and
-that every key of the twin still has the source's presence and version, and fails the gate
-(exit 5) if an insert or a delete (an erasure among them) landed during the run. A
-lightweight `UPDATE`, such as the quarantine `memory.reject` writes, keeps a key and its
-version, so the tool also counts the source's patch parts before the copy and before the
-swap and fails the gate if the count grew. Stop writes and rerun it with `--restart`. With
-`--reuse` the count starts at that run, so an `UPDATE` between runs is covered only by the
-maintenance window. `--statement-timeout-s` (default 1800, at most 7200) caps each gate
-read, delta and repair statement.
+stopped; it fails closed and never repairs the live table.
+
+- **Width.** The target width of a plain column is the most common width of its real
+  vectors (not all zeros), or `LOOM_EMBEDDING_DIM` when it holds none; a coded column
+  states its own. The tool refuses (exit 3), `--dry-run` included, while a plain named
+  column holds real vectors of another width, since the copy would replace them with zero
+  vectors, and the message names each width and `LOOM_EMBEDDING_DIM`. Re-embed or delete
+  the rows of other widths until one width remains; for `memory_embeddings`,
+  `entity_vectors` and `conversation_embeddings`, `loom reembed --delete-old` does this.
+- **Gates (exit 5).** A key the twin lacks, or whose newest version differs, is copied
+  again key by key, and the gate fails if it still differs. On a table without a version
+  column a key can hold several rows, so a key whose row count differs fails it too. A key
+  only the twin holds fails it: rows were removed from the source after the copy, and the
+  swap would bring them back. The recall gate ranks real vectors only, since a
+  placeholder's cosine distance is NaN.
+- **Before the swap.** The width and consistency checks run again, so an insert or a
+  delete (an erasure among them) that landed during the run fails the gate. A lightweight
+  `UPDATE`, such as the quarantine `memory.reject` writes, keeps a key and its version, so
+  the tool also records the names of the source's patch parts before the copy and fails
+  the gate if a patch part appears that was not among them. Stop writes and rerun with
+  `--restart`. With `--reuse` the record starts at that run, so an `UPDATE` between runs
+  is covered only by the maintenance window.
+
+`--statement-timeout-s` (default 1800, at most 7200) caps each gate read, delta, repair
+and patch-part read; the copy itself runs under its own limit.
 
 ## Disk pressure hygiene
 

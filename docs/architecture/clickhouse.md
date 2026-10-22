@@ -488,20 +488,9 @@ flush never fails a request; a crash loses the queue.
   layout, and `scripts/ops/vector_codec_rebuild.py` applies the codec once the setting is on.
   ClickHouse Cloud holds the setting read-only at its default 0 until the operator enables
   it for the service with a settings-profile override; it then reads 1, still read-only,
-  and coded tables work. An existing table moves with the same tool, in a maintenance
-  window with every writer and erasure stopped: it fails closed and never repairs the
-  live table. It refuses a plain column whose served rows hold vectors of more than one
-  width that are not all zeros, since the copy would zero all but the target's. A plain
-  column's target is its most common width, which may not be `LOOM_EMBEDDING_DIM`; the
-  refusal names both. The rows of other widths are re-embedded or deleted first; for
-  `memory_embeddings`, `entity_vectors` and `conversation_embeddings`,
-  `loom reembed --delete-old` does this. Just before the swap it checks the widths again
-  and that every key of the twin still has the source's presence and version, and fails
-  the gate if an insert or a delete landed during the run. A lightweight `UPDATE` keeps
-  a key and its version, so it also counts the source's patch parts before the copy and
-  before the swap, and fails the gate if the count grew (a quarantine, below, is one such
-  write). Rerun with `--restart` once writes stop. Its recall gate ranks real vectors
-  only, since a placeholder's cosine distance is NaN.
+  and coded tables work. An existing table moves with the same tool, which fails closed and
+  needs a maintenance window with every writer and erasure stopped
+  ([procedure](../operations/maintenance.md#compaction-and-optimize)).
 - **Codes-first reads.** When a column is coded and its table has no patch parts, reads
   send `vector_search_use_quantized_codes = 1` (`LOOM_VECTOR_SEARCH_QUANTIZED_CODES`): a
   pass over the codes keeps `LIMIT × LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER`
