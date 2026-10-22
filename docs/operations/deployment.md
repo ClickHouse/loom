@@ -578,8 +578,9 @@ in that state, whatever layout or columns the rerun names. When `next` asks to c
 before dropping either. When `next` names the twin a leftover never exchanged in, no
 exchange ran: rerun with `--restart --yes` or drop it. The tool tells a leftover by the
 twin's UUID, which it records in `$LOOM_REBUILD_DIR`, so run every line from the same
-directory. Otherwise drop the twin with
-`DROP TABLE IF EXISTS loom.<table>_rebuild SYNC`.
+directory. When `next` starts `not swapped`, drop the twin with
+`DROP TABLE IF EXISTS loom.<table>_rebuild SYNC`; for any other `next`, drop nothing and
+inspect both tables by hand.
 
 Start Loom again after cleanup; each process reads the codec settings when it starts.
 

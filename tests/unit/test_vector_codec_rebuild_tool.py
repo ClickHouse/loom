@@ -178,6 +178,12 @@ def _live(rows: int = 5) -> dict[str, Any]:
     return {"ddl": ARRAY, "rows": rows, "uuid": "live"}
 
 
+def _twin(method: str = "rabitq") -> dict[str, Any]:
+    """A twin an earlier run left, coded with `method`, created at TWIN_CREATED."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('{method}', {DIM}, 0))")
+    return {"ddl": coded, "rows": 5, "uuid": "twin"}
+
+
 @pytest.fixture(autouse=True)
 def _run_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """A plain column's target width is LOOM_EMBEDDING_DIM; each test keeps its own
@@ -216,6 +222,40 @@ def test_a_confirmed_rebuild_swaps_and_keeps_the_rollback_copy() -> None:
     ch.commands.clear()
     ch.t.pop("memory_chunks_pre_rebuild")
     assert _run(ch, "--yes") == tr.OK and _writes(ch) == []
+
+
+@pytest.mark.parametrize(
+    ("twin", "flags"),
+    [
+        (_twin("turboquant"), ()),
+        (_twin(), ("--index-granularity", "64")),
+        (_twin(), ("--chain", "LZ4")),
+        (_live(), ()),
+        (
+            {**_twin(), "ddl": _twin()["ddl"].replace("ORDER BY (org, namespace)", "ORDER BY org")},
+            (),
+        ),
+    ],
+    ids=["method", "granularity", "chain", "plain", "sorting-key"],
+)
+def test_a_reused_twin_of_another_layout_refuses(
+    twin: dict[str, Any], flags: tuple[str, ...], capsys: Any
+) -> None:
+    """The gates read the stored vectors and the codes, so neither sees a twin built with
+    another method, granularity, chain or sorting key: --reuse refuses it and names
+    --restart instead of swapping that layout in."""
+    ch = _CH(memory_chunks=_live(), memory_chunks_rebuild=twin)
+    assert _run(ch, "--yes", "--reuse", *flags) == tr.REFUSED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert ch.t["memory_chunks_rebuild"] is twin and _writes(ch) == []
+    assert "--restart --yes" in capsys.readouterr().out
+
+
+def test_a_reused_twin_of_this_layout_swaps() -> None:
+    ch = _CH(memory_chunks=_live(), memory_chunks_rebuild=_twin())
+    assert _run(ch, "--yes", "--reuse") == tr.OK
+    assert not any(c.startswith("CREATE") for c in ch.commands)
+    assert "Quantized('rabitq', 1536, 0)" in ch.t["memory_chunks"]["ddl"]
 
 
 def test_a_twin_left_behind_is_a_lock_until_reuse_or_restart(capsys: Any) -> None:
@@ -536,6 +576,34 @@ def test_rollback_and_drop_need_yes_and_check_their_result() -> None:
     assert "memory_chunks_pre_rebuild" not in ch.t
 
 
+def test_a_second_rollback_refuses_and_names_the_drop(capsys: Any) -> None:
+    """After a rollback the live table is the old layout again: another --rollback would
+    exchange the new layout back in without the recall gate, so it refuses."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    ch = _CH(
+        memory_chunks={"ddl": coded, "rows": 5, "uuid": "a"}, memory_chunks_pre_rebuild=_live()
+    )
+    assert _run(ch, "--rollback", "--yes") == tr.OK
+    ch.commands.clear()
+    capsys.readouterr()
+    assert _run(ch, "--rollback", "--yes") == tr.REFUSED
+    assert _writes(ch) == [] and ch.t["memory_chunks"]["ddl"] == ARRAY
+    step = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])["next"]
+    assert "already rolled back" in step and "--drop-pre-rebuild --yes" in step
+
+
+def test_a_second_rollback_on_the_target_layout_refuses() -> None:
+    """A --require-patch-free run leaves both tables on the target layout; after its
+    rollback the live table is the older one, so another --rollback refuses."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    ch = _CH(memory_chunks={"ddl": coded, "rows": 5, "uuid": "live"})
+    assert _run(ch, "--yes", "--require-patch-free") == tr.OK
+    assert _run(ch, "--rollback", "--yes") == tr.OK
+    ch.commands.clear()
+    assert _run(ch, "--rollback", "--yes") == tr.REFUSED
+    assert _writes(ch) == []
+
+
 @pytest.mark.parametrize(
     ("mutations", "cons"),
     [(1, (0, 0, 0)), (0, (0, 0, 1)), (0, (1, 0, 0))],
@@ -838,6 +906,29 @@ def test_the_statement_timeout_caps_the_gate_reads_and_stays_within_the_read_tim
             vcr.parse(["--table", "t", "--columns", "embedding", "--statement-timeout-s", bad])
 
 
+@pytest.mark.parametrize(
+    ("flag", "bad"),
+    [("--probes", "0"), ("--probes", "-1"), ("--gate-fetch-multiplier", "0")]
+    + [("--gate-fetch-multiplier", v) for v in ("-1", "nan", "inf")],
+)
+def test_the_gate_flags_are_bounded(flag: str, bad: str) -> None:
+    """No probe would leave a table with real vectors named as holding none."""
+    with pytest.raises(SystemExit):
+        vcr.parse(["--table", "t", "--columns", "embedding", flag, bad])
+
+
+def test_the_printed_command_names_an_abort_file_outside_the_default() -> None:
+    """The twin record lives beside the abort file, so a printed step that reads it names
+    the run's abort file when it is not the default one."""
+    base = ["--table", "memory_chunks", "--columns", "embedding"]
+    job = vcr.VectorRebuild(_CH(memory_chunks=_live()), vcr.parse(base))
+    assert "--abort-file" not in job.run_line
+    job = vcr.VectorRebuild(
+        _CH(memory_chunks=_live()), vcr.parse([*base, "--abort-file", "/x y/ABORT_REBUILD"])
+    )
+    assert job.run_line.endswith(" --abort-file '/x y/ABORT_REBUILD'")
+
+
 def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:
     """The width check runs again before the swap: a row of another width written after
     the preflight was zeroed in the twin, so the gate fails instead of serving it."""
@@ -1092,7 +1183,7 @@ def test_a_mutation_finished_under_a_minute_ago_refuses_before_the_twin(capsys: 
 def test_the_preflight_counts_mutations_since_a_reused_twin_was_created(capsys: Any) -> None:
     """With --reuse the gate before the swap counts from the twin's creation; the preflight
     counts from the same time, so a mutation finished since then refuses before the delta."""
-    ch = _CH(memory_chunks=_live(), memory_chunks_rebuild=_live())
+    ch = _CH(memory_chunks=_live(), memory_chunks_rebuild=_twin())
     ch.mutations = 1
     assert _run(ch, "--yes", "--reuse") == tr.REFUSED
     out = capsys.readouterr().out
@@ -1110,7 +1201,7 @@ def test_a_mutation_since_the_copy_stops_the_swap_even_when_done(
     """An erasure tombstone is an ALTER UPDATE that keeps the key and its version and may
     finish before the swap; any mutation created since the copy (or since a reused twin
     was created) fails the gate, done or not."""
-    twin = {"memory_chunks_rebuild": _live()} if flags else {}
+    twin = {"memory_chunks_rebuild": _twin()} if flags else {}
     ch = _CH(memory_chunks=_live(), **twin)
     ch.mutations_first = [0]  # the preflight finds nothing unfinished
     ch.mutations = 1

@@ -223,7 +223,10 @@ copying it refuses while a source mutation is still running or was created in th
 minute; the minute covers replica clock skew, and the gate before the swap counts it
 too. Rerun a minute after the last mutation finishes. With `--reuse` it counts every
 mutation since the reused twin was created, finished ones included: such a mutation
-makes the twin stale, and the rerun is `--restart --yes`, which copies again. An empty table is rebuilt too, at the width the Width bullet below
+makes the twin stale, and the rerun is `--restart --yes`, which copies again. `--reuse`
+also refuses a twin whose named columns, granularity or sorting key differ from the twin
+the run would create (another `--method`, `--index-granularity` or `--chain`, or another
+tool's twin): the gates read the stored vectors and the codes and would not see it. An empty table is rebuilt too, at the width the Width bullet below
 gives (a coded column's own, else `LOOM_EMBEDDING_DIM`); the recall gate has no rows to probe there. Its ClickHouse user needs the
 `SYSTEM FLUSH ASYNC INSERT QUEUE` and `SYSTEM SYNC REPLICA` privileges on the table and,
 on `ReplicatedMergeTree`, `SELECT` on `system.zookeeper` and `system.replication_queue`
@@ -393,7 +396,8 @@ one version. An unfinished `ALTER UPDATE` on the new-layout copy after a rollbac
 not show under `FINAL`, which is why a mutation on it counts. A rollback that succeeds
 names the next step in its summary: keep writers and erasure stopped and run
 `--drop-pre-rebuild --yes`, which checks the two tables before it drops the new-layout
-copy.
+copy. A second `--rollback` refuses (exit 3) and names that step: the live table is no
+longer the new layout.
 A delete in the live table leaves its keys only in the rollback copy, so the first row
 names `--rollback` only while the live table has no mutation since the copy started.
 
@@ -434,7 +438,11 @@ that has not applied yet. Then:
   (`INSERT INTO loom.<table> (<all columns>) SELECT <all columns> FROM
 loom.<table>_pre_rebuild FINAL WHERE (<key>) IN (...)`; at one version the row inserted
   last wins), run the read again until it lists only changes the live table should keep,
-  and drop the copy then.
+  and drop the copy then. `<all columns>` leaves out MATERIALIZED and ALIAS columns,
+  which an INSERT refuses. After a swap the live table is coded and refuses an empty
+  vector or one of another width, so in the `SELECT` write each column the rebuild named
+  as the rebuild writes it:
+  `if(length(<column>) = <dim>, CAST(<column> AS Array(BFloat16)), arrayResize(CAST([] AS Array(BFloat16)), <dim>, toBFloat16(0))) AS <column>`.
 
 A hand drop removes the only copy of what that table alone holds, so it comes after the
 read, never before it.

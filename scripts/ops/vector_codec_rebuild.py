@@ -74,8 +74,8 @@ rollback, and refuses (keeping the copy) while the copy it would drop holds a ch
 table holds a change the copy back would lose.
 
 The twin is the run's lock: an existing twin refuses the run unless
-`--reuse` (continue from it) or `--restart` (drop it and copy again), and the
-swap refuses when the twin is no longer the one this run created or reused,
+`--reuse` (continue from it, refused when its layout is not the one this run
+builds) or `--restart` (drop it and copy again), and the swap refuses when the twin is no longer the one this run created or reused,
 or when the live table was altered after the twin was created.
 An `ABORT_REBUILD` file in `LOOM_REBUILD_DIR` (default `.`) stops the run
 before the copy and before the swap, leaving the twin. The UUIDs of each twin
@@ -306,11 +306,15 @@ def on_target(
     """Whether every named column already has the declaration the rebuild would give it,
     and the table the `granularity` asked for (0 = any). Pure."""
     want = rewrite_ddl(ddl, "_", "_", columns, chain, method, 0, dim=dim)
-    if granularity > 0:
-        live = re.search(r"index_granularity = (\d+)", ddl)
-        if int(live.group(1) if live else 8192) != granularity:
-            return False
+    if granularity > 0 and index_granularity(ddl) != granularity:
+        return False
     return all(column_shape(ddl, c) == column_shape(want, c) for c in columns)
+
+
+def index_granularity(ddl: str) -> int:
+    """The table's index_granularity, 8192 when the DDL does not state it. Pure."""
+    m = re.search(r"index_granularity = (\d+)", ddl)
+    return int(m.group(1)) if m else 8192
 
 
 def exact_vector_expr(ddl: str, column: str) -> str:
@@ -681,6 +685,9 @@ class VectorRebuild:
             line += f" --cluster {shlex.quote(self.a.cluster)}"
         if self.a.statement_timeout_s != DEFAULT_STATEMENT_TIMEOUT_S:
             line += f" --statement-timeout-s {self.a.statement_timeout_s!r}"
+        if self.a.abort_file != default_abort_file():
+            # the twin record lives beside the abort file
+            line += f" --abort-file {shlex.quote(self.a.abort_file)}"
         return line
 
     def twin_after_exchange(self) -> bool | None:
@@ -803,6 +810,12 @@ class VectorRebuild:
                 "another run's lock or its leftover: --reuse continues from it, --restart drops it"
             )
         reused = twin is not None and self.a.reuse and tr.row_count(self.ch, self.twin) > 0
+        if reused and not self.reusable(ddl):
+            return (
+                f"loom.{self.twin} does not have the layout this run builds (another --method, "
+                "--index-granularity or --chain, or another tool's twin), and the gates "
+                "would not see it: --restart --yes drops it and copies again"
+            )
         if why := self.mutation_refusal(reused):
             return why
         if why := self.drain_refusal(parse_engine(ddl)[0]):
@@ -811,6 +824,17 @@ class VectorRebuild:
             return self.width_refusal(ddl)
         except ReplicaBehind as e:
             return str(e)
+
+    def reusable(self, ddl: str) -> bool:
+        """Whether the twin has the named columns, granularity and sorting key the twin
+        this run would create from the live table's `ddl` has. The gates read the stored
+        vectors and the codes, so neither sees a twin of another layout."""
+        twin = self.ddl(self.twin)
+        granularity = self.a.index_granularity or index_granularity(ddl)
+        return (
+            on_target(twin, self.cols, self.chain, self.a.method, self.dim, granularity)
+            and parse_engine(twin)[1:] == parse_engine(ddl)[1:]
+        )
 
     def mutation_refusal(self, reused: bool) -> str:
         """A stopped writer can leave mutations running on ClickHouse. The gate before the
@@ -1459,6 +1483,21 @@ class VectorRebuild:
             log(f"REFUSED: no loom.{self.pre} to roll back to")
             return REFUSED
         self.dim = self.find_dim()
+        swapped = self.live_is_new()
+        if swapped is None:
+            self.next_step = (
+                f"loom.{self.t} and loom.{self.pre} were created in the same second. {KEEP_BOTH}"
+            )
+            log(f"REFUSED: {self.next_step}")
+            return REFUSED
+        if not swapped:
+            self.next_step = (
+                f"already rolled back, or this line names another layout than its swap's: "
+                f"`{self.run_line} --drop-pre-rebuild --yes` checks the two tables before "
+                "it drops the new-layout copy"
+            )
+            log(f"REFUSED: loom.{self.t} is not on the layout this line names; {self.next_step}")
+            return REFUSED
         # the copy back takes only newer versions or absent keys, so a change only the
         # new table holds, or a mutation on it, would be lost
         try:
@@ -1503,6 +1542,20 @@ class VectorRebuild:
             "--yes`, which checks the two tables before it drops the new-layout copy"
         )
         return OK
+
+    def live_is_new(self) -> bool | None:
+        """Whether the live table is the new layout, the rollback copy the old: after a
+        swap and before a rollback. When both are on the target layout (a
+        --require-patch-free run rebuilds a table already on it) the run's twin is the
+        newer table; None when both were created in the same second (one second's
+        precision shows neither)."""
+        live, pre = self.target_state(self.t), self.target_state(self.pre)
+        if not (live and pre):
+            return bool(live)
+        live_time, pre_time = self.metadata_time(self.t), self.metadata_time(self.pre)
+        if live_time == pre_time:
+            return None
+        return live_time > pre_time
 
     def drain_after_swap(self) -> tuple[str, str | None, list[str]]:
         """Drain as the postcondition does and read as it reads: (engine, version column,
@@ -1560,8 +1613,7 @@ class VectorRebuild:
             log(f"loom.{self.pre} is already gone")
             return OK
         self.dim = self.find_dim()
-        live, pre = self.target_state(self.t), self.target_state(self.pre)
-        if not (live or pre):
+        if not (self.target_state(self.t) or self.target_state(self.pre)):
             log(f"REFUSED: neither loom.{self.t} nor loom.{self.pre} has the target layout")
             return REFUSED
         # after a swap or a rollback the copy may be the only copy of a change
@@ -1570,21 +1622,14 @@ class VectorRebuild:
                 self.next_step = f"loom.{self.t} and loom.{self.pre} differ. {KEEP_BOTH}"
                 log(f"REFUSED: the rollback copy's columns differ by name. {KEEP_BOTH}")
                 return REFUSED
-            if live and pre:
-                # a --require-patch-free run rebuilds a table already on the target layout;
-                # the run's twin is the newer table, after a swap and after a rollback
-                live_time, pre_time = self.metadata_time(self.t), self.metadata_time(self.pre)
-                if live_time == pre_time:
-                    # one second's precision: equal times do not show which table is the twin
-                    self.next_step = (
-                        f"loom.{self.t} and loom.{self.pre} were created in the same second. "
-                        f"{KEEP_BOTH}"
-                    )
-                    log(f"REFUSED: {self.next_step}")
-                    return REFUSED
-                swapped = live_time > pre_time
-            else:
-                swapped = bool(live)
+            swapped = self.live_is_new()
+            if swapped is None:
+                self.next_step = (
+                    f"loom.{self.t} and loom.{self.pre} were created in the same second. "
+                    f"{KEEP_BOTH}"
+                )
+                log(f"REFUSED: {self.next_step}")
+                return REFUSED
             why, rollback = self.swapped_change() if swapped else (self.rolled_back_change(), False)
         except tr.Interrupted:
             raise
@@ -1606,6 +1651,11 @@ class VectorRebuild:
             return POSTCONDITION
         log(f"dropped loom.{self.pre}")
         return OK
+
+
+def default_abort_file() -> str:
+    """The abort file in LOOM_REBUILD_DIR, the current directory when it is unset."""
+    return str(Path(os.environ.get("LOOM_REBUILD_DIR", ".")) / "ABORT_REBUILD")
 
 
 def parse(argv: list[str] | None) -> argparse.Namespace:
@@ -1672,15 +1722,17 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
         default=DEFAULT_STATEMENT_TIMEOUT_S,
         help="seconds each read, delta and repair INSERT may run, after the swap included",
     )
-    ap.add_argument(
-        "--abort-file", default=str(Path(os.environ.get("LOOM_REBUILD_DIR", ".")) / "ABORT_REBUILD")
-    )
+    ap.add_argument("--abort-file", default=default_abort_file())
     a = ap.parse_args(argv)
     a.table = a.table.removeprefix("loom.")
     if a.cluster and not _CLUSTER_NAME.fullmatch(a.cluster):
         ap.error(f"--cluster: not a cluster name: {a.cluster!r}")
     if not math.isfinite(a.statement_timeout_s) or a.statement_timeout_s <= 0:
         ap.error("--statement-timeout-s must be finite and above 0")
+    if a.probes < 1:
+        ap.error("--probes must be at least 1")
+    if not math.isfinite(a.gate_fetch_multiplier) or a.gate_fetch_multiplier <= 0:
+        ap.error("--gate-fetch-multiplier must be finite and above 0")
     if a.statement_timeout_s >= COPY_RECEIVE_TIMEOUT_S:
         ap.error(
             f"--statement-timeout-s must be below {COPY_RECEIVE_TIMEOUT_S}, the client's read timeout"
