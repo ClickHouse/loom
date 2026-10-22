@@ -404,10 +404,10 @@ How Loom uses ClickHouse is in [ClickHouse](../architecture/clickhouse.md).
 
 ### Recommended ClickHouse settings
 
-Loom runs without these, but vector search is faster with them on. Turn them on for Loom's
-ClickHouse user before Loom first starts (the server applies its migrations at boot) or
-runs `loom migrate`: a fresh install codes its vector columns only if the codec is on at
-that moment.
+Loom runs without these, but vector search is faster with them on. Make sure Loom's
+ClickHouse user can have both on before the first `loom migrate` or the first server start
+(the server applies its migrations at boot): a fresh install codes its vector columns only
+if the codec can be on at that moment.
 
 | Setting                   | Value | What it gives Loom                                                                                                                          |
 | ------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -424,7 +424,8 @@ WHERE name IN ('enable_quantized_codec', 'allow_suspicious_codecs')
 
 A setting is fine when `value = 1`, read-only or not, or when `value = 0` and the user may
 change it. It is blocked when `value = 0` and the row has `readonly = 1`, `max = '0'` or `1`
-in `disallowed_values`.
+in `disallowed_values`. No row for `enable_quantized_codec` means the server is older than
+26.8.
 
 - **Self-managed ClickHouse 26.8 or later.** Both settings are user-settable by default and
   Loom sends them with each `CREATE` that needs them, so a fresh install needs nothing.
@@ -443,14 +444,14 @@ the server does not change existing tables:
 1. Restart Loom, so each process reads the settings again. A process that found the codec
    unavailable keeps that answer until it restarts.
 2. Rebuild each coded table with `scripts/ops/vector_codec_rebuild.py`. The tool is not in
-   the image: run it from a clone of the repository at the deployed version, installed with
-   `make install` (or `uv sync --locked`), with `LOOM_CH_*` pointing at the deployment's
-   ClickHouse. Run the block with `mode=--dry-run` to see each plan, then again with
-   `mode=--yes` to rebuild:
+   the image: run it from a clone of the repository at the deployed version, after
+   `uv sync --locked`, with `LOOM_CH_*` pointing at the deployment's ClickHouse. Run the
+   block with `mode=--dry-run` to see each plan, then again with `mode=--yes` to rebuild:
 
    ```bash
    mode=--dry-run   # then mode=--yes
-   rebuild() { python -P -m scripts.ops.vector_codec_rebuild "$@" "$mode"; }
+   cluster=default  # your cluster's name; '' checks this server only
+   rebuild() { uv run python -P -m scripts.ops.vector_codec_rebuild "$@" --cluster "$cluster" "$mode"; }
    rebuild --table memory_embeddings --columns embedding,memory_key_embedding
    rebuild --table memory_chunks --columns embedding
    rebuild --table code_chunks --columns embedding
@@ -468,9 +469,15 @@ the server does not change existing tables:
    These are the tables in `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`). Where
    `allow_suspicious_codecs` cannot be on, the tool refuses `--chain`: leave `entity_vectors`
    plain (skip its line), or rebuild it without `--chain` and accept a column about four
-   times larger. The preflight checks the replicas of the cluster `default`; pass
-   `--cluster <name>` for another cluster, or `--cluster ''` to check this server only.
-   `--rollback` returns a table to its old copy until `--drop-pre-rebuild` removes it
+   times larger.
+
+   A table with no full-length vectors yet (no rows, or only placeholder vectors from failed
+   embeds) cannot pass the rebuild's recall gate, and the dry run does not show that. Skip
+   its line until the table holds real vectors (`SELECT count() FROM loom.<table>` shows
+   whether it has rows). A run that stopped at the gate leaves its twin,
+   `loom.<table>_rebuild`: drop it with `DROP TABLE`, or pass `--restart` the next time you
+   run that line. `--rollback` returns a table to its old copy until `--drop-pre-rebuild`
+   removes it
    ([table rebuilds](../development/migrations.md#changing-a-sort-key-or-a-partition-key)).
 
 How Loom reads these settings is in
