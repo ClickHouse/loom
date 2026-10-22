@@ -479,31 +479,30 @@ the server does not change existing tables:
    `entity_vectors` line and it stays as it is, plain or coded without the chain; or, where
    it is plain, rebuild it without `--chain` and accept a column about four times larger.
 
-   A table with no full-length vectors yet (no rows, or only placeholder vectors of rows
-   still awaiting an embedding) cannot pass the rebuild's recall gate, and the dry run does
-   not show that. The dry run prints the width it will code
-   (`target <table> dimension <n>`); skip the line while this query, with the line's first
-   column, returns 0:
+   A table with no real vectors yet (no rows, or only the zero placeholder vectors of rows
+   without an embedding) cannot pass the rebuild's recall gate, and the dry run does not
+   show that. The dry run prints the width it will code (`target <table> dimension <n>`);
+   skip the line while this query, with the line's first column, returns 0:
    `SELECT countIf(length(<column>) = <n> AND <column>[1] != 0) FROM loom.<table>`.
    The gate can also fail where one `(org, namespace)` holds fewer than 20 real vectors
    next to placeholder rows of the same width: their distance is NaN, which sorts last, so
-   the gate reads that namespace's recall as 0. Rebuild such a table once each namespace has
-   20 real vectors, or once its rows are embedded.
+   the gate reads that namespace's recall as 0. Some rows never get a vector
+   (`code_summaries` structural rows, `code_answers` stubs), so such a table stays plain
+   until every namespace that has placeholders also has 20 real vectors.
 
    A run that stops before its swap (a failed gate, an abort file, an interrupt) leaves its
-   twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not reach: drop
-   it with `DROP TABLE loom.<table>_rebuild SYNC`, or pass `--restart` when you run that line again.
+   twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not fully
+   cover (a namespace erasure purges only the `code_*` copies). Drop it with
+   `DROP TABLE loom.<table>_rebuild SYNC`, or pass `--restart` when you run that line
+   again.
 
-3. Once search looks right, drop the old copies: run the lines of the tables you rebuilt
-   again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its old
-   copy as `loom.<table>_pre_rebuild`, a full second copy that erasure does not reach. To go
-   back instead, run that table's line with `mode="--rollback --yes"`; the coded copy then
-   sits in `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the table
-   was rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
-   `--chain LZ4` only if its rebuild had it.
-
-How Loom reads these settings is in
-[gated settings](../architecture/clickhouse.md#gated-clickhouse-settings).
+3. Once search looks right, drop the old copies soon: run the lines of the tables you
+   rebuilt again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps
+   its old copy as `loom.<table>_pre_rebuild`, a full second copy with its merges stopped,
+   which erasure does not fully cover either. To go back instead, run that table's line with
+   `mode="--rollback --yes"`; the coded copy then sits in `loom.<table>_pre_rebuild`, so
+   drop it the same way. Repeat the flags the table was rebuilt with: the tool checks the
+   layout it built, so `entity_vectors` needs `--chain LZ4` only if its rebuild had it.
 
 ## Providers
 
