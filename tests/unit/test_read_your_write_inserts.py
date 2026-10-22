@@ -138,33 +138,27 @@ def test_default_read_path_tables_are_written_synchronously(rel_path: str, table
         )
 
 
-# (module, table, background, always_async). `background` is the wait window every
-# insert of the table must use, None where the module writes it with both (a request's
-# flush and the timer's). `always_async` marks the tables that are waited async inserts
-# whether or not batching is on (`async_insert_settings`); with it off, the others are
-# committed.
+# (module, table, window). "switched": batched_insert_settings(), committed with the switch
+# off. The others are waited async inserts whether or not batching is on
+# (async_insert_settings): "request" takes the short window, "either" is written with
+# both (a request's flush and the timer's).
 BATCHED_TABLES = [
-    ("server/observability/audit.py", "loom.audit_log", False, False),
-    ("server/observability/events.py", "loom.agent_events", False, False),
-    ("server/memory/store/webhooks.py", "loom.memory_webhook_outbox", False, False),
-    ("server/memory/app/evidence.py", "loom.memory_evidence", False, False),
-    ("server/memory/app/evidence.py", "loom.memory_belief_sources", False, False),
-    ("server/core/rmt_carry.py", "loom.carry_acks", False, True),
-    ("server/auth/attempts.py", "loom.auth_attempts", False, True),
-    ("server/memory/app/projection_failures.py", "loom.memory_projection_failures", False, True),
-    ("server/memory/store/usage.py", "loom.memory_usage_events", None, True),
+    ("server/observability/audit.py", "loom.audit_log", "switched"),
+    ("server/observability/events.py", "loom.agent_events", "switched"),
+    ("server/memory/store/webhooks.py", "loom.memory_webhook_outbox", "switched"),
+    ("server/memory/app/evidence.py", "loom.memory_evidence", "switched"),
+    ("server/memory/app/evidence.py", "loom.memory_belief_sources", "switched"),
+    ("server/core/rmt_carry.py", "loom.carry_acks", "request"),
+    ("server/auth/attempts.py", "loom.auth_attempts", "request"),
+    ("server/memory/app/projection_failures.py", "loom.memory_projection_failures", "request"),
+    ("server/memory/store/usage.py", "loom.memory_usage_events", "either"),
 ]
 
 
 @pytest.mark.parametrize("switch", [True, False])
-@pytest.mark.parametrize("rel_path,table,background,always_async", BATCHED_TABLES)
+@pytest.mark.parametrize("rel_path,table,window", BATCHED_TABLES)
 def test_tables_written_on_every_request_are_batched(
-    monkeypatch: pytest.MonkeyPatch,
-    rel_path: str,
-    table: str,
-    background: bool | None,
-    always_async: bool,
-    switch: bool,
+    monkeypatch: pytest.MonkeyPatch, rel_path: str, table: str, window: str, switch: bool
 ) -> None:
     """A committed insert per request makes one part per row in these tables;
     batched, concurrent writers share parts and each still waits for its row. A
@@ -174,13 +168,15 @@ def test_tables_written_on_every_request_are_batched(
     monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     settings_seen = _insert_settings(ROOT / rel_path, table)
     assert settings_seen, f"no `settings=` on any {table} insert in {rel_path}"
-    if always_async:
-        windows = [False, True] if background is None else [background]
-        allowed = [async_insert_settings(background=b) for b in windows]
-        expected = f"async_insert_settings(background={background})"
-    else:
+    if window == "switched":
         allowed = [batched_insert_settings()]
         expected = "batched_insert_settings()"
+    elif window == "request":
+        allowed = [async_insert_settings()]
+        expected = "async_insert_settings()"
+    else:
+        allowed = [async_insert_settings(), async_insert_settings(background=True)]
+        expected = "async_insert_settings(background=...)"
     for s in settings_seen:
         assert s in allowed, (
             f"{table} in {rel_path} is written with {s}; pass `settings={expected}`."

@@ -775,7 +775,7 @@ async def insert_thread(
     await ch.insert(
         "loom.conversation_threads",
         [cast(dict[str, Any], row)],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+        settings=committed_insert_settings(),
     )
 
 

@@ -2,7 +2,8 @@
 (`dedup_settings`, `insert_dedup_token`), and the settings a call site passes
 for a batched insert (`batched_insert_settings`), a waited async insert
 (`async_insert_settings`) or a committed one (`committed_insert_settings`).
-Each returns a new dict the caller may change.
+Each returns a new dict the caller may change. A committed insert in a module that
+also batches uses `committed_insert_settings`; elsewhere the literal dict is the same.
 """
 
 from __future__ import annotations
