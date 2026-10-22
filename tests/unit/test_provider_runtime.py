@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from server.core import background
 from server.core.background import TaskSet
 from server.core.embedding_space import fingerprint as embedding_space_fingerprint
 from server.core.model_work_gate import ModelWorkGate
@@ -29,6 +30,9 @@ def clean_runtime(monkeypatch: pytest.MonkeyPatch):
     gate = ModelWorkGate()
     monkeypatch.setattr(runtime, "get_model_work_gate", lambda: gate)
     monkeypatch.setattr(runtime, "_refresh_calibration", AsyncMock())
+    # The drain reads every registered deferred task in the process: a task another
+    # test left pending would hold the model switch these tests expect to apply.
+    monkeypatch.setattr(background, "_registered_tasks", set())
     install_provider_keys({})
     yield
     install_provider_keys({})
