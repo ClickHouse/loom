@@ -219,6 +219,33 @@ before the queue's 30-day TTL is dropped with a `loom.memory_drops` record.
 batches. Until a batch runs, `memory.search` and `memory.ask` report
 `pending_extraction`. With the worker off, deferred saves stay `pending`.
 
+`memory.extraction_status` is an HTTP and SDK view, hidden from MCP. An agent follows up on its
+own batches over MCP, through `loom_op`, with two ops that take the `queue_id`s its
+deferred calls returned, at most 20 a call:
+
+- `memory.extraction_status_mine` reports each batch's state, attempts, sizes and last
+  error.
+- `memory.extraction_retry_mine` accepts the caller's `failed` batches for one more
+  attempt. `requeued` means the retry was accepted: an asynchronous in-place update
+  eventually changes status to `pending`. A failed replay ends `failed` again;
+  batches still waiting or done are left alone. The update targets the exact version
+  read, preserving newer worker results and never restoring an erased transcript.
+  While the org's model calls are switched off nothing is accepted (`model_calls_off`).
+
+Both answer only a batch the calling principal queued in that namespace, inside the
+token's read scope; every other id comes back in `unknown`, so an agent cannot learn
+whether another principal's batch exists:
+
+- **The principal is the token's `kind:subject`**, the enqueuer a deferred call stores.
+  Each token minted on the Setup page and each delegated token is its own principal: a
+  newly minted token, another client, or the token's creator does not see the batches
+  another one queued. Subjects compare as stored, so a human subject spelled
+  differently is another principal.
+- **The read scope.** A token pinned to a user (`read_user_id`) sees that user's
+  batches only. A token whose scope needs a session, or a user it does not pin, is
+  refused: these ops take no `user_id` or `session_id` to complete it.
+- **Auth off.** A call carries no principal and sees the batches queued without one.
+
 ## Operator extraction policy
 
 An org admin can say once what extraction never stores, for the whole org or for one
@@ -314,17 +341,19 @@ the one model-written part, and they follow the policy). Pair it with the
 
 ## Operations
 
-| Op                         | Role      | Does                                                                             |
-| -------------------------- | --------- | -------------------------------------------------------------------------------- |
-| `memory.set_from_messages` | writer    | Extract facts (or one typed record) from `messages` and write them.              |
-| `memory.extraction_status` | viewer    | State of deferred batches. HTTP and SDK only.                                    |
-| `memory.recall`            | viewer    | Search the raw turns behind the namespace's memories by text, time and role.     |
-| `memory.evidence`          | viewer    | The source turns one memory was extracted from, with the supporting span.        |
-| `observe.record`           | writer    | Record one tool observation into the episodic plane; no model call.              |
-| `observe.crystallize`      | writer    | Mark a session's observations ready for the `observe_extract` worker.            |
-| `extraction_policy.set`    | org_admin | Set the org's or a namespace's [extraction policy](#operator-extraction-policy). |
-| `extraction_policy.get`    | org_admin | Read a scope's policy and the effective one.                                     |
-| `extraction_policy.clear`  | org_admin | Remove a scope's policy.                                                         |
+| Op                              | Role      | Does                                                                             |
+| ------------------------------- | --------- | -------------------------------------------------------------------------------- |
+| `memory.set_from_messages`      | writer    | Extract facts (or one typed record) from `messages` and write them.              |
+| `memory.extraction_status`      | viewer    | State of the namespace's deferred batches. HTTP and SDK only.                    |
+| `memory.extraction_status_mine` | viewer    | State of the caller's own deferred batches, by `queue_id`. Over MCP as well.     |
+| `memory.extraction_retry_mine`  | writer    | Replay the caller's own failed batches once more, by `queue_id`.                 |
+| `memory.recall`                 | viewer    | Search the raw turns behind the namespace's memories by text, time and role.     |
+| `memory.evidence`               | viewer    | The source turns one memory was extracted from, with the supporting span.        |
+| `observe.record`                | writer    | Record one tool observation into the episodic plane; no model call.              |
+| `observe.crystallize`           | writer    | Mark a session's observations ready for the `observe_extract` worker.            |
+| `extraction_policy.set`         | org_admin | Set the org's or a namespace's [extraction policy](#operator-extraction-policy). |
+| `extraction_policy.get`         | org_admin | Read a scope's policy and the effective one.                                     |
+| `extraction_policy.clear`       | org_admin | Remove a scope's policy.                                                         |
 
 Field lists: [operations reference](../../reference/operations.md#memory),
 [observe](../../reference/operations.md#observe) and

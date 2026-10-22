@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -303,9 +303,10 @@ class MemorySetFromMessagesOutput(BaseModel):
     # nothing was skipped.
     degraded: list[str] = Field(default_factory=list)
     # defer=true: nothing extracted yet; `written` is empty and `queue_id` is
-    # the handle memory.extraction_status reports on.
+    # the handle memory.extraction_status_mine (and memory.extraction_status) report on.
     deferred: bool = False
-    # The queued batch's id for `memory.extraction_status`; '' when inline.
+    # The queued batch's id for `memory.extraction_status_mine` and
+    # `memory.extraction_status`; '' when inline.
     queue_id: str = ""
     # "" (inline) | "flag" (the caller passed defer=true) | "allowlist" (the
     # deployment's extraction_defer_agents chose for the caller)
@@ -522,3 +523,63 @@ class MemoryExtractionStatusOutput(BaseModel):
     pending: int = 0
     # Of the returned batches, how many ended `failed`.
     failed: int = 0
+
+
+# The most batch ids one memory.extraction_status_mine takes.
+MAX_OWN_BATCH_IDS = 20  # not a setting: a wire bound the request schema and SDKs publish
+
+
+class MemoryExtractionStatusMineInput(BaseModel):
+    """Your deferred memory.set_from_messages batches, by the queue_id each call returned.
+
+    Each batch's state (`pending`, `running`, `held`, `done`, `failed`), attempts, sizes and last
+    error. Only a batch the calling principal queued in this namespace, inside the token's
+    read scope, is answered; any other id is listed in `unknown`, as an id never queued is.
+    """
+
+    org: str
+    namespace: str
+    # The ids deferred memory.set_from_messages calls returned. An id past 64 characters
+    # refuses the request; a repeated id is answered once.
+    queue_ids: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        ..., min_length=1, max_length=MAX_OWN_BATCH_IDS
+    )
+
+
+class MemoryExtractionStatusMineOutput(BaseModel):
+    # The asked batches you queued, newest first: state, attempts, sizes and last error.
+    batches: list[_ExtractionQueueRow] = Field(default_factory=list)
+    # The asked ids no batch of yours answers to, in the order asked: queued by another
+    # principal, in another namespace or outside the token's read scope, past the queue's
+    # 30-day retention, or never queued.
+    unknown: list[str] = Field(default_factory=list)
+    # Of the returned batches, how many are not extracted yet (`pending`, `running`, `held`).
+    pending: int = 0
+    # Of the returned batches, how many ended `failed`.
+    failed: int = 0
+
+
+class MemoryExtractionRetryMineInput(MemoryExtractionStatusMineInput):
+    """Replay your failed deferred memory.set_from_messages batches once more, by queue_id.
+
+    Each `failed` batch the calling principal queued in this namespace, inside the token's
+    read scope, is accepted for one more replay. Status changes to `pending`
+    asynchronously; a failed replay ends `failed` again. While the org's model calls
+    are switched off nothing is accepted.
+    Batches still waiting or done are left alone; any other id is listed in `unknown`, as
+    an id never queued is.
+    """
+
+
+class MemoryExtractionRetryMineOutput(BaseModel):
+    # The asked batches accepted for one more attempt, in the order asked.
+    # Status changes to `pending` asynchronously.
+    requeued: list[str] = Field(default_factory=list)
+    # The asked batches you queued that had not failed (`pending`, `running`, `held` or `done`):
+    # nothing to replay.
+    not_failed: list[str] = Field(default_factory=list)
+    # The asked failed batches left `failed` because the org's model calls are switched
+    # off: a replay could only wait. Ask again once they are back on.
+    model_calls_off: list[str] = Field(default_factory=list)
+    # The asked ids no batch of yours answers to, as memory.extraction_status_mine's.
+    unknown: list[str] = Field(default_factory=list)

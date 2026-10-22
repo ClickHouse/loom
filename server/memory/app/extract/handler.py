@@ -19,7 +19,11 @@ from server.embedding import get_embedder
 from server.memory.api.models_bulk import (
     REFUSED,
     MemoryBulkSetInput,
+    MemoryExtractionRetryMineInput,
+    MemoryExtractionRetryMineOutput,
     MemoryExtractionStatusInput,
+    MemoryExtractionStatusMineInput,
+    MemoryExtractionStatusMineOutput,
     MemoryExtractionStatusOutput,
     MemorySetFromMessagesInput,
     MemorySetFromMessagesOutput,
@@ -147,6 +151,74 @@ async def handle_memory_extraction_status(
         batches=[_ExtractionQueueRow.model_validate(r) for r in rows],
         pending=pending,
         failed=failed,
+    )
+
+
+def _own_enqueuer() -> str | None:
+    """The caller's enqueuer, or None when a token names no principal."""
+    from server.auth.context import current_auth
+    from server.memory.app.provenance import writer_actor
+
+    actor = writer_actor()
+    if not actor and current_auth() is not None:
+        return None
+    return actor
+
+
+async def handle_memory_extraction_status_mine(
+    input: MemoryExtractionStatusMineInput,
+) -> MemoryExtractionStatusMineOutput:
+    """Report the caller's batches; foreign and missing ids both read as unknown."""
+    from server.identity.app.request_scope import request_scope
+    from server.memory.app import extraction_queue
+
+    asked = list(dict.fromkeys(input.queue_ids))
+    enqueuer = _own_enqueuer()
+    if enqueuer is None:
+        return MemoryExtractionStatusMineOutput(unknown=asked)
+    rows = await extraction_queue.list_own_status(
+        org=input.org,
+        namespace=input.namespace,
+        queue_ids=asked,
+        enqueued_by=enqueuer,
+        scope=request_scope(),
+    )
+    found = {str(r.get("queue_id") or "") for r in rows}
+    finished = (extraction_queue.STATUS_DONE, extraction_queue.STATUS_FAILED)
+    return MemoryExtractionStatusMineOutput(
+        batches=[_ExtractionQueueRow.model_validate(r) for r in rows],
+        unknown=[qid for qid in asked if qid not in found],
+        pending=sum(1 for r in rows if r.get("status") not in finished),
+        failed=sum(1 for r in rows if r.get("status") == extraction_queue.STATUS_FAILED),
+    )
+
+
+async def handle_memory_extraction_retry_mine(
+    input: MemoryExtractionRetryMineInput,
+) -> MemoryExtractionRetryMineOutput:
+    """Requeue the caller's failed batches for one more extraction attempt."""
+    from server.identity.app.request_scope import request_scope
+    from server.memory.app import extraction_queue
+    from server.settings import settings
+
+    asked = list(dict.fromkeys(input.queue_ids))
+    enqueuer = _own_enqueuer()
+    if enqueuer is None:
+        return MemoryExtractionRetryMineOutput(unknown=asked)
+    done = await extraction_queue.requeue_own_failed(
+        org=input.org,
+        namespace=input.namespace,
+        queue_ids=asked,
+        enqueued_by=enqueuer,
+        scope=request_scope(),
+        max_attempts=settings.extraction_queue_max_attempts,
+    )
+    known = {*done.requeued, *done.not_failed, *done.model_calls_off}
+    return MemoryExtractionRetryMineOutput(
+        requeued=done.requeued,
+        not_failed=done.not_failed,
+        model_calls_off=done.model_calls_off,
+        unknown=[qid for qid in asked if qid not in known],
     )
 
 

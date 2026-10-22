@@ -242,10 +242,22 @@ def read_scope(op: Operation, auth: AuthInfo | None, input_obj: Any) -> Any:
         raise result
     if isinstance(result, Exception):
         if op.name in SCOPED_OPS or _would_act_as_nobody(op):
-            raise result
+            raise _read_scope_error(op, result)
         # Bound above: a memory read inside this op raises the same refusal.
         return input_obj
     return with_read_identity(input_obj, result)
+
+
+def _read_scope_error(op: Operation, e: Exception) -> Exception:
+    """Explain an incomplete scope when the op cannot accept the missing identity."""
+    fields = getattr(op.input_model, "model_fields", {})
+    if not isinstance(e, IdentityIncompleteError) or "user_id" in fields or "session_id" in fields:
+        return e
+    return IdentityIncompleteError(
+        f"{op.name} takes no user_id or session_id, so it cannot complete this token's read "
+        "scope; call it with a namespace-scoped token or one pinned to a user "
+        "(read_scope own_user with read_user_id)"
+    )
 
 
 def _would_act_as_nobody(op: Operation) -> bool:

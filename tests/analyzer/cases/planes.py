@@ -635,6 +635,16 @@ async def _ledgers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await R.redact_versions(ORG, NS, "u1", _UUID, 1, when=_DT, reason_blob="r|admin", ch=ch)
 
 
+_FAILED_BATCH = {
+    "queue_id": _UUID,
+    "agent": AGENT,
+    "user_id": "u1",
+    "session_id": "s1",
+    "status": "failed",
+    "version": 1,
+}
+
+
 async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory.app import conflicts as CF
     from server.memory.app import digest_chain as DC
@@ -675,6 +685,15 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
         queue_id=_UUID if f else None,
         status="pending" if f else None,
         ch=ch,
+    )
+    # The caller's own batches: one user's under a narrowed token, else the namespace's.
+    own = ReadFilters(scope="own_user", user_id="u1", session_id=None) if f else WHOLE_NAMESPACE
+    by = "process:sa:a"
+    await EQ.list_own_status(
+        org=ORG, namespace=NS, queue_ids=[_UUID, "q2"], enqueued_by=by, scope=own, ch=ch
+    )
+    await EQ.requeue_own_failed(
+        org=ORG, namespace=NS, queue_ids=[_UUID], enqueued_by=by, scope=own, max_attempts=3, ch=ch
     )
     await EQ.pending_count(
         org=ORG, namespace=NS, agent=AGENT if f else None, user_id="alice" if f else None, ch=ch
@@ -927,6 +946,10 @@ def cases() -> list[Case]:
             "server.memory.app.projection_failures",
             _services,
             {"filters": (False, True)},
+            # A failed batch drives the retry mutation.
+            rows=rows_by_substring(
+                {"SELECT queue_id, agent, user_id, session_id, status, version": [_FAILED_BATCH]}
+            ),
         ),
     ]
     return out

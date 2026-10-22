@@ -618,6 +618,13 @@ on `valid_to`, `invalid_at`, `version`; `set` on `status` and `memory_type`.
 
 ## Deletes and mutations
 
+`memory.extraction_retry_mine` updates failed queue rows in place, asynchronously.
+It targets the exact identity and version observed, with the caller's namespace,
+principal and read scope. Copying the transcript into a new version could restore
+it after a concurrent erasure; this mutation changes no payload or version and
+cannot create a row. The request returns when the mutation is accepted and does
+not wait for parts to be rewritten.
+
 Loom deletes memory by writing a tombstone version (`tombstoned_at` set, every other column
 carried). It is visible to the next `FINAL` read, keeps prior versions in
 `memory_versions` and leaves `memory.restore` a window. Physical removal is for erasure

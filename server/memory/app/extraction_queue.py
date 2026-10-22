@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 from server.core.datetimes import utc_now as _now
 from server.identity.domain.read_scope import (
@@ -135,8 +135,9 @@ async def enqueue(
     input: Any, *, scope: ReadFilters, rule_agent: str = "", ch: Any | None = None
 ) -> str:
     """Persist one deferred set_from_messages request, with the agent a rule it
-    files is for ('' files nothing). Returns the queue_id the caller can poll with
-    `memory.extraction_status`."""
+    files is for ('' files nothing). Returns the queue_id the enqueuing principal
+    polls with `memory.extraction_status_mine` and replays, once failed, with
+    `memory.extraction_retry_mine`; `memory.extraction_status` reports it too."""
     from server.core.ch import get_client
 
     ch = ch or get_client()
@@ -576,11 +577,160 @@ def status_of(row: dict[str, Any]) -> str:
     return str(row["status"])
 
 
+# What memory.extraction_status_mine reports of a batch: its state, never its payload.
+_STATUS_COLUMNS = (
+    "queue_id, agent, user_id, session_id, status, attempts, message_count, content_chars, "
+    "written, last_error, enqueued_at, updated_at"
+)
+
+
+async def _own_rows(
+    ch: Any,
+    columns: str,
+    *,
+    org: str,
+    namespace: str,
+    queue_ids: list[str],
+    enqueued_by: str,
+    scope: ReadFilters,
+) -> list[dict[str, Any]]:
+    """Read the requested batches in the caller's principal and read scope."""
+    from server.core.ch import own_write_reads
+
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "qids": list(queue_ids),
+        "by": enqueued_by,
+        "lim": len(queue_ids),
+    }
+    in_scope = scope_and(scope, params)
+    # N-1 rows can carry their enqueuer only in the replay payload.
+    enqueuer = "if(enqueued_by != '', enqueued_by, JSONExtractString(payload, 'enqueued_by'))"
+    with own_write_reads():
+        rows = await ch.query_all(
+            f"""
+            SELECT {columns}
+            FROM {TABLE} FINAL
+            PREWHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND queue_id IN {{qids:Array(String)}}{in_scope}
+            WHERE {enqueuer} = {{by:String}}
+            ORDER BY enqueued_at DESC
+            LIMIT {{lim:UInt32}}
+            """,
+            params=params,
+        )
+    return [dict(r) for r in rows]
+
+
+async def list_own_status(
+    *,
+    org: str,
+    namespace: str,
+    queue_ids: list[str],
+    enqueued_by: str,
+    scope: ReadFilters,
+    ch: Any | None = None,
+) -> list[dict[str, Any]]:
+    """The batches among `queue_ids` that `enqueued_by` queued in (org, namespace),
+    inside `scope`, newest first, payload excluded: `memory.extraction_status_mine`."""
+    from server.core.ch import get_client
+
+    rows = await _own_rows(
+        ch or get_client(),
+        _STATUS_COLUMNS,
+        org=org,
+        namespace=namespace,
+        queue_ids=queue_ids,
+        enqueued_by=enqueued_by,
+        scope=scope,
+    )
+    return [{**r, "status": status_of(r)} for r in rows]
+
+
+class Requeued(NamedTuple):
+    """What `requeue_own_failed` did with each asked id the principal queued, in the
+    order asked."""
+
+    # Accepted for an asynchronous transition to `pending`.
+    requeued: list[str]
+    # Not `failed` (waiting or done): left alone.
+    not_failed: list[str]
+    # `failed`, but the org's model calls are switched off: left `failed`.
+    model_calls_off: list[str]
+
+
+async def requeue_own_failed(
+    *,
+    org: str,
+    namespace: str,
+    queue_ids: list[str],
+    enqueued_by: str,
+    scope: ReadFilters,
+    max_attempts: int,
+    ch: Any | None = None,
+) -> Requeued:
+    """Submit an in-place retry with one attempt left; status changes asynchronously."""
+    from server.core.ch import get_client
+    from server.llm import customer
+
+    ch = ch or get_client()
+    own: dict[str, Any] = {
+        "org": org,
+        "namespace": namespace,
+        "enqueued_by": enqueued_by,
+        "scope": scope,
+    }
+    rows = await _own_rows(
+        ch, "queue_id, agent, user_id, session_id, status, version", queue_ids=queue_ids, **own
+    )
+    states = {str(r["queue_id"]): r for r in rows}
+    failed = [qid for qid in queue_ids if states.get(qid, {}).get("status") == STATUS_FAILED]
+    waiting_or_done = [qid for qid in queue_ids if qid in states and qid not in failed]
+    if not failed:
+        return Requeued([], waiting_or_done, [])
+    if await customer.switched_off(org):
+        return Requeued([], waiting_or_done, failed)
+    failed_rows = [states[qid] for qid in failed]
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "batches": [
+            (r["agent"], r["user_id"], r["session_id"], r["queue_id"], int(r["version"]))
+            for r in failed_rows
+        ],
+        "by": enqueued_by,
+        "attempts": max(0, int(max_attempts) - 1),
+        "updated": _now().strftime("%Y-%m-%d %H:%M:%S.%f"),
+    }
+    in_scope = scope_and(scope, params)
+    # Updating stored rows cannot restore a payload deleted while the request was in flight.
+    await ch.execute(
+        f"""
+        ALTER TABLE loom.memory_extraction_queue
+        UPDATE status = 'pending', attempts = {{attempts:UInt32}},
+               lease_until = toDateTime64(0, 3, 'UTC'),
+               updated_at = toDateTime64({{updated:String}}, 3, 'UTC')
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND (agent, user_id, session_id, queue_id, version)
+              IN {{batches:Array(Tuple(String, String, String, String, UInt64))}}
+          AND status = 'failed'
+          AND if(enqueued_by != '', enqueued_by,
+                 JSONExtractString(payload, 'enqueued_by')) = {{by:String}}
+          {in_scope}
+        SETTINGS mutations_sync = 0
+        """,
+        params=params,
+    )
+    return Requeued(failed, waiting_or_done, [])
+
+
 __all__ = [
     "COLUMNS",
     "ENQUEUED_BY_KEY",
     "READ_SCOPE_KEY",
     "RULE_AGENT_KEY",
+    "Requeued",
     "STATUS_DONE",
     "STATUS_FAILED",
     "STATUS_HELD",
@@ -594,6 +744,7 @@ __all__ = [
     "drop_expiring",
     "enqueue",
     "enqueued_actor",
+    "list_own_status",
     "list_status",
     "mark_done",
     "mark_error",
@@ -601,6 +752,7 @@ __all__ = [
     "mark_unreachable",
     "payload_for",
     "pending_count",
+    "requeue_own_failed",
 ]
 
 
