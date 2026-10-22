@@ -68,15 +68,19 @@ def test_code_symbol_prices_the_ranked_and_brief_shapes():
         ("memory.delete_version", "webhook"),
         ("memory.update", "webhook"),
         ("memory.update_by_id", "webhook"),
+        ("memory.bulk_set", "webhook"),
+        ("memory.restore", "webhook"),
+        ("memory.restore", "undo"),
+        ("conversation.save_message", "rewrite"),
     ],
 )
 def test_a_memory_op_prices_its_conditional_insert_wait_as_a_shape(op_name, shape):
-    # one waited insert (an audit row of a high read, an outbox row of a webhook
-    # namespace) adds ch_batched_insert_wait_max_ms to the calls that make it
+    # one waited insert only some calls make (an audit row of a high read or an Undo,
+    # an outbox row of a webhook namespace, a rewritten turn) adds
+    # ch_batched_insert_wait_max_ms to the calls that make it
     from server.settings import Settings
 
     op = next(o for o in ALL_OPERATIONS if o.name == op_name)
-    assert list(op.shape_budgets_p99_ms) == [shape]
     wait_ms = Settings.model_fields["ch_batched_insert_wait_max_ms"].default
     assert op.shape_budgets_p99_ms[shape] == op.budget_p99_ms + wait_ms
     note_budget_shape(shape)

@@ -619,9 +619,10 @@ async def _update_live_row(
         return await _write_revision(input, head, ch, op=op)
 
 
-async def _announce_revision(memory_row: dict[str, Any]) -> None:
-    """The revision's webhook event; a call that wrote outbox rows is held to the budget
-    that covers their wait. Never raises."""
+# Its own function: _write_revision is at the function-length gate's 50 statements.
+async def _announce_revised(memory_row: dict[str, Any]) -> None:
+    """The `memory.revised` event, noted as the "webhook" budget shape when it sent
+    outbox rows."""
     if await webhooks.announce([("memory.revised", memory_row)]):
         note_budget_shape("webhook")
 
@@ -759,7 +760,7 @@ async def _write_revision(
         if not isinstance(memory_done, BaseException):
             # The row is in: announce it even when the rest of the write fails; a retry
             # writes and announces a new version.
-            await _announce_revision(memory_row)
+            await _announce_revised(memory_row)
         for done in [memory_done, *others_done]:
             if isinstance(done, BaseException):
                 raise done

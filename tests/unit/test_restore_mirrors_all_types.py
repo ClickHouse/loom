@@ -24,6 +24,7 @@ from server.memory.app import restore as restore_mod
 from server.memory.app import stack as _stack_mod
 from server.memory.domain.memory_types import is_searchable_type
 from server.memory.store import EMBEDDING_PERSISTED_COLS, MemoryRow
+from server.observability.budget_shape import current_budget_shape, note_budget_shape
 from tests.unit.claims_fake import fake_key_locks
 
 _NOW = datetime.now(UTC).replace(tzinfo=None)
@@ -215,6 +216,38 @@ async def test_restore_announces_its_row_when_the_high_fence_fails(
         await restore_mod.handle_memory_restore(_restore_input())
     [(event, row)] = announced
     assert event == "memory.restored" and row["tombstoned_at"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("wrote", "shape"), [(True, "webhook"), (False, "")])
+async def test_an_undelete_is_held_to_the_webhook_budget_only_when_it_wrote_outbox_rows(
+    monkeypatch: pytest.MonkeyPatch, wrote: bool, shape: str
+) -> None:
+    existing = _row("semantic", tombstoned_at=_NOW - timedelta(days=2))
+    _wire(monkeypatch, existing, _CH([]))
+
+    async def _announce(changes: Any) -> bool:
+        return wrote
+
+    monkeypatch.setattr("server.memory.app.webhooks.announce", _announce)
+    note_budget_shape("")
+    out = await restore_mod.handle_memory_restore(_restore_input())
+    assert out.restored is True and current_budget_shape() == shape
+
+
+@pytest.mark.asyncio
+async def test_an_undo_is_held_to_the_undo_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    # every Undo awaits its audit record before its restore version
+    existing = _row("semantic", status="superseded", superseded_by="other-key")
+    _wire(monkeypatch, existing, _CH([]))
+
+    async def _unsupersede(*_: Any, **__: Any) -> int:
+        return 1
+
+    monkeypatch.setattr(memory_repo, "unsupersede_embeddings", _unsupersede)
+    note_budget_shape("")
+    out = await restore_mod.handle_memory_restore(_restore_input())
+    assert out.from_status == "superseded" and current_budget_shape() == "undo"
 
 
 def test_the_types_cover_both_sides_of_the_old_guard() -> None:

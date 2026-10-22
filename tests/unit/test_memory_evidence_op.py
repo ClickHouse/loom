@@ -200,9 +200,33 @@ async def test_a_high_rows_evidence_read_is_audited(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(memory_repo, "get_by_key", fake_get_by_key)
     monkeypatch.setattr("server.core.ch.get_client", lambda: _FakeCH(links=[], evidence=[]))
     monkeypatch.setattr(audit, "emit", fake_emit)
-    note_budget_shape("")
     out = await handle_memory_evidence(
         MemoryEvidenceInput(org="o", namespace="ns", agent="a", memory_key="vault")
     )
     assert out.found and audits == ["memory.sensitive_read:vault"]
-    assert current_budget_shape() == "audited"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("sensitivity", "shape"), [("high", "audited"), ("", "")])
+async def test_an_evidence_read_is_held_to_the_audited_budget_only_when_it_audits(
+    monkeypatch: pytest.MonkeyPatch, sensitivity: str, shape: str
+) -> None:
+    from server.observability import audit
+
+    row = _Row()
+    row.sensitivity = sensitivity
+
+    async def fake_get_by_key(identity: Any, key: str, **kw: Any) -> Any:
+        return row
+
+    async def fake_emit(event: str, **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(memory_repo, "get_by_key", fake_get_by_key)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _FakeCH(links=[], evidence=[]))
+    monkeypatch.setattr(audit, "emit", fake_emit)
+    note_budget_shape("")
+    await handle_memory_evidence(
+        MemoryEvidenceInput(org="o", namespace="ns", agent="a", memory_key="vault")
+    )
+    assert current_budget_shape() == shape

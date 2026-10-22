@@ -386,6 +386,16 @@ async def test_a_failed_outbox_insert_never_fails_the_write(
         raise RuntimeError("ClickHouse is away")
 
     monkeypatch.setattr(store, "insert_outbox", broken)
+    # the rows were sent and waited on before the insert failed
+    assert await app.announce([("memory.written", _change())]) is True
+
+
+@pytest.mark.asyncio
+async def test_a_failed_registry_read_sends_no_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def broken() -> Any:
+        raise RuntimeError("ClickHouse is away")
+
+    monkeypatch.setattr(app, "_fresh_hooks", broken)
     assert await app.announce([("memory.written", _change())]) is False
 
 
@@ -582,7 +592,9 @@ async def test_bulk_set_splits_written_and_revised_and_a_repeated_key_is_revised
             {"memory_key": "new", "version": 3},
         ],
     )
+    note_budget_shape("")
     await bulk_set._bulk_announce(state)  # type: ignore[arg-type]
+    assert current_budget_shape() == "webhook"  # held to the budget with the outbox-row wait
     (call,) = announced  # one insert for the batch
     assert [(e, c["version"]) for e, c in call] == [
         ("memory.written", 1),
@@ -596,8 +608,9 @@ async def test_bulk_set_announces_nothing_for_an_unchanged_batch(announced: list
     from server.memory.app import bulk_set
 
     # Unchanged restatements write no row: the batch's memory_rows are empty.
+    note_budget_shape("")
     await bulk_set._bulk_announce(SimpleNamespace(existing_ids={"k": "m"}, memory_rows=[]))  # type: ignore[arg-type]
-    assert announced == []
+    assert announced == [] and current_budget_shape() == ""
 
 
 def _memory_row(key: str, version: int = 10, **over: Any) -> MemoryRow:

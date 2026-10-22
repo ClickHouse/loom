@@ -84,7 +84,6 @@ def served(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_bulk_get_serves_sensitivity_and_usage_and_audits_high_rows(served) -> None:
-    note_budget_shape("")
     out = await query.handle_memory_bulk_get(
         MemoryBulkGetInput(org="o", namespace="n", agent="a", memory_keys=["plain", "secret"])
     )
@@ -93,7 +92,18 @@ async def test_bulk_get_serves_sensitivity_and_usage_and_audits_high_rows(served
     assert out.results["plain"].recall_count == 4
     assert served["audits"] == [("memory.sensitive_read", ["secret"])]  # one insert per call
     assert served["actor"] == "a"  # the token's principal; with no token, the request's agent
-    assert current_budget_shape() == "audited"  # held to the budget with the audit-row wait
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("key", "shape"), [("secret", "audited"), ("plain", "")])
+async def test_bulk_get_is_held_to_the_audited_budget_only_when_it_audits(
+    served, key: str, shape: str
+) -> None:
+    note_budget_shape("")
+    await query.handle_memory_bulk_get(
+        MemoryBulkGetInput(org="o", namespace="n", agent="a", memory_keys=[key])
+    )
+    assert current_budget_shape() == shape
 
 
 @pytest.mark.asyncio

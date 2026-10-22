@@ -164,7 +164,6 @@ async def test_a_high_read_is_audited_as_the_tokens_principal(env) -> None:
     from server.memory.domain.trust import actor_for
 
     env.row = _row(sensitivity="high")
-    note_budget_shape("")
     set_current_auth(
         AuthInfo(
             subject="reader", org="acme", namespaces=("ns",), roles=(), is_service_account=True
@@ -176,7 +175,6 @@ async def test_a_high_read_is_audited_as_the_tokens_principal(env) -> None:
         set_current_auth(None)
     assert out.found and env.audits == ["memory.sensitive_read"]
     assert env.actor == actor_for("reader", is_service_account=True)
-    assert current_budget_shape() == "audited"  # held to the budget with the audit-row wait
 
 
 @pytest.mark.asyncio
@@ -197,7 +195,6 @@ async def test_a_high_read_by_id_is_audited_as_the_tokens_principal(
 
     monkeypatch.setattr(memory_repo, "get_by_id", by_id)
     monkeypatch.setattr("server.auth.authz.row_in_scope", in_scope)
-    note_budget_shape("")
     set_current_auth(
         AuthInfo(
             subject="reader", org="acme", namespaces=("ns",), roles=(), is_service_account=True
@@ -211,4 +208,37 @@ async def test_a_high_read_by_id_is_audited_as_the_tokens_principal(
         set_current_auth(None)
     assert env.audits == ["memory.sensitive_read"]
     assert env.actor == actor_for("reader", is_service_account=True)
-    assert current_budget_shape() == "audited"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("sensitivity", "shape"), [("high", "audited"), ("", "")])
+async def test_a_get_is_held_to_the_audited_budget_only_when_it_audits(
+    env, sensitivity: str, shape: str
+) -> None:
+    env.row = _row(sensitivity=sensitivity)
+    note_budget_shape("")
+    await mem.handle_memory_get(_input())
+    assert current_budget_shape() == shape
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("sensitivity", "shape"), [("high", "audited"), ("", "")])
+async def test_a_get_by_id_is_held_to_the_audited_budget_only_when_it_audits(
+    env, monkeypatch: pytest.MonkeyPatch, sensitivity: str, shape: str
+) -> None:
+    import server.memory.store as memory_repo
+    from server.memory.api.models_crud import MemoryGetByIdInput
+
+    async def by_id(*_a: Any, **_k: Any) -> Any:
+        return _row(sensitivity=sensitivity)
+
+    async def in_scope(*_a: Any, **_k: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(memory_repo, "get_by_id", by_id)
+    monkeypatch.setattr("server.auth.authz.row_in_scope", in_scope)
+    note_budget_shape("")
+    await mem.handle_memory_get_by_id(
+        MemoryGetByIdInput(org="acme", memory_id="11111111-1111-1111-1111-111111111111")
+    )
+    assert current_budget_shape() == shape

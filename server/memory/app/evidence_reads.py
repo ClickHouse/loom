@@ -91,9 +91,9 @@ async def _belief_links(
     return links
 
 
-async def _audit_high_read(input: MemoryEvidenceInput, memory_id: str) -> None:
-    """The audit row of a 'high' row's evidence read; the call is held to the budget that
-    covers its wait. Never raises."""
+# Its own function: handle_memory_evidence is at the function-length gate's 50 statements.
+async def _audit_sensitive_read(input: MemoryEvidenceInput, memory_id: str) -> None:
+    """The `memory.sensitive_read` audit row, noted as the "audited" budget shape."""
     note_budget_shape("audited")
     await _audit.emit(
         "memory.sensitive_read",
@@ -227,7 +227,7 @@ async def handle_memory_evidence(input: MemoryEvidenceInput) -> MemoryEvidenceOu
     if sensitivity == "high":
         # A key read of a 'high' row is audited, as memory.get audits it,
         # once the answer is built.
-        await _audit_high_read(input, memory_id)
+        await _audit_sensitive_read(input, memory_id)
     return MemoryEvidenceOutput(
         found=True,
         memory_key=input.memory_key,

@@ -74,6 +74,7 @@ from server.memory.domain.sensitivity import (
     reads_high,
     without_high,
 )
+from server.observability.budget_shape import note_budget_shape
 from server.observability.genai import staged
 from server.observability.otel import traced
 from server.operations.read_projection import project_rows
@@ -384,6 +385,7 @@ async def _save_message(input: ConversationSaveMessageInput) -> ConversationSave
         if stored is None:
             # The deduplication window still holds a block of this turn whose rows
             # were since erased, and dropped this one.
+            note_budget_shape("rewrite")
             await _write_saved_turn(input, once_per_identity=False)
             stored = await _stored_turn(key, user_id)
         if stored is None:

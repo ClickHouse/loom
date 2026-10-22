@@ -5068,8 +5068,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "conversation.get": 100,
     "conversation.list": 80,
     "conversation.list_saved_messages": 150,
-    # + embedding-row wait, and the rewritten turn's when deduplication dropped the first.
-    "conversation.save_message": 350,
+    # + the embedding-row wait of a save that embeds the turn.
+    "conversation.save_message": 300,
     "conversation.saved_status": 100,
     "conversation.search": 120,
     "conversation.search_saved_messages": 200,
@@ -5151,8 +5151,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.backlinks": 200,
     "memory.brief": 4000,
     "memory.bulk_get": 80,
-    # One CH insert + N embeds, + audit-row and outbox-row (webhook namespaces) waits.
-    "memory.bulk_set": 400,
+    # One CH insert + N embeds; the audit-row wait runs beside the graph legs.
+    "memory.bulk_set": 300,
     # 6 ALTER UPDATEs against bounded scopes.
     "memory.clear": 600,
     "memory.consolidate": 15000,
@@ -5166,7 +5166,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # 1-2 ALTER UPDATEs; mutations_sync=2.
     "memory.dedup_resolve": 400,
     "memory.delete": 30,
-    # memory.delete's work + two committed check inserts.
+    # memory.delete's work plus two committed check inserts and the read after the
+    # tombstone: about 2.6x memory.delete's p99 on one server.
     "memory.delete_version": 80,
     "memory.demonstrate": 400,
     "memory.demote": 100,
@@ -5220,8 +5221,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # Two point-lookups + one bounded arrayIntersect scan (entities bloom index).
     "memory.related": 120,
     "memory.resolve_orphan_duplicates": 5000,
-    # + one wait: the Undo's audit record (every Undo) or the undelete's outbox row.
-    "memory.restore": 130,
+    "memory.restore": 80,
     # Covers semantic / hybrid / all_mine fan-out (auto_touch is async, no
     # contribution). Reranker hop is EXCLUDED — the operator endpoint owns its
     # own latency. Rerank usage surfaces as `loom.search.assist{kind="rerank"}`
@@ -5419,16 +5419,23 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
         "ranked": 3000,
         "uses_brief": 1500,
     },
+    # The batched-insert shapes below are the base + the default
+    # ch_batched_insert_wait_max_ms (50 ms), not a measured p99.
     # "audited": a high-sensitivity row was read, + its audit-row wait.
     # "webhook": the namespace has a webhook, + its outbox-row wait.
+    # "undo": memory.restore's Undo, + its audit-record wait.
+    # "rewrite": deduplication dropped the saved turn, + the rewritten row's wait.
+    "conversation.save_message": {"rewrite": 350},
     "memory.bulk_get": {"audited": 130},
+    "memory.bulk_set": {"webhook": 350},
     "memory.delete": {"webhook": 80},
-    # memory.delete's work + two committed check inserts + outbox-row wait.
+    # memory.delete_version's base + outbox-row wait.
     "memory.delete_version": {"webhook": 130},
     "memory.evidence": {"audited": 200},
     "memory.get": {"audited": 75},
     "memory.get_by_id": {"audited": 100},
     "memory.history": {"audited": 130},
+    "memory.restore": {"undo": 130, "webhook": 130},
     "memory.update": {"webhook": 170},
     "memory.update_by_id": {"webhook": 130},
     "session.brief_save": {

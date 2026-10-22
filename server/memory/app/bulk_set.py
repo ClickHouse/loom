@@ -66,6 +66,7 @@ from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.conflicts import kept_versions
 from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.webhook_events import EventType
+from server.observability.budget_shape import note_budget_shape
 
 if TYPE_CHECKING:
     from server.memory.app.auto_resolution import Follow
@@ -1042,7 +1043,8 @@ async def _bulk_announce(state: _BulkWriteState) -> None:
         key = str(row["memory_key"])
         changes.append(("memory.revised" if key in seen else "memory.written", row))
         seen.add(key)
-    await webhooks.announce(changes)
+    if await webhooks.announce(changes):
+        note_budget_shape("webhook")
 
 
 def _supersede_pairs(plan: BulkVerdictPlan) -> list[tuple[str, str]]:
