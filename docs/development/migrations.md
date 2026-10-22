@@ -125,7 +125,9 @@ ClickHouse it talks to and its plan, and changes nothing without `--yes`. The to
 every row (not FINAL) into `loom.<t>_rebuild` in bounded batches, copies the parts written
 meanwhile, checks the row count under FINAL and the newest version of a sample of keys,
 swaps with `EXCHANGE TABLES`, and keeps the old table as `loom.<t>_pre_rebuild` for
-`--rollback` until `--drop-pre-rebuild`. `loom migrate --dry-run --strict` fails while a
+`--rollback` until `--drop-pre-rebuild`. It refuses to swap (exit 3, twin kept) when an
+`ALTER` changed the live table during the copy, and refuses a table no migration declares;
+rerun with `--restart` after such an `ALTER`. `loom migrate --dry-run --strict` fails while a
 declared table still holds rows in the old layout, so the deploy preflight catches a
 skipped step.
 

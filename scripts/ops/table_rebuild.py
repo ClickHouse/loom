@@ -36,7 +36,9 @@ and stops. The steps of a rebuild:
    another delta pass before it fails the run.
 5. Refuse to swap when a mutation (an erasure purge) or a lightweight update
    touched the live table after the copy started: the twin may hold rows it
-   removed. Rerun with `--restart`.
+   removed. Refuse it too when an `ALTER` changed the live table's metadata
+   since the copy started: the twin was checked against the table before it. Rerun with
+   `--restart`.
 6. A last delta pass, then `EXCHANGE TABLES`, then the old table becomes
    `loom.<t>_pre_rebuild`, and its merges are stopped. Two delta passes
    `--settle-s` apart copy what in-flight writers put into it after the swap.
@@ -165,6 +167,7 @@ class Rebuild:
         self.copied: set[str] = set()
         self.rows_copied = 0
         self.twin_uuid = ""
+        self.live_meta: Any = None
         self.mod = 1
         self.abort = Path(args.abort_file) if args.abort_file else None
 
@@ -396,6 +399,12 @@ class Rebuild:
         self.twin_uuid = row[1] if row else ""
         return ""
 
+    def altered(self) -> bool:
+        """An ALTER (a column, an index, a setting) changed the live table since
+        the copy started: the twin was checked against the table before it."""
+        row = self.table_row(self.t)
+        return row is None or row[2] != self.live_meta
+
     def still_ours(self) -> bool:
         row = self.table_row(self.twin)
         return row is not None and row[1] == self.twin_uuid
@@ -405,6 +414,8 @@ class Rebuild:
         if why:
             log("REFUSED:", why)
             return REFUSED
+        row = self.table_row(self.t)
+        self.live_meta = row[2] if row else None
         started = self.q("SELECT now()")[0][0]
         patches = self.patch_parts()
         t0 = time.time()
@@ -429,6 +440,11 @@ class Rebuild:
         if self.aborted():
             log("abort file present; no swap")
             return ABORTED
+        if self.altered():
+            log(
+                f"REFUSED: loom.{self.t} was altered during the copy; no swap. Rerun with --restart"
+            )
+            return REFUSED
         if not self.still_ours():
             log(f"REFUSED: loom.{self.twin} is no longer the twin this run created; no swap")
             return REFUSED
@@ -553,7 +569,11 @@ def main(argv: list[str] | None = None, ch: Any = None) -> int:
         from server.core.schema.migrate import client
 
         ch = client()
-    job = Rebuild(ch, args)
+    try:
+        job = Rebuild(ch, args)
+    except LookupError as e:  # no migration declares a rebuild of this table
+        log("REFUSED:", e)
+        return REFUSED
     return tr.run_reported(
         args.table, action, lambda: execute(job, action), job.report_state, lambda: job.rows_copied
     )

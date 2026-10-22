@@ -88,7 +88,9 @@ class _CH:
             if row is None:
                 return _Result([])
             if "engine" in sql:
-                return _Result([(row["engine"], row["uuid"], "2000-01-01 00:00:00")])
+                return _Result(
+                    [(row["engine"], row["uuid"], row.get("meta", "2000-01-01 00:00:00"))]
+                )
             return _Result([(row["layout"].sorting_key, row["layout"].partition_key)])
         if "system.columns" in sql:
             return _Result(COLS)
@@ -218,6 +220,30 @@ def test_a_twin_replaced_by_another_run_is_never_swapped() -> None:
     finally:
         tool.Rebuild.verified = real  # type: ignore[method-assign]
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+
+
+def test_an_alter_of_the_live_table_during_the_copy_is_never_swapped(capsys: Any) -> None:
+    ch = _CH(code_test_facets=_table(OLD, 5))
+    real = tool.Rebuild.verified
+
+    def verified(job: tool.Rebuild) -> bool:
+        ch.t["code_test_facets"]["meta"] = "2000-01-01 00:00:09"  # ALTER ... ADD COLUMN
+        return real(job)
+
+    tool.Rebuild.verified = verified  # type: ignore[method-assign]
+    try:
+        assert _run(ch, "--yes") == tool.REFUSED
+    finally:
+        tool.Rebuild.verified = real  # type: ignore[method-assign]
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "was altered during the copy" in capsys.readouterr().out
+
+
+def test_a_table_no_migration_declares_is_refused_without_a_traceback(capsys: Any) -> None:
+    ch = _CH(memory_chunks=_table(OLD, 5))
+    argv = ["--table", "memory_chunks", "--migrations-dir", REBUILD_FIXTURE, "--dry-run"]
+    assert tool.main(argv, ch=ch) == tool.REFUSED and ch.commands == []
+    assert "no migration declares" in capsys.readouterr().out
 
 
 def test_preflight_refuses_an_engine_the_gate_cannot_check() -> None:
