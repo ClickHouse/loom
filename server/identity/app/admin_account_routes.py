@@ -37,6 +37,21 @@ def _short_lived(info: AuthInfo) -> bool:
     return info.is_service_account or info.subject.startswith("sa:") or third_party_session
 
 
+def _only_a_person(info: AuthInfo | None, done: str, on_host: str) -> None:
+    """Refuse a `_short_lived` caller. A token that may not mint a lasting admin may not
+    rebind how a human admin signs in either: signed in as them, it would mint one."""
+    if info is not None and _short_lived(info):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "AUTH_INSUFFICIENT",
+                "message": f"{done} by a person signed in to Loom as a platform admin, or on "
+                f"the host (`{on_host}`), never with a service account's token or a "
+                "third-party client's session",
+            },
+        )
+
+
 def _invalid(e: ValueError) -> HTTPException:
     return HTTPException(status_code=422, detail={"code": "VALIDATION_FAILED", "message": str(e)})
 
@@ -59,6 +74,8 @@ class AdoptInput(_Input):
 async def sso_adopt(input: AdoptInput, info: Admin) -> dict[str, Any]:
     """The password accounts at a domain and why any is skipped; with `apply`,
     links the rest (see `loom sso adopt`)."""
+    if input.apply:
+        _only_a_person(info, "accounts are adopted", "loom sso adopt")
     try:
         plan = await account_admin.adopt_plan(input.domain, input.org, input.skip)
         linked = (
@@ -91,6 +108,7 @@ class LinkInput(_Input):
 @router.post("/v1/admin/sso.link")
 async def sso_link(input: LinkInput, info: Admin) -> dict[str, Any]:
     """Point one password account at the address its owner signs in with (see `loom sso link`)."""
+    _only_a_person(info, "an account is linked to an SSO address", "loom sso link")
     try:
         was, carried = await account_admin.link_account(
             input.email, input.org, input.namespace, by=_by(info)
@@ -107,6 +125,7 @@ async def sso_link(input: LinkInput, info: Admin) -> dict[str, Any]:
 @router.post("/v1/admin/sso.unlink")
 async def sso_unlink(input: EmailInput, info: Admin) -> dict[str, Any]:
     """Detach the email's accounts from their SSO sign-in (see `loom sso unlink`)."""
+    _only_a_person(info, "an SSO link is undone", "loom sso unlink")
     accounts = await account_admin.unlink(input.email, input.org, by=_by(info))
     return {"unlinked": [{"org": org, "namespace": ns} for org, ns in accounts]}
 
@@ -115,6 +134,7 @@ async def sso_unlink(input: EmailInput, info: Admin) -> dict[str, Any]:
 async def sso_password_link(input: EmailInput, info: Admin, request: Request) -> dict[str, Any]:
     """A one-time link (valid for `password_link_ttl_seconds`) that gives the email's SSO
     accounts a password."""
+    _only_a_person(info, "an SSO account is given a password", "loom sso password-link")
     try:
         code, namespaces = await account_admin.password_link(input.email, input.org, by=_by(info))
     except ValueError as e:
@@ -145,18 +165,10 @@ class BotInput(_Input):
 async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
     """Register a bot. With `generate_key` the answer carries its private key,
     once: Loom keeps only the public half."""
-    if input.platform_admin and info is not None and _short_lived(info):
+    if input.platform_admin:
         # A token that carries platform_admin must not mint itself a lasting
         # successor: a leaked hour-long token would become a permanent one.
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "AUTH_INSUFFICIENT",
-                "message": "a platform-admin bot is registered by a person signed in to Loom "
-                "as a platform admin, or on the host (`loom bot create`), never with a "
-                "service account's token or a third-party client's session",
-            },
-        )
+        _only_a_person(info, "a platform-admin bot is registered", "loom bot create")
     if input.generate_key and input.public_key_pem:
         raise _invalid(ValueError("give a public key or ask for one to be generated, not both"))
     private, public = machines.generate_key() if input.generate_key else (b"", b"")
