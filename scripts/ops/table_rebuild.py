@@ -37,13 +37,13 @@ and stops. The steps of a rebuild:
 5. Refuse to swap when a mutation (an erasure purge) or a lightweight update
    touched the live table after the copy started: the twin may hold rows it
    removed; an `ALTER` that ClickHouse runs as a mutation (dropping, renaming
-   or retyping a column, dropping an index) is refused here too. Rerun with
+   or retyping a column, dropping an index, a TTL) is refused here too. Rerun with
    `--restart`, after restating a schema `ALTER` in the migration's target.
    Refuse it too (exit 3) when an `ALTER` that is not a mutation (an index,
-   a setting, a TTL, a column's default or codec) moved the live table's
+   a setting, a column's default or codec) moved the live table's
    metadata time since the twin's columns were checked: a rebuild does not
    carry it over either. An added column fails the next copy pass (exit 1, no
-   swap), or exit 3 once the last pass ran.
+   swap), or exit 3 once the last verify pass ran.
 6. A last delta pass, then `EXCHANGE TABLES`, then the old table becomes
    `loom.<t>_pre_rebuild`, and its merges are stopped. Two delta passes
    `--settle-s` apart copy what in-flight writers put into it after the swap.
@@ -405,11 +405,9 @@ class Rebuild:
         return ""
 
     def altered(self) -> bool:
-        """An ALTER that is not a mutation (an index, a setting, a TTL, a column's
-        default or codec) moved the live table's metadata time since the twin
-        was checked against it. The
-        time has one second's precision: two ALTERs in the snapshot's second
-        compare equal."""
+        """A non-mutation ALTER (an index, a setting, a column's default or codec)
+        moved the live table's metadata time since the twin's columns were checked
+        (one second's precision)."""
         row = self.table_row(self.t)
         return row is None or row[2] != self.live_meta
 

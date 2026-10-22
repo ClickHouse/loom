@@ -127,9 +127,9 @@ meanwhile, checks the row count under FINAL and the newest version of a sample o
 swaps with `EXCHANGE TABLES`, and keeps the old table as `loom.<t>_pre_rebuild` for
 `--rollback` until `--drop-pre-rebuild`. It refuses to swap, keeping the twin, when an `ALTER`
 changed the live table during the copy: exit 6 for one ClickHouse runs as a mutation
-(dropping, renaming or retyping a column, dropping an index), exit 3 for one that only
-moves its metadata time (an index, a setting, a TTL, a column's default or codec). An
-added column fails the copy (exit 1, no swap). A rebuild does not carry an `ALTER` over:
+(dropping, renaming or retyping a column, dropping an index, a TTL), exit 3 for one that
+only moves its metadata time (an index, a setting, a column's default or codec). An added
+column fails the copy (exit 1, no swap), or exits 3 after the last verify pass. A rebuild does not carry an `ALTER` over:
 restate it in the target statement, then rerun with `--restart`.
 It also refuses a table no migration declares. `loom migrate --dry-run --strict` fails while a
 declared table still holds rows in the old layout, so the deploy preflight catches a
