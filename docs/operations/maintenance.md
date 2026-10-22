@@ -223,9 +223,14 @@ target of a plain column is its most common width, which may not be `LOOM_EMBEDD
 the message names both. Re-embed or delete the rows of other widths until one width
 remains; for `memory_embeddings`, `entity_vectors` and `conversation_embeddings`,
 `loom reembed --delete-old` does this. Just before the swap it checks the widths again and
-that every key of the twin still matches the source, and fails the gate (exit 5) if a write
-or a delete (an erasure among them) landed during the run; stop writes and rerun it with
-`--restart`. `--statement-timeout-s` (default 1800) caps each gate read and repair.
+that every key of the twin still has the source's presence and version, and fails the gate
+(exit 5) if an insert or a delete (an erasure among them) landed during the run. A
+lightweight `UPDATE`, such as the quarantine `memory.reject` writes, keeps a key and its
+version, so the tool also counts the source's patch parts before the copy and before the
+swap and fails the gate if the count grew. Stop writes and rerun it with `--restart`. With
+`--reuse` the count starts at that run, so an `UPDATE` between runs is covered only by the
+maintenance window. `--statement-timeout-s` (default 1800, at most 7200) caps each gate
+read, delta and repair statement.
 
 ## Disk pressure hygiene
 

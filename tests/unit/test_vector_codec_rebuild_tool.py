@@ -39,6 +39,7 @@ class _CH:
         self.commands: list[str] = []
         self.sent: list[tuple[str, dict[str, Any]]] = []  # (statement, its settings)
         self.patches: dict[str, int] = {}
+        self.patches_first: dict[str, list[int]] = {}  # earlier reads, before self.patches
         self.uuids = iter(f"u{i}" for i in range(100))
         self.codec_rows = codec_rows("writable", "writable")
         self.delta = 0  # rows a delta finds above the destination's version
@@ -47,10 +48,12 @@ class _CH:
         self.cons = (0, 0, 0)  # (mismatched, source_only, twin_only) the gate reads
         self.cons_first: list[tuple[int, int, int]] = []  # earlier reads, before self.cons
         self.queries: list[str] = []
+        self.query_settings: list[tuple[str, dict[str, Any]]] = []  # (query, its settings)
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _R:
         p = parameters or {}
         self.queries.append(sql)
+        self.query_settings.append((sql, dict(settings or {})))
         if sql == CODEC_SETTINGS_SQL:
             return _R(self.codec_rows)
         if sql.startswith("SHOW CREATE TABLE loom."):
@@ -70,7 +73,8 @@ class _CH:
             )
         if "startsWith(name, 'patch')" in sql:
             name = re.search(r"table = '(\w+)'", sql).group(1)  # type: ignore[union-attr]
-            return _R([(self.patches.get(name, 0),)])
+            first = self.patches_first.get(name)
+            return _R([(first.pop(0) if first else self.patches.get(name, 0),)])
         if "topK(1)" in sql:
             return _R([([DIM],)])
         if "FULL OUTER JOIN" in sql:
@@ -380,14 +384,31 @@ def test_a_key_that_changed_during_the_gates_stops_the_swap(capsys: Any) -> None
     assert "the source changed during the gates" in out and "--restart" in out
 
 
-def test_the_statement_timeout_caps_the_gate_reads_and_must_be_positive() -> None:
+def test_the_statement_timeout_caps_the_gate_reads_and_stays_within_the_read_timeout() -> None:
     ch = _CH(memory_chunks=_live())
     ch.cons_first = [(1, 0, 0)]
     assert _run(ch, "--statement-timeout-s", "60", "--yes") == tr.OK
     repairs = [st for s, st in ch.sent if "WHERE (org, namespace) IN" in s]
     assert repairs and all(st["max_execution_time"] == 60 for st in repairs)
-    with pytest.raises(SystemExit):
-        vcr.parse(["--table", "t", "--columns", "embedding", "--statement-timeout-s", "0"])
+    for needle in ("GROUP BY w", "FULL OUTER JOIN", "LEFT JOIN", "topK(1)", "round(cosineDistance"):
+        reads = [st for q, st in ch.query_settings if needle in q]
+        assert reads and all(st["max_execution_time"] == 60 for st in reads), needle
+    for bad in ("0", str(vcr.COPY_RECEIVE_TIMEOUT_S + 1)):
+        with pytest.raises(SystemExit):
+            vcr.parse(["--table", "t", "--columns", "embedding", "--statement-timeout-s", bad])
+
+
+def test_a_lightweight_update_during_the_run_stops_the_swap(capsys: Any) -> None:
+    """A quarantine keeps the key and its version, so the consistency reads match; the
+    patch part it writes on the source is what shows it, and the run stops."""
+    ch = _CH(memory_chunks=_live())
+    ch.patches_first = {"memory_chunks": [1]}
+    ch.patches = {"memory_chunks": 2}
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    out = capsys.readouterr().out
+    assert "a lightweight UPDATE landed on the source during the run" in out
+    assert "--restart" in out
 
 
 def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:

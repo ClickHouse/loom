@@ -496,9 +496,12 @@ flush never fails a request; a crash loses the queue.
   refusal names both. The rows of other widths are re-embedded or deleted first; for
   `memory_embeddings`, `entity_vectors` and `conversation_embeddings`,
   `loom reembed --delete-old` does this. Just before the swap it checks the widths again
-  and that every key of the twin still matches the source, and fails the gate if a write
-  or a delete landed during the run; rerun with `--restart` once writes stop. Its recall gate ranks real vectors only, since a
-  placeholder's cosine distance is NaN.
+  and that every key of the twin still has the source's presence and version, and fails
+  the gate if an insert or a delete landed during the run. A lightweight `UPDATE` keeps
+  a key and its version, so it also counts the source's patch parts before the copy and
+  before the swap, and fails the gate if the count grew (a quarantine, below, is one such
+  write). Rerun with `--restart` once writes stop. Its recall gate ranks real vectors
+  only, since a placeholder's cosine distance is NaN.
 - **Codes-first reads.** When a column is coded and its table has no patch parts, reads
   send `vector_search_use_quantized_codes = 1` (`LOOM_VECTOR_SEARCH_QUANTIZED_CODES`): a
   pass over the codes keeps `LIMIT × LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER`

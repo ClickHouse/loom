@@ -56,8 +56,13 @@ The gates (exit 5), each of which leaves the table as it is:
   distance is NaN), and each probe's recall is over the exact neighbours it
   found, at most 20.
 - Before the swap, after the last delta: the consistency check and the width
-  check run again, and any key that differs fails the run, so a write or a
-  delete that landed during the gates stops the swap.
+  check run again, and any key whose presence or version differs fails the run,
+  so an insert or a delete that landed during the gates stops the swap. A
+  lightweight UPDATE keeps a key and its version (a quarantine by memory.reject
+  is one): the live table's patch parts are counted before the copy and again
+  here, and a count that grew fails the run too. With `--reuse` the count starts
+  at this run, so an UPDATE between the runs is covered by the maintenance
+  window only.
 
 `--require-patch-free`: the twin-and-EXCHANGE also sheds the patch parts of
 past lightweight UPDATEs (`OPTIMIZE FINAL` / `APPLY PATCHES` do not). The flag
@@ -368,6 +373,7 @@ class VectorRebuild:
         self.replicas = replicas_source(args.cluster)
         self.rows_copied = 0
         self.dim = 0
+        self.fin = ""  # ' FINAL' where the live table is a ReplacingMergeTree
 
     # -- small reads -------------------------------------------------------
     def q(self, sql: str, **st: Any) -> list[Any]:
@@ -429,7 +435,8 @@ class VectorRebuild:
             d = vector_dim(ddl, c)
             if d is None:
                 seen = self.q(
-                    f"SELECT topK(1)(length({c})) FROM loom.{name}{fin} WHERE length({c}) > 0"
+                    f"SELECT topK(1)(length({c})) FROM loom.{name}{fin} WHERE length({c}) > 0",
+                    max_execution_time=self.a.statement_timeout_s,
                 )
                 d = int(seen[0][0][0]) if seen and seen[0][0] else int(settings.embedding_dim)
             dims.add(d)
@@ -482,7 +489,7 @@ class VectorRebuild:
             log("rows written in the last hour with an empty vector:", n)
             if n:
                 return "recent rows carry an empty vector: add this table to placeholders.PLACEHOLDER_COLUMNS and deploy first"
-        if why := self.width_refusal(ddl, read_final(parse_engine(ddl)[0])):
+        if why := self.width_refusal(ddl):
             return why
         twin = tr.table_row(self.ch, self.twin)
         if twin is not None and not (self.a.reuse or self.a.restart):
@@ -492,14 +499,14 @@ class VectorRebuild:
             )
         return ""
 
-    def width_refusal(self, ddl: str, fin: str) -> str:
+    def width_refusal(self, ddl: str) -> str:
         """Why a named column holds vectors the copy would zero, or ''."""
         from server.settings import settings
 
         # a coded column's codec rejects any other width, so only plain columns are scanned
         for c in [c for c in self.cols if vector_dim(ddl, c) is None]:
             widths = self.q(
-                mixed_width_sql(self.t, c, fin, dim=self.dim),
+                mixed_width_sql(self.t, c, self.fin, dim=self.dim),
                 max_execution_time=self.a.statement_timeout_s,
             )
             if widths:
@@ -521,6 +528,7 @@ class VectorRebuild:
             return REFUSED
         ddl = self.ddl(self.t)
         self.dim = self.find_dim()
+        self.fin = read_final(parse_engine(ddl)[0])
         log(
             "target",
             self.t,
@@ -609,10 +617,15 @@ class VectorRebuild:
         else:
             ident = ", ".join(key)
             cond = f"({ident}) NOT IN (SELECT {ident} FROM loom.{dst})"
-        n = int(self.q(f"SELECT count() FROM loom.{src} WHERE {cond}")[0][0])
+        limit = self.a.statement_timeout_s
+        n = int(
+            self.q(f"SELECT count() FROM loom.{src} WHERE {cond}", max_execution_time=limit)[0][0]
+        )
         if n:
             self.cmd(
-                f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE {cond}", **self.codec_on()
+                f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE {cond}",
+                **self.codec_on(),
+                max_execution_time=limit,
             )
             self.rows_copied += n
         return n
@@ -683,9 +696,10 @@ class VectorRebuild:
         )[0]
         return int(row[0]), int(row[1]), int(row[2])
 
-    def recall(self, ddl: str, fin: str) -> list[float]:
+    def recall(self, ddl: str) -> list[float]:
         """Distance recall per probe: exact on the source vs the twin read as the legs read it."""
-        vcol, dim = self.cols[0], self.dim
+        vcol, dim, fin = self.cols[0], self.dim, self.fin
+        limit = self.a.statement_timeout_s
         # a fixed-length placeholder is all zeros: its cosine is NaN, never a probe
         real = vector_filter(vcol, dim=dim)
         probes = self.q(
@@ -699,13 +713,15 @@ class VectorRebuild:
             scope = f"org='{org}' AND namespace='{ns}'"
             ex = self.q(
                 f"SELECT round(cosineDistance({src_v}, {lit}), 6) AS d FROM loom.{self.t}{fin} "
-                f"WHERE {scope} AND {real} ORDER BY d LIMIT 20"
+                f"WHERE {scope} AND {real} ORDER BY d LIMIT 20",
+                max_execution_time=limit,
             )
             dist, st = twin_read(vcol, lit, self.a.gate_fetch_multiplier)
             tw = self.q(
                 f"SELECT round({dist}, 6) FROM loom.{self.twin}{fin} "
                 f"WHERE {scope} AND {real} ORDER BY {dist} LIMIT 20",
                 **st,
+                max_execution_time=limit,
             )
             d20 = ex[-1][0] if ex else 0.0
             # the denominator is the real neighbours the exact read found, at most 20
@@ -719,10 +735,12 @@ class VectorRebuild:
             return REFUSED
         engine, version, key = parse_engine(ddl)
         log("engine", engine, "version column", version, "sorting key", key)
-        fin = read_final(engine)
+        fin, limit = self.fin, self.a.statement_timeout_s
         sel = replace_select(self.cols, dim=self.dim)
         if self.aborted():
             raise Aborted("abort file present before the copy; the twin is left")
+        # a lightweight UPDATE keeps a key and its version, so only its patch part shows it
+        live_patches = int(self.q(patch_parts_sql(self.t))[0][0])
         if not reused:
             stop = threading.Event()
             threading.Thread(target=self.monitor, args=(stop,), daemon=True).start()
@@ -741,10 +759,14 @@ class VectorRebuild:
             log(f"copy done in {time.time() - t0:.0f}s")
         # Compare under FINAL (the twin's merges already collapsed duplicate versions)
         # and let the count settle: a replica can lag a fresh table's part metadata.
-        src_final = int(self.q(f"SELECT count() FROM loom.{self.t}{fin}")[0][0])
+        src_final = int(
+            self.q(f"SELECT count() FROM loom.{self.t}{fin}", max_execution_time=limit)[0][0]
+        )
         twin_n = 0
         for attempt in range(COUNT_SETTLE_ATTEMPTS):
-            twin_n = int(self.q(f"SELECT count() FROM loom.{self.twin}{fin}")[0][0])
+            twin_n = int(
+                self.q(f"SELECT count() FROM loom.{self.twin}{fin}", max_execution_time=limit)[0][0]
+            )
             log(f"rows{fin or ''} — twin {twin_n} source {src_final}, attempt {attempt + 1}")
             if reused or rows_settled(twin_n, src_final):
                 break
@@ -765,7 +787,7 @@ class VectorRebuild:
         if cons[2]:
             log(twin_only_failure(cons[2]))
             return GATE_FAILED
-        drec = self.recall(ddl, fin)
+        drec = self.recall(ddl)
         if not drec:
             log("GATE FAILED: no probe rows with a full-length vector")
             return GATE_FAILED
@@ -787,7 +809,7 @@ class VectorRebuild:
             return REFUSED
         self.delta_into(self.twin, self.t, sel, version, key)
         # writers and erasure must be stopped; check again that nothing landed during the gates
-        if why := self.width_refusal(ddl, fin):
+        if why := self.width_refusal(ddl):
             log(f"GATE FAILED: {why}; no swap")
             return GATE_FAILED
         cons = self.consistent(fin, version, key)
@@ -799,6 +821,15 @@ class VectorRebuild:
             log(
                 "GATE FAILED: the source changed during the gates (a write or a delete), and the "
                 "twin no longer matches it; no swap. Stop writes and rerun with --restart"
+            )
+            return GATE_FAILED
+        patches = int(self.q(patch_parts_sql(self.t))[0][0])
+        log("live patch parts before the copy and before the swap:", live_patches, patches)
+        if patches > live_patches:
+            log(
+                "GATE FAILED: a lightweight UPDATE landed on the source during the run (a "
+                "quarantine, say), which the twin does not hold; no swap. Stop writes and rerun "
+                "with --restart"
             )
             return GATE_FAILED
         tr.swap_in(self.ch, self.t)
@@ -941,7 +972,7 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
         "--statement-timeout-s",
         type=float,
         default=1800.0,
-        help="cap on each gate read and repair INSERT, a full FINAL scan of the table",
+        help="seconds each gate read, delta and repair INSERT may run",
     )
     ap.add_argument(
         "--abort-file", default=str(Path(os.environ.get("LOOM_REBUILD_DIR", ".")) / "ABORT_REBUILD")
@@ -952,6 +983,10 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
         ap.error(f"--cluster: not a cluster name: {a.cluster!r}")
     if a.statement_timeout_s <= 0:
         ap.error("--statement-timeout-s must be above 0")
+    if a.statement_timeout_s > COPY_RECEIVE_TIMEOUT_S:
+        ap.error(
+            f"--statement-timeout-s must be at most {COPY_RECEIVE_TIMEOUT_S}, the client's read timeout"
+        )
     return a
 
 
