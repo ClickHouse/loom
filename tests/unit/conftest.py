@@ -669,7 +669,7 @@ def _deferred_ledgers_left_empty() -> Iterator[None]:
     Four write paths buffer rows and flush them from the loop later: the
     usage-event ledger (a detached task every 0.5 s), the drops ledger, the
     namespace write marks and the graph write marks (each a `call_later`
-    timer, the write marks' re-armed after a failed flush). The unit suite
+    timer, re-armed while a failed flush leaves rows buffered). The unit suite
     runs on a session loop, so a flush armed in one test would write into the
     fake client of whatever test held the loop later, and its registered task
     would make a later test's `drain_task_sets` see work. Each test leaves every
