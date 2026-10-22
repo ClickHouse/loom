@@ -49,6 +49,8 @@ _TABLES: dict[str, dict[str, Any]] = {
         "version": None,
     },
 }
+# The tables a re-embed covers.
+REEMBED_TABLES = tuple(_TABLES)
 
 _MATERIALIZED = "MATERIALIZED"
 

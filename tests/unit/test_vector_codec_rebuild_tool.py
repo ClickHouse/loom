@@ -404,7 +404,8 @@ def test_a_width_refusal_names_loom_reembed_only_for_the_tables_it_re_embeds(
     flags = ["--table", "memory_embeddings", "--columns", "embedding", "--settle-s", "0"]
     assert vcr.main([*flags, "--dry-run"], ch=ch) == tr.REFUSED
     out = capsys.readouterr().out
-    assert "re-embed to LOOM_EMBEDDING_DIM (`loom reembed --delete-old`)" in out
+    assert "re-embed to LOOM_EMBEDDING_DIM (`loom reembed --delete-old` re-embeds" in out
+    assert "a width change with the same model goes through Settings -> Models & keys" in out
 
 
 def test_an_empty_source_refuses_before_the_twin(capsys: Any) -> None:
@@ -537,7 +538,7 @@ def test_the_queue_and_the_replica_are_drained_before_the_last_delta() -> None:
     seq = ch.sequence
     recall = max(i for i, q in enumerate(seq) if "round(cosineDistance" in q)
     flush = seq.index("SYSTEM FLUSH ASYNC INSERT QUEUE loom.memory_chunks", recall)
-    sync = seq.index("SYSTEM SYNC REPLICA loom.memory_chunks", recall)
+    sync = seq.index("SYSTEM SYNC REPLICA loom.memory_chunks LIGHTWEIGHT", recall)
     delta = max(i for i, q in enumerate(seq) if "FROM loom.memory_chunks WHERE created_at >" in q)
     assert recall < flush < sync < delta
 
@@ -1048,6 +1049,25 @@ def test_drop_pre_rebuild_syncs_the_rollback_copy_before_reading_it() -> None:
     assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.OK
     _synced_before_the_last_read(ch, start)
     assert "memory_chunks_pre_rebuild" not in ch.t
+
+
+def test_a_replicated_live_table_is_synced_lightweight_in_every_drain() -> None:
+    """A full sync waits on the merges still queued on the live table; the reads need only
+    the fetched parts, so the preflight, the drain before the swap and --drop-pre-rebuild
+    sync it LIGHTWEIGHT."""
+    ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
+    assert _run(ch, "--yes") == tr.OK
+    seq = ch.sequence
+    sync = "SYSTEM SYNC REPLICA loom.memory_chunks LIGHTWEIGHT"
+    copy = next(
+        i for i, q in enumerate(seq) if q.startswith("INSERT INTO loom.memory_chunks_rebuild")
+    )
+    swap = seq.index("EXCHANGE TABLES loom.memory_chunks AND loom.memory_chunks_rebuild")
+    assert sync in seq[:copy] and sync in seq[copy:swap]
+    assert "SYSTEM SYNC REPLICA loom.memory_chunks" not in seq
+    start = len(seq)
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.OK
+    assert sync in ch.sequence[start:]
 
 
 def test_drop_pre_rebuild_checks_that_cannot_run_keep_the_copy_without_a_rollback(

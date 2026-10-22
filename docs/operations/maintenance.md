@@ -259,8 +259,10 @@ cover these copies.
   vectors of another width, since the copy would replace them with zero vectors, and the
   message names each width and `LOOM_EMBEDDING_DIM`. Re-embed to `LOOM_EMBEDDING_DIM`
   and rerun: `loom reembed --delete-old` for `memory_embeddings`, `entity_vectors` and
-  `conversation_embeddings`; any other table, such as `memory_chunks`, `code_chunks` or
-  `code_summaries`, is re-embedded by its own writer.
+  `conversation_embeddings`, which re-embeds only rows of another `embedding_model`, so a
+  width change with the same model goes through Settings → Models & keys; any other
+  table, such as `memory_chunks`, `code_chunks` or `code_summaries`, is re-embedded by
+  its own writer.
 - **Gates (exit 5).** The consistency gate compares each key's newest version (or, on a
   table without a version column, its row count) and a hash of every column, the
   source's rebuilt vector columns cast and padded as the copy writes them. A key the twin
@@ -277,7 +279,8 @@ cover these copies.
   source inside the window, which leaves one row per key, then rerun with `--restart`.
 - **Before the swap.** The tool flushes the source's async insert queue (and, on a
   replicated engine, runs `SYSTEM SYNC REPLICA`, which syncs only the replica that
-  answers it). For `ReplicatedMergeTree`, connect directly to one replica throughout the
+  answers it; on `ReplicatedMergeTree` with `LIGHTWEIGHT`, which waits for fetches and
+  not for merges). For `ReplicatedMergeTree`, connect directly to one replica throughout the
   run. Each later consistency and width read also reads, in the same statement, whether
   the replica answering it has copied the whole replication log of the tables it reads
   and has no entry other than a merge or a mutation left in its queue; a read on a

@@ -148,8 +148,6 @@ KEEP_BOTH = (
     "Keep writers and erasure stopped and both tables as they are, and inspect the "
     "difference by hand before any --rollback or --drop-pre-rebuild"
 )
-# The tables `loom reembed` re-embeds (server.memory.app.reembed).
-REEMBED_TABLES = ("memory_embeddings", "entity_vectors", "conversation_embeddings")
 # A codec clause with one level of nested parentheses: CODEC(Quantized('rabitq', 3072, 0), LZ4).
 _CODEC = r"CODEC\((?:[^()]|\([^()]*\))*\)"
 
@@ -756,6 +754,7 @@ class VectorRebuild:
     def width_refusal(self, ddl: str, table: str | None = None) -> str:
         """Why a named column of `table` (the live table by default) holds vectors the copy
         would zero, or ''."""
+        from server.memory.app.reembed import REEMBED_TABLES
         from server.settings import settings
 
         # a coded column's codec rejects any other width, so only plain columns are scanned
@@ -765,7 +764,11 @@ class VectorRebuild:
             if widths:
                 found = ", ".join(f"width {w}: {n} row(s)" for w, n in widths)
                 if self.t in REEMBED_TABLES:
-                    how = "`loom reembed --delete-old`"
+                    how = (
+                        "`loom reembed --delete-old` re-embeds only rows of another "
+                        "embedding_model; a width change with the same model goes through "
+                        "Settings -> Models & keys"
+                    )
                 else:
                     how = f"`loom reembed` does not cover loom.{self.t}; its own writer must"
                 return (
@@ -973,10 +976,14 @@ class VectorRebuild:
         SYSTEM SYNC REPLICA syncs only the replica that answers it. On ReplicatedMergeTree
         each later consistency and width read checks that its own replica has fetched
         every part (q_drained); SharedMergeTree reads use sequential consistency when a
-        different replica serves a later request.
+        different replica serves a later request. LIGHTWEIGHT on ReplicatedMergeTree: it
+        waits for the fetch, attach and drop-range entries only, the ones the reads
+        require, and not for a long merge that merges on the live table keep queuing.
         """
         self.cmd(f"SYSTEM FLUSH ASYNC INSERT QUEUE loom.{self.t}")
-        if engine.startswith(("Replicated", "Shared")):
+        if engine.startswith("Replicated"):
+            self.cmd(f"SYSTEM SYNC REPLICA loom.{self.t} LIGHTWEIGHT")
+        elif engine.startswith("Shared"):
             self.cmd(f"SYSTEM SYNC REPLICA loom.{self.t}")
 
     def sync_rollback_copy(self, engine: str) -> None:
