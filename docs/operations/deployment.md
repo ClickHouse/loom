@@ -375,7 +375,6 @@ user with SQL.
   `Quantized` codec, `aiEmbed`, lightweight `UPDATE` (Loom falls back to a mutation where
   it is off). Before 26.8 a vector read can leave wrong entries in the query condition
   cache, so every Loom session on an older server turns the cache off when it connects.
-- **The `Quantized` codec.** See [recommended settings](#recommended-clickhouse-settings).
 - **Run id claims.** A claim key lives only while a `run.begin` runs; one
   left by a begin that failed or died before writing its row stays until the same user
   and session re-begin and complete that id, or an erasure of its namespace or user.
@@ -405,54 +404,62 @@ How Loom uses ClickHouse is in [ClickHouse](../architecture/clickhouse.md).
 
 ### Recommended ClickHouse settings
 
-Loom runs without these, but vector search is faster and smaller with them on. Turn them on
-for Loom's ClickHouse user before the first `loom migrate` if you can: a fresh install
-creates its vector columns coded only when the codec is on at that moment.
+Loom runs without these, but vector search is faster and the vector tables are smaller with
+them on. Turn them on for Loom's ClickHouse user before Loom first starts (the server
+applies its migrations at boot) or runs `loom migrate`: a fresh install codes its vector
+columns only if the codec is on at that moment.
 
 | Setting                   | Value | What it gives Loom                                                                                                                          |
 | ------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `enable_quantized_codec`  | `1`   | Vector columns stored with the `Quantized` codec (26.8+), so searches scan compact codes first and rescore the best rows at full precision. |
 | `allow_suspicious_codecs` | `1`   | `entity_vectors` keeps `LZ4` after `Quantized`. Without it that column is about four times larger.                                          |
 
-How to get them:
+Check what Loom's user gets with:
 
-- **Self-managed ClickHouse 26.8 or later.** Both settings are user-settable by default,
-  and Loom sends them with each `CREATE` that needs them, so there is nothing to do. Check
-  that no settings profile or constraint holds either one at 0 for Loom's user:
+```sql
+SELECT name, value, readonly, min, max, disallowed_values
+FROM system.settings
+WHERE name IN ('enable_quantized_codec', 'allow_suspicious_codecs')
+```
 
-  ```sql
-  SELECT name, value, readonly, min, max, disallowed_values
-  FROM system.settings
-  WHERE name IN ('enable_quantized_codec', 'allow_suspicious_codecs')
-  ```
+A setting is fine when `value = 1`, read-only or not, or when `value = 0` and the user may
+change it. It is blocked when `value = 0` and the row has `readonly = 1`, `max = '0'` or `1`
+in `disallowed_values`.
 
-  A row with `readonly = 1`, `max = '0'` or `1` in `disallowed_values` blocks it.
+- **Self-managed ClickHouse 26.8 or later.** Both settings are user-settable by default and
+  Loom sends them with each `CREATE` that needs them, so a fresh install needs nothing.
+  Check that no settings profile or constraint blocks them.
+- **ClickHouse Cloud.** A service holds both read-only at 0. `enable_quantized_codec` is
+  enabled for the service with a settings-profile override; `allow_suspicious_codecs` is
+  enabled for Loom's user. Loom cannot change either itself. Run the query again
+  afterwards: both should show `value = 1`.
+- **Older servers.** Loom codes vectors only on 26.8 or later, so an older server gets plain
+  vectors and full-precision scans.
 
-- **ClickHouse Cloud.** A service holds both settings read-only at 0 until they are
-  enabled for the service with a settings-profile override. Enable
-  `enable_quantized_codec`, and `allow_suspicious_codecs` for Loom's user, then run the
-  query above: both should show `value = 1`.
-- **Before 26.8.** The codec does not exist, so Loom uses plain vectors and full-precision
-  scans. Upgrade the server to get it.
+If Loom was installed before the settings were on, or before the server ran 26.8, its vector
+tables are plain (or `entity_vectors` lacks its chain). Turning the settings on or upgrading
+the server does not change existing tables:
 
-If Loom was installed before the settings were on, its vector tables are plain (or
-`entity_vectors` lacks its chain). Enabling the settings does not change existing tables:
-
-1. Restart Loom, so each process reads the settings again. A process that read the codec
-   as unavailable keeps that answer until it restarts.
-2. Rebuild each table with `scripts/ops/vector_codec_rebuild.py`, which copies it online
-   and swaps it in. Start with `--dry-run`, then `--yes`:
+1. Restart Loom, so each process reads the settings again. A process that found the codec
+   unavailable keeps that answer until it restarts.
+2. Rebuild each coded table with `scripts/ops/vector_codec_rebuild.py`. The tool is not in
+   the image: run it from a clone of the repository at the deployed version, with `LOOM_CH_*`
+   pointing at the deployment's ClickHouse. Run each command with `--dry-run` first to see
+   the plan, then again with `--yes`:
 
    ```bash
-   python -P -m scripts.ops.vector_codec_rebuild --table memory_embeddings --columns embedding,memory_key_embedding --yes
-   python -P -m scripts.ops.vector_codec_rebuild --table entity_vectors --columns entity_embedding --chain LZ4 --yes
+   python -P -m scripts.ops.vector_codec_rebuild --table memory_embeddings --columns embedding,memory_key_embedding --dry-run
+   python -P -m scripts.ops.vector_codec_rebuild --table entity_vectors --columns entity_embedding --chain LZ4 --dry-run
+   python -P -m scripts.ops.vector_codec_rebuild --table code_summaries --columns embedding --index-granularity 256 --gate-fetch-multiplier 10 --dry-run
    ```
 
-   The coded tables and their columns are listed in `CODED_TABLES`
-   (`server/core/schema/vector_codec_ddl.py`). `--rollback` returns a table to its old
-   copy until `--drop-pre-rebuild` removes it ([maintenance](./maintenance.md)).
+   The tables and their vector columns are listed in `CODED_TABLES`
+   (`server/core/schema/vector_codec_ddl.py`). On a self-managed cluster whose name is not
+   `default`, pass `--cluster <name>` (`--cluster ''` checks this server only). `--rollback`
+   returns a table to its old copy until `--drop-pre-rebuild` removes it
+   ([table rebuilds](../development/migrations.md#changing-a-sort-key-or-a-partition-key)).
 
-The details of how Loom reads these settings are in
+How Loom reads these settings is in
 [gated settings](../architecture/clickhouse.md#gated-clickhouse-settings).
 
 ## Providers
