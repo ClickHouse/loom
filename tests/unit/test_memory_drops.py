@@ -27,8 +27,7 @@ _real_flush_later = drops._flush_later
 
 @pytest.fixture(autouse=True)
 def _quiet_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep rows in the buffer (no flush timer) so tests can inspect them. The
-    suite's teardown empties the buffer and cancels any timer between tests."""
+    """Keep drops buffered for assertions; suite teardown clears them."""
     monkeypatch.setattr(drops, "_flush_later", lambda delay: True)
 
 
@@ -502,8 +501,6 @@ def test_drops_cli_is_registered_and_runs(monkeypatch: pytest.MonkeyPatch, capsy
 
 @pytest.mark.asyncio
 async def test_reset_cancels_an_armed_flush_timer(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A drop arms a flush timer; the reset cancels it, so it cannot fire into a
-    later test and register a flush there."""
     monkeypatch.setattr(drops, "_flush_later", _real_flush_later)
     drops.record_drop("o", "n", "parse", "empty", item="item")
     timer = drops._timer

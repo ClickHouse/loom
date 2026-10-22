@@ -664,17 +664,7 @@ def _trace_tasks_left_as_found() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _deferred_ledgers_left_empty() -> Iterator[None]:
-    """Stop a test's deferred ledger flushes from landing in a later test.
-
-    Four write paths buffer rows and flush them from the loop later: the
-    usage-event ledger (a detached task every 0.5 s), the drops ledger, the
-    namespace write marks and the graph write marks (each a `call_later`
-    timer, re-armed while a failed flush leaves rows buffered). The unit suite
-    runs on a session loop, so a flush armed in one test would write into the
-    fake client of whatever test held the loop later, and its registered task
-    would make a later test's `drain_task_sets` see work. Each test leaves every
-    buffer empty, the usage flusher stopped and every timer cancelled.
-    """
+    """Cancel ledger timers so their flushes cannot reach the next test's client."""
     yield
     from server.core import namespace_write_marks
     from server.memory.app import drops, graph_write_marks
