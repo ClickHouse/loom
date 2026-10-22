@@ -366,6 +366,26 @@ def test_a_twin_older_than_a_plain_live_table_is_a_leftover() -> None:
     assert "Quantized('rabitq', 1536, 0)" in ch.t["memory_chunks"]["ddl"]
 
 
+@pytest.mark.parametrize("flags", [(), ("--restart",), ("--reuse",), ("--dry-run",)])
+def test_a_twin_keyed_otherwise_under_a_plain_live_table_is_kept(
+    flags: tuple[str, ...], capsys: Any
+) -> None:
+    """scripts/ops/table_rebuild.py shares the twin's name and changes only the keys: a
+    twin keyed otherwise, older than the live table, may be its old table after an
+    exchange without the rename, so no line drops it or calls it a leftover."""
+    rekeyed = ARRAY.replace("ORDER BY (org, namespace)", "ORDER BY (namespace, org)")
+    old = {"ddl": rekeyed, "rows": 5, "uuid": "old", "created": TWIN_CREATED}
+    live = {**_live(), "created": COPY_STARTED}
+    ch = _CH(memory_chunks=live, memory_chunks_rebuild=old)
+    rc = _run(ch, "--yes", *flags)
+    out = capsys.readouterr().out
+    assert _writes(ch) == [] and "memory_chunks_rebuild" in ch.t
+    assert "scripts.ops.table_rebuild --table memory_chunks --dry-run" in out
+    assert "not swapped" not in out
+    if flags != ("--dry-run",):
+        assert rc == tr.REFUSED
+
+
 def test_two_coded_tables_with_an_older_twin_are_refused_untouched(capsys: Any) -> None:
     """A --require-patch-free run can leave a coded twin under a coded live table, so
     the layouts do not show whether an exchange ran: the run neither renames nor drops,

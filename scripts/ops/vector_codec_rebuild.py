@@ -713,6 +713,23 @@ class VectorRebuild:
         twin = self.ddl(self.twin)
         return any(vector_dim(twin, c) is not None for c in coded)
 
+    def twin_of_another_layout(self) -> str:
+        """Why the twin may be the old table `scripts/ops/table_rebuild.py` exchanged out
+        without its rename, or ''. That tool shares the twin's name and changes only the
+        sorting or partition key, so a twin keyed otherwise than the live table, not known
+        to be this tool's leftover, may be the only copy of the old layout: nothing here
+        drops or reuses it."""
+        if not (self.exists(self.t) and self.exists(self.twin)) or self.twin_never_exchanged():
+            return ""
+        if tr.layout_of(self.ddl(self.twin)) == tr.layout_of(self.ddl(self.t)):
+            return ""
+        return (
+            f"loom.{self.twin} has another sorting or partition key than loom.{self.t}, so it "
+            f"may be the old table scripts/ops/table_rebuild.py exchanged out: drop nothing "
+            f"and run `python -P -m scripts.ops.table_rebuild --table {self.t} --dry-run`, "
+            f"whose report names the rename"
+        )
+
     def twin_never_exchanged(self) -> bool:
         """Whether the twin was never exchanged in. Its UUID and the live table's are the
         ones this tool recorded when it created the twin: any exchange gives the live
@@ -752,6 +769,8 @@ class VectorRebuild:
     def report_state(self) -> str:
         if self.next_step:
             return self.next_step
+        if why := self.twin_of_another_layout():
+            return why
         if not self.exists(self.pre) and self.exists(self.t) and self.exists(self.twin):
             twin = self.twin_after_exchange()
             if twin is not None:
@@ -806,6 +825,8 @@ class VectorRebuild:
             if n:
                 return "recent rows carry an empty vector: add this table to placeholders.PLACEHOLDER_COLUMNS and deploy first"
         twin = tr.table_row(self.ch, self.twin)
+        if why := self.twin_of_another_layout():
+            return why
         if twin is not None and not (self.a.reuse or self.a.restart):
             return (
                 f"loom.{self.twin} (created {twin[2]}, {tr.row_count(self.ch, self.twin)} rows) is "

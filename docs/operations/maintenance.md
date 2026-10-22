@@ -267,7 +267,11 @@ each column coded on the live table is plain on the twin, the tool names the ren
 When one is coded on the twin too (a `--require-patch-free` run, or a
 rebuild of a coded table), the codecs do not show whether an exchange ran: the tool
 refuses, renames and drops nothing, and asks to compare the two tables' rows before
-dropping either by hand. A twin never exchanged in is a leftover, whatever layout the
+dropping either by hand. A twin whose sorting or partition key differs from the live
+table's may be the old table `scripts/ops/table_rebuild.py` exchanged out without its
+rename, since that tool shares the twin's name: every line refuses, drops nothing, and
+names `python -P -m scripts.ops.table_rebuild --table <table> --dry-run`, whose report
+gives the rename. A twin never exchanged in is a leftover, whatever layout the
 rerun names: `--restart --yes` copies again, or drop it. The tool knows a twin was never
 exchanged in when its UUID, and the live table's, are the ones recorded in
 `$LOOM_REBUILD_DIR/<table>_rebuild.uuid` (the abort file's directory) when the tool

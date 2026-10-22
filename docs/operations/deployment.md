@@ -576,7 +576,10 @@ step instead of a drop. In that state every run of the table's line refuses with
 the same line with `--yes`, `--reuse` or `--restart` included, whatever layout or columns
 it names, and so does `--drop-pre-rebuild`. When `next` asks to compare `<table>` and
 `<table>_rebuild`, both are coded and either may be the old table: compare their rows
-before dropping either. When `next` names the twin a leftover never exchanged in, no
+before dropping either. When `next` names `scripts.ops.table_rebuild`, the twin has
+another sorting or partition key and may be that tool's old table: run its `--dry-run`
+and follow its report, never a drop. When `next` names the twin a leftover never
+exchanged in, no
 exchange ran: rerun with `--restart --yes` or drop it. The tool tells a leftover by the
 twin's UUID, which it records in `$LOOM_REBUILD_DIR`, so run every line from the same
 directory. When `next` starts `not swapped`, drop the twin with
