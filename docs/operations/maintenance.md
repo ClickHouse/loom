@@ -217,10 +217,12 @@ into a twin table, check it, swap with `EXCHANGE TABLES` and keep the old table 
 in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-key).
 `vector_codec_rebuild.py` needs a maintenance window with every writer and erasure
 stopped; it fails closed and never repairs the live table. It refuses (exit 3),
-`--dry-run` included, while a named column holds non-empty vectors of another width than
-the target's: re-embed those rows first, since the copy would replace them with zero
-vectors. Just before the swap it checks the widths again and that the twin holds no rows
-removed from the source during the run (an erasure or delete), and fails the gate (exit 5)
+`--dry-run` included, while a named column holds non-empty vectors of more than one width,
+since the copy would replace all but the target's with zero vectors. The target of a plain
+column is its most common width, which may not be `LOOM_EMBEDDING_DIM`; the message names
+both. Re-embed until one width remains: `loom reembed` moves rows to the configured model.
+Just before the swap it checks the widths again and that the twin holds no rows removed
+from the source after they were copied (an erasure or delete), and fails the gate (exit 5)
 if either finds rows; stop writes and rerun it with `--restart`.
 
 ## Disk pressure hygiene

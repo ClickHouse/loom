@@ -490,8 +490,10 @@ flush never fails a request; a crash loses the queue.
   it for the service with a settings-profile override; it then reads 1, still read-only,
   and coded tables work. An existing table moves with the same tool, in a maintenance
   window with every writer and erasure stopped: it fails closed and never repairs the
-  live table. It refuses a table whose served rows hold non-empty vectors of another
-  width than the codec's (the copy would zero them; re-embed them first). Just before
+  live table. It refuses a table whose served rows hold non-empty vectors of more than
+  one width, since the copy would zero all but the target's. A plain column's target is
+  its most common width, which may not be `LOOM_EMBEDDING_DIM`; the refusal names both,
+  and `loom reembed` moves rows to the configured model. Just before
   the swap it checks the widths again and that the twin holds no key the source no longer
   has (a row erased during the run), and fails the gate if either finds rows; rerun with
   `--restart` once writes stop. Its recall gate ranks real vectors only, since a

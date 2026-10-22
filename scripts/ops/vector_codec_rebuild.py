@@ -36,17 +36,20 @@ takes `LOOM_EMBEDDING_DIM`. Every named column must agree.
 Run it in a maintenance window with every writer and erasure stopped: it
 fails closed and never repairs the live table. It refuses (exit 3), `--dry-run`
 included, while a named column holds non-empty vectors of another length among
-the rows Loom serves (under FINAL on a ReplacingMergeTree), printing each width
-and its row count, since the copy would replace them with zero vectors; re-embed
-those rows first. An empty vector is copied as a zero placeholder.
+the rows Loom serves (under FINAL on a ReplacingMergeTree), printing each width,
+its row count and `LOOM_EMBEDDING_DIM`, since the copy would replace them with
+zero vectors. The target width of a plain column is its most common length, not
+necessarily the configured one: re-embed until one width remains (`loom reembed`
+moves rows to the configured model). An empty vector is copied as a zero
+placeholder.
 
 The gates (exit 5), each of which leaves the table as it is:
 
 - Consistency: a key whose newest version differs, or that the source holds
   and the twin lacks, is repaired in the twin key by key and fails the run if
   it remains. A key only the twin holds fails it too: rows were removed from
-  the source during the copy (an erasure or delete) and the swap would bring
-  them back; stop writes and rerun with `--restart`.
+  the source after they were copied (an erasure or delete) and the swap would
+  bring them back; stop writes and rerun with `--restart`.
 - Recall: both reads rank real vectors only (a zero placeholder's cosine
   distance is NaN), and each probe's recall is over the exact neighbours it
   found, at most 20.
@@ -121,6 +124,7 @@ from server.core.schema.vector_codec_ddl import (
 # `product` take their own arguments and are not a rebuild target).
 CODEC_METHODS: tuple[str, ...] = ("rabitq", "turboquant", "int8")
 COPY_RECEIVE_TIMEOUT_S = 7200
+GATE_READ_TIMEOUT_S = 1800  # not a setting: an operator tool's per-statement cap, sized to a full FINAL scan of the largest vector table
 # How far above the exact 20th distance a twin hit may read and still count.
 DISTANCE_TOLERANCE = 1e-6
 COUNT_SETTLE_ATTEMPTS = 8
@@ -303,8 +307,8 @@ def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
 def twin_only_failure(n: int) -> str:
     """The gate's message for keys only the twin holds. Pure."""
     return (
-        f"GATE FAILED: {n} keys are in the twin only: rows were removed from the source "
-        "during the copy (an erasure or delete), and the swap would bring them back; no swap. "
+        f"GATE FAILED: {n} key(s) only in the twin: rows were removed from the source after "
+        "they were copied (an erasure or delete), and the swap would bring them back; no swap. "
         "Stop writes and rerun with --restart"
     )
 
@@ -487,13 +491,20 @@ class VectorRebuild:
 
     def width_refusal(self, fin: str) -> str:
         """Why a named column holds vectors the copy would zero, or ''."""
+        from server.settings import settings
+
         for c in self.cols:
-            widths = self.q(mixed_width_sql(self.t, c, fin, dim=self.dim), max_execution_time=1800)
+            widths = self.q(
+                mixed_width_sql(self.t, c, fin, dim=self.dim),
+                max_execution_time=GATE_READ_TIMEOUT_S,
+            )
             if widths:
                 found = ", ".join(f"width {w}: {n} row(s)" for w, n in widths)
                 return (
-                    f"{c} holds vectors of another width than {self.dim} ({found}): the copy "
-                    "would zero them; re-embed those rows first"
+                    f"{c} holds vectors of more than one width (target {self.dim}; {found}; "
+                    f"LOOM_EMBEDDING_DIM {settings.embedding_dim}): the copy would zero all but "
+                    f"width {self.dim}; re-embed until one width remains (loom reembed moves "
+                    "rows to the configured model)"
                 )
         return ""
 
@@ -620,14 +631,14 @@ class VectorRebuild:
             f"LEFT JOIN (SELECT {ident}{vsel}, 1 AS __present FROM loom.{dst}{fin}) AS t "
             f"USING ({ident}) WHERE {newer}"
         )
-        keys = self.q(diverged, join_use_nulls=0, max_execution_time=1800)
+        keys = self.q(diverged, join_use_nulls=0, max_execution_time=GATE_READ_TIMEOUT_S)
         for i in range(0, len(keys), REPAIR_BATCH):
             batch = keys[i : i + REPAIR_BATCH]
             lits = ", ".join("(" + ", ".join(key_literal(v) for v in k) + ")" for k in batch)
             self.cmd(
                 f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE ({ident}) IN ({lits})",
                 **self.codec_on(),
-                max_execution_time=1800,
+                max_execution_time=GATE_READ_TIMEOUT_S,
             )
         self.rows_copied += len(keys)
         return len(keys)
@@ -663,7 +674,7 @@ class VectorRebuild:
           FULL OUTER JOIN (SELECT {ident}{vsel}, 1 AS __present FROM loom.{self.twin}{fin}) AS t USING ({ident})
         """,
             join_use_nulls=0,
-            max_execution_time=1800,
+            max_execution_time=GATE_READ_TIMEOUT_S,
         )[0]
         return int(row[0]), int(row[1]), int(row[2])
 

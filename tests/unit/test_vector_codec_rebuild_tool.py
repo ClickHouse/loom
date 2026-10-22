@@ -118,6 +118,11 @@ def _writes(ch: _CH) -> list[str]:
     return [c for c in ch.commands if not c.startswith("SYSTEM")]
 
 
+def _last(ch: _CH, needle: str) -> int:
+    """The index of the last recorded query that contains `needle`."""
+    return max(i for i, q in enumerate(ch.queries) if needle in q)
+
+
 def _live(rows: int = 5) -> dict[str, Any]:
     return {"ddl": ARRAY, "rows": rows, "uuid": "live"}
 
@@ -323,7 +328,8 @@ def test_vectors_of_another_width_refuse_before_the_twin_dry_run_included(capsys
     ch.widths = [(768, 3), (3072, 1)]
     assert _run(ch, "--dry-run") == tr.REFUSED and _writes(ch) == []
     out = capsys.readouterr().out
-    assert f"embedding holds vectors of another width than {DIM}" in out
+    assert f"embedding holds vectors of more than one width (target {DIM};" in out
+    assert "LOOM_EMBEDDING_DIM" in out and "loom reembed" in out
     assert "width 768: 3 row(s), width 3072: 1 row(s)" in out and "re-embed" in out
     preflight = [q for q in ch.queries if "GROUP BY w" in q]
     assert preflight and all(" FINAL " in q and f"NOT IN (0, {DIM})" in q for q in preflight)
@@ -341,8 +347,8 @@ def test_rows_only_the_twin_holds_fail_the_gate(capsys: Any) -> None:
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     assert "memory_chunks_rebuild" in ch.t
     out = capsys.readouterr().out
-    assert "2 keys are in the twin only" in out
-    assert "removed from the source during the copy" in out and "--restart" in out
+    assert "2 key(s) only in the twin" in out
+    assert "removed from the source after they were copied" in out and "--restart" in out
 
 
 def test_a_delete_during_the_gates_stops_the_swap(capsys: Any) -> None:
@@ -353,7 +359,9 @@ def test_a_delete_during_the_gates_stops_the_swap(capsys: Any) -> None:
     ch.cons = (0, 0, 1)
     assert _run(ch, "--yes") == tr.GATE_FAILED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
-    assert "1 keys are in the twin only" in capsys.readouterr().out
+    assert "1 key(s) only in the twin" in capsys.readouterr().out
+    delta = _last(ch, "SELECT count() FROM loom.memory_chunks WHERE created_at >")
+    assert delta < _last(ch, "FULL OUTER JOIN") and delta < _last(ch, "GROUP BY w")
 
 
 def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:
@@ -365,8 +373,10 @@ def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:
     assert _run(ch, "--yes") == tr.GATE_FAILED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     out = capsys.readouterr().out
-    assert "GATE FAILED: embedding holds vectors of another width" in out
+    assert "GATE FAILED: embedding holds vectors of more than one width" in out
     assert "width 768: 2 row(s)" in out
+    delta = _last(ch, "SELECT count() FROM loom.memory_chunks WHERE created_at >")
+    assert delta < _last(ch, "GROUP BY w")
 
 
 def test_the_recall_reads_rank_real_vectors_only() -> None:
