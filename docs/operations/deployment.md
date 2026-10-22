@@ -405,14 +405,14 @@ How Loom uses ClickHouse is in [ClickHouse](../architecture/clickhouse.md).
 
 ### Recommended ClickHouse settings
 
-Loom runs without these, but vector search is faster and smaller with them on. Turn them on
-for Loom's ClickHouse user before the first `loom migrate` if you can: a fresh install
-creates its vector columns coded only when the codec is on at that moment.
+These settings enable quantized vector reads and codec chains. Turn them on for Loom's
+ClickHouse user before the first `loom migrate` if you can: a fresh install creates
+its vector columns coded only when the codec is available at that moment.
 
 | Setting                   | Value | What it gives Loom                                                                                                                          |
 | ------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `enable_quantized_codec`  | `1`   | Vector columns stored with the `Quantized` codec (26.8+), so searches scan compact codes first and rescore the best rows at full precision. |
-| `allow_suspicious_codecs` | `1`   | `entity_vectors` keeps `LZ4` after `Quantized`. Without it that column is about four times larger.                                          |
+| `allow_suspicious_codecs` | `1`   | Allows `LZ4` after `Quantized` on `entity_vectors`, compressing the stored vector data.                                                     |
 
 How to get them:
 
@@ -426,14 +426,15 @@ How to get them:
   WHERE name IN ('enable_quantized_codec', 'allow_suspicious_codecs')
   ```
 
-  A row with `readonly = 1`, `max = '0'` or `1` in `disallowed_values` blocks it.
+  A setting already at `value = 1` is usable even when read-only. When it is at 0,
+  `readonly = 1`, `max = '0'` or `1` in `disallowed_values` prevents Loom from enabling it.
 
 - **ClickHouse Cloud.** A service holds both settings read-only at 0 until they are
   enabled for the service with a settings-profile override. Enable
   `enable_quantized_codec`, and `allow_suspicious_codecs` for Loom's user, then run the
   query above: both should show `value = 1`.
-- **Before 26.8.** The codec does not exist, so Loom uses plain vectors and full-precision
-  scans. Upgrade the server to get it.
+- **Before 26.8.** Loom uses plain vectors and full-precision scans. Upgrade the server
+  to enable Loom's codec path.
 
 If Loom was installed before the settings were on, its vector tables are plain (or
 `entity_vectors` lacks its chain). Enabling the settings does not change existing tables:
