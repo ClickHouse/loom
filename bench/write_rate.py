@@ -223,13 +223,13 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         async def one(i: int, at: float) -> None:
             kind = kinds[i % len(kinds)]
             await asyncio.sleep(max(0.0, at - time.monotonic()))
-            sent = time.monotonic()
+            began = time.monotonic()
             try:
                 if args.target == "server":
                     await server_write(i, kind)
                 else:
                     await _client_write(i, run, args)
-                latencies[kind].append((time.monotonic() - sent) * 1000)
+                latencies[kind].append((time.monotonic() - began) * 1000)
             except Exception as e:  # noqa: BLE001 — counted and reported, the run goes on
                 errors[kind] += 1
                 first_error.setdefault(kind, str(e)[:300])
@@ -245,6 +245,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         finally:
             if args.target == "client":
                 await _delete_client_rows(run, args)
+            await get_client().disconnect()
 
     return {
         "target": args.target,
