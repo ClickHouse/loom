@@ -506,34 +506,39 @@ upgrading the server does not change existing tables:
    you run from): each later line then stops before it starts. Ctrl-C stops only the line
    that is running, and bash goes on to the next. Remove the file before the next run.
 
-   A run that stops before its swap (a failed gate, an abort file, an interrupt) leaves
-   its twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not
-   fully cover (a namespace erasure purges only the `code_*` copies). Drop it with
-   `DROP TABLE loom.<table>_rebuild SYNC`, or pass `--restart` when you run that line
-   again.
+   A run that stops before its swap (a failed gate, an abort file, an interrupt) can leave
+   its twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not fully
+   cover (a namespace erasure purges only the `code_*` copies). Drop it with
+   `DROP TABLE IF EXISTS loom.<table>_rebuild SYNC`, or pass `--restart` when you run that
+   line again.
 
-   Start no erasure while a line runs with `mode=--yes` (`erasure.request`,
-   `collection.delete`, a repository retire), and turn the namespace GC worker off
-   (`LOOM_NAMESPACE_GC_WORKER_ENABLED=false` on the workers, read at start, until the
-   swap). The copy is taken before the erasure and the swap puts it live, so the erased
-   rows come back. Before the first `--yes` line, note `SELECT now()` on the same
-   ClickHouse as `<start>`. After the swap, list the erasures that ran during it, wait for
-   any still running to finish, and request each one again:
-
-   ```sql
-   SELECT id, org, scope_type, scope_value, status FROM loom.erasure_requests FINAL
-   WHERE completed_at >= '<start>' OR status IN ('queued', 'in_progress')
-   ```
-
-3. Once search looks right, drop the old copies soon: run the lines of the tables you
-   rebuilt again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table
-   keeps its old copy as `loom.<table>_pre_rebuild`, a full second copy with its merges
-   stopped, which erasure does not fully cover either: a namespace erasure that reaches a
-   `code_*` copy waits until it is dropped, because a stopped table runs no mutation. To
+3. Once search looks right, drop the old copies: run the lines of the tables you rebuilt
+   again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its
+   old copy as `loom.<table>_pre_rebuild`, a full second copy with its merges stopped. To
    go back instead, run that table's line with `mode="--rollback --yes"`; the coded copy
    then sits in `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the
    table was rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
    `--chain LZ4` only if its rebuild had it.
+
+Hold erasures from the first `--yes` line until the last `--drop-pre-rebuild` line has run.
+An erasure during that window does not stick: the twin is copied before it and swapped in
+after it, a rollback brings back the old copy and copies across only newer versions, and a
+namespace erasure that reaches a `code_*_pre_rebuild` copy cannot finish while that copy's
+merges are stopped (it fails after `LOOM_ERASURE_MUTATION_WAIT_S` and is retried, then
+abandoned). So, during the window:
+
+- start no erasure: `erasure.request`, `collection.delete`, a repository retire or
+  `loom namespaces-gc`;
+- set `LOOM_NAMESPACE_GC_WORKER_ENABLED=false` on the workers (read at start);
+- note `SELECT now()` on the same ClickHouse as `<start>` before the first `--yes` line.
+
+After the last drop, turn the GC worker back on, wait for any erasure still running to
+finish, and request each one this lists again with the same scope and `purge`:
+
+```sql
+SELECT id, org, scope_type, scope_value, purge, status FROM loom.erasure_requests FINAL
+WHERE completed_at >= '<start>' OR status IN ('queued', 'in_progress', 'failed')
+```
 
 ## Providers
 
