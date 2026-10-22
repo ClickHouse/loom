@@ -666,33 +666,23 @@ def _trace_tasks_left_as_found() -> Iterator[None]:
 def _deferred_ledgers_left_empty() -> Iterator[None]:
     """Stop a test's deferred ledger flushes from landing in a later test.
 
-    Two write paths buffer rows and flush them from the loop later: the
-    usage-event ledger (`memory_repo_usage`, a detached task every 0.5 s)
-    and the drops ledger (`memory.app.drops`, a `call_later` timer). Both
-    resolve the client at fire time through `server.core.ch.get_client`, and the
-    unit suite runs on a session loop, so a `memory.outcome` recorded in one
-    test would flush a `memory_usage_events` row into the fake client of
-    whatever test held the loop half a second later. Each test leaves both
-    buffers empty and the usage flusher stopped;
-    the drops timer that may still fire finds an empty buffer and writes
-    nothing.
+    Four write paths buffer rows and flush them from the loop later: the
+    usage-event ledger (a detached task every 0.5 s), the drops ledger, the
+    namespace write marks and the graph write marks (each a `call_later`
+    timer, the graph marks' also a retry after a failed flush). The unit suite
+    runs on a session loop, so a flush armed in one test would write into the
+    fake client of whatever test held the loop later, and its registered task
+    would make a later test's `drain_task_sets` see work. Each test leaves every
+    buffer empty and every timer cancelled.
     """
     yield
-    from server.memory.app import drops
+    from server.core import namespace_write_marks
+    from server.memory.app import drops, graph_write_marks
     from server.memory.store import usage as memory_repo_usage
 
     memory_repo_usage._reset_for_tests()
     drops._reset_for_tests()
-    # The write-marks buffer arms a `call_later` timer on the
-    # session loop; leave it disarmed and empty for the next test.
-    from server.core import namespace_write_marks
-
     namespace_write_marks._reset_for_tests()
-    # A graph-marks flush that fails (no client in a unit test) re-arms a retry
-    # timer, which is not a task and outlives the test: each firing spawns a
-    # registered deferred flush, so a later test's `drain_task_sets` finds work.
-    from server.memory.app import graph_write_marks
-
     graph_write_marks._reset_for_tests()
 
 

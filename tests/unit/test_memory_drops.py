@@ -512,3 +512,15 @@ def test_drops_cli_is_registered_and_runs(monkeypatch: pytest.MonkeyPatch, capsy
     assert rc == 0
     out = capsys.readouterr().out
     assert "chunk.split" in out and "truncated" in out
+
+
+@pytest.mark.asyncio
+async def test_reset_cancels_an_armed_flush_timer() -> None:
+    """A drop arms a flush timer; the reset cancels it, so it cannot fire into a
+    later test and register a flush there."""
+    drops.record_drop("o", "n", "parse", "empty", item="item")
+    timer = drops._timer
+    assert timer is not None
+    drops._reset_for_tests()
+    assert timer.cancelled()
+    assert drops._timer is None

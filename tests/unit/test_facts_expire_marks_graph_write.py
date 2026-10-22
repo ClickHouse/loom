@@ -4,7 +4,6 @@ serving a walk remembered before the delete for its full minute."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -23,12 +22,11 @@ class _CH:
 
 
 @pytest.fixture
-def local_marks() -> Iterator[Any]:
+def local_marks() -> Any:
+    """The graph-marks module; the suite's autouse teardown resets it after each test."""
     from server.memory.app import graph_write_marks
 
-    graph_write_marks._reset_for_tests()
-    yield graph_write_marks
-    graph_write_marks._reset_for_tests()
+    return graph_write_marks
 
 
 async def _expire(monkeypatch: pytest.MonkeyPatch, ch: _CH) -> None:
