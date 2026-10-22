@@ -101,9 +101,9 @@ settings:
   # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. [restart]
   # ch_timeout_ddl_s: 300.0
 
-  # Send per-request inserts (audit, transcript turns, agent_events, webhook outbox,
-  # evidence) as waited async inserts sharing parts, each holding a pooled connection;
-  # false commits each. [live]
+  # Batch inserts of tables written per request or by busy workers (audit, turns,
+  # embeddings, agent_events, webhook outbox and attempts, evidence) as waited async
+  # inserts; false commits. [live]
   # ch_batched_inserts: true
 
   # Longest wait, ms, of a batched or waited async insert a request waits on for others

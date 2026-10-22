@@ -559,8 +559,8 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Send per-request inserts (audit, transcript turns, agent_events, webhook outbox, evidence)
-    # as waited async inserts sharing parts, each holding a pooled connection; false commits each.
+    # Batch inserts of tables written per request or by busy workers (audit, turns, embeddings,
+    # agent_events, webhook outbox and attempts, evidence) as waited async inserts; false commits.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched or waited async insert a request waits on for others
     # to share its part; holds a pooled connection meanwhile.
@@ -4926,8 +4926,9 @@ class TrackerSettings(BaseModel):
 # without editing this table: `latency_budget_overrides` (one op, in ms or "<n>x"),
 # `latency_budget_overrides_by_consumer` (one consumer), `latency_budget_multiplier`
 # (all of them), and `POST /v1/admin/budget.set` while Loom runs. Each batched or
-# waited async insert an op awaits adds up to `ch_batched_insert_wait_max_ms` (50 ms);
-# "+ ... wait" below names those waits.
+# waited async insert an op awaits adds up to `ch_batched_insert_wait_max_ms` (50 ms).
+# A budget is raised where one such wait is a large share of it ("+ ... wait" below
+# names those waits); budgets of 400 ms or more absorb it.
 
 OP_BUDGETS_P99_MS: dict[str, int] = {
     "admin.users": 300,
@@ -5238,7 +5239,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # Version inserts plus the conflict and dedup reads: p50 1,062 ms and p99 3.7 s on
     # ClickHouse Cloud; 200 ms at the x20 multiplier = 4 s sits at that p99, so a
     # violation is a signal. + audit-row, entity-edge and entity-triple (concurrent) and
-    # outbox-row waits (~150 ms).
+    # outbox-row waits (~150 ms). 200 stands: the waited graph inserts fell from 200 to
+    # 50 ms, which offsets the new audit and outbox waits.
     "memory.set": 200,
     # LLM extraction dominates (~7K-token prompt); bulk_set adds ~200 ms + ~4 insert waits
     # (audit, evidence, belief sources twice) before it.

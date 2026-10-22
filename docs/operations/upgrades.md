@@ -81,11 +81,10 @@ checkout.
    a process at 200 writes a second refused writes with a pool at the bound (20) and
    none at twice it. Keep `LOOM_CH_POOL_MAXSIZE` at least three times the bound plus the
    process's other statements, and raise it when that sum passes the current value. The
-   default 64 leaves room for about 300 request-path batched inserts a second (three
-   times the bound is 45) with about 20 connections for the process's other statements.
-   The default 64 was measured clean at 200 `conversation.append` writes a second (two
-   batched inserts each, `bench/write_rate.py --target client`); count each
-   `memory.set` at six. A process that cannot grow its pool starts with
+   default 64 holds three times the bound for about 300 request-path batched inserts a
+   second, with about 20 connections left for other statements (measured clean at 400 a
+   second: 200 `conversation.append` writes, `bench/write_rate.py --target client`);
+   count each `memory.set` at six. A process that cannot grow its pool starts with
    `LOOM_CH_BATCHED_INSERTS=false`
    ([batched inserts](../architecture/clickhouse.md#batched-inserts)). That frees only
    the audit and outbox rows of a memory write: the four entity-graph inserts stay

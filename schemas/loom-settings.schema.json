@@ -204,7 +204,7 @@
         "ch_batched_inserts": {
           "default": true,
           "type": "boolean",
-          "description": "Send per-request inserts (audit, transcript turns, agent_events, webhook outbox, evidence) as waited async inserts sharing parts, each holding a pooled connection; false commits each."
+          "description": "Batch inserts of tables written per request or by busy workers (audit, turns, embeddings, agent_events, webhook outbox and attempts, evidence) as waited async inserts; false commits."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,
