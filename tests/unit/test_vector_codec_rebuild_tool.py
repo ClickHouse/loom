@@ -94,6 +94,8 @@ class _CH:
             return _R([("ReplacingMergeTree", row["uuid"], "2000-01-01")] if row else [])
         if "system.one" in sql:
             return _R([("h", "26.8.8.8")])
+        if "FROM system.replication_queue" in sql:  # the grant probe
+            return _R([(0,)])
         if "system.replicas" in sql or "compression_codec FROM" in sql:
             return _R([])
         if "version(), hostName()" in sql:
@@ -225,30 +227,32 @@ def test_a_confirmed_rebuild_swaps_and_keeps_the_rollback_copy() -> None:
 
 
 @pytest.mark.parametrize(
-    ("twin", "flags"),
+    ("twin", "flags", "step"),
     [
-        (_twin("turboquant"), ()),
-        (_twin(), ("--index-granularity", "64")),
-        (_twin(), ("--chain", "LZ4")),
-        (_live(), ()),
+        (_twin("turboquant"), (), "--restart --yes"),
+        (_twin(), ("--index-granularity", "64"), "--restart --yes"),
+        (_twin(), ("--chain", "LZ4"), "--restart --yes"),
+        (_live(), (), "--restart --yes"),
         (
             {**_twin(), "ddl": _twin()["ddl"].replace("ORDER BY (org, namespace)", "ORDER BY org")},
             (),
+            "scripts.ops.table_rebuild --table memory_chunks --dry-run",
         ),
     ],
     ids=["method", "granularity", "chain", "plain", "sorting-key"],
 )
 def test_a_reused_twin_of_another_layout_refuses(
-    twin: dict[str, Any], flags: tuple[str, ...], capsys: Any
+    twin: dict[str, Any], flags: tuple[str, ...], step: str, capsys: Any
 ) -> None:
     """The gates read the stored vectors and the codes, so neither sees a twin built with
-    another method, granularity, chain or sorting key: --reuse refuses it and names
-    --restart instead of swapping that layout in."""
+    another method, granularity, chain or sorting key: --reuse refuses it instead of
+    swapping that layout in. It names --restart, or for another sorting key, which may be
+    the old table scripts/ops/table_rebuild.py exchanged out, that tool's --dry-run."""
     ch = _CH(memory_chunks=_live(), memory_chunks_rebuild=twin)
     assert _run(ch, "--yes", "--reuse", *flags) == tr.REFUSED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     assert ch.t["memory_chunks_rebuild"] is twin and _writes(ch) == []
-    assert "--restart --yes" in capsys.readouterr().out
+    assert step in capsys.readouterr().out
 
 
 def test_a_reused_twin_of_this_layout_swaps() -> None:
@@ -513,7 +517,8 @@ def test_a_swap_removes_the_record_so_a_later_half_swap_keeps_the_old_table(
     other.mkdir()
     monkeypatch.chdir(other)
     ch.lose_rename = True
-    _run(ch, "--yes", "--require-patch-free")
+    with pytest.raises(RuntimeError, match="session lost"):
+        _run(ch, "--yes", "--require-patch-free")
     assert not (other / "memory_chunks_rebuild.uuid").exists()
     monkeypatch.chdir(tmp_path)
     old = ch.t["memory_chunks_rebuild"]
@@ -545,7 +550,8 @@ def test_a_record_left_by_a_reused_swap_no_longer_names_the_twin_a_leftover(
     assert (tmp_path / "memory_chunks_rebuild.uuid").exists()
     ch.t.pop("memory_chunks_pre_rebuild")
     ch.lose_rename = True
-    _run(ch, "--yes", "--require-patch-free")
+    with pytest.raises(RuntimeError, match="session lost"):
+        _run(ch, "--yes", "--require-patch-free")
     assert ch.t["memory_chunks_rebuild"] is created
     monkeypatch.chdir(tmp_path)
     ch.commands.clear()
@@ -918,7 +924,6 @@ def test_the_statement_timeout_caps_the_gate_reads_and_stays_within_the_read_tim
         "GROUP BY w",
         "FULL OUTER JOIN",
         "LEFT JOIN",
-        "ORDER BY n DESC",
         "round(cosineDistance",
         "ORDER BY rand()",
         "SELECT max(created_at)",
@@ -1426,6 +1431,8 @@ def test_only_a_log_keeper_lists_empty_passes_on_zero_log_pointers() -> None:
         def q(self, sql: str, parameters: Any = None, **st: Any) -> list[Any]:
             if "zookeeper_path" in sql:
                 return [("a", "/t/a/"), ("b", "/t/b")]
+            if "system.replication_queue" in sql:  # the grant probe
+                return [(0,)]
             return [(entries[parameters["p"]],)]
 
     job: Any = _Job()
@@ -1550,12 +1557,17 @@ def test_a_write_into_the_new_table_after_the_swap_never_names_the_rollback(
     assert _run(ch, "--yes") == tr.OK
     out = capsys.readouterr().out
     assert "next: keep writers and erasure stopped" in out and "--drop-pre-rebuild --yes" in out
-    for cons, newer in (((1, 0, 0), (0, 0)), ((1, 0, 0), (0, 1)), ((0, 0, 1), (0, 0))):
+    new_ahead = "loom.memory_chunks holds a change loom.memory_chunks_pre_rebuild lacks"
+    for cons, newer, why in (
+        ((1, 0, 0), (0, 0), "1 key(s) differ at one version; either table may hold the change"),
+        ((1, 0, 0), (0, 1), new_ahead),
+        ((0, 0, 1), (0, 0), new_ahead),
+    ):
         ch.cons, ch.newer = cons, newer
         assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
         assert "memory_chunks_pre_rebuild" in ch.t
         out = capsys.readouterr().out
-        assert "loom.memory_chunks holds a change loom.memory_chunks_pre_rebuild lacks" in out
+        assert why in out
         assert "inspect the difference" in json.loads(out.rsplit("summary ", 1)[1])["next"]
         assert "--rollback --yes" not in out
     ch.cons, ch.newer = (1, 0, 0), (1, 0)  # the rollback copy holds the newer version
@@ -1597,7 +1609,8 @@ def test_drop_pre_rebuild_after_a_rollback_keeps_a_change_only_the_new_layout_co
     assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
     assert "memory_chunks_pre_rebuild" in ch.t
     out = capsys.readouterr().out
-    assert "loom.memory_chunks_pre_rebuild holds a change loom.memory_chunks lacks" in out
+    assert "1 key(s) differ at one version" in out
+    assert "a same-version change in the new-layout copy" in out
     last = ch.queries[_last(ch, "FULL OUTER JOIN")]
     assert "FROM loom.memory_chunks FINAL" in last.split("FULL OUTER JOIN")[0]
     ch.cons = (0, 2, 0)  # writes after the rollback reached only the live table
