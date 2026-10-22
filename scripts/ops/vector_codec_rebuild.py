@@ -50,7 +50,9 @@ Preconditions: one ClickHouse version (26.7+) on every replica of the
 cluster `--cluster` names (`default`; `''` checks this server only), `enable_quantized_codec`
 settable or held at 1 for this user (`allow_suspicious_codecs` too with `--chain`; a setting held
 at 1 is never sent), every replica writable, the `SYSTEM FLUSH ASYNC INSERT QUEUE` and
-`SYSTEM SYNC REPLICA` privileges on the table (the preflight runs both once), and no row
+`SYSTEM SYNC REPLICA` privileges on the table (the preflight runs both once), `SELECT` on
+`system.zookeeper` on a ReplicatedMergeTree (each read after the drain reads the replication
+log there, and a run that cannot read it refuses), and no row
 written in the last hour with an empty vector in the named columns (writers'
 fixed-length placeholders must be deployed first: a coded column rejects an
 empty vector). ReplicatedMergeTree runs connect directly to one replica throughout
@@ -244,6 +246,11 @@ def column_shape(ddl: str, col: str) -> str:
     if not m:
         return ""
     return m.group(0).replace(m.group(1), "", 1) if m.group(1) else m.group(0)
+
+
+def vector_columns(ddl: str) -> list[str]:
+    """Every vector column the DDL declares, in order. Pure."""
+    return re.findall(r"^\s*`(\w+)` Array\((?:Float32|BFloat16)\)", ddl, re.MULTILINE)
 
 
 def vector_dim(ddl: str, col: str) -> int | None:
@@ -566,10 +573,18 @@ class VectorRebuild:
         )
         empty = []
         for table, path in paths:
-            entries = self.q(
-                "SELECT count() FROM system.zookeeper WHERE path = {p:String}",
-                parameters={"p": path.rstrip("/") + "/log"},
-            )[0][0]
+            try:
+                entries = self.q(
+                    "SELECT count() FROM system.zookeeper WHERE path = {p:String}",
+                    parameters={"p": path.rstrip("/") + "/log"},
+                )[0][0]
+            except tr.Interrupted:
+                raise
+            except Exception as e:  # an unreadable log refuses, never passes
+                raise ReplicaBehind(
+                    f"could not read the replication log of loom.{table} in system.zookeeper "
+                    f"({str(e)[:160]}); the run needs SELECT on system.zookeeper"
+                ) from e
             if not entries:
                 empty.append(table)
         return empty
@@ -666,20 +681,21 @@ class VectorRebuild:
 
     def twin_after_exchange(self) -> bool | None:
         """Whether the twin may be the old table an exchange without its rename left,
-        read from the two tables rather than this run's layout flags (a rerun may name
-        another layout). None when it is not: absent, newer than the live table, or
-        under a live table with a plain named column. Else whether the twin's named
-        columns are coded: False (all plain) means it is the old table, True means
-        either table may be the old one."""
+        read from every vector column of the two tables rather than this run's flags (a
+        rerun may name another layout or other columns). None when it is not: absent,
+        newer than the live table, or under a live table with no coded vector column.
+        Else whether a column coded on the live table is coded on the twin too: False
+        means the twin is the old table, True means either table may be the old one."""
         if not (self.exists(self.t) and self.exists(self.twin)):
             return None
         if self.twin_is_newer():
             return None
         live = self.ddl(self.t)
-        if any(vector_dim(live, c) is None for c in self.cols):
+        coded = [c for c in vector_columns(live) if vector_dim(live, c) is not None]
+        if not coded:
             return None
         twin = self.ddl(self.twin)
-        return any(vector_dim(twin, c) is not None for c in self.cols)
+        return any(vector_dim(twin, c) is not None for c in coded)
 
     def twin_is_newer(self) -> bool:
         """Whether the twin's metadata time is later than the live table's, which shows it
@@ -751,8 +767,9 @@ class VectorRebuild:
             # Any ALTER of the live table also moves its metadata time past the twin's, so
             # the time alone does not show an exchange; the codecs do. An older twin under
             # a coded live table may be the old table, the only rollback copy, whatever
-            # layout this run asks for: the report names the rename (a plain twin) or the
-            # comparison (two coded tables). Under a plain live table the twin is a leftover.
+            # layout or columns this run asks for: the report names the rename (a plain twin)
+            # or the comparison (two coded tables). Under a live table with no coded vector
+            # column the twin is a leftover.
             return self.report_state()
         twin = tr.table_row(self.ch, self.twin)
         if twin is not None and not (self.a.reuse or self.a.restart):

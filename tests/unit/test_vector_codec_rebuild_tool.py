@@ -258,6 +258,41 @@ def test_an_older_plain_twin_is_kept_whatever_layout_the_rerun_names(
     )
 
 
+@pytest.mark.parametrize("flag", ["--restart", "--reuse", "--dry-run"])
+def test_an_older_plain_twin_is_kept_whatever_columns_the_rerun_names(
+    flag: str, capsys: Any
+) -> None:
+    """A rebuild of `embedding` alone exchanged without its rename: the live table has
+    `embedding` coded and `key_embedding` plain, and the older plain twin is the old
+    table. A rerun naming both columns still refuses, drops nothing and prints the rename."""
+    two = ARRAY.replace(
+        "    `created_at` DateTime",
+        "    `key_embedding` Array(Float32),\n    `created_at` DateTime",
+    )
+    coded = two.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    old = {"ddl": two, "rows": 5, "uuid": "old", "created": TWIN_CREATED}
+    new = {"ddl": coded, "rows": 5, "uuid": "live", "created": COPY_STARTED}
+    ch = _CH(memory_chunks=new, memory_chunks_rebuild=old)
+    code = vcr.main(
+        [
+            "--table",
+            "memory_chunks",
+            "--columns",
+            "embedding,key_embedding",
+            "--settle-s",
+            "0",
+            "--yes",
+            flag,
+        ],
+        ch=ch,
+    )
+    assert code == tr.REFUSED
+    assert _writes(ch) == [] and ch.t["memory_chunks_rebuild"] is old
+    assert "RENAME TABLE loom.memory_chunks_rebuild TO loom.memory_chunks_pre_rebuild" in (
+        capsys.readouterr().out
+    )
+
+
 def test_drop_pre_rebuild_without_the_copy_refuses_while_a_twin_exists(capsys: Any) -> None:
     """With no rollback copy and an older plain twin, --drop-pre-rebuild names the rename
     rather than reporting the copy gone, so no hand drop of the twin follows."""
@@ -1163,6 +1198,23 @@ def test_only_a_log_keeper_lists_empty_passes_on_zero_log_pointers() -> None:
 
     job: Any = _Job()
     assert vcr.VectorRebuild.empty_logs(job, ["a", "b"]) == ["a"]
+
+
+def test_a_user_who_cannot_read_system_zookeeper_is_refused(capsys: Any) -> None:
+    """The drained reads on a ReplicatedMergeTree read the replication log in
+    system.zookeeper; without that grant the preflight refuses (exit 3) and names it."""
+
+    class _NoKeeper(_CH):
+        def _answer(self, sql: str, p: dict[str, Any]) -> _R:
+            if "zookeeper_path" in sql:
+                return _R([("memory_chunks", "/t/memory_chunks")])
+            if "system.zookeeper" in sql:
+                raise RuntimeError("Not enough privileges")
+            return super()._answer(sql, p)
+
+    ch = _NoKeeper(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
+    assert _run(ch, "--yes") == tr.REFUSED and _writes(ch) == []
+    assert "the run needs SELECT on system.zookeeper" in capsys.readouterr().out
 
 
 def test_each_gate_read_of_a_replicated_twin_follows_its_sync() -> None:

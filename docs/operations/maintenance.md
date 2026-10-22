@@ -253,10 +253,11 @@ left for inspection, or a leftover newer than the live table). When it names
 tables, do that first and drop nothing: the rename step means the exchange ran without
 the rename, `<table>_rebuild` is the old table, and the tool refuses `--reuse`,
 `--restart` and `--drop-pre-rebuild` until the rename runs. The tool reads
-this from the tables, not from the run's flags, so a rerun with another `--method`,
-`--chain` or `--index-granularity` refuses too: a twin not newer than a live table whose named
-columns are all coded may be the old table. When the twin's named columns are plain, the
-tool names the rename. When they are coded too (a `--require-patch-free` run, or a
+this from every vector column of the two tables, not from the run's flags, so a rerun
+with another `--method`, `--chain`, `--index-granularity` or `--columns` refuses too: a
+twin not newer than a live table with a coded vector column may be the old table. When
+each column coded on the live table is plain on the twin, the tool names the rename.
+When one is coded on the twin too (a `--require-patch-free` run, or a
 rebuild of a coded table), the codecs do not show whether an exchange ran: the tool
 refuses, renames and drops nothing, and asks to compare the two tables' rows before
 dropping either by hand. A twin newer than the live table was never exchanged in, so
@@ -305,7 +306,8 @@ The erasure saga does not cover these copies.
   no entry other than a merge or a mutation left in its queue. A replica that has not
   pulled a log of one entry reports the same zero log pointer as one with an empty log, so
   the run reads the log's entries in `system.zookeeper` and passes the zeros only for a
-  log with none; its user needs read access to `system.zookeeper`. A read on a replica that
+  log with none; its user needs `SELECT` on `system.zookeeper`, and a run that cannot read
+  it refuses like a read on a replica behind. A read on a replica that
   has not caught up refuses the run in the preflight (exit 3), fails the gate before the
   swap (exit 5) and fails the postcondition after it (exit 7). Every later gate read and
   the last delta use `select_sequential_consistency = 1`. On `SharedMergeTree` this covers

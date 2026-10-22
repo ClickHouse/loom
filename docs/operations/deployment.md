@@ -563,7 +563,7 @@ the `next` it prints; an earlier run may have stopped before printing one. When 
 names `RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild`, the exchange ran
 without the rename and `<table>_rebuild` is the old table, the rollback copy: run that
 step instead of a drop. The tool refuses `--reuse`, `--restart` and `--drop-pre-rebuild`
-in that state, whatever layout the rerun names. When `next` asks to compare `<table>` and
+in that state, whatever layout or columns the rerun names. When `next` asks to compare `<table>` and
 `<table>_rebuild`, both are coded and the twin is not newer: compare their rows
 before dropping either. When `next` names the twin a leftover newer than `<table>`, no
 exchange ran: rerun with `--restart --yes` or drop it. Otherwise drop the twin with
