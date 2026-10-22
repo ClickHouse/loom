@@ -101,9 +101,10 @@ settings:
   # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. [restart]
   # ch_timeout_ddl_s: 300.0
 
-  # Batch the inserts written on every request as waited async inserts that share parts;
-  # each holds a pooled connection while it waits, so size ch_pool_maxsize. False
-  # commits them. [live]
+  # Batch the inserts written on every request as waited async inserts that share parts
+  # (the switched group, docs/architecture/clickhouse.md#batched-inserts); each holds a
+  # pooled connection while it waits. False commits that group; waited async inserts
+  # keep their bounds. [live]
   # ch_batched_inserts: true
 
   # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits

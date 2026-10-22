@@ -558,8 +558,9 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Batch the inserts written on every request as waited async inserts that share parts; each
-    # holds a pooled connection while it waits, so size ch_pool_maxsize. False commits them.
+    # Batch the inserts written on every request as waited async inserts that share parts (the
+    # switched group, docs/architecture/clickhouse.md#batched-inserts); each holds a pooled
+    # connection while it waits. False commits that group; waited async inserts keep their bounds.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when
     # writes are sparse; capped at ch_batched_insert_wait_max_ms (or the background bound).
@@ -5306,7 +5307,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "policy.delete": 400,
     "policy.list": 200,
     "policy.set": 400,
-    "procedure.add": 120,
+    # memory.set's write path (handle_memory_set).
+    "procedure.add": 200,
     "procedure.evolve": 200,
     "procedure.fork": 400,
     "procedure.list": 100,
@@ -5315,11 +5317,11 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "procedure.record_run": 150,
     "procedure.revise": 300,
     "profile.activity": 80,
-    # memory.set's write path (handle_memory_set), 2-3 round-trips under contention.
-    "profile.append": 200,
+    # memory.get, then memory.set's write path (handle_memory_set).
+    "profile.append": 225,
     "profile.render": 60,
-    # memory.set's write path (handle_memory_set).
-    "profile.replace": 200,
+    # memory.get, then memory.set's write path (handle_memory_set).
+    "profile.replace": 225,
     # memory.set's write path (handle_memory_set).
     "profile.set": 200,
     # The schema, the profile row and one user's digest aggregate.

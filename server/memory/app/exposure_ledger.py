@@ -151,7 +151,7 @@ def record_exposure(
         # No running loop (sync caller / unit test): built, not written.
         after_write.schedule(_bg(), name="memory.exposure_ledger")
 
-    # A breadth rule counts this row: committed before the answer instead.
+    # A breadth rule counts this row: written (a waited insert) before the answer instead.
     if not hold_exposure(row, _schedule):
         _schedule()
     return row

@@ -113,9 +113,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   every call. For `OVERLOADED` under a sustained write rate, size the pool for the
   connections batched inserts hold
   ([batched inserts](../architecture/clickhouse.md#batched-inserts)): raise
-  `LOOM_CH_POOL_MAXSIZE` (a restart), switch batching off with
+  `LOOM_CH_POOL_MAXSIZE` (a restart), switch batching off for the switched group with
   `loom settings set ch_batched_inserts false` (`LOOM_CH_BATCHED_INSERTS=false` at
-  startup), or lower the insert waits live with
+  startup; the waited async inserts still wait), or lower the insert waits live with
   `loom settings set ch_batched_insert_wait_max_ms <ms>` (and
   `ch_batched_insert_background_wait_max_ms`).
   [Runtime settings](./runtime-settings.md) covers live overrides.

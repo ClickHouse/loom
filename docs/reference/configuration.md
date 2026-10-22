@@ -131,7 +131,7 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_CH_TIMEOUT_READ_S` | `float` | `30.0` |  | Deadline, seconds, for read statements, applied as `max_execution_time` and as a client-side bound that frees the pool slot. 0 = no bound for reads. |
 | `LOOM_CH_TIMEOUT_WRITE_S` | `float` | `60.0` |  | Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. |
 | `LOOM_CH_TIMEOUT_DDL_S` | `float` | `300.0` |  | Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. |
-| `LOOM_CH_BATCHED_INSERTS` | `bool` | `True` | live | Batch the inserts written on every request as waited async inserts that share parts; each holds a pooled connection while it waits, so size ch_pool_maxsize. False commits them. |
+| `LOOM_CH_BATCHED_INSERTS` | `bool` | `True` | live | Batch the inserts written on every request as waited async inserts that share parts (the switched group, docs/architecture/clickhouse.md#batched-inserts); each holds a pooled connection while it waits. False commits that group; waited async inserts keep their bounds. |
 | `LOOM_CH_BATCHED_INSERT_WAIT_MIN_MS` | `int` | `10` | live | Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when writes are sparse; capped at ch_batched_insert_wait_max_ms (or the background bound). |
 | `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` | `int` | `50` | live | Longest wait, ms, of a batched or waited async insert a request waits on; it holds a pooled connection meanwhile. |
 | `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` | `int` | `200` | live | Longest wait, ms, of the usage-event flusher's ticks and shutdown drain and the write-mark timer's flush, which no request waits on. |
