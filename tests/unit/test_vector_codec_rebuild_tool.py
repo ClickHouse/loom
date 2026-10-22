@@ -557,7 +557,8 @@ def test_an_in_place_change_after_the_checks_keeps_both_tables_without_a_rollbac
     ch.cons = (1, 0, 0)
     assert _run(ch, "--yes") == tr.POSTCONDITION
     out = capsys.readouterr().out
-    assert "1 with other content at one version" in out and "inspect the difference" in out
+    assert "1 key(s) differ at one version; either table may hold the change" in out
+    assert "holds a change" not in out and "inspect the difference" in out
     assert "--rollback --yes" not in json.loads(out.rsplit("summary ", 1)[1])["next"]
     last = ch.queries[_last(ch, "FULL OUTER JOIN")]
     src, twin = last.split("FULL OUTER JOIN")
@@ -590,6 +591,49 @@ def test_a_mutation_after_the_checks_fails_the_postcondition(capsys: Any) -> Non
     last = _last(ch, "system.mutations")
     assert "table = {t:String}" in ch.queries[last]
     assert ch.params[last]["t"] == "memory_chunks_pre_rebuild"
+
+
+def test_a_mutation_rolled_back_shows_as_a_same_version_difference_in_the_drop(
+    capsys: Any,
+) -> None:
+    """The swap stops the rollback copy's merges, so a mutation created after the last
+    check applies only once --rollback starts them again. The postcondition says so, and
+    the --drop-pre-rebuild that follows reports the touched keys as differing at one
+    version without naming the new-layout copy as the one that holds the change."""
+    ch = _CH(memory_chunks=_live())
+    ch.mutations_first = [0, 0]  # the preflight and the gate before the swap
+    ch.mutations = 1
+    assert _run(ch, "--yes") == tr.POSTCONDITION
+    out = capsys.readouterr().out
+    assert "A mutation applies after the rollback" in out
+    assert "--rollback --yes" in json.loads(out.rsplit("summary ", 1)[1])["next"]
+    assert _run(ch, "--rollback", "--yes") == tr.OK
+    assert "SYSTEM START MERGES loom.memory_chunks" in ch.commands
+    capsys.readouterr()
+    ch.cons = (1, 0, 0)  # the tombstone applied to the restored table
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+    assert "memory_chunks_pre_rebuild" in ch.t
+    out = capsys.readouterr().out
+    assert "1 key(s) differ at one version; either table may hold the change" in out
+    assert "a mutation the rollback carried back" in out
+    assert "holds a change" not in out
+
+
+def test_a_signal_during_the_postcondition_exits_130_and_keeps_the_copy(
+    capsys: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SIGTERM raises Interrupted where the run is; the checks after the swap pass it on
+    rather than reporting checks that could not run."""
+
+    def interrupted(*_: Any) -> Any:
+        raise tr.Interrupted("signal 15")
+
+    monkeypatch.setattr(vcr.VectorRebuild, "rollback_copy_change", interrupted)
+    ch = _CH(memory_chunks=_live())
+    assert _run(ch, "--yes") == tr.INTERRUPTED
+    assert "memory_chunks_pre_rebuild" in ch.t
+    out = capsys.readouterr().out
+    assert "INTERRUPTED: signal 15" in out and "the checks could not run" not in out
 
 
 def test_a_duplicate_key_insert_on_a_plain_merge_tree_stops_the_swap(capsys: Any) -> None:
@@ -654,7 +698,7 @@ def test_unfinished_mutations_refuse_the_rebuild(capsys: Any) -> None:
     ch.mutations = 1
     assert _run(ch, "--yes") == tr.REFUSED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
-    assert "a mutation still running or one that finished under a minute ago" in (
+    assert "a mutation still running or one created under a minute ago (the clock-skew margin)" in (
         capsys.readouterr().out
     )
 
@@ -777,13 +821,20 @@ def test_a_swap_names_its_next_step_with_the_run_s_layout_flags_in_the_summary(
     check the tables against the default layout and refuse."""
     ch = _CH(memory_chunks=_live())
     flags = ("--method", "int8", "--index-granularity", "512", "--cluster", "")
-    assert _run(ch, *flags, "--statement-timeout-s", "5000", "--yes") == tr.OK
+    gates = ("--gate-fetch-multiplier", "10", "--probes", "40", "--require-patch-free")
+    assert _run(ch, *flags, *gates, "--statement-timeout-s", "5000", "--yes") == tr.OK
     summary = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])
     assert summary["exit"] == tr.OK and "writers and erasure stopped" in summary["next"]
     assert (
-        "--method int8 --index-granularity 512 --cluster '' --statement-timeout-s 5000 "
+        "--method int8 --index-granularity 512 --gate-fetch-multiplier 10 --probes 40 "
+        "--require-patch-free --cluster '' --statement-timeout-s 5000 "
         "--drop-pre-rebuild --yes"
     ) in summary["next"]
+    ch = _CH(memory_chunks=_live())
+    assert _run(ch, "--yes") == tr.OK
+    summary = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])
+    assert "--gate-fetch-multiplier" not in summary["next"] and "--probes" not in summary["next"]
+    assert "--require-patch-free" not in summary["next"]
 
 
 def test_columns_that_differ_by_name_after_the_swap_keep_both_tables(

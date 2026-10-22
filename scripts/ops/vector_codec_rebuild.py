@@ -60,7 +60,8 @@ log names, and fails the run when it has not.
 
 After a swap the tool compares the rollback copy with the live table. A change only
 the rollback copy holds names `--rollback`; a change the live table holds (a write
-after the swap, or other content at one version) keeps both tables for inspection.
+after the swap) or a key that differs at one version, which either table may hold,
+keeps both tables for inspection.
 `--drop-pre-rebuild` runs the same comparison first, after a swap and after a
 rollback, and refuses (keeping the copy) while the copy it would drop holds a change.
 
@@ -125,7 +126,12 @@ COPY_RECEIVE_TIMEOUT_S = 7200
 COPY_EXECUTION_TIME_S = COPY_RECEIVE_TIMEOUT_S - 200
 # The defaults of --cluster and --statement-timeout-s; a printed next step names any other.
 DEFAULT_CLUSTER = "default"
+# not a setting: the default of this operator tool's --statement-timeout-s flag
 DEFAULT_STATEMENT_TIMEOUT_S = 1800.0
+# The defaults of the recall gate's flags; a printed next step names any other.
+# not a setting: the defaults of this operator tool's --gate-fetch-multiplier and --probes flags
+DEFAULT_GATE_FETCH_MULTIPLIER = 3.0
+DEFAULT_PROBES = 20
 # How far above the exact 20th distance a twin hit may read and still count.
 DISTANCE_TOLERANCE = 1e-6
 COUNT_SETTLE_ATTEMPTS = 8
@@ -612,7 +618,7 @@ class VectorRebuild:
     @property
     def run_line(self) -> str:
         """The command line that runs this tool on this table with this run's layout,
-        cluster and timeout flags, up to its action flags."""
+        gate, cluster and timeout flags, up to its action flags."""
         line = (
             f"python -P -m scripts.ops.vector_codec_rebuild --table {self.t} "
             f"--columns {','.join(self.cols)} --method {self.a.method}"
@@ -621,6 +627,12 @@ class VectorRebuild:
             line += f" --chain {shlex.quote(self.chain)}"
         if self.a.index_granularity:
             line += f" --index-granularity {self.a.index_granularity}"
+        if self.a.gate_fetch_multiplier != DEFAULT_GATE_FETCH_MULTIPLIER:
+            line += f" --gate-fetch-multiplier {self.a.gate_fetch_multiplier:g}"
+        if self.a.probes != DEFAULT_PROBES:
+            line += f" --probes {self.a.probes}"
+        if self.a.require_patch_free:
+            line += " --require-patch-free"
         if self.a.cluster != DEFAULT_CLUSTER:
             line += f" --cluster {shlex.quote(self.a.cluster)}"
         if self.a.statement_timeout_s != DEFAULT_STATEMENT_TIMEOUT_S:
@@ -713,8 +725,8 @@ class VectorRebuild:
         rather than after the copy."""
         if self.mutations_since(self.t, since):
             return (
-                f"loom.{self.t} has a mutation still running or one that finished under a "
-                "minute ago; wait for it to finish and rerun in a minute"
+                f"loom.{self.t} has a mutation still running or one created under a minute "
+                "ago (the clock-skew margin); wait for it to finish and rerun in a minute"
             )
         return ""
 
@@ -723,6 +735,8 @@ class VectorRebuild:
         missing grant refuses before the copy rather than failing after the gates."""
         try:
             self.drain(engine)
+        except tr.Interrupted:
+            raise
         except Exception as e:  # noqa: BLE001 - any refusal of the drain refuses the run
             return (
                 f"the pre-swap drain failed ({str(e)[:160]}); one cause is a missing grant: "
@@ -1143,6 +1157,8 @@ class VectorRebuild:
             log("live patch parts after:", self.q(patch_parts_sql(self.t))[0][0])
         try:
             why, rollback = self.rollback_copy_change(engine, version, key, since)
+        except tr.Interrupted:
+            raise
         except Exception as e:  # noqa: BLE001 - checks that cannot run keep the copy
             self.recheck = True
             log(
@@ -1167,11 +1183,11 @@ class VectorRebuild:
 
     def differences(
         self, version: str | None, key: list[str], old: str, new: str
-    ) -> tuple[str, str]:
-        """What the old-layout table `old` holds that the new-layout table `new` lacks, and
-        what `new` holds that `old` lacks, each as a phrase or ''. A key both hold at one
-        version with other content counts for `new`: copying back newer versions and absent
-        keys cannot restore it. Raises when the checks cannot run."""
+    ) -> tuple[str, str, str]:
+        """What the old-layout table `old` holds that the new-layout table `new` lacks, what
+        `new` holds that `old` lacks, and the keys both hold at one version with other
+        content, each as a phrase or ''. The hash shows only that such a key differs, not
+        which table holds the change. Raises when the checks cannot run."""
         mismatched, old_only, new_only = self.consistent(version, key, source=old, copy=new)
         old_newer = new_newer = 0
         if mismatched:
@@ -1182,15 +1198,14 @@ class VectorRebuild:
             f"loom.{old} against loom.{new} (mismatched, only in the first, only in the second):",
             (mismatched, old_only, new_only),
         )
-        old_ahead = new_ahead = ""
+        old_ahead = new_ahead = same = ""
         if old_only or old_newer:
             old_ahead = f"{old_only} key(s) only in loom.{old}, {old_newer} newer there"
-        if new_only or new_newer or same_version:
-            new_ahead = (
-                f"{new_only} key(s) only in loom.{new}, {new_newer} newer there, "
-                f"{same_version} with other content at one version"
-            )
-        return old_ahead, new_ahead
+        if new_only or new_newer:
+            new_ahead = f"{new_only} key(s) only in loom.{new}, {new_newer} newer there"
+        if same_version:
+            same = f"{same_version} key(s) differ at one version; either table may hold the change"
+        return old_ahead, new_ahead, same
 
     def rollback_copy_change(
         self, engine: str, version: str | None, key: list[str], since: int
@@ -1200,21 +1215,35 @@ class VectorRebuild:
         left it: the live table must match it, with no mutation since `since` (the gate saw
         none before the swap). Raises when the checks cannot run."""
         self.sync_rollback_copy(engine)
-        old_ahead, new_ahead = self.differences(version, key, self.pre, self.t)
-        if new_ahead:
+        old_ahead, new_ahead, same = self.differences(version, key, self.pre, self.t)
+        if new_ahead or same:
+            why = []
+            if new_ahead:
+                why.append(
+                    f"loom.{self.t} holds a change loom.{self.pre} lacks ({new_ahead}): a "
+                    "write after the swap"
+                )
+            if same:
+                why.append(same)
             return (
-                f"loom.{self.t} holds a change loom.{self.pre} lacks ({new_ahead}): a write "
-                "after the swap, or other content at one version, which --rollback would "
-                "drop, since it copies back only newer versions and absent keys"
+                "; ".join(why) + ". --rollback would drop a change the new table holds, "
+                "since it copies back only newer versions and absent keys"
             ), False
         mutations = self.mutations_since(self.pre, since)
         log("mutations on the rollback copy:", mutations)
         if old_ahead or mutations:
-            return (
+            why = (
                 f"the source changed after the last check ({old_ahead or 'no key'}; "
                 f"{mutations} mutation(s) on loom.{self.pre}), and the new table may not "
                 "hold the change"
-            ), True
+            )
+            if mutations:
+                # the swap stopped the copy's merges; the rollback starts them again
+                why += (
+                    ". A mutation applies after the rollback, so the --drop-pre-rebuild "
+                    "that follows shows the keys it touched as differing at one version"
+                )
+            return why, True
         # the hash zeroes a vector of another width on both sides, so an UPDATE to one
         # after the last width check reads as consistent; the width read shows it
         if why := self.width_refusal(self.ddl(self.pre), self.pre):
@@ -1276,15 +1305,24 @@ class VectorRebuild:
         return self.rollback_copy_change(engine, version, key, self.metadata_time(self.t))
 
     def rolled_back_change(self) -> str:
-        """Why the new-layout copy a rollback left holds a change the live table lacks (a
-        same-version change made in the new table, which the rollback did not copy back),
-        or ''. Raises when the checks cannot run."""
+        """Why the new-layout copy a rollback left may hold a change the live table lacks,
+        or ''. A key both hold at one version with other content is either a same-version
+        change made in the new table, which the rollback did not copy back, or a mutation
+        on the old table that applied once the rollback started its merges. Raises when
+        the checks cannot run."""
         engine, version, key = self.drain_after_swap()
         self.sync_rollback_copy(engine)
-        _, new_ahead = self.differences(version, key, self.t, self.pre)
+        _, new_ahead, same = self.differences(version, key, self.t, self.pre)
+        why = []
         if new_ahead:
-            return f"loom.{self.pre} holds a change loom.{self.t} lacks ({new_ahead})"
-        return ""
+            why.append(f"loom.{self.pre} holds a change loom.{self.t} lacks ({new_ahead})")
+        if same:
+            why.append(
+                f"{same}: a same-version change in the new-layout copy, or a mutation the "
+                f"rollback carried back that has since applied to loom.{self.t}, which "
+                "another --rollback would undo"
+            )
+        return "; ".join(why)
 
     def drop_pre(self) -> int:
         tr.print_target(self.ch, self.t)
@@ -1305,6 +1343,8 @@ class VectorRebuild:
             else:
                 swapped = bool(live)
             why, rollback = self.swapped_change() if swapped else (self.rolled_back_change(), False)
+        except tr.Interrupted:
+            raise
         except Exception as e:  # noqa: BLE001 - checks that cannot run keep the copy
             self.recheck = True
             log(
@@ -1346,7 +1386,7 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument(
         "--gate-fetch-multiplier",
         type=float,
-        default=3.0,
+        default=DEFAULT_GATE_FETCH_MULTIPLIER,
         help="the recall gate reads the twin at the multiplier its leg serves (code_summaries' cards: 10)",
     )
     ap.add_argument(
@@ -1355,7 +1395,7 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
         default=0,
         help="the twin's index_granularity (0 = keep the table's; code_summaries takes 256)",
     )
-    ap.add_argument("--probes", type=int, default=20)
+    ap.add_argument("--probes", type=int, default=DEFAULT_PROBES)
     ap.add_argument(
         "--require-patch-free",
         action="store_true",

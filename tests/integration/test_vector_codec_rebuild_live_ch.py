@@ -295,7 +295,8 @@ def test_a_lightweight_update_after_the_last_check_fails_the_postcondition(
     monkeypatch.setattr(tr, "swap_in", update_then_swap)
     assert vcr.main([*args(table), "--yes"], ch=ch) == tr.POSTCONDITION
     out = capsys.readouterr().out
-    assert "1 with other content at one version" in out and "inspect the difference" in out
+    assert "1 key(s) differ at one version; either table may hold the change" in out
+    assert "holds a change" not in out and "inspect the difference" in out
     assert "--rollback --yes" not in out.rsplit("summary ", 1)[1]
     pre = f"loom.{table}{tr.PRE_SUFFIX}"
     assert ch.query(f"SELECT note FROM {pre} FINAL WHERE id = 1").result_rows == [("late",)]

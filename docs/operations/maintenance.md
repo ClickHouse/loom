@@ -236,7 +236,8 @@ Keep writers and erasure stopped until the rebuild finishes or is abandoned and 
 `<table>_rebuild` twin and `<table>_pre_rebuild` rollback copy is removed; a successful
 swap prints that as its next step, in its log and in the summary line's `next`. Each next
 step that names a command carries the run's `--method`, `--chain`,
-`--index-granularity`, `--cluster` and `--statement-timeout-s`, so it runs as printed. Use `--drop-pre-rebuild --yes` to remove the rollback
+`--index-granularity`, `--gate-fetch-multiplier`, `--probes`, `--require-patch-free`,
+`--cluster` and `--statement-timeout-s`, so it runs as printed. Use `--drop-pre-rebuild --yes` to remove the rollback
 copy after validation or rollback, and `DROP TABLE loom.<table>_rebuild SYNC` to remove
 an abandoned twin. `--drop-pre-rebuild` first compares the two tables again (after the
 same drain as the postcondition) and refuses (exit 3), keeping the copy, while the copy
@@ -244,7 +245,7 @@ it would drop holds a change the live table lacks, also when both tables are on 
 target layout (a `--require-patch-free` rebuild of a table already on it). After a swap, a change only the
 rollback copy holds names `--rollback --yes`; a change the live table holds names no
 rollback (see after the swap below). After a rollback, a change only the new-layout copy
-holds keeps it. When the checks cannot run (a failed drain or sync, a read past the
+holds, or a key that differs at one version, keeps it. When the checks cannot run (a failed drain or sync, a read past the
 timeout, or a read on a replica that has not caught up), it also refuses and keeps the
 copy: fix the grant, connect directly to one replica, or raise `--statement-timeout-s`,
 and rerun `--drop-pre-rebuild`. The erasure saga does not
@@ -300,15 +301,20 @@ cover these copies.
   on the rollback copy, which has its own replication queue: a write that reached
   another replica before the swap belongs to the copy after the rename. `LIGHTWEIGHT`,
   because the swap stops the copy's merges and a full sync would wait on a merge entry.
-  A key only the rollback copy holds, a newer version there, an `ALTER UPDATE` on it, or
-  an `UPDATE` that sets a vector of another width (the hash zeroes such a vector on both
-  sides, so the tool also reads the rollback copy's widths) is a change the new table
-  lacks: the run fails its postcondition and names `--rollback --yes`, which puts the old
-  table back with the change. A key only the new table holds, a newer version there, or
-  a key whose content differs at one version (a lightweight `UPDATE` in either table,
-  merged or not) is a change `--rollback` would drop, since it copies back only newer
-  versions and absent keys: the run fails its postcondition, names no rollback, and asks
-  for both tables to be kept and the difference inspected by hand. A merge changes
+  A key only the rollback copy holds, a newer version there, an unfinished `ALTER UPDATE`
+  on it (the swap stops the copy's merges), or an `UPDATE` that sets a vector of another
+  width (the hash zeroes such a vector on both sides, so the tool also reads the rollback
+  copy's widths) is a change the new table lacks: the run fails its postcondition and
+  names `--rollback --yes`, which puts the old table back with the change. The rollback
+  starts the old table's merges again, so the mutation applies after it, and the
+  `--drop-pre-rebuild` that follows shows the keys it touched as differing at one version
+  and keeps both tables. A key only the new table holds or a newer version there is a
+  change `--rollback` would drop, since it copies back only newer versions and absent
+  keys. A key whose content differs at one version (a lightweight `UPDATE` in either
+  table, merged or not, or an `ALTER UPDATE` that finished before the swap) may be in
+  either table; the hash shows only that the rows differ. In both cases the run fails its
+  postcondition, names no rollback, and asks for both tables to be kept and the
+  difference inspected by hand. A merge changes
   neither table's rows and passes. When the checks cannot run (a refused sync of the
   rollback copy, a read past the timeout, a replica that has not caught up), the run
   fails its postcondition, keeps the copy and names `--drop-pre-rebuild`, which checks

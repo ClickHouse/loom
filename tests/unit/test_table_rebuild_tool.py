@@ -4,6 +4,7 @@ as the lock, postconditions, signals over the exchange)."""
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 from pathlib import Path
@@ -232,6 +233,29 @@ def test_rollback_and_drop_need_yes_and_check_their_result() -> None:
     assert _run(ch, "--drop-pre-rebuild") == tool.UNCONFIRMED
     assert _run(ch, "--drop-pre-rebuild", "--yes") == tool.OK
     assert "code_test_facets_pre_rebuild" not in ch.t
+
+
+def _next(out: str) -> str:
+    return str(json.loads(out.rsplit("summary ", 1)[1])["next"])
+
+
+def test_a_successful_rebuild_names_its_next_step_and_a_rollback_names_none(
+    capsys: Any,
+) -> None:
+    """The swap leaves the rollback copy to keep or drop, so a successful rebuild names
+    both; a table already on the target layout says so; a successful rollback or drop
+    leaves nothing to do."""
+    ch = _CH(code_test_facets=_table(OLD, 5))
+    assert _run(ch, "--yes") == tool.OK
+    step = _next(capsys.readouterr().out)
+    assert "--rollback --yes" in step and "--drop-pre-rebuild --yes" in step
+    assert _run(ch, "--rollback", "--yes") == tool.OK
+    assert _next(capsys.readouterr().out) == ""
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tool.OK
+    assert _next(capsys.readouterr().out) == ""
+    ch = _CH(code_test_facets=_table(NEW, 5))
+    assert _run(ch, "--yes") == tool.OK
+    assert "nothing to do" in _next(capsys.readouterr().out)
 
 
 def test_the_next_step_follows_what_the_three_names_hold() -> None:
