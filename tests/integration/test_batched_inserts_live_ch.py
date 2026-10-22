@@ -116,11 +116,13 @@ def _embedding_row(org: str, msg_id: str, vector: list[float]) -> dict[str, Any]
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("one_flush_window")
 async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_flush(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Keep all 21 requests buffered until the test confirms they share a flush.
+    # Batching on, a 30 s window and a pool slot for each of the 21 requests (a lower
+    # LOOM_CH_POOL_MAXSIZE would queue some past the slot wait): they stay buffered until
+    # the test confirms they share a flush.
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
     monkeypatch.setattr(settings, "ch_pool_maxsize", 64)
     monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 30000)
     monkeypatch.setattr(settings, "ch_batched_insert_wait_max_ms", 30000)
