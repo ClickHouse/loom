@@ -31,7 +31,7 @@ def table(ch: Any, request: pytest.FixtureRequest) -> Iterator[str]:
     engine = getattr(request, "param", "ReplacingMergeTree(version)")
     ch.command(
         f"CREATE TABLE loom.{name} (org String, namespace String, id UInt64, "
-        "embedding Array(Float32), version UInt64) "
+        "embedding Array(Float32), version UInt64, note String DEFAULT '') "
         f"ENGINE = {engine} ORDER BY (org, namespace, id)"
     )
     try:
@@ -46,7 +46,10 @@ def args(table: str) -> list[str]:
 
 
 def insert(ch: Any, table: str, ident: int, vector: list[float], version: int = 1) -> None:
-    ch.command(f"INSERT INTO loom.{table} VALUES ('o', 'n', {ident}, {vector}, {version})")
+    ch.command(
+        f"INSERT INTO loom.{table} (org, namespace, id, embedding, version) "
+        f"VALUES ('o', 'n', {ident}, {vector}, {version})"
+    )
 
 
 @pytest.mark.parametrize("mode", ["--dry-run", "--yes"])
@@ -214,3 +217,52 @@ def test_a_lightweight_update_during_recall_stops_the_swap(
         assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
     finally:
         ch.command(f"SYSTEM START MERGES loom.{table}")
+
+
+def test_a_finished_alter_update_during_recall_stops_the_swap(
+    ch: Any, table: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An erasure tombstone is an ALTER UPDATE that keeps the key and its version; one that
+    finishes before the swap leaves no unfinished mutation and no patch part."""
+    insert(ch, table, 1, [1.0] * 8)
+    job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
+    if why := job.codec_refusal():
+        pytest.skip(why)
+
+    def tombstone_during_recall(*_: Any) -> list[float]:
+        ch.command(
+            f"ALTER TABLE loom.{table} UPDATE embedding = [2., 2., 2., 2., 2., 2., 2., 2.] "
+            "WHERE id = 1",
+            settings={"mutations_sync": 2},
+        )
+        return [1.0]
+
+    monkeypatch.setattr(vcr.VectorRebuild, "recall", tombstone_during_recall)
+    assert vcr.main([*args(table), "--yes"], ch=ch) == tr.GATE_FAILED
+    assert "mutation(s) on loom." in capsys.readouterr().out
+    assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
+    assert ch.query(f"SELECT embedding FROM loom.{table} FINAL").result_rows == [([2.0] * 8,)]
+
+
+def test_an_update_of_another_column_during_recall_stops_the_swap(
+    ch: Any, table: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A quarantine changes a row's other columns and keeps its key and version: the row's
+    content hash shows it, whether or not its patch part is still there."""
+    ch.command(
+        f"ALTER TABLE loom.{table} MODIFY SETTING "
+        "enable_block_number_column = 1, enable_block_offset_column = 1"
+    )
+    insert(ch, table, 1, [1.0] * 8)
+    job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
+    if why := job.codec_refusal():
+        pytest.skip(why)
+
+    def quarantine_during_recall(*_: Any) -> list[float]:
+        ch.command(f"UPDATE loom.{table} SET note = 'quarantined' WHERE id = 1")
+        return [1.0]
+
+    monkeypatch.setattr(vcr.VectorRebuild, "recall", quarantine_during_recall)
+    assert vcr.main([*args(table), "--yes"], ch=ch) == tr.GATE_FAILED
+    assert "the source changed during the gates" in capsys.readouterr().out
+    assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]

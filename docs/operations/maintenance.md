@@ -215,45 +215,48 @@ compact it in an announced window. Bulk passes compact on their own after
 into a twin table, check it, swap with `EXCHANGE TABLES` and keep the old table for
 `--rollback`. Both print their plan and change nothing without `--yes`; the procedure is
 in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-key).
+
 `vector_codec_rebuild.py` needs a maintenance window with every writer and erasure
 stopped and all in-flight writes drained. It refuses unfinished source mutations before
-copying and swapping, and never repairs the live table.
+copying, and never repairs the live table. Where a check below fails, stop writes and
+erasures and rerun with `--restart`.
 Keep writers and erasure stopped until the rebuild finishes or is abandoned and
 every `<table>_rebuild` twin and `<table>_pre_rebuild` rollback copy is removed.
 Use `--drop-pre-rebuild --yes` to remove the rollback copy after validation or
 rollback. The erasure saga does not cover these copies.
 
-- **Width.** The target width of a plain column is the most common width of its real
-  vectors (not all zeros), or `LOOM_EMBEDDING_DIM` when it holds none; a coded column
-  states its own. The tool refuses (exit 3), `--dry-run` included, while a plain named
-  column holds real vectors of another width, since the copy would replace them with zero
-  vectors, and the message names each width and `LOOM_EMBEDDING_DIM`. Re-embed or delete
-  the rows of other widths until one width remains; for `memory_embeddings`,
-  `entity_vectors` and `conversation_embeddings`, `loom reembed --delete-old` does this.
-- **Gates (exit 5).** A key the twin lacks, or whose newest version differs, is copied
-  again key by key, and the gate fails if it still differs. On a table without a version
-  column a key can hold several rows, so a key whose row count differs fails it too. A key
-  only the twin holds fails it: rows were removed from the source after the copy, and the
-  swap would bring them back. The recall gate ranks real vectors only, since a
-  placeholder's cosine distance is NaN.
+- **Width.** The target width of a plain column is the most frequent width among the
+  first 100,000 real vectors (not all zeros) read, approximate, or `LOOM_EMBEDDING_DIM`
+  when it holds none; a coded column states its own. The tool refuses (exit 3),
+  `--dry-run` included, while a plain named column holds real vectors of another width,
+  since the copy would replace them with zero vectors, and the message names each width
+  and `LOOM_EMBEDDING_DIM`. Re-embed or delete the rows of other widths until one width
+  remains; for `memory_embeddings`, `entity_vectors` and `conversation_embeddings`,
+  `loom reembed --delete-old` does this.
+- **Gates (exit 5).** The consistency gate compares each key's newest version (or, on a
+  table without a version column, its row count) and a hash of every column but the
+  rebuilt vector columns. A key the twin lacks, or whose version is older, is copied again
+  key by key, and the gate fails if any key still differs. A key only the twin holds fails
+  it: rows were removed from the source after the copy, and the swap would bring them
+  back. The recall gate ranks real vectors only, since a placeholder's cosine distance is
+  NaN.
 - **Before the swap.** A last delta copies in the rows written during the run, then the
-  width and consistency checks run again. They fail the gate on a delete (an erasure
-  among them), a write of another width, and a write the delta cannot pick up: one whose
-  version is below the twin's highest, or a row under a key the twin holds on a table
-  without a version column. Any other insert is copied in and the swap goes ahead: the
-  window, not the tool, keeps writers out. A lightweight `UPDATE`, such as the quarantine
-  `memory.reject` writes, keeps a key and its version, so the tool also records the
-  highest block number of the source's patch parts per partition before the copy and
-  fails the gate if a patch part reports a higher one; a merge of patch parts keeps the
-  highest block, so it does not fail the gate. Stop writes and rerun with `--restart`.
-  With `--reuse` the record starts at that run, so an `UPDATE` between runs is covered
-  only by the maintenance window.
+  width and consistency checks run again. They fail the gate on a delete, a write of
+  another width, a write the delta cannot pick up (a version below the twin's highest, or
+  a row under a key the twin holds on a table without a version column), and any change
+  to a row's other columns, such as a lightweight `UPDATE` (the quarantine `memory.reject`
+  writes) or an erasure tombstone, whether or not its patch part is still there. Any
+  other insert is copied in and the swap goes ahead: the window, not the tool, keeps
+  writers out. The gate also fails on any source mutation created since the copy started
+  (with `--reuse`, since the twin was created), finished or not: an erasure tombstone is an
+  `ALTER UPDATE` that keeps the key and its version. It fails too when a source patch part
+  reports a higher block number than before the copy.
 
 `--statement-timeout-s` (default 1800, at most 7200) caps each gate read, delta, repair
 and patch-part read; the copy itself runs under its own limit. Each width check, before
 the twin and again before the swap, reads every vector of a plain named column (under
-`FINAL` on a ReplacingMergeTree), so set the timeout to cover one full read of the column.
-The dimension read takes a sample of real vectors.
+`FINAL` on a ReplacingMergeTree), and each consistency check reads every row of both
+tables, so set the timeout to cover one full read of the table.
 
 ## Disk pressure hygiene
 

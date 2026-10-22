@@ -65,6 +65,8 @@ def test_later():
         "PYTHONPATH": str(Path(__file__).resolve().parents[2]),
         "PROVIDED_TOKEN": "caller-token" if provided else "",
     }
+    # The child runs its two tests in order with no plugins: a parent's addopts
+    # (coverage, randomly) would fail it or reorder it.
     env.pop("PYTEST_ADDOPTS", None)
     if provided:
         env["LOOM_API_KEY"] = env["PROVIDED_TOKEN"]

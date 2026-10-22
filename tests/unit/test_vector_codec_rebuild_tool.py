@@ -26,6 +26,7 @@ ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (org, namespace)
 SETTINGS index_granularity = 256"""
 DIM = 1536
+TWIN_CREATED, COPY_STARTED = 1_600_000_000, 1_700_000_000  # server Unix times
 
 
 class _R:
@@ -63,6 +64,10 @@ class _CH:
         self.query_settings.append((sql, dict(settings or {})))
         if sql == CODEC_SETTINGS_SQL:
             return _R(self.codec_rows)
+        if "toUnixTimestamp(metadata_modification_time)" in sql:
+            return _R([(TWIN_CREATED,)])  # a reused twin's creation
+        if sql == "SELECT toUnixTimestamp(now())":
+            return _R([(COPY_STARTED,)])
         if sql.startswith("SHOW CREATE TABLE loom."):
             return _R([(self.t[sql.split("loom.", 1)[1]]["ddl"],)])
         if "FROM system.tables" in sql:
@@ -466,23 +471,30 @@ def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:
     assert delta < _last(ch, "GROUP BY w")
 
 
-@pytest.mark.parametrize(
-    "after",
-    [
-        # patch-a (block 2) and patch-b (block 5) merged into one part: it keeps block 5
-        {"patch-h1-all": 5},
-        # applied and dropped during the run
-        {},
-    ],
-)
-def test_patch_parts_that_were_there_before_the_copy_do_not_stop_the_swap(
-    after: dict[str, int],
-) -> None:
+def test_patch_parts_merged_since_the_copy_do_not_stop_the_swap() -> None:
+    """patch-a (block 2) and patch-b (block 5) merged into one part: it keeps block 5."""
     ch = _CH(memory_chunks=_live())
     ch.patch_blocks_first = [{"patch-h1-all": 5}]
-    ch.patch_blocks = after
+    ch.patch_blocks = {"patch-h1-all": 5}
     assert _run(ch, "--yes") == tr.OK
     assert any(c.startswith("EXCHANGE") for c in ch.commands)
+
+
+def test_an_update_whose_patch_part_was_applied_and_dropped_stops_the_swap(
+    capsys: Any,
+) -> None:
+    """A new patch part applied and dropped before the swap leaves no block to see; the
+    row's content hash in the consistency read still differs, and the run stops."""
+    ch = _CH(memory_chunks=_live())
+    ch.patch_blocks_first = [{"patch-h1-all": 5}]
+    ch.patch_blocks = {}
+    ch.cons_first = [(0, 0, 0)]
+    ch.cons = (1, 0, 0)  # the key and its version match; the hash does not
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "the source changed during the gates" in capsys.readouterr().out
+    reads = [q for q in ch.queries if "FULL OUTER JOIN" in q]
+    assert reads and all("s.__hash != t.__hash" in q for q in reads)
 
 
 def test_a_duplicate_key_insert_on_a_plain_merge_tree_stops_the_swap(capsys: Any) -> None:
@@ -523,14 +535,32 @@ def test_the_recall_reads_rank_real_vectors_only() -> None:
     )
 
 
-@pytest.mark.parametrize("during_run", [False, True])
-def test_unfinished_mutations_stop_the_rebuild(during_run: bool, capsys: Any) -> None:
+def test_unfinished_mutations_refuse_the_rebuild(capsys: Any) -> None:
     ch = _CH(memory_chunks=_live())
-    ch.mutations_first = [0] if during_run else []
     ch.mutations = 1
-    assert _run(ch, "--yes") == (tr.GATE_FAILED if during_run else tr.REFUSED)
+    assert _run(ch, "--yes") == tr.REFUSED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     assert "unfinished mutations" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(("flags", "since"), [((), COPY_STARTED), (("--reuse",), TWIN_CREATED)])
+def test_a_mutation_since_the_copy_stops_the_swap_even_when_done(
+    flags: tuple[str, ...], since: int, capsys: Any
+) -> None:
+    """An erasure tombstone is an ALTER UPDATE that keeps the key and its version and may
+    finish before the swap; any mutation created since the copy (or since a reused twin
+    was created) fails the gate, done or not."""
+    twin = {"memory_chunks_rebuild": _live()} if flags else {}
+    ch = _CH(memory_chunks=_live(), **twin)
+    ch.mutations_first = [0]  # the preflight finds nothing unfinished
+    ch.mutations = 1
+    assert _run(ch, "--yes", *flags) == tr.GATE_FAILED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    out = capsys.readouterr().out
+    assert "1 mutation(s) on loom.memory_chunks since the copy started" in out
+    assert "--restart" in out
+    last = ch.queries[_last(ch, "system.mutations")]
+    assert f"(NOT is_done OR create_time >= toDateTime({since}))" in last
 
 
 def test_the_rebuild_writes_only_to_the_twin() -> None:

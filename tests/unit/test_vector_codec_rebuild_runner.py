@@ -247,14 +247,40 @@ def test_a_coded_live_table_is_on_target_and_a_chained_ask_is_not() -> None:
 def test_a_key_is_mismatched_only_when_both_sides_hold_it() -> None:
     """With join_use_nulls=0 a key one side lacks reads defaults there; counted as
     mismatched too, a key erased from the source would never read as twin-only alone."""
-    for version, vcmp in (("created_at", "s.created_at != t.created_at"), (None, "s.n != t.n")):
-        sql = vcr.consistency_sql("memory_chunks", "memory_chunks_rebuild", "", version, ["org"])
+    hashed = ["org", "deleted_at"]
+    for version, vcmp in (
+        ("created_at", "(s.created_at != t.created_at OR s.__hash != t.__hash)"),
+        (None, "(s.n != t.n OR s.__hash != t.__hash)"),
+    ):
+        sql = vcr.consistency_sql(
+            "memory_chunks", "memory_chunks_rebuild", "", version, ["org"], hashed
+        )
         assert sql.startswith(
             f"SELECT countIf(s.__present = 1 AND t.__present = 1 AND {vcmp}) AS mismatched, "
             "countIf(t.__present = 0) AS source_only, countIf(s.__present = 0) AS twin_only "
         )
-    plain = vcr.consistency_sql("chunks", "chunks_rebuild", "", None, ["org", "namespace"])
-    assert "count() AS n, 1 AS __present FROM loom.chunks GROUP BY org, namespace" in plain
+    plain = vcr.consistency_sql("chunks", "chunks_rebuild", "", None, ["org", "namespace"], hashed)
+    assert (
+        "count() AS n, sum(cityHash64(tuple(`org`, `deleted_at`))) AS __hash, 1 AS __present "
+        "FROM loom.chunks GROUP BY org, namespace"
+    ) in plain
+
+
+def test_the_consistency_read_hashes_each_row_it_compares() -> None:
+    """A change that keeps the key and its version (an UPDATE, a tombstone) shows only in
+    the hash; `tuple` keeps a NULL column from making the hash NULL."""
+    sql = vcr.consistency_sql("t", "t_rebuild", " FINAL", "v", ["org"], ["org", "v", "x"])
+    assert "SELECT org, v, cityHash64(tuple(`org`, `v`, `x`)) AS __hash, 1 AS __present " in sql
+    assert "FROM loom.t FINAL) AS s" in sql and "FROM loom.t_rebuild FINAL) AS t" in sql
+
+
+def test_the_pre_swap_mutation_read_counts_finished_mutations_since_the_copy() -> None:
+    unfinished = vcr.mutations_sql("system.mutations", "t")
+    assert unfinished.startswith("SELECT count() FROM system.mutations WHERE database = '")
+    assert unfinished.endswith("AND table = 't' AND (NOT is_done)")
+    assert vcr.mutations_sql("system.mutations", "t", 1_700_000_000).endswith(
+        "AND (NOT is_done OR create_time >= toDateTime(1700000000))"
+    )
 
 
 def test_the_dimension_read_samples_real_vectors() -> None:
