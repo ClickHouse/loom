@@ -4,6 +4,7 @@ tier covers it, over a real git history and stub ClickHouse repositories."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import subprocess
@@ -23,6 +24,7 @@ from server.code.store import coverage_watches as wrepo
 from server.code.workers import coverage_notify as code_coverage_notify
 from server.core.errors import AuthInsufficientError, NotFoundError, ValidationError
 from server.operations.registry import OPERATIONS_BY_NAME
+from tests.unit.claims_fake import memory_claims
 
 ORG, NS, INBOX = "acme", "code-app", "reviewer-bot"
 # The server clock task events are stamped from, far from any host clock.
@@ -80,12 +82,14 @@ class Fake:
             self.watches[key] = row
 
     async def ready_event_exists(self, org, inbox, task_id):
+        await asyncio.sleep(0.01)  # a racing delivery runs meanwhile
         return any(
             e["org"] == org and e["inbox"] == inbox and e["task_id"] == task_id for e in self.events
         )
 
     async def insert_ready_event(self, row):
         self.events.append(dict(row))
+        return True
 
     async def fetch_inbox(self, org, inbox):
         return self.inboxes.get((org, inbox))
@@ -125,6 +129,7 @@ def fake(history: tuple[str, list[str]], monkeypatch: pytest.MonkeyPatch) -> Fak
         return SERVER_NOW_US
 
     monkeypatch.setattr(tasks_repo, "server_version", server_version)
+    memory_claims(monkeypatch)
 
     class _State:
         async def all_state(self, org, ns):
@@ -201,6 +206,79 @@ async def test_a_crash_between_the_event_and_the_watch_update_does_not_duplicate
     got = await code_coverage_notify.run_pass()
     assert (got.delivered, got.emitted) == (1, 0) and len(fake.events) == 1
     assert fake.watches[(ORG, NS, b, INBOX)].delivered_at is not None
+
+
+@pytest.mark.asyncio
+async def test_two_racing_deliveries_report_one_emitted_event(
+    fake: Fake, history: tuple[str, list[str]]
+) -> None:
+    from server.code.domain.index import repos
+
+    _, (a, b, c) = history
+    fake.set_heads(fast=c, clang=a)
+    await h.handle_code_coverage_watch(_watch(b))
+    fake.set_heads(fast=c, clang=c)
+    watch = fake.watches[(ORG, NS, b, INBOX)]
+    coverage = await svc.coverage_for(repos.repo_for_namespace(ORG, NS), b, fake.state)
+
+    # The event check yields, so without the delivery's lease both deliverers
+    # would check before either posted.
+    (first, _), (second, _) = await asyncio.gather(
+        svc.deliver(watch, coverage), svc.deliver(watch, coverage)
+    )
+    assert (first, second) == (True, False) and len(fake.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_delivery_whose_lease_is_held_or_unavailable_posts_nothing(
+    fake: Fake, history: tuple[str, list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core import leases
+    from server.core.errors import PreconditionFailedError
+
+    _, (a, b, c) = history
+    fake.set_heads(fast=c, clang=a)
+    await h.handle_code_coverage_watch(_watch(b))
+    watch = fake.watches[(ORG, NS, b, INBOX)]
+
+    async def still_held(name: str, **_: Any) -> None:
+        return None  # another delivery kept the event past the wait
+
+    monkeypatch.setattr(leases, "take", still_held)
+    with pytest.raises(PreconditionFailedError) as held:
+        await svc.deliver(watch, {"tiers": []})
+    assert held.value.status_code == 409
+
+    async def keeper_down(name: str, **_: Any) -> None:
+        raise leases.LeaseUnavailable("the lease store did not answer", operation=name)
+
+    monkeypatch.setattr(leases, "take", keeper_down)
+    with pytest.raises(leases.LeaseUnavailable) as down:
+        await svc.deliver(watch, {"tiers": []})
+    assert down.value.status_code == 503
+    assert not fake.events
+    assert fake.watches[(ORG, NS, b, INBOX)].delivered_at is None
+
+
+@pytest.mark.asyncio
+async def test_two_racing_first_watches_post_one_event(
+    fake: Fake, history: tuple[str, list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A client retry after a timeout: both calls missed the watch and the
+    # event, so each built its own watch (with its own version) and delivered.
+    _, (a, b, c) = history
+    fake.set_heads(fast=c, clang=c)
+
+    async def nothing_yet(*args: Any) -> None:
+        return None
+
+    monkeypatch.setattr(wrepo, "fetch_watch", nothing_yet)
+    first, second = await asyncio.gather(
+        h.handle_code_coverage_watch(_watch(b)), h.handle_code_coverage_watch(_watch(b))
+    )
+    # Either may take the lease first; exactly one emits.
+    assert sorted([first.emitted, second.emitted]) == [False, True]
+    assert len(fake.events) == 1
 
 
 @pytest.mark.asyncio

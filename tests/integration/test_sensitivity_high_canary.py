@@ -154,6 +154,51 @@ def test_a_high_row_is_written_without_an_embedding_row_and_the_gauge_reads_zero
     _wait(lambda: _sensitive_reads() >= 1)
 
 
+def test_a_read_by_id_that_omits_a_high_value_serves_none_and_audits_none(
+    control_plane_url: str, ch_client, token: str
+) -> None:
+    """The dashboard names a high conflict peer by id with `omit_high_value`: the answer
+    carries no value or hash and no sensitive read is audited; a plain read by id
+    serves the value and is audited."""
+    key = f"vault_peer_{uuid.uuid4().hex[:6]}"
+    r = _post(
+        control_plane_url,
+        token,
+        "memory.set",
+        {
+            "org": ORG,
+            "namespace": NAMESPACE,
+            "agent": "canary",
+            "memory_key": key,
+            "value": f"deploy token for the peer vault: {_CANARY_SECRET}",
+            "memory_type": "semantic",
+        },
+    )
+    assert r.status_code == 200, r.text
+    memory_id = r.json()["memory_id"]
+
+    def _reads_of_row() -> int:
+        return int(
+            ch_client.query(
+                "SELECT count() FROM loom.audit_log WHERE org = {o:String} AND namespace = {n:String}"
+                " AND event_type = 'memory.sensitive_read' AND position(subject, {id:String}) > 0",
+                parameters={"o": ORG, "n": NAMESPACE, "id": memory_id},
+            ).result_rows[0][0]
+        )
+
+    by_id = {"org": ORG, "memory_id": memory_id}
+    r = _post(control_plane_url, token, "memory.get_by_id", {**by_id, "omit_high_value": True})
+    assert r.status_code == 200 and r.json()["found"] is True, r.text
+    out = r.json()
+    assert out["sensitivity"] == "high" and out["value"] is None and out["content_sha256"] == ""
+    assert out["verification"] == "none"  # the row was never verified
+    assert _CANARY_SECRET not in r.text
+    r = _post(control_plane_url, token, "memory.get_by_id", by_id)
+    assert _CANARY_SECRET in r.text
+    _wait(lambda: _reads_of_row() >= 1)
+    assert _reads_of_row() == 1, "the read that omitted the value is not audited"
+
+
 @pytest.mark.parametrize(
     ("value", "level", "other_tags"),
     [
@@ -213,6 +258,8 @@ def test_payment_and_identity_numbers_are_labelled_on_write(
         "actor": "process:canary",
         "source_class": "asserted",
         "agent": "canary",
+        "user_id": "-",
+        "session_id": "-",
         "status": "active",
         "code": [],
         "superseded_by": "",

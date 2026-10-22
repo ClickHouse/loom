@@ -316,7 +316,7 @@ async def test_purge_of_a_wide_table_is_a_lightweight_delete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """In purge mode `memory_embeddings` gets `DELETE FROM`
-    (a `_row_exists` mask, no part rewrite, no HNSW rebuild); a narrow table
+    (a `_row_exists` mask, no part rewrite); a narrow table
     keeps the `ALTER TABLE … DELETE`."""
     with erasure_mutations.purge_scope(True):
         ch = StubCH()

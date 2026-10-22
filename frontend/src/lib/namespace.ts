@@ -118,6 +118,14 @@ export function canReadNamespace(
   );
 }
 
+/** An end user's personal collection (`col-me-…`, server/core/principals.py's
+ *  PERSONAL_PREFIX): opened by its grants only, and it takes no guide. */
+export const PERSONAL_COLLECTION_PREFIX = "col-me-";
+
+export function isPersonalCollection(ns: string): boolean {
+  return ns.startsWith(PERSONAL_COLLECTION_PREFIX);
+}
+
 /** The auto-claimed personal namespace (`personal-<subject>`), the one row a
  *  brand-new account has before it creates or joins anything. */
 export function isPersonalNamespace(ns: string): boolean {

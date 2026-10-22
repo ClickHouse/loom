@@ -12,11 +12,19 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from server.core.naming import SENTINEL
 from server.memory.api.models_common import _Identity
 from server.operations.base import MCP_HIDDEN
 
 
 class ContextPackInput(_Identity):
+    # The user the pack reads for; "-" reads every user in the memories, profile,
+    # procedures and runs sections, and the rows filed under no user in the stack and
+    # working-memory sections.
+    user_id: str = Field(default=SENTINEL)
+    # The session the pack reads for; "-" reads every session in the memories section,
+    # and the rows filed under no session in the stack and working-memory sections.
+    session_id: str = Field(default=SENTINEL)
     query: str = Field(
         default="",
         description="Optional task/question used to select relevant memories and docs.",
@@ -65,7 +73,7 @@ class ContextPackInput(_Identity):
         default_factory=dict, json_schema_extra=MCP_HIDDEN
     )
     # Optional caller-specified block ordering. Values are section names:
-    # working_memory, profile, namespace_health, mentor, memory_stack,
+    # working_memory, profile, namespace_health, namespace_guide, mentor, memory_stack,
     # memories, procedures, decisions, knowledge, conversations, runs.
     # Empty keeps Loom's default ordering.
     block_order: list[str] = Field(
@@ -90,9 +98,10 @@ class ContextPackInput(_Identity):
             "conversations",
             "runs",
             "namespace_health",
+            "namespace_guide",
             "mentor",
         ]
-    ] = Field(default_factory=list, max_length=11)
+    ] = Field(default_factory=list, max_length=12)
     # Decision-typed hits leave the memories block and render as their own
     # tagged <decisions> section carrying the structured record (scenario,
     # outcome, realized outcome). Same search, one more plane on the wire.

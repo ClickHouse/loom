@@ -9,8 +9,8 @@ Pure planning over two views of the same keys:
 `version` on loom.memory is a wall-clock epoch-ns stamp taken at write
 time (`memory_repo.next_version`), so "the head as of T" is exactly "the
 largest version ≤ T_ns". That is head-state rollback: each key returns to
-the row it had at T. It is not exact-state rollback — derived aggregates,
-embeddings and the ANN index are regenerated from the reinstated heads by
+the row it had at T. It is not exact-state rollback — derived aggregates
+and embeddings are regenerated from the reinstated heads by
 the existing workers, not restored byte-for-byte. The planner never sees
 ClickHouse; the handler feeds it join rows and applies the plan.
 """

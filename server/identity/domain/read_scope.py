@@ -20,13 +20,12 @@ from typing import Any
 from pydantic import BaseModel
 
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+from server.core.naming import named
 
 # Higher = narrower. The effective scope is the narrowest of the request and
 # the token's ceiling. The keys are the token claim's values
 # (`server.auth.jwt.READ_SCOPES`), widest first.
 _NARROWNESS: dict[str, int] = {"namespace": 0, "own_user": 1, "own_session": 2}
-
-SENTINEL = "-"
 
 
 def narrower(a: str, b: str) -> str:
@@ -42,10 +41,7 @@ def effective_read_scope(requested: str | None, auth: Any) -> str:
 
 
 def _clean(value: str | None) -> str | None:
-    if value is None:
-        return None
-    v = str(value).strip()
-    return v if v and v != SENTINEL else None
+    return named(str(value).strip()) if value is not None else None
 
 
 @dataclass(frozen=True)
@@ -63,6 +59,48 @@ class ReadFilters:
 # The scope of a read the caller's token does not bound: auth off, a worker,
 # or a write path that reads the row it is about to replace.
 WHOLE_NAMESPACE = ReadFilters(scope="namespace", user_id=None, session_id=None)
+
+
+# The payload key a stored read scope rides under.
+READ_SCOPE_KEY = "read_filters"
+# The scope stored for a write whose own read scope was refused: no replay runs under it.
+REFUSED_READ_SCOPE = "refused"
+
+
+def stored_read_scope(scope: ReadFilters) -> dict[str, Any]:
+    """The JSON form of `scope` a payload stores, for a replay outside the request."""
+    return {"scope": scope.scope, "user_id": scope.user_id, "session_id": scope.session_id}
+
+
+class RefusedReadScope(ValueError):
+    """The writer's read scope was refused, so no replay runs under it."""
+
+
+def replayed_read_scope(stored: Any) -> ReadFilters:
+    """The read scope a replay runs under: the one `stored_read_scope` stored. A
+    payload stored before scopes were replays over the whole namespace, as it always
+    did (no write was scoped then). A stored scope that is not a complete one raises
+    ValueError, and one stored as refused `RefusedReadScope`, so the replay fails
+    rather than reading wider."""
+    if stored is None:
+        return WHOLE_NAMESPACE
+    if not isinstance(stored, dict):
+        raise ValueError(f"stored read scope is incomplete: {stored!r}")
+    if stored.get("scope") == REFUSED_READ_SCOPE:
+        raise RefusedReadScope("the writer's read scope was refused: no replay runs under it")
+    scope = ReadFilters(
+        scope=str(stored.get("scope") or ""),
+        user_id=stored.get("user_id"),
+        session_id=stored.get("session_id"),
+    )
+    complete = (
+        scope.scope == "namespace"
+        or (scope.scope == "own_user" and scope.user_id)
+        or (scope.scope == "own_session" and scope.user_id and scope.session_id)
+    )
+    if not complete:
+        raise ValueError(f"stored read scope is incomplete: {stored!r}")
+    return scope
 
 
 def resolve_read_filters(
@@ -236,6 +274,8 @@ SCOPED_OPS = frozenset(
         "conversation.search_saved_messages",
         "memory.aggregate",
         "memory.ask",
+        # Each retired entry is kept only when its user and session lie inside the scope.
+        "memory.auto_retirements",
         "memory.bulk_get",
         "memory.digests",
         "memory.evidence",
@@ -252,6 +292,7 @@ SCOPED_OPS = frozenset(
         "memory.search",
         "memory.search_trace",
         "memory.stack",
+        "memory.statuses",
         "memory.timeline",
         "procedure.list",
         "procedure.match",
@@ -351,6 +392,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # other users' memory keys and payloads.
     "ops.capabilities": "the deployment's capabilities",
     "ops.health": "deployment health",
+    "mentor.guide": "the deployment's static agent guide, no memory",
     # Not blacklist.*: a pattern has no user axis (created_by is the token subject,
     # which many users' tokens can share). List, remove and sweep would reach another
     # user's patterns, and an add would be a namespace-wide Refuse the token can't manage.
@@ -359,6 +401,9 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "memory_schema.list": "value schemas",
     # A narrowed token is not told the subject that set the schema (updated_by).
     "profile_schema.get": "operator configuration: property names and descriptions",
+    # The same text the session-start pack gives such a token; the writer (updated_by)
+    # is not shown. Not guide_history: it lists every revision's writer.
+    "namespace.guide_get": "the namespace's conventions",
     "admin.users": "the deployment's users",
     # Not agents.connected: no user axis; it lists every user's agents, their ops,
     # when they were seen and what they cost.

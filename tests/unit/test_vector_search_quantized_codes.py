@@ -22,32 +22,25 @@ def _reset_probe():
 
 
 def test_unprobed_server_gets_no_codec_setting() -> None:
-    frag = search_sql.vector_search_settings()
-    assert frag.startswith("SETTINGS hnsw_candidate_list_size_for_search = ")
-    assert "vector_search_index_fetch_multiplier = " in frag
-    assert _NAME not in frag
+    assert search_sql.vector_search_settings() == ""
 
 
 def test_probed_support_adds_the_setting_once_after_the_multiplier(monkeypatch) -> None:
     quantized_setting.set_quantized_codes_supported(True)
     monkeypatch.setattr(settings, "vector_search_quantized_codes", True)
-    frag = search_sql.vector_search_settings(ef_search=64, fetch_multiplier=3)
-    assert frag == (
-        "SETTINGS hnsw_candidate_list_size_for_search = 64, "
-        f"vector_search_index_fetch_multiplier = 3.0, {_NAME} = 1"
-    )
+    frag = search_sql.vector_search_settings(fetch_multiplier=3)
+    assert frag == f"SETTINGS vector_search_index_fetch_multiplier = 3.0, {_NAME} = 1"
 
 
 def test_quantized_reads_use_their_own_smaller_multiplier(monkeypatch) -> None:
-    """X3 for the codes-first scan, the HNSW x10 otherwise; an
-    explicit caller value still wins."""
+    """The codes-first scan keeps LIMIT x the codes multiplier; with codes off
+    the read carries no settings; an explicit caller value still wins."""
     quantized_setting.set_quantized_codes_supported(True)
     monkeypatch.setattr(settings, "vector_search_quantized_codes", True)
     monkeypatch.setattr(settings, "vector_search_quantized_fetch_multiplier", 3.0)
-    monkeypatch.setattr(settings, "vector_search_index_fetch_multiplier", 10.0)
     assert "vector_search_index_fetch_multiplier = 3.0" in search_sql.vector_search_settings()
     monkeypatch.setattr(settings, "vector_search_quantized_codes", False)
-    assert "vector_search_index_fetch_multiplier = 10.0" in search_sql.vector_search_settings()
+    assert search_sql.vector_search_settings() == ""
     monkeypatch.setattr(settings, "vector_search_quantized_codes", True)
     assert "vector_search_index_fetch_multiplier = 7.0" in search_sql.vector_search_settings(
         fetch_multiplier=7

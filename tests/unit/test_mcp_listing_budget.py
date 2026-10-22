@@ -210,6 +210,15 @@ def test_no_listed_description_names_an_unlisted_op_without_saying_so(toolset: s
 # ---------------------------------------------------------------- one revision policy
 
 
+def test_run_begin_names_writes_for_run_id_in_every_tier():
+    """A body run_id on a read filters to the run's rows, so no tier tells an agent to
+    pass it on every memory call."""
+    for text in (TOOL_DESCRIPTIONS["run.begin"], ATOMIC_TOOL_DESCRIPTIONS["run.begin"]):
+        assert "every memory call" not in text and "memory.ask" not in text
+        assert "memory.set" in text and "session's own run" in text
+    assert "carries your run_id" not in ATOMIC_TOOL_DESCRIPTIONS["memory.ask"]
+
+
 def test_one_revision_policy_text_everywhere():
     core_set = TOOL_DESCRIPTIONS["memory.set"]
     assert revision_policy("memory.update") in core_set
@@ -347,7 +356,6 @@ def test_marked_fields_are_unlisted_but_still_accepted():
         "code.search": {"query", "expand", "namespaces", "top_k", "cursor"},
         "memory.set": {
             "dry_run",
-            "await_verdict",
             "ttl_seconds",
             "on_expire",
             "entities",

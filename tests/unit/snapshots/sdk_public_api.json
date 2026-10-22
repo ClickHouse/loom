@@ -49,6 +49,9 @@
     "close": [
       "failed"
     ],
+    "guide": [
+      "part"
+    ],
     "identity": [
       "user_id",
       "session_id",
@@ -886,6 +889,10 @@
               "body",
               "options"
             ],
+            "auto_retirements": [
+              "body",
+              "options"
+            ],
             "backlinks": [
               "body",
               "options"
@@ -1122,6 +1129,10 @@
               "body",
               "options"
             ],
+            "statuses": [
+              "body",
+              "options"
+            ],
             "sweep_expired": [
               "body",
               "options"
@@ -1183,6 +1194,10 @@
             "brief": [
               "body",
               "options"
+            ],
+            "guide": [
+              "body",
+              "options"
             ]
           }
         },
@@ -1206,6 +1221,18 @@
               "options"
             ],
             "get": [
+              "body",
+              "options"
+            ],
+            "guide_get": [
+              "body",
+              "options"
+            ],
+            "guide_history": [
+              "body",
+              "options"
+            ],
+            "guide_set": [
               "body",
               "options"
             ],
@@ -2686,8 +2713,8 @@
           "valid_at",
           "valid_to",
           "char_limit",
-          "dry_run",
-          "await_verdict"
+          "relations",
+          "dry_run"
         ],
         "promote": [
           "memory_key",
@@ -2739,7 +2766,9 @@
         "restore": [
           "memory_key",
           "user_id",
-          "session_id"
+          "session_id",
+          "if_superseded_by",
+          "only_if_superseded"
         ],
         "search": [
           "query",
@@ -2818,8 +2847,8 @@
           "valid_at",
           "valid_to",
           "char_limit",
-          "dry_run",
-          "await_verdict"
+          "relations",
+          "dry_run"
         ],
         "set_from_messages": [
           "messages",
@@ -2884,7 +2913,9 @@
           "concepts",
           "confidence",
           "reason",
-          "revive"
+          "relations",
+          "revive",
+          "run_id"
         ],
         "update_by_id": [
           "memory_id",
@@ -2893,6 +2924,7 @@
           "char_limit",
           "tags",
           "concepts",
+          "relations",
           "revive"
         ],
         "verify": [

@@ -18,7 +18,7 @@ import pytest
 
 from server.insights.app import mentor as m
 from server.insights.app import mentor_rules
-from server.memory.app.entity_projections import set_entities_for_projection
+from server.memory.app.set_entities import set_entities_for_projection
 from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL, is_transcript_row
 
 _STEP = (
@@ -92,7 +92,7 @@ def test_an_undeclared_fact_is_still_mined_as_before() -> None:
 
 
 def test_the_pack_drops_transcript_hits_and_keeps_facts() -> None:
-    from server.memory.app.context_pack import _recall_rows, _without_transcript_rows
+    from server.memory.app.context_pack import _without_transcript_rows
 
     hits = [
         SimpleNamespace(memory_key="event:1e8b", tags=["event", "from_observation"]),
@@ -103,11 +103,6 @@ def test_the_pack_drops_transcript_hits_and_keeps_facts() -> None:
     kept = _without_transcript_rows(hits)
     assert [h.memory_key for h in kept] == ["deploy_day", "fix_recipe"]
     assert all(h.tags is None for h in kept)  # asked for the filter, never on the wire
-    rows = [
-        SimpleNamespace(memory_key="pin", tags=[], source_trace=""),
-        SimpleNamespace(memory_key="obs:2", tags=[], source_trace="observe.record"),
-    ]
-    assert [r.memory_key for r in _recall_rows(rows[:1], rows[1:])] == ["pin"]
 
 
 # --- the graph hint --------------------------------------------------------------

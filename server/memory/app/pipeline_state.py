@@ -95,6 +95,8 @@ class WorkflowState:
 
     # Populated by bulk_write step
     written: list[dict[str, Any]] = field(default_factory=list)
+    # The entries bulk_set refused: {memory_key, verdict} each.
+    refused: list[dict[str, str]] = field(default_factory=list)
 
     # Pipeline metadata
     # Wall time per step (`step.<step_id>`) and, carried up from the bulk

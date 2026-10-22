@@ -28,7 +28,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.memory.app.chunk_projection import chunk_text_with_ranges, chunk_text_with_truncation
-from server.memory.app.credential_passages import embed_chunks_of
+from server.memory.app.sensitive_passages import embed_chunks_of
 
 log = logging.getLogger(__name__)
 
@@ -423,7 +423,7 @@ async def write_set_chunks(
 
         embedder = get_embedder()
 
-    # A credential chunk is held whatever its row's label: the chunk read path and the
+    # A chunk that reads as high is held whatever its row's label: the chunk read path and the
     # provider rebuild decide by the text too.
     embedded = await embed_chunks_of(
         text, ranges, [c for c, _, _ in chunks], lambda texts: _embed_chunks(embedder, texts)

@@ -273,7 +273,7 @@ async def test_refused_titles_count_toward_the_pass_cap(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_a_thread_whose_turns_all_hold_a_key_is_marked_and_skipped(monkeypatch) -> None:
-    """A thread whose eight opening turns all read as a credential is marked, so it no
+    """A thread whose eight opening turns all read as high is marked, so it no
     longer takes a scan slot on later passes."""
     turns = [{"role": "user", "content": f"my key is {OPENAI_KEY}"}] * 8
     ch = StubCH([_CAND], turns, None)

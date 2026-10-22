@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 # After extraction, compress a session into one dense dated digest, embed it
 # with the fact-plane embedder, and store it in loom.session_summaries. The
-# read leg ANN-retrieves these as source="summary" hits — a compact,
+# read leg retrieves these by vector as source="summary" hits — a compact,
 # high-recall stand-in for a whole session.
 
 # Bumped when the prompt text changes, so an operator can tell which prompt
@@ -138,7 +138,7 @@ async def _draft_session_summary(
     """One LLM call + one embedding: everything about the digest that does not
     need the extraction result. None when the model returns nothing or the
     embedder returns an empty vector (the read leg filters embedding_dim > 0);
-    a digest that reads as a credential is drafted with no vector. The digest is
+    a digest that reads as high is drafted with no vector. The digest is
     written from the raw turns, so it follows the operator's extraction policy as
     the extractor does."""
     from server.llm.client import get_llm_client
@@ -157,7 +157,7 @@ async def _draft_session_summary(
         log.info("session_summaries: empty digest for session=%r; skipping", input.session_id)
         return None
     embedder = get_embedder()
-    # A digest that reads as a credential is written without a vector: the summary leg
+    # A digest that reads as high is written without a vector: the summary leg
     # reads only digests that have one, and the text never reaches the embedder.
     embedding: list[float] = []
     if not reads_high(summary_text):

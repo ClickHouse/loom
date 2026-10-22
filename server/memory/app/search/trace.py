@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.naming import named
 from server.embedding import get_embedder
 from server.memory.api.models_search import (
     MemorySearchTraceInput,
@@ -32,6 +33,7 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
     from server.observability.otel import traced
 
     input, _ = pin_read_filters(input, current_auth())
+    input = input.model_copy(update={"run_id": named(input.run_id)})
     embedder = get_embedder()
     with traced("embed.compute.query", model=embedder.model_name):
         query_vec, spellings = await embed_query(
@@ -129,10 +131,10 @@ async def handle_memory_search_trace_log(input: SearchTraceLogInput) -> SearchTr
             return SearchTraceLogOutput(rows=[])
         where.append("actor IN {actors:Array(String)}")
         params["actors"] = actors
-    if getattr(input, "agent", ""):
+    if named(input.agent, wildcard=True):
         where.append("agent = {agent:String}")
         params["agent"] = input.agent
-    if getattr(input, "run_id", ""):
+    if named(input.run_id):
         where.append("run_id = {rid:String}")
         params["rid"] = input.run_id
     rows = await get_client().query_all(

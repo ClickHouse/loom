@@ -9,12 +9,13 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from server.core.repo_base import _CHClient, _default_client
+from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.core.tag_sql import TagFilter, tag_where
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.domain.delete_marks import DELETE_VERSION_TRACE
 from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 from server.memory.domain.temporal_sql import as_of_predicate
+from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
 from server.memory.store.sql import (
     _IDENTITY_KEY_TUPLE,
@@ -165,6 +166,43 @@ async def get_by_key(
     return await _overlay_usage_totals(hydrated, ch) if include_usage_totals else hydrated
 
 
+# Each id's newest version, without FINAL: memory_id is found by its bloom-filter skip
+# index, which FINAL re-expands to every granule of the key range.
+_STATUSES_SQL = """
+        SELECT toString(memory_id) AS id,
+               argMax(status, version) AS status,
+               argMax(superseded_by, version) AS superseded_by,
+               -- argMax skips NULLs: take it over the flag, or a restored row reads deleted.
+               argMax(tombstoned_at IS NOT NULL, version) AS deleted
+        FROM loom.memory
+        PREWHERE org = {org:String} AND namespace = {ns:String}
+        WHERE memory_id IN {ids:Array(UUID)}%s
+        GROUP BY memory_id
+        SETTINGS select_sequential_consistency = 1
+        """
+
+
+async def statuses_by_ids(
+    org: str, namespace: str, ids: list[str], *, scope: ReadFilters, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """[{memory_id, status, superseded_by}] for the ids among `ids` the namespace holds
+    inside `scope`, read strongly; a tombstoned row's status is `deleted`. An id whose
+    row a write of the same key replaced under another id (two first writes of a key
+    racing each mint one) drops out once the table's parts merge, as a read by id
+    answers found=false."""
+    ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "ids": ids}
+    sql = _STATUSES_SQL % scope_and(scope, params)
+    return [
+        {
+            "memory_id": str(r["id"]),
+            "status": "deleted" if r["deleted"] else str(r["status"]),
+            "superseded_by": str(r["superseded_by"] or ""),
+        }
+        for r in await query_all_sliced(ch, sql, params, "ids")
+    ]
+
+
 async def get_by_id(
     memory_id: str,
     *,
@@ -175,6 +213,7 @@ async def get_by_id(
     include_usage_totals: bool = False,
     fresh: bool = False,
     strong: bool = False,
+    include_tombstoned: bool = False,
 ) -> MemoryRow | None:
     """Lookup by surrogate ID. Used by ops that address memories by their
     UUID rather than the (identity, key) tuple — `memory.update_by_id`,
@@ -191,6 +230,7 @@ async def get_by_id(
     consistency (see `_point_lookup`).
 
     `scope`: a row outside the read scope is not found (None), never refused.
+    `include_tombstoned`: a deleted row is returned too, as get_by_key's.
     """
     ch = ch or _default_client()
     params: dict[str, Any] = {"mid": memory_id}
@@ -230,11 +270,9 @@ async def get_by_id(
         "namespace = {ns:String}",
         "memory_key = {k:String}",
     ]
-    where = [
-        "created_at = {ca:DateTime}",
-        "memory_id = {mid:UUID}",
-        "tombstoned_at IS NULL",
-    ]
+    where = ["created_at = {ca:DateTime}", "memory_id = {mid:UUID}"]
+    if not include_tombstoned:
+        where.append("tombstoned_at IS NULL")
     params = {
         **params,
         "org": str(key["org"]),
@@ -729,6 +767,8 @@ async def list_by_namespace(
     include_duplicates: bool = True,
     include_superseded: bool = True,
     include_proposed: bool = True,
+    exclude_transcripts: bool = False,
+    exclude_memory_types: Sequence[str] = (),
 ) -> list[MemoryRow]:
     """List active memories under (org, namespace, agent, user, session).
 
@@ -741,6 +781,8 @@ async def list_by_namespace(
       - contains:    case-insensitive substring of the value or the key — the
                      keyword filter a browse page's search box applies; a
                      'high' row matches by its key only
+      - exclude_transcripts: no trajectory transcript rows (`TRANSCRIPT_ROW_SQL`)
+      - exclude_memory_types: none of these types
 
     Ordering:
       - "created_at_desc" (default) — recent-first feed shape
@@ -797,6 +839,11 @@ async def list_by_namespace(
     if contains:
         where.append(CONTAINS_PREDICATE)
         params["contains"] = contains
+    if exclude_transcripts:
+        where.append("NOT " + TRANSCRIPT_ROW_SQL)
+    if exclude_memory_types:
+        where.append("memory_type NOT IN {xmt:Array(String)}")
+        params["xmt"] = list(exclude_memory_types)
     if as_of is not None:
         where.append(as_of_predicate("valid_time"))
         params["as_of"] = as_of

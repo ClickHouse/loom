@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
@@ -15,6 +16,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
+from server.core.naming import named
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
@@ -26,9 +28,18 @@ from server.memory.api.models_crud import (
     MemoryUpdateOutput,
 )
 from server.memory.app import after_write, webhooks
-from server.memory.app import conflict_deferred as _cd
 from server.memory.app import provenance as app_provenance
+from server.memory.app.auto_resolution import Follow, follow_beside_response
+from server.memory.app.conflicts import same_key_mark
+from server.memory.app.edge_links import (
+    drop_undeclared_edges_beside,
+    owes_undeclared_drop,
+    project_revised_edges,
+)
 from server.memory.app.high_fence import fence_high
+from server.memory.app.projection_errors import ProjectionScope
+from server.memory.app.set_entities import declared_entities
+from server.memory.app.triple_projections import project_stated_relations
 from server.memory.domain import lock as _lock
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
 from server.memory.domain.excerpt import build_excerpt
@@ -56,23 +67,6 @@ async def _embed_value_and_key(
             return vectors[0], vectors[1]
     value_vec, key_vec = await asyncio.gather(embedder.embed(embed_text), embedder.embed(key_text))
     return value_vec, key_vec
-
-
-def _settle_identity(org: str, existing: Any, run_id: str) -> Any:
-    """What a deferred judge needs of a revised row: its identity, type and the revision's
-    run."""
-    from types import SimpleNamespace
-
-    return SimpleNamespace(
-        org=org,
-        namespace=existing.namespace,
-        agent=existing.agent,
-        user_id=existing.user_id,
-        session_id=existing.session_id,
-        memory_key=existing.memory_key,
-        memory_type=existing.memory_type,
-        run_id=run_id,
-    )
 
 
 def _pinned_conflict(op: str, existing: Any, conflict_result: Any) -> HTTPException:
@@ -110,7 +104,12 @@ def _cf_start_write_config(org: str, existing: Any, checked: bool) -> Any:
 
 
 async def _revision_supersession(
-    org: str, existing: Any, serialized_value: str, ch: Any, policy: str | None
+    org: str,
+    existing: Any,
+    serialized_value: str,
+    ch: Any,
+    policy: str | None,
+    follows: list[Follow],
 ) -> None:
     """Same-key supersession for a revision; `policy` None reads it."""
     from server.memory.app.key_supersession import supersede_same_key_rows
@@ -123,7 +122,13 @@ async def _revision_supersession(
         }
     ]
     await supersede_same_key_rows(
-        org=org, namespace=existing.namespace, new_rows=batch, ch=ch, policy=policy
+        org=org,
+        namespace=existing.namespace,
+        new_rows=batch,
+        ch=ch,
+        follows=follows,
+        policy=policy,
+        agent=str(existing.agent),
     )
 
 
@@ -194,8 +199,9 @@ async def handle_memory_update(input: MemoryUpdateInput) -> MemoryUpdateOutput:
                 "message": (
                     f"memory_key {input.memory_key!r} is live under "
                     f"{len(rows)} identity tuples in namespace "
-                    f"{input.namespace!r}; pass agent/user_id/session_id to "
-                    "narrow it, or memory.update_by_id with one of the ids"
+                    f"{input.namespace!r}; pass a named agent/user_id/session_id "
+                    'to narrow it ("-" does not narrow, nor "*" for agent), or '
+                    "memory.update_by_id with one of the ids"
                 ),
                 "memory_key": input.memory_key,
                 "candidates": [c.model_dump() for c in rows],
@@ -242,9 +248,15 @@ async def _live_rows_for_key(input: MemoryUpdateInput, ch: Any) -> list[dict[str
         "ns": input.namespace,
         "key": input.memory_key,
     }
-    for col in ("agent", "user_id", "session_id"):
-        val = getattr(input, col, "") or ""
-        if val:
+    # "-" (the identity sentinel the SDKs stamp) means unset, and "*" too for agent,
+    # as in memory.ask.
+    narrowing = {
+        "agent": named(input.agent, wildcard=True),
+        "user_id": named(input.user_id),
+        "session_id": named(input.session_id),
+    }
+    for col, val in narrowing.items():
+        if val is not None:
             where.append(f"{col} = {{{col}:String}}")
             params[col] = val
     sql = f"""
@@ -332,7 +344,7 @@ def _update_embedding_row(
             )
             in ("human", "process")
         ),
-        # The pending mark while a deferred judge is owed (`conflict_deferred.checked_at_for`).
+        # The conflict resolver's owed mark when the check asks it to look.
         conflict_checked_at=conflict_checked_at,
         content_sha256=str(memory_row["content_sha256"] or ""),
     )
@@ -385,6 +397,32 @@ def _check_update_precondition(input: Any, existing: MemoryRow) -> None:
                 "current_sha256": current_sha,
             },
         )
+
+
+async def _revised_edges(
+    existing: MemoryRow,
+    memory_row: dict[str, Any],
+    new_value: Any,
+    new_sha: str,
+    sensitivity: str,
+    *,
+    op: str,
+    ch: Any,
+) -> None:
+    """The edges of a revision's new value; a 'high' row keeps only its declared
+    entities' edges, so what any value's text gave the graph goes, after the response."""
+    if new_sha != existing.content_sha256:
+        await project_revised_edges(memory_row, new_value, op=op, ch=ch)
+    declared = declared_entities(memory_row.get("entities"))
+    if sensitivity == "high" and owes_undeclared_drop(existing, declared):
+        scope = ProjectionScope(
+            org=existing.org,
+            namespace=existing.namespace,
+            agent=str(existing.agent),
+            user_id=str(existing.user_id),
+        )
+        memory_id = str(existing.memory_id)
+        await drop_undeclared_edges_beside(scope, {memory_id: int(memory_row["version"])}, op=op)
 
 
 def _update_sensitivity(
@@ -470,9 +508,6 @@ async def _update_conflict_check(
             memory_key=existing.memory_key,
             new_value=serialized_value,
             new_embedding=embedding,
-            # The LLM judge settles after the write, as memory.set's does; deterministic
-            # tiers stay inline.
-            defer_judge=_cd.wanted(input),
             **(await cfg_task).check_kwargs(),
         )
     if conflict_result.verdict == "rejected":
@@ -499,7 +534,7 @@ def _status_columns(conflict_result: Any) -> tuple[str, dict[str, Any]]:
             duplicate_of_id = conflict_result.existing_memory_id or ""
         if duplicate_of_id:
             status_cols = {"status": "duplicate", "duplicate_of": duplicate_of_id}
-        elif conflict_result.verdict in ("clear", "refines", "conflict", _cd.PENDING):
+        elif conflict_result.verdict in ("clear", "refines", "conflict"):
             # `conflict` is stamped after the write by mark_peers_conflicted,
             # exactly as memory.set does; start from a clean row.
             status_cols = {"status": "active", "duplicate_of": "", "conflict_with": []}
@@ -509,29 +544,36 @@ def _status_columns(conflict_result: Any) -> tuple[str, dict[str, Any]]:
 def _revision_run_id(input: Any, existing: MemoryRow) -> str:
     """A revision made under a run carries that run on its version row (the `acted` fold joins
     the run's writes to what the run was shown); a caller naming no run keeps the row's own."""
-    revision_run_id = str(getattr(input, "run_id", "") or "").strip()
-    if revision_run_id in ("", "-"):
-        revision_run_id = str(getattr(existing, "run_id", "-") or "-")
-    return revision_run_id
+    revision_run_id = named(str(getattr(input, "run_id", "") or "").strip())
+    return revision_run_id or str(getattr(existing, "run_id", "-") or "-")
 
 
 async def _update_post_write(
-    input: Any, existing: MemoryRow, conflict_result: Any, ch: Any
-) -> None:
+    input: Any,
+    existing: MemoryRow,
+    conflict_result: Any,
+    ch: Any,
+    follows: list[Follow],
+) -> Any:
     """Post-write, as memory.set: a conflict flags both sides (the new version
-    exists, so the cross-link resolves); a judged elaboration supersedes the
-    rows it refines and links to them."""
+    exists, so the cross-link resolves); a templated substitution supersedes the
+    rows it replaces. Returns the verdict that landed: `clear`
+    when the mark flagged nothing (no peer, or the new row, was left live)."""
     from server.observability.otel import traced
 
     if conflict_result is not None and conflict_result.verdict == "conflict":
         from server.memory.app.conflicts import mark_peers_conflicted
 
         with traced("conflicts.mark_peers", peers=len(conflict_result.peers)):
-            await mark_peers_conflicted(
+            landed = await mark_peers_conflicted(
                 org=input.org,
                 new_memory_id=str(existing.memory_id),
                 peer_ids=[p.memory_id for p in conflict_result.peers],
             )
+        if landed != "conflict":
+            # Every peer, or the new row itself, retired before the mark:
+            # nothing was flagged.
+            conflict_result = replace(conflict_result, verdict="clear", peers=[])
     elif (
         conflict_result is not None
         and conflict_result.verdict == "refines"
@@ -547,8 +589,9 @@ async def _update_post_write(
                 new_memory_key=existing.memory_key,
                 refined_peers=conflict_result.refined_peers,
                 ch=ch,
-                relation=conflict_result.refine_relation,
+                follows=follows,
             )
+    return conflict_result
 
 
 async def _update_live_row(
@@ -669,6 +712,13 @@ async def _write_revision(
         **({"confidence": float(new_confidence)} if new_confidence is not None else {}),
         **status_cols,
     )
+    mark = await same_key_mark(
+        conflict_result,
+        org=input.org,
+        namespace=existing.namespace,
+        memory_row=memory_row,
+        policy=(await cfg_task).policy,
+    )
     # If searchable, refresh the embedding row too — in the same round trip
     # as the version row (as memory.set's dual write).
     emb_rows = (
@@ -680,7 +730,7 @@ async def _write_revision(
                 embedding,
                 key_embedding,
                 has_key=bool(key_text),
-                conflict_checked_at=_cd.checked_at_for(conflict_result),
+                conflict_checked_at=mark,
             )
         ]
         if embedder is not None
@@ -714,21 +764,25 @@ async def _write_revision(
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     after_write.index_late_rows(emb_rows, ch=ch)
     cfg = await cfg_task
-    if emb_rows:  # a deferred judge needs the vector
-        _cd.schedule_settle(
-            _settle_identity(input.org, existing, revision_run_id),
-            conflict_result,
-            memory_id=str(existing.memory_id),
-            version=new_version,
-            created_at=emb_rows[0]["created_at"],
-            content_sha256=emb_rows[0]["content_sha256"],
-            cfg=cfg,
-        )
 
-    await _update_post_write(input, existing, conflict_result, ch)
+    follows: list[Follow] = []
+    conflict_result = await _update_post_write(input, existing, conflict_result, ch, follows)
 
     # Same-key supersession, exactly as memory.set runs it after its insert.
-    await _revision_supersession(input.org, existing, serialized_value, ch, cfg.policy)
+    await _revision_supersession(input.org, existing, serialized_value, ch, cfg.policy, follows)
+    await _revised_edges(existing, memory_row, new_value, new_sha, sensitivity, op=op, ch=ch)
+    await project_stated_relations(
+        memory_row, new_value, input.relations, revised=True, op=op, ch=ch
+    )
+    # After the revision's own relations, so the follow sees the successor they state.
+    follow_beside_response(
+        org=input.org,
+        namespace=existing.namespace,
+        pairs=follows,
+        op=op,
+        agent=str(existing.agent),
+        user_id=str(existing.user_id),
+    )
     return MemoryUpdateByIdOutput(
         updated=True,
         new_version=new_version,

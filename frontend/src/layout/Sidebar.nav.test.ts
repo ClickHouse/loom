@@ -111,16 +111,18 @@ describe("the admin drawer reads as workflows", () => {
     expect(ADMIN_BASE.map((i) => i.id)).toContain("admin:guardrails");
   });
 
-  it("groups what the caller may see: Review queue leads Review while there is one; Access only when Users is visible", () => {
+  it("groups what the caller may see: Review queue leads Review while there is one; Access holds Collections, then Users when visible", () => {
     const visible: NavItem[] = [
       { id: "admin:review_queue", label: "Review queue", icon: ADMIN_BASE[0].icon, badge: 3 },
       ...ADMIN_BASE,
     ];
     const groups = groupAdminItems(visible);
-    expect(groups.map((g) => g.label)).toEqual(["Review", "Observe"]);
+    expect(groups.map((g) => g.label)).toEqual(["Review", "Observe", "Access"]);
     expect(groups[0].items.map((i) => i.id)).toEqual(["admin:review_queue", "admin:guardrails", "admin:policies"]);
+    expect(groups[2].items.map((i) => i.id)).toEqual(["admin:collections"]);
     const withUsers = groupAdminItems([...ADMIN_BASE, { id: "admin:users", label: "Users", icon: ADMIN_BASE[0].icon }]);
     expect(withUsers.map((g) => g.label)).toEqual(["Review", "Observe", "Access"]);
+    expect(withUsers[2].items.map((i) => i.id)).toEqual(["admin:collections", "admin:users"]);
     expect(groupAdminItems([])).toEqual([]);
   });
 });

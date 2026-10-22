@@ -411,6 +411,19 @@ test.describe("open overlays", () => {
     expect(await violations(page)).toEqual([]);
   });
 
+  test("a collection's details and the New collection dialog", async ({ page }) => {
+    await open(page, "/admin/collections");
+    await page.getByRole("button", { name: "col-handbook", exact: true }).click();
+    const details = page.getByRole("dialog", { name: "col-handbook" });
+    await expect(details.getByRole("heading", { name: "Documents" })).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+    await page.keyboard.press("Escape");
+    await expect(details).toBeHidden();
+    await page.getByRole("button", { name: "New collection" }).click();
+    await expect(page.getByRole("dialog", { name: "New collection" })).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+  });
+
   test("the task sheet at 1000 px", async ({ page }) => {
     await page.setViewportSize({ width: 1000, height: 900 });
     await open(page, "/tasks");

@@ -99,7 +99,7 @@ class SearchMixin(CodeRepoBase):
         """The file cards nearest the query — one row per file (`scope_path`,
         `summary`, `pagerank`, `distance`) from the weekly
         cards (loom.code_summaries), the same bare-distance shape as the
-        chunk leg so an HNSW index on the table accelerates it unchanged.
+        chunk leg so a coded column turns the scan codes-first unchanged.
         Only rows that carry a summary vote: a structural placeholder row
         (embedded before any card was written) has nothing to say about the
         file. A
@@ -155,8 +155,8 @@ class SearchMixin(CodeRepoBase):
         scope: SearchScope | None = None,
     ) -> list[dict[str, Any]]:
         """Brute-force cosine leg in the exact shape CH's vector rewrite
-        needs (bare distance, single ASC sort, no GROUP BY) so the HNSW
-        ops-layer index accelerates it unchanged once applied.
+        needs (bare distance, single ASC sort, no GROUP BY) so a coded
+        column turns it codes-first unchanged.
 
         Carries `vector_search_settings()` like every memory-plane vector
         read: with the `Quantized('rabitq')` codec on `code_chunks.embedding`

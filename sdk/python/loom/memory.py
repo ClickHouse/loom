@@ -38,6 +38,7 @@ SearchableMemoryType = str
 Scope = Literal["private", "shared"]
 SENTINEL = "-"
 
+from loom.errors import from_response  # noqa: E402
 from loom.records import MemoryRecordClient, MemorySchemaClient  # noqa: E402
 from loom.run import credit_answer, current_run_id  # noqa: E402  (after the module constants)
 
@@ -73,20 +74,6 @@ _BULK_ENTRY_KEYS = frozenset(
 _IDENTITY_KEYS = ("org", "namespace", "agent", "user_id", "session_id", "run_id")
 
 
-def _bulk_verdict(memory_key: str, bulk: dict[str, Any]) -> str:
-    """The point-path spelling of a bulk verdict for one key, from the
-    aggregate lists (for a row that carries no verdict of its own)."""
-    for verdict, field_name in (
-        ("merge", "merged"),
-        ("rejected", "rejected_pinned"),
-        ("duplicate", "duplicates"),
-        ("conflict", "conflicted"),
-    ):
-        if memory_key in (bulk.get(field_name) or ()):
-            return verdict
-    return "clear"
-
-
 class _CoalesceWindow:
     __slots__ = ("t0", "count", "pending", "timer", "identity")
 
@@ -103,9 +90,10 @@ class _SetCoalescer:
 
     `submit()` returns the set's own result: the bulk row's `memory_key` and
     `version` plus `coalesced: true`, `conflict_verdict` (the row's own
-    verdict, as the point path spells it) and `noop` (version 0: a merge
-    or a pinned rejection wrote nothing). A failed bulk request fails every
-    set it carried with the same exception."""
+    verdict, as the point path spells it) and `noop` (version 0: a merge, or
+    a restatement the server skipped, wrote nothing). A set the server refused
+    raises the error the same set alone would have raised, and a failed bulk
+    request fails every set it carried with the same exception."""
 
     def __init__(self, transport: Any) -> None:
         self._transport = transport
@@ -176,23 +164,33 @@ class _SetCoalescer:
                 if not fut.done():
                     fut.set_exception(e)
             return
-        written = list(res.get("written") or [])
-        for i, (entry, fut) in enumerate(batch):
+        # Results are matched by key, in order, not by position: an older server leaves
+        # a blacklisted entry out of `written`, which would shift every later result.
+        rows_by_key: dict[str, list[dict[str, Any]]] = {}
+        for written_row in res.get("written") or []:
+            rows_by_key.setdefault(str(written_row.get("memory_key")), []).append(written_row)
+        for entry, fut in batch:
+            rows = rows_by_key.get(str(entry["memory_key"])) or []
             if fut.done():
+                if rows:
+                    rows.pop(0)  # keep the next entry of this key on its own row
                 continue
-            row = (
-                dict(written[i])
-                if i < len(written)
-                else {"memory_key": entry["memory_key"], "version": 0}
-            )
-            row.setdefault("memory_key", entry["memory_key"])
+            row = dict(rows.pop(0)) if rows else {"memory_key": entry["memory_key"], "version": 0}
             row["coalesced"] = True
-            # The server stamps each row's own verdict (`refines` is on no list);
-            # the lists are the fallback for a row it left unchecked.
-            row["conflict_verdict"] = row.get("conflict_verdict") or _bulk_verdict(
-                str(row["memory_key"]), res
-            )
+            # Only the verdict the server stamped on this row counts. The key
+            # lists can name a key for another entry of the same key, so an
+            # unstamped row (unchecked, or a restatement skipped) is clear.
+            row["conflict_verdict"] = row.get("conflict_verdict") or "clear"
             row["noop"] = int(row.get("version") or 0) == 0
+            # A refused entry (a pinned or read_only key, a blacklisted value, a write
+            # close to a pinned row) raises what the same set alone would have. The row
+            # says so, not the key's list, since a restatement of the same key in the
+            # batch is not refused.
+            refusal = _COALESCED_REFUSALS.get(row["conflict_verdict"])
+            if refusal is not None:
+                status, detail = _refusal_detail(row, *refusal)
+                fut.set_exception(from_response({"detail": detail}, status))
+                continue
             fut.set_result(row)
 
     async def flush(self) -> None:
@@ -201,6 +199,31 @@ class _SetCoalescer:
             self._close(key, window)
         if self._inflight:
             await asyncio.gather(*list(self._inflight), return_exceptions=True)
+
+
+# A coalesced entry's refusal by its row's verdict: the status, code and message the
+# same memory.set alone answers.
+_COALESCED_REFUSALS: dict[str, tuple[int, str, str]] = {
+    "pinned": (409, "PINNED_CONFLICT", "the key is pinned"),
+    "rejected": (409, "PINNED_CONFLICT", "write conflicts with a pinned memory"),
+    "locked": (423, "LOCKED", "the key is locked read_only"),
+    "blacklisted": (422, "BLACKLISTED", "value matches a blacklist pattern"),
+}
+
+
+def _refusal_detail(
+    row: dict[str, Any], status: int, code: str, message: str
+) -> tuple[int, dict[str, Any]]:
+    """The error detail for a refused coalesced entry. A pinned refusal names the
+    blocker and the peers, as memory.set does; the row carries no lock or blacklist
+    pattern, so those name the key only."""
+    detail: dict[str, Any] = {"code": code, "message": message, "memory_key": row["memory_key"]}
+    if code == "PINNED_CONFLICT":
+        blocker = str(row.get("pinned_blocker_id") or "")
+        peer_ids = [str(p.get("memory_id") or "") for p in row.get("peers") or []]
+        detail["pinned_blocker_id"] = blocker
+        detail["peer_ids"] = peer_ids or ([blocker] if blocker else [])
+    return status, detail
 
 
 def _opt_int(v: Any) -> int | None:
@@ -647,8 +670,8 @@ class MemoryClient:
         valid_at: datetime | None = None,
         valid_to: datetime | None = None,
         char_limit: int | None = None,
+        relations: list[tuple[str, str, str]] | None = None,
         dry_run: bool = False,
-        await_verdict: bool = False,
     ) -> dict[str, Any]:
         """Write a memory entry.
 
@@ -676,6 +699,10 @@ class MemoryClient:
         `char_limit`: server-enforced cap on the stringified value length.
         Server returns 422 if exceeded.
 
+        `relations`: the (subject, relation, object) facts the value states,
+        written to the fact graph and linked to the row. A set carrying them
+        is sent on its own, never coalesced into a bulk write.
+
         `source_resource_id`: provenance pointer to the primary source this
         fact was cited from — a file path, document id, or URL. Bloom-indexed
         (filterable) and surfaced by `memory.provenance`.
@@ -693,7 +720,11 @@ class MemoryClient:
         identity inside 200 ms the SDK coalesces sets into one
         `memory.bulk_set`, and such a result carries `coalesced: true` and no
         `memory_id` / `content_sha256`: read the hash with `get()` (a set
-        with `if_match_sha256` is never coalesced).
+        with `if_match_sha256` is never coalesced). A blacklisted value raises
+        the `ValidationError` (`BLACKLISTED`, 422); a new value for a pinned
+        key, or a close write against a pinned row, the `PreconditionFailed`
+        (`PINNED_CONFLICT`, 409); a write to a `read_only` key a `LoomError`
+        with code `LOCKED` (423); coalesced or not.
 
         The response also carries the write-time conflict verdict
         (`conflict_verdict`: clear | merge | duplicate | conflict | refines),
@@ -705,11 +736,6 @@ class MemoryClient:
         `dry_run=True` runs the check and returns the verdict, peers and
         `next` without writing anything — no row, no embedding, no audit
         hash; `version` is 0 and `noop` is true.
-
-        `conflict_verdict` may come back `pending` (`verdict_at:
-        "deferred"`): the row is written and the LLM conflict judge runs
-        after the call; `get()` shows the settled `status` / `duplicate_of`.
-        `await_verdict=True` waits for the judge in the response.
         """
         payload = self._set_payload(
             memory_key,
@@ -732,8 +758,8 @@ class MemoryClient:
             valid_at=valid_at,
             valid_to=valid_to,
             char_limit=char_limit,
+            relations=[list(f) for f in relations or []],
             dry_run=dry_run,
-            await_verdict=await_verdict,
         )
         coalescer = self._set_coalescer()
         if coalescer is not None and set(payload) - set(_IDENTITY_KEYS) <= _BULK_ENTRY_KEYS:
@@ -847,8 +873,8 @@ class MemoryClient:
         valid_at: datetime | None = None,
         valid_to: datetime | None = None,
         char_limit: int | None = None,
+        relations: list[tuple[str, str, str]] | None = None,
         dry_run: bool = False,
-        await_verdict: bool = False,
     ) -> dict[str, Any]:
         """Reinforce: `set` with `pinned=True`, taking the same arguments. A
         later write close to a pinned row is refused (409 PINNED_CONFLICT)
@@ -878,8 +904,8 @@ class MemoryClient:
             valid_at=valid_at,
             valid_to=valid_to,
             char_limit=char_limit,
+            relations=[list(f) for f in relations or []],
             dry_run=dry_run,
-            await_verdict=await_verdict,
         )
         return await self._agent.transport.post("/v1/memory.pin", payload)
 
@@ -1184,8 +1210,16 @@ class MemoryClient:
         *,
         user_id: str | None = None,
         session_id: str | None = None,
+        if_superseded_by: str | None = None,
+        only_if_superseded: bool = False,
     ) -> dict[str, Any]:
-        """Undo a tombstone within the 14-day grace window.
+        """Bring back a deleted memory (within the 14-day grace window) or one
+        Loom retired on its own (status `superseded`).
+
+        `if_superseded_by` restores the row only while it is still retired
+        behind that memory id (as a `memory.auto_supersede` record names it);
+        `only_if_superseded` restores it only while it is retired at all, never
+        undoing a delete.
 
         Returns the full memory.restore response:
           - `restored: bool` — True if a live row was written.
@@ -1194,14 +1228,20 @@ class MemoryClient:
           - `expired: bool` — True when the tombstone aged past the 14d
             grace window. The data is being GC'd; restoration is no longer
             possible.
+          - `from_status: str` — `"tombstoned"` (a delete undone) or
+            `"superseded"` (a retirement reversed); empty on a no-op.
 
         Preserves the original char_limit, pinned, tags, and entities
-        across the restore. Expires_at is intentionally cleared so the
-        restored row gets a fresh lease — restoring a row whose original
-        expiry was in the past would otherwise immediately re-tombstone.
+        across the restore. An undone delete clears `expires_at`, so the row
+        gets a fresh lease (its old expiry may have passed, which would
+        tombstone it again at once); an undone retirement keeps it.
         """
         payload = self._identity(user_id, session_id)
         payload["memory_key"] = memory_key
+        if if_superseded_by:
+            payload["if_superseded_by"] = if_superseded_by
+        if only_if_superseded:
+            payload["only_if_superseded"] = True
         return await self._agent.transport.post("/v1/memory.restore", payload)
 
     async def clear(
@@ -1213,11 +1253,14 @@ class MemoryClient:
     ) -> dict[str, Any]:
         """Bulk-tombstone all memories in one scope. ADMIN role required.
 
-        At least one of `user_id` or `agent` must be provided.
-        `confirm_subject` must equal that value (or one of them, when
+        At least one of `user_id` or `agent` must name a concrete value
+        other than `'-'`; `"*"` on the other clears every user's or every
+        agent's rows.
+        `confirm_subject` must equal a concrete value (or one of them, when
         both are set) — defense against accidental clears.
 
-        Returns `{cleared_at, rows_affected: {table: count}, total}`.
+        Returns `{cleared_at, rows_affected: {table: count}, total, locked_skipped}`;
+        locked rows stay and are counted in `locked_skipped`.
         Tombstone-not-hard-delete: cleared rows are recoverable for the
         14-day grace window by re-writing the same key. For
         cross-system erasure use `erasure.request_user_id` or
@@ -1635,6 +1678,7 @@ class MemoryClient:
         char_limit: int | None = None,
         tags: Sequence[str] | None = None,
         concepts: Sequence[str] | None = None,
+        relations: Sequence[tuple[str, str, str]] | None = None,
         revive: bool = False,
     ) -> dict[str, Any]:
         """Update a memory's `value` by opaque memory_id. Preserves
@@ -1652,6 +1696,7 @@ class MemoryClient:
         `value=None` keeps the stored value: pass `tags` / `concepts` alone
         to rewrite the row's facets (the whole row is re-emitted and the
         embedding refreshed, so a key-facet vector follows the tags).
+        `relations`: the facts the new value states, as `set()` takes them.
         """
         payload: dict[str, Any] = {
             "org": self._agent.org,
@@ -1669,6 +1714,8 @@ class MemoryClient:
             payload["tags"] = list(tags)
         if concepts is not None:
             payload["concepts"] = list(concepts)
+        if relations:
+            payload["relations"] = [list(f) for f in relations]
         return await self._agent.transport.post(
             "/v1/memory.update_by_id",
             payload,
@@ -1689,7 +1736,9 @@ class MemoryClient:
         concepts: Sequence[str] | None = None,
         confidence: float | None = None,
         reason: str = "",
+        relations: Sequence[tuple[str, str, str]] | None = None,
         revive: bool = False,
+        run_id: str | None = None,
     ) -> dict[str, Any]:
         """Update a memory by key — the fact changed or got more specific.
         Resolves `memory_key` namespace-wide unless
@@ -1701,6 +1750,9 @@ class MemoryClient:
         "content_sha256"}` on hit, `{"updated": False, "reason": "not_found"}`
         when no live row carries the key, and raises on 409 AMBIGUOUS_KEY
         (detail lists the candidate rows) or PRECONDITION_FAILED.
+
+        `run_id` stamps the revision with a run; unset, the active
+        `run_scope`'s.
         """
         payload: dict[str, Any] = {
             "org": self._agent.org,
@@ -1726,6 +1778,11 @@ class MemoryClient:
             payload["confidence"] = confidence
         if reason:
             payload["reason"] = reason
+        if relations:
+            payload["relations"] = [list(f) for f in relations]
+        run_id = run_id or current_run_id()
+        if run_id:
+            payload["run_id"] = run_id
         return await self._agent.transport.post("/v1/memory.update", payload)
 
     async def share(
@@ -1792,8 +1849,11 @@ class MemoryClient:
         Returns the server response: `written` in input order (each row's
         `memory_key`, `version`, `conflict_verdict`), and the keys that were
         not written and why — `skipped_pinned` / `skipped_locked` (the live
-        row is pinned or locked), `merged`, `rejected_pinned`. A row not
-        written has version 0.
+        row is pinned or locked), `skipped_blacklisted`, `merged`,
+        `rejected_pinned`. A row not written has version 0, and its
+        `conflict_verdict` says why: `blacklisted`, `pinned`, `locked` or
+        `rejected` (close to a pinned row), with `pinned_blocker_id` naming
+        the pinned row for the last two.
 
         `idempotency_key`: unlike `set` (idempotent on identity+memory_key),
         a bulk insert is replayed verbatim — an app-level retry of a failed
@@ -1880,7 +1940,9 @@ class MemoryClient:
         you need the written keys back now.
 
         Returns a dict with `written: list[{memory_key, version}]`,
-        `tokens_in`, `tokens_out`, `llm_provider`, `llm_model` (or
+        `refused: list[{memory_key, verdict}]` (the extracted facts the write
+        refused: a blacklisted, pinned or locked key, or a pinned row close
+        by), `tokens_in`, `tokens_out`, `llm_provider`, `llm_model` (or
         `deferred: True, queue_id` when deferred).
         """
         payload: dict[str, object] = self._identity(

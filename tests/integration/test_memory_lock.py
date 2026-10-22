@@ -173,3 +173,44 @@ def test_no_delete_and_a_lapsing_lock(writer: httpx.Client, ns: str) -> None:
     )
     r = _post(writer, "memory.delete", _ident(ns, memory_key=key))
     assert r.status_code == 200 and r.json()["tombstoned"] is True
+
+
+def test_a_star_agent_clear_leaves_only_the_locked_identity(
+    writer: httpx.Client, admin: httpx.Client, ns: str
+) -> None:
+    """One user's key under two agents, locked under one: agent="*" clears the
+    other agent's copy and every other key, and reports the locked row."""
+
+    def ident(agent: str, **extra) -> dict:
+        return {"org": ORG, "namespace": ns, "agent": agent, "user_id": "u1", **extra}
+
+    for agent, key in (("a", "deploy_window"), ("b", "deploy_window"), ("b", "oncall")):
+        body = ident(agent, memory_key=key, value=f"{agent} {key}", memory_type="semantic")
+        r = _post(writer, "memory.set", {**body, "classify": False})
+        assert r.status_code == 200, r.text
+    r = _post(
+        writer,
+        "memory.lock",
+        ident("a", memory_key="deploy_window", mode="read_only", reason="keep"),
+    )
+    assert r.status_code == 200 and r.json()["locked"], r.text
+
+    r = _post(
+        admin,
+        "memory.clear",
+        {"org": ORG, "namespace": ns, "user_id": "u1", "agent": "*", "confirm_subject": "u1"},
+    )
+    assert r.status_code == 200, r.text
+    c = r.json()
+    assert c["locked_skipped"] == 1 and c["rows_affected"]["loom.memory"] == 2
+    # Agent b's vector of the locked key goes too: only agent a's is excluded.
+    assert c["rows_affected"]["loom.memory_embeddings"] == 2
+
+    # memory.list reads one agent's rows; memory.get would fall back to another agent's.
+    def keys(agent: str) -> list[str]:
+        r = _post(writer, "memory.list", ident(agent))
+        assert r.status_code == 200, r.text
+        return sorted(e["memory_key"] for e in r.json()["entries"])
+
+    assert keys("a") == ["deploy_window"]
+    assert keys("b") == []

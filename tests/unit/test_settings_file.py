@@ -216,7 +216,7 @@ def test_a_group_a_secret_opens_keeps_its_heading_and_note() -> None:
 
 
 # Names a description may give bare although a sibling setting ends in them: request,
-# row and ClickHouse fields (a request's `top_k`, a row's `on_expire`, `ef_search`).
+# row and ClickHouse fields (a request's `top_k`, a row's `on_expire`).
 _WIRE_NAMES = {
     "candidate_min_confidence",
     "chunk_size",
@@ -224,7 +224,6 @@ _WIRE_NAMES = {
     "consolidation_enabled",
     "deadline_ms",
     "deep_select",
-    "ef_search",
     "fan_in",
     "floor_mode",
     "git_fetch_pr_heads",

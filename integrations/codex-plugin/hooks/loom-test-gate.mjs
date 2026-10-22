@@ -23,6 +23,8 @@ import {
   git,
   postBounded,
   readStdinJson,
+  DIFF_ARGS,
+  diffHeaders,
   resolveServerUrl,
   resolveToken,
   scheduleExit,
@@ -115,7 +117,10 @@ async function main() {
     return;
   }
 
-  const diff = git(["diff", "--unified=0", "HEAD", "--", ...changed], root, { timeoutMs: 2000, raw: true });
+  const diff = git(["diff", ...DIFF_ARGS, "--unified=0", "HEAD", "--", ...changed], root, {
+    timeoutMs: 2000,
+    raw: true,
+  });
   // A comment- or whitespace-only change owes no test.
   if (commentOnlyDiff(diff)) {
     scheduleExit(0);
@@ -135,7 +140,7 @@ async function main() {
       org: repo.org,
       namespace: repo.namespace,
       files: changed.slice(0, 50),
-      diff: diff.slice(0, 200_000),
+      diff: diffHeaders(diff, 200_000),
       depth: DEPTH,
       consumer: "claude-code-testgate",
     },

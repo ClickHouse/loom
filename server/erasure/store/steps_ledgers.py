@@ -16,6 +16,7 @@ from server.erasure.store.predicates import (
     NS_EQ,
     NS_IN,
     ORPHAN_LEARNINGS,
+    PAYLOAD_UID,
     SUPPORTED_LEARNINGS,
     UID,
 )
@@ -227,6 +228,15 @@ async def delete_memory_drops_by_namespace(
     )
 
 
+async def delete_namespace_guides_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """Every revision of the namespace's guide: text its writers wrote about it."""
+    return await delete_scoped(
+        "loom.namespace_guides", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
 async def delete_delete_version_checks_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
@@ -431,13 +441,26 @@ async def delete_consolidation_runs_by_user(
 async def delete_projection_failures_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
-    """A failed projection keeps its payload (the row it could not write)
-    and the keys; no TTL, no soft-delete, no user axis."""
+    """A failed projection keeps its payload (the row it could not write) and the keys.
+    Resolved rows leave by the table's TTL; active and abandoned ones stay until erased."""
     return await delete_scoped(
         "loom.memory_projection_failures",
         org=org,
         scope_where=NS_EQ,
         params={"ns": namespace},
+        ch=ch,
+    )
+
+
+async def delete_projection_failures_by_user(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    """By the identity its payload names: the entries a bulk write could not project."""
+    return await delete_scoped(
+        "loom.memory_projection_failures",
+        org=org,
+        scope_where=PAYLOAD_UID,
+        params={"uid": user_id},
         ch=ch,
     )
 

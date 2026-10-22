@@ -149,6 +149,18 @@ Pass a `logger` (four methods: debug/info/warn/error) and a `logLevel` (`debug |
 const loom = new LoomClient({ baseUrl, apiKey, logger: myPinoAdapter, logLevel: "info" });
 ```
 
+## Give your agent the guide
+
+`await bot.guide()` returns how to use Loom, written for a model: the loop,
+where each kind of state goes and how to read what comes back
+(the experimental `mentor.guide`, the `loom` skill in `skills/loom/`). Put it in the system
+prompt of an agent that has no plugin to carry it; `guide("reference")` returns
+every plane with its ops.
+
+```ts
+const systemPrompt = `You triage support tickets.\n\n${await bot.guide()}`;
+```
+
 ## Ask the mentor
 
 The store reads what your agent actually calls and names the planes it never

@@ -159,8 +159,9 @@ What an agent framework holds between turns:
   `await execute(name, arguments)` that returns the string the model reads:
   `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`,
   `loom_note`. The schemas match the TypeScript SDK's.
-- `bot.run_scope(goal=...)` is an `async with` block that begins a run, threads
-  its `run_id` through every memory call inside, and on exit credits the keys a
+- `bot.run_scope(goal=...)` is an `async with` block that begins a run, stamps
+  its `run_id` on the writes inside and labels the reads with it (the
+  `X-Loom-Run-Id` header, not a filter), and on exit credits the keys a
   non-abstained `memory.ask` cited as the run's `memories_used`. See
   [Runs](../features/runs.md).
 
@@ -175,6 +176,8 @@ async with bot.session("thread-42", user_id="u1") as s:
 
 `await bot.mentor()` asks the store what the agent's calls are missing (planes
 it never uses, with the counts behind each hint) and logs up to three hints.
+`await bot.guide()` returns how to use Loom as Markdown (`mentor.guide`), for the
+system prompt of an agent with no plugin; `part="reference"` lists every plane.
 
 ## Framework adapters
 

@@ -8,9 +8,10 @@ writes inside it, and closes it naming the memories it relied on. That
 ledger has nothing to credit. The shape:
 
   1. `agent.run_scope(goal=...)`  — `run.begin` on entry, `run.complete` on exit.
-  2. reads inside the block        — `memory.search` / `memory.ask` stamp the
-                                     run_id; `ask` credits the keys its
-                                     answer cited automatically.
+  2. reads inside the block        — `memory.search` / `memory.ask` are
+                                     labelled with the run (`X-Loom-Run-Id`),
+                                     not filtered by it; `ask` credits the
+                                     keys its answer cited automatically.
   3. `run.used(key, ...)`          — name what the task actually relied on
                                      (search hits the agent read and acted on).
   4. writes inside the block       — `memory.set` stamps the run_id, so the
@@ -57,7 +58,7 @@ async def run_task(
         await agent.memory.set(DEPLOY_KEY, DEPLOY_FACT, tags=["ops"])
 
         async with agent.run_scope(goal=goal, user_request="When can we ship?") as run:
-            # READ — inside the block every call carries run.run_id.
+            # READ — inside the block reads are labelled with run.run_id, writes carry it.
             hits = await agent.memory.search("when do we deploy?", top_k=5)
             # What the task relied on: the hits it read. (`memory.ask` does
             # this step itself for the keys its answer cites.)

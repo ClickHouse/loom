@@ -183,9 +183,9 @@ class MemoryStore:
             and r["memory_key"] == input.memory_key
             and r["tombstoned_at"] is None
             and r["status"] in ("active", "duplicate", "conflicted")
+            and getattr(input, "agent", None) in (None, "", "-", "*", r["agent"])
             and all(
-                getattr(input, f, None) in (None, "", r[f])
-                for f in ("agent", "user_id", "session_id")
+                getattr(input, f, None) in (None, "", "-", r[f]) for f in ("user_id", "session_id")
             )
         ]
         return sorted(rows, key=lambda r: -int(r["version"]))
@@ -297,6 +297,7 @@ def wire_memory_store(monkeypatch: pytest.MonkeyPatch, store: MemoryStore) -> Re
     monkeypatch.setattr(cf, "check_on_commit", _check)
     monkeypatch.setattr(cf, "mark_peers_conflicted", _none)
     monkeypatch.setattr("server.observability.audit.emit", _audit)
+    monkeypatch.setattr("server.observability.audit.emit_strict", _audit)
     monkeypatch.setattr(mr, "record_usage_event", _none)
     monkeypatch.setattr("server.memory.app.key_supersession.supersede_same_key_rows", _zero)
     monkeypatch.setattr(set_commit, "_project_set_entities_fail_open", _none)

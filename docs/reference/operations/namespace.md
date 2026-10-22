@@ -44,7 +44,7 @@ Discover public namespaces in the org; anyone can join returned rows via namespa
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
-| `query` | `str` | `''` | substring match on namespace name or description |
+| `query` | `str` | `''` | Substring match on the namespace name or description, or on a public namespace's guide summary. |
 | `limit` | `int` | `50` | At most this many rows, most members first; `closed` rows are dropped after the limit. |
 | `include_closed` | `bool` | `False` | `closed` rows (bench/scratch) are omitted unless asked for; `kinds` narrows the directory (e.g. ["code"] for the Code view). |
 | `kinds` | `list[str]` | *(computed)* | Only these kinds (`memory`, `code`, `bench`); empty lists every kind. |
@@ -129,8 +129,70 @@ Fetch one namespace's metadata + settings (owner, visibility, feature flags, ret
 | `code_change_policy` | `Literal['retire_removed', 'flag', 'revise'] \| None` | How reads treat the namespace's code-linked memories when their code changes: `retire_removed` (the default), `flag` or `revise`. |
 | `tag_registry` | `list[dict[str, Any]] \| None` | Per-tag configuration rows (retention, dedup threshold, hot quota, conflict policy); empty when none are registered. |
 | `classification` | `Literal['standard', 'restricted'] \| None` | `standard` or `restricted` (loom.namespaces.classification). |
+| `guide_revision` | `int \| None` | The current revision of the namespace's guide, the `expected_revision` of its next `namespace.guide_set`; 0 when it never had one. |
+| `guide_summary` | `str \| None` | The guide's one-line summary; empty when there is no guide or it was cleared. |
 | `created_at` | `datetime \| None` | When the namespace was first registered (UTC). |
 | `updated_at` | `datetime \| None` | When the registry row was last written (UTC). |
+
+## `namespace.guide_get`
+
+The namespace's guide: Markdown its writers keep on what it holds, its key layout and what its tags mean.
+
+`POST /v1/namespace.guide_get` · MCP `loom_namespace_guide_get` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `revision` | `int` | `0` | A past revision to read; 0 (the default) reads the current guide. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `found` | `bool` | False when the revision read does not exist or cleared the guide. |
+| `revision` | `int` | The revision read, the current one being what `namespace.guide_set` takes as `expected_revision`; 0 when that revision (or any guide) does not exist. |
+| `content` | `str` | The guide in Markdown: what the namespace holds, its key layout, what its tags mean. |
+| `summary` | `str` | One line for directories (`namespace.browse`) and the session-start pack. |
+| `note` | `str` | The writer's note on what this revision changed. |
+| `updated_by` | `str` | The actor (`human:<subject>` or `process:<subject>`) that wrote the revision. |
+| `updated_at` | `datetime \| None` | When the revision was written (UTC); None when the namespace never had a guide. |
+
+## `namespace.guide_history`
+
+The guide's revisions, newest first, with summary, note, writer and length.
+
+`POST /v1/namespace.guide_history` · MCP `loom_namespace_guide_history` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `limit` | `int` | `20` | Newest revisions to list, at most 200. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `revisions` | `list[_GuideRevision]` | Newest first; read one whole with `namespace.guide_get` and its `revision`. |
+
+## `namespace.guide_set`
+
+Save a new revision of the namespace's guide after you change one of its conventions: the whole text, a `note`, and `expected_revision` = the revision you read.
+
+`POST /v1/namespace.guide_set` · MCP `loom_namespace_guide_set` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `content` | `str` | required | The whole new guide in Markdown, at most 32,000 characters; "" clears it. |
+| `summary` | `str \| None` | `None` | One line, at most 300 characters, that a directory shows for the namespace; left out, the current summary is kept, and "" removes it. |
+| `expected_revision` | `int` | required | The revision this edit was made from (0 when there is no guide yet); a guide that has moved past it refuses the write and answers with its current text. |
+| `note` | `str` | `''` | What this revision changes and why, at most 500 characters. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `written` | `bool` | True when this call wrote a new revision. |
+| `conflict` | `bool` | True when the guide moved past `expected_revision` and this save's text differs from it: nothing was written, and `current` holds the guide to merge into. |
+| `revision` | `int` | The current revision after the call (the one written, or the one that refused it), which the next edit passes as `expected_revision`. |
+| `current` | `NamespaceGuideGetOutput \| None` | On a conflict, the current guide; otherwise None. |
 
 ## `namespace.join`
 

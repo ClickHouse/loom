@@ -1,16 +1,23 @@
 """Run ledger client — one agent execution as a first-class object.
 
     run = await agent.run.begin(goal="Fix the flaky CI job", user_request=prompt)
-    hits = await agent.memory.ask("what broke CI last week", run_id=run["run_id"])
+    await agent.memory.set("ci:fix", "Pin the runner image.", run_id=run["run_id"])
     ...
     await agent.run.complete(run["run_id"], status="completed",
                              memories_used=["ci:flaky:2026-09"],
                              final_response="Pinned the runner image.")
 
+`agent.run_scope(...)` does the same as an `async with` block, and also labels
+the block's reads with the run (see `RunScope`).
+
 `memories_used` is the credit-assignment signal: each key gets a `used`
 usage event (search-side reinforcement), and on a completed run a positive
 `evidence` event as well. The server derives what the run wrote and
 recalled from the run_id, and its cost from the session.
+
+Pass the run_id on writes (memory.set, memory.update, observe.record). On a read
+(memory.search, memory.ask) a body run_id filters to the run's own rows;
+`run_scope` labels reads with the `X-Loom-Run-Id` header instead.
 """
 
 from __future__ import annotations
@@ -228,7 +235,9 @@ class RunClient:
         budget_seconds: int = 0,
     ) -> dict[str, Any]:
         """Open a run. Returns {run_id, status, started_at, next}. Pass the
-        run_id on memory.set / memory.ask / memory.search / observe.record.
+        run_id on writes (memory.set, memory.update, observe.record); on
+        memory.search or memory.ask a body run_id filters to the run's rows,
+        so label reads with `run_scope` (the `X-Loom-Run-Id` header) instead.
         `role` (planner / executor / critic / your own word) tags the run's
         reflection `role:<role>` so a same-role memory.search(role=...)
         prefers it. `budget_usd` / `budget_seconds` (0 = none) set a budget
@@ -442,7 +451,9 @@ class RunScope:
     async def note(self, content: str, *, block_key: str = "scratchpad") -> dict[str, Any]:
         """Write the run's scratchpad block: the task's current
         state as the agent sees it. context.pack and memory.ask calls that
-        carry this run_id read it back before the memories."""
+        carry this run_id in the body read it back before the memories; on
+        memory.ask that body run_id also filters the read to the run's rows,
+        and a read inside this scope sends the run as a header instead."""
         return await self._client._agent.working_memory.set(
             content, block_key=block_key, run_id=self.run_id
         )

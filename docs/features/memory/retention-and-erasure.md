@@ -8,8 +8,12 @@ it.
 ## What is kept, and for how long
 
 No memory, embedding, version-history, conversation, entity, summary, working-memory or
-knowledge table has a TTL in `schemas/schema.sql`, and no worker retires rows by age. A
-row leaves the served set only when:
+knowledge table has a TTL in `schemas/schema.sql`, and no worker retires rows by age.
+The link tables `entity_triple_rows` and `entity_edge_rows` follow `entity_triples` and
+`entity_edges`: no TTL. An erasure deletes the links of the memories it erases, and
+`loom erasure-re-verify --completed-since … --resume` the orphan links an older build's
+erasure left behind.
+A row leaves the served set only when:
 
 - **its writer removes it**: `memory.delete`, a same-key rewrite that supersedes it,
   `memory.apply`, `memory.clear`, `conflicts.resolve`, `blacklist.add(sweep=true)`;
@@ -36,7 +40,11 @@ the row and its prior versions in `loom.memory_versions` stay on disk:
 - `memory.restore` revives a tombstoned key within 14 days (after that it answers
   `expired=true`). It also reverses an automatic supersession.
 - `memory.clear` (admin) tombstones every memory for an agent or user in a namespace;
-  `confirm_subject` must repeat a scope value. Cleared keys revive the same way.
+  `confirm_subject` must repeat the concrete `user_id` or `agent` (neither `'*'` nor `'-'`
+  confirms). `agent="*"` with a `user_id` clears that user's rows under every agent, and
+  `user_id="*"` with an `agent` that agent's rows for every user. A scope that names nobody
+  but `'-'` is refused, as a namespace-wide clear is. Locked rows stay and are counted in
+  `locked_skipped`. Cleared keys revive the same way.
 
 To remove the bytes, use an [erasure](#erasure). To strip one value but keep the row and
 audit trail, use [`memory.redact`](./history-and-provenance.md#scrubbing-history-memoryredact).
@@ -76,6 +84,10 @@ wins.
 
 - **A table TTL deletes physically** at the part's next merge. There is no restore
   window, and tombstones age out with the rows they hide.
+- **An Undo holds while its record does.** The conflict resolver honours a person's Undo
+  of a retirement by its `memory.unsupersede` row in `audit_log`. With an `audit_log` TTL
+  shorter than a pair's life, an aged-out Undo stops holding, and the resolver may judge
+  and retire that pair again.
 - **Tiering needs a volume.** `LOOM_TIERING_WARM_VOLUME_NAME` must name a volume in the
   storage policy, and the warm age must be below the retention age.
 
@@ -172,16 +184,20 @@ After 5 attempts the worker marks the request `failed` for good and writes an
 `erasure.abandoned` audit row, with `failure_reason` and `steps_completed`. A person must
 then escalate. `loom erasure-re-verify` re-checks terminal sagas; `--resume` re-runs
 failed ones from their checkpoint (`--skip-external` for a `namespace_list` saga whose
-external step keeps failing). See [troubleshooting](../../operations/troubleshooting.md).
+external step keeps failing). `--completed-since <ISO timestamp>` re-checks the completed
+sagas verified since then instead of the failed ones, for the erasures a previous build
+ran during an upgrade; with `--resume` it deletes only their orphan row links
+([maintenance](../../operations/maintenance.md#erasure)). See
+[troubleshooting](../../operations/troubleshooting.md).
 
 ### Operations
 
-| Op                | Role                         | Does                                                                                                                                                                                       |
-| ----------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `erasure.request` | writer (admin on the target) | Run the saga for one scope. `urgency` `normal` or `urgent`; `purge`; `external`.                                                                                                           |
-| `erasure.status`  | viewer                       | One request's state, current step, failure reason and census. A user's erasure answers only an org admin or platform admin of its org. Not listed in the MCP toolsets.                     |
-| `erasure.list`    | viewer                       | Recent requests (filter by `status`), with `steps_completed_count`, `reversals_count`, `residue_count`.                                                                                    |
-| `erasure.export`  | admin                        | A subject's data as JSON: `memory`, `knowledge`, `agent_events`, `audit_log`, each capped by `section_limit` (default 10,000; `truncated` when over). Includes tombstoned rows by default. |
+| Op                | Role                         | Does                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `erasure.request` | writer (admin on the target) | Run the saga for one scope. `urgency` `normal` or `urgent`; `purge`; `external`.                                                                                                                                                                                                                                                                            |
+| `erasure.status`  | viewer                       | One request's state, current step, failure reason and census. A user's erasure answers only an org admin or platform admin of its org. Not listed in the MCP toolsets.                                                                                                                                                                                      |
+| `erasure.list`    | viewer                       | Recent requests (filter by `status`), with `steps_completed_count`, `reversals_count`, `residue_count`.                                                                                                                                                                                                                                                     |
+| `erasure.export`  | admin                        | A subject's data as JSON: `memory`, `knowledge`, `conversations` (transcript turns and saved messages), `conversation_threads`, `agent_events`, `audit_log`, each capped by `section_limit` (default 10,000; `truncated` when over), and `conversations` also by `LOOM_ERASURE_EXPORT_CONVERSATION_MAX_BYTES` of text. Includes tombstoned rows by default. |
 
 Ledger rows are kept 90 days. Field lists:
 [operations reference](../../reference/operations.md#erasure).
