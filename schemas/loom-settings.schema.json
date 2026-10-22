@@ -188,26 +188,26 @@
           "exclusiveMinimum": 0,
           "maximum": 5000,
           "type": "integer",
-          "description": "Longest wait, ms, of a batched or waited async insert no request waits on (the usage-event and write-mark flushes, webhook delivery attempts); ClickHouse's default. At most 5000, far under the write deadline."
+          "description": "Longest wait, ms, of a batched or waited async insert no request waits on (background flushes, webhook attempts; docs/architecture/clickhouse.md#batched-inserts)."
         },
         "ch_batched_insert_wait_max_ms": {
           "default": 50,
           "exclusiveMinimum": 0,
           "maximum": 1000,
           "type": "integer",
-          "description": "Longest wait, ms, of a batched or waited async insert a request waits on for others to share its part; holds a pooled connection meanwhile. At most 1000, far under the write deadline."
+          "description": "Longest wait, ms, of a batched or waited async insert a request waits on; it holds a pooled connection meanwhile."
         },
         "ch_batched_insert_wait_min_ms": {
           "default": 10,
           "exclusiveMinimum": 0,
           "maximum": 1000,
           "type": "integer",
-          "description": "Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when writes are sparse; capped at the insert's longest wait. At most 1000."
+          "description": "Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when writes are sparse; capped at the insert's longest wait."
         },
         "ch_batched_inserts": {
           "default": true,
           "type": "boolean",
-          "description": "Send the inserts of tables written per request or by the webhook worker (audit_log, conversation turns and conversation_embeddings, agent_events, webhook outbox and attempts, memory_evidence, memory_belief_sources) as waited async inserts that share parts; each holds a pooled connection while it waits, so size ch_pool_maxsize for it (docs/operations/upgrades.md). false commits them, one part each."
+          "description": "Send per-request inserts (audit, transcript, ledgers) as waited async inserts that share parts (docs/architecture/clickhouse.md#batched-inserts); false commits each as one part."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,
@@ -259,7 +259,7 @@
         "ch_pool_maxsize": {
           "default": 64,
           "type": "integer",
-          "description": "Connections and concurrent statements per process: size to request concurrency plus workers, plus the connections batched inserts hold while they wait (docs/operations/upgrades.md)."
+          "description": "HTTP connection pool size; the driver default (~8) exhausts under bulk writes plus workers. Size to request concurrency (docs/architecture/clickhouse.md#batched-inserts)."
         },
         "ch_pool_wait_ms": {
           "default": 500,
