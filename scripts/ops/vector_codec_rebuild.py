@@ -60,7 +60,7 @@ log names, and fails the run when it has not.
 
 After a swap the tool compares the rollback copy with the live table. A change only
 the rollback copy holds names `--rollback`; a change the live table holds (a write
-after the swap) or a key that differs at one version, which either table may hold,
+to it after the swap, or a delete in the old table after the last check) or a key that differs at one version, which either table may hold,
 keeps both tables for inspection.
 `--drop-pre-rebuild` runs the same comparison first, after a swap and after a
 rollback, and refuses (keeping the copy) while the copy it would drop holds a change.
@@ -148,6 +148,8 @@ KEEP_BOTH = (
     "Keep writers and erasure stopped and both tables as they are, and inspect the "
     "difference by hand before any --rollback or --drop-pre-rebuild"
 )
+# The tables `loom reembed` re-embeds (server.memory.app.reembed).
+REEMBED_TABLES = ("memory_embeddings", "entity_vectors", "conversation_embeddings")
 # A codec clause with one level of nested parentheses: CODEC(Quantized('rabitq', 3072, 0), LZ4).
 _CODEC = r"CODEC\((?:[^()]|\([^()]*\))*\)"
 
@@ -413,7 +415,9 @@ def newer_sql(old: str, new: str, fin: str, version: str | None, key: list[str])
 # Whether the replica answering a read has fetched every part of the tables in
 # {tables:Array(String)} that their replication logs name: it has copied the whole log
 # into its queue, and the queue holds nothing but merges, which keep the rows. A
-# mutation fails the run through the mutation count instead.
+# mutation fails the run through the mutation count instead. An empty table is refused
+# before any such read: its log is empty, and log_pointer = log_max_index = 0 also
+# reads a log of one entry that this replica has not read.
 REPLICA_SYNCED_SQL = (
     "(SELECT countIf(log_pointer > log_max_index) = length({tables:Array(String)}) "
     "FROM system.replicas WHERE database = currentDatabase() "
@@ -510,10 +514,7 @@ class VectorRebuild:
         self.since = 0  # the server's Unix time before the preflight's mutation check
         self.reads: dict[str, Any] = {}  # settings every read takes; sequential after the drain
         self.replicated = False  # the live table is a ReplicatedMergeTree
-        self.rollback_only = False  # a check found what only the rollback copy holds
-        self.diverged = False  # a check found a change the live table or a dropped copy holds
-        self.recheck = False  # the checks after the swap could not run
-        self.swapped = False  # the swap and its postcondition passed
+        self.next_step = ""  # the summary's next step, set where a check decides it
 
     # -- small reads -------------------------------------------------------
     def q(self, sql: str, parameters: dict[str, Any] | None = None, **st: Any) -> list[Any]:
@@ -628,7 +629,7 @@ class VectorRebuild:
         if self.a.index_granularity:
             line += f" --index-granularity {self.a.index_granularity}"
         if self.a.gate_fetch_multiplier != DEFAULT_GATE_FETCH_MULTIPLIER:
-            line += f" --gate-fetch-multiplier {self.a.gate_fetch_multiplier:g}"
+            line += f" --gate-fetch-multiplier {self.a.gate_fetch_multiplier!r}"
         if self.a.probes != DEFAULT_PROBES:
             line += f" --probes {self.a.probes}"
         if self.a.require_patch_free:
@@ -636,32 +637,15 @@ class VectorRebuild:
         if self.a.cluster != DEFAULT_CLUSTER:
             line += f" --cluster {shlex.quote(self.a.cluster)}"
         if self.a.statement_timeout_s != DEFAULT_STATEMENT_TIMEOUT_S:
-            line += f" --statement-timeout-s {self.a.statement_timeout_s:g}"
+            line += f" --statement-timeout-s {self.a.statement_timeout_s!r}"
         return line
 
     def report_state(self) -> str:
-        run = self.run_line
-        if self.swapped:
-            return (
-                f"keep writers and erasure stopped; run `{run} --drop-pre-rebuild --yes`, "
-                "which checks the two tables again before it drops the rollback copy"
-            )
-        if self.recheck:
-            return (
-                "the checks could not run: fix the grant, connect directly to one replica, "
-                f"or raise --statement-timeout-s, and rerun `{run} --drop-pre-rebuild --yes`; "
-                f"loom.{self.pre} is kept"
-            )
-        if self.rollback_only:
-            return (
-                f"loom.{self.pre} holds a change the new table lacks. "
-                + KEEP_AND_ROLL_BACK.format(run=run)
-            )
-        if self.diverged:
-            return f"loom.{self.t} and loom.{self.pre} differ. {KEEP_BOTH}"
+        if self.next_step:
+            return self.next_step
         return tr.guidance(
             self.t,
-            run,
+            self.run_line,
             self.target_state(self.t),
             self.exists(self.twin),
             self.target_state(self.pre),
@@ -713,6 +697,10 @@ class VectorRebuild:
             return why
         if why := self.drain_refusal(parse_engine(ddl)[0]):
             return why
+        if not tr.row_count(self.ch, self.t):
+            # the recall gate needs rows to probe, and REPLICA_SYNCED_SQL cannot read an
+            # empty replication log as caught up
+            return f"loom.{self.t} holds no rows: nothing to copy"
         try:
             return self.width_refusal(ddl)
         except ReplicaBehind as e:
@@ -776,12 +764,14 @@ class VectorRebuild:
             widths = self.q_drained(mixed_width_sql(table, c, self.fin, dim=self.dim), [table])
             if widths:
                 found = ", ".join(f"width {w}: {n} row(s)" for w, n in widths)
+                if self.t in REEMBED_TABLES:
+                    how = "`loom reembed --delete-old`"
+                else:
+                    how = f"`loom reembed` does not cover loom.{self.t}; its own writer must"
                 return (
                     f"{c} holds vectors of more than one width (target {self.dim}; {found}; "
                     f"LOOM_EMBEDDING_DIM {settings.embedding_dim}): the copy would zero all but "
-                    f"width {self.dim}; re-embed to LOOM_EMBEDDING_DIM (`loom reembed "
-                    "--delete-old`, for memory_embeddings, entity_vectors and "
-                    "conversation_embeddings) and rerun"
+                    f"width {self.dim}; re-embed to LOOM_EMBEDDING_DIM ({how}) and rerun"
                 )
         return ""
 
@@ -1150,7 +1140,7 @@ class VectorRebuild:
             return POSTCONDITION
         if set(tr.columns(self.ch, self.t)) != set(tr.columns(self.ch, self.pre)):
             # either table may have changed, so neither --rollback nor the drop keeps it whole
-            self.diverged = True
+            self.next_step = f"loom.{self.t} and loom.{self.pre} differ. {KEEP_BOTH}"
             log("POSTCONDITION FAILED: the rollback copy's columns differ by name")
             return POSTCONDITION
         if self.a.require_patch_free:
@@ -1160,7 +1150,7 @@ class VectorRebuild:
         except tr.Interrupted:
             raise
         except Exception as e:  # noqa: BLE001 - checks that cannot run keep the copy
-            self.recheck = True
+            self.next_step = self.recheck_step()
             log(
                 f"POSTCONDITION FAILED: the checks could not run ({str(e)[:160]}); "
                 f"loom.{self.pre} is kept"
@@ -1169,16 +1159,28 @@ class VectorRebuild:
         if why:
             log(f"POSTCONDITION FAILED: {why}. {self.keep_copy(rollback)}")
             return POSTCONDITION
-        self.swapped = True
+        self.next_step = (
+            f"keep writers and erasure stopped; run `{self.run_line} --drop-pre-rebuild "
+            "--yes`, which checks the two tables again before it drops the rollback copy"
+        )
         return OK
+
+    def recheck_step(self) -> str:
+        """The next step when the checks after the swap could not run."""
+        return (
+            "the checks could not run: fix the grant, connect directly to one replica, "
+            f"or raise --statement-timeout-s, and rerun `{self.run_line} --drop-pre-rebuild "
+            f"--yes`; loom.{self.pre} is kept"
+        )
 
     def keep_copy(self, rollback: bool) -> str:
         """The next step when the two tables differ, recorded for the summary: --rollback
         when only the rollback copy holds the change, else inspection with both kept."""
         if rollback:
-            self.rollback_only = True
-            return KEEP_AND_ROLL_BACK.format(run=self.run_line)
-        self.diverged = True
+            step = KEEP_AND_ROLL_BACK.format(run=self.run_line)
+            self.next_step = f"loom.{self.pre} holds a change the new table lacks. {step}"
+            return step
+        self.next_step = f"loom.{self.t} and loom.{self.pre} differ. {KEEP_BOTH}"
         return KEEP_BOTH
 
     def differences(
@@ -1221,7 +1223,8 @@ class VectorRebuild:
             if new_ahead:
                 why.append(
                     f"loom.{self.t} holds a change loom.{self.pre} lacks ({new_ahead}): a "
-                    "write after the swap"
+                    "write to the new table after the swap, or a delete in the old table "
+                    "after the last check"
                 )
             if same:
                 why.append(same)
@@ -1346,7 +1349,7 @@ class VectorRebuild:
         except tr.Interrupted:
             raise
         except Exception as e:  # noqa: BLE001 - checks that cannot run keep the copy
-            self.recheck = True
+            self.next_step = self.recheck_step()
             log(
                 f"REFUSED: the checks could not run ({str(e)[:160]}): fix the grant, "
                 "connect directly to one replica, or raise --statement-timeout-s, and "

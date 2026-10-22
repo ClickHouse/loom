@@ -217,11 +217,12 @@ into a twin table, check it, swap with `EXCHANGE TABLES` and keep the old table 
 in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-key).
 
 `vector_codec_rebuild.py` needs a maintenance window with every writer and erasure
-stopped and all in-flight writes drained. Before copying it refuses a source mutation
-still running or created in the minute before the run (with `--reuse`, before the
-reused twin was created), the margin for replica clocks that the gate before the swap
-also counts (rerun a minute after the last one finishes),
-and it never repairs the live table. Its ClickHouse user needs the
+stopped and all in-flight writes drained. It never repairs the live table. Before
+copying it refuses while a source mutation is still running or was created in the last
+minute (with `--reuse`, since the reused twin was created); the minute covers replica
+clock skew, and the gate before the swap counts it too. Rerun a minute after the last
+mutation finishes. It also refuses an empty table (exit 3): there is nothing to copy,
+and the recall gate needs rows to probe. Its ClickHouse user needs the
 `SYSTEM FLUSH ASYNC INSERT QUEUE` and `SYSTEM SYNC REPLICA` privileges on the table and,
 on `ReplicatedMergeTree`, `SYSTEM SYNC REPLICA` on `loom.<table>_pre_rebuild`, the
 rollback copy the swap creates, which the checks after the swap and in
@@ -257,8 +258,9 @@ cover these copies.
   The tool refuses (exit 3), `--dry-run` included, while a plain named column holds real
   vectors of another width, since the copy would replace them with zero vectors, and the
   message names each width and `LOOM_EMBEDDING_DIM`. Re-embed to `LOOM_EMBEDDING_DIM`
-  (`loom reembed --delete-old`, for `memory_embeddings`, `entity_vectors` and
-  `conversation_embeddings`) and rerun.
+  and rerun: `loom reembed --delete-old` for `memory_embeddings`, `entity_vectors` and
+  `conversation_embeddings`; any other table, such as `memory_chunks`, `code_chunks` or
+  `code_summaries`, is re-embedded by its own writer.
 - **Gates (exit 5).** The consistency gate compares each key's newest version (or, on a
   table without a version column, its row count) and a hash of every column, the
   source's rebuilt vector columns cast and padded as the copy writes them. A key the twin
@@ -308,8 +310,9 @@ cover these copies.
   names `--rollback --yes`, which puts the old table back with the change. The rollback
   starts the old table's merges again, so the mutation applies after it, and the
   `--drop-pre-rebuild` that follows shows the keys it touched as differing at one version
-  and keeps both tables. A key only the new table holds or a newer version there is a
-  change `--rollback` would drop, since it copies back only newer versions and absent
+  and keeps both tables. A key only the new table holds or a newer version there (a write
+  to the new table after the swap, or a delete in the old table after the last check) is
+  a change `--rollback` would drop, since it copies back only newer versions and absent
   keys. A key whose content differs at one version (a lightweight `UPDATE` in either
   table, merged or not, or an `ALTER UPDATE` that finished before the swap) may be in
   either table; the hash shows only that the rows differ. In both cases the run fails its

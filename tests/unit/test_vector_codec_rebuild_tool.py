@@ -384,7 +384,8 @@ def test_vectors_of_another_width_refuse_before_the_twin_dry_run_included(capsys
     assert _run(ch, "--dry-run") == tr.REFUSED and _writes(ch) == []
     out = capsys.readouterr().out
     assert f"embedding holds vectors of more than one width (target {DIM};" in out
-    assert "LOOM_EMBEDDING_DIM" in out and "loom reembed --delete-old" in out
+    assert "LOOM_EMBEDDING_DIM" in out
+    assert "`loom reembed` does not cover loom.memory_chunks; its own writer must" in out
     assert "width 768: 3 row(s), width 3072: 1 row(s)" in out and "re-embed" in out
     preflight = [q for q in ch.queries if "GROUP BY w" in q]
     assert preflight and all(
@@ -393,6 +394,27 @@ def test_vectors_of_another_width_refuse_before_the_twin_dry_run_included(capsys
     assert _run(ch, "--yes") == tr.REFUSED and _writes(ch) == []
     ch.widths = []
     assert _run(ch, "--yes") == tr.OK
+
+
+def test_a_width_refusal_names_loom_reembed_only_for_the_tables_it_re_embeds(
+    capsys: Any,
+) -> None:
+    ch = _CH(memory_embeddings=_live())
+    ch.widths = [(768, 3)]
+    flags = ["--table", "memory_embeddings", "--columns", "embedding", "--settle-s", "0"]
+    assert vcr.main([*flags, "--dry-run"], ch=ch) == tr.REFUSED
+    out = capsys.readouterr().out
+    assert "re-embed to LOOM_EMBEDDING_DIM (`loom reembed --delete-old`)" in out
+
+
+def test_an_empty_source_refuses_before_the_twin(capsys: Any) -> None:
+    """The recall gate needs rows to probe, and an empty replicated table's log reads the
+    same as one its replica has not read: the preflight names the empty table instead."""
+    ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 0, "uuid": "live"})
+    assert _run(ch, "--yes") == tr.REFUSED and _writes(ch) == []
+    out = capsys.readouterr().out
+    assert "loom.memory_chunks holds no rows: nothing to copy" in out
+    assert "has not fetched every part" not in out
 
 
 def test_rows_only_the_twin_holds_fail_the_gate(capsys: Any) -> None:
@@ -818,16 +840,17 @@ def test_a_swap_names_its_next_step_with_the_run_s_layout_flags_in_the_summary(
     capsys: Any,
 ) -> None:
     """The printed --drop-pre-rebuild runs as written: without the run's --method it would
-    check the tables against the default layout and refuse."""
+    check the tables against the default layout and refuse. A float flag prints as the
+    value passed, not rounded to six digits."""
     ch = _CH(memory_chunks=_live())
     flags = ("--method", "int8", "--index-granularity", "512", "--cluster", "")
     gates = ("--gate-fetch-multiplier", "10", "--probes", "40", "--require-patch-free")
-    assert _run(ch, *flags, *gates, "--statement-timeout-s", "5000", "--yes") == tr.OK
+    assert _run(ch, *flags, *gates, "--statement-timeout-s", "1234.5678", "--yes") == tr.OK
     summary = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])
     assert summary["exit"] == tr.OK and "writers and erasure stopped" in summary["next"]
     assert (
-        "--method int8 --index-granularity 512 --gate-fetch-multiplier 10 --probes 40 "
-        "--require-patch-free --cluster '' --statement-timeout-s 5000 "
+        "--method int8 --index-granularity 512 --gate-fetch-multiplier 10.0 --probes 40 "
+        "--require-patch-free --cluster '' --statement-timeout-s 1234.5678 "
         "--drop-pre-rebuild --yes"
     ) in summary["next"]
     ch = _CH(memory_chunks=_live())

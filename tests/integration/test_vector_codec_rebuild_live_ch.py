@@ -397,6 +397,28 @@ def test_a_quiet_rebuild_of_a_replicated_table_checks_each_read_s_replica(
     assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
 
 
+def test_an_empty_replicated_table_refuses_as_empty(
+    replicated_ch: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A ReplicatedMergeTree never written has an empty replication log: the run names
+    the empty table rather than a replica that has not caught up."""
+    ch = replicated_ch
+    table = f"vcr_it_{uuid.uuid4().hex[:8]}"
+    ch.command(
+        f"CREATE TABLE loom.{table} (org String, namespace String, id UInt64, "
+        "embedding Array(Float32), version UInt64, note String DEFAULT '') "
+        "ENGINE = ReplicatedReplacingMergeTree(version) ORDER BY (org, namespace, id)"
+    )
+    job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
+    if why := job.codec_refusal():
+        pytest.skip(why)
+    assert vcr.main([*args(table), "--yes"], ch=ch) == tr.REFUSED
+    out = capsys.readouterr().out
+    assert f"loom.{table} holds no rows: nothing to copy" in out
+    assert "has not fetched every part" not in out
+    assert ch.query(f"EXISTS TABLE loom.{table}{tr.TWIN_SUFFIX}").result_rows == [(0,)]
+
+
 def test_a_read_on_a_replica_that_has_not_fetched_a_part_refuses_the_run(
     ch: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
