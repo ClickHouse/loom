@@ -363,13 +363,13 @@ Loom needs no server config of its own: the table settings it relies on are set 
 tables (`032_table_settings.sql`), and `loom ch-setup` makes the database and the reader
 user with SQL.
 
-| Requirement               | Why                                                                                                                                                                                                                                                                        | ClickHouse Cloud                                 | Self-managed                                                                                                                                                                                            |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Version 26.4 or later     | the oldest server that applies every migration (26.3 still gates `stem()`); boot refuses an older one                                                                                                                                                                      | the service's version; the oldest replica counts | upgrade the server. CI tests only the latest release (`dev/clickhouse_release.sh`); a release bundle names the one that was latest when it was built                                                    |
-| Grants                    | everything on `loom.*` and `loom_telemetry.*` (`GRANT ALL`, or `GRANT CURRENT GRANTS` on Cloud): the migrations create, alter and drop tables and views, and Loom rebuilds tables and refreshes views at runtime; `SELECT` on the system tables it reads; `READ ON REMOTE` | the user `ch-setup --print-sql` grants           | an admin, or the same SQL                                                                                                                                                                               |
-| Keeper                    | required: every lease and claim is a KeeperMap key (the migration lock, the workers lease, the task-inbox leases, the sign-in state, and the sign-up, account, grant change and run id claims); Loom refuses to start without one                                          | present                                          | the bundled stack runs an embedded Keeper (`deploy/clickhouse-config/keeper.xml`); for your own server, add that file to its `config.d/` (or a `<zookeeper>` section naming your Keeper) and restart it |
-| `Quantized` codec (26.8+) | codes-first vector search: a fresh install creates its vector columns coded when `LOOM_EMBEDDING_DIM` is a multiple of 8                                                                                                                                                   | with `enable_quantized_codec` on (below)         | nothing to configure; an older server gets plain vectors and full-precision scans                                                                                                                       |
-| `aiEmbed` (26.7+)         | only `loom reembed --in-database`                                                                                                                                                                                                                                          | where the service version has it                 | needs a named collection (`named_collections.xml.template`)                                                                                                                                             |
+| Requirement               | Why                                                                                                                                                                                                                                                                        | ClickHouse Cloud                                                                            | Self-managed                                                                                                                                                                                            |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Version 26.4 or later     | the oldest server that applies every migration (26.3 still gates `stem()`); boot refuses an older one                                                                                                                                                                      | the service's version; the oldest replica counts                                            | upgrade the server. CI tests only the latest release (`dev/clickhouse_release.sh`); a release bundle names the one that was latest when it was built                                                    |
+| Grants                    | everything on `loom.*` and `loom_telemetry.*` (`GRANT ALL`, or `GRANT CURRENT GRANTS` on Cloud): the migrations create, alter and drop tables and views, and Loom rebuilds tables and refreshes views at runtime; `SELECT` on the system tables it reads; `READ ON REMOTE` | the user `ch-setup --print-sql` grants                                                      | an admin, or the same SQL                                                                                                                                                                               |
+| Keeper                    | required: every lease and claim is a KeeperMap key (the migration lock, the workers lease, the task-inbox leases, the sign-in state, and the sign-up, account, grant change and run id claims); Loom refuses to start without one                                          | present                                                                                     | the bundled stack runs an embedded Keeper (`deploy/clickhouse-config/keeper.xml`); for your own server, add that file to its `config.d/` (or a `<zookeeper>` section naming your Keeper) and restart it |
+| `Quantized` codec (26.8+) | codes-first vector search: a fresh install creates its vector columns coded when `LOOM_EMBEDDING_DIM` is a multiple of 8                                                                                                                                                   | with `enable_quantized_codec` on ([recommended settings](#recommended-clickhouse-settings)) | nothing to configure; an older server gets plain vectors and full-precision scans                                                                                                                       |
+| `aiEmbed` (26.7+)         | only `loom reembed --in-database`                                                                                                                                                                                                                                          | where the service version has it                                                            | needs a named collection (`named_collections.xml.template`)                                                                                                                                             |
 
 - **Newer servers.** Features past the floor are probed where they are used: the
   `Quantized` codec, `aiEmbed`, lightweight `UPDATE` (Loom falls back to a mutation where
@@ -399,8 +399,6 @@ user with SQL.
 - **Self-managed.** A single node is durable only to its own disk and has no
   point-in-time recovery; high availability is a Keeper ensemble and
   `ReplicatedMergeTree`, an operator project.
-
-How Loom uses ClickHouse is in [ClickHouse](../architecture/clickhouse.md).
 
 ### Recommended ClickHouse settings
 
@@ -473,15 +471,22 @@ the server does not change existing tables:
 
    A table with no full-length vectors yet (no rows, or only placeholder vectors from failed
    embeds) cannot pass the rebuild's recall gate, and the dry run does not show that. Skip
-   its line until the table holds real vectors (`SELECT count() FROM loom.<table>` shows
-   whether it has rows). A run that stopped at the gate leaves its twin,
+   its line while this query, with the line's first column, returns 0:
+   `SELECT countIf(length(<column>) > 0 AND <column>[1] != 0) FROM loom.<table>`. A run that stopped at the gate leaves its twin,
    `loom.<table>_rebuild`: drop it with `DROP TABLE`, or pass `--restart` the next time you
-   run that line. `--rollback` returns a table to its old copy until `--drop-pre-rebuild`
-   removes it
+   run that line.
+
+3. Once search looks right, drop the old copies: with `mode=--yes`, run
+   `rebuild --table <table> --columns <columns> --drop-pre-rebuild` for each table you
+   rebuilt. Until then each rebuilt table keeps its old copy
+   as `loom.<table>_pre_rebuild`, a full second copy that erasure does not reach. To go back
+   instead, run a line with `--rollback` and `mode=--yes` (`--rollback` and
+   `--drop-pre-rebuild` cannot be combined with `--dry-run`)
    ([table rebuilds](../development/migrations.md#changing-a-sort-key-or-a-partition-key)).
 
 How Loom reads these settings is in
-[gated settings](../architecture/clickhouse.md#gated-clickhouse-settings).
+[gated settings](../architecture/clickhouse.md#gated-clickhouse-settings), and how Loom uses
+ClickHouse in [ClickHouse](../architecture/clickhouse.md).
 
 ## Providers
 
