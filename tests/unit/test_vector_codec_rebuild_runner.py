@@ -228,6 +228,8 @@ def test_the_twin_only_read_keeps_the_twin_keys_the_source_lacks() -> None:
         "LEFT JOIN (SELECT org, namespace, 1 AS __present FROM loom.t FINAL) AS s "
         "USING (org, namespace) WHERE s.__present = 0"
     )
+    erased = vcr.twin_only_keys_sql("t", "t_pre_rebuild", ["org"], "", "version < 7")
+    assert erased.startswith("SELECT org FROM (SELECT org FROM loom.t WHERE version < 7) AS t ")
     assert vcr.key_literal(b"\x3f\xa9") == "unhex('3fa9')"
 
 

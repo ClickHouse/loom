@@ -26,6 +26,10 @@ ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (org, namespace)
 SETTINGS index_granularity = 256"""
 DIM = 1536
+# memory_chunks' sorting key ends in a FixedString column
+FIXED_KEY = ARRAY.replace(
+    "`created_at` DateTime\n", "`created_at` DateTime,\n    `content_sha256` FixedString(64)\n"
+).replace("ORDER BY (org, namespace)", "ORDER BY (org, namespace, content_sha256)")
 
 
 class _R:
@@ -46,6 +50,7 @@ class _CH:
         self.widths: list[list[tuple[int, int]]] = [[]]  # (width, rows) the width check finds
         self.cons = [(0, 0, 0)]  # (mismatched, source_only, twin_only) the gate reads
         self.gone: list[list[tuple[Any, ...]]] = [[]]  # the keys only the twin holds
+        self.erased: list[tuple[Any, ...]] = []  # live keys the rollback copy lacks
         self.sync_writable = ["alter_sync", "mutations_sync", "lightweight_deletes_sync"]
         self.queries: list[str] = []
         self.reads_before_exchange = 0  # len(queries) when the EXCHANGE was sent
@@ -79,6 +84,8 @@ class _CH:
             return _R([(self.patches.get(name, 0),)])
         if "topK(1)" in sql:
             return _R([([DIM],)])
+        if "WHERE s.__present = 0" in sql and "_pre_rebuild" in sql:
+            return _R(self.erased)
         if "WHERE s.__present = 0" in sql:
             return _R(_next(self.gone))
         if "FULL OUTER JOIN" in sql:
@@ -350,7 +357,7 @@ def test_rows_only_the_twin_holds_are_deleted_from_it_before_the_swap() -> None:
     """A key erased from the source during the copy is still in the twin, and the swap
     would bring it back: the run deletes exactly those keys from the twin, by literal."""
     ch = _CH(memory_chunks=_live())
-    ch.cons = [(0, 0, 2), (0, 0, 0)]
+    ch.cons = [(0, 0, 1), (0, 0, 0)]
     ch.gone = [[("o", "n")], []]
     assert _run(ch, "--yes") == tr.OK
     deletes = [(c, st) for c, st in ch.sent if c.startswith("DELETE")]
@@ -364,13 +371,13 @@ def test_rows_only_the_twin_holds_are_deleted_from_it_before_the_swap() -> None:
 
 def test_a_fixed_string_key_is_deleted_by_its_hex() -> None:
     """A FixedString key such as content_sha256 reads as bytes; its literal is unhex()."""
-    ch = _CH(memory_chunks=_live())
+    ch = _CH(memory_chunks={"ddl": FIXED_KEY, "rows": 5, "uuid": "live"})
     ch.cons = [(0, 0, 1), (0, 0, 0)]
     ch.gone = [[("o", "n", b"3fa9")], []]
     assert _run(ch, "--yes") == tr.OK
     deletes = [c for c in ch.commands if c.startswith("DELETE")]
     assert deletes == [
-        "DELETE FROM loom.memory_chunks_rebuild WHERE (org, namespace) IN "
+        "DELETE FROM loom.memory_chunks_rebuild WHERE (org, namespace, content_sha256) IN "
         "(('o', 'n', unhex('33666139')))"
     ]
 
@@ -390,7 +397,7 @@ def test_rows_that_stay_in_the_twin_only_fail_the_gate(capsys: Any) -> None:
     """Rows still removed from the source as the run deletes them: no swap, the twin is left."""
     ch = _CH(memory_chunks=_live())
     ch.cons = [(0, 0, 2)]
-    ch.gone = [[("o", "n")]]
+    ch.gone = [[("o", "n"), ("o", "m")]]
     assert _run(ch, "--yes") == tr.GATE_FAILED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     assert "memory_chunks_rebuild" in ch.t
@@ -421,19 +428,52 @@ def test_a_delete_during_the_gates_stops_the_swap(capsys: Any) -> None:
 
 def test_the_twin_only_check_is_the_last_read_before_the_exchange() -> None:
     """The width scans read only the source and run first; a delete during them is
-    caught by the twin-only read that follows, and the EXCHANGE comes right after it.
-    Only when that read deleted keys does a consistency read recheck them."""
+    caught by the twin-only read that follows, and the EXCHANGE comes right after it
+    and the twin's version mark. Only when that read deleted keys does a consistency
+    read recheck them."""
+    mark = "SELECT max(created_at) FROM loom.memory_chunks_rebuild"
     ch = _CH(memory_chunks=_live())
     assert _run(ch, "--yes") == tr.OK
     before = ch.queries[: ch.reads_before_exchange]
-    assert "WHERE s.__present = 0" in before[-1]
-    assert max(i for i, q in enumerate(before) if "GROUP BY w" in q) < len(before) - 1
+    assert before[-1] == mark and "WHERE s.__present = 0" in before[-2]
+    assert max(i for i, q in enumerate(before) if "GROUP BY w" in q) < len(before) - 2
 
     ch = _CH(memory_chunks=_live())
     ch.gone = [[("o", "n")], []]
     assert _run(ch, "--yes") == tr.OK
     before = ch.queries[: ch.reads_before_exchange]
-    assert "FULL OUTER JOIN" in before[-1] and "WHERE s.__present = 0" in before[-2]
+    assert before[-1] == mark and "FULL OUTER JOIN" in before[-2]
+    assert "WHERE s.__present = 0" in before[-3]
+
+
+def test_a_row_erased_across_the_swap_is_deleted_from_the_live_table() -> None:
+    """An erasure after the last twin-only read reaches only the old table. A live row
+    below the twin's version mark was copied before the swap, so the rollback copy's
+    lacking it means its writer deleted it: the run deletes it from the live table."""
+    ch = _CH(memory_chunks=_live())
+    ch.erased = [("o", "n")]
+    assert _run(ch, "--yes") == tr.OK
+    exchange = next(i for i, c in enumerate(ch.commands) if c.startswith("EXCHANGE"))
+    deletes = [c for c in ch.commands[exchange:] if c.startswith("DELETE")]
+    assert deletes == ["DELETE FROM loom.memory_chunks WHERE (org, namespace) IN (('o', 'n'))"]
+    read = next(q for q in ch.queries if "_pre_rebuild" in q and "s.__present = 0" in q)
+    assert "FROM loom.memory_chunks FINAL WHERE created_at < 5)" in read
+
+
+def test_without_a_version_a_key_missing_from_the_rollback_copy_fails_the_run(
+    capsys: Any,
+) -> None:
+    """With no version column a new write and an erased row look the same: the keys are
+    logged for the erasures to be rerun, nothing is deleted, and the run exits 7."""
+    plain = ARRAY.replace("ReplacingMergeTree(created_at)", "MergeTree")
+    ch = _CH(memory_chunks={"ddl": plain, "rows": 5, "uuid": "live"})
+    ch.erased = [("o", "n")]
+    assert _run(ch, "--yes") == tr.POSTCONDITION
+    assert any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert not any(c.startswith("DELETE") for c in ch.commands)
+    out = capsys.readouterr().out
+    assert "1 keys are in loom.memory_chunks and not in loom.memory_chunks_pre_rebuild" in out
+    assert "('o', 'n')" in out
 
 
 def test_a_write_of_another_width_during_the_run_stops_the_swap(capsys: Any) -> None:
