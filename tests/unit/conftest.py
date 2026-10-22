@@ -674,15 +674,6 @@ def _reset_deferred_ledgers() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _deferred_ledgers_left_empty() -> Iterator[None]:
-    """Empty the deferred ledgers, stop the usage flusher and cancel the drops and
-    write-marks timers: a flush armed in one test would write into a later test's
-    client and register a task its `drain_task_sets` counts."""
-    yield
-    _reset_deferred_ledgers()
-
-
-@pytest.fixture(autouse=True)
 def _worker_cursors_left_empty() -> Iterator[None]:
     """A worker's next page must not depend on a previous test's pass."""
     if module := sys.modules.get("server.memory.workers.projection_repair"):
@@ -752,14 +743,18 @@ async def _tasks_left_as_found() -> Any:
     """
     before = set(asyncio.all_tasks())
     yield
-    # A ledger timer due during this teardown would spawn its flush after the
-    # leaked tasks are listed, so cancel the timers first.
-    _reset_deferred_ledgers()
     current = asyncio.current_task()
-    leaked = [t for t in asyncio.all_tasks() - before if t is not current and not t.done()]
-    for t in leaked:
-        t.cancel()
-    if leaked:
+    # The deferred ledgers are emptied and their timers cancelled first: a flush
+    # armed in one test would write into a later test's client and register a
+    # task its `drain_task_sets` counts. A cancelled task's done callback can
+    # re-arm a timer or spawn a graph-marks end task, so repeat until none is left.
+    for _ in range(3):
+        _reset_deferred_ledgers()
+        leaked = [t for t in asyncio.all_tasks() - before if t is not current and not t.done()]
+        if not leaked:
+            break
+        for t in leaked:
+            t.cancel()
         await asyncio.gather(*leaked, return_exceptions=True)
 
 
