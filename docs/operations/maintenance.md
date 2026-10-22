@@ -254,10 +254,12 @@ The erasure saga does not cover these copies.
   inside the window, which leaves one row per key, then rerun with `--restart`.
 - **Before the swap.** The tool flushes the source's async insert queue (and, on a
   replicated engine, runs `SYSTEM SYNC REPLICA`, which syncs only the replica that answers
-  it). Every read after that, a last delta that copies in the rows written during the run
-  and the width, consistency and mutation checks, runs with
-  `select_sequential_consistency = 1`, so it sees every acknowledged write whichever
-  replica serves it, as on ClickHouse Cloud. The width and consistency checks fail the
+  it). For `ReplicatedMergeTree`, connect directly to one replica throughout the run so
+  all checks read that synchronized replica. Every later gate read and the last delta
+  use `select_sequential_consistency = 1`. On `SharedMergeTree` this covers acknowledged
+  writes even if another replica serves the read. On `ReplicatedMergeTree` the setting
+  only covers quorum inserts with `insert_quorum_parallel = 0`; it does not replace the
+  direct replica connection. The width and consistency checks fail the
   gate on a delete, a write of another width, a write the delta cannot pick up (a version
   below the twin's highest, or a row under a key the twin holds on a table without a
   version column), and any change to a row's columns that keeps its key and version, the
@@ -267,8 +269,8 @@ The erasure saga does not cover these copies.
   out. The gate also fails on any source mutation still running or created since the copy
   started (with `--reuse`, since the twin was created), less a minute for replica clocks.
 - **After the swap (exit 7).** The tool runs the consistency check again, the rollback
-  copy as the source and the new table as the twin, under the same sequentially
-  consistent reads, and counts the rollback copy's mutations since the copy. A row added
+  copy as the source and the new table as the twin, with the same read settings and
+  replica as the last gate reads, and counts the rollback copy's mutations since the copy. A row added
   or removed, a newer version, any change to a row's columns (a lightweight `UPDATE`
   included, merged or not) or an `ALTER UPDATE` after the last check is not in the new
   table, so the run fails its postcondition and names `--rollback --yes`, which puts the
