@@ -425,30 +425,33 @@ WHERE name IN ('enable_quantized_codec', 'allow_suspicious_codecs')
 A setting is fine at `value = 1`, read-only or not, and blocked at `value = 0` when this
 user may not set it to 1 (the rules are in
 [gated settings](../architecture/clickhouse.md#gated-clickhouse-settings)). No row for
-`enable_quantized_codec` means the server is older than 26.8.
+`enable_quantized_codec` means the server is older than 26.8, which Loom never codes.
 
-- **Self-managed ClickHouse 26.8 or later.** Both settings are user-settable by default and
-  Loom sends them with each `CREATE` that needs them, so a fresh install needs nothing.
-  Check that no settings profile or constraint blocks them.
+- **Self-managed ClickHouse 26.8 or later.** Both settings are user-settable by default
+  and Loom sends them with each `CREATE` that needs them, so a fresh install needs
+  nothing. Check that no settings profile or constraint blocks them.
 - **ClickHouse Cloud.** A service holds both read-only at 0. `enable_quantized_codec` is
   enabled for the service with a settings-profile override; `allow_suspicious_codecs` is
   enabled for Loom's user. Loom cannot change either itself. Run the query again
   afterwards: both should show `value = 1`.
-- **Older servers.** Loom codes vectors only on 26.8 or later, so an older server gets plain
-  vectors and full-precision scans.
 
-If Loom was installed before the settings were on, or before the server ran 26.8, its vector
-tables are plain (or `entity_vectors` lacks its chain). Turning the settings on or upgrading
-the server does not change existing tables:
+If Loom was installed before the settings were on, or before the server ran 26.8, its
+vector tables are plain (or `entity_vectors` lacks its chain). Turning the settings on or
+upgrading the server does not change existing tables:
 
-1. Restart Loom, so each process reads the settings again. A process that found the codec
-   unavailable keeps that answer until it restarts.
+Apply rebuilds during a maintenance window. Every Loom server, worker and direct table
+writer must be stopped, and all in-flight writes, erasures and ClickHouse mutations must
+have finished before copying starts. Keep them stopped through rebuilding, read-only
+checks, rollback and cleanup. A copy or post-swap repair can restore erased rows, and
+erasure does not fully cover the rebuild and rollback copies.
+
+1. Check that Loom's ClickHouse user gets the settings above before starting the rebuild.
 2. Rebuild each coded table with `scripts/ops/vector_codec_rebuild.py`. The tool is not in
    the image: run it from a clone of the repository at the deployed version, after
    `uv sync --locked`, with `LOOM_CH_*` pointing at the deployment's ClickHouse. Run the
    block in bash. `mode` holds the action: run the block with `mode=--dry-run` to see each
-   plan, then again with `mode=--yes` to rebuild. Set `cluster` to your cluster's name, or to
-   `''` to check this server only:
+   plan, then again with `mode=--yes` to rebuild. Set `cluster` to your cluster's name, or
+   to `''` to check this server only:
 
    ```bash
    mode=--dry-run
@@ -478,31 +481,56 @@ the server does not change existing tables:
    it is plain, rebuild it without `--chain` and keep quantization without the additional
    `LZ4` compression.
 
-   A table with no full-length vectors yet (no rows, or only placeholder vectors of rows
-   still awaiting an embedding) cannot pass the rebuild's recall gate, and the dry run does
-   not show that. The dry run prints the width it will code
-   (`target <table> dimension <n>`); skip the line while this query, with the line's first
-   column, returns 0:
+   A table with no real vectors yet (no rows, or only the zero placeholder vectors of rows
+   without an embedding) cannot pass the rebuild's recall gate, and the dry run does not
+   show that. The dry run prints the width it will code (`target <table> dimension <n>`);
+   skip the line while this query, with the line's first column, returns 0 (`loom` in
+   these statements is your `LOOM_CH_DATABASE`):
    `SELECT countIf(length(<column>) = <n> AND <column>[1] != 0) FROM loom.<table>`.
-   The gate can also fail where one `(org, namespace)` holds fewer than 20 real vectors
-   next to placeholder rows of the same width: their distance is NaN, which sorts last, so
-   the gate reads that namespace's recall as 0. Rebuild such a table once each namespace has
-   20 real vectors, or once its rows are embedded.
 
-   A run that stops before its swap (a failed gate, an abort file, an interrupt) leaves its
-   twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not reach: drop
-   it with `DROP TABLE loom.<table>_rebuild SYNC`, or pass `--restart` when you run that line again.
+   A run can also fail the gate where one `(org, namespace)` holds placeholder rows and
+   between 1 and 19 real vectors of the same width: a probe drawn there reads recall 0,
+   because a placeholder's distance is NaN and sorts last. Any table can hold
+   placeholders, for rows whose embedding never arrived or failed (`code_summaries`
+   structural rows, `code_answers` stubs, failed embeds), so run this for each table
+   before its line (drop `FINAL` for `chunks`, the one plain `MergeTree`):
 
-3. Once search looks right, drop the old copies: run the lines of the tables you rebuilt
-   again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its old
-   copy as `loom.<table>_pre_rebuild`, a full second copy that erasure does not reach. To go
-   back instead, run that table's line with `mode="--rollback --yes"`; the coded copy then
-   sits in `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the table
-   was rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
+   ```sql
+   SELECT org, namespace FROM loom.<table> FINAL
+   WHERE length(<column>) = <n>
+     AND (org, namespace) IN (SELECT org, namespace FROM loom.<table>
+                              WHERE length(<column>) = <n> AND <column>[1] != 0)
+   GROUP BY org, namespace
+   HAVING countIf(<column>[1] != 0) < 20 AND countIf(<column>[1] = 0) > 0
+   ```
+
+   Skip that table's line while this returns rows: its layout stays as it is.
+
+   To stop the block, create `ABORT_REBUILD` in `LOOM_REBUILD_DIR` (default: the directory
+   you run from): each later line then stops before it starts. Ctrl-C stops only the line
+   that is running, and bash goes on to the next. Remove the file before the next run.
+
+   A run that stops before its swap (a failed gate, an abort file, an interrupt) can leave
+   its twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not fully
+   cover (a namespace erasure purges only the `code_*` copies). Drop it with
+   `DROP TABLE IF EXISTS loom.<table>_rebuild SYNC`, or pass `--restart` when you run that
+   line again.
+
+3. After the tool's checks pass, inspect the tables with read-only ClickHouse queries
+   and drop the old copies: run the lines of the tables you rebuilt
+   again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its
+   old copy as `loom.<table>_pre_rebuild`, a full second copy with its merges stopped. To
+   go back instead, run that table's line with `mode="--rollback --yes"`; the coded copy
+   then sits in `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the
+   table was rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
    `--chain LZ4` only if its rebuild had it.
 
-How Loom reads these settings is in
-[gated settings](../architecture/clickhouse.md#gated-clickhouse-settings).
+Before restarting Loom or resuming traffic, drop every leftover `<table>_rebuild` and
+`<table>_pre_rebuild` copy for the tables you processed, including copies left by an
+aborted run or rollback.
+
+Restart Loom after cleanup, so each process reads the settings again. A process that
+found the codec unavailable keeps that answer until it restarts.
 
 ## Providers
 
