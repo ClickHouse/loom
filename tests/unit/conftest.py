@@ -773,7 +773,7 @@ async def _tasks_left_as_found() -> Any:
     await asyncio.gather(*left, return_exceptions=True)
     _reset_deferred_ledgers()
     if unstopped:
-        pytest.fail(f"tasks a test left survived three teardown passes: {unstopped}")
+        pytest.fail(f"cancelling the tasks a test left kept starting new ones: {unstopped}")
 
 
 @pytest.fixture(autouse=True)
