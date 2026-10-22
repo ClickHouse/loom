@@ -447,7 +447,7 @@ writer must be stopped, and all in-flight writes, erasures and ClickHouse mutati
 have finished before copying starts. Keep them stopped through rebuilding, read-only
 checks, rollback and cleanup. A copy or post-swap repair can restore erased rows, and
 erasure does not fully cover the rebuild and rollback copies. Before copying starts, this
-returns no rows:
+returns no rows (`loom` here and in every statement below is your `LOOM_CH_DATABASE`):
 
 ```sql
 SELECT table, mutation_id, command FROM system.mutations
@@ -455,7 +455,8 @@ WHERE database = 'loom' AND NOT is_done
 ```
 
 A pending mutation on a `<table>_pre_rebuild` copy left by an earlier run never finishes,
-because its merges are stopped: drop that copy first.
+because its merges are stopped: drop that copy first
+(`DROP TABLE IF EXISTS loom.<table>_pre_rebuild SYNC`).
 
 1. Check that Loom's ClickHouse user gets the settings above before starting the rebuild.
 2. Rebuild each coded table with `scripts/ops/vector_codec_rebuild.py`. The tool is not in
@@ -520,9 +521,10 @@ because its merges are stopped: drop that copy first.
    Skip that table's line while this returns rows: its layout stays as it is.
 
    To stop the block, create `ABORT_REBUILD` in `LOOM_REBUILD_DIR` (default: the directory
-   you run from): each later rebuild line then stops before it starts.
-   `--drop-pre-rebuild` and `--rollback` lines do not read it. Ctrl-C stops only the line
-   that is running, and bash goes on to the next. Remove the file before the next run.
+   you run from): the running line stops before its copy or its swap, and each later
+   rebuild line stops before it starts. `--drop-pre-rebuild` and `--rollback` lines do not
+   read it. Ctrl-C stops only the line that is running, and bash goes on to the next.
+   Remove the file before the next run.
 
    A run that stops before its swap (a failed gate, an abort file, an interrupt) can leave
    its twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not
