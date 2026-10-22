@@ -667,19 +667,29 @@ class VectorRebuild:
     def twin_after_exchange(self) -> bool | None:
         """Whether the twin may be the old table an exchange without its rename left,
         read from the two tables rather than this run's layout flags (a rerun may name
-        another layout). None when it is not: absent, not older than the live table, or
+        another layout). None when it is not: absent, newer than the live table, or
         under a live table with a plain named column. Else whether the twin's named
         columns are coded: False (all plain) means it is the old table, True means
         either table may be the old one."""
         if not (self.exists(self.t) and self.exists(self.twin)):
             return None
-        if self.metadata_time(self.twin) >= self.metadata_time(self.t):
+        if self.twin_is_newer():
             return None
         live = self.ddl(self.t)
         if any(vector_dim(live, c) is None for c in self.cols):
             return None
         twin = self.ddl(self.twin)
         return any(vector_dim(twin, c) is not None for c in self.cols)
+
+    def twin_is_newer(self) -> bool:
+        """Whether the twin's metadata time is later than the live table's, which shows it
+        was never exchanged in. EXCHANGE TABLES keeps each table's own time on the Atomic
+        and Replicated databases the live tests run it on; on any other database engine,
+        and on equal times (one second's precision), the order shows nothing."""
+        engine = self.q("SELECT engine FROM system.databases WHERE name = currentDatabase()")[0][0]
+        if engine not in ("Atomic", "Replicated"):
+            return False
+        return self.metadata_time(self.twin) > self.metadata_time(self.t)
 
     def report_state(self) -> str:
         if self.next_step:
@@ -688,7 +698,7 @@ class VectorRebuild:
             twin = self.twin_after_exchange()
             if twin is not None:
                 return tr.guidance(self.t, self.run_line, True, twin, None)
-            if self.metadata_time(self.twin) >= self.metadata_time(self.t):
+            if self.twin_is_newer():
                 # a twin newer than the live table was never exchanged, so it is not the
                 # old table, whatever layout this run names
                 return (

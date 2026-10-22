@@ -244,20 +244,25 @@ step that names a command carries the run's `--method`, `--chain`,
 `--index-granularity`, `--gate-fetch-multiplier`, `--probes`, `--require-patch-free`,
 `--cluster` and `--statement-timeout-s`, so it runs as printed. Use
 `--drop-pre-rebuild --yes` to remove the rollback copy after validation or rollback, and
-`DROP TABLE loom.<table>_rebuild SYNC` to remove an abandoned twin, after a `--dry-run` of
-the table's line shows a next step other than
-`RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild`: that step means the
-exchange ran without the rename, `<table>_rebuild` is the old table, and the tool refuses
-`--reuse`, `--restart` and `--drop-pre-rebuild` until the rename runs. The tool reads
+`DROP TABLE loom.<table>_rebuild SYNC` to remove an abandoned twin only after a
+`--dry-run` of the table's line prints a next step that starts `not swapped` (a twin
+left for inspection, or a leftover newer than the live table). When it names
+`RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild` or asks to compare the two
+tables, do that first and drop nothing: the rename step means the exchange ran without
+the rename, `<table>_rebuild` is the old table, and the tool refuses `--reuse`,
+`--restart` and `--drop-pre-rebuild` until the rename runs. The tool reads
 this from the tables, not from the run's flags, so a rerun with another `--method`,
-`--chain` or `--index-granularity` refuses too: a twin older than a live table whose named
+`--chain` or `--index-granularity` refuses too: a twin not newer than a live table whose named
 columns are all coded may be the old table. When the twin's named columns are plain, the
 tool names the rename. When they are coded too (a `--require-patch-free` run, or a
 rebuild of a coded table), the codecs do not show whether an exchange ran: the tool
 refuses, renames and drops nothing, and asks to compare the two tables' rows before
 dropping either by hand. A twin newer than the live table was never exchanged in, so
 the tool names it a leftover, whatever layout the rerun names: `--restart --yes` copies
-again, or drop it.
+again, or drop it. It reads "newer" from `system.tables.metadata_modification_time`,
+which `EXCHANGE TABLES` keeps per table on Atomic and Replicated databases. Equal times
+(the column has one second's precision), and any other database engine, show nothing,
+so there the tool treats the twin as possibly the old table.
 `--drop-pre-rebuild` first compares the two tables again, after the same drain as the
 postcondition, also when both are on the target layout (a `--require-patch-free`
 rebuild of a table already on it), and refuses (exit 3) and keeps the copy on any

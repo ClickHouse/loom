@@ -63,6 +63,7 @@ class _CH:
         self.params: list[dict[str, Any]] = []  # each query's parameters, in order
         self.behind: set[str] = set()  # tables the replica answering a read has not caught up
         self.no_probes = False  # the probe read finds no full-length vector
+        self.db_engine = "Atomic"  # the engine of the database the run's tables are in
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _R:
         self.queries.append(sql)
@@ -81,6 +82,8 @@ class _CH:
         if "toUnixTimestamp(metadata_modification_time)" in sql:
             # a table this fake did not create (a reused twin) was created at TWIN_CREATED
             return _R([(self.t.get(str(p.get("t")), {}).get("created", TWIN_CREATED),)])
+        if "FROM system.databases" in sql:
+            return _R([(self.db_engine,)])
         if sql == "SELECT toUnixTimestamp(now())":
             return _R([(COPY_STARTED,)])
         if sql.startswith("SHOW CREATE TABLE loom."):
@@ -308,6 +311,27 @@ def test_a_twin_newer_than_a_coded_live_table_is_named_a_leftover(flag: str, cap
     step = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])["next"]
     assert "RENAME TABLE" not in step and "compare" not in step
     assert "leftover newer than loom.memory_chunks" in step and "--restart --yes" in step
+
+
+@pytest.mark.parametrize(
+    ("db_engine", "twin_created"), [("Atomic", TWIN_CREATED), ("Shared", COPY_STARTED)]
+)
+def test_a_twin_not_shown_newer_is_never_named_a_leftover(
+    db_engine: str, twin_created: int, capsys: Any
+) -> None:
+    """Equal metadata times, or times on a database engine the live tests do not cover,
+    do not show that no exchange ran: a plain twin under a coded live table may be the
+    old table, so the run names the rename and keeps it."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    live = {"ddl": coded, "rows": 5, "uuid": "live", "created": TWIN_CREATED}
+    twin = {"ddl": ARRAY, "rows": 5, "uuid": "old", "created": twin_created}
+    ch = _CH(memory_chunks=live, memory_chunks_rebuild=twin)
+    ch.db_engine = db_engine
+    assert _run(ch, "--yes", "--restart") == tr.REFUSED
+    assert _writes(ch) == [] and ch.t["memory_chunks_rebuild"] is twin
+    out = capsys.readouterr().out
+    assert "leftover" not in out
+    assert "RENAME TABLE loom.memory_chunks_rebuild TO loom.memory_chunks_pre_rebuild" in out
 
 
 def test_a_twin_with_patch_parts_is_never_swapped() -> None:

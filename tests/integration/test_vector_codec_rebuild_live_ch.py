@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from collections.abc import Iterator
 from datetime import UTC
@@ -46,10 +47,21 @@ def table(ch: Any, request: pytest.FixtureRequest) -> Iterator[str]:
 def replicated_ch(ch: Any, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     """A client on a Replicated database the run takes as its schema: there a table's Keeper
     path holds its own UUID, so the twin created from SHOW CREATE gets a path of its own."""
-    name = f"vcr_it_rdb_{uuid.uuid4().hex[:8]}"
-    ch.command(
-        f"CREATE DATABASE {name} ENGINE = Replicated('/clickhouse/databases/{name}', 's1', 'r1')"
-    )
+    yield from database_client(ch, monkeypatch, "Replicated")
+
+
+@pytest.fixture
+def atomic_ch(ch: Any, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+    """A client on an Atomic database the run takes as its schema."""
+    yield from database_client(ch, monkeypatch, "Atomic")
+
+
+def database_client(ch: Any, monkeypatch: pytest.MonkeyPatch, engine: str) -> Iterator[Any]:
+    """A client on a new database of `engine`, which the run takes as its schema."""
+    name = f"vcr_it_db_{uuid.uuid4().hex[:8]}"
+    if engine == "Replicated":
+        engine = f"Replicated('/clickhouse/databases/{name}', 's1', 'r1')"
+    ch.command(f"CREATE DATABASE {name} ENGINE = {engine}")
     client = ch_client_from_env(
         database=name, settings={"session_timezone": "UTC"}, tz_source="server"
     )
@@ -69,6 +81,17 @@ def replicated_table(ch: Any) -> str:
         f"CREATE TABLE loom.{table} (org String, namespace String, id UInt64, "
         "embedding Array(Float32), version UInt64, note String DEFAULT '') "
         "ENGINE = ReplicatedReplacingMergeTree(version) ORDER BY (org, namespace, id)"
+    )
+    return table
+
+
+def plain_table(ch: Any) -> str:
+    """A new ReplacingMergeTree in the database `ch` uses."""
+    table = f"vcr_it_{uuid.uuid4().hex[:8]}"
+    ch.command(
+        f"CREATE TABLE loom.{table} (org String, namespace String, id UInt64, "
+        "embedding Array(Float32), version UInt64, note String DEFAULT '') "
+        "ENGINE = ReplacingMergeTree(version) ORDER BY (org, namespace, id)"
     )
     return table
 
@@ -537,3 +560,26 @@ def test_a_replica_that_has_not_pulled_a_single_log_entry_refuses_the_run(
         ch.command(f"SYSTEM START PULLING REPLICATION LOG loom.{table}")
         for name in (table, other):
             ch.command(f"DROP TABLE IF EXISTS loom.{name} SYNC")
+
+
+@pytest.mark.parametrize("db_engine", ["Atomic", "Replicated"])
+def test_an_exchange_leaves_the_twin_the_older_metadata_time(
+    db_engine: str, request: pytest.FixtureRequest
+) -> None:
+    """The tool names a twin newer than the live table a leftover only on the database
+    engines where EXCHANGE TABLES keeps each table's own metadata time, so after an
+    exchange the twin, now the old table, reads older than the live table."""
+    ch = request.getfixturevalue(f"{db_engine.lower()}_ch")
+    assert ch.query(
+        "SELECT engine FROM system.databases WHERE name = currentDatabase()"
+    ).result_rows == [(db_engine,)]
+    table = replicated_table(ch) if db_engine == "Replicated" else plain_table(ch)
+    twin = f"{table}{tr.TWIN_SUFFIX}"
+    time.sleep(1.1)  # metadata times have one second's precision
+    ch.command(f"CREATE TABLE loom.{twin} AS loom.{table}")
+    job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
+    assert job.twin_is_newer()
+    time.sleep(1.1)  # an exchange that rewrote both times would make them equal
+    ch.command(f"EXCHANGE TABLES loom.{table} AND loom.{twin}")
+    assert job.metadata_time(twin) < job.metadata_time(table)
+    assert not job.twin_is_newer()
