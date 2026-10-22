@@ -248,7 +248,8 @@ Keep writers and erasure stopped until the rebuild finishes or is abandoned and 
 swap prints that as its next step, in its log and in the summary line's `next`. Each next
 step that names a command carries the run's `--method`, `--chain`,
 `--index-granularity`, `--gate-fetch-multiplier`, `--probes`, `--require-patch-free`,
-`--cluster` and `--statement-timeout-s`, so it runs as printed. Use
+`--cluster`, `--statement-timeout-s` and, when it is not the default, `--abort-file`
+(the twin's record lives beside it), so it runs as printed. Use
 `--drop-pre-rebuild --yes` to remove the rollback copy after validation or rollback, and
 `DROP TABLE loom.<table>_rebuild SYNC` to remove an abandoned twin only after a
 `--dry-run` of the table's line prints a next step that starts `not swapped` (a twin
