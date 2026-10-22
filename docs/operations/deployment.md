@@ -423,8 +423,8 @@ WHERE name IN ('enable_quantized_codec', 'allow_suspicious_codecs')
 ```
 
 A setting is fine at `value = 1`, read-only or not, and blocked at `value = 0` when this
-user may not set it to 1 (the rules are in
-[gated settings](../architecture/clickhouse.md#gated-clickhouse-settings)). No row for
+user may not set it to 1 (the rules are in [gated
+settings](../architecture/clickhouse.md#gated-clickhouse-settings)). No row for
 `enable_quantized_codec` means the server is older than 26.8, which Loom never codes.
 
 - **Self-managed ClickHouse 26.8 or later.** Both settings are user-settable by default
@@ -487,14 +487,15 @@ upgrading the server does not change existing tables:
    between 1 and 19 real vectors of the same width: a probe drawn there reads recall 0,
    because a placeholder's distance is NaN and sorts last. Tables with rows that never get
    a vector (`code_summaries` structural rows, `code_answers` stubs) can hit this. This
-   finds such namespaces; add `FINAL` after the table name where it is a
-   `ReplacingMergeTree`, as the gate reads it:
+   finds such namespaces (drop `FINAL` for `chunks`, the one plain `MergeTree`):
 
    ```sql
-   SELECT org, namespace FROM loom.<table>
+   SELECT org, namespace FROM loom.<table> FINAL
    WHERE length(<column>) = <n>
+     AND (org, namespace) IN (SELECT org, namespace FROM loom.<table>
+                              WHERE length(<column>) = <n> AND <column>[1] != 0)
    GROUP BY org, namespace
-   HAVING countIf(<column>[1] != 0) BETWEEN 1 AND 19 AND countIf(<column>[1] = 0) > 0
+   HAVING countIf(<column>[1] != 0) < 20 AND countIf(<column>[1] = 0) > 0
    ```
 
    Skip that table's line while this returns rows: the table stays plain and Loom serves
@@ -505,6 +506,16 @@ upgrading the server does not change existing tables:
    fully cover (a namespace erasure purges only the `code_*` copies). Drop it with
    `DROP TABLE loom.<table>_rebuild SYNC`, or pass `--restart` when you run that line
    again.
+
+   Run no `erasure.request` while a line runs with `mode=--yes`. The copy is taken before
+   the erasure and the swap puts it live, so the erased rows come back. If one completed
+   during a run, request it again after the swap; this lists the ones requested since the
+   run started:
+
+   ```sql
+   SELECT id, scope_type, scope_value FROM loom.erasure_requests FINAL
+   WHERE status = 'completed' AND requested_at >= '<start>'
+   ```
 
 3. Once search looks right, drop the old copies soon: run the lines of the tables you
    rebuilt again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table
