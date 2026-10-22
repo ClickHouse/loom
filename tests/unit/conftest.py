@@ -688,6 +688,12 @@ def _deferred_ledgers_left_empty() -> Iterator[None]:
     from server.core import namespace_write_marks
 
     namespace_write_marks._reset_for_tests()
+    # A graph-marks flush that fails (no client in a unit test) re-arms a retry
+    # timer, which is not a task and outlives the test: each firing spawns a
+    # registered deferred flush, so a later test's `drain_task_sets` finds work.
+    from server.memory.app import graph_write_marks
+
+    graph_write_marks._reset_for_tests()
 
 
 @pytest.fixture(autouse=True)
