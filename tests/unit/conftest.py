@@ -741,10 +741,10 @@ async def _tasks_left_as_found() -> Any:
     bystander. Tasks that existed before the test (session fixtures'
     servers, the loop's own) are left alone.
 
-    The deferred ledgers (usage, drops, namespace and graph write marks) are
-    emptied and their timers cancelled first: a flush armed in one test would
-    write into a later test's client and register a task its `drain_task_sets`
-    counts.
+    Each pass first empties the deferred ledgers (usage, drops, namespace and
+    graph write marks) and stops their timers and flusher: a flush left armed
+    would write into a later test's client and leave a deferred task that
+    `drain_task_sets` counts.
     """
     before = set(asyncio.all_tasks())
     yield

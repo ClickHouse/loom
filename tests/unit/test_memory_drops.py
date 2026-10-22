@@ -516,6 +516,9 @@ async def test_reset_stops_an_armed_flush_from_writing(monkeypatch: pytest.Monke
     monkeypatch.setattr(drops, "_FLUSH_DELAY_S", 0.01)
     drops.record_drop("o", "n", "parse", "empty", item="item")
     drops._reset_for_tests()
+    # A row only the first timer could flush: this one arms no timer of its own.
+    monkeypatch.setattr(drops, "_flush_later", lambda delay: True)
+    drops.record_drop("o", "n", "parse", "empty", item="after")
     await asyncio.sleep(0.05)
     assert inserts == []
-    assert not [t for t in asyncio.all_tasks() if t.get_name() == "loom-drops-flush"]
+    assert drops.pending_count() == 1
