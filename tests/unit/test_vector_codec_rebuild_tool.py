@@ -618,7 +618,23 @@ def test_unfinished_mutations_refuse_the_rebuild(capsys: Any) -> None:
     ch.mutations = 1
     assert _run(ch, "--yes") == tr.REFUSED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
-    assert "unfinished mutations" in capsys.readouterr().out
+    assert "a mutation still running or one that finished under a minute ago" in (
+        capsys.readouterr().out
+    )
+
+
+def test_a_mutation_finished_under_a_minute_ago_refuses_before_the_twin(capsys: Any) -> None:
+    """The gate before the swap counts every mutation since a minute before the preflight;
+    the preflight counts the same ones, so a recent finished mutation refuses in seconds
+    instead of failing the gate after the whole copy."""
+    ch = _CH(memory_chunks=_live())
+    ch.mutations = 1  # finished, created 30 seconds before the run
+    assert _run(ch, "--yes") == tr.REFUSED
+    assert "memory_chunks_rebuild" not in ch.t and _writes(ch) == []
+    assert "rerun in a minute" in capsys.readouterr().out
+    read = next(q for q in ch.queries if "system.mutations" in q)
+    margin = COPY_STARTED - vcr.CLOCK_SKEW_MARGIN_S
+    assert f"(NOT is_done OR create_time >= toDateTime({margin}))" in read
 
 
 @pytest.mark.parametrize(("flags", "since"), [((), COPY_STARTED), (("--reuse",), TWIN_CREATED)])
@@ -727,3 +743,48 @@ def test_a_postcondition_read_on_another_replica_fails_it(capsys: Any) -> None:
     out = capsys.readouterr().out
     assert "POSTCONDITION FAILED: a read after the drain ran on h2" in out
     assert "--rollback --yes" in json.loads(out.rsplit("summary ", 1)[1])["next"]
+
+
+def _synced_before_the_last_read(ch: _CH, start: int) -> None:
+    """The rollback copy's own replication queue is synchronized, LIGHTWEIGHT, after
+    `start` and before the last comparison of the copy with the new table."""
+    seq = ch.sequence[start:]
+    sync = seq.index("SYSTEM SYNC REPLICA loom.memory_chunks_pre_rebuild LIGHTWEIGHT")
+    last = max(i for i, q in enumerate(seq) if "FULL OUTER JOIN" in q)
+    assert sync < last
+    assert "FROM loom.memory_chunks_pre_rebuild" in seq[last].split("FULL OUTER JOIN")[0]
+
+
+def test_the_postcondition_syncs_the_rollback_copy_before_reading_it() -> None:
+    """A write that reached another replica before the swap belongs to the rollback copy
+    after the rename; the drained replica fetches it before the postcondition reads."""
+    ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
+    assert _run(ch, "--yes") == tr.OK
+    swap = ch.sequence.index("EXCHANGE TABLES loom.memory_chunks AND loom.memory_chunks_rebuild")
+    _synced_before_the_last_read(ch, swap)
+
+
+def test_drop_pre_rebuild_syncs_the_rollback_copy_before_reading_it() -> None:
+    ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
+    assert _run(ch, "--yes") == tr.OK
+    start = len(ch.sequence)
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.OK
+    _synced_before_the_last_read(ch, start)
+    assert "memory_chunks_pre_rebuild" not in ch.t
+
+
+def test_drop_pre_rebuild_checks_that_cannot_run_keep_the_copy_without_a_rollback(
+    capsys: Any,
+) -> None:
+    """A missing grant or a lost connection says nothing about the tables: the copy is
+    kept and the next step is to fix the cause and rerun, not to undo the rebuild."""
+    ch = _CH(memory_chunks=_live())
+    assert _run(ch, "--yes") == tr.OK
+    capsys.readouterr()
+    ch.refuse_system = True
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+    assert "memory_chunks_pre_rebuild" in ch.t
+    out = capsys.readouterr().out
+    assert "the checks could not run (Not enough privileges)" in out
+    summary = json.loads(out.rsplit("summary ", 1)[1])
+    assert "--rollback" not in summary["next"] and "--drop-pre-rebuild" in summary["next"]

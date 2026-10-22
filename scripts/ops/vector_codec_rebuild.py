@@ -115,8 +115,9 @@ from server.core.schema.vector_codec_ddl import (
 # `product` take their own arguments and are not a rebuild target).
 CODEC_METHODS: tuple[str, ...] = ("rabitq", "turboquant", "int8")
 COPY_RECEIVE_TIMEOUT_S = 7200
-# The full copy and the rollback's catch-up copy run under this limit, below the read timeout.
-COPY_EXECUTION_TIME_S = 7000
+# The full copy and the rollback's catch-up copy run under this limit.
+# not a setting: stays below the client's read timeout
+COPY_EXECUTION_TIME_S = COPY_RECEIVE_TIMEOUT_S - 200
 # How far above the exact 20th distance a twin hit may read and still count.
 DISTANCE_TOLERANCE = 1e-6
 COUNT_SETTLE_ATTEMPTS = 8
@@ -463,6 +464,7 @@ class VectorRebuild:
         self.reads: dict[str, Any] = {}  # settings every read takes; sequential after the drain
         self.host = ""  # the replica the drain synchronized, on a ReplicatedMergeTree engine
         self.rollback_only = False  # a check found what only the rollback copy holds
+        self.recheck = False  # the --drop-pre-rebuild checks could not run
 
     # -- small reads -------------------------------------------------------
     def q(self, sql: str, **st: Any) -> list[Any]:
@@ -554,6 +556,11 @@ class VectorRebuild:
 
     def report_state(self) -> str:
         run = f"python -P -m scripts.ops.vector_codec_rebuild --table {self.t} --columns {','.join(self.cols)}"
+        if self.recheck:
+            return (
+                f"the checks could not run: fix the grant or connect directly to one replica "
+                f"and rerun `{run} --drop-pre-rebuild --yes`; loom.{self.pre} is kept"
+            )
         if self.rollback_only:
             return (
                 f"loom.{self.pre} holds a change the new table lacks: keep writers stopped and "
@@ -616,9 +623,15 @@ class VectorRebuild:
             return str(e)
 
     def mutation_refusal(self) -> str:
-        """A stopped writer can leave mutations running on ClickHouse."""
-        pending = self.q(mutations_sql(self.replicas("mutations"), self.t))[0][0]
-        return f"loom.{self.t} has unfinished mutations; wait for them to finish" if pending else ""
+        """A stopped writer can leave mutations running on ClickHouse. The gate before the
+        swap counts every mutation since `self.since`, less the clock-skew margin, so the
+        preflight refuses on the same rule rather than after the copy."""
+        if self.mutations_since(self.t, self.since):
+            return (
+                f"loom.{self.t} has a mutation still running or one that finished under a "
+                "minute ago; wait for it to finish and rerun in a minute"
+            )
+        return ""
 
     def drain_refusal(self, engine: str) -> str:
         """Why this user cannot run the pre-swap drain, or '': it runs once here, so a
@@ -627,8 +640,10 @@ class VectorRebuild:
             self.drain(engine)
         except Exception as e:  # noqa: BLE001 - any refusal of the drain refuses the run
             return (
-                f"the pre-swap drain needs SYSTEM FLUSH ASYNC INSERT QUEUE and SYSTEM SYNC "
-                f"REPLICA on loom.{self.t}: {str(e)[:160]}"
+                f"the pre-swap drain failed ({str(e)[:160]}); one cause is a missing grant: "
+                f"the run needs SYSTEM FLUSH ASYNC INSERT QUEUE and SYSTEM SYNC REPLICA on "
+                f"loom.{self.t} and, on a replicated engine, SYSTEM SYNC REPLICA on "
+                f"loom.{self.pre}"
             )
         return ""
 
@@ -870,6 +885,22 @@ class VectorRebuild:
         if engine.startswith("Replicated"):
             self.host = str(self.q("SELECT hostName()")[0][0])
 
+    def sync_rollback_copy(self, engine: str) -> None:
+        """Synchronize the drained replica's parts of the rollback copy before a read
+        compares it. The copy has its own replication queue: a write that reached another
+        replica before the swap belongs to it after the rename. LIGHTWEIGHT, because
+        swap_in stops the copy's merges and a full sync would wait on a merge entry.
+        SharedMergeTree reads it with sequential consistency instead."""
+        if not engine.startswith("Replicated"):
+            return
+        self.cmd(f"SYSTEM SYNC REPLICA loom.{self.pre} LIGHTWEIGHT")
+        host = str(self.q("SELECT hostName()")[0][0])
+        if host != self.host:
+            raise HostMoved(
+                f"SYSTEM SYNC REPLICA loom.{self.pre} ran on {host}, not on {self.host}; "
+                "connect directly to one replica and rerun"
+            )
+
     def recall(self, ddl: str) -> list[float]:
         """Distance recall per probe: exact on the source vs the twin read as the legs read it."""
         vcol, dim, fin = self.cols[0], self.dim, self.fin
@@ -1009,9 +1040,9 @@ class VectorRebuild:
             )
             return GATE_FAILED
         tr.swap_in(self.ch, self.t)
-        return self.check_swapped(version, key, since)
+        return self.check_swapped(engine, version, key, since)
 
-    def check_swapped(self, version: str | None, key: list[str], since: int) -> int:
+    def check_swapped(self, engine: str, version: str | None, key: list[str], since: int) -> int:
         live = self.target_state(self.t)
         log(
             "live rows",
@@ -1032,32 +1063,39 @@ class VectorRebuild:
             return POSTCONDITION
         if self.a.require_patch_free:
             log("live patch parts after:", self.q(patch_parts_sql(self.t))[0][0])
-        if why := self.rollback_copy_change(version, key, since):
+        try:
+            why = self.rollback_copy_change(engine, version, key, since)
+        except HostMoved as e:
+            why = str(e)
+        if why:
             self.rollback_only = True
             log(f"POSTCONDITION FAILED: {why}. {KEEP_AND_ROLL_BACK}")
             return POSTCONDITION
         return OK
 
-    def rollback_copy_change(self, version: str | None, key: list[str], since: int) -> str:
-        """Why the rollback copy may hold a change the live table lacks, or ''. After the
-        swap the rollback copy is the source as writers left it: the live table must match
-        it, with no mutation since `since` (the gate saw none before the swap)."""
-        try:
-            cons = self.consistent(version, key, source=self.pre, copy=self.t)
-            mutations = self.mutations_since(self.pre, since)
-            log("consistency against the rollback copy:", cons, "mutations:", mutations)
-            if any(cons) or mutations:
-                return (
-                    "the source changed after the last check (mismatched, source-only and "
-                    f"twin-only keys {cons}, {mutations} mutation(s) on loom.{self.pre}), and "
-                    "the new table may not hold the change"
-                )
-            # the hash zeroes a vector of another width on both sides, so an UPDATE to one
-            # after the last width check reads as consistent; the width read shows it
-            if why := self.width_refusal(self.ddl(self.pre), self.pre):
-                return f"{why}. The change landed after the last check and the new table holds it zeroed"
-        except HostMoved as e:
-            return str(e)
+    def rollback_copy_change(
+        self, engine: str, version: str | None, key: list[str], since: int
+    ) -> str:
+        """Why the rollback copy holds a change the live table lacks, or ''. After the swap
+        the rollback copy is the source as writers left it: the live table must match it,
+        with no mutation since `since` (the gate saw none before the swap). Raises when the
+        checks cannot run (HostMoved, a failed sync)."""
+        self.sync_rollback_copy(engine)
+        cons = self.consistent(version, key, source=self.pre, copy=self.t)
+        mutations = self.mutations_since(self.pre, since)
+        log("consistency against the rollback copy:", cons, "mutations:", mutations)
+        if any(cons) or mutations:
+            return (
+                "the source changed after the last check (mismatched, source-only and "
+                f"twin-only keys {cons}, {mutations} mutation(s) on loom.{self.pre}), and "
+                "the new table may not hold the change"
+            )
+        # the hash zeroes a vector of another width on both sides, so an UPDATE to one
+        # after the last width check reads as consistent; the width read shows it
+        if why := self.width_refusal(self.ddl(self.pre), self.pre):
+            return (
+                f"{why}. The change landed after the last check and the new table holds it zeroed"
+            )
         return ""
 
     def rollback(self) -> int:
@@ -1094,16 +1132,15 @@ class VectorRebuild:
         return OK
 
     def swapped_change(self) -> str:
-        """Why the rollback copy may hold a change the live table lacks, read after a drain
+        """Why the rollback copy holds a change the live table lacks, read after a drain
         as the postcondition reads it, or ''. Writers stay stopped until the copy is
-        dropped, so the two tables still match."""
+        dropped, so the two tables still match. Raises when the checks cannot run."""
         engine, version, key = parse_engine(self.ddl(self.pre))
         self.fin = read_final(engine)
-        if why := self.drain_refusal(engine):
-            return why
+        self.drain(engine)
         self.reads = dict(tr.CONSISTENT)
         # the live table is the run's twin, created when the copy started
-        return self.rollback_copy_change(version, key, self.metadata_time(self.t))
+        return self.rollback_copy_change(engine, version, key, self.metadata_time(self.t))
 
     def drop_pre(self) -> int:
         tr.print_target(self.ch, self.t)
@@ -1116,10 +1153,21 @@ class VectorRebuild:
             log(f"REFUSED: neither loom.{self.t} nor loom.{self.pre} has the target layout")
             return REFUSED
         # swapped and not rolled back: the rollback copy may be the only copy of a change
-        if live and not pre and (why := self.swapped_change()):
-            self.rollback_only = True
-            log(f"REFUSED: {why}; loom.{self.pre} is kept. {KEEP_AND_ROLL_BACK}")
-            return REFUSED
+        if live and not pre:
+            try:
+                why = self.swapped_change()
+            except Exception as e:  # noqa: BLE001 - checks that cannot run keep the copy
+                self.recheck = True
+                log(
+                    f"REFUSED: the checks could not run ({str(e)[:160]}): fix the grant or "
+                    "connect directly to one replica and rerun --drop-pre-rebuild; "
+                    f"loom.{self.pre} is kept"
+                )
+                return REFUSED
+            if why:
+                self.rollback_only = True
+                log(f"REFUSED: {why}; loom.{self.pre} is kept. {KEEP_AND_ROLL_BACK}")
+                return REFUSED
         log(f"drop: loom.{self.pre} ({tr.row_count(self.ch, self.pre)} rows); cannot be undone")
         if not self.a.yes:
             log("plan only: pass --yes to drop it")
@@ -1194,7 +1242,7 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
         "--statement-timeout-s",
         type=float,
         default=1800.0,
-        help="seconds each gate read, delta and repair INSERT may run",
+        help="seconds each read, delta and repair INSERT may run, after the swap included",
     )
     ap.add_argument(
         "--abort-file", default=str(Path(os.environ.get("LOOM_REBUILD_DIR", ".")) / "ABORT_REBUILD")
