@@ -22,6 +22,9 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = ResizeObserverStub;
 }
 
+// jsdom has no scrolling; delayed transcript navigation still calls this method.
+Element.prototype.scrollIntoView = () => {};
+
 // React's markup warnings fail the test that caused them: a <div> inside a <p> (Click UI
 // draws its icon, badge and ellipsis as divs) and a ref handed to a component that cannot
 // take one (a Radix Portal tracks its child by its ref).

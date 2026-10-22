@@ -749,13 +749,13 @@ State of deferred set_from_messages batches.
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `queue_id` | `str` | `''` | One batch, by the id a deferred `memory.set_from_messages` returned; '' = every batch in scope. |
-| `status` | `Literal['', 'pending', 'running', 'done', 'failed']` | `''` | Only batches in this state; '' = any. |
+| `status` | `Literal['', 'pending', 'running', 'held', 'done', 'failed']` | `''` | Only batches in this state, '' = any (`held`: its model call held for its org or its enqueuer's identity, no attempt spent). |
 | `limit` | `int` | `50` | At most this many batches returned. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `batches` | `list[_ExtractionQueueRow]` | The queued batches in scope: state, attempts, sizes and last error. |
-| `pending` | `int` | Not yet extracted (pending + running) in the requested scope. |
+| `pending` | `int` | Not yet extracted (pending + running + held) in the requested scope. |
 | `failed` | `int` | Of the returned batches, how many ended `failed`. |
 
 ## `memory.for_file`

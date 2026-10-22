@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -63,6 +64,7 @@ def _fake_retry(monkeypatch: pytest.MonkeyPatch, retry: Any) -> list[dict[str, A
 def _failure(i: int, projection: str) -> ProjectionFailureRow:
     return ProjectionFailureRow(
         failure_id=f"f{i}",
+        created_at=datetime(2026, 1, 1),
         org="acme",
         namespace="shop",
         agent="a",

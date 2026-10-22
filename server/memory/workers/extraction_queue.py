@@ -5,8 +5,13 @@
 worker claims the oldest pending rows, rebuilds the exact input and runs the
 unchanged inline handler — LLM extraction, embedding, conflict surfacing,
 blacklist, evidence and chunk projections — then rewrites the row `done`.
-A failure goes back to `pending` with `attempts+1` until `max_attempts`,
-then `failed` with `last_error` for `memory.extraction_status` to show.
+A failure goes back to `pending` with `attempts+1`, claimed again after a
+backoff (15 s, 1, 5, then 30 minutes), until `max_attempts`, then `failed`
+with `last_error` for `memory.extraction_status` to show. A model provider or
+gateway that cannot be reached (no connection, a timeout, 502/503/504) spends
+no attempt: the row waits the same backoff. A held call (the org switched off,
+the enqueuer's identity refused, asked to wait or unread) marks the row `held`
+until the hold ends, no attempt spent.
 
 On by default: `defer` is opt-in per call, so an enabled worker with an
 empty queue costs one indexed SELECT per interval and no LLM call. Turning
@@ -21,7 +26,11 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
+
+from server.llm.gateway import GatewayUnavailable
 from server.memory.app import extraction_queue as q
+from server.workers.holds import hold_seconds
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
@@ -34,7 +43,7 @@ class ExtractionQueueConfig:
     # A claim older than this is reclaimable (worker died mid-extraction).
     lease_seconds: int = 600
     # Attempts before a row is parked `failed`.
-    max_attempts: int = 3
+    max_attempts: int = 8
     # Test scoping under shared CH state; production runs unscoped.
     org_filter: str | None = None
     namespace_filter: str | None = None
@@ -52,8 +61,14 @@ class ExtractionQueueResult:
     done: list[dict[str, Any]] = field(default_factory=list)
     written_memories: int = 0
     failures: list[str] = field(default_factory=list)
-    # Claimed rows left for later: their org's model calls were switched off.
+    # Claimed rows marked `held`, no attempt spent: their org's model calls were
+    # switched off, or the enqueuer's identity was refused, asked to wait or unread.
     skipped: int = 0
+    # Claimed rows put back with no attempt spent: the model provider or gateway
+    # could not be reached.
+    unreachable: int = 0
+    # Requests dropped on their last day before the queue's TTL, still waiting.
+    expired: int = 0
     # Requests of a switched-off org dropped after LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS.
     dropped: int = 0
 
@@ -87,6 +102,27 @@ def order_within_namespace(
     return groups
 
 
+# What a model provider or gateway that does not answer raises: no connection, a
+# timeout, an answer cut off, no gateway token to be had.
+_UNREACHABLE = (
+    httpx.TimeoutException,
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+    httpx.ProxyError,
+    GatewayUnavailable,
+    TimeoutError,
+)
+
+
+def unreachable(e: BaseException) -> bool:
+    """Whether a replay's failure is the model provider or gateway not answering
+    (`_UNREACHABLE`, or a 502, 503 or 504): the row is not at fault, so it spends
+    no attempt. A request it cannot make at all (a bad scheme) is not this."""
+    if isinstance(e, _UNREACHABLE):
+        return True
+    return isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (502, 503, 504)
+
+
 def _config_from_settings() -> ExtractionQueueConfig:
     from server.settings import settings
 
@@ -107,18 +143,35 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
     cfg = cfg or _config_from_settings()
     result = ExtractionQueueResult()
     ch = get_client()
+    # What holds a replay with no attempt spent: switched off after the claim, the
+    # switch unread, or the enqueuer's identity refused, asked to wait or unread. Not
+    # `HOLDS`: a request naming no customer never will, so it spends its attempts.
+    held: tuple[type[Exception], ...] = (customer.SwitchUnread, *customer.GROUP_HOLDS)
 
     async def _replay_one(row: dict[str, Any]) -> None:
         try:
             written = await q.replay_row(row)
-        except (customer.ModelCallsDisabled, customer.SwitchUnread):
-            # Switched off after the claim, or the model-call switch or the extraction
-            # policies went unread: no attempt spent. The lease runs out and the row
-            # waits, unclaimed, until the org is back on and both are read. Not `HOLDS`:
-            # a request naming no customer never will, so it spends its attempts and fails.
+        except held as e:
+            # Held until the org is back on, the switch or identity is read, or the
+            # gateway's hold is over; the other rows, and other identities', go on.
+            await q.mark_held(
+                row, reason=f"{type(e).__name__}: {e}", seconds=hold_seconds(e), ch=ch
+            )
             result.skipped += 1
             return
         except Exception as e:
+            if unreachable(e):
+                log.warning(
+                    "extraction_queue: the model provider could not be reached for %s/%s "
+                    "queue_id=%s (%s); no attempt spent",
+                    row.get("org"),
+                    row.get("namespace"),
+                    row.get("queue_id"),
+                    type(e).__name__,
+                )
+                await q.mark_unreachable(row, error=f"{type(e).__name__}: {e}", ch=ch)
+                result.unreachable += 1
+                return
             log.exception(
                 "extraction_queue replay failed for %s/%s queue_id=%s",
                 row.get("org"),
@@ -189,13 +242,20 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
                 log.error("extraction_queue group %s/%s failed", org, ns, exc_info=o)
         if errors:
             raise errors[0]
+        # Whatever still waits on its last day before the table's TTL is dropped with
+        # a record, never removed unseen.
+        result.expired = await q.drop_expiring(
+            ch=ch, org_filter=cfg.org_filter, namespace_filter=cfg.namespace_filter
+        )
         rec.outcome = {
             "claimed": len(rows),
             "done": result.done_count,
             "written_memories": result.written_memories,
             "failed": len(result.failures),
             "skipped": result.skipped,
+            "unreachable": result.unreachable,
             "dropped": result.dropped,
+            "expired": result.expired,
         }
 
     if result.done_count or result.failures:

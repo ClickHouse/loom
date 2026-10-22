@@ -148,7 +148,7 @@ class RateLimitedError(LoomServerError):
 class GatewayRequiredError(LoomServerError):
     """503 — a model call named a host LOOM_INFERENCE_GATEWAY_HOSTS does not
     list while the gateway is required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or a
-    token exchange); the message names the host. Also every data-plane request
+    workload token); the message names the host. Also every data-plane request
     on a server whose saved model configuration the check refuses, until a
     replacement is saved or the configuration is reset; that answer names no
     host. A setting to fix, not an outage: never retried. A classifier or
@@ -156,6 +156,38 @@ class GatewayRequiredError(LoomServerError):
     the input order, stays."""
 
     code = "GATEWAY_REQUIRED"
+    status_code = 503
+
+
+class ModelCallRefused(LoomServerError):
+    """403 — the inference gateway refused the call for the identity it was made
+    for: that identity's refusal, not the provider's failure. The answer is one
+    `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists under `refused` (an agent over
+    its budget, an agent not allowed). It is not retried, marks no provider
+    failing and switches no org off; a background job leaves that identity's
+    calls to the same model for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS`.
+    `gateway_status` and `gateway_code` say what the gateway answered."""
+
+    code = "MODEL_CALL_REFUSED"
+    status_code = 403
+
+    def __init__(self, message: str = "", *, hold_s: float = 0.0, **extra: Any) -> None:
+        super().__init__(message, **extra)
+        # How long a job leaves the identity's calls to that route and model (0: none
+        # held); not part of the answer.
+        self.hold_s = hold_s
+
+
+class ModelCallDeferred(ModelCallRefused):
+    """503 — the inference gateway asked the call's identity to wait for
+    `retry_after_s`, its `Retry-After`. The answer is one
+    `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists under `wait` (too many of the
+    agent's requests in progress). A request's call asked to wait two seconds or
+    less waits once and asks again first; a background job holds that identity's
+    calls to the same model as long. The SDKs raise it as `BackendUnavailable`,
+    the wait in `detail.retry_after_s` and the `Retry-After` header."""
+
+    code = "MODEL_CALL_DEFERRED"
     status_code = 503
 
 

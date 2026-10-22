@@ -132,6 +132,7 @@ from server.memory.store.reads import (
     memory_rows_by_identity_keys,
     namespace_version,
     overlay_usage_totals_many,
+    session_writers,
     statuses_by_ids,
     versions_above,
 )
@@ -287,6 +288,7 @@ __all__ = [
     "rollback_change_rows",
     "serialize_value",
     "SESSION_SUMMARY_PERSISTED_COLS",
+    "session_writers",
     "status_by_keys",
     "status_divergence_sql",
     "statuses_by_ids",

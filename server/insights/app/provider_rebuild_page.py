@@ -79,17 +79,14 @@ async def rebuild_snapshot_page(
         rows, source_texts = await reconcile_tracker_page(
             rows, body_chars=settings.tracker_embed_body_chars
         )
-    waiting: list[int] = []
-    rebuilt = await rebuild_batch(
-        names.table, rows, embedder, source_texts=source_texts, waiting=waiting, ch=ch
-    )
+    rebuilt = await rebuild_batch(names.table, rows, embedder, source_texts=source_texts, ch=ch)
     await write_target_page(
         names,
         schema,
         snapshot_uuid,
         target_uuid,
         embedding_fingerprint,
-        rebuilt,
+        rebuilt.rows,
         after=after,
         ch=ch,
     )
@@ -97,5 +94,6 @@ async def rebuild_snapshot_page(
         cursor=after + len(rows),
         rows_written=len(rows),
         done=len(rows) < PAGE_SIZE,
-        rows_waiting=len(waiting),
+        rows_waiting=rebuilt.rows_waiting,
+        retry_after_s=rebuilt.retry_after_s,
     )

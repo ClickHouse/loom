@@ -21,11 +21,13 @@ before ClickHouse applies it; watch `system.mutations`.
   old-model rows afterwards; `--key-only` rebuilds only the key-axis vector of each live
   row. `--in-database <named collection>` runs the embedding inside ClickHouse with
   `aiEmbed` (ClickHouse 26.7 or later) as one `INSERT … SELECT` per table instead of a
-  Python loop. The Python path reads `--batch-size` rows at a time in sort-key order and
-  prints a `resume:` token after each page; `--resume <token>` continues an interrupted
-  run there. The Python path never sends a conversation turn whose text reads as high
-  to the embedder: the row stays on the old model, which search does not read, until
-  `--delete-old` removes it. A memory row's vector follows its sensitivity label.
+  Python loop. It is refused while a customer or identity header is set or the inference
+  gateway is required: ClickHouse's own calls name no customer or identity and skip the
+  gateway's host check. The Python path reads `--batch-size` rows at a time in sort-key
+  order and prints a `resume:` token after each page; `--resume <token>` continues an
+  interrupted run there. The Python path never sends a conversation turn whose text reads as
+  high to the embedder: the row stays on the old model, which search does not read,
+  until `--delete-old` removes it. A memory row's vector follows its sensitivity label.
   `--in-database` cannot check the text and re-embeds such a turn too; search still holds
   it back ([sensitivity](../architecture/security.md#sensitivity)).
 - **A model of another width.** On ClickHouse 26.8 or later a fresh install codes its

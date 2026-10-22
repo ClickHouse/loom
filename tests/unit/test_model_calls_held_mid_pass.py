@@ -307,8 +307,7 @@ def test_the_conflict_resolvers_judge_lets_a_held_call_through(monkeypatch, erro
 
 @held
 def test_the_conflict_resolver_leaves_a_held_row_owed_with_no_attempt(monkeypatch, error) -> None:
-    """The judge's call is held: no error, no attempt, and the namespace waits for the
-    next pass."""
+    """Held work spends no attempt; an unread global switch stops the pass."""
     from server.memory.app import conflict_resolver as resolver
     from server.memory.workers import conflict_resolver as w
 
@@ -341,8 +340,14 @@ def test_the_conflict_resolver_leaves_a_held_row_owed_with_no_attempt(monkeypatc
         return p
 
     p = asyncio.run(one())
-    assert p.errors == [] and p.counts.errored == 0 and p.unavailable is None
-    assert p.stopped == {("acme", "n")} and w._state.attempts == {}
+    assert p.errors == [] and p.counts.errored == 0 and w._state.attempts == {}
+    assert p.stopped == set()
+    if isinstance(error, customer.GROUP_HOLDS):
+        assert p.unavailable is None
+        assert w._HELD.current() == frozenset({w._identity(row)})
+    else:
+        assert p.unavailable is error
+        assert w._HELD.current() == frozenset()
 
 
 @held

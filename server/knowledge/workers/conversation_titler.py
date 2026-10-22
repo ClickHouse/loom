@@ -124,7 +124,7 @@ async def _make_title(
     row_started = time.monotonic()
     cost_accumulator.begin_op()
     try:
-        with llm_stage("title"), customer.for_org(str(row["org"])):
+        with llm_stage("title"), customer.for_org(str(row["org"]), namespace=str(row["namespace"])):
             out = await llm.complete(
                 system=with_policy(_TITLE_SYSTEM, policy),
                 user=snippet,

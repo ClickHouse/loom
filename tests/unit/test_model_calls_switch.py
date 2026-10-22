@@ -85,7 +85,7 @@ def test_it_holds_with_no_customer_header_and_lets_an_unknown_org_through(monkey
     with pytest.raises(customer.ModelCallsDisabled):
         asyncio.run(customer.require())
     genai._identity.set(None)  # a dev call naming no org: nothing to check, no header to send
-    assert asyncio.run(customer.require()) == ""
+    assert customer.headers(asyncio.run(customer.require())) == {}
 
 
 @pytest.mark.parametrize("cmd", ["rechunk", "code"])
@@ -501,6 +501,7 @@ async def test_the_extraction_queue_leaves_a_switched_off_orgs_requests_pending(
         return 0
 
     monkeypatch.setattr(q, "drop_waiting", nothing_waited_long)
+    monkeypatch.setattr(q, "drop_expiring", nothing_waited_long)
     monkeypatch.setattr("server.core.ch.get_client", lambda: object())
 
     switch_off("acme")
@@ -526,6 +527,7 @@ async def test_a_claimed_request_the_switch_holds_waits_and_one_naming_no_custom
     from server.memory.workers import extraction_queue as w
 
     errors: list[str] = []
+    held: list[str] = []
 
     async def claim_batch(**_: Any) -> list[Any]:
         return [{"org": "acme", "namespace": "n", "queue_id": "q1", "enqueued_at": 1}]
@@ -537,15 +539,23 @@ async def test_a_claimed_request_the_switch_holds_waits_and_one_naming_no_custom
         errors.append(row["queue_id"])
         return "error"
 
+    async def mark_held(row: dict[str, Any], **_: Any) -> None:
+        held.append(row["queue_id"])
+
+    async def nothing(*a: Any, **k: Any) -> int:
+        return 0
+
     monkeypatch.setattr(q, "claim_batch", claim_batch)
     monkeypatch.setattr(q, "replay_row", replay_row)
     monkeypatch.setattr(q, "mark_error", mark_error)
+    monkeypatch.setattr(q, "mark_held", mark_held)
+    monkeypatch.setattr(q, "drop_expiring", nothing)
     monkeypatch.setattr("server.core.ch.get_client", lambda: object())
     result = await w.run_pass(w.ExtractionQueueConfig())
     if waits:
-        assert errors == [] and result.skipped == 1
+        assert errors == [] and held == ["q1"] and result.skipped == 1
     else:
-        assert errors == ["q1"] and result.skipped == 0
+        assert errors == ["q1"] and held == [] and result.skipped == 0
 
 
 async def test_the_entity_extractor_selects_no_row_of_a_switched_off_org(
@@ -737,7 +747,11 @@ async def test_the_extraction_queue_drops_with_the_configured_wait(monkeypatch) 
     async def claim_batch(**_: Any) -> list[Any]:
         return []
 
+    async def nothing(*a: Any, **k: Any) -> int:
+        return 0
+
     monkeypatch.setattr(q, "drop_waiting", drop_waiting)
+    monkeypatch.setattr(q, "drop_expiring", nothing)
     monkeypatch.setattr(q, "claim_batch", claim_batch)
     monkeypatch.setattr(settings, "model_calls_off_max_wait_days", 3)
     monkeypatch.setattr("server.core.ch.get_client", lambda: object())
@@ -965,10 +979,11 @@ def test_a_reembed_leaves_a_switched_off_orgs_rows_and_counts_them(monkeypatch) 
 
 def test_without_a_header_a_batch_splits_by_org_only_when_one_is_switched_off() -> None:
     assert settings.inference_customer_header == ""
+    rows = [customer.Attribution(org) for org in ("acme", "beta", "acme")]
     switch_off()
-    assert asyncio.run(customer.by_org(["acme", "beta", "acme"])) == {"": [0, 1, 2]}
+    assert asyncio.run(customer.groups(rows)) == {customer.Attribution(): [0, 1, 2]}
     switch_off("acme")
-    assert asyncio.run(customer.by_org(["acme", "beta", "acme"])) == {"acme": [0, 2], "beta": [1]}
+    assert asyncio.run(customer.groups(rows)) == {rows[0]: [0, 2], rows[1]: [1]}
 
 
 def test_a_reembed_page_without_a_header_leaves_the_rows_of_an_org_switched_off_mid_run(
@@ -1101,11 +1116,11 @@ def test_a_rebuild_stages_a_switched_off_orgs_rows_without_a_vector(monkeypatch)
 
     rows = [{"org": "acme", "text": "a"}, {"org": "beta", "text": "b"}]
     switch_off("acme")
-    waiting: list[int] = []
-    out = asyncio.run(batch.rebuild_batch("memory_embeddings", rows, _E(), waiting=waiting))
-    assert waiting == [0]  # the rebuild goes on: acme's row waits for its vector
-    assert (out[0]["embedding"], out[0]["embedding_dim"]) == ([], 0)
-    assert (out[1]["embedding"], out[1]["embedding_dim"]) == ([0.5, 0.5], 2)
+    out = asyncio.run(batch.rebuild_batch("memory_embeddings", rows, _E()))
+    assert out.rows_waiting == 1
+    assert out.retry_after_s == 30.0
+    assert (out.rows[0]["embedding"], out.rows[0]["embedding_dim"]) == ([], 0)
+    assert (out.rows[1]["embedding"], out.rows[1]["embedding_dim"]) == ([0.5, 0.5], 2)
 
 
 def test_the_dupcheck_refit_command_sends_nothing_for_a_switched_off_org(monkeypatch) -> None:

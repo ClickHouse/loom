@@ -413,6 +413,29 @@ async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
     await M.live_shared_embedding_rows_for_key(ch, org=ORG, namespace=NS, memory_key="k1")
 
 
+_STUB_KEY = {
+    "org": ORG,
+    "namespace": NS,
+    "agent": AGENT,
+    "user_id": "-",
+    "session_id": "s1",
+    "scope": "private",
+    "embedding_model": MODEL,
+    "memory_key": "k1",
+}
+# A candidate stub and its confirmation, so the selection reaches its FINAL read.
+_STUB_ROWS = rows_by_substring(
+    {"HAVING argMax(embedding_dim": [_STUB_KEY], "PREWHERE embedding_dim": [_STUB_KEY]}
+)
+
+
+async def _embedding_stubs(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The embedding worker's reads exclude held rows before their limits."""
+    from server.memory import store as M
+
+    await M.find_embedding_stubs(batch_size=10, max_attempts=3, ch=ch)
+
+
 async def _keys_and_fence(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory import store as M
 
@@ -431,6 +454,8 @@ async def _memory_workers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await M.find_embedding_stubs(
         batch_size=10, max_attempts=3, org_filter=org, namespace_filter=ns, ch=ch
     )
+    # whom a job's call over a session is for: its newest live version's writer
+    await M.session_writers([(ORG, NS, AGENT, "-", "s1")], ch=ch)
     await M.find_memories_without_embedding_rows(
         batch_size=10, org_filter=org, namespace_filter=ns, since_seconds=since, ch=ch
     )
@@ -603,6 +628,13 @@ def cases() -> list[Case]:
             {"scope": ("private", "shared"), "user_id": (False, True), "vector": (False, True)},
         ),
         Case("memory_repo.workers", MR, _memory_workers, {"filters": (False, True)}),
+        Case(
+            "memory_repo.embedding_stubs",
+            MR,
+            _embedding_stubs,
+            {},
+            rows=_STUB_ROWS,
+        ),
         Case("memory_repo.keys_and_fence", MR, _keys_and_fence, {}),
         Case("deep_evidence", DE, _deep_evidence, {}),
         Case(

@@ -393,7 +393,7 @@ Raised in `server/memory/app/verify.py`.
 
 #### `GATEWAY_REQUIRED`
 
-HTTP 503, raised as `server.core.errors.GatewayRequiredError`. 503 — a model call named a host LOOM_INFERENCE_GATEWAY_HOSTS does not list while the gateway is required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or a token exchange); the message names the host.
+HTTP 503, raised as `server.core.errors.GatewayRequiredError`. 503 — a model call named a host LOOM_INFERENCE_GATEWAY_HOSTS does not list while the gateway is required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or a workload token); the message names the host.
 
 #### `GRANT_BUSY`
 
@@ -482,6 +482,14 @@ Raised in `server/memory/app/handlers.py`.
 #### `MODEL_CALLS_DISABLED`
 
 HTTP 403, raised as `server.llm.customer.ModelCallsDisabled`. The org's admin switched its model calls off: nothing is sent for it.
+
+#### `MODEL_CALL_DEFERRED`
+
+HTTP 503, raised as `server.core.errors.ModelCallDeferred`. 503 — the inference gateway asked the call's identity to wait for `retry_after_s`, its `Retry-After`.
+
+#### `MODEL_CALL_REFUSED`
+
+HTTP 403, raised as `server.core.errors.ModelCallRefused`. 403 — the inference gateway refused the call for the identity it was made for: that identity's refusal, not the provider's failure.
 
 #### `MODEL_CALL_UNATTRIBUTED`
 

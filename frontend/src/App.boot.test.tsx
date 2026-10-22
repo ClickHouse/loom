@@ -282,10 +282,6 @@ describe("boot order", () => {
 describe("a link's namespace", () => {
   const JOINED = { ...MINE[0], namespace: "joined", role: "writer" };
   let calls: { path: string; body: Record<string, unknown> | null }[];
-  // A read of the Memories page. The sidebar's Review badge also asks
-  // memory.auto_retirements, on the namespace the picker shows, whatever the page is.
-  const memoriesPageRead = (c: { path: string }) =>
-    c.path.startsWith("memory.") && c.path !== "memory.auto_retirements";
   function serve(rows: unknown[] | "failing") {
     calls = [];
     vi.stubGlobal(
@@ -359,8 +355,11 @@ describe("a link's namespace", () => {
     expect(address()).toBe("/memories?namespace=group-b-shared&memory=k");
     // The picker is there, on the namespace under the page.
     expect(screen.getByRole("button", { name: `Namespace: ${NS}` })).toBeInTheDocument();
+    await until(() => calls.some((c) => c.path === "memory.auto_retirements"));
     expect(calls.some((c) => c.body?.namespace === "group-b-shared")).toBe(false);
-    expect(calls.some(memoriesPageRead)).toBe(false);
+    expect(
+      calls.filter((c) => c.path.startsWith("memory.")).map((c) => ({ path: c.path, namespace: c.body?.namespace })),
+    ).toEqual([{ path: "memory.auto_retirements", namespace: NS }]);
     expect(localStorage.getItem("loom_namespace_v1")).toBe(NS);
     expect(savedDefault()).toBe(false);
     // Continue: the page the link asked for, on the namespace the picker shows.
@@ -402,8 +401,11 @@ describe("a link's namespace", () => {
     expect(useStore.getState()).toMatchObject({ identity: { namespace: NS }, deniedNamespace: "joined" });
     expect(screen.queryByText(/cannot read/)).toBeNull();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    await until(() => calls.some((c) => c.path === "memory.auto_retirements"));
     expect(calls.some((c) => c.body?.namespace === "joined")).toBe(false);
-    expect(calls.some(memoriesPageRead)).toBe(false);
+    expect(
+      calls.filter((c) => c.path.startsWith("memory.")).map((c) => ({ path: c.path, namespace: c.body?.namespace })),
+    ).toEqual([{ path: "memory.auto_retirements", namespace: NS }]);
   });
 
   it("when the membership read fails, a reload still opens the saved pick: the server answers its reads", async () => {

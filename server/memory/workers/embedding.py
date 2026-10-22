@@ -17,13 +17,16 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import server.memory.store as memory_repo
+from server.core.datetimes import utc_now
 from server.embedding import get_embedder
-from server.llm import customer
+from server.llm import customer, identity
+from server.memory.app.model_attribution import attribution_for, memory_writers
 from server.workers import pass_context
+from server.workers.holds import Held, hold_seconds
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
@@ -174,33 +177,55 @@ def _carry_signals(r: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _embed_rows(
-    embedder: Any, rows: list[dict[str, Any]]
+    embedder: Any,
+    rows: list[dict[str, Any]],
+    writers: dict[tuple[str, ...], str] | None = None,
 ) -> list[tuple[list[float] | None, str]]:
-    """`_embed_batch` per org, in the rows' order: a pass picks stubs of every
-    org, and one model call names a single customer. An org switched off since
-    the stubs were picked gets `(None, SWITCHED_OFF)`: its rows are left as
-    they are, attempts untouched. A switch gone stale mid-pass (`SwitchUnread`)
-    stops the pass before its write."""
+    """Embed each writer's rows together; held identities retry without spending attempts."""
     out: list[tuple[list[float] | None, str]] = [(None, "")] * len(rows)
-    groups = await customer.by_org(str(r.get("org") or "") for r in rows)
-    for org, positions in groups.items():
+    if writers is None:
+        writers = await memory_writers(rows) if identity.reads_writer() else {}
+    groups = await customer.groups(attribution_for(r, writers) for r in rows)
+    for who, positions in groups.items():
         embedded: list[tuple[list[float] | None, str]]
+        group = [rows[i] for i in positions]
+        remaining = max(
+            _HELD_WHO.left(identity.split_by(attribution_for(r, writers))) for r in group
+        )
+        if remaining > 0:
+            _hold(group, writers, remaining)
+            for i in positions:
+                out[i] = (None, HELD)
+            continue
         try:
-            with customer.for_org(org):
+            with customer.attributed(who):
                 if not customer.names_one():
                     embedded = [(None, customer.NO_CUSTOMER)] * len(positions)
                 else:
                     texts = [rows[i]["content_excerpt"] for i in positions]
                     embedded = await _embed_batch(embedder, texts)
         except customer.ModelCallsDisabled:
-            embedded = [(None, SWITCHED_OFF)] * len(positions)
+            embedded = [(None, HELD)] * len(positions)
+        except customer.GROUP_HOLDS as e:
+            _hold([rows[i] for i in positions], writers, hold_seconds(e))
+            embedded = [(None, HELD)] * len(positions)
         for i, one in zip(positions, embedded, strict=True):
             out[i] = one
     return out
 
 
-# The error `_embed_rows` gives a row whose org was switched off mid-pass.
-SWITCHED_OFF = "model calls switched off"
+# Held rows retain their embedding attempts.
+HELD = "model call held"
+
+_HELD_WHO: Held[Any] = Held()
+
+
+def _hold(rows: list[dict[str, Any]], writers: dict[tuple[str, ...], str], seconds: float) -> None:
+    """Persist a retry time without spending an embedding attempt."""
+    _HELD_WHO.hold((identity.split_by(attribution_for(r, writers)) for r in rows), seconds)
+    until = utc_now() + timedelta(seconds=seconds)
+    for row in rows:
+        row["embed_retry_at"] = until
 
 
 async def _embed_batch(embedder: Any, texts: list[str]) -> list[tuple[list[float] | None, str]]:
@@ -452,10 +477,6 @@ async def run_pass(
             log.warning("embedding worker: reconciliation pass failed: %s", e)
             pass_context.note_failure(e, "reconciliation")
 
-        from server.llm import customer
-
-        # An org whose model calls are switched off keeps its stubs, attempts
-        # untouched, until it is switched back on.
         rows = await memory_repo.find_embedding_stubs(
             batch_size=cfg.batch_size,
             max_attempts=cfg.max_attempts,
@@ -473,12 +494,27 @@ async def run_pass(
         rows, dropped = await _stubs_still_served(rows, stub_embedding, now)
         if dropped:
             await memory_repo.insert_embedding_rows(dropped)
+        writers = await memory_writers(rows) if rows and identity.reads_writer() else {}
         if rows:
-            embedded = await _embed_rows(embedder, rows)
+            embedded = await _embed_rows(embedder, rows, writers)
             for r, (vec, embed_err) in zip(rows, embedded, strict=True):
                 content = r["content_excerpt"]
-                if vec is None and embed_err == SWITCHED_OFF:
-                    continue  # left unwritten: it waits for the org to be switched back on
+                if vec is None and embed_err == HELD:
+                    if r.get("embed_retry_at") is None:
+                        continue  # switched-off orgs are excluded by the next selection
+                    retries.append(
+                        memory_repo.build_embedding_row(
+                            **_carry_signals(r),
+                            content_excerpt=content,
+                            embedding_model=r["embedding_model"],
+                            embedding_dim=0,
+                            embedding=stub_embedding,
+                            embed_attempts=int(r.get("embed_attempts") or 0),
+                            embed_last_error=HELD,
+                            embed_retry_at=r["embed_retry_at"],
+                        )
+                    )
+                    continue
                 if vec is None:
                     new_attempts = int(r.get("embed_attempts") or 0) + 1
                     err = embed_err

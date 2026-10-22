@@ -275,6 +275,9 @@ def _cmd_reembed(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
+        except ValueError as e:  # --in-database or --resume refused before any row is read
+            print(f"loom reembed: {e}", file=sys.stderr)
+            return 2
         print(f"re-embedded: {written}")
         return 0
 
@@ -300,7 +303,9 @@ def _add_reembed_parser(sub: Any) -> None:
         metavar="NAMED_COLLECTION",
         help="Re-embed inside ClickHouse with aiEmbed (ClickHouse 26.7+): the "
         "named collection holding provider/endpoint/api_key. One INSERT … SELECT per "
-        "table instead of a Python loop; refuses when an embed-text switch is on.",
+        "table instead of a Python loop; refuses when an embed-text switch is on, and "
+        "with a customer or identity header set or the inference gateway required "
+        "(ClickHouse's calls name no one and skip the gateway check).",
     )
     p_reembed.add_argument(
         "--dry-run", action="store_true", help="Count off-model rows without writing"

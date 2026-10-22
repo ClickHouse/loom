@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from server.insights.app import provider_rebuild_page as page
+from server.insights.app.provider_rebuild_batch import RebuildBatchResult
 from server.insights.store.provider_staging import SourceSchema, StagingNames
 
 
@@ -20,7 +21,9 @@ def plan(monkeypatch):
         object(),
     )
     read = AsyncMock(return_value=[{"value": "source", "_loom_rebuild_ordinal": 5}])
-    embed = AsyncMock(return_value=[{"value": "rebuilt", "_loom_rebuild_ordinal": 5}])
+    embed = AsyncMock(
+        return_value=RebuildBatchResult([{"value": "rebuilt", "_loom_rebuild_ordinal": 5}], 0)
+    )
     write = AsyncMock()
     monkeypatch.setattr(page, "snapshot_page", read)
     monkeypatch.setattr(page, "rebuild_batch", embed)
@@ -35,9 +38,9 @@ async def test_checkpoint_follows_successful_staged_write(plan):
     assert (result.cursor, result.rows_written, result.done) == (5, 1, True)
     read.assert_awaited_once_with(args[0], args[1], args[2], after=4, limit=64, ch=None)
     embed.assert_awaited_once_with(
-        "memory_embeddings", read.return_value, args[5], source_texts=None, waiting=[], ch=None
+        "memory_embeddings", read.return_value, args[5], source_texts=None, ch=None
     )
-    write.assert_awaited_once_with(*args[:5], embed.return_value, after=4, ch=None)
+    write.assert_awaited_once_with(*args[:5], embed.return_value.rows, after=4, ch=None)
 
 
 @pytest.mark.asyncio
@@ -120,7 +123,6 @@ async def test_tracker_page_hydrates_before_embedding(plan, monkeypatch):
         read.return_value,
         args[5],
         source_texts={0: "Title\nBody"},
-        waiting=[],
         ch=None,
     )
 

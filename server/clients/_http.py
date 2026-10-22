@@ -8,10 +8,15 @@ per call; the lifespan in server/main.py calls `aclose()` at shutdown.
 Callers pass their own per-request timeout when the default is too short.
 
 Both follow redirects, so neither is for caller-supplied URLs: a client that
-must not be redirected to another host (webhook delivery) builds its own.
+must not be redirected to another host (webhook delivery) builds its own, and a
+model call to one (a namespace's classifier) passes `follow_redirects=False`.
 The model client runs `_on_request` before every request it sends, each
-redirect hop included, so while the gateway is required no model call leaves
-for a host LOOM_INFERENCE_GATEWAY_HOSTS does not list.
+redirect hop included: while the gateway is required no model call leaves for
+a host LOOM_INFERENCE_GATEWAY_HOSTS does not list, the identity headers go only
+to a host it lists, and a job's call for an identity the gateway holds is
+refused unsent (`server.llm.gateway.sending`). `_on_response` runs after every
+answer, which tells the gateway's bearer and its identity holds what it said
+(`server.llm.gateway.answered`).
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ import httpx
 
 from server.core.errors import GatewayRequiredError
 from server.settings import settings
+from server.settings.catalog import url_host
 
 _lock = threading.Lock()
 _client: httpx.AsyncClient | None = None
@@ -37,6 +43,25 @@ class _ProviderClient(httpx.AsyncClient):
     Anthropic and Gemini keys ride `x-api-key` / `x-goog-api-key`, which it
     would forward to whatever host the redirect names. This client drops
     those too, on any redirect that changes scheme, host or port."""
+
+    async def send(self, request: httpx.Request, **kwargs: Any) -> httpx.Response:
+        from server.llm import gateway
+
+        try:
+            return await super().send(request, **kwargs)
+        except gateway.RetryIdentityCall as retry:
+            await retry.response.aclose()
+            await gateway._sleep(retry.seconds)
+            request.extensions["loom_identity_retried"] = True
+            return await super().send(request, **kwargs)
+
+    def _build_redirect_request(
+        self, request: httpx.Request, response: httpx.Response
+    ) -> httpx.Request:
+        redirected = super()._build_redirect_request(request, response)
+        if isinstance(redirected.stream, httpx.ByteStream):
+            redirected.read()
+        return redirected
 
     def _redirect_headers(
         self, request: httpx.Request, url: httpx.URL, method: str
@@ -62,6 +87,21 @@ def refuse_off_gateway(url: str) -> None:
 
 async def _on_request(request: httpx.Request) -> None:
     refuse_off_gateway(str(request.url))
+    identity = settings.identity_headers()
+    if identity and url_host(str(request.url)) not in settings.gateway_hosts():
+        # Whom a call is for is the gateway's to know: a reranker, a classifier or a
+        # provider elsewhere never gets the identity headers, a redirect hop included.
+        for name, _ in identity:
+            request.headers.pop(name, None)
+    from server.llm import gateway
+
+    await gateway.sending(request)
+
+
+async def _on_response(response: httpx.Response) -> None:
+    from server.llm import gateway
+
+    await gateway.answered(response)
 
 
 def _build(**extra: Any) -> httpx.AsyncClient:
@@ -97,7 +137,9 @@ def get_model_client() -> httpx.AsyncClient:
         return _model_client
     with _lock:
         if _model_client is None:
-            _model_client = _build(event_hooks={"request": [_on_request]})
+            _model_client = _build(
+                event_hooks={"request": [_on_request], "response": [_on_response]}
+            )
     return _model_client
 
 

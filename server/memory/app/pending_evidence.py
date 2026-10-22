@@ -138,15 +138,14 @@ async def pending_batches(
     are `extraction_queue.pending_count`'s: `agent="*"`/None and `user_id`
     None widen the way memory.search does."""
     from server.core.ch import get_client
-    from server.memory.app.extraction_queue import STATUS_PENDING, STATUS_RUNNING
+    from server.memory.app.extraction_queue import WAITING
 
     ch = ch or get_client()
     scope = ""
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
-        "pending": STATUS_PENDING,
-        "running": STATUS_RUNNING,
+        "waiting": list(WAITING),
         "lim": max(1, int(limit)),
     }
     if agent and agent != "*":
@@ -160,7 +159,7 @@ async def pending_batches(
         SELECT queue_id, session_id, payload, toString(enqueued_at) AS enqueued_at
         FROM loom.memory_extraction_queue FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND status IN ({{pending:String}}, {{running:String}}){scope}
+          AND status IN {{waiting:Array(String)}}{scope}
         ORDER BY enqueued_at DESC
         LIMIT {{lim:UInt32}}
         """,

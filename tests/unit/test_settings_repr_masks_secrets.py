@@ -66,6 +66,7 @@ _NOT_SECRETS = {
     "oauth_access_token_ttl_seconds",
     "inference_token_url",
     "inference_workload_token_file",
+    "inference_workload_token_mode",
     "inference_token_audience",
     "inference_token_scope",
     "inference_token_exchange_timeout_s",

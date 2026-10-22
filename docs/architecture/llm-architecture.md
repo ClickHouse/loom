@@ -101,7 +101,9 @@ sorting key, so old and new rows coexist until `--delete-old`. `entity_vectors`
 (`ReplacingMergeTree(created_at)`) is replaced in place. Flags: `--org`, `--namespace`,
 `--batch-size`, `--dry-run`, `--key-only`, `--resume`, and `--in-database <named
 collection>`, which runs one `INSERT … SELECT` per table through ClickHouse's `aiEmbed`
-(it needs a ClickHouse release that ships it). See the [CLI reference](../reference/cli.md).
+(it needs a ClickHouse release that ships it, and is refused while a customer or identity
+header is set or the gateway is required, since those calls name no one and skip the
+gateway's check). See the [CLI reference](../reference/cli.md).
 
 `embedding_worker` covers the rest. It embeds `embedding_dim = 0` stubs newest first; a
 stub labelled with an older model is embedded under the served one and the old stub
@@ -240,6 +242,10 @@ what it takes. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude mod
   401, 403 and 404 propagate. Each hand-over is logged and counted (`loom.llm.fallback`),
   and the result names the model that answered. Fallbacks do not chain.
 - **Missing key.** The client is the fake (`_build_llm_client`), logged at WARNING.
+- **One identity refused.** With identity headers set, an answer from a gateway host that
+  `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists is the gateway refusing the call's identity or
+  asking it to wait ([identity headers](#identity-headers)): never retried, never handed to the
+  fallback model.
 
 ### Response cache
 
@@ -272,7 +278,8 @@ the shared HTTP client also carries non-model calls, which name no customer.
   deployment's own calls (the startup embedder probe, the recalibration worker's fixed
   pairs, the provider checks) run under `customer.system()` and name
   `LOOM_INFERENCE_SYSTEM_CUSTOMER`. The sampled retrieval judge sends the judged org's query
-  and memory text, so it names that org.
+  and memory text, so it names that org. `code.refresh` runs the poller's ingest pass, and
+  its calls stay the caller's (its token's subject) where the poller's are the namespace's.
 - **One customer per call.** A job that batches several orgs' rows (the embedding worker,
   `loom reembed`, a model rebuild) splits its batches by org before calling.
 - **The gateway's names.** `LOOM_INFERENCE_CUSTOMER_FORMAT` turns an org id into the gateway's
@@ -302,14 +309,128 @@ the shared HTTP client also carries non-model calls, which name no customer.
   whole code index. A conflict mark older than the sweep's hour when the org comes back is past
   the sweep, as a judge lost in an outage is: the write stands as made. The check runs in
   `require()`, before provider-health recording, so a refusal is never a provider failure. With
-  no customer header a job's batch of several orgs is one call, unless an org in it is switched
-  off: `customer.by_org` then splits it by org, so the switch refuses that org's call and the
-  others go on.
+  no customer or identity header a job's batch of several orgs is one call, unless an org in it
+  is switched off: `customer.groups` then splits it by org, so the switch refuses that org's
+  call and the others go on.
 
 **Why headers, not a token per customer.** The gateway already knows Loom as one service
 (its token); a credential per org would mean thousands to issue, rotate and revoke for no
 gain in what the gateway can check. The org in the header is the org the request addresses,
 as authorized for its token.
+
+### Identity headers
+
+`LOOM_INFERENCE_IDENTITY_HEADERS_JSON` names more of whom a call is for, for a gateway that
+bills or limits each agent or person (`server/llm/identity.py`). It maps header names to
+templates; `customer.require()` renders them from the call's attribution, and the senders add
+them beside the customer header on every chat, embedding, rerank and classify request to the
+gateway.
+
+| Placeholder   | A request                                                                       | A job (`customer.for_org`)                                    |
+| ------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `{org}`       | the org it addresses                                                            | the row's org                                                 |
+| `{namespace}` | the namespace the transport recorded                                            | the row's namespace                                           |
+| `{subject}`   | the token's subject                                                             | the row's writer, else the agent whose own namespace it is in |
+| `{agent}`     | `<agent>` of an agent's subject, `sa:<trust>:<agent>`                           | the same, of that subject                                     |
+| `{tenant}`    | its trust's one required value of the claim `LOOM_INFERENCE_TENANT_CLAIM` names | the same                                                      |
+| `{email}`     | a person's address: the subject, or its directory spelling                      | the same                                                      |
+| `{user_id}`   | the request's `user_id`, else the subject                                       | the row's `user_id`, else the subject                         |
+
+- **Empty is left out.** A header whose template renders empty is not sent, so a bare
+  placeholder is left out when its value is unknown; text around a placeholder is sent as
+  written. A value is percent-encoded only where a header cannot carry it (a space, `%`,
+  anything outside printable ASCII). A prefix claim (`tenant_id=acme-*`) names no tenant.
+- **The agent goes whole.** The headers whose templates name `{agent}` or `{tenant}` are sent
+  together or not at all: when any placeholder of theirs renders empty (an agent whose trust
+  requires no exact tenant, a trust's own token), none of them goes, and the gateway applies
+  its default identity rather than refusing half of one. The other headers stand alone.
+- **No org, no call.** With identity headers set, a call that names no org is refused
+  (`MODEL_CALL_UNATTRIBUTED`, logged), as it is with the customer header, unless it is the
+  deployment's own (`customer.system()`): a `loom` command run without `--org` or a request
+  whose identity was not recorded never goes out as the gateway's default. A `loom` command
+  names its `--namespace` too, so its calls are for the agent whose namespace it is; while
+  the headers name the agent, a command's call with `--org` and no namespace is refused the
+  same way rather than billed to the gateway's default agent.
+- **Writer first.** A job's call is for the principal that wrote the row: the subject in its
+  `actor` (`human:` or `process:` and a token's subject). A pipeline's own actor
+  (`process:extraction-worker`, `process:cli:<command>`, `provenance.PIPELINE_ACTORS`) is no
+  principal. A deferred `memory.set_from_messages` stores its enqueuer on the queue row; the
+  entity extractor, the embedding worker, projection repair and the code-link judge read the
+  writer of the memory they work on. Observe-extract, profile folds and structured profiles
+  take the newest principal writer among the observations or facts eligible for their prompt.
+  Version orders these writes, so an update counts as a new write. Reflection and the period
+  digest take the newest writer of the session's memories (`memory_repo.session_writers`);
+  the conflict resolver takes the current row's writer. Only a row that
+  records no principal (a conversation turn, a shared-scope vector) takes the agent whose own
+  namespace it is in (owned by `sa:<trust>:<agent>`, the home its trust made on the agent's
+  first token exchange). Only the deployment's own calls (`customer.system()`) name no one.
+- **One identity per call.** A job that batches rows (the embedding worker, `loom reembed`, a
+  model rebuild) groups them by the identity they render (`customer.groups`), so one call never
+  carries two agents' texts, and one agent's rows in several namespaces share a call.
+- **Reads.** A trust's claims (`loom.machine_identities`), a namespace's owner and an account's email are read at
+  most once a minute per process. A failed read serves the copy in hand; with none the call is
+  held (`identity.IdentityUnread`, one of `customer.HOLDS`): it waits rather than go out as
+  someone else's, and a job leaves that work for 30 seconds, no attempt spent.
+- **Only to the gateway.** The identity headers go only to a host
+  `LOOM_INFERENCE_GATEWAY_HOSTS` lists, so setting them requires it. The model client's request
+  hook (`server/clients/_http.py`) drops them from any other request, a redirect hop included:
+  an operator's reranker, a namespace's classifier, Cohere or a provider elsewhere never learns
+  whom a call is for. The reranker and classifier post through the model client too.
+- **One identity refused.** An answer from a gateway host that
+  `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists is the gateway refusing that identity, not a
+  provider failure. Each entry names a status and at least one of the error body's `code`,
+  `type` or `message` (under `error`), each matched exactly; no word in a message counts. The
+  default matches by code an agent over its budget (`budget_exceeded`), denied
+  (`agent_denied`) or named incompletely (`identity_incomplete`, `identity_malformed`), and
+  waits on `agent_request_limit`; the metering's Anthropic-shaped budget answer carries no
+  code, so it is matched by its type and its whole message. An answer the gateway also gives
+  for its own failure (`token_unavailable`, `identity_missing`) is left out, so health still
+  sees an outage or a misconfiguration. The model client's response hook (`gateway.answered`)
+  raises `ModelCallRefused` for an entry under `refused`, so the request answers 403
+  `MODEL_CALL_REFUSED` with the gateway's `gateway_status` and `gateway_code`, and
+  `ModelCallDeferred` for one under `wait`, answered 503 `MODEL_CALL_DEFERRED` with the
+  gateway's `Retry-After`. A request's call asked to wait two seconds or less waits it out once
+  and the shared model client sends it again before it is deferred, including after a redirect.
+  Neither answer is retried further or handed to the fallback model, `/v1/health` reads
+  nothing from either, and the org's switch is untouched. Both are `customer.HOLDS`, so a job
+  preserves the work without spending an attempt.
+- **A job's hold.** After that answer, a job's calls (`customer.for_org`) for the identity to
+  the same origin, path and model are held: refused by the request hook (`gateway.sending`) with
+  nothing sent, for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` after a refusal and the answer's
+  `Retry-After` (at most 5 minutes) after a wait. Its calls to another model or to the
+  embeddings go on, and so do other identities'. The customer header is part of the identity. A success at that path and model, from a
+  request or a job, ends the hold. A request always asks the gateway, which may take the
+  identity back at any time. Any other answer is the provider's, as before: another 403 is a
+  provider failure, never retried, and another 429 a rate limit, retried.
+- **Skip, not stall.** A job leaves held work out of its next selections while the hold
+  lasts (`server/workers/holds.py`), so its batch goes to other identities' work instead of
+  filling again with work that would only be held. The extraction queue marks the request
+  as `held` with the reason until the hold ends, storing a `running` lease that older
+  workers can reclaim after rollback. It claims none of that enqueuer's other
+  requests in the namespace meanwhile (by its `enqueued_by` column). The profile fold reads
+  four times its slots, gives a held identity's slot to the next one read, and leaves it out
+  of its scan; the structured profile worker leaves a held user out until the hold ends.
+  The embedding worker records each held stub's `embed_retry_at` without
+  spending an attempt. Projection repair excludes held failure IDs before its limit.
+  Embedding selection excludes held rows before either limit, including
+  when a healthy writer uses the same namespace and agent label. The batch embedders (the
+  embedding workers, `loom reembed`, a model rebuild) hold one group at a time (`customer.GROUP_HOLDS`: an org switched off, an
+  identity refused, asked to wait or unread), and write the vectors the other groups' calls
+  bought. A model rebuild stages those healthy vectors but retains the page's cursor and
+  counters until every held row can be rebuilt. Its saved retry deadline survives a worker
+  change and prevents provider calls before the hold ends. Verification still rejects a
+  lost source vector before publication.
+
+**Why the namespace's owner.** Some rows a job works on record no principal (a conversation
+turn, a shared-scope vector), and an agent's token has its own namespace as its home, so the
+namespace names the agent the work is for. A row of a shared namespace that records no writer
+goes out with the headers that rendered and no agent.
+
+**Why a table of answers.** A gateway's refusal of one identity and its own failure can share a
+status (a 403 for an agent not allowed, and for Loom's credential not allowed to act for agents),
+and a word in a message is no contract. The table lists the exact answers a gateway gives for
+one identity, by their stable code wherever the gateway gives one, and only those hold the
+identity rather than read as the provider down.
 
 ## Fake providers
 

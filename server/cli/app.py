@@ -123,7 +123,13 @@ def _dispatch(args: argparse.Namespace) -> int:
             from server.settings import settings
 
             org = settings.code_org
-        with pipeline_actor(cli_actor(getattr(args, "cmd", ""))), customer.for_org(str(org)):
+        # Its namespace too, when it names one: whose agent the identity headers name.
+        namespace = str(getattr(args, "namespace", "") or "")
+        with (
+            pipeline_actor(cli_actor(getattr(args, "cmd", ""))),
+            customer.cli_command(),
+            customer.for_org(str(org), namespace=namespace),
+        ):
             rc = int(args.func(args))
         if hint := dry_run_hint(args, rc):
             # stderr: a command's --json output stays the only thing on stdout

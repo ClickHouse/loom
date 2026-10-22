@@ -150,7 +150,7 @@ async def _revise(
         if not await _unchanged(org, row):
             return _Revised()
         try:
-            link = await _judge(claim, a, texts, head, budget)
+            link = await _judge(claim, a, texts, head, budget, writer=str(row.get("actor") or ""))
         except customer.HOLDS:
             out.due.add(key)  # held, not failed: due with no backoff stamp
             continue
@@ -213,9 +213,18 @@ async def _texts(files: link_pass.RepoReads, claim: str, link: LinkRow, head: st
 
 
 async def _judge(
-    claim: str, link: LinkRow, texts: _Texts, head: str, budget: link_pass.Budget
+    claim: str,
+    link: LinkRow,
+    texts: _Texts,
+    head: str,
+    budget: link_pass.Budget,
+    *,
+    writer: str = "",
 ) -> LinkRow | None:
-    """`link` judged on `texts`, spending one of `budget`'s judgements; None on an unsure
-    verdict. Raises when the model fails or its reply is malformed."""
+    """`link` judged on `texts`, spending one of `budget`'s judgements, the call made
+    for the memory's `writer` (its actor); None on an unsure verdict. Raises when the
+    model fails or its reply is malformed."""
     budget.judgements -= 1
-    return await code_link_judge.judge(claim, link, texts.old, texts.new, texts.now, head)
+    return await code_link_judge.judge(
+        claim, link, texts.old, texts.new, texts.now, head, writer=writer
+    )

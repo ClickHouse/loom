@@ -47,7 +47,9 @@ describe("rememberPlace / readPlace", () => {
 });
 
 describe("restorePlace and arriveAt", () => {
-  beforeEach(() => vi.useFakeTimers({ toFake: ["requestAnimationFrame", "setTimeout", "Date"] }));
+  beforeEach(() =>
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "Date"] }),
+  );
   afterEach(() => vi.useRealTimers());
 
   it("scrolls back once the page is tall enough, then focuses the keyed element", () => {
@@ -64,6 +66,63 @@ describe("restorePlace and arriveAt", () => {
     expect(document.activeElement).toBe(main.querySelector("a"));
     vi.advanceTimersByTime(100);
     expect(document.getElementById("loom-nav-status")!.textContent).toBe("Memories");
+  });
+
+  it("restores the offset again when deferred rows move it after focus", () => {
+    const main = page('<h1>Memories</h1><a href="/graph" data-focus-key="entity:redis">redis</a>');
+    tall(main, 2000);
+    main.querySelector("a")!.addEventListener("focus", () => {
+      requestAnimationFrame(() => {
+        main.scrollTop = 770;
+      });
+    });
+    restorePlace({ scrollTop: 900, focusKey: "entity:redis", inspected: "k", inspectedAgent: "" }, true);
+    vi.advanceTimersByTime(20);
+    expect(main.scrollTop).toBe(900);
+    vi.advanceTimersByTime(20);
+    expect(main.scrollTop).toBe(900);
+    vi.advanceTimersByTime(20);
+    main.scrollTop = 600;
+    vi.advanceTimersByTime(100);
+    expect(main.scrollTop).toBe(600);
+  });
+
+  it("restores the top of the page from a scrolled view", () => {
+    const main = page("<h1>Memories</h1>");
+    tall(main, 2000);
+    main.scrollTop = 300;
+    restorePlace({ scrollTop: 0, focusKey: null, inspected: null, inspectedAgent: "" }, true);
+    vi.advanceTimersByTime(40);
+    expect(main.scrollTop).toBe(0);
+  });
+
+  it("stops retrying an unreachable offset at the scroll limit", () => {
+    const main = page("<h1>Memories</h1>");
+    tall(main, 600);
+    let offset = 0;
+    Object.defineProperty(main, "scrollTop", {
+      get: () => offset,
+      set: (value: number) => {
+        offset = Math.min(value, 100);
+      },
+    });
+    restorePlace({ scrollTop: 900, focusKey: null, inspected: null, inspectedAgent: "" }, true);
+    vi.advanceTimersByTime(3100);
+    expect(main.scrollTop).toBe(100);
+    main.scrollTop = 50;
+    vi.advanceTimersByTime(100);
+    expect(main.scrollTop).toBe(50);
+  });
+
+  it("a new navigation cancels the pending scroll verification", () => {
+    const main = page("<h1>Memories</h1>");
+    tall(main, 2000);
+    restorePlace({ scrollTop: 900, focusKey: null, inspected: null, inspectedAgent: "" }, true);
+    vi.advanceTimersByTime(20);
+    arriveAt();
+    main.scrollTop = 300;
+    vi.advanceTimersByTime(100);
+    expect(main.scrollTop).toBe(300);
   });
 
   // Back to Memories focuses the row, not its first focusable control (the checkbox).

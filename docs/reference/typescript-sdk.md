@@ -217,7 +217,10 @@ the HTTP status (`errorFromResponse`):
 
 Because the class follows the status, match on `e.code` to tell codes that
 share one (`PRECONDITION_FAILED` from `PINNED_CONFLICT`, `OVERLOADED` from
-`SCHEMA_PENDING`). What each code means is in the [errors reference](./errors.md).
+`SCHEMA_PENDING`, `MODEL_CALL_DEFERRED` from `BACKEND_UNAVAILABLE`). A model call the
+inference gateway asked to wait is a `BackendUnavailable` with code
+`MODEL_CALL_DEFERRED` and no `retryAfterS`: the wait is in `detail.retry_after_s` and the
+`Retry-After` header. What each code means is in the [errors reference](./errors.md).
 
 ```ts
 import { NotFound, RateLimited } from "@clickhouse/loom";

@@ -42,8 +42,9 @@ by `python scripts/codegen/settings_reference.py`; edit the comment, not this fi
 
 Every change to a setting's default, from `server/settings/_history.py`. A deployment that never set the variable changes with each one.
 
-No default has changed since the history began.
-
+| Release | Variable | Was | Is | Why |
+| --- | --- | --- | --- | --- |
+| 1.0.0 | `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `3` | `8` | A failed replay now waits 15 s, 1, 5, then 30 minutes before the next attempt, and an unreachable provider spends none: eight attempts span about two hours instead of three back to back. |
 
 ## Auth
 
@@ -708,6 +709,7 @@ Erasure: saga recovery, reclaim, purge and the external backends it cascades to.
 | `LOOM_ERASURE_RECLAIM_MIN_DEAD_FRACTION` | `float` | `0.3` |  | A table is reclaimed once this share of its rows on disk are purged rows. |
 | `LOOM_ERASURE_RECLAIM_MIN_DEAD_BYTES` | `int` | `1073741824` |  | Least bytes the deleted rows must hold before the erasure reclaim compacts a table (default 1 GiB). |
 | `LOOM_ERASURE_MUTATION_WAIT_S` | `int` | `3600` |  | Seconds one erasure step waits for its mutation (submitted with mutations_sync=0, polled in system.mutations); past it the saga fails naming the mutation. |
+| `LOOM_ERASURE_EVENT_DRAIN_TIMEOUT_S` | `float` | `5.0` |  | Seconds erasure waits for this replica's buffered events before deleting them; a timeout leaves the saga retryable. Must be positive and finite. |
 | `LOOM_ERASURE_EXPORT_CONVERSATION_MAX_BYTES` | `int` | `67108864` | live | Bytes of conversation text after which `erasure.export` stops its `conversations` section, marked `truncated`; a page holds up to this plus the turn that crosses it. |
 
 ### External erasure backends
@@ -778,7 +780,7 @@ The coverage sweep gives the turns an extraction's first pass cited nowhere a se
 | `LOOM_EXTRACTION_QUEUE_INTERVAL_SECONDS` | `int` | `15` |  | Seconds between deferred-extraction queue passes. |
 | `LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS` | `int` | `8` | live | Most queued batches one pass claims. |
 | `LOOM_EXTRACTION_QUEUE_LEASE_SECONDS` | `int` | `600` | live | Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping worker may claim a batch still waiting in the pass. |
-| `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `int` | `3` | live | Attempts before a failing batch stops returning to `pending` and is marked failed. |
+| `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `int` | `8` | live | Attempts before a failing batch stops returning to `pending` and is marked failed; each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or gateway that cannot be reached, or a held call, spends none. |
 | `LOOM_EXTRACTION_QUEUE_NAMESPACE_CONCURRENCY` | `int` | `4` | live | Namespaces replayed concurrently per pass; batches inside one namespace stay serial in session-date order. At least 1: none would hang the pass. |
 
 ### Operator extraction policy
@@ -1485,11 +1487,12 @@ Embedding and LLM providers.
 | `LOOM_ANTHROPIC_BASE_URL` | `str` | `'https://api.anthropic.com'` |  | Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway in front of Anthropic. Off the default, the key also goes as a bearer, the scheme gateways take. |
 | `LOOM_INFERENCE_TOKEN_URL` | `str` | `''` |  | Model calls with no provider key: exchange an identity token (RFC 8693) at this token endpoint of the gateway, and send the answer as the bearer (server/llm/gateway.py). The gateway must trust the token's issuer. "" = the provider keys. |
 | `LOOM_INFERENCE_WORKLOAD_TOKEN_FILE` | `str` | `''` |  | The workload's OIDC token, as a file its platform rotates (a projected service-account token on Kubernetes). With inference_token_url, this or inference_token_audience. |
+| `LOOM_INFERENCE_WORKLOAD_TOKEN_MODE` | `'exchange' \| 'bearer'` | `'exchange'` |  | How inference_workload_token_file reaches the gateway: "exchange" (RFC 8693, at inference_token_url) or "bearer" (the file itself, read again at most every minute and after a 401; requires the gateway). |
 | `LOOM_INFERENCE_TOKEN_AUDIENCE` | `str` | `''` |  | With inference_token_url and no workload token: the audience of the identity token Loom signs (issuer <https public_base_url>/v1, newest RS256 key); never jwt_audience. |
 | `LOOM_INFERENCE_TOKEN_SCOPE` | `str` | `''` |  | The scope sent with the inference gateway token exchange; "" sends none. |
 | `LOOM_INFERENCE_TOKEN_EXCHANGE_TIMEOUT_S` | `float` | `10.0` |  | Seconds one token exchange with the inference gateway may take. |
 | `LOOM_PROVIDER_CHECK_TIMEOUT_S` | `float` | `30.0` | live | Seconds a provider check (the dashboard's Models & keys validate and save) waits for its probe call before it reports `timeout`. |
-| `LOOM_INFERENCE_GATEWAY_REQUIRED` | `bool` | `False` |  | True: model calls and memory content go only to inference_gateway_hosts; on whenever inference_token_url is set. |
+| `LOOM_INFERENCE_GATEWAY_REQUIRED` | `bool` | `False` |  | True: model calls and memory content go only to inference_gateway_hosts; on whenever a workload token is sent (inference_token_url, or the bearer mode). |
 | `LOOM_INFERENCE_GATEWAY_HOSTS` | `str` | `''` |  | Comma-separated hostnames (exact, any case) of the gateway; required, and the only hosts sent to, while the gateway is required. |
 | `LOOM_INFERENCE_CUSTOMER_HEADER` | `str` | `''` |  | Header naming the customer (the org) on every model call, for a gateway that meters by it; set, a call naming no customer is refused (server/llm/customer.py). |
 | `LOOM_INFERENCE_FEATURE_HEADER` | `str` | `''` |  | Header naming the feature that made the call (hyde, memory.search, worker.embedding, ...), with inference_customer_header only; "" sends none. |
@@ -1497,6 +1500,10 @@ Embedding and LLM providers.
 | `LOOM_INFERENCE_CUSTOMER_REQUIRED` | `bool` | `False` |  | True (a cell serving several customers): refuse to start without inference_customer_header, so no model call goes out unattributed. |
 | `LOOM_INFERENCE_CUSTOMER_FORMAT` | `str` | `'{org}'` |  | How the customer header names an org, as the gateway knows it: `{org}` is the org id, around it letters, digits and . _ ~ : @ - only ("{org}" = the id as is). |
 | `LOOM_INFERENCE_FEATURE_MAP_JSON` | `str` | `''` |  | JSON object from Loom's feature names (hyde, memory.search, worker.embedding, ...) to the gateway's (letters, digits, . _ ~ : @ -); "*" for any other; "" = Loom's. |
+| `LOOM_INFERENCE_IDENTITY_HEADERS_JSON` | `str` | `''` |  | JSON object {header: template} every model call carries, naming whom it is for: {org} {namespace} {subject} {user_id}, {agent} (of a workload trust's agent token), {tenant} (that trust's inference_tenant_claim) and {email} (a person's). A header whose template renders empty is not sent, and those naming {agent} or {tenant} go together or not at all; set, a call naming no org is refused. "" sends none (server/llm/identity.py). |
+| `LOOM_INFERENCE_TENANT_CLAIM` | `str` | `'tenant_id'` |  | The workload trust claim {tenant} names: the value the trust requires of it, exactly. |
+| `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` | `str` | `'{"refused": [{"status": 429, "code": "budget_exceeded"},…` |  | JSON object of the gateway answers that hold one identity, not the provider: {"refused": [...], "wait": [...]}, each entry {"status": <int>} and at least one of the error body's exact "code", "type" or "message". A refused identity's job work waits inference_refusal_cooldown_seconds, a waiting one the answer's Retry-After. The default: an agent over its budget (by code, and by type and message where the Anthropic-shaped answer carries no code), denied, or named incompletely or malformed; too many of its requests in progress waits. Never list an answer the gateway also gives for its own failure (a credential it cannot fetch, no default agent): health would stop seeing it. Read only with identity headers set (server/llm/gateway.py). |
+| `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` | `float` | `600.0` |  | Seconds a background job leaves the work of an identity the gateway refused (an answer listed under "refused") before it calls for it again; 0 calls again at once. |
 | `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` | `float` | `10.0` |  | Seconds between each process's reads of the orgs whose model calls are switched off (loom.org_model_calls) and of the operators' extraction policies (loom.extraction_policies); a change reaches every process within it. |
 | `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` | `float` | `60.0` |  | Seconds a process trusts its copy of the org model-call switch, and of the extraction policies, when it cannot read it again; past it, every model call for an org is refused and no extraction runs (fail closed). 15 to 300. |
 | `LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS` | `int` | `7` |  | Days a switched-off org's queued requests (the extraction queue) wait, from when the org was switched off, before they are dropped, each with a memory_drops record. 1 to 29: the queue's own 30-day TTL would otherwise remove them first, with no record. |

@@ -10,7 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 from server.clients._http import get_model_client
 from server.embedding._cache import cached_embed
 from server.embedding._provider import MalformedEmbedding, retrying, vector
-from server.llm import customer
+from server.llm import customer, gateway
 
 
 def endpoint_url(base_url: str) -> str:
@@ -64,7 +64,7 @@ class CompatibleEmbedder:
         self._cache_model = "compatible:" + hashlib.sha256(identity.encode()).hexdigest()
 
     async def _request(self, texts: list[str]) -> list[list[float]]:
-        org = await customer.require()
+        who = await customer.require()
         payload: dict[str, object] = {
             "model": self.model_name,
             "input": texts,
@@ -72,8 +72,10 @@ class CompatibleEmbedder:
         }
         if self._send_dimensions:
             payload["dimensions"] = self.dim
-        headers = {"Authorization": f"Bearer {self._key}"} if self._key else {}
-        headers |= customer.headers(org)
+        # Its own key, else the workload token that stands in for a provider key.
+        key = self._key or (await gateway.bearer("", self._endpoint) if gateway.keyless() else "")
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        headers |= customer.headers(who)
         async for attempt in retrying():
             with attempt:
                 response = await get_model_client().post(

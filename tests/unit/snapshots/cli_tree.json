@@ -5966,7 +5966,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Re-embed inside ClickHouse with aiEmbed (ClickHouse 26.7+): the named collection holding provider/endpoint/api_key. One INSERT … SELECT per table instead of a Python loop; refuses when an embed-text switch is on.",
+       "help": "Re-embed inside ClickHouse with aiEmbed (ClickHouse 26.7+): the named collection holding provider/endpoint/api_key. One INSERT … SELECT per table instead of a Python loop; refuses when an embed-text switch is on, and with a customer or identity header set or the inference gateway required (ClickHouse's calls name no one and skip the gateway check).",
        "metavar": "NAMED_COLLECTION"
       },
       {

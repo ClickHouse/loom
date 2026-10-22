@@ -102,11 +102,11 @@ class HealthState:
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
 
 
-def _exchanging() -> bool:
-    """Model calls take a gateway token instead of a provider key (server/llm/gateway.py)."""
+def _keyless() -> bool:
+    """Model calls take a workload token instead of a provider key (server/llm/gateway.py)."""
     from server.llm import gateway
 
-    return gateway.exchanging()
+    return gateway.keyless()
 
 
 def _embedder_key_envs(provider: str) -> tuple[str, ...]:
@@ -168,7 +168,7 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
     else:
         keys = _embedder_key_envs(provider)
         missing = keys and not state.saved_keys.get(provider, any(state.env.get(k) for k in keys))
-        missing = missing and not (provider == "openai" and _exchanging())
+        missing = missing and not (provider in ("openai", "compatible") and _keyless())
         if missing:
             out.append(
                 Problem(
@@ -232,9 +232,7 @@ def _llm_problems(settings: Any, state: HealthState) -> list[Problem]:
             )
         ]
     key_env = _llm_key_env(provider)
-    if key_env and not (
-        state.saved_keys.get(provider, bool(state.env.get(key_env))) or _exchanging()
-    ):
+    if key_env and not (state.saved_keys.get(provider, bool(state.env.get(key_env))) or _keyless()):
         # Say how the provider was chosen — an inferred openai
         # with no key is the case worth naming.
         how = (

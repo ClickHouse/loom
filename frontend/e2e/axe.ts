@@ -15,6 +15,11 @@ export interface Violation {
 }
 
 export async function violations(page: Page): Promise<Violation[]> {
+  // The entry fade changes contrast while it runs: audit the settled page.
+  await page.evaluate(async () => {
+    const entering = document.querySelector(".animate-view-in");
+    await Promise.allSettled(entering?.getAnimations().map((animation) => animation.finished) ?? []);
+  });
   await page.addScriptTag({ content: AXE });
   return page.evaluate(async (tags) => {
     // The injected axe global; the specs carry no axe types.

@@ -1720,6 +1720,9 @@ class ErasureSettings(BaseModel):
     # mutations_sync=0, polled in system.mutations); past it the saga fails
     # naming the mutation.
     erasure_mutation_wait_s: int = 3600
+    # Seconds erasure waits for this replica's buffered events before deleting them;
+    # a timeout leaves the saga retryable. Must be positive and finite.
+    erasure_event_drain_timeout_s: float = Field(default=5.0, gt=0, allow_inf_nan=False)
     # Bytes of conversation text after which `erasure.export` stops its `conversations`
     # section, marked `truncated`; a page holds up to this plus the turn that crosses it.
     erasure_export_conversation_max_bytes: Annotated[int, LIVE] = Field(default=67108864, ge=1)
@@ -1885,8 +1888,10 @@ class ExtractionSettings(BaseModel):
     # (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping
     # worker may claim a batch still waiting in the pass.
     extraction_queue_lease_seconds: Annotated[int, LIVE] = Field(default=600, ge=60)
-    # Attempts before a failing batch stops returning to `pending` and is marked failed.
-    extraction_queue_max_attempts: Annotated[int, LIVE] = Field(default=3, ge=0)
+    # Attempts before a failing batch stops returning to `pending` and is marked failed;
+    # each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or
+    # gateway that cannot be reached, or a held call, spends none.
+    extraction_queue_max_attempts: Annotated[int, LIVE] = Field(default=8, ge=0)
     # Namespaces replayed concurrently per pass; batches inside one namespace
     # stay serial in session-date order. At least 1: none would hang the pass.
     extraction_queue_namespace_concurrency: Annotated[int, LIVE] = Field(default=4, ge=1)
@@ -3758,6 +3763,70 @@ _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 _HEADER_TEXT = re.compile(r"[A-Za-z0-9._~:@-]*")
 # A customer or feature name sent as a header value: the same characters, at least one.
 _HEADER_VALUE = re.compile(r"[A-Za-z0-9._~:@-]+")
+# What an identity header template names, each as `{name}` (server/llm/identity.py).
+IDENTITY_PLACEHOLDERS = ("org", "namespace", "agent", "tenant", "subject", "user_id", "email")
+IDENTITY_PLACEHOLDER = re.compile(r"\{(" + "|".join(IDENTITY_PLACEHOLDERS) + r")\}")
+# The text around them: printable ASCII but braces, which a header carries as it is.
+_IDENTITY_TEXT = re.compile(r"[\x20-\x7a|~]*")
+# What one entry of LOOM_INFERENCE_IDENTITY_REFUSALS_JSON may match besides its status:
+# fields of the answer's error body (`{"error": {...}}`), each matched exactly.
+IDENTITY_REFUSAL_FIELDS = ("code", "type", "message")
+
+
+@functools.lru_cache(maxsize=4)
+def _identity_headers(raw: str) -> tuple[tuple[str, str], ...]:
+    """LOOM_INFERENCE_IDENTITY_HEADERS_JSON decoded once per value: every model call
+    reads it, several times."""
+    if not raw:
+        return ()
+    pairs = json_map_items(raw, "LOOM_INFERENCE_IDENTITY_HEADERS_JSON", strings_only=True)
+    return tuple((name, template.strip()) for name, template in pairs)
+
+
+@functools.lru_cache(maxsize=4)
+def _identity_refusals(raw: str) -> dict[str, tuple[dict[str, Any], ...]]:
+    """LOOM_INFERENCE_IDENTITY_REFUSALS_JSON decoded and checked, once per value: every
+    gateway answer to a model call is matched against it."""
+    parsed = json.loads(raw) if raw.strip() else {}
+    if not isinstance(parsed, dict) or set(parsed) - {"refused", "wait"}:
+        raise ValueError("LOOM_INFERENCE_IDENTITY_REFUSALS_JSON keys are 'refused' and 'wait'")
+    out: dict[str, tuple[dict[str, Any], ...]] = {}
+    for kind, entries in parsed.items():
+        if not isinstance(entries, list):
+            raise ValueError(f"LOOM_INFERENCE_IDENTITY_REFUSALS_JSON: {kind!r} is a list")
+        for e in entries:
+            status = e.get("status") if isinstance(e, dict) else None
+            fields = set(e) - {"status"} if isinstance(e, dict) else set()
+            if (
+                not isinstance(status, int)
+                or isinstance(status, bool)
+                or not 400 <= status <= 599
+                or not fields
+                or fields - set(IDENTITY_REFUSAL_FIELDS)
+                or not all(isinstance(e[f], str) and e[f] for f in fields)
+            ):
+                raise ValueError(
+                    f"LOOM_INFERENCE_IDENTITY_REFUSALS_JSON: each {kind!r} entry is "
+                    '{"status": 400..599} and at least one of "code", "type", "message"'
+                )
+        out[kind] = tuple(entries)
+    return out
+
+
+# Hop-by-hop headers (RFC 9110 §7.6.1): a proxy drops them, so no identity rides one.
+_HOP_BY_HOP = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    }
+)
 # Headers the model-call senders set themselves, or the HTTP client does: a customer or
 # feature header of that name would overwrite them (the provider key, the body's type).
 _SENDER_HEADERS = frozenset(
@@ -3847,6 +3916,10 @@ class ProviderSettings(ModelSettings):
     # service-account token on Kubernetes). With inference_token_url, this or
     # inference_token_audience.
     inference_workload_token_file: str = ""
+    # How inference_workload_token_file reaches the gateway: "exchange" (RFC 8693, at
+    # inference_token_url) or "bearer" (the file itself, read again at most every
+    # minute and after a 401; requires the gateway).
+    inference_workload_token_mode: Annotated[Literal["exchange", "bearer"], CaseFolded] = "exchange"
     # With inference_token_url and no workload token: the audience of the identity token Loom
     # signs (issuer <https public_base_url>/v1, newest RS256 key); never jwt_audience.
     inference_token_audience: str = ""
@@ -3858,7 +3931,7 @@ class ProviderSettings(ModelSettings):
     # its probe call before it reports `timeout`.
     provider_check_timeout_s: Annotated[float, LIVE] = Field(default=30.0, gt=0)
     # True: model calls and memory content go only to inference_gateway_hosts;
-    # on whenever inference_token_url is set.
+    # on whenever a workload token is sent (inference_token_url, or the bearer mode).
     inference_gateway_required: bool = False
     # Comma-separated hostnames (exact, any case) of the gateway; required, and
     # the only hosts sent to, while the gateway is required.
@@ -3881,6 +3954,36 @@ class ProviderSettings(ModelSettings):
     # JSON object from Loom's feature names (hyde, memory.search, worker.embedding, ...)
     # to the gateway's (letters, digits, . _ ~ : @ -); "*" for any other; "" = Loom's.
     inference_feature_map_json: Annotated[str, JsonObject] = ""
+    # JSON object {header: template} every model call carries, naming whom it is for:
+    # {org} {namespace} {subject} {user_id}, {agent} (of a workload trust's agent token),
+    # {tenant} (that trust's inference_tenant_claim) and {email} (a person's). A header
+    # whose template renders empty is not sent, and those naming {agent} or {tenant} go
+    # together or not at all; set, a call naming no org is refused. "" sends none
+    # (server/llm/identity.py).
+    inference_identity_headers_json: Annotated[str, JsonObject] = ""
+    # The workload trust claim {tenant} names: the value the trust requires of it, exactly.
+    inference_tenant_claim: str = "tenant_id"
+    # JSON object of the gateway answers that hold one identity, not the provider:
+    # {"refused": [...], "wait": [...]}, each entry {"status": <int>} and at least one of
+    # the error body's exact "code", "type" or "message". A refused identity's job work
+    # waits inference_refusal_cooldown_seconds, a waiting one the answer's Retry-After.
+    # The default: an agent over its budget (by code, and by type and message where the
+    # Anthropic-shaped answer carries no code), denied, or named incompletely or
+    # malformed; too many of its requests in progress waits. Never list an answer the
+    # gateway also gives for its own failure (a credential it cannot fetch, no default
+    # agent): health would stop seeing it. Read only with identity headers set
+    # (server/llm/gateway.py).
+    inference_identity_refusals_json: Annotated[str, JsonObject] = (
+        '{"refused": [{"status": 429, "code": "budget_exceeded"}, '
+        '{"status": 429, "type": "rate_limit_error", "message": "budget exceeded"}, '
+        '{"status": 403, "code": "agent_denied"}, '
+        '{"status": 400, "code": "identity_incomplete"}, '
+        '{"status": 400, "code": "identity_malformed"}], '
+        '"wait": [{"status": 429, "code": "agent_request_limit"}]}'
+    )
+    # Seconds a background job leaves the work of an identity the gateway refused (an
+    # answer listed under "refused") before it calls for it again; 0 calls again at once.
+    inference_refusal_cooldown_seconds: float = Field(600.0, ge=0)
     # Seconds between each process's reads of the orgs whose model calls are
     # switched off (loom.org_model_calls) and of the operators' extraction
     # policies (loom.extraction_policies); a change reaches every process within it.
@@ -3961,6 +4064,15 @@ class ProviderSettings(ModelSettings):
             return {}
         return dict(json_map_items(raw, "LOOM_INFERENCE_FEATURE_MAP_JSON", strings_only=True))
 
+    def identity_refusals(self) -> dict[str, tuple[dict[str, Any], ...]]:
+        """`inference_identity_refusals_json` parsed: "refused" and "wait" entries."""
+        return _identity_refusals(self.inference_identity_refusals_json)
+
+    def identity_headers(self) -> tuple[tuple[str, str], ...]:
+        """`inference_identity_headers_json` parsed: (header, template) pairs, each
+        template without its surrounding whitespace."""
+        return _identity_headers(self.inference_identity_headers_json.strip())
+
     @model_validator(mode="after")
     def _check_model_calls_refresh(self) -> ProviderSettings:
         """A process refuses every model call once its copy of the model-call
@@ -4023,6 +4135,38 @@ class ProviderSettings(ModelSettings):
         return self
 
     @model_validator(mode="after")
+    def _check_identity_headers(self) -> ProviderSettings:
+        """Every identity header is a header name, once, that neither a sender nor the
+        customer or feature header sets, with a template of known placeholders; they go
+        only to the gateway's hosts, so they need them. The refusals table parses."""
+        self.identity_refusals()
+        if self.identity_headers() and not self.gateway_hosts():
+            raise ValueError(
+                "LOOM_INFERENCE_IDENTITY_HEADERS_JSON needs LOOM_INFERENCE_GATEWAY_HOSTS: "
+                "identity headers go only to the gateway's hosts"
+            )
+        taken = {h.lower() for h in (self.inference_customer_header, self.inference_feature_header)}
+        for name, template in self.identity_headers():
+            refused = _SENDER_HEADERS | _HOP_BY_HOP | taken
+            if not _HEADER_NAME.fullmatch(name) or name.lower() in refused:
+                raise ValueError(
+                    f"LOOM_INFERENCE_IDENTITY_HEADERS_JSON: {name[:64]!r} must be an end-to-end "
+                    "HTTP header name, once, that no sender and neither metering header sets"
+                )
+            taken.add(name.lower())
+            if not template:
+                raise ValueError(
+                    f"LOOM_INFERENCE_IDENTITY_HEADERS_JSON: the template of {name!r} is empty"
+                )
+            if not _IDENTITY_TEXT.fullmatch(IDENTITY_PLACEHOLDER.sub("", template)):
+                raise ValueError(
+                    f"LOOM_INFERENCE_IDENTITY_HEADERS_JSON: the template of {name!r} may name "
+                    "only {org} {namespace} {agent} {tenant} {subject} {user_id} {email}, "
+                    "around them printable ASCII"
+                )
+        return self
+
+    @model_validator(mode="after")
     def _check_gateway(self) -> ProviderSettings:
         """A mistyped API root or a token exchange missing its token fails at
         load, not at the first model call."""
@@ -4047,6 +4191,17 @@ class ProviderSettings(ModelSettings):
                 "LOOM_INFERENCE_TOKEN_URL needs one of LOOM_INFERENCE_WORKLOAD_TOKEN_FILE (the "
                 "workload's token) and LOOM_INFERENCE_TOKEN_AUDIENCE (a token Loom signs)"
             )
+        if self.inference_workload_token_mode == "bearer":
+            if not self.inference_workload_token_file:
+                raise ValueError(
+                    "LOOM_INFERENCE_WORKLOAD_TOKEN_MODE=bearer needs "
+                    "LOOM_INFERENCE_WORKLOAD_TOKEN_FILE, the token it sends"
+                )
+            if self.inference_token_url:
+                raise ValueError(
+                    "LOOM_INFERENCE_WORKLOAD_TOKEN_MODE=bearer sends the workload token as it "
+                    "is: LOOM_INFERENCE_TOKEN_URL is for the exchange; unset one of them"
+                )
         return self
 
     @model_validator(mode="after")
@@ -4209,6 +4364,8 @@ class ProviderSettings(ModelSettings):
         """The setting that requires the gateway, for an error to name; "" when none does."""
         if self.inference_token_url:
             return "LOOM_INFERENCE_TOKEN_URL"
+        if self.inference_workload_token_mode == "bearer":
+            return "LOOM_INFERENCE_WORKLOAD_TOKEN_MODE"
         return "LOOM_INFERENCE_GATEWAY_REQUIRED" if self.inference_gateway_required else ""
 
     @model_validator(mode="after")

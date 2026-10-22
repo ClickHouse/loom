@@ -18,12 +18,14 @@ from typing import Any
 import httpx
 
 from server.core.ch import set_query_tag
+from server.core.ch_params import fitting
 from server.core.leases import LeaseUnavailable
 from server.llm import customer
 from server.memory.app import conflict_resolver as resolver
 from server.memory.store import conflict_resolver as queue
 from server.settings import settings
 from server.workers import pass_context
+from server.workers.holds import Held, hold_seconds
 from server.workers.status import log_pass_errors, record_pass
 
 log = logging.getLogger(__name__)
@@ -56,6 +58,7 @@ class _State:
 
 
 _state = _State()
+_HELD: Held[tuple[str, ...]] = Held()
 
 
 def _identity(r: Mapping[str, Any]) -> tuple[str, ...]:
@@ -114,12 +117,17 @@ async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]]
     off = await customer.switched_off_orgs()
     capped = sorted(set(capped) | paused | {pair for pair in pairs if pair[0] in off})
     batch = int(settings.memory_conflict_resolver_batch)
+    held = fitting(sorted(_HELD.current()))
     # A new order of the namespaces within a turn each pass, so none waits behind the rest.
     seed = random.getrandbits(32)
-    rows = await queue.owed_rows(limit=batch, capped=capped, seed=seed, max_age_days=max_age)
+    rows = await queue.owed_rows(
+        limit=batch, capped=capped, held=held, seed=seed, max_age_days=max_age
+    )
     full = len(rows) >= batch
     if due:
-        found = await queue.unjudged_conflicted_rows(limit=recheck, capped=capped, seed=seed)
+        found = await queue.unjudged_conflicted_rows(
+            limit=recheck, capped=capped, held=held, seed=seed
+        )
         if len(found) < recheck:
             _state.recheck_after = (
                 time.monotonic() + settings.memory_conflict_resolver_recheck_idle_seconds
@@ -158,17 +166,15 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
                 return
             key = _attempt_key(r)
             shown = _state.attempts.get(key, (0, frozenset()))[1]
-            with customer.for_org(org):
-                judged = await resolver.resolve_row(r, policy=policy, counts=counts, shown=shown)
+            judged = await resolver.resolve_row(r, policy=policy, counts=counts, shown=shown)
             _after_row(p, (org, namespace), key, counts, judged)
             if judged is not None and await _out_of_attempts(r, judged):
                 counts.errored += 1
                 p.errors.append(f"{namespace}/{r.get('memory_key')}: a flagged peer never judged")
-        except customer.HOLDS:
-            # The org was switched off since the queue read, or the switch is unread: no
-            # call was sent, so the row stays owed with no attempt or error, and its
-            # namespace waits for the next pass.
-            p.stopped.add((org, namespace))
+        except customer.GROUP_HOLDS as e:
+            _HELD.hold([_identity(r)], hold_seconds(e))
+        except customer.HOLDS as e:
+            p.unavailable = p.unavailable or e
         except (resolver.ModelUnavailable, LeaseUnavailable) as e:
             # The same answer for every row: stop before paying for more calls.
             p.unavailable = p.unavailable or e

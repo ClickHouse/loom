@@ -338,6 +338,11 @@ settings:
   # inference_token_audience. [restart]
   # inference_workload_token_file: ""
 
+  # How inference_workload_token_file reaches the gateway: "exchange" (RFC 8693, at
+  # inference_token_url) or "bearer" (the file itself, read again at most every minute
+  # and after a 401; requires the gateway). [restart]
+  # inference_workload_token_mode: "exchange"
+
   # With inference_token_url and no workload token: the audience of the identity token
   # Loom signs (issuer <https public_base_url>/v1, newest RS256 key); never
   # jwt_audience. [restart]
@@ -354,7 +359,7 @@ settings:
   # provider_check_timeout_s: 30.0
 
   # True: model calls and memory content go only to inference_gateway_hosts; on whenever
-  # inference_token_url is set. [restart]
+  # a workload token is sent (inference_token_url, or the bearer mode). [restart]
   # inference_gateway_required: false
 
   # Comma-separated hostnames (exact, any case) of the gateway; required, and the only
@@ -387,6 +392,35 @@ settings:
   # to the gateway's (letters, digits, . _ ~ : @ -); "*" for any other; "" = Loom's.
   # [restart]
   # inference_feature_map_json: ""
+
+  # JSON object {header: template} every model call carries, naming whom it is for:
+  # {org} {namespace} {subject} {user_id}, {agent} (of a workload trust's agent token),
+  # {tenant} (that trust's inference_tenant_claim) and {email} (a person's). A header
+  # whose template renders empty is not sent, and those naming {agent} or {tenant} go
+  # together or not at all; set, a call naming no org is refused. "" sends none
+  # (server/llm/identity.py). [restart]
+  # inference_identity_headers_json: ""
+
+  # The workload trust claim {tenant} names: the value the trust requires of it,
+  # exactly. [restart]
+  # inference_tenant_claim: "tenant_id"
+
+  # JSON object of the gateway answers that hold one identity, not the provider:
+  # {"refused": [...], "wait": [...]}, each entry {"status": <int>} and at least one of
+  # the error body's exact "code", "type" or "message". A refused identity's job work
+  # waits inference_refusal_cooldown_seconds, a waiting one the answer's Retry-After.
+  # The default: an agent over its budget (by code, and by type and message where the
+  # Anthropic-shaped answer carries no code), denied, or named incompletely or
+  # malformed; too many of its requests in progress waits. Never list an answer the
+  # gateway also gives for its own failure (a credential it cannot fetch, no default
+  # agent): health would stop seeing it. Read only with identity headers set
+  # (server/llm/gateway.py). [restart]
+  # inference_identity_refusals_json: '{"refused": [{"status": 429, "code": "budget_exceeded"}, {"status": 429, "type": "rate_limit_error", "message": "budget exceeded"}, {"status": 403, "code": "agent_denied"}, {"status": 400, "code": "identity_incomplete"}, {"status": 400, "code": "identity_malformed"}], "wait": [{"status": 429, "code": "agent_request_limit"}]}'
+
+  # Seconds a background job leaves the work of an identity the gateway refused (an
+  # answer listed under "refused") before it calls for it again; 0 calls again at once.
+  # [restart]
+  # inference_refusal_cooldown_seconds: 600.0
 
   # Seconds between each process's reads of the orgs whose model calls are switched off
   # (loom.org_model_calls) and of the operators' extraction policies
@@ -2107,6 +2141,10 @@ settings:
   # polled in system.mutations); past it the saga fails naming the mutation. [restart]
   # erasure_mutation_wait_s: 3600
 
+  # Seconds erasure waits for this replica's buffered events before deleting them; a
+  # timeout leaves the saga retryable. Must be positive and finite. [restart]
+  # erasure_event_drain_timeout_s: 5.0
+
   # Bytes of conversation text after which `erasure.export` stops its `conversations`
   # section, marked `truncated`; a page holds up to this plus the turn that crosses it.
   # [live]
@@ -2293,9 +2331,10 @@ settings:
   # may claim a batch still waiting in the pass. [live]
   # extraction_queue_lease_seconds: 600
 
-  # Attempts before a failing batch stops returning to `pending` and is marked failed.
-  # [live]
-  # extraction_queue_max_attempts: 3
+  # Attempts before a failing batch stops returning to `pending` and is marked failed;
+  # each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or
+  # gateway that cannot be reached, or a held call, spends none. [live]
+  # extraction_queue_max_attempts: 8
 
   # Namespaces replayed concurrently per pass; batches inside one namespace stay serial
   # in session-date order. At least 1: none would hang the pass. [live]

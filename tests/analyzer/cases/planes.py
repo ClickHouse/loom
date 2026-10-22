@@ -656,6 +656,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
         ch=ch,
     )
     await PF.scan_active_projection_failures(ch=ch)
+    await PF.scan_active_projection_failures(after=(_DT, _UUID), ch=ch)
     await PF.mark_projection_failures_resolved(org=ORG, failure_ids=[_UUID], ch=ch)
     await EQ.claim_batch(
         limit=10,
@@ -678,6 +679,8 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await EQ.pending_count(
         org=ORG, namespace=NS, agent=AGENT if f else None, user_id="alice" if f else None, ch=ch
     )
+    # a request still waiting on its last day before the queue's TTL
+    await EQ.drop_expiring(ch=ch, org_filter=ORG if f else None, namespace_filter=NS if f else None)
     await EC.community_assignment(ch, org=ORG, namespaces=[NS, "n2"], entities=["nate", "sam"])
     await EC.fetch_communities(ch, org=ORG, namespace=NS)
     await ER.lookup_canonical_entities(ch, org=ORG, namespaces=[NS], entity_texts=["Nate"])

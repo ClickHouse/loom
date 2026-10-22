@@ -94,7 +94,7 @@ async def _run(result: CodeSummaryResult) -> None:
         if await customer.switched_off(cfg.org):
             continue  # its cards wait until the org is switched back on
         try:
-            with customer.for_org(cfg.org):
+            with customer.for_org(cfg.org, namespace=cfg.namespace):
                 await _summarize_repo(
                     cfg.org, cfg.namespace, result, cap=result.cards_written + share
                 )

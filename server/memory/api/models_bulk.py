@@ -493,8 +493,9 @@ class MemoryExtractionStatusInput(_Identity):
     # One batch, by the id a deferred `memory.set_from_messages` returned; '' = every
     # batch in scope.
     queue_id: str = ""
-    # Only batches in this state; '' = any.
-    status: Literal["", "pending", "running", "done", "failed"] = ""
+    # Only batches in this state, '' = any (`held`: its model call held for its org or
+    # its enqueuer's identity, no attempt spent).
+    status: Literal["", "pending", "running", "held", "done", "failed"] = ""
     # At most this many batches returned.
     limit: int = Field(default=50, ge=1, le=500)
 
@@ -517,7 +518,7 @@ class _ExtractionQueueRow(BaseModel):
 class MemoryExtractionStatusOutput(BaseModel):
     # The queued batches in scope: state, attempts, sizes and last error.
     batches: list[_ExtractionQueueRow] = Field(default_factory=list)
-    # Not yet extracted (pending + running) in the requested scope.
+    # Not yet extracted (pending + running + held) in the requested scope.
     pending: int = 0
     # Of the returned batches, how many ended `failed`.
     failed: int = 0

@@ -102,6 +102,7 @@ test("a row reached with Down is scrolled clear of the list's fade", async ({ pa
   await page.getByRole("button", { name: /^Namespace: / }).click();
   const dialog = page.getByRole("dialog", { name: "Namespaces" });
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("textbox", { name: "Search namespaces" })).toBeFocused();
   await page.keyboard.press("ArrowDown");
   for (let i = 0; i < 14; i++) await page.keyboard.press("ArrowDown");
   const gap = await page.evaluate(() => {

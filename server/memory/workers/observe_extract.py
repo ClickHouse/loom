@@ -24,6 +24,7 @@ from server.memory.domain.observation_tags import (
     OBSERVATION_TAG,
 )
 from server.memory.domain.sensitivity import value_reads_high
+from server.memory.domain.trust import subject_of
 from server.memory.store.rows import next_version
 from server.settings import settings
 from server.workers.status import record_pass
@@ -212,6 +213,15 @@ async def _load_session_observations(
     return [memory_repo._hydrate(r) for r in rows]
 
 
+def _writer(observations: list[Any]) -> str:
+    """The newest principal whose observations can be sent to the model."""
+    for o in sorted(observations, key=lambda o: int(o.version), reverse=True):
+        if _sendable(o.sensitivity, o.value):
+            if subject := subject_of(str(getattr(o, "actor", "") or "")):
+                return subject
+    return ""
+
+
 async def _distill_session(
     session: dict[str, Any],
     observations: list[Any],
@@ -388,7 +398,12 @@ async def run_pass(
                 observations = await _load_session_observations(session, cfg, ch)
                 if not observations:
                     continue
-                with customer.for_org(str(session["org"])):
+                with customer.for_org(
+                    str(session["org"]),
+                    namespace=str(session["namespace"]),
+                    subject=_writer(observations),
+                    user_id=str(session.get("user_id") or ""),
+                ):
                     distilled = await _distill_session(session, observations)
                 result.distilled_sessions.append(distilled)
                 result.written_memories += distilled.written

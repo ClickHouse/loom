@@ -7,12 +7,12 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
-from server.core.datetimes import naive_utc_now, parse_iso_dt, to_naive_utc
+from server.core.datetimes import as_aware_utc, naive_utc_now, parse_iso_dt, to_naive_utc
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
     WHOLE_NAMESPACE,
@@ -21,6 +21,7 @@ from server.identity.domain.read_scope import (
     replayed_read_scope,
 )
 from server.llm import customer
+from server.llm.identity import IdentityUnread, reads_writer
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app.projection_errors import (
     LANDED_ENTRIES,
@@ -38,6 +39,7 @@ from server.memory.app.projection_errors import (
 )
 from server.memory.domain.graph_quality import IntervalRepair
 from server.memory.domain.temporal_sql import HOLDS_VALUE_SQL
+from server.memory.domain.trust import subject_of
 
 log = logging.getLogger(__name__)
 
@@ -333,11 +335,64 @@ async def retry_failures(
     done: list[Retried] = []
     try:
         for failure in failures:
-            with customer.for_org(failure.org):
-                done.append((failure, await _retry(failure, ch=ch)))
+            try:
+                with customer.for_org(
+                    failure.org,
+                    namespace=failure.namespace,
+                    subject=(
+                        ""
+                        if failure.projection == "entity_vectors"
+                        else await _writer(failure, ch=ch)
+                    ),
+                    user_id=str(failure.payload.get("user_id") or ""),
+                ):
+                    retry = await _retry(failure, ch=ch)
+            except customer.GROUP_HOLDS:
+                retry = _held(failure)
+            done.append((failure, retry))
     finally:
         await mark_retried(done, ch=ch)
     return [r for _, r in done]
+
+
+async def _writer(failure: ProjectionFailureRow, *, ch: Any | None = None) -> str:
+    """The principal whose memories a model-bearing projection replays."""
+    if (
+        failure.projection not in {"memory_chunks", "entity_vectors"}
+        or not failure.memory_keys
+        or not reads_writer()
+    ):
+        return ""
+    import server.memory.store as memory_repo
+
+    keys = [(failure.namespace, str(k)) for k in failure.memory_keys]
+    found = await memory_repo.actors_by_key(failure.org, keys, scope=WHOLE_NAMESPACE, ch=ch)
+    wanted = {c: str(failure.payload.get(c) or "-") for c in ("user_id", "session_id")}
+    if failure.projection == "memory_chunks":
+        wanted["session_id"] = _session_from_source_resource_id(failure.source_resource_id)
+        wanted.pop("user_id")
+    subjects = set()
+    for key in keys:
+        for head in found.get(key, []):
+            if head["agent"] != failure.agent:
+                continue
+            if any(head[c] != value for c, value in wanted.items()):
+                continue
+            if subject := subject_of(head["actor"]):
+                subjects.add(subject)
+    if len(subjects) > 1:
+        raise IdentityUnread("the projection's memories name more than one principal")
+    return next(iter(subjects), "")
+
+
+def _held(failure: ProjectionFailureRow) -> ProjectionFailureRetryResult:
+    return ProjectionFailureRetryResult(
+        failure_id=failure.failure_id,
+        projection=failure.projection,
+        retried=False,
+        resolved=False,
+        reason="model_calls_held",
+    )
 
 
 async def mark_retried(done: list[Retried], *, ch: Any | None = None) -> None:
@@ -434,13 +489,7 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
         )
     except customer.HOLDS:
         # Held by the model-call switch: no attempt, no error; the row stays open.
-        return ProjectionFailureRetryResult(
-            failure_id=failure.failure_id,
-            projection=failure.projection,
-            retried=False,
-            resolved=False,
-            reason="model_calls_held",
-        )
+        return _held(failure)
     except Exception as e:  # noqa: BLE001 — reported on the result; the row stays open
         return ProjectionFailureRetryResult(
             failure_id=failure.failure_id,
@@ -477,6 +526,7 @@ async def scan_active_projection_failures(
     *,
     limit: int = 50,
     exclude_orgs: frozenset[str] = frozenset(),
+    after: tuple[datetime, str] | None = None,
     ch: Any | None = None,
 ) -> list[ProjectionFailureRow]:
     """Return active failures across orgs for the repair worker, oldest first. Failures
@@ -486,10 +536,20 @@ async def scan_active_projection_failures(
     from server.memory.store.conflict_resolver import ERASING_ORGS_SQL
 
     ch = ch or get_client()
+    params: dict[str, Any] = {
+        "lim": int(limit),
+        "off": sorted(exclude_orgs),
+        "follow_owed": FOLLOW_OWED,
+        "grace": FOLLOW_OWED_GRACE_S,
+    }
+    cursor_sql = ""
+    if after is not None:
+        cursor_sql = "AND (f.created_at, f.failure_id) > ({after_at:DateTime}, {after_id:UUID})"
+        params.update(after_at=as_aware_utc(after[0]), after_id=after[1])
     rows = await ch.query_all(
         f"""
         SELECT
-            toString(failure_id) AS failure_id,
+            toString(f.failure_id) AS failure_id,
             org,
             namespace,
             agent,
@@ -503,22 +563,18 @@ async def scan_active_projection_failures(
             status,
             created_at,
             resolved_at
-        FROM loom.memory_projection_failures
+        FROM loom.memory_projection_failures AS f
         WHERE status = 'active'
           AND org NOT IN ({ERASING_ORGS_SQL})
           AND org NOT IN {{off:Array(String)}}
+          {cursor_sql}
           AND NOT (projection = {{follow_owed:String}}
                    AND created_at > now() - INTERVAL {{grace:UInt32}} SECOND)
-        ORDER BY created_at ASC, failure_id ASC
+        ORDER BY f.created_at ASC, f.failure_id ASC
         LIMIT {{lim:UInt32}}
         SETTINGS select_sequential_consistency = 1
         """,
-        params={
-            "lim": int(limit),
-            "off": sorted(exclude_orgs),
-            "follow_owed": FOLLOW_OWED,
-            "grace": FOLLOW_OWED_GRACE_S,
-        },
+        params=params,
     )
     return [_row_from_ch(dict(row)) for row in rows]
 
@@ -898,11 +954,12 @@ async def _retry_memory_chunks(
             "session_id": _session_from_source_resource_id(failure.source_resource_id),
         },
     )()
-    await write_memory_chunks(
-        retry_input,
-        msgs,
-        parent_memory_keys=failure.memory_keys,
-    )
+    with customer.attributed(replace(customer.attribution(), user_id=user_id)):
+        await write_memory_chunks(
+            retry_input,
+            msgs,
+            parent_memory_keys=failure.memory_keys,
+        )
 
 
 async def _retry_memory_chunk_sources(
@@ -1092,7 +1149,11 @@ async def _retry_graph_projection(
 
     with read_filters_bound(current_auth(), scope):
         if failure.projection == "entity_vectors":
-            await write_entity_vectors(bulk_input, bulk_results, get_embedder(), ch=ch)
+            replay = replace(failure, memory_keys=[e.memory_key for e in bulk_input.entries])
+            with customer.attributed(
+                replace(customer.attribution(), subject=await _writer(replay, ch=ch))
+            ):
+                await write_entity_vectors(bulk_input, bulk_results, get_embedder(), ch=ch)
         # entity_edges / entity_triples are plain MergeTree, one row per
         # observation: a replay that inserted and then failed to resolve would
         # count its rows again next pass. The failure's id is the dedup token.

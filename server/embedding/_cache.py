@@ -18,6 +18,7 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 
 from server.core.background import TaskSet
+from server.core.errors import ModelCallRefused
 from server.embedding.normalize import normalize_whitespace, query_text
 from server.llm import customer
 from server.observability.genai import request_org
@@ -121,14 +122,15 @@ async def cached_embed(
     # memory, knowledge, conversation and profile legs embed the same query
     # at once; each missed the cache and paid its own call. A waiter shares
     # the owner's outcome: its vector, or the provider failure the owner's
-    # retries ended on (the same call again would only repeat them). Only an
-    # owner cancelled by its own caller leaves the waiters to embed themselves.
+    # retries ended on (the same call again would only repeat them). An owner
+    # cancelled by its own caller, or refused for its own identity (another
+    # agent of the org, maybe), leaves the waiters to embed themselves.
     loop = asyncio.get_running_loop()
     pending = _INFLIGHT.get(k)
     if pending is not None and pending.get_loop() is loop and not pending.done():
         try:
             vec = await asyncio.shield(pending)
-        except _OwnerGone:
+        except (_OwnerGone, ModelCallRefused):
             return await _embed_uncached(model, k, text, fetch, dim, org)
         _last_tier.set("inflight")
         return vec, True

@@ -2301,6 +2301,12 @@
           "type": "integer",
           "description": "Seconds between the entity extractor's mirror divergence heal, a FINAL-to-FINAL join of loom.memory and loom.memory_embeddings (343 GB/day if run every pass). Divergence arrives a few rows a day."
         },
+        "erasure_event_drain_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds erasure waits for this replica's buffered events before deleting them; a timeout leaves the saga retryable. Must be positive and finite."
+        },
         "erasure_export_conversation_max_bytes": {
           "default": 67108864,
           "minimum": 1,
@@ -2385,10 +2391,10 @@
           "description": "Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping worker may claim a batch still waiting in the pass."
         },
         "extraction_queue_max_attempts": {
-          "default": 3,
+          "default": 8,
           "minimum": 0,
           "type": "integer",
-          "description": "Attempts before a failing batch stops returning to `pending` and is marked failed."
+          "description": "Attempts before a failing batch stops returning to `pending` and is marked failed; each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or gateway that cannot be reached, or a held call, spends none."
         },
         "extraction_queue_max_batches_per_pass": {
           "default": 8,
@@ -2511,12 +2517,33 @@
         "inference_gateway_required": {
           "default": false,
           "type": "boolean",
-          "description": "True: model calls and memory content go only to inference_gateway_hosts; on whenever inference_token_url is set."
+          "description": "True: model calls and memory content go only to inference_gateway_hosts; on whenever a workload token is sent (inference_token_url, or the bearer mode)."
+        },
+        "inference_identity_headers_json": {
+          "default": "",
+          "type": "string",
+          "description": "JSON object {header: template} every model call carries, naming whom it is for: {org} {namespace} {subject} {user_id}, {agent} (of a workload trust's agent token), {tenant} (that trust's inference_tenant_claim) and {email} (a person's). A header whose template renders empty is not sent, and those naming {agent} or {tenant} go together or not at all; set, a call naming no org is refused. \"\" sends none (server/llm/identity.py)."
+        },
+        "inference_identity_refusals_json": {
+          "default": "{\"refused\": [{\"status\": 429, \"code\": \"budget_exceeded\"}, {\"status\": 429, \"type\": \"rate_limit_error\", \"message\": \"budget exceeded\"}, {\"status\": 403, \"code\": \"agent_denied\"}, {\"status\": 400, \"code\": \"identity_incomplete\"}, {\"status\": 400, \"code\": \"identity_malformed\"}], \"wait\": [{\"status\": 429, \"code\": \"agent_request_limit\"}]}",
+          "type": "string",
+          "description": "JSON object of the gateway answers that hold one identity, not the provider: {\"refused\": [...], \"wait\": [...]}, each entry {\"status\": <int>} and at least one of the error body's exact \"code\", \"type\" or \"message\". A refused identity's job work waits inference_refusal_cooldown_seconds, a waiting one the answer's Retry-After. The default: an agent over its budget (by code, and by type and message where the Anthropic-shaped answer carries no code), denied, or named incompletely or malformed; too many of its requests in progress waits. Never list an answer the gateway also gives for its own failure (a credential it cannot fetch, no default agent): health would stop seeing it. Read only with identity headers set (server/llm/gateway.py)."
+        },
+        "inference_refusal_cooldown_seconds": {
+          "default": 600.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Seconds a background job leaves the work of an identity the gateway refused (an answer listed under \"refused\") before it calls for it again; 0 calls again at once."
         },
         "inference_system_customer": {
           "default": "loom",
           "type": "string",
           "description": "The customer named on calls made for the deployment itself (startup probe, the recalibration worker's fixed pairs, provider checks), which belong to no org."
+        },
+        "inference_tenant_claim": {
+          "default": "tenant_id",
+          "type": "string",
+          "description": "The workload trust claim {tenant} names: the value the trust requires of it, exactly."
         },
         "inference_token_audience": {
           "default": "",
@@ -2543,6 +2570,15 @@
           "default": "",
           "type": "string",
           "description": "The workload's OIDC token, as a file its platform rotates (a projected service-account token on Kubernetes). With inference_token_url, this or inference_token_audience."
+        },
+        "inference_workload_token_mode": {
+          "default": "exchange",
+          "enum": [
+            "exchange",
+            "bearer"
+          ],
+          "type": "string",
+          "description": "How inference_workload_token_file reaches the gateway: \"exchange\" (RFC 8693, at inference_token_url) or \"bearer\" (the file itself, read again at most every minute and after a 401; requires the gateway)."
         },
         "insights_agents_connected_ttl_s": {
           "default": 60.0,
