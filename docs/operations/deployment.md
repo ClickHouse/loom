@@ -454,9 +454,9 @@ SELECT table, mutation_id, command FROM system.mutations
 WHERE database = 'loom' AND NOT is_done
 ```
 
-A pending mutation on a `<table>_pre_rebuild` copy left by an earlier run never finishes,
-because its merges are stopped: drop that copy first
-(`DROP TABLE IF EXISTS loom.<table>_pre_rebuild SYNC`).
+A pending mutation on a `<table>_pre_rebuild` copy left by an earlier run does not finish
+while that copy's merges are stopped (the tool stops them after its swap): drop that copy
+first (`DROP TABLE IF EXISTS loom.<table>_pre_rebuild SYNC`).
 
 1. Check that Loom's ClickHouse user gets the settings above before starting the rebuild.
 2. Rebuild each coded table with `scripts/ops/vector_codec_rebuild.py`. The tool is not in
@@ -490,8 +490,9 @@ because its merges are stopped: drop that copy first
    Check the list against `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`), which
    names every coded table and its vector columns, before you run it. The
    `--gate-fetch-multiplier` values are the defaults the search legs serve. Where the
-   deployment changes one, in its environment or as a live override, pass that value on
-   its line: `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER` on `memory_embeddings`,
+   deployment sets one (its environment, `.env`, the settings file, or a live override for
+   `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER`), pass that value on its line:
+   `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER` on `memory_embeddings`,
    `LOOM_CODE_SEARCH_CARDS_FETCH_MULTIPLIER` on `code_summaries`,
    `LOOM_TRACKER_EMBED_FETCH_MULTIPLIER` on `qa_item_embeddings`, and
    `LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER` on the rest. Where
@@ -540,7 +541,7 @@ because its merges are stopped: drop that copy first
 3. After the tool's checks pass, inspect the tables with read-only ClickHouse queries and
    drop the old copies: run the lines of the tables you rebuilt again with
    `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its old copy as
-   `loom.<table>_pre_rebuild`, a full second copy with its merges stopped. To go back
+   `loom.<table>_pre_rebuild`, a full second copy, its merges stopped by the tool. To go back
    instead, run that table's line with `mode="--rollback --yes"`; the coded copy then sits
    in `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the table was
    rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
