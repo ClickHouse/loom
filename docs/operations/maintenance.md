@@ -264,10 +264,12 @@ rebuild of a coded table), the codecs do not show whether an exchange ran: the t
 refuses, renames and drops nothing, and asks to compare the two tables' rows before
 dropping either by hand. A twin never exchanged in is a leftover, whatever layout the
 rerun names: `--restart --yes` copies again, or drop it. The tool knows a twin was never
-exchanged in when its UUID is the one recorded in `$LOOM_REBUILD_DIR/<table>_rebuild.uuid`
-(the abort file's directory) when the tool created it, on any database engine: the tool
-removes the record just before its exchange, and refuses the swap when it cannot, so the
-record names only a twin no exchange has moved to the live table's name. Without that record, it reads a twin
+exchanged in when its UUID, and the live table's, are the ones recorded in
+`$LOOM_REBUILD_DIR/<table>_rebuild.uuid` (the abort file's directory) when the tool
+created it, on any database engine: any exchange gives the live table's name another
+UUID, including a `--reuse` swap run from another directory, which leaves the record
+behind. The tool also removes the record just before its own exchange, and refuses the
+swap when it cannot. Without a matching record, it reads a twin
 whose `system.tables.metadata_modification_time` is later than the live table's as never
 exchanged in, which holds on Atomic and Replicated databases, where `EXCHANGE TABLES`
 keeps each table's own time. Equal times (the column has one second's precision), and any
@@ -391,9 +393,11 @@ names `--rollback` only while the live table has no mutation since the copy star
 To inspect a difference by hand, keep writers and erasure stopped and list each key the
 two tables hold differently, with both sides' version column. `<version>` is the
 table's ReplacingMergeTree version column: `version`, or `created_at` on `memory_chunks`
-and `entity_vectors` and `ts` on `conversation_embeddings`. `<key>` is the table's sorting key and `<columns>` every column but the vector
-columns. `<copy_vectors>` and `<live_vectors>` list each vector column of that table.
-On the new-layout side (the live table after a swap, the copy after a rollback) a column
+and `entity_vectors` and `ts` on `conversation_embeddings`. `<key>` is the table's sorting key.
+`<copy_vectors>` and `<live_vectors>` list only the vector columns the rebuild named
+(`--columns`). `<columns>` is every other column, other vector columns among them, each
+named as it is on both sides: the tool hashes them as stored.
+For the columns the rebuild named, on the new-layout side (the live table after a swap, the copy after a rollback) a column
 is named as it is. On the old-layout side it is written as the rebuild writes it,
 `if(length(<column>) = <dim>, CAST(<column> AS Array(BFloat16)), arrayResize(CAST([] AS Array(BFloat16)), <dim>, toBFloat16(0)))`,
 where `<dim>` is the codec's width (`Quantized(<method>, <dim>, 0)` in the new

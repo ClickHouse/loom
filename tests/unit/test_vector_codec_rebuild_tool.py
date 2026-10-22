@@ -385,7 +385,7 @@ def test_a_twin_this_tool_created_is_a_leftover_on_any_database_engine(capsys: A
     ch.db_engine = "Shared"
     assert _run(ch, "--dry-run", "--require-patch-free") == tr.REFUSED
     assert "compare" in capsys.readouterr().out  # no record: either may be the old table
-    Path("memory_chunks_rebuild.uuid").write_text("ours")
+    Path("memory_chunks_rebuild.uuid").write_text("ours live")
     assert _run(ch, "--dry-run", "--require-patch-free") == tr.REFUSED
     step = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])["next"]
     assert "leftover never exchanged in" in step and "compare" not in step
@@ -397,7 +397,19 @@ def test_a_created_twin_is_recorded_by_its_uuid() -> None:
     ch = _CH(memory_chunks=_live())
     ch.cons = (1, 0, 0)  # the gate fails, so the twin stays
     assert _run(ch, "--yes") == tr.GATE_FAILED
-    assert Path("memory_chunks_rebuild.uuid").read_text() == ch.t["memory_chunks_rebuild"]["uuid"]
+    twin = ch.t["memory_chunks_rebuild"]["uuid"]
+    assert Path("memory_chunks_rebuild.uuid").read_text() == f"{twin} live"
+
+
+class _RenameLost(_CH):
+    """A fake whose RENAME TABLE fails once `lose_rename` is set: a half swap."""
+
+    lose_rename = False
+
+    def command(self, stmt: str, parameters: Any = None, settings: Any = None) -> None:
+        if self.lose_rename and stmt.startswith("RENAME TABLE"):
+            raise RuntimeError("session lost")
+        super().command(stmt, parameters, settings)
 
 
 def test_a_swap_removes_the_record_so_a_later_half_swap_keeps_the_old_table(
@@ -406,15 +418,6 @@ def test_a_swap_removes_the_record_so_a_later_half_swap_keeps_the_old_table(
     """A recorded twin that was exchanged in is the live table, and a later run's twin
     may be the old table. Run A's swap removes A's record, so after run B, from another
     directory, exchanges without its rename, a run from A's directory keeps B's twin."""
-
-    class _RenameLost(_CH):
-        lose_rename = False
-
-        def command(self, stmt: str, parameters: Any = None, settings: Any = None) -> None:
-            if self.lose_rename and stmt.startswith("RENAME TABLE"):
-                raise RuntimeError("session lost")
-            super().command(stmt, parameters, settings)
-
     ch = _RenameLost(memory_chunks=_live())
     ch.db_engine = "Shared"
     assert _run(ch, "--yes") == tr.OK
@@ -434,6 +437,39 @@ def test_a_swap_removes_the_record_so_a_later_half_swap_keeps_the_old_table(
     assert _writes(ch) == [] and ch.t["memory_chunks_rebuild"] is old
     out = capsys.readouterr().out
     assert "compare" in out and "leftover" not in out
+
+
+def test_a_record_left_by_a_reused_swap_no_longer_names_the_twin_a_leftover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """A twin created from one directory and swapped in by a --reuse run from another
+    keeps its record in the first. After a later half swap leaves it, now the old table,
+    at the twin's name, the record no longer matches: the live table's UUID changed, so
+    a run from the first directory keeps the twin and never drops it."""
+    ch = _RenameLost(memory_chunks=_live())
+    ch.db_engine = "Shared"
+    ch.cons = (1, 0, 0)  # the gate fails, so the twin stays
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    created = ch.t["memory_chunks_rebuild"]
+    other = tmp_path / "other"
+    other.mkdir()
+    monkeypatch.chdir(other)
+    ch.cons = (0, 0, 0)
+    assert _run(ch, "--yes", "--reuse") == tr.OK
+    assert (tmp_path / "memory_chunks_rebuild.uuid").exists()
+    ch.t.pop("memory_chunks_pre_rebuild")
+    ch.lose_rename = True
+    _run(ch, "--yes", "--require-patch-free")
+    assert ch.t["memory_chunks_rebuild"] is created
+    monkeypatch.chdir(tmp_path)
+    ch.commands.clear()
+    capsys.readouterr()
+    _run(ch, "--dry-run", "--require-patch-free")
+    step = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])["next"]
+    assert "leftover" not in step and "compare" in step
+    assert _run(ch, "--yes", "--require-patch-free", "--restart") == tr.REFUSED
+    assert _writes(ch) == [] and ch.t["memory_chunks_rebuild"] is created
+    assert "leftover" not in capsys.readouterr().out
 
 
 def test_a_record_that_cannot_be_removed_refuses_the_swap() -> None:

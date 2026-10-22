@@ -75,10 +75,11 @@ The twin is the run's lock: an existing twin refuses the run unless
 `--reuse` (continue from it) or `--restart` (drop it and copy again), and the
 swap refuses when the twin is no longer the one this run created or reused.
 An `ABORT_REBUILD` file in `LOOM_REBUILD_DIR` (default `.`) stops the run
-before the copy and before the swap, leaving the twin. The UUID of each twin
-the tool creates goes to `<table>_rebuild.uuid` there, and the swap removes it
-first (refusing when it cannot): a later run names a twin with that UUID a
-leftover never exchanged in.
+before the copy and before the swap, leaving the twin. The UUIDs of each twin
+the tool creates and of the live table then go to `<table>_rebuild.uuid` there,
+and the swap removes it first (refusing when it cannot): a later run names a
+twin with that UUID a leftover never exchanged in while the live table still has
+the recorded UUID, which any exchange changes.
 
 Exit codes (shared with table_rebuild): 0 done or nothing to do, 2 aborted,
 3 refused (widths among them), 4 needs `--yes`, 5 a gate failed (consistency,
@@ -515,7 +516,8 @@ class VectorRebuild:
         self.cols = [x.strip() for x in args.columns.split(",") if x.strip()]
         self.chain = args.chain or None
         self.abort = Path(args.abort_file)
-        # the UUID of the twin this tool created, which a later run reads
+        # the UUIDs of the twin this tool created and of the live table then, which a
+        # later run reads
         self.twin_record = self.abort.parent / f"{self.twin}.uuid"
         self.twin_uuid = ""
         self.replicas = replicas_source(args.cluster)
@@ -696,27 +698,33 @@ class VectorRebuild:
         return any(vector_dim(twin, c) is not None for c in coded)
 
     def twin_never_exchanged(self) -> bool:
-        """Whether the twin was never exchanged in. Its UUID is the one this tool recorded
-        when it created the twin: an exchange moves that UUID to the live table's name. Or
-        its metadata time is later than the live table's: EXCHANGE TABLES keeps each
-        table's own time on the Atomic and Replicated databases the live tests run it on.
-        Without the record, on any other database engine and on equal times (one second's
-        precision), neither shows anything."""
-        row = tr.table_row(self.ch, self.twin)
-        if row is not None and row[1] not in ("", ZERO_UUID) and row[1] == self.created_twin():
+        """Whether the twin was never exchanged in. Its UUID and the live table's are the
+        ones this tool recorded when it created the twin: any exchange gives the live
+        table's name another UUID, including a --reuse swap run from another directory,
+        which leaves this record behind. Or its metadata time is later than the live
+        table's: EXCHANGE TABLES keeps each table's own time on the Atomic and Replicated
+        databases the live tests run it on. Without the record, on any other database
+        engine and on equal times (one second's precision), neither shows anything."""
+        twin, live = tr.table_row(self.ch, self.twin), tr.table_row(self.ch, self.t)
+        if (
+            twin is not None
+            and live is not None
+            and twin[1] not in ("", ZERO_UUID)
+            and [twin[1], live[1]] == self.created_twin()
+        ):
             return True
         engine = self.q("SELECT engine FROM system.databases WHERE name = currentDatabase()")[0][0]
         if engine not in ("Atomic", "Replicated"):
             return False
         return self.metadata_time(self.twin) > self.metadata_time(self.t)
 
-    def created_twin(self) -> str:
-        """The UUID of the last twin this tool created for the table, from its record
-        beside the abort file, or ''."""
+    def created_twin(self) -> list[str]:
+        """The UUIDs of the last twin this tool created for the table and of the live
+        table then, from the record beside the abort file, or []."""
         try:
-            return self.twin_record.read_text().strip()
+            return self.twin_record.read_text().split()
         except OSError:
-            return ""
+            return []
 
     def report_state(self) -> str:
         if self.next_step:
@@ -961,8 +969,9 @@ class VectorRebuild:
             return f"could not create loom.{self.twin} (another run?): {str(e)[:160]}", False
         row = tr.table_row(self.ch, self.twin)
         self.twin_uuid = row[1] if row else ""
+        live = tr.table_row(self.ch, self.t)
         try:
-            self.twin_record.write_text(self.twin_uuid)
+            self.twin_record.write_text(f"{self.twin_uuid} {live[1] if live else ''}")
         except OSError as e:
             log(f"could not record the twin's UUID in {self.twin_record}:", e)
         log(

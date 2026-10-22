@@ -454,11 +454,15 @@ SELECT table, mutation_id, command FROM system.mutations
 WHERE database = 'loom' AND NOT is_done
 ```
 
-A `<table>_pre_rebuild` copy left by an earlier run blocks that table's rebuild, and a
-mutation pending on it does not finish while the tool keeps its merges stopped. Remove it
-with that table's line and `mode="--drop-pre-rebuild --yes"`, as in step 3. The copy can be
-the only holder of a change: drop it by hand only after the read in
-[what the checks after a swap find](./maintenance.md#what-the-checks-after-a-swap-find).
+A `<table>_pre_rebuild` copy left by an earlier run blocks that table's rebuild. Remove it
+with that table's line and `mode="--drop-pre-rebuild --yes"`, as in step 3. A mutation on
+the copy since the copy started does not finish while the tool keeps its merges stopped,
+and while there is one, `--drop-pre-rebuild` refuses and names `--rollback`. To keep the
+new layout, run the read in
+[what the checks after a swap find](./maintenance.md#what-the-checks-after-a-swap-find),
+check in `system.mutations` that the live table already carries that mutation's effect,
+then drop the copy by hand. To keep the change only the copy holds, run
+`--rollback --yes`.
 
 1. Check that Loom's ClickHouse user gets the settings above before starting the rebuild.
 2. Rebuild each coded table with `scripts/ops/vector_codec_rebuild.py`. The tool is not in
