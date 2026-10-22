@@ -36,11 +36,14 @@ and stops. The steps of a rebuild:
    another delta pass before it fails the run.
 5. Refuse to swap when a mutation (an erasure purge) or a lightweight update
    touched the live table after the copy started: the twin may hold rows it
-   removed. Rerun with `--restart`. Refuse it too when an `ALTER` (a dropped
-   or changed column, an index, a setting) moved the live table's metadata
-   time since the twin's columns were checked: a rebuild does not carry the
-   `ALTER` over, so restate it in the migration's target first. An added
-   column fails the next delta pass instead (exit 1, no swap).
+   removed; an `ALTER` that ClickHouse runs as a mutation (dropping, renaming
+   or retyping a column, dropping an index) is refused here too. Rerun with
+   `--restart`, after restating a schema `ALTER` in the migration's target.
+   Refuse it too (exit 3) when an `ALTER` that is not a mutation (an index,
+   a setting, a TTL, a column's default or codec) moved the live table's
+   metadata time since the twin's columns were checked: a rebuild does not
+   carry it over either. An added column fails the next copy pass (exit 1, no
+   swap), or exit 3 once the last pass ran.
 6. A last delta pass, then `EXCHANGE TABLES`, then the old table becomes
    `loom.<t>_pre_rebuild`, and its merges are stopped. Two delta passes
    `--settle-s` apart copy what in-flight writers put into it after the swap.
@@ -402,8 +405,9 @@ class Rebuild:
         return ""
 
     def altered(self) -> bool:
-        """An ALTER (a dropped or changed column, an index, a setting) moved the
-        live table's metadata time since the twin was checked against it. The
+        """An ALTER that is not a mutation (an index, a setting, a TTL, a column's
+        default or codec) moved the live table's metadata time since the twin
+        was checked against it. The
         time has one second's precision: two ALTERs in the snapshot's second
         compare equal."""
         row = self.table_row(self.t)
@@ -429,7 +433,7 @@ class Rebuild:
         if self.touched(started, patches):
             log(
                 "REFUSED: a mutation or lightweight update touched the table during the copy; "
-                "rerun with --restart"
+                "rerun with --restart (restate a schema ALTER in the migration's target first)"
             )
             return TOUCHED
         if not self.verified():
@@ -438,7 +442,7 @@ class Rebuild:
         if self.touched(started, patches):
             log(
                 "REFUSED: a mutation or lightweight update touched the table during the check; "
-                "rerun with --restart"
+                "rerun with --restart (restate a schema ALTER in the migration's target first)"
             )
             return TOUCHED
         if self.aborted():
@@ -585,7 +589,11 @@ def main(argv: list[str] | None = None, ch: Any = None) -> int:
             return REFUSED
 
         return tr.run_reported(
-            args.table, action, refuse, lambda: "declare the target in a migration", lambda: 0
+            args.table,
+            action,
+            refuse,
+            lambda: "check --table: only a table a migration declares can be rebuilt",
+            lambda: 0,
         )
     return tr.run_reported(
         args.table, action, lambda: execute(job, action), job.report_state, lambda: job.rows_copied

@@ -76,6 +76,7 @@ class _CH:
         self.t = tables
         self.commands: list[str] = []
         self.fail_create = False
+        self.mutation_count = 0
         self.uuids = iter(f"u{i}" for i in range(100))
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _Result:
@@ -100,7 +101,9 @@ class _CH:
             return _Result([])
         if "system.parts" in sql:
             return _Result([(1024,)])
-        if "system.mutations" in sql or "WHERE version >" in sql:
+        if "system.mutations" in sql:
+            return _Result([(self.mutation_count,)])
+        if "WHERE version >" in sql:
             return _Result([(0,)])
         if sql == "SELECT now()":
             return _Result([("2000-01-01 00:00:00",)])
@@ -237,6 +240,23 @@ def test_an_alter_of_the_live_table_during_the_copy_is_never_swapped(capsys: Any
         tool.Rebuild.verified = real  # type: ignore[method-assign]
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     assert "was altered during the copy" in capsys.readouterr().out
+
+
+def test_an_alter_run_as_a_mutation_during_the_copy_is_never_swapped(capsys: Any) -> None:
+    ch = _CH(code_test_facets=_table(OLD, 5))
+    real = tool.Rebuild.converge
+
+    def converge(job: tool.Rebuild) -> None:
+        ch.mutation_count = 1  # ALTER ... DROP COLUMN
+        real(job)
+
+    tool.Rebuild.converge = converge  # type: ignore[method-assign]
+    try:
+        assert _run(ch, "--yes") == tool.TOUCHED
+    finally:
+        tool.Rebuild.converge = real  # type: ignore[method-assign]
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "restate a schema ALTER" in capsys.readouterr().out
 
 
 def test_an_alter_before_the_twin_is_checked_is_never_swapped() -> None:
