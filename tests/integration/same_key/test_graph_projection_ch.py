@@ -1262,6 +1262,12 @@ async def test_a_replay_that_inserted_never_inserts_again_after_a_failed_repair(
     assert "loom.entity_triples" not in inserted
     await _mutations_done(ch, org)
     assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 0}
+    # The retry marks the failure resolved with an ALTER UPDATE, a mutation that lands
+    # in the background: the active list empties once it has.
+    for _ in range(300):
+        if not await list_projection_failures(org=org, ch=ch):
+            break
+        await asyncio.sleep(0.1)
     assert await list_projection_failures(org=org, ch=ch) == []
 
 
