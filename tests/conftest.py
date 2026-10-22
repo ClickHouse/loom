@@ -111,19 +111,11 @@ def _load_repo_dotenv():
         os.environ.pop(k, None)
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _seed_test_api_key():
-    """Auto-set LOOM_API_KEY to a wildcard-org writer token if not already set.
+@pytest.fixture(autouse=True)
+def _seed_test_api_key(_load_repo_dotenv):
+    """Mint SDK fallback credentials per test so long suites do not outlive them.
 
-    Many integration tests construct `Agent(...)` without an explicit `api_key`,
-    relying on the SDK's `LOOM_API_KEY` env fallback. Under
-    `LOOM_AUTH_REQUIRED=true` (the production default), unauthenticated calls
-    fail with 401. This fixture mints one wildcard-org token at session start so
-    every test gets a working Bearer header through the SDK's env fallback,
-    regardless of which ORG the test declares.
-
-    Skipped if the caller already exported LOOM_API_KEY (e.g. CI passing in a
-    pre-minted token).
+    A caller-supplied LOOM_API_KEY remains in place.
     """
     if os.environ.get("LOOM_API_KEY"):
         yield
