@@ -740,14 +740,17 @@ async def _tasks_left_as_found() -> Any:
     test, so a leak stops at the test that caused it instead of failing a
     bystander. Tasks that existed before the test (session fixtures'
     servers, the loop's own) are left alone.
+
+    The deferred ledgers (usage, drops, namespace and graph write marks) are
+    emptied and their timers cancelled first: a flush armed in one test would
+    write into a later test's client and register a task its `drain_task_sets`
+    counts.
     """
     before = set(asyncio.all_tasks())
     yield
     current = asyncio.current_task()
-    # The deferred ledgers are emptied and their timers cancelled first: a flush
-    # armed in one test would write into a later test's client and register a
-    # task its `drain_task_sets` counts. A cancelled task's done callback can
-    # re-arm a timer or spawn a graph-marks end task, so repeat until none is left.
+    # A cancelled task's done callback can re-arm a timer or spawn a graph-marks
+    # end task, so the reset and the sweep repeat, at most three passes.
     for _ in range(3):
         _reset_deferred_ledgers()
         leaked = [t for t in asyncio.all_tasks() - before if t is not current and not t.done()]
@@ -756,6 +759,7 @@ async def _tasks_left_as_found() -> Any:
         for t in leaked:
             t.cancel()
         await asyncio.gather(*leaked, return_exceptions=True)
+    _reset_deferred_ledgers()
 
 
 @pytest.fixture(autouse=True)

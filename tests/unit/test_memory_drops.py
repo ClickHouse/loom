@@ -27,7 +27,7 @@ _real_flush_later = drops._flush_later
 
 @pytest.fixture(autouse=True)
 def _quiet_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep drops buffered for assertions; suite teardown clears them."""
+    """Keep drops buffered for assertions; each test's teardown clears them."""
     monkeypatch.setattr(drops, "_flush_later", lambda delay: True)
 
 
