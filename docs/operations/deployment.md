@@ -400,6 +400,8 @@ user with SQL.
   point-in-time recovery; high availability is a Keeper ensemble and
   `ReplicatedMergeTree`, an operator project.
 
+How Loom uses ClickHouse is in [ClickHouse](../architecture/clickhouse.md).
+
 ### Recommended ClickHouse settings
 
 Loom runs without these. With them on, vector reads scan compact codes first and rescore
@@ -453,7 +455,9 @@ the server does not change existing tables:
    ```bash
    mode=--dry-run
    cluster=default
-   rebuild() { uv run python -P -m scripts.ops.vector_codec_rebuild "$@" --cluster "$cluster" $mode; }
+   rebuild() {
+     uv run python -P -m scripts.ops.vector_codec_rebuild "$@" --cluster "$cluster" $mode
+   }
    rebuild --table memory_embeddings --columns embedding,memory_key_embedding
    rebuild --table memory_chunks --columns embedding
    rebuild --table code_chunks --columns embedding
@@ -464,23 +468,27 @@ the server does not change existing tables:
    rebuild --table entity_summaries --columns summary_embedding
    rebuild --table code_answers --columns question_embedding
    rebuild --table categories --columns embedding
-   rebuild --table code_summaries --columns embedding --index-granularity 256 --gate-fetch-multiplier 10
+   rebuild --table code_summaries --columns embedding \
+     --index-granularity 256 --gate-fetch-multiplier 10
    rebuild --table qa_item_embeddings --columns embedding
    ```
 
-   These are the tables in `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`). Where
+   Check the list against `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`), which
+   names every coded table and its vector columns, before you run it. Where
    `allow_suspicious_codecs` cannot be on, the tool refuses `--chain`. Skip the
    `entity_vectors` line and it stays as it is, plain or coded without the chain; or, where
    it is plain, rebuild it without `--chain` and accept a column about four times larger.
 
-   A table with no full-length vectors yet (no rows, or only placeholder vectors from failed
-   embeds) cannot pass the rebuild's recall gate, and the dry run does not show that. The
-   dry run prints the width it will code (`target <table> dimension <n>`); skip the line
-   while this query, with the line's first column, returns 0:
+   A table with no full-length vectors yet (no rows, or only placeholder vectors of rows
+   still awaiting an embedding) cannot pass the rebuild's recall gate, and the dry run does
+   not show that. The dry run prints the width it will code
+   (`target <table> dimension <n>`); skip the line while this query, with the line's first
+   column, returns 0:
    `SELECT countIf(length(<column>) = <n> AND <column>[1] != 0) FROM loom.<table>`.
 
-   A run that stopped at the gate leaves its twin, `loom.<table>_rebuild`: drop it with
-   `DROP TABLE`, or pass `--restart` the next time you run that line.
+   A run that stopped at the gate leaves its twin, `loom.<table>_rebuild`, a copy of the
+   table's rows that erasure does not reach: drop it with
+   `DROP TABLE loom.<table>_rebuild SYNC`, or pass `--restart` when you run that line again.
 
 3. Once search looks right, drop the old copies: run the lines of the tables you rebuilt
    again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its old
@@ -488,12 +496,10 @@ the server does not change existing tables:
    back instead, run that table's line with `mode="--rollback --yes"`; the coded copy then
    sits in `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the table
    was rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
-   `--chain LZ4` only if its rebuild had it, and `code_summaries` keeps its
-   `--index-granularity 256` ([vector storage](../architecture/clickhouse.md#vector-storage)).
+   `--chain LZ4` only if its rebuild had it.
 
 How Loom reads these settings is in
-[gated settings](../architecture/clickhouse.md#gated-clickhouse-settings), and how Loom uses
-ClickHouse in [ClickHouse](../architecture/clickhouse.md).
+[gated settings](../architecture/clickhouse.md#gated-clickhouse-settings).
 
 ## Providers
 
