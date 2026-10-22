@@ -22,28 +22,14 @@ from server.settings import settings
 
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
+_real_flush_later = drops._flush_later
+
 
 @pytest.fixture(autouse=True)
-def _quiet_ledger(monkeypatch: pytest.MonkeyPatch):
-    """Keep rows in the buffer (no background flush task) so tests can
-    inspect them; reset between tests.
-
-    `_flush_and_rearm` is stubbed too: a test elsewhere that recorded a drop
-    without this fixture armed a real `call_later(2.0, _fire_flush)` on the
-    session loop, and that timer fires inside whichever test runs two
-    seconds later — under random order, one of these — draining the buffer
-    the assertion is about to read. The timer keeps its `_fire_flush`, but
-    that looks `_flush_and_rearm` up at fire time, so the stub catches it.
-    """
-    drops._reset_for_tests()
-
-    async def _no_flush() -> None:
-        return None
-
+def _quiet_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep rows in the buffer (no flush timer) so tests can inspect them. The
+    suite's teardown empties the buffer and cancels any timer between tests."""
     monkeypatch.setattr(drops, "_flush_later", lambda delay: True)
-    monkeypatch.setattr(drops, "_flush_and_rearm", _no_flush)
-    yield
-    drops._reset_for_tests()
 
 
 def _pairs() -> list[tuple[str, str]]:
@@ -515,9 +501,10 @@ def test_drops_cli_is_registered_and_runs(monkeypatch: pytest.MonkeyPatch, capsy
 
 
 @pytest.mark.asyncio
-async def test_reset_cancels_an_armed_flush_timer() -> None:
+async def test_reset_cancels_an_armed_flush_timer(monkeypatch: pytest.MonkeyPatch) -> None:
     """A drop arms a flush timer; the reset cancels it, so it cannot fire into a
     later test and register a flush there."""
+    monkeypatch.setattr(drops, "_flush_later", _real_flush_later)
     drops.record_drop("o", "n", "parse", "empty", item="item")
     timer = drops._timer
     assert timer is not None
