@@ -8,12 +8,14 @@ one; revocation is a separate INSERT with `revoked_at` populated
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from server.core import grant_cache
-from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
+from server.core.datetimes import to_naive_utc
+from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT, grant_rank_sql, has_aliases_sql
 from server.core.repo_base import _CHClient, _default_client
-from server.identity.domain.grants import GrantState, PendingGrant
+from server.identity.domain.grants import GrantPerson, GrantState, PendingGrant
 
 
 async def insert_row(
@@ -137,6 +139,104 @@ async def list_active(
         """,
         params={"org": org, "ns": namespace, "lim": int(limit)},
     )
+
+
+# Fold live spellings before the keyset and limit. Active rows set access;
+# pending rows contribute requests without raising the active role.
+_PEOPLE_PAGE = """
+SELECT head.1 AS subject,
+       if(active_rows > 0, active_role, head.7) AS role,
+       if(active_rows > 0, 'active', head.2) AS status,
+       if(active_rows > 0, request.1, head.3) AS pending_role,
+       if(active_rows > 0, request.2, head.4) AS pending_since,
+       head.5 AS granted_at, head.6 AS granted_by,
+       arrayMap(k -> k.2, arrayFilter(k -> lowerUTF8(k.2) != lowerUTF8(head.1),
+                                      arrayReverseSort(spellings))) AS also
+FROM (
+    SELECT argMax(tuple(subject, status, pending_role, pending_since, granted_at, granted_by, role),
+                  tuple(granted_at, subject)) AS head,
+           countIf({live}) AS active_rows,
+           argMaxIf(role, {rank}, {live}) AS active_role,
+           argMaxIf(tuple(asked, asked_at), tuple({rank_asked}, granted_at, subject),
+                    asked IS NOT NULL) AS request,
+           groupArray(tuple(granted_at, subject)) AS spellings
+    FROM (
+        SELECT g.subject AS subject, g.role AS role, g.status AS status,
+               g.revoked_at AS revoked_at,
+               g.pending_role AS pending_role, g.pending_since AS pending_since,
+               g.granted_at AS granted_at, g.granted_by AS granted_by,
+               -- What the row asks for: a pending row's role, or an active row's elevation.
+               if(g.status = 'pending', g.role, g.pending_role) AS asked,
+               if(g.status = 'pending', ifNull(g.pending_since, g.granted_at),
+                  g.pending_since) AS asked_at,
+               if({has_aliases}, ifNull(nullIf(t.person, ''), lowerUTF8(g.subject)),
+                  lowerUTF8(g.subject)) AS person
+        FROM (
+            SELECT subject, role, status, revoked_at, pending_role, pending_since, granted_at,
+                   granted_by
+            FROM loom.namespace_grants FINAL
+            WHERE org = {org:String} AND namespace = {ns:String} AND revoked_at IS NULL
+        ) AS g
+        LEFT JOIN (
+            SELECT spelling, min(handle) AS person
+            FROM (
+                SELECT lowerUTF8(owner_email) AS handle,
+                       arrayJoin([handle, lowerUTF8(contact_email)]) AS spelling
+                FROM loom.namespaces FINAL
+                WHERE org = {org:String} AND ifNull(active, true) = true AND contact_email != ''
+            )
+            -- Only spellings that ever held a grant here (a superset of the live ones
+            -- needs no FINAL): the map then grows with the namespace, not the org.
+            WHERE spelling IN (
+                SELECT lowerUTF8(subject) FROM loom.namespace_grants
+                WHERE org = {org:String} AND namespace = {ns:String}
+            )
+            GROUP BY spelling
+        ) AS t ON t.spelling = lowerUTF8(g.subject)
+    )
+    GROUP BY person
+    HAVING {first:Bool} OR (head.5, head.1) < (toDateTime({at:String}, 'UTC'), {sub:String})
+    ORDER BY head.5 DESC, head.1 DESC
+    LIMIT {lim:UInt32}
+)
+ORDER BY granted_at DESC, subject DESC
+"""
+_PEOPLE_PAGE = (
+    _PEOPLE_PAGE.replace("{live}", LIVE_GRANT)
+    .replace("{rank}", GRANT_RANK_SQL)
+    .replace("{rank_asked}", grant_rank_sql("asked"))
+    .replace("{has_aliases}", has_aliases_sql("g.subject"))
+)
+
+
+async def people_page(
+    org: str,
+    namespace: str,
+    *,
+    after: tuple[datetime, str] | None,
+    limit: int,
+    ch: _CHClient | None = None,
+) -> list[GrantPerson]:
+    """At most `limit` people below `after`, ordered by their newest grant.
+
+    Fold all live spellings before the keyset so no page splits a person.
+    """
+    ch = ch or _default_client()
+    at, sub = after if after is not None else (datetime(1970, 1, 1), "")
+    rows = await ch.query_all(
+        _PEOPLE_PAGE,
+        params={
+            "org": org,
+            "ns": namespace,
+            "first": after is None,
+            # UTC text, read back with toDateTime(…, 'UTC'): the driver binds a datetime
+            # in its own zone, and DateTime has no sub-second part.
+            "at": to_naive_utc(at).strftime("%Y-%m-%d %H:%M:%S"),
+            "sub": sub,
+            "lim": int(limit),
+        },
+    )
+    return [GrantPerson.from_row(r) for r in rows]
 
 
 async def find_active_grant(
