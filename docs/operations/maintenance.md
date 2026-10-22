@@ -274,9 +274,11 @@ The erasure saga does not cover these copies.
   or removed, a newer version, any change to a row's columns (a lightweight `UPDATE`
   included, merged or not) or an `ALTER UPDATE` after the last check is not in the new
   table, so the run fails its postcondition and names `--rollback --yes`, which puts the
-  old table back with the change. A merge changes neither table's rows and passes. A write
-  into the new table before the check reads as a key only there and fails it too: keep
-  writers stopped until the run ends.
+  old table back with the change. The hash zeroes a vector of another width on both
+  sides, so the tool also reads the rollback copy's widths: an `UPDATE` that sets a vector
+  of another width fails the postcondition the same way. A merge changes neither table's
+  rows and passes. A write into the new table before the check reads as a key only there
+  and fails it too: keep writers stopped until the run ends.
 
 `--statement-timeout-s` (default 1800, below 7200, the client's read timeout) caps each
 gate read, delta and repair; the copy itself runs under its own limit. Each width check,

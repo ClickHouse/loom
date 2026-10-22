@@ -533,6 +533,19 @@ def test_an_in_place_change_after_the_checks_fails_the_postcondition(capsys: Any
     assert vcr.stored_vector("embedding", dim=DIM) in src
 
 
+def test_an_off_width_update_after_the_checks_fails_the_postcondition(capsys: Any) -> None:
+    """An UPDATE that turns a zero placeholder into a vector of another width hashes as
+    zeros on both sides; the width read of the rollback copy shows it."""
+    ch = _CH(memory_chunks=_live())
+    ch.widths_first = [[], []]  # the preflight and the gate before the swap
+    ch.widths = [(768, 1)]
+    assert _run(ch, "--yes") == tr.POSTCONDITION
+    out = capsys.readouterr().out
+    assert "POSTCONDITION FAILED: embedding holds vectors of more than one width" in out
+    assert "--rollback --yes" in out
+    assert "FROM loom.memory_chunks_pre_rebuild" in ch.queries[_last(ch, "GROUP BY w")]
+
+
 def test_a_mutation_after_the_checks_fails_the_postcondition(capsys: Any) -> None:
     """A mutation created after the gate's last mutation check follows the rename onto the
     rollback copy; the new table may not hold it."""
@@ -566,7 +579,7 @@ def test_the_target_width_comes_from_real_vectors_only() -> None:
     )
     job.find_dim()
     read = next(q for q in job.ch.queries if "topK(1)" in q)
-    assert "WHERE length(embedding) > 0 AND arrayExists(x -> x != 0, embedding)" in read
+    assert "WHERE arrayExists(x -> x != 0, embedding)" in read
 
 
 def test_the_recall_reads_rank_real_vectors_only() -> None:

@@ -217,8 +217,7 @@ def test_the_width_preflight_counts_other_non_empty_widths_as_loom_serves_them()
     assert vcr.read_final("SharedMergeTree") == ""
     assert vcr.mixed_width_sql("memory_chunks", "embedding", " FINAL", dim=3072) == (
         "SELECT length(embedding) AS w, count() FROM loom.memory_chunks FINAL "
-        "WHERE length(embedding) != 3072 AND length(embedding) > 0 "
-        "AND arrayExists(x -> x != 0, embedding) "
+        "WHERE length(embedding) != 3072 AND arrayExists(x -> x != 0, embedding) "
         "GROUP BY w ORDER BY w"
     )
     assert "FINAL" not in vcr.mixed_width_sql("chunks", "embedding", "", dim=3072)
@@ -297,7 +296,7 @@ def test_the_pre_swap_mutation_read_counts_finished_mutations_since_the_copy() -
 def test_the_dimension_read_samples_real_vectors() -> None:
     assert vcr.dim_sql("memory_chunks", "embedding", " FINAL") == (
         "SELECT topK(1)(w) FROM (SELECT length(embedding) AS w FROM loom.memory_chunks FINAL "
-        "WHERE length(embedding) > 0 AND arrayExists(x -> x != 0, embedding) "
+        "WHERE arrayExists(x -> x != 0, embedding) "
         f"LIMIT {vcr.DIM_SAMPLE_ROWS})"
     )
 

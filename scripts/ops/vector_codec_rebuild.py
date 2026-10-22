@@ -301,16 +301,11 @@ def nonzero(column: str) -> str:
     return f"arrayExists(x -> x != 0, {column})"
 
 
-def real_vector(column: str) -> str:
-    """The predicate for a real vector: not empty and not an all-zero placeholder. Pure."""
-    return f"length({column}) > 0 AND {nonzero(column)}"
-
-
 def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
     """Count nonzero vectors of another width; zero placeholders can be resized."""
     return (
         f"SELECT length({column}) AS w, count() FROM loom.{table}{fin} "
-        f"WHERE length({column}) != {int(dim)} AND {real_vector(column)} "
+        f"WHERE length({column}) != {int(dim)} AND {nonzero(column)} "
         "GROUP BY w ORDER BY w"
     )
 
@@ -319,7 +314,7 @@ def dim_sql(table: str, column: str, fin: str) -> str:
     """Infer width from sampled real vectors, ignoring old zero placeholders."""
     return (
         f"SELECT topK(1)(w) FROM (SELECT length({column}) AS w FROM loom.{table}{fin} "
-        f"WHERE {real_vector(column)} LIMIT {DIM_SAMPLE_ROWS})"
+        f"WHERE {nonzero(column)} LIMIT {DIM_SAMPLE_ROWS})"
     )
 
 
@@ -617,13 +612,14 @@ class VectorRebuild:
         sql = mutations_sql(self.replicas("mutations"), name, since - CLOCK_SKEW_MARGIN_S)
         return int(self.q(sql)[0][0])
 
-    def width_refusal(self, ddl: str) -> str:
-        """Why a named column holds vectors the copy would zero, or ''."""
+    def width_refusal(self, ddl: str, table: str | None = None) -> str:
+        """Why a named column of `table` (the live table by default) holds vectors the copy
+        would zero, or ''."""
         from server.settings import settings
 
         # a coded column's codec rejects any other width, so only plain columns are scanned
         for c in [c for c in self.cols if vector_dim(ddl, c) is None]:
-            widths = self.q(mixed_width_sql(self.t, c, self.fin, dim=self.dim))
+            widths = self.q(mixed_width_sql(table or self.t, c, self.fin, dim=self.dim))
             if widths:
                 found = ", ".join(f"width {w}: {n} row(s)" for w, n in widths)
                 return (
@@ -792,10 +788,11 @@ class VectorRebuild:
                 log("monitor err", str(e)[:120])
 
     def consistent(
-        self, version: str | None, key: list[str], src: str = "", twin: str = ""
+        self, version: str | None, key: list[str], src: str | None = None, twin: str | None = None
     ) -> tuple[int, int, int]:
-        """(mismatched, source_only, twin_only) keys of `src` (the live table) against
-        `twin` (the twin), whose vectors are coded."""
+        """(mismatched, source_only, twin_only) keys of `src` (the live table by default)
+        against `twin` (the twin by default), whose vectors are the rebuilt ones; `src`'s
+        vectors are hashed as the copy writes them."""
         src, twin = src or self.t, twin or self.twin
         hashed = [c for c in tr.insertable_columns(self.ch, self.t) if c not in self.cols]
         sql = consistency_sql(src, twin, self.fin, version, key, hashed, self.cols, dim=self.dim)
@@ -904,11 +901,11 @@ class VectorRebuild:
             log("repair keys:", self.repair_into(self.twin, self.t, sel, version, key))
             cons = self.consistent(version, key)
             log("consistency after repair:", cons)
-        why = (
+        diverged = (
             "GATE FAILED: the twin diverges (a key's version, row count or content); no "
             "swap. Stop writes and erasures and rerun with --restart"
         )
-        if failure := self.gate_failure(cons, version, key, why):
+        if failure := self.gate_failure(cons, version, key, diverged):
             log(failure)
             return GATE_FAILED
         drec = self.recall(ddl)
@@ -941,12 +938,12 @@ class VectorRebuild:
             return GATE_FAILED
         cons = self.consistent(version, key)
         log("consistency before the swap:", cons)
-        why = (
+        changed = (
             "GATE FAILED: the source changed during the gates (a write, an update or a "
             "delete), and the twin no longer matches it; no swap. Stop writes and erasures "
             "and rerun with --restart"
         )
-        if failure := self.gate_failure(cons, version, key, why):
+        if failure := self.gate_failure(cons, version, key, changed):
             log(failure)
             return GATE_FAILED
         if n := self.mutations_since(self.t, since):
@@ -992,6 +989,15 @@ class VectorRebuild:
                 f"loom.{self.pre}), and the new table may not hold the change. Keep writers "
                 "stopped and run --rollback --yes, which puts the old table, the change "
                 "included, back in"
+            )
+            return POSTCONDITION
+        # the hash zeroes a vector of another width on both sides, so an UPDATE to one
+        # after the last width check reads as consistent; the width read shows it
+        if why := self.width_refusal(self.ddl(self.pre), self.pre):
+            log(
+                f"POSTCONDITION FAILED: {why}. The change landed after the last check and the "
+                "new table holds it zeroed. Keep writers stopped and run --rollback --yes, "
+                "which puts the old table, the change included, back in"
             )
             return POSTCONDITION
         return OK
