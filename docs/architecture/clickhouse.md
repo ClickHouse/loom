@@ -163,26 +163,25 @@ insert adds up to its window, and holds its pooled connection meanwhile. A susta
 R_request request-path and R_background background batched inserts a second therefore
 hold at least R_request × `ch_batched_insert_wait_max_ms` / 1000 + R_background ×
 `ch_batched_insert_background_wait_max_ms` / 1000 connections: 100 `conversation.append`
-a second, two batched inserts each, hold at least 100 × 2 × 50 / 1000 = 10. A
-`memory.set` waits on six or more: the audit row, the outbox row (webhook namespaces),
-the `entity_edges` and `entity_edge_memories` inserts, the `entity_triples` and
-`entity_triple_memories` inserts, plus `carry_acks` on a carried write;
-`memory.set_from_messages` waits on about ten. The four entity-graph inserts are
-waited async inserts, so `ch_batched_inserts = false` leaves them holding connections:
-a process taking mostly memory writes sizes its pool for them either way, or lowers
-`ch_batched_insert_wait_max_ms`. That is a
+a second, two batched inserts each, hold at least 100 × 2 × 50 / 1000 = 10. That is a
 lower bound: a waiting insert holds its connection for the window and then the flush
-and part write, which queue up and grow under load. One process taking 200 writes a
-second, two batched inserts each (`bench/write_rate.py --target client`), refused
-3,367 of 12,000 writes with 503 `OVERLOADED` at `ch_pool_maxsize = 20`, the formula's
-bound, and none at 40 or 64; that is one run on one host, so read it as an order of
-magnitude. Size `ch_pool_maxsize` at three times the bound or more, plus the process's
-other statements: the default 64 holds three times the bound for about 300
-request-path batched inserts a second, with about 20 connections left for other
-statements. A process at
-that rate either raises `ch_pool_maxsize` or sets `ch_batched_inserts = false`; lowering
-`ch_batched_insert_wait_max_ms` also frees connections
-([troubleshooting](../operations/troubleshooting.md)).
+and part write, which queue up and grow under load. A `memory.set` waits on six or
+more: the audit row, the outbox row (webhook namespaces), the `entity_edges` and
+`entity_edge_memories` inserts, the `entity_triples` and `entity_triple_memories`
+inserts, plus `carry_acks` on a carried write; `memory.set_from_messages` waits on
+about ten. The four entity-graph inserts are waited async inserts, so
+`ch_batched_inserts = false` leaves them holding connections: a process taking mostly
+memory writes sizes its pool for them either way, or lowers
+`ch_batched_insert_wait_max_ms`. One process taking 200 writes a second, two batched
+inserts each (`bench/write_rate.py --target client`), refused 3,367 of 12,000 writes
+with 503 `OVERLOADED` at `ch_pool_maxsize = 20`, the formula's bound, and none at 40 or
+64; that is one run on one host, so read it as an order of magnitude. Size
+`ch_pool_maxsize` at three times the bound or more, plus the process's other
+statements: the default 64 holds three times the bound for about 300 request-path
+batched inserts a second, with about 20 connections left for other statements. A
+process above that rate either raises `ch_pool_maxsize` or sets
+`ch_batched_inserts = false`; lowering `ch_batched_insert_wait_max_ms` also frees
+connections ([troubleshooting](../operations/troubleshooting.md)).
 
 `ch_batched_inserts` (live, on by default) switches batching off for the first group
 above: off, those inserts are committed, one part each. The second group waits on the

@@ -207,7 +207,7 @@
         "ch_batched_inserts": {
           "default": true,
           "type": "boolean",
-          "description": "Send the audit, transcript, op-ledger (agent_events), outbox and evidence inserts as waited async inserts that share parts (docs/architecture/clickhouse.md#batched-inserts); false commits them, one part each. Inserts that are waited async either way keep their windows."
+          "description": "Batch the inserts written on every request (docs/architecture/clickhouse.md#batched-inserts) as waited async inserts that share parts; false commits them, one part each."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,

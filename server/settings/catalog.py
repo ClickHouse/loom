@@ -558,10 +558,8 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Send the audit, transcript, op-ledger (agent_events), outbox and evidence inserts as
-    # waited async inserts that share parts (docs/architecture/clickhouse.md#batched-inserts);
-    # false commits them, one part each. Inserts that are waited async either way keep their
-    # windows.
+    # Batch the inserts written on every request (docs/architecture/clickhouse.md#batched-inserts)
+    # as waited async inserts that share parts; false commits them, one part each.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched or waited async insert a request waits on; it holds a
     # pooled connection meanwhile.
