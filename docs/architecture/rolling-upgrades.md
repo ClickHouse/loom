@@ -251,7 +251,7 @@ schema. These rules keep that safe. The operator procedure is in
     on the same ClickHouse, such as a branch server, is not counted.
 
 25. **Platform-admin bots** (`loom.machine_identities.platform_admin`, migration
-    `072_machine_platform_admin.sql`): the column's `UInt8 DEFAULT 0` reads 0 for every
+    `074_machine_platform_admin.sql`): the column's `UInt8 DEFAULT 0` reads 0 for every
     bot made before it. N-1 does not know the flag: it answers a platform-admin bot's
     exchange 401 (the bot names no namespace), and its `/v1/admin/bots.create` refuses the
     field (422). Register and use such a bot only once no N-1 replica serves. N-1 writes
