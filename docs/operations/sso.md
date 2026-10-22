@@ -299,6 +299,12 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   one. An `expires_in` that is not a whole number of seconds, or is under 60,
   is refused with `invalid_request` before the proof is spent or counted.
 
+  Finish the server rollout before relying on a lifetime other than an hour.
+  An older server ignores `expires_in` and the maximum, issues an hour, and
+  resets the maximum to 3600 when it saves a bot. This can lengthen a token
+  capped below an hour as well as shorten a longer one. Reapply the maximum
+  if an older server saved the bot during the rollout.
+
   A longer token is no harder to end: disabling or replacing the bot,
   `loom revoke-token --subject`, `/v1/admin/revoke_subject` (with or without
   `issued_before`) and `loom claim-release` refuse its tokens at once, whatever
