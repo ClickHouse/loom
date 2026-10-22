@@ -235,8 +235,8 @@ The erasure saga does not cover these copies.
   remains; for `memory_embeddings`, `entity_vectors` and `conversation_embeddings`,
   `loom reembed --delete-old` does this.
 - **Gates (exit 5).** The consistency gate compares each key's newest version (or, on a
-  table without a version column, its row count) and a hash of every column but the
-  rebuilt vector columns. A key the twin lacks, or whose version is older, is copied again
+  table without a version column, its row count) and a hash of every column, the source's
+  rebuilt vector columns cast and padded as the copy writes them. A key the twin lacks, or whose version is older, is copied again
   key by key, and the gate fails if any key still differs. A key only the twin holds fails
   it: rows were removed from the source after the copy, and the swap would bring them
   back. The recall gate ranks real vectors only, since a placeholder's cosine distance is
@@ -248,23 +248,28 @@ The erasure saga does not cover these copies.
   `DateTime`, are enough). When a key still differs, the gate counts such keys on the source
   and names them in its message. Run `OPTIMIZE TABLE loom.<table> FINAL` on the source
   inside the window, which leaves one row per key, then rerun with `--restart`.
-- **Before the swap.** A last delta copies in the rows written during the run, then the
-  width and consistency checks run again. They fail the gate on a delete, a write of
-  another width, a write the delta cannot pick up (a version below the twin's highest, or
-  a row under a key the twin holds on a table without a version column), and any change
-  to a row's other columns, such as a lightweight `UPDATE` (the quarantine `memory.reject`
+- **Before the swap.** The tool flushes the source's async insert queue (and, on a
+  replicated engine, runs `SYSTEM SYNC REPLICA`), a last delta copies in the rows written
+  during the run, then the width and consistency checks run again. They fail the gate on
+  a delete, a write of another width, a write the delta cannot pick up (a version below
+  the twin's highest, or a row under a key the twin holds on a table without a version
+  column), and any change to a row's columns that keeps its key and version, the rebuilt
+  vectors included, such as a lightweight `UPDATE` (the quarantine `memory.reject`
   writes) or an erasure tombstone, whether or not its patch part is still there. Any
   other insert is copied in and the swap goes ahead: the window, not the tool, keeps
-  writers out. The gate also fails on any source mutation created since the copy started
-  (with `--reuse`, since the twin was created), finished or not: an erasure tombstone is an
-  `ALTER UPDATE` that keeps the key and its version. It fails too when a source patch part
-  reports a higher block number than before the copy.
+  writers out. The gate also fails on any source mutation still running or created since
+  the copy started (with `--reuse`, since the twin was created), less a minute for replica
+  clocks.
+- **After the swap (exit 7).** The rollback copy must hold the rows served and the highest
+  version the last check read on the source. A row that reached the source after that
+  check is not in the new table, so the run fails its postcondition and names
+  `--rollback --yes`, which puts the old table back with that row.
 
-`--statement-timeout-s` (default 1800, below 7200, the client's read timeout) caps each gate read, delta, repair
-and patch-part read; the copy itself runs under its own limit. Each width check, before
-the twin and again before the swap, reads every vector of a plain named column (under
-`FINAL` on a ReplacingMergeTree), and each consistency check reads every row of both
-tables, so set the timeout to cover one full read of the table.
+`--statement-timeout-s` (default 1800, below 7200, the client's read timeout) caps each
+gate read, delta and repair; the copy itself runs under its own limit. Each width check,
+before the twin and again before the swap, reads every vector of a plain named column
+(under `FINAL` on a ReplacingMergeTree), and each consistency check reads every row of
+both tables, vectors included, so set the timeout to cover one full read of the table.
 
 ## Disk pressure hygiene
 

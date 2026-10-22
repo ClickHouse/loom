@@ -3,11 +3,13 @@
 
 A column's codec and type are CREATE-only, so the table is rebuilt: a twin
 `loom.<t>_rebuild` from `SHOW CREATE` with the vector columns rewritten, every
-row copied (a short vector padded to the fixed length), a delta keyed on the
+row copied (an empty or all-zero vector padded to the fixed length; the
+preflight refuses a real vector of another width), a delta keyed on the
 ReplacingMergeTree version column (or an anti-join on the sorting key for a
 plain MergeTree), a FULL OUTER JOIN consistency gate on the sorting key (with
-a hash of every column but the rebuilt vectors), a distance-based recall gate,
-then `EXCHANGE TABLES`; the old table stays as `loom.<t>_pre_rebuild` for
+a hash of every column, the rebuilt vectors as the twin stores them), a
+distance-based recall gate, then `EXCHANGE TABLES`; the old table stays as
+`loom.<t>_pre_rebuild` for
 `--rollback` until `--drop-pre-rebuild`, as with scripts/ops/table_rebuild.py
 (the swap, the signals held over it, the next step and the summary line are
 shared in server/core/schema/table_rebuild.py).
@@ -112,6 +114,9 @@ COPY_RECEIVE_TIMEOUT_S = 7200
 DISTANCE_TOLERANCE = 1e-6
 COUNT_SETTLE_ATTEMPTS = 8
 COUNT_SETTLE_SLEEP_S = 15
+# How far before the run's start the pre-swap check counts mutations from: a mutation's
+# create_time comes from the replica that took it, whose clock can run behind this one.
+CLOCK_SKEW_MARGIN_S = 60
 # A codec clause with one level of nested parentheses: CODEC(Quantized('rabitq', 3072, 0), LZ4).
 _CODEC = r"CODEC\((?:[^()]|\([^()]*\))*\)"
 
@@ -157,21 +162,11 @@ def patch_parts_sql(name: str) -> str:
 
 def mutations_sql(cluster_mutations: str, name: str, since: int | None = None) -> str:
     """Count the table's unfinished mutations, and with `since` (a Unix time) every one
-    created from then on, finished or not: a finished ALTER UPDATE keeps the key and its
-    version and leaves no patch part."""
+    created since then: a finished ALTER UPDATE keeps the key and its version."""
     newer = f" OR create_time >= toDateTime({int(since)})" if since is not None else ""
     return (
         f"SELECT count() FROM {cluster_mutations} "
         f"WHERE database = '{database()}' AND table = '{name}' AND (NOT is_done{newer})"
-    )
-
-
-def patch_blocks_sql(name: str) -> str:
-    """Read patch partitions' highest blocks; merging parts does not raise them."""
-    return (
-        "SELECT partition_id, max(max_block_number) FROM system.parts "
-        f"WHERE database = currentDatabase() AND table = '{name}' AND active "
-        "AND startsWith(name, 'patch') GROUP BY partition_id"
     )
 
 
@@ -327,27 +322,50 @@ def dim_sql(table: str, column: str, fin: str) -> str:
     )
 
 
+def stored_vector(column: str, *, dim: int) -> str:
+    """A source vector as the twin stores it: BFloat16 at the fixed length, an empty or
+    all-zero vector of another width as the zero placeholder. Pure."""
+    return f"if(length({column}) = {int(dim)}, CAST({column} AS Array(BFloat16)), {pad(dim)})"
+
+
 def consistency_sql(
-    src: str, twin: str, fin: str, version: str | None, key: list[str], hashed: list[str]
+    src: str,
+    twin: str,
+    fin: str,
+    version: str | None,
+    key: list[str],
+    hashed: list[str],
+    vectors: list[str],
+    *,
+    dim: int,
 ) -> str:
-    """Compare versions or per-key counts, and a hash of the `hashed` columns per key,
-    separating absent keys from mismatches. The hash catches a change that keeps the key
-    and its version (an UPDATE, an erasure tombstone); `tuple` keeps a NULL from making
-    the hash NULL. join_use_nulls=0 supplies default values for the missing side. Pure."""
+    """Compare versions or per-key counts, and a hash per key of the `hashed` columns and
+    the rebuilt `vectors` (the source's as the copy writes them), separating absent keys
+    from mismatches. The hash catches a change that keeps the key and its version (an
+    UPDATE of any column, an erasure tombstone), whether or not its patch part is still
+    there; `tuple` keeps a NULL from making the hash NULL. join_use_nulls=0 supplies
+    default values for the missing side. Pure."""
     ident = ", ".join(key)
-    row_hash = "cityHash64(tuple(" + ", ".join(f"`{c}`" for c in hashed) + "))"
+    plain = [f"`{c}`" for c in hashed]
+
+    def side(name: str, vecs: list[str]) -> str:
+        row_hash = f"cityHash64(tuple({', '.join(plain + vecs)}))"
+        if version:
+            cols = f"{version}, {row_hash} AS __hash"
+            return f"SELECT {ident}, {cols}, 1 AS __present FROM loom.{name}{fin}"
+        cols = f"count() AS n, sum({row_hash}) AS __hash"
+        return f"SELECT {ident}, {cols}, 1 AS __present FROM loom.{name}{fin} GROUP BY {ident}"
+
     if version:
-        vsel, group = f", {version}, {row_hash} AS __hash", ""
         vcmp = f"(s.{version} != t.{version} OR s.__hash != t.__hash)"
     else:
-        vsel, group = f", count() AS n, sum({row_hash}) AS __hash", f" GROUP BY {ident}"
         vcmp = "(s.n != t.n OR s.__hash != t.__hash)"
+    src_side = side(src, [stored_vector(c, dim=dim) for c in vectors])
+    twin_side = side(twin, [f"`{c}`" for c in vectors])
     return (
         f"SELECT countIf(s.__present = 1 AND t.__present = 1 AND {vcmp}) AS mismatched, "
         "countIf(t.__present = 0) AS source_only, countIf(s.__present = 0) AS twin_only "
-        f"FROM (SELECT {ident}{vsel}, 1 AS __present FROM loom.{src}{fin}{group}) AS s "
-        f"FULL OUTER JOIN (SELECT {ident}{vsel}, 1 AS __present FROM loom.{twin}{fin}{group}) AS t "
-        f"USING ({ident})"
+        f"FROM ({src_side}) AS s FULL OUTER JOIN ({twin_side}) AS t USING ({ident})"
     )
 
 
@@ -382,13 +400,10 @@ def twin_only_failure(n: int) -> str:
 
 
 def replace_select(columns: list[str], *, dim: int) -> str:
-    """The copy's SELECT: every named column padded to the fixed length (an empty vector
-    becomes a zero placeholder; the preflight refuses any other width)."""
-
-    def vec(c: str) -> str:
-        return f"if(length({c}) = {int(dim)}, {c}, {pad(dim)})"
-
-    return "SELECT * REPLACE (" + ", ".join(f"{vec(c)} AS {c}" for c in columns) + ")"
+    """The copy's SELECT: every named column at the fixed length (an empty or all-zero
+    vector padded to it; the preflight refuses a real vector of another width)."""
+    vecs = ", ".join(f"{stored_vector(c, dim=dim)} AS {c}" for c in columns)
+    return f"SELECT * REPLACE ({vecs})"
 
 
 def twin_read(column: str, lit: str, multiplier: float) -> tuple[str, dict[str, Any]]:
@@ -570,8 +585,9 @@ class VectorRebuild:
         """The server's Unix time."""
         return int(self.q("SELECT toUnixTimestamp(now())")[0][0])
 
-    def twin_created(self) -> int:
-        """The server's Unix time a reused twin was created (a mutation between runs counts too)."""
+    def twin_metadata_time(self) -> int:
+        """The server's Unix time of the reused twin's last metadata change, its CREATE (a
+        mutation between runs counts too)."""
         sql = (
             "SELECT toUnixTimestamp(metadata_modification_time) FROM system.tables "
             f"WHERE database = currentDatabase() AND name = '{self.twin}'"
@@ -579,8 +595,10 @@ class VectorRebuild:
         return int(self.q(sql)[0][0])
 
     def mutations_since(self, since: int) -> int:
-        """The source's mutations created from `since` on, finished or not, or unfinished."""
-        return int(self.q(mutations_sql(self.replicas("mutations"), self.t, since))[0][0])
+        """Count the source's unfinished mutations and every one created since `since`,
+        less the clock-skew margin."""
+        sql = mutations_sql(self.replicas("mutations"), self.t, since - CLOCK_SKEW_MARGIN_S)
+        return int(self.q(sql)[0][0])
 
     def width_refusal(self, ddl: str) -> str:
         """Why a named column holds vectors the copy would zero, or ''."""
@@ -759,21 +777,40 @@ class VectorRebuild:
     def consistent(self, version: str | None, key: list[str]) -> tuple[int, int, int]:
         """(mismatched, source_only, twin_only) keys of the live table against the twin."""
         hashed = [c for c in tr.insertable_columns(self.ch, self.t) if c not in self.cols]
-        sql = consistency_sql(self.t, self.twin, self.fin, version, key, hashed)
+        sql = consistency_sql(
+            self.t, self.twin, self.fin, version, key, hashed, self.cols, dim=self.dim
+        )
         row = self.q(sql, join_use_nulls=0)[0]
         return int(row[0]), int(row[1]), int(row[2])
 
-    def divergence(self, version: str | None, key: list[str], why: str) -> str:
-        """The gate's message for keys that still differ: `why`, unless the source holds
-        keys with more than one row at their newest version, which no copy can match."""
+    def gate_failure(
+        self, cons: tuple[int, int, int], version: str | None, key: list[str], why: str
+    ) -> str:
+        """The consistency gate's message, or '' when the twin matches: keys only the twin
+        holds first, then keys that differ (`why`, unless the source holds keys with more
+        than one row at their newest version, which no copy can match)."""
+        mismatched, source_only, twin_only = cons
+        if twin_only:
+            return twin_only_failure(twin_only)
+        if not (mismatched or source_only):
+            return ""
         if version and (n := int(self.q(tied_keys_sql(self.t, version, key))[0][0])):
             return tied_failure(self.t, n)
         return why
 
-    def patch_blocks(self) -> dict[str, int]:
-        """The highest block number of the live table's active patch parts, per partition."""
-        rows = self.q(patch_blocks_sql(self.t))
-        return {str(r[0]): int(r[1]) for r in rows}
+    def drain(self, engine: str) -> None:
+        """Land the writes ClickHouse has acknowledged but not yet shows this replica: the
+        async insert queue, and on a replicated engine the parts other replicas took."""
+        self.cmd(f"SYSTEM FLUSH ASYNC INSERT QUEUE loom.{self.t}")
+        if engine.startswith(("Replicated", "Shared")):
+            self.cmd(f"SYSTEM SYNC REPLICA loom.{self.t}")
+
+    def mark(self, name: str, version: str | None) -> tuple[int, Any]:
+        """(rows served, highest version) of `loom.<name>`: the swap's postcondition
+        compares the rollback copy with the source as the last gate read it."""
+        top = f"max({version})" if version else "0"
+        row = self.q(f"SELECT count(), {top} FROM loom.{name}{self.fin}")[0]
+        return int(row[0]), row[1]
 
     def recall(self, ddl: str) -> list[float]:
         """Distance recall per probe: exact on the source vs the twin read as the legs read it."""
@@ -815,9 +852,7 @@ class VectorRebuild:
         sel = replace_select(self.cols, dim=self.dim)
         if self.aborted():
             raise Aborted("abort file present before the copy; the twin is left")
-        # the hash leaves out the rebuilt vectors, so an UPDATE of one shows only in its patch part
-        live_patches = self.patch_blocks()
-        since = self.twin_created() if reused else self.since
+        since = self.twin_metadata_time() if reused else self.since
         if not reused:
             stop = threading.Event()
             threading.Thread(target=self.monitor, args=(stop,), daemon=True).start()
@@ -854,15 +889,12 @@ class VectorRebuild:
             log("repair keys:", self.repair_into(self.twin, self.t, sel, version, key))
             cons = self.consistent(version, key)
             log("consistency after repair:", cons)
-        if cons[0] or cons[1]:
-            why = (
-                "GATE FAILED: the twin diverges (a key's version, row count or content); no "
-                "swap. Stop writes and erasures and rerun with --restart"
-            )
-            log(self.divergence(version, key, why))
-            return GATE_FAILED
-        if cons[2]:
-            log(twin_only_failure(cons[2]))
+        why = (
+            "GATE FAILED: the twin diverges (a key's version, row count or content); no "
+            "swap. Stop writes and erasures and rerun with --restart"
+        )
+        if failure := self.gate_failure(cons, version, key, why):
+            log(failure)
             return GATE_FAILED
         drec = self.recall(ddl)
         if not drec:
@@ -884,34 +916,24 @@ class VectorRebuild:
         if not self.still_ours():
             log(f"REFUSED: loom.{self.twin} is no longer the twin this run created; no swap")
             return REFUSED
+        # the flush in swap_in then has nothing left to add after the checks below
+        self.drain(engine)
         self.delta_into(self.twin, self.t, sel, version, key)
         # writers and erasure must be stopped; check again that nothing landed during the gates
         if why := self.width_refusal(ddl):
             log(f"GATE FAILED: {why}; no swap")
             return GATE_FAILED
+        # read first: a row that lands after it shows in the rollback copy after the swap
+        checked = self.mark(self.t, version)
         cons = self.consistent(version, key)
-        log("consistency before the swap:", cons)
-        if cons[2]:
-            log(twin_only_failure(cons[2]))
-            return GATE_FAILED
-        if cons[0] or cons[1]:
-            why = (
-                "GATE FAILED: the source changed during the gates (a write, an update or a "
-                "delete), and the twin no longer matches it; no swap. Stop writes and erasures "
-                "and rerun with --restart"
-            )
-            log(self.divergence(version, key, why))
-            return GATE_FAILED
-        new_patches = sorted(
-            p for p, block in self.patch_blocks().items() if block > live_patches.get(p, -1)
+        log("consistency before the swap:", cons, "rows and highest version:", checked)
+        why = (
+            "GATE FAILED: the source changed during the gates (a write, an update or a "
+            "delete), and the twin no longer matches it; no swap. Stop writes and erasures "
+            "and rerun with --restart"
         )
-        log("live patch partitions with a block new since the copy:", new_patches)
-        if new_patches:
-            log(
-                "GATE FAILED: a lightweight UPDATE landed on the source during the run (a "
-                "quarantine, say), which the twin does not hold; no swap. Stop writes and rerun "
-                "with --restart"
-            )
+        if failure := self.gate_failure(cons, version, key, why):
+            log(failure)
             return GATE_FAILED
         if n := self.mutations_since(since):
             log(
@@ -922,9 +944,9 @@ class VectorRebuild:
             )
             return GATE_FAILED
         tr.swap_in(self.ch, self.t)
-        return self.check_swapped()
+        return self.check_swapped(version, checked)
 
-    def check_swapped(self) -> int:
+    def check_swapped(self, version: str | None, checked: tuple[int, Any]) -> int:
         live = self.target_state(self.t)
         log(
             "live rows",
@@ -941,6 +963,14 @@ class VectorRebuild:
             return POSTCONDITION
         if set(tr.columns(self.ch, self.t)) != set(tr.columns(self.ch, self.pre)):
             log("POSTCONDITION FAILED: the rollback copy's columns differ by name")
+            return POSTCONDITION
+        if (now := self.mark(self.pre, version)) != checked:
+            log(
+                f"POSTCONDITION FAILED: rows reached the source after the last check (rows and "
+                f"highest version {checked} then, {now} in loom.{self.pre}), and the new table "
+                "does not hold them. Keep writers stopped and run --rollback --yes, which puts the "
+                "old table, those rows included, back in"
+            )
             return POSTCONDITION
         return OK
 

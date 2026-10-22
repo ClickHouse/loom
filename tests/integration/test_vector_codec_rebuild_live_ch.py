@@ -190,9 +190,16 @@ def test_removing_one_unversioned_row_under_a_shared_key_stops_the_swap(
     assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
 
 
-def test_a_lightweight_update_during_recall_stops_the_swap(
-    ch: Any, table: str, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("merged", [False, True])
+def test_a_lightweight_update_of_the_vector_during_recall_stops_the_swap(
+    ch: Any,
+    table: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    merged: bool,
 ) -> None:
+    """The UPDATE keeps the key and its version; merged, its patch part is applied and
+    gone before the swap, and the vector in the row hash still shows the change."""
     ch.command(
         f"ALTER TABLE loom.{table} MODIFY SETTING "
         "enable_block_number_column = 1, enable_block_offset_column = 1"
@@ -201,18 +208,21 @@ def test_a_lightweight_update_during_recall_stops_the_swap(
     job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
     if why := job.codec_refusal():
         pytest.skip(why)
-    ch.command(f"SYSTEM STOP MERGES loom.{table}")
+    if not merged:
+        ch.command(f"SYSTEM STOP MERGES loom.{table}")
 
-    def update_during_recall(self: Any, *_: Any) -> list[float]:
+    def update_during_recall(*_: Any) -> list[float]:
         ch.command(
             f"UPDATE loom.{table} SET embedding = [2., 2., 2., 2., 2., 2., 2., 2.] WHERE id = 1"
         )
-        assert self.patch_blocks()
+        if merged:
+            ch.command(f"OPTIMIZE TABLE loom.{table} FINAL")
         return [1.0]
 
     try:
         monkeypatch.setattr(vcr.VectorRebuild, "recall", update_during_recall)
         assert vcr.main([*args(table), "--yes"], ch=ch) == tr.GATE_FAILED
+        assert "the source changed during the gates" in capsys.readouterr().out
         assert ch.query(f"SELECT embedding FROM loom.{table} FINAL").result_rows == [([2.0] * 8,)]
         assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
     finally:
@@ -223,7 +233,7 @@ def test_a_finished_alter_update_during_recall_stops_the_swap(
     ch: Any, table: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """An erasure tombstone is an ALTER UPDATE that keeps the key and its version; one that
-    finishes before the swap leaves no unfinished mutation and no patch part."""
+    finishes before the swap leaves no unfinished mutation, and the row hash shows it."""
     insert(ch, table, 1, [1.0] * 8)
     job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
     if why := job.codec_refusal():
@@ -239,7 +249,7 @@ def test_a_finished_alter_update_during_recall_stops_the_swap(
 
     monkeypatch.setattr(vcr.VectorRebuild, "recall", tombstone_during_recall)
     assert vcr.main([*args(table), "--yes"], ch=ch) == tr.GATE_FAILED
-    assert "mutation(s) on loom." in capsys.readouterr().out
+    assert "the source changed during the gates" in capsys.readouterr().out
     assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
     assert ch.query(f"SELECT embedding FROM loom.{table} FINAL").result_rows == [([2.0] * 8,)]
 

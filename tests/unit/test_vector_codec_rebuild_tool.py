@@ -41,11 +41,7 @@ class _CH:
         self.sent: list[tuple[str, dict[str, Any]]] = []  # (statement, its settings)
         self.patches: dict[str, int] = {}
         self.patches_first: dict[str, list[int]] = {}  # earlier reads, before self.patches
-        # the live table's patch parts: partition id -> highest max_block_number
-        self.patch_blocks: dict[str, int] = {}
-        self.patch_blocks_first: list[
-            dict[str, int]
-        ] = []  # earlier reads, before self.patch_blocks
+        self.flushed: list[int] = []  # rows each async-queue flush lands, in order
         self.uuids = iter(f"u{i}" for i in range(100))
         self.codec_rows = codec_rows("writable", "writable")
         self.delta = 0  # rows a delta finds above the destination's version
@@ -57,11 +53,13 @@ class _CH:
         self.mutations_first: list[int] = []
         self.tied = 0  # keys with more than one row at their newest version
         self.queries: list[str] = []
+        self.sequence: list[str] = []  # every query and command, in order
         self.query_settings: list[tuple[str, dict[str, Any]]] = []
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _R:
         p = parameters or {}
         self.queries.append(sql)
+        self.sequence.append(sql)
         self.query_settings.append((sql, dict(settings or {})))
         if sql == CODEC_SETTINGS_SQL:
             return _R(self.codec_rows)
@@ -84,11 +82,9 @@ class _CH:
             return _R(
                 [(c, "T", "", "", "") for c in ("org", "namespace", "embedding", "created_at")]
             )
-        if sql.startswith("SELECT partition_id, max(max_block_number)"):
-            blocks = (
-                self.patch_blocks_first.pop(0) if self.patch_blocks_first else self.patch_blocks
-            )
-            return _R(list(blocks.items()))
+        if sql.startswith("SELECT count(), "):  # rows served and highest version
+            rows = self.t[sql.split("FROM loom.", 1)[1].split()[0]]["rows"]
+            return _R([(rows, rows)])
         if "startsWith(name, 'patch')" in sql:
             name = re.search(r"table = '(\w+)'", sql).group(1)  # type: ignore[union-attr]
             first = self.patches_first.get(name)
@@ -120,6 +116,7 @@ class _CH:
     def command(self, stmt: str, parameters: Any = None, settings: Any = None) -> None:
         s = " ".join(stmt.split())
         self.commands.append(s)
+        self.sequence.append(s)
         self.sent.append((s, dict(settings or {})))
         w = s.replace("loom.", "").split()
         if s.startswith("CREATE TABLE"):
@@ -128,6 +125,8 @@ class _CH:
             self.t.pop(w[2])
         elif s.startswith("EXCHANGE TABLES"):
             self.t[w[2]], self.t[w[4]] = self.t[w[4]], self.t[w[2]]
+        elif s.startswith("SYSTEM FLUSH ASYNC INSERT QUEUE") and self.flushed:
+            self.t[w[5]]["rows"] += self.flushed.pop(0)
         elif s.startswith("RENAME TABLE"):
             self.t[w[4]] = self.t.pop(w[2])
         elif s.startswith("INSERT INTO") and "WHERE" not in s:
@@ -425,38 +424,13 @@ def test_the_statement_timeout_caps_the_gate_reads_and_stays_within_the_read_tim
         "round(cosineDistance",
         "ORDER BY rand()",
         "SELECT max(created_at)",
-        "max(max_block_number)",
+        "SELECT count(), max(created_at)",
     ):
         reads = [st for q, st in ch.query_settings if needle in q]
         assert reads and all(st["max_execution_time"] == 60 for st in reads), needle
     for bad in ("0", "-1", "nan", "inf", str(vcr.COPY_RECEIVE_TIMEOUT_S)):
         with pytest.raises(SystemExit):
             vcr.parse(["--table", "t", "--columns", "embedding", "--statement-timeout-s", bad])
-
-
-@pytest.mark.parametrize(
-    ("before", "after"),
-    [
-        # a new UPDATE takes a block above every recorded one, merged or not
-        ({"patch-h1-all": 5}, {"patch-h1-all": 7}),
-        # an UPDATE of other columns writes patch parts in a partition not recorded
-        ({"patch-h1-all": 5}, {"patch-h1-all": 5, "patch-h2-all": 7}),
-        ({}, {"patch-h1-all": 7}),
-    ],
-)
-def test_a_lightweight_update_during_the_run_stops_the_swap(
-    before: dict[str, int], after: dict[str, int], capsys: Any
-) -> None:
-    """A quarantine keeps the key and its version, so the consistency reads match; the
-    patch part it writes on the source is what shows it, and the run stops."""
-    ch = _CH(memory_chunks=_live())
-    ch.patch_blocks_first = [before]
-    ch.patch_blocks = after
-    assert _run(ch, "--yes") == tr.GATE_FAILED
-    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
-    out = capsys.readouterr().out
-    assert "a lightweight UPDATE landed on the source during the run" in out
-    assert "--restart" in out
 
 
 def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:
@@ -474,23 +448,11 @@ def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:
     assert delta < _last(ch, "GROUP BY w")
 
 
-def test_patch_parts_merged_since_the_copy_do_not_stop_the_swap() -> None:
-    """patch-a (block 2) and patch-b (block 5) merged into one part: it keeps block 5."""
+def test_an_update_of_a_rebuilt_vector_stops_the_swap(capsys: Any) -> None:
+    """An UPDATE of the vector keeps the key and its version, and a merge can apply and drop
+    its patch part; the hash covers the vector as the twin stores it, so the key reads as
+    mismatched and the run stops."""
     ch = _CH(memory_chunks=_live())
-    ch.patch_blocks_first = [{"patch-h1-all": 5}]
-    ch.patch_blocks = {"patch-h1-all": 5}
-    assert _run(ch, "--yes") == tr.OK
-    assert any(c.startswith("EXCHANGE") for c in ch.commands)
-
-
-def test_an_update_whose_patch_part_was_applied_and_dropped_stops_the_swap(
-    capsys: Any,
-) -> None:
-    """A new patch part applied and dropped before the swap leaves no block to see; the
-    row's content hash in the consistency read still differs, and the run stops."""
-    ch = _CH(memory_chunks=_live())
-    ch.patch_blocks_first = [{"patch-h1-all": 5}]
-    ch.patch_blocks = {}
     ch.cons_first = [(0, 0, 0)]
     ch.cons = (1, 0, 0)  # the key and its version match; the hash does not
     assert _run(ch, "--yes") == tr.GATE_FAILED
@@ -498,6 +460,37 @@ def test_an_update_whose_patch_part_was_applied_and_dropped_stops_the_swap(
     assert "the source changed during the gates" in capsys.readouterr().out
     reads = [q for q in ch.queries if "FULL OUTER JOIN" in q]
     assert reads and all("s.__hash != t.__hash" in q for q in reads)
+    assert all(vcr.stored_vector("embedding", dim=DIM) in q for q in reads)
+
+
+def test_rows_flushed_into_the_source_after_the_checks_fail_the_postcondition(
+    capsys: Any,
+) -> None:
+    """The swap's own async-queue flush lands a row after every check: the rollback copy
+    then holds a row the new table lacks, and the run says so and names --rollback."""
+    ch = _CH(memory_chunks=_live())
+    ch.flushed = [0, 1]  # the drain before the last delta, then the swap's flush
+    assert _run(ch, "--yes") == tr.POSTCONDITION
+    assert any(c.startswith("EXCHANGE") for c in ch.commands)
+    out = capsys.readouterr().out
+    assert "rows reached the source after the last check" in out
+    assert "--rollback --yes" in out
+    assert not any(c.startswith("INSERT INTO loom.memory_chunks ") for c in ch.commands)
+
+
+def test_the_queue_and_the_replica_are_drained_before_the_last_delta() -> None:
+    ddl = ARRAY.replace(
+        "ReplacingMergeTree(created_at)",
+        "ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}', '{replica}', created_at)",
+    )
+    ch = _CH(memory_chunks={"ddl": ddl, "rows": 5, "uuid": "live"})
+    assert _run(ch, "--yes") == tr.OK
+    seq = ch.sequence
+    flush = seq.index("SYSTEM FLUSH ASYNC INSERT QUEUE loom.memory_chunks")
+    sync = seq.index("SYSTEM SYNC REPLICA loom.memory_chunks")
+    recall = max(i for i, q in enumerate(seq) if "round(cosineDistance" in q)
+    delta = max(i for i, q in enumerate(seq) if "FROM loom.memory_chunks WHERE created_at >" in q)
+    assert recall < flush < sync < delta
 
 
 def test_a_duplicate_key_insert_on_a_plain_merge_tree_stops_the_swap(capsys: Any) -> None:
@@ -563,7 +556,8 @@ def test_a_mutation_since_the_copy_stops_the_swap_even_when_done(
     assert "1 mutation(s) on loom.memory_chunks since the copy started" in out
     assert "--restart" in out
     last = ch.queries[_last(ch, "system.mutations")]
-    assert f"(NOT is_done OR create_time >= toDateTime({since}))" in last
+    margin = since - vcr.CLOCK_SKEW_MARGIN_S
+    assert f"(NOT is_done OR create_time >= toDateTime({margin}))" in last
 
 
 def test_the_mutation_baseline_is_read_before_the_preflight_mutation_check() -> None:

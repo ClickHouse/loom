@@ -253,13 +253,15 @@ def test_a_key_is_mismatched_only_when_both_sides_hold_it() -> None:
         (None, "(s.n != t.n OR s.__hash != t.__hash)"),
     ):
         sql = vcr.consistency_sql(
-            "memory_chunks", "memory_chunks_rebuild", "", version, ["org"], hashed
+            "memory_chunks", "memory_chunks_rebuild", "", version, ["org"], hashed, [], dim=8
         )
         assert sql.startswith(
             f"SELECT countIf(s.__present = 1 AND t.__present = 1 AND {vcmp}) AS mismatched, "
             "countIf(t.__present = 0) AS source_only, countIf(s.__present = 0) AS twin_only "
         )
-    plain = vcr.consistency_sql("chunks", "chunks_rebuild", "", None, ["org", "namespace"], hashed)
+    plain = vcr.consistency_sql(
+        "chunks", "chunks_rebuild", "", None, ["org", "namespace"], hashed, [], dim=8
+    )
     assert (
         "count() AS n, sum(cityHash64(tuple(`org`, `deleted_at`))) AS __hash, 1 AS __present "
         "FROM loom.chunks GROUP BY org, namespace"
@@ -267,11 +269,20 @@ def test_a_key_is_mismatched_only_when_both_sides_hold_it() -> None:
 
 
 def test_the_consistency_read_hashes_each_row_it_compares() -> None:
-    """A change that keeps the key and its version (an UPDATE, a tombstone) shows only in
-    the hash; `tuple` keeps a NULL column from making the hash NULL."""
-    sql = vcr.consistency_sql("t", "t_rebuild", " FINAL", "v", ["org"], ["org", "v", "x"])
-    assert "SELECT org, v, cityHash64(tuple(`org`, `v`, `x`)) AS __hash, 1 AS __present " in sql
-    assert "FROM loom.t FINAL) AS s" in sql and "FROM loom.t_rebuild FINAL) AS t" in sql
+    """A change that keeps the key and its version (an UPDATE of any column, a tombstone)
+    shows only in the hash; `tuple` keeps a NULL column from making the hash NULL. The
+    source's vector is hashed as the copy writes it, the twin's as it is stored."""
+    sql = vcr.consistency_sql("t", "t_rebuild", " FINAL", "v", ["org"], ["org", "v"], ["e"], dim=3)
+    stored = "if(length(e) = 3, CAST(e AS Array(BFloat16)), " + vcr.pad(3) + ")"
+    assert vcr.stored_vector("e", dim=3) == stored
+    assert (
+        f"(SELECT org, v, cityHash64(tuple(`org`, `v`, {stored})) AS __hash, 1 AS __present "
+        "FROM loom.t FINAL) AS s"
+    ) in sql
+    assert (
+        "(SELECT org, v, cityHash64(tuple(`org`, `v`, `e`)) AS __hash, 1 AS __present "
+        "FROM loom.t_rebuild FINAL) AS t"
+    ) in sql
 
 
 def test_the_pre_swap_mutation_read_counts_finished_mutations_since_the_copy() -> None:
@@ -288,14 +299,6 @@ def test_the_dimension_read_samples_real_vectors() -> None:
         "SELECT topK(1)(w) FROM (SELECT length(embedding) AS w FROM loom.memory_chunks FINAL "
         "WHERE length(embedding) > 0 AND arrayExists(x -> x != 0, embedding) "
         f"LIMIT {vcr.DIM_SAMPLE_ROWS})"
-    )
-
-
-def test_the_patch_check_reads_the_highest_block_per_partition() -> None:
-    assert vcr.patch_blocks_sql("memory_embeddings") == (
-        "SELECT partition_id, max(max_block_number) FROM system.parts "
-        "WHERE database = currentDatabase() AND table = 'memory_embeddings' AND active "
-        "AND startsWith(name, 'patch') GROUP BY partition_id"
     )
 
 
