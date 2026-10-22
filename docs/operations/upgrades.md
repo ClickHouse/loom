@@ -73,7 +73,9 @@ checkout.
    R_request × `ch_batched_insert_wait_max_ms` / 1000 + R_background ×
    `ch_batched_insert_background_wait_max_ms` / 1000 connections on top of its other
    statements. R_request is the batched inserts a second that requests wait on: about 2
-   per `conversation.append` and up to 4 per memory write. R_background is the
+   per `conversation.append`, 6 or more per `memory.set` (the audit row, the outbox row,
+   two entity-edge and two entity-triple inserts, plus the carry acknowledgements on a
+   carried write) and about 10 per `memory.set_from_messages`. R_background is the
    background flushes a second (usage events, write marks, webhook attempts). Treat the
    result as a floor: a waiting insert also holds its connection through the flush, and
    a process at 200 writes a second refused writes with a pool at the bound (20) and
@@ -82,10 +84,13 @@ checkout.
    default 64 leaves room for about 300 request-path batched inserts a second (three
    times the bound is 45) with about 20 connections for the process's other statements.
    The default 64 was measured clean at 200 `conversation.append` writes a second (two
-   batched inserts each, `bench/write_rate.py --target client`); memory writes send up
-   to four each, so count them at four. A process that cannot grow its pool starts with
+   batched inserts each, `bench/write_rate.py --target client`); count each
+   `memory.set` at six. A process that cannot grow its pool starts with
    `LOOM_CH_BATCHED_INSERTS=false`
-   ([batched inserts](../architecture/clickhouse.md#batched-inserts)). After the
+   ([batched inserts](../architecture/clickhouse.md#batched-inserts)). That frees only
+   the audit and outbox rows of a memory write: the four entity-graph inserts stay
+   waited, so a memory-write-heavy process sizes its pool for them either way, or
+   lowers `ch_batched_insert_wait_max_ms`. After the
    rollout, watch `loom.ch.pool.in_use`, `loom.ch.pool.waiters` and
    `loom.ch.pool.overloaded_total`; if `waiters` stays above zero or `overloaded_total`
    climbs, raise `LOOM_CH_POOL_MAXSIZE` or set `ch_batched_inserts` to `false` (live, no

@@ -559,9 +559,8 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Batch the inserts docs/architecture/clickhouse.md#batched-inserts lists as switched
-    # by this setting, so concurrent ones share a part; false commits them. The waited
-    # async inserts listed there stay waited either way.
+    # Send per-request inserts (audit, transcript turns, agent_events, webhook outbox, evidence)
+    # as waited async inserts sharing parts, each holding a pooled connection; false commits each.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched or waited async insert a request waits on for others
     # to share its part; holds a pooled connection meanwhile.
@@ -5238,9 +5237,11 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.search_trace_log": 200,
     # Version inserts plus the conflict and dedup reads: p50 1,062 ms and p99 3.7 s on
     # ClickHouse Cloud; 200 ms at the x20 multiplier = 4 s sits at that p99, so a
-    # violation is a signal. + audit-row, entity-triple and outbox-row waits (~150 ms).
+    # violation is a signal. + audit-row, entity-edge and entity-triple (concurrent) and
+    # outbox-row waits (~150 ms).
     "memory.set": 200,
-    # LLM extraction dominates (~7K-token prompt); bulk_set adds ~200 ms + ~4 insert waits.
+    # LLM extraction dominates (~7K-token prompt); bulk_set adds ~200 ms + ~4 insert waits
+    # (audit, evidence, belief sources twice) before it.
     "memory.set_from_messages": 2700,
     # Profile + pinned + score-ordered recall (+ optional knowledge.search),
     # each identity-scoped point-lookups.

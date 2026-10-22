@@ -204,7 +204,7 @@
         "ch_batched_inserts": {
           "default": true,
           "type": "boolean",
-          "description": "Batch the inserts docs/architecture/clickhouse.md#batched-inserts lists as switched by this setting, so concurrent ones share a part; false commits them. The waited async inserts listed there stay waited either way."
+          "description": "Send per-request inserts (audit, transcript turns, agent_events, webhook outbox, evidence) as waited async inserts sharing parts, each holding a pooled connection; false commits each."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,

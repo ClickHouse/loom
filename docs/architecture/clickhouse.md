@@ -162,7 +162,14 @@ insert adds up to its window, and holds its pooled connection meanwhile. A susta
 R_request request-path and R_background background batched inserts a second therefore
 hold at least R_request × `ch_batched_insert_wait_max_ms` / 1000 + R_background ×
 `ch_batched_insert_background_wait_max_ms` / 1000 connections: 100 `conversation.append`
-a second, two batched inserts each, hold at least 100 × 2 × 50 / 1000 = 10. That is a
+a second, two batched inserts each, hold at least 100 × 2 × 50 / 1000 = 10. A
+`memory.set` waits on six or more: the audit row, the outbox row (webhook namespaces),
+the `entity_edges` and `entity_edge_memories` inserts, the `entity_triples` and
+`entity_triple_memories` inserts, plus `carry_acks` on a carried write;
+`memory.set_from_messages` waits on about ten. The four entity-graph inserts are
+waited async inserts, so `ch_batched_inserts = false` leaves them holding connections:
+a process taking mostly memory writes sizes its pool for them either way, or lowers
+`ch_batched_insert_wait_max_ms`. That is a
 lower bound: a waiting insert holds its connection for the window and then the flush
 and part write, which queue up and grow under load. One process taking 200 writes a
 second, two batched inserts each (`bench/write_rate.py --target client`), refused
