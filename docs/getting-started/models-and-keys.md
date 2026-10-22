@@ -281,6 +281,25 @@ gateway's audience; the gateway must trust the cluster's OIDC issuer and match
 Loom's service account (`system:serviceaccount:<namespace>:<name>`), not just
 the issuer, since every pod of the cluster can get a token from it.
 
+A gateway that verifies the workload's token itself takes it as the bearer, with no
+exchange: set the bearer mode instead of a token endpoint. Loom reads the file at most
+once a minute, and again at once when the gateway answers 401, so a rotated token is
+picked up without a restart:
+
+```bash
+LOOM_INFERENCE_WORKLOAD_TOKEN_MODE=bearer
+LOOM_INFERENCE_WORKLOAD_TOKEN_FILE=/var/run/secrets/tokens/gateway   # sent as it is
+LOOM_INFERENCE_GATEWAY_HOSTS=gateway.example                         # required, as with the exchange
+LOOM_OPENAI_BASE_URL=https://gateway.example/v1
+LOOM_ANTHROPIC_BASE_URL=https://gateway.example
+LOOM_EMBEDDING_PROVIDER=compatible                                   # embeddings through the gateway too
+LOOM_EMBEDDING_BASE_URL=https://gateway.example/v1
+```
+
+Name the provider and the models as in the exchange example. The token goes only to the
+gateway's hosts: the bearer mode requires the gateway, as the exchange does. A compatible
+embedding endpoint given its own `LOOM_EMBEDDING_API_KEY` sends that key instead.
+
 #### Naming the customer on every call
 
 A gateway that meters or budgets per customer reads the customer from a header.
@@ -315,6 +334,71 @@ LOOM_INFERENCE_FEATURE_MAP_JSON='{"hyde": "search", "*": "memory"}'  # Loom's fe
 Cached answers make no call: an embedding or a model answer served from Loom's
 cache is not metered again. The customer is still checked before the cache, so a
 path that names none is refused even on a hit.
+
+#### Naming the agent on every call
+
+A gateway that bills or limits each agent reads whom a call is for from headers. Map each
+header to a template, and every chat, embedding, rerank and classify request to the gateway
+carries it:
+
+```bash
+LOOM_INFERENCE_IDENTITY_HEADERS_JSON='{"X-Tenant": "{tenant}", "X-Agent": "{agent}", "X-Actor": "{email}"}'
+LOOM_INFERENCE_GATEWAY_HOSTS=gateway.example   # required: identity headers go only to these hosts
+LOOM_INFERENCE_TENANT_CLAIM=tenant_id   # the workload trust claim {tenant} names (the default)
+```
+
+- The placeholders are `{org}`, `{namespace}`, `{subject}`, `{user_id}`, `{agent}` (the agent
+  of a workload trust's token, `sa:<trust>:<agent>`), `{tenant}` (the value that trust requires
+  of its `LOOM_INFERENCE_TENANT_CLAIM` claim) and `{email}` (a signed-in person's address).
+- A header whose template renders empty is not sent: with bare placeholders, a call with no
+  agent behind it (a person's, or the deployment's own) carries no agent header. The headers
+  naming `{agent}` or `{tenant}` go together or not at all, so an agent never goes without its
+  tenant.
+- A call that names no org is refused (`MODEL_CALL_UNATTRIBUTED`) unless it is the deployment's
+  own: run `loom` commands that call models with `--org`, and with `--namespace` while the
+  headers name the agent (one with no namespace is refused rather than billed to the
+  gateway's default agent).
+- Background jobs name the identity of the rows they work on: the writer of a memory or of a
+  deferred extraction, else the agent whose own namespace the row is in. A job batching rows
+  makes one call per identity.
+- No other host gets the identity headers: a reranker, a classifier or a provider outside
+  `LOOM_INFERENCE_GATEWAY_HOSTS` never learns whom a call is for.
+- `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists the answers your gateway gives for one
+  identity, each by its status and the exact `code`, `type` or `message` of its error body
+  (under `error`). Match by `code` where the gateway gives one. The default matches an
+  inference proxy's per-agent codes and the budget refusal of the metering behind it:
+
+  ```json
+  {
+    "refused": [
+      { "status": 429, "code": "budget_exceeded" },
+      { "status": 429, "type": "rate_limit_error", "message": "budget exceeded" },
+      { "status": 403, "code": "agent_denied" },
+      { "status": 400, "code": "identity_incomplete" },
+      { "status": 400, "code": "identity_malformed" }
+    ],
+    "wait": [{ "status": 429, "code": "agent_request_limit" }]
+  }
+  ```
+
+  The second entry is matched by type and message because the metering's Anthropic-shaped
+  answer on `/v1/messages` carries no code.
+
+- Never list an answer the gateway also gives for its own failure: `token_unavailable` (it
+  cannot fetch a credential, which a credential-service outage also answers) or
+  `identity_missing` (the request named no agent and the gateway has no default, a
+  configuration problem). Listed, `/v1/health` would stop seeing the outage or the
+  misconfiguration. Deployment-level answers stay provider failures too: `caller_*`,
+  `scope_not_granted` (a route the token's scopes do not cover), `route_not_found`,
+  `upstream_*`, `misconfigured`, `no_identity`.
+- An answer under `refused` makes that request answer 403 `MODEL_CALL_REFUSED`, and one under
+  `wait` 503 `MODEL_CALL_DEFERRED` with the gateway's `Retry-After`; a wait of two seconds or
+  less is waited out once first, and the call asked again. Nothing retries either answer,
+  `/v1/health` does not read them as a provider failure, and background jobs hold that
+  identity's calls to the same model, for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` (10
+  minutes by default) after a refusal and the `Retry-After` after a wait, while other work
+  goes on. Any answer the table does not list is the provider's, as always.
+- How each value is found: [identity headers](../architecture/llm-architecture.md#identity-headers).
 
 #### Switching an org's model calls off
 

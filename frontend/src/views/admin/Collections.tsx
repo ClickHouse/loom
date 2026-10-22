@@ -51,8 +51,8 @@ const HEADERS = [
   { label: "Name" },
   { label: "Inside" },
   { label: "Your role" },
-  // The row menus' column: named for a screen reader, blank on screen.
-  { label: <span className="sr-only">Actions</span>, width: "52px" },
+  // A 32 px menu and 16 px cell padding on each side leave room for its focus ring.
+  { label: <span className="sr-only">Actions</span>, width: "64px" },
 ];
 
 /** How many of a collection's documents its details list. */
@@ -124,6 +124,7 @@ export function Collections() {
   const [members, setMembers] = useState<CollectionEntry | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listBox = useRef<HTMLDivElement | null>(null);
+  const focusSearchOnRead = useRef<string | null>(null);
 
   // Refresh, Retry, a create and a delete read again through the effect, so a newer read
   // drops an older one.
@@ -138,7 +139,10 @@ export function Collections() {
           if (live()) setRead({ org, rows: r.collections, next: r.next_cursor });
         })
         .catch((e) => {
-          if (live()) setError(e);
+          if (live()) {
+            focusSearchOnRead.current = null;
+            setError(e);
+          }
         })
         .finally(() => {
           if (live()) setRefreshing(false);
@@ -174,17 +178,17 @@ export function Collections() {
 
   // A deleted row leaves with the next read, and with it the menu or the dialog that held
   // the focus: once that read lands, focus goes to the search.
-  const focusSearchOnRead = useRef(false);
   useEffect(() => {
-    if (!focusSearchOnRead.current || refreshing) return;
-    focusSearchOnRead.current = false;
-    searchRef.current?.focus();
-  }, [refreshing]);
+    const deletedFrom = focusSearchOnRead.current;
+    if (!deletedFrom || !current) return;
+    focusSearchOnRead.current = null;
+    if (current.org === deletedFrom) searchRef.current?.focus();
+  }, [current]);
 
   const onDelete = useCallback(
     async (c: CollectionEntry) => {
       if (await confirmDelete(org, c)) {
-        focusSearchOnRead.current = true;
+        focusSearchOnRead.current = org;
         setOpen(null);
         reload();
       }

@@ -8,6 +8,7 @@ import logging
 import time
 from typing import Any
 
+from server.auth.context import current_caller
 from server.code.app.index.pass_budget import (
     CodeIngestResult,
     PassBudget,
@@ -266,7 +267,10 @@ async def ingest_oldest_first(
         # Attribution is ContextVar state, so each lane task tags its own entry.
         pass_context.set_namespace(stream.cfg.namespace)
         set_worker_identity("code_ingest", org=stream.cfg.org, namespace=stream.cfg.namespace)
-        with customer.for_org(stream.cfg.org):
+        # The caller's model calls when code.refresh runs the pass (its token's subject).
+        with customer.for_org(
+            stream.cfg.org, namespace=stream.cfg.namespace, subject=current_caller()[0]
+        ):
             landed = await stream.step(clock=clock)
         if landed is None:
             deferred.append(stream)  # sliced: continues next pass

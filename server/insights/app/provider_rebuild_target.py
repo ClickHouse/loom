@@ -10,6 +10,18 @@ from server.embedding.gemini import GeminiEmbedder
 from server.embedding.local import LocalEmbedder
 from server.embedding.openai import OpenAIEmbedder
 from server.insights.api.models_provider_setup import ProviderSetupInput
+from server.llm import customer
+from server.workers.holds import hold_seconds
+
+
+def _hold_cause(error: BaseException) -> BaseException:
+    if not isinstance(error, BaseExceptionGroup):
+        return error
+    causes = [_hold_cause(child) for child in error.exceptions]
+    for cause in causes:
+        if isinstance(cause, customer.SwitchUnread):
+            return cause
+    return max(causes, key=hold_seconds)
 
 
 class RebuildEmbedder:
@@ -32,8 +44,11 @@ class RebuildEmbedder:
 
         # TaskGroup waits for sibling requests to finish cancellation before an
         # error escapes; no provider request may outlive the coordinator fence.
-        async with asyncio.TaskGroup() as group:
-            tasks = [group.create_task(one(text)) for text in texts]
+        try:
+            async with asyncio.TaskGroup() as group:
+                tasks = [group.create_task(one(text)) for text in texts]
+        except* customer.HOLDS as held:
+            raise _hold_cause(held) from held
         return [task.result() for task in tasks]
 
 

@@ -25,6 +25,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
+from server.core.errors import ModelCallRefused
+
 _lock = threading.Lock()
 # Set while a candidate configuration is probed: its outcome says nothing about
 # the providers the server is running on.
@@ -70,10 +72,14 @@ def recording(provider: str) -> Iterator[None]:
     """Record the outcome of the provider call made inside the block: a
     normal exit is a success, an `Exception` a failure (re-raised unchanged).
     A cancellation (the caller's deadline, a client gone) is not the
-    provider's failure and records nothing. Every provider client wraps its
-    call in this, so a configured provider that keeps failing reads degraded."""
+    provider's failure and records nothing, nor is the gateway's refusal of
+    one identity (`ModelCallRefused`), which says nothing of the provider.
+    Every provider client wraps its call in this, so a configured provider
+    that keeps failing reads degraded."""
     try:
         yield
+    except ModelCallRefused:
+        raise
     except Exception as exc:
         record_failure(provider, exc)
         raise

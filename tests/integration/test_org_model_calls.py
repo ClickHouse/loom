@@ -59,9 +59,10 @@ async def test_the_work_queries_return_only_the_org_left_switched_on(ch: Any) ->
     from server.memory.store import entities, sweeps
 
     off, on = unique_org("ai-off"), unique_org("ai-on")
+    namespace = f"model-calls-{on}"
     now = datetime.now(UTC).replace(tzinfo=None)
     sync = {"async_insert": 0, "wait_for_async_insert": 1}
-    ident = {"namespace": "n", "agent": "a", "user_id": "-", "session_id": "-"}
+    ident = {"namespace": namespace, "agent": "a", "user_id": "-", "session_id": "-"}
     from server.memory.store import rows as row_builders
 
     await ch.insert(
@@ -107,7 +108,7 @@ async def test_the_work_queries_return_only_the_org_left_switched_on(ch: Any) ->
         [
             {
                 "org": org,
-                "namespace": "n",
+                "namespace": namespace,
                 "queue_id": f"q-{org}",
                 "status": extraction_queue.STATUS_PENDING,
                 "enqueued_at": now,
@@ -120,11 +121,13 @@ async def test_the_work_queries_return_only_the_org_left_switched_on(ch: Any) ->
     excluded = frozenset({off})
     with own_write_reads():
         stubs = await sweeps.find_embedding_stubs(
-            batch_size=50, max_attempts=3, exclude_orgs=excluded
+            batch_size=50, max_attempts=3, namespace_filter=namespace, exclude_orgs=excluded
         )
-        keys = await entities.find_unentitied_keys(batch_size=500, exclude_orgs=excluded)
+        keys = await entities.find_unentitied_keys(
+            batch_size=500, namespace_filter=namespace, exclude_orgs=excluded
+        )
         claimed = await extraction_queue.claim_batch(
-            limit=500, lease_seconds=60, exclude_orgs=excluded
+            limit=500, lease_seconds=60, namespace_filter=namespace, exclude_orgs=excluded
         )
     for found in (stubs, keys, claimed):
         orgs = {r["org"] for r in found}

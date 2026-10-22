@@ -18,16 +18,18 @@ import httpx
 
 import server.memory.store as memory_repo
 from server.core.datetimes import naive_utc_now, to_naive_utc
-from server.core.errors import PreconditionFailedError
+from server.core.errors import ModelCallRefused, PreconditionFailedError
 from server.core.leases import LeaseUnavailable
 from server.core.naming import is_anonymous_user, same_session
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.llm import customer
 from server.llm.fake import FakeLLMClient
 from server.memory.app import intent_marks
 from server.memory.app.projection_errors import ProjectionScope
 from server.memory.domain import conflict_resolution as cr
 from server.memory.domain.conflicts import ConflictPeer
 from server.memory.domain.sensitivity import reads_high, value_reads_high
+from server.memory.domain.trust import subject_of
 from server.memory.store import conflict_resolver as queue
 from server.observability.genai import llm_stage
 from server.settings import settings
@@ -144,7 +146,7 @@ async def judge(new: cr.Note, peers: list[cr.Note]) -> tuple[dict[str, cr.PeerVe
                 # Cut at the cap, malformed, or a peer left out: once more, with room.
                 try:
                     again, more = await ask(2 * cap)
-                except (httpx.HTTPError, TimeoutError):
+                except (httpx.HTTPError, TimeoutError, ModelCallRefused):
                     if not verdicts:
                         raise
                     again, more = res, {}  # the first answer stands; what it left out waits
@@ -770,7 +772,13 @@ async def _judge_and_act(
     if not peers:
         return set()
     new, notes = notes_for(row, peers, {mid: when for mid, (when, _) in found.when.items()})
-    verdicts, model = await judge(new, notes)
+    with customer.for_org(
+        org,
+        namespace=namespace,
+        subject=subject_of(str(row.actor or "")),
+        user_id=str(row.user_id),
+    ):
+        verdicts, model = await judge(new, notes)
     counts.judged += 1
     acting = asyncio.ensure_future(
         _act_on_verdicts(org, namespace, row, peers, verdicts, policy, counts, model, new, notes)

@@ -97,9 +97,11 @@ def _function_body(fn_name: str) -> str:
 
 
 def test_stub_and_orphan_selects_read_the_columns_the_carry_needs():
-    stub_select = _function_body("find_embedding_stubs")
+    # find_embedding_stubs' FINAL read of the stubs it hands the worker
+    stub_select = _function_body("_stub_rows")
     for col in ("source_class", "verified", "conflict_checked_at", "content_sha256"):
         assert re.search(rf"\b{col}\b", stub_select), f"find_embedding_stubs omits {col}"
+    assert "_stub_rows(" in _function_body("find_embedding_stubs")
     from server.memory.store.sweeps import _EMBEDDING_MIRROR_COLUMNS
 
     # the orphan repair and memory.reindex read loom.memory, which has no

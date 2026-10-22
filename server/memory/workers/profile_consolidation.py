@@ -20,10 +20,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core import ch as core_ch
+from server.core.ch_params import fitting
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.llm import client as llm_client
 from server.llm import customer
 from server.memory.app import profile as profile_app
+from server.memory.app.model_attribution import newest_subject
 from server.memory.domain.profile_facts import render_fold_input
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.store.profile_sources import user_facts
@@ -33,9 +35,18 @@ from server.settings import settings
 from server.settings.budgets import llm_max_tokens
 from server.workers import pass_context
 from server.workers.cost_event import emit_worker_cost_event_for
+from server.workers.holds import Held, hold_seconds
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
+
+# Identities (org, namespace, user_id) whose fold was held (`customer.GROUP_HOLDS`), each
+# until its hold ends: the selection leaves them out meanwhile, so the pass's slots go to
+# identities whose fold can run.
+_HELD: Held[tuple[str, str, str]] = Held()
+# A pass reads this many times its slots: an identity whose fold is held in the pass
+# (a hold outlasts no pass of a six-hourly fold) gives its slot to the next one read.
+_OVERFETCH = 4  # not a setting: room for the held identities at the top of the ranking
 
 _FOLD_SYSTEM = (
     "You maintain a concise standing profile for an AI assistant. Given a list "
@@ -86,6 +97,12 @@ async def run_pass(
         # just-folded top identities every pass and never reach the rest.
         # `updated_at`, not `created_at`: a rewrite keeps the section's
         # creation time.
+        held = fitting(sorted(_HELD.current()))  # one parameter, one form field
+        held_sql = (
+            "AND (m.org, m.namespace, m.user_id) NOT IN {held:Array(Tuple(String, String, String))}"
+            if held
+            else ""
+        )
         identities = await ch.query_all(
             """
             SELECT m.org AS org, m.namespace AS namespace, m.user_id AS user_id,
@@ -97,8 +114,9 @@ async def run_pass(
               AND m.tombstoned_at IS NULL
               AND m.user_id != '-'
               AND m.memory_type IN {types:Array(String)}
-              -- an org whose model calls are switched off waits, and takes no slot
-              AND NOT has({off:Array(String)}, m.org)
+              -- an org whose model calls are switched off waits, and takes no slot;
+              -- so does an identity whose fold is held (`held`)
+              AND NOT has({off:Array(String)}, m.org) /*held*/
               AND (m.org, m.namespace, m.user_id) NOT IN (
                   SELECT org, namespace, user_id
                   FROM loom.memory FINAL
@@ -110,33 +128,54 @@ async def run_pass(
             HAVING n >= {minm:UInt32}
             ORDER BY n DESC
             LIMIT {lim:UInt32}
-            """,
+            """.replace("/*held*/", held_sql),
             params={
                 "minm": int(cfg.min_memories),
-                "lim": int(max(1, cfg.max_identities_per_pass)),
+                "lim": int(max(1, cfg.max_identities_per_pass)) * _OVERFETCH,
                 "types": ["preference", "decision"],
                 "label": cfg.label,
                 "cool": int(max(0, cfg.cooldown_seconds)),
                 "off": sorted(await customer.switched_off_orgs()),
+                **({"held": held} if held else {}),
             },
         )
-        result.identities_scanned = len(identities)
-        for row in identities:
-            try:
-                if await _consolidate_identity(ch, row, cfg):
-                    result.profiles_written += 1
-            except customer.HOLDS:
-                continue  # a held call is no failure: the identity is folded once the org is back
-            except Exception as e:
-                result.errors += 1
-                log.exception("profile consolidation failed for %s", dict(row))
-                pass_context.note_failure(e, str(row.get("namespace") or ""))
+        await _fold(ch, identities, cfg, result)
         rec.outcome = {
             "identities_scanned": result.identities_scanned,
             "profiles_written": result.profiles_written,
             "errors": result.errors,
         }
     return result
+
+
+async def _fold(
+    ch: Any,
+    identities: list[dict[str, Any]],
+    cfg: ProfileConsolidationConfig,
+    result: ProfileConsolidationResult,
+) -> None:
+    """Fold `identities` in their order until the pass's slots are spent. A held
+    fold is no failure and takes no slot: the identity is left out of the next
+    selections until its hold ends, and the next identity read takes its place."""
+    slots = max(1, cfg.max_identities_per_pass)
+    for row in identities:
+        if slots <= 0:
+            break
+        result.identities_scanned += 1
+        try:
+            if await _consolidate_identity(ch, row, cfg):
+                result.profiles_written += 1
+            slots -= 1
+        except customer.GROUP_HOLDS as e:
+            key = (str(row["org"]), str(row["namespace"]), str(row["user_id"]))
+            _HELD.hold([key], hold_seconds(e))
+        except customer.HOLDS:
+            return  # a switch gone unread holds every identity: the next pass tries
+        except Exception as e:
+            slots -= 1
+            result.errors += 1
+            log.exception("profile consolidation failed for %s", dict(row))
+            pass_context.note_failure(e, str(row.get("namespace") or ""))
 
 
 async def _consolidate_identity(
@@ -167,12 +206,21 @@ async def _consolidate_identity(
     row_started = time.monotonic()
     cost_accumulator.begin_op()
     try:
-        with llm_stage("profile_fold"), customer.for_org(str(row["org"])):
+        with (
+            llm_stage("profile_fold"),
+            customer.for_org(
+                str(row["org"]),
+                namespace=str(row["namespace"]),
+                subject=newest_subject(rows),
+                user_id=str(row["user_id"]),
+            ),
+        ):
             client = (
                 llm_client.get_llm_client_for_model(cfg.model)
                 if cfg.model
                 else llm_client.get_llm_client()
             )
+
             out = await client.complete(
                 system=_FOLD_SYSTEM,
                 user=facts,

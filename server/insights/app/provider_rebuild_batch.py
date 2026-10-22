@@ -8,6 +8,7 @@ full rows only after the entire batch validates. Source rows stay untouched.
 import asyncio
 import math
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from server.core.repo_base import _CHClient
@@ -15,10 +16,12 @@ from server.embedding.embedder import Embedder
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
 from server.insights.store.provider_staging import session_chunks
 from server.llm import customer
+from server.memory.app.model_attribution import attribution_for, memory_writers
 from server.memory.domain.embed_text import key_axis_text
 from server.memory.domain.okf_evidence import IMPORT_MAX_ITEMS
 from server.memory.domain.sensitivity import joined_overlaps_high, reads_high
 from server.settings import settings
+from server.workers.holds import UNREAD_HOLD_S, hold_seconds
 
 # Stored text recipes mirror the original write paths. Tracker rows do not
 # contain their source text and therefore require explicit hydration by caller.
@@ -42,6 +45,13 @@ _CALL_BATCH = 64
 
 class RebuildBatchError(ValueError):
     """A safe status code, never source content or an upstream provider body."""
+
+
+@dataclass(frozen=True)
+class RebuildBatchResult:
+    rows: list[dict[str, Any]]
+    rows_waiting: int
+    retry_after_s: float = 0.0
 
 
 def _source_text(
@@ -226,17 +236,12 @@ async def rebuild_batch(
     target: Embedder,
     *,
     source_texts: Mapping[int, str] | None = None,
-    waiting: list[int] | None = None,
     ch: _CHClient | None = None,
-) -> list[dict[str, Any]]:
-    """Return full staged rows; never publish partial or malformed embeddings.
+) -> RebuildBatchResult:
+    """Return staged rows and the retry delay for model calls held on this page.
 
-    A row whose org's model calls are switched off is staged without a vector
-    (`embedding_dim = 0`), as a tombstone is, and its index added to `waiting`;
-    the rebuild completes and counts it in its progress (`rows_waiting`). Once the
-    org is back on, memory_embeddings and code_chunks / code_summaries stubs are
-    embedded again by their recovery workers, and a row of any other table when a
-    write replaces it or a later rebuild covers it.
+    Model holds leave empty vectors until the coordinator retries this page.
+    Verification prevents publishing those rows before their vectors are rebuilt.
 
     A raw passage (`PASSAGE_TABLES`) whose text reads as high is staged
     without a vector and never sent to the provider; verification reads its text
@@ -255,21 +260,28 @@ async def rebuild_batch(
         raise RebuildBatchError("embedding_target_invalid")
     held = await _held_chunks(rows, ch) if table == "memory_chunks" else set()
     texts, slots = _inputs(table, rows, source_texts or {}, held)
-    # One call carries one org's texts: a model call names a single customer.
-    by_org = await customer.by_org(str(rows[index].get("org", "")) for index, _ in slots)
+    # One call carries one org's texts, of one identity: a model call names a single
+    # customer and identity.
+    writers = await memory_writers([rows[index] for index, _ in slots])
+    groups = await customer.groups(attribution_for(rows[index], writers) for index, _ in slots)
     vectors: list[list[float]] = [[] for _ in texts]
     left: set[int] = set()
-    for org, positions in by_org.items():
-        if await customer.switched_off(org):
+    retry_after_s = 0.0
+    for who, positions in groups.items():
+        if await customer.switched_off(who.org):
             left.update(positions)
+            retry_after_s = max(retry_after_s, UNREAD_HOLD_S)
             continue
         for start in range(0, len(positions), _CALL_BATCH):
             part = positions[start : start + _CALL_BATCH]
             try:
-                with customer.for_org(org):
+                with customer.attributed(who):
                     produced = await target.embed_many([texts[i] for i in part])
-            except customer.ModelCallsDisabled:
-                left.update(positions)  # switched off during the batch
+            except customer.GROUP_HOLDS as error:
+                # Switched off during the batch, or the identity refused, asked to wait
+                # or unread: its rows wait.
+                left.update(positions)
+                retry_after_s = max(retry_after_s, hold_seconds(error))
                 break
             except customer.SwitchUnread:
                 raise  # not a provider failure: the step waits for the switch to be read
@@ -281,8 +293,6 @@ async def rebuild_batch(
     result = [_empty_target_row(table, row, target.model_name) for row in rows]
     for i in sorted(left):
         vectors[i] = []  # staged without a vector, as the row's empty target row has
-    if waiting is not None:
-        waiting.extend(sorted({slots[i][0] for i in left}))
     for i, ((index, column), vector) in enumerate(zip(slots, vectors, strict=True)):
         if i in left:
             continue
@@ -292,4 +302,4 @@ async def rebuild_batch(
         )
         if dimension_column in result[index]:
             result[index][dimension_column] = target.dim
-    return result
+    return RebuildBatchResult(result, len({slots[i][0] for i in left}), retry_after_s)

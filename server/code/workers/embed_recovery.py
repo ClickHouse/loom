@@ -312,15 +312,16 @@ async def _embed_rows(
             texts = [clip_for_embedding(text_of(r), count_tokens=counter) for r in group]
             vectors: dict[int, list[float]]
             try:
-                with customer.for_org(org):
+                with customer.for_org(org, namespace=ns):
                     if not customer.names_one():
                         vectors = {}
                         failures = dict.fromkeys(range(len(group)), customer.NO_CUSTOMER)
                     else:
                         vectors, failures = await _vectors_for(embedder, texts)
-            except customer.ModelCallsDisabled:
-                # Switched off since the pass began: its stubs stay as they are,
-                # no attempt spent, and are embedded once the org is back on.
+            except customer.GROUP_HOLDS:
+                # Switched off since the pass began, or the identity refused, asked to
+                # wait or unread: its stubs stay as they are, no attempt spent, and
+                # are embedded later; the other groups' vectors are written.
                 result.switched_off += len(group)
                 continue
             embedded += _stage_replacements(

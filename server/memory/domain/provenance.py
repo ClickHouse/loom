@@ -90,9 +90,35 @@ def pipeline_actor(actor: str) -> Iterator[None]:
         pipeline_actor_var.reset(token)
 
 
+CLI_ACTOR_PREFIX: Final = "process:cli:"
+
+
 def cli_actor(command: str) -> str:
     """The principal a `loom <command>` invocation writes as."""
-    return "process:cli:" + (str(command or "").strip() or "unknown")
+    return CLI_ACTOR_PREFIX + (str(command or "").strip() or "unknown")
+
+
+# The actors Loom's own jobs and commands write as when no token stands behind a write: a
+# pipeline, never a principal. A model call for such a row is made for the row's namespace
+# (server/llm/identity.py), not for the pipeline. Every `process:<name>` literal under
+# server/ is one of these, or a `loom` command's (tests/unit/test_model_call_writers.py).
+PIPELINE_ACTORS: Final = frozenset(
+    {
+        EXTRACTION_WORKER_ACTOR,
+        "process:code_coverage_notify",
+        "process:consolidation",
+        "process:loom",
+        "process:period_digest",
+        "process:proposal_policy",
+        "process:session_brief",
+        "process:task_lease_sweep",
+    }
+)
+
+
+def is_pipeline_actor(actor: str) -> bool:
+    """Whether `actor` is a pipeline's own (`PIPELINE_ACTORS`, a command's), no principal's."""
+    return actor in PIPELINE_ACTORS or actor.startswith(CLI_ACTOR_PREFIX)
 
 
 def class_from_trace(source_trace: str) -> str:

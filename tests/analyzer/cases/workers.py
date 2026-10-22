@@ -198,9 +198,42 @@ async def _first_pass(ch: RecordingCH, c: dict[str, Any]) -> None:
         await fp.held_namespaces(owned, [(ORG, NS)], ch=ch)
 
 
+async def _profile_fold(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The profile fold's scan, with an identity held (its NOT IN) and without."""
+    from server.memory.workers import profile_consolidation as pc
+    from server.workers import holds
+
+    if c["held"]:
+        pc._HELD.hold([(ORG, NS, "alice")], 600)
+    try:
+        await pc.run_pass(pc.ProfileConsolidationConfig(max_identities_per_pass=2))
+    finally:
+        holds._reset_for_tests()
+
+
+async def _conflict_resolver(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory.store import conflict_resolver as queue
+
+    held = [(ORG, NS, "bot", "alice", "s1", "fact")] if c["held"] else []
+    await queue.owed_rows(limit=10, held=held, ch=ch)
+    await queue.unjudged_conflicted_rows(limit=10, held=held, ch=ch)
+
+
 def cases() -> list[Case]:
     return [
+        Case(
+            "workers.conflict_resolver",
+            "server.memory.store.conflict_resolver",
+            _conflict_resolver,
+            {"held": (False, True)},
+        ),
         Case("workers.first_pass", "server.workers.first_pass", _first_pass, {}),
+        Case(
+            "workers.profile_fold",
+            "server.memory.workers.profile_consolidation",
+            _profile_fold,
+            {"held": (False, True)},
+        ),
         Case(
             "builders.pure",
             "server.memory.store.integrity",

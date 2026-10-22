@@ -85,13 +85,16 @@ def _queued_pairs(where: str) -> str:
     return f"SELECT DISTINCT org, namespace FROM loom.memory_embeddings WHERE {where}"
 
 
-def _in_turns(where: str, *, newest_first: bool = False) -> str:
+def _in_turns(where: str, *, newest_first: bool = False, held: bool = False) -> str:
     """The vector rows matching `where`, in turns across (org, namespace), each
     namespace's rows oldest first (newest first with `newest_first`), so one namespace's
     backlog cannot hold the others back; within a turn the namespaces come in an order
     drawn from the pass's `seed`. Read strongly: a stamp a replica lacks is a row paid
     for twice."""
     order = "created_at DESC" if newest_first else "created_at"
+    if held:
+        where += """ AND (org, namespace, agent, user_id, session_id, memory_key) NOT IN
+            {held:Array(Tuple(String, String, String, String, String, String))}"""
     return f"""
         SELECT {_QUEUE_COLUMNS}
         FROM loom.memory_embeddings FINAL
@@ -137,6 +140,7 @@ async def owed_rows(
     *,
     limit: int,
     capped: Sequence[tuple[str, str]] = (),
+    held: Sequence[tuple[str, ...]] = (),
     seed: int = 0,
     max_age_days: int = 30,
     ch: _CHClient | None = None,
@@ -152,13 +156,16 @@ async def owed_rows(
         "seed": int(seed),
         "max_age": int(max_age_days),
     }
-    return await ch.query_all(_in_turns(_OWED, newest_first=True), params)
+    if held:
+        params["held"] = list(held)
+    return await ch.query_all(_in_turns(_OWED, newest_first=True, held=bool(held)), params)
 
 
 async def unjudged_conflicted_rows(
     *,
     limit: int,
     capped: Sequence[tuple[str, str]] = (),
+    held: Sequence[tuple[str, ...]] = (),
     seed: int = 0,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
@@ -167,7 +174,9 @@ async def unjudged_conflicted_rows(
     in `capped`."""
     ch = ch or _default_client()
     params = {"lim": int(limit), "capped": _capped(capped), "seed": int(seed)}
-    return await ch.query_all(_in_turns(_UNJUDGED), params)
+    if held:
+        params["held"] = list(held)
+    return await ch.query_all(_in_turns(_UNJUDGED, held=bool(held)), params)
 
 
 async def under_erasure(org: str, *, ch: _CHClient | None = None) -> bool:

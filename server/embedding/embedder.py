@@ -103,7 +103,8 @@ def _served(name: str) -> Embedder:
         # Labels over the served model, never the served model itself.
         raise ValueError(f"unknown embedding model: {name!r}")
     keys = KEY_ENVS.get(provider, ())
-    if keys and not provider_key(provider) and not (provider == "openai" and gateway.exchanging()):
+    keyless = provider in ("openai", "compatible") and gateway.keyless()
+    if keys and not provider_key(provider) and not keyless:
         logging.getLogger(__name__).error(
             "No real embedder configured. LOOM_EMBEDDING_MODEL=%s but %s is not set — "
             "falling back to fake-ngram-%d (NOT production-quality; will mis-rank "

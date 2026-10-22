@@ -23,7 +23,9 @@ from collections.abc import Callable
 from typing import Any
 
 from server.llm import customer
+from server.memory.app.model_attribution import attribution_for, memory_writers
 from server.memory.domain.sensitivity import without_high
+from server.settings import settings
 
 # (text-source column, vector column) per table, plus an optional secondary
 # (key text -> key vector, key dim) embedding.
@@ -339,14 +341,15 @@ async def _rewrite_page(
     model, dim = embedder.model_name, embedder.dim
     vecs: list[list[float]] | None = [[] for _ in chunk] if not key_only else None
     kvecs: list[list[float]] | None = [[] for _ in chunk] if cfg.get("key_text") else None
-    # A page can span two orgs (the keyset leads with org): one call per org,
-    # since a model call names a single customer.
+    # A page can span two orgs (the keyset leads with org): one call per org and
+    # identity, since a model call names a single customer and identity.
     left: set[int] = set()
     left_by_org: dict[str, int] = {}
-    groups = await customer.by_org(str(r.get("org") or "") for r in chunk)
-    for org, positions in groups.items():
+    writers = await memory_writers(chunk)
+    groups = await customer.groups(attribution_for(r, writers) for r in chunk)
+    for who, positions in groups.items():
         try:
-            with customer.for_org(org):
+            with customer.attributed(who):
                 if vecs is not None:
                     texts = [str(chunk[i].get(cfg["text"]) or "") for i in positions]
                     for i, v in zip(positions, await embedder.embed_many(texts), strict=True):
@@ -355,9 +358,11 @@ async def _rewrite_page(
                     keys = [_key_input(chunk[i]) for i in positions]
                     for i, v in zip(positions, await embedder.embed_many(keys), strict=True):
                         kvecs[i] = v
-        except customer.ModelCallsDisabled:
-            left.update(positions)  # switched off since the run began: its rows wait
-            left_by_org[org] = len(positions)
+        except customer.GROUP_HOLDS:
+            # Switched off since the run began, or the identity refused, asked to wait
+            # or unread: its rows wait, and the other groups' vectors are written.
+            left.update(positions)
+            left_by_org[who.org] = left_by_org.get(who.org, 0) + len(positions)
     out = [
         rewrite_row(r, cfg, model, dim, vecs[i] if vecs else None, kvecs[i] if kvecs else None)
         for i, r in enumerate(chunk)
@@ -431,6 +436,28 @@ async def delete_off_model(
     await ch.execute(f"DELETE FROM loom.{table} WHERE {' AND '.join(where)}", params=params)
 
 
+def in_database_refusal() -> str:
+    """Why `--in-database` may not run here: ClickHouse then calls the embedding
+    provider itself, with none of the headers that name whom a call is for and
+    outside the gateway's host check. '' when it may."""
+    why = (
+        "LOOM_INFERENCE_IDENTITY_HEADERS_JSON is set"
+        if settings.identity_headers()
+        else "LOOM_INFERENCE_CUSTOMER_HEADER is set"
+        if settings.inference_customer_header
+        else f"{settings.gateway_required_by()} requires the gateway"
+        if settings.gateway_required()
+        else ""
+    )
+    if not why:
+        return ""
+    return (
+        f"--in-database calls the embedding provider from ClickHouse, which names no "
+        f"customer or identity and is outside the gateway check, and {why}: re-embed "
+        "without --in-database"
+    )
+
+
 async def reembed_all(
     ch: Any,
     embedder: Any,
@@ -447,13 +474,17 @@ async def reembed_all(
 ) -> dict[str, int]:
     """`in_database` names the ClickHouse named collection holding the
     embedding provider's endpoint and key; when given, every table is
-    re-embedded by `aiEmbed` inside ClickHouse instead of a Python loop.
+    re-embedded by `aiEmbed` inside ClickHouse instead of a Python loop
+    (`in_database_refusal` says when it may not be).
     `resume`: a token a previous run printed; tables before its table are
     skipped and its table continues after the row it names.
     Raises CodedWidthMismatchError, before reading any row, when the embedder's
     width is not the one a coded vector table was created at."""
     from server.core.vectors import codes_state
 
+    refusal = in_database_refusal() if in_database else ""
+    if refusal:
+        raise ValueError(refusal)
     for table in _TABLES:
         await codes_state.refuse_width(table, embedder.dim)
     written: dict[str, int] = {}

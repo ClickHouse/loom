@@ -102,11 +102,14 @@ async def find_embedding_stubs(
 ) -> list[dict[str, Any]]:
     """memory_embeddings rows with embedding_dim=0 (stubs) that haven't
     been poisoned. Used by the embedding_worker. `exclude_orgs` (orgs whose
-    model calls are switched off) leaves their stubs where they are.
+    model calls are switched off) leaves their stubs where they are. Held stubs
+    wait until `embed_retry_at` before taking a slot.
 
     `version` rides along so the worker can write its replacement at
     stub_version + 1: newer than the stub it read, older than any row a
     later memory.set wrote in the meantime (fence, see _carry_signals)."""
+    from server.core.ch_params import chunks
+
     ch = ch or _default_client()
     extra_where = ""
     params: dict[str, Any] = {"lim": int(batch_size), "ma": int(max_attempts)}
@@ -119,7 +122,6 @@ async def find_embedding_stubs(
     if exclude_orgs:
         extra_where += " AND org NOT IN {exclude_orgs:Array(String)}"
         params["exclude_orgs"] = sorted(exclude_orgs)
-
     # Two phases. Under FINAL the WHERE is applied after the merge, so a
     # single query would read every selected column of every row (3.1 GB and
     # 488k rows per pass) to find an empty queue. Phase 1 has no FINAL:
@@ -144,6 +146,7 @@ async def find_embedding_stubs(
           {extra_where}
         GROUP BY org, namespace, agent, user_id, session_id,
                  scope, embedding_model, memory_key
+        HAVING argMax(embed_retry_at IS NULL OR embed_retry_at <= now64(3), version) = 1
         ORDER BY max(version) DESC
         LIMIT {{cand_lim:UInt32}}
         """,
@@ -151,27 +154,45 @@ async def find_embedding_stubs(
     )
     if not candidates:
         return []
-    keys = [
-        (
-            str(r["org"]),
-            str(r["namespace"]),
-            str(r["agent"]),
-            str(r["user_id"]),
-            str(r["session_id"]),
-            str(r["scope"]),
-            str(r["embedding_model"]),
-            str(r["memory_key"]),
-        )
-        for r in candidates
-    ]
-    # Phase 1b. A stub row that was later embedded keeps its stub VERSION in
-    # the table until a merge collapses it, so phase 1 keeps returning it, and
-    # the FINAL read below would read every column of every granule those keys
-    # touch, the two vectors included (1.17 GB a tick for a few hundred stale
-    # stubs), to return nothing. Confirm each candidate on its newest version
-    # first: a keyed GROUP BY
-    # without FINAL reads the narrow columns of the same granules only.
-    confirmed = await ch.query_all(
+    # The candidate keys go to the next reads in parameters that each fit one form
+    # field (server/core/ch_params.py): a few hundred cell-shaped keys exceed it.
+    confirmed: list[dict[str, Any]] = []
+    for part in chunks([_stub_key(r) for r in candidates]):
+        confirmed.extend(await _confirmed_stubs(ch, part, params, extra_where))
+    if not confirmed:
+        return []
+    parts = list(chunks([_stub_key(r) for r in confirmed]))
+    rows: list[dict[str, Any]] = []
+    for part in parts:
+        rows.extend(await _stub_rows(ch, part, params, extra_where))
+    if len(parts) > 1:
+        rows.sort(key=lambda r: (r.get("created_at") is None, r.get("created_at") or 0))
+    return rows[: int(batch_size)]
+
+
+def _stub_key(r: dict[str, Any]) -> tuple[str, ...]:
+    return (
+        str(r["org"]),
+        str(r["namespace"]),
+        str(r["agent"]),
+        str(r["user_id"]),
+        str(r["session_id"]),
+        str(r["scope"]),
+        str(r["embedding_model"]),
+        str(r["memory_key"]),
+    )
+
+
+async def _confirmed_stubs(
+    ch: _CHClient, keys: list[tuple[str, ...]], params: dict[str, Any], extra_where: str
+) -> list[dict[str, Any]]:
+    """Phase 1b. A stub row that was later embedded keeps its stub VERSION in the
+    table until a merge collapses it, so phase 1 keeps returning it, and the FINAL
+    read would read every column of every granule those keys touch, the two vectors
+    included (1.17 GB a tick for a few hundred stale stubs), to return nothing. Each
+    candidate is confirmed on its newest version first: a keyed GROUP BY without
+    FINAL reads the narrow columns of the same granules only."""
+    rows: list[dict[str, Any]] = await ch.query_all(
         f"""
         SELECT org, namespace, agent, user_id, session_id, scope,
                embedding_model, memory_key
@@ -189,25 +210,21 @@ async def find_embedding_stubs(
            AND argMax(tombstoned_at IS NULL, version) = 1
            AND argMax(embed_failed_at IS NULL, version) = 1
            AND argMax(embed_attempts, version) < {{ma:UInt16}}
+           AND argMax(embed_retry_at IS NULL OR embed_retry_at <= now64(3), version) = 1
         """,
         params={**params, "keys": keys},
     )
-    if not confirmed:
-        return []
-    keys = [
-        (
-            str(r["org"]),
-            str(r["namespace"]),
-            str(r["agent"]),
-            str(r["user_id"]),
-            str(r["session_id"]),
-            str(r["scope"]),
-            str(r["embedding_model"]),
-            str(r["memory_key"]),
-        )
-        for r in confirmed
-    ]
-    return await ch.query_all(
+    return rows
+
+
+async def _stub_rows(
+    ch: _CHClient,
+    keys: list[tuple[str, ...]],
+    params: dict[str, Any],
+    extra_where: str,
+) -> list[dict[str, Any]]:
+    """Read confirmed stubs oldest first, rechecking their retry time under FINAL."""
+    rows: list[dict[str, Any]] = await ch.query_all(
         f"""
         SELECT org, namespace, agent, user_id, session_id, memory_key,
                memory_type, scope, content_excerpt, embedding_model, created_at,
@@ -228,12 +245,14 @@ async def find_embedding_stubs(
           AND tombstoned_at IS NULL
           AND embed_failed_at IS NULL
           AND embed_attempts < {{ma:UInt16}}
+          AND (embed_retry_at IS NULL OR embed_retry_at <= now64(3))
           {extra_where}
         ORDER BY created_at ASC
         LIMIT {{lim:UInt32}}
         """,
         params={**params, "keys": keys},
     )
+    return rows
 
 
 # The loom.memory columns an embedding row mirrors, named as

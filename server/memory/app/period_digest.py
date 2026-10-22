@@ -37,8 +37,11 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.llm import customer
+from server.llm.identity import reads_writer
 from server.memory.app.provenance import writer_actor
+from server.memory.domain.trust import subject_of
 from server.memory.store.inserts import insert_memory_versions
+from server.memory.store.reads import session_writers
 from server.memory.store.rows import next_version
 from server.observability.genai import llm_stage
 from server.settings.budgets import llm_max_tokens
@@ -430,12 +433,34 @@ async def _source_memories(ch: Any, period: Period) -> tuple[list[str], list[str
     return ids, ents
 
 
+async def _period_writer(ch: Any, period: Period) -> str:
+    """Whom a period's digest call is for: the newest of its sessions' principal
+    writers ('' when none recorded one, and the period's namespace decides). Read
+    only while identity headers name it."""
+    if not reads_writer():
+        return ""
+    keys = [
+        (period.org, period.namespace, period.agent, period.user_id, str(d.get("session_id") or ""))
+        for d in period.digests
+    ]
+    writers = await session_writers(keys, ch=ch)
+    for key in reversed(keys):
+        if subject := subject_of(writers.get(key, "")):
+            return subject
+    return ""
+
+
 async def _write_period(
     ch: Any, llm: Any, embedder: Any, period: Period, result: PeriodDigestResult
 ) -> bool:
     system, user = build_period_prompt(period)
+    whose = {
+        "namespace": period.namespace,
+        "subject": await _period_writer(ch, period),
+        "user_id": period.user_id,
+    }
     try:
-        with llm_stage("period_digest"), customer.for_org(period.org):
+        with llm_stage("period_digest"), customer.for_org(period.org, **whose):
             out = await llm.complete(
                 system=system, user=user, max_tokens=llm_max_tokens("period_digest")
             )
@@ -450,7 +475,7 @@ async def _write_period(
     if not text:
         result.failures.append(f"empty digest {period.memory_key}")
         return False
-    with customer.for_org(period.org):
+    with customer.for_org(period.org, **whose):
         embedding = await embedder.embed(text)
     try:
         source_ids, source_entities = await _source_memories(ch, period)

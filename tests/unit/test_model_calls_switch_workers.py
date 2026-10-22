@@ -93,7 +93,7 @@ def test_projection_repair_scans_no_failure_of_a_switched_off_org(monkeypatch) -
     assert _excludes(ch, "acme")
     seen: list[frozenset[str]] = []
 
-    async def scan(*, limit: int, exclude_orgs: frozenset[str]) -> list[Any]:
+    async def scan(*, limit: int, exclude_orgs: frozenset[str], after: Any) -> list[Any]:
         seen.append(exclude_orgs)
         return []
 
@@ -836,4 +836,4 @@ async def test_a_stub_whose_org_is_switched_off_mid_pass_is_left_unwritten() -> 
     rows = [{"org": "acme", "content_excerpt": "a"}, {"org": "beta", "content_excerpt": "b"}]
     switch_off("acme")  # switched off after the stubs were picked
     out = await w._embed_rows(_E(), rows)
-    assert out == [(None, w.SWITCHED_OFF), ([1.0], "")]
+    assert out == [(None, w.HELD), ([1.0], "")]

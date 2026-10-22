@@ -15,6 +15,8 @@ import pytest
 from server.llm import customer
 from server.observability import genai
 from server.settings import settings
+from tests.unit.model_client import through_the_model_client
+from tests.unit.test_conflict_resolver import row_env  # noqa: F401
 
 
 @pytest.fixture
@@ -146,28 +148,24 @@ def test_chat_and_embedding_requests_carry_the_customer(metered, monkeypatch) ->
     assert [h["X-Customer"] for h in sent] == ["acme"] * 5
 
 
+def _sent_headers(monkeypatch: pytest.MonkeyPatch, answer: dict[str, Any]) -> list[Any]:
+    """The headers of each request the model client sends, every one answered `answer`."""
+    sent: list[Any] = []
+
+    def wire(request: httpx.Request) -> httpx.Response:
+        sent.append(request.headers)
+        return httpx.Response(200, json=answer)
+
+    client = through_the_model_client(monkeypatch)
+    monkeypatch.setattr(client, "_transport", httpx.MockTransport(wire))
+    return sent
+
+
 def test_rerank_and_classify_requests_carry_the_customer(metered, monkeypatch) -> None:
     from server.memory.app import classify as classify_mod
     from server.memory.app import rerank as rerank_mod
 
-    sent: list[dict[str, str]] = []
-
-    class _Client:
-        def __init__(self, **_: Any) -> None:
-            pass
-
-        async def __aenter__(self) -> _Client:
-            return self
-
-        async def __aexit__(self, *_: Any) -> None:
-            return None
-
-        async def post(self, url: str, **kw: Any) -> httpx.Response:
-            sent.append(kw.get("headers") or {})
-            return httpx.Response(200, json={}, request=httpx.Request("POST", url))
-
-    monkeypatch.setattr(rerank_mod.httpx, "AsyncClient", _Client)
-    monkeypatch.setattr(classify_mod.httpx, "AsyncClient", _Client)
+    sent = _sent_headers(monkeypatch, {})
     monkeypatch.setenv("COHERE_API_KEY", "key")
     _request("acme")
     candidates = [rerank_mod.RerankCandidate("k", "ns", "v", "fact", 1.0)]
@@ -274,7 +272,7 @@ def test_a_provider_rebuild_batch_makes_one_call_per_org(metered, monkeypatch) -
         {"org": "acme", "text": "c"},
     ]
     emb = _ByOrg()
-    out = asyncio.run(batch.rebuild_batch("memory_embeddings", rows, emb))
+    out = asyncio.run(batch.rebuild_batch("memory_embeddings", rows, emb)).rows
     assert emb.calls == [("acme", 2), ("beta", 1)]
     assert [r["embedding"][0] for r in out] == [1.0, 2.0, 1.0]
 
@@ -415,23 +413,7 @@ def test_an_operator_reranker_carries_the_customer_and_refuses_outside_its_fail_
 ) -> None:
     from server.memory.app import rerank as rerank_mod
 
-    sent: list[dict[str, str]] = []
-
-    class _Client:
-        def __init__(self, **_: Any) -> None:
-            pass
-
-        async def __aenter__(self) -> _Client:
-            return self
-
-        async def __aexit__(self, *_: Any) -> None:
-            return None
-
-        async def post(self, url: str, **kw: Any) -> httpx.Response:
-            sent.append(kw.get("headers") or {})
-            return httpx.Response(200, json={"ranked": []}, request=httpx.Request("POST", url))
-
-    monkeypatch.setattr(rerank_mod.httpx, "AsyncClient", _Client)
+    sent = _sent_headers(monkeypatch, {"ranked": []})
     monkeypatch.setattr(
         type(settings), "rerank_endpoint_map", lambda self: {"ops": "https://rerank.example"}
     )
@@ -585,26 +567,9 @@ def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_heade
     async def types(org: str, ns: str) -> list[Any]:
         return [{"memory_type": "observation"}]
 
-    sent: list[dict[str, str]] = []
-
-    class _Client:
-        def __init__(self, **_: Any) -> None:
-            pass
-
-        async def __aenter__(self) -> _Client:
-            return self
-
-        async def __aexit__(self, *_: Any) -> None:
-            return None
-
-        async def post(self, url: str, **kw: Any) -> httpx.Response:
-            sent.append(kw.get("headers") or {})
-            body = {"memory_type": "observation"}
-            return httpx.Response(200, json=body, request=httpx.Request("POST", url))
-
+    sent = _sent_headers(monkeypatch, {"memory_type": "observation"})
     monkeypatch.setattr(classify_mod, "get_namespace_classify_config", config)
     monkeypatch.setattr(namespace_types, "list_type_configs", types)
-    monkeypatch.setattr(classify_mod.httpx, "AsyncClient", _Client)
     body = MemorySetInput(
         org="acme",
         namespace="ns",
@@ -619,7 +584,8 @@ def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_heade
     monkeypatch.setattr(settings, "inference_customer_header", "")
     resolved, _, _ = asyncio.run(write._set_resolve_type(body))
     # Unset: the classifier is asked once, with no metering header, and its type applies.
-    assert resolved.memory_type == "observation" and sent == [{}]
+    assert resolved.memory_type == "observation" and len(sent) == 1
+    assert "x-customer" not in sent[0]
     from server.observability import provider_health
 
     provider_health.reset()  # classify recorded a success in the process-wide state
@@ -990,8 +956,12 @@ def test_observe_extract_names_each_sessions_org(metered, monkeypatch, caplog) -
     async def sessions(cfg: Any, ch: Any) -> list[dict[str, Any]]:
         return [session]
 
-    async def observations(session: Any, cfg: Any, ch: Any) -> list[dict[str, Any]]:
-        return [{"memory_key": "obs:1"}]
+    async def observations(session: Any, cfg: Any, ch: Any) -> list[Any]:
+        return [
+            SimpleNamespace(
+                memory_key="obs:1", actor="", version=1, sensitivity="", value="prefers tea"
+            )
+        ]
 
     async def distill(session: Any, observations: Any) -> Any:
         await _model_call(seen)
@@ -1055,38 +1025,29 @@ def test_projection_repair_names_each_failures_org(metered, monkeypatch, caplog)
     _no_refusal_logged(caplog)
 
 
-def test_the_conflict_resolver_names_the_rows_org(metered, monkeypatch, caplog) -> None:
-    from types import SimpleNamespace
-
+def test_the_conflict_resolver_names_the_rows_org(
+    metered,
+    monkeypatch,
+    caplog,
+    row_env,  # noqa: F811
+) -> None:
     from server.memory.app import conflict_resolver as resolver
-    from server.memory.workers import conflict_resolver as w
+    from tests.unit.claims_fake import fake_key_locks
+    from tests.unit.test_conflict_resolver import _q
 
+    fake_key_locks(monkeypatch, wait_s=10.0)
     seen: list[str] = []
+    original = resolver.judge
 
-    async def resolve(r: Any, **k: Any) -> Any:
+    async def judge(new: Any, peers: Any) -> Any:
         await _model_call(seen)
-        return None
+        return await original(new, peers)
 
-    async def over_cap(*a: Any, **k: Any) -> bool:
-        return False
-
-    async def flush() -> None:
-        return None
-
-    monkeypatch.setattr(resolver, "resolve_row", resolve)
-    monkeypatch.setattr("server.observability.budget.namespace_over_cap", over_cap)
-    monkeypatch.setattr(
-        "server.observability.events.get_emitter", lambda: SimpleNamespace(flush_now=flush)
-    )
-    monkeypatch.setattr("server.workers.cost_event.emit_worker_cost_event_for", lambda **k: None)
-    row = {"org": "acme", "namespace": "ns", "agent": "a", "user_id": "-"}
-    row |= {"session_id": "-", "memory_key": "k", "content_sha256": "sha"}
-
-    async def one() -> None:
-        await w._resolve_one(w._Pass(), row, "manual")
-
-    asyncio.run(one())
+    monkeypatch.setattr(resolver, "judge", judge)
+    counts = resolver.Counts()
+    asyncio.run(resolver.resolve_row(_q(org="acme"), policy="manual_review", counts=counts))
     assert seen == ["acme"]
+    assert row_env.llm_calls == counts.judged == 1
     _no_refusal_logged(caplog)
 
 

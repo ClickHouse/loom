@@ -70,7 +70,7 @@ def test_text_recipes_cover_every_reembed_surface():
 async def test_all_tables_preserve_full_rows_without_mutating_source(table, target):
     row = row_for(table)
     before = deepcopy(row)
-    result = await rebuild_batch(table, [row], target, source_texts={0: "tracker source"})
+    result = (await rebuild_batch(table, [row], target, source_texts={0: "tracker source"})).rows
     assert row == before
     assert len(result) == 1
     assert result[0]["embedding_model"] == "target-model"
@@ -86,7 +86,7 @@ async def test_all_tables_preserve_full_rows_without_mutating_source(table, targ
 
 @pytest.mark.asyncio
 async def test_memory_key_uses_the_same_text_recipe_as_normal_writes(target):
-    result = await rebuild_batch("memory_embeddings", [row_for("memory_embeddings")], target)
+    result = (await rebuild_batch("memory_embeddings", [row_for("memory_embeddings")], target)).rows
     target.embed_many.assert_awaited_once_with(["source text", "user dog name"])
     assert result[0]["memory_key_embedding"] == [0.6, 0.8]
     assert result[0]["memory_key_embedding_dim"] == 2
@@ -104,7 +104,7 @@ async def test_code_uses_context_and_falls_back_to_content(target):
 async def test_tombstones_never_send_deleted_content_to_provider(target):
     row = row_for("memory_embeddings")
     row["tombstoned_at"] = datetime(2025, 2, 1, tzinfo=UTC)
-    result = (await rebuild_batch("memory_embeddings", [row], target))[0]
+    result = (await rebuild_batch("memory_embeddings", [row], target)).rows[0]
     target.embed_many.assert_not_awaited()
     assert result["tombstoned_at"] == row["tombstoned_at"]
     assert result["embedding"] == result["memory_key_embedding"] == []
@@ -158,7 +158,7 @@ async def test_provider_failure_is_safe_and_does_not_modify_source(target):
 @pytest.mark.asyncio
 async def test_provider_requests_are_bounded(target):
     rows = [row_for("chunks") for _ in range(130)]
-    result = await rebuild_batch("chunks", rows, target)
+    result = (await rebuild_batch("chunks", rows, target)).rows
     assert len(result) == 130
     assert [len(call.args[0]) for call in target.embed_many.await_args_list] == [64, 64, 2]
 
@@ -184,7 +184,7 @@ async def test_cancellation_is_not_swallowed_as_provider_failure(target):
 @pytest.mark.parametrize("stored", [[], [0.0, 0.0, 0.0]], ids=["empty", "placeholder"])
 async def test_empty_unindexed_text_stays_unindexed_in_target_space(target, stored):
     row = {**row_for("chunks"), "content": "", "embedding": stored, "embedding_dim": 0}
-    result = (await rebuild_batch("chunks", [row], target))[0]
+    result = (await rebuild_batch("chunks", [row], target)).rows[0]
     assert result["embedding_model"] == "target-model"
     assert result["embedding"] == []
     assert result["embedding_dim"] == 0
@@ -202,7 +202,7 @@ async def test_a_structural_summary_card_without_text_rebuilds_as_a_placeholder(
     row.update(scope_path="tests/__init__.py", pagerank=0.1)
     assert pad_rows("code_summaries", [row]) == [(0, "embedding")]
     assert row["embedding"] and not any(row["embedding"])
-    result = (await rebuild_batch("code_summaries", [row], target))[0]
+    result = (await rebuild_batch("code_summaries", [row], target)).rows[0]
     assert result["embedding_model"] == "target-model"
     assert (result["embedding"], result["embedding_dim"], result["pagerank"]) == ([], 0, 0.1)
     target.embed_many.assert_not_awaited()
@@ -229,7 +229,7 @@ async def test_non_reembed_actions_cannot_accidentally_send_data(target, table):
 async def test_a_passage_that_reads_as_a_credential_is_rebuilt_without_a_vector(table, target):
     # Embedded by an earlier build; its text holds a key.
     secret = {**row_for(table), TEXT_COLUMNS[table]: "key " + AWS_KEY_ID}
-    result = await rebuild_batch(table, [row_for(table), secret], target)
+    result = (await rebuild_batch(table, [row_for(table), secret], target)).rows
     target.embed_many.assert_awaited_once_with(["source text"])
     assert [r["embedding_dim"] for r in result] == [2, 0]
 
@@ -238,7 +238,7 @@ async def test_a_passage_that_reads_as_a_credential_is_rebuilt_without_a_vector(
 async def test_a_memory_row_is_rebuilt_whatever_its_text(target):
     # Only raw passages are held; a memory row's vector follows its sensitivity label.
     row = {**row_for("memory_embeddings"), "content_excerpt": "key " + AWS_KEY_ID}
-    result = await rebuild_batch("memory_embeddings", [row], target)
+    result = (await rebuild_batch("memory_embeddings", [row], target)).rows
     assert result[0]["embedding_dim"] == 2
 
 
@@ -282,7 +282,7 @@ async def test_a_plain_memory_chunk_without_a_vector_between_plain_chunks_is_emb
         {**row_for("memory_chunks"), "chunk_index": 2, "content": "plain words after"},
     ]
     asked = _stored_chunks(monkeypatch, rows)
-    result = (await rebuild_batch("memory_chunks", rows[1:2], target))[0]
+    result = (await rebuild_batch("memory_chunks", rows[1:2], target)).rows[0]
     cap = max(settings.memory_chunks_max_per_call, IMPORT_MAX_ITEMS)
     assert asked == [("private-org", "private-ns", "s", 0, 1 + cap)]
     target.embed_many.assert_awaited_once_with(["source text"])
@@ -302,7 +302,7 @@ async def test_memory_chunks_with_vectors_read_no_neighbours(target, monkeypatch
 async def test_a_plain_turn_or_digest_stored_without_a_vector_is_embedded(table, stored, target):
     # Only a failed embed leaves a plain turn or digest without a vector.
     row = {**_without_vector(table, "source text", stored), "embed_last_error": "timeout"}
-    result = (await rebuild_batch(table, [row], target))[0]
+    result = (await rebuild_batch(table, [row], target)).rows[0]
     target.embed_many.assert_awaited_once_with(["source text"])
     assert result["embedding_dim"] == 2
 
@@ -326,8 +326,8 @@ async def test_memory_chunks_cut_through_a_key_stay_without_a_vector_on_separate
         for i, c in enumerate(contents)
     ]
     _stored_chunks(monkeypatch, rows)
-    first_page = await rebuild_batch("memory_chunks", rows[:1], target)
-    second_page = await rebuild_batch("memory_chunks", rows[1:], target)
+    first_page = (await rebuild_batch("memory_chunks", rows[:1], target)).rows
+    second_page = (await rebuild_batch("memory_chunks", rows[1:], target)).rows
     assert [r["embedding_dim"] for r in first_page + second_page] == [0, 0, 2]
     target.embed_many.assert_awaited_once_with([contents[2]])
 
@@ -360,7 +360,7 @@ async def test_a_private_key_cut_into_many_chunks_stays_without_a_vector_on_ever
     _stored_chunks(monkeypatch, rows)
     staged = []
     for i in range(len(rows)):
-        staged += await rebuild_batch("memory_chunks", rows[i : i + 1], target)
+        staged += (await rebuild_batch("memory_chunks", rows[i : i + 1], target)).rows
     assert [i for i, r in enumerate(staged) if r["embedding_dim"] == 0] == covers
     sent = [text for call in target.embed_many.await_args_list for text in call.args[0]]
     assert not any(line in text for text in sent for line in lines)
@@ -384,6 +384,6 @@ async def test_a_long_session_of_plain_chunks_without_vectors_is_read_once_per_p
         return original(chunks)
 
     monkeypatch.setattr(provider_rebuild_batch, "joined_overlaps_high", counted)
-    result = await rebuild_batch("memory_chunks", rows[100:164], target)
+    result = (await rebuild_batch("memory_chunks", rows[100:164], target)).rows
     assert len(asked) == 1 and len(passes) == 1
     assert [r["embedding_dim"] for r in result] == [2] * 64

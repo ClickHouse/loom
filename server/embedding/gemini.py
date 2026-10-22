@@ -74,11 +74,13 @@ class GeminiEmbedder:
             "outputDimensionality": self.dim,
         }
 
-    async def _post(self, url: str, payload: dict[str, object], org: str) -> dict[str, Any]:
+    async def _post(
+        self, url: str, payload: dict[str, object], who: customer.Customer
+    ) -> dict[str, Any]:
         resp = await _http_client().post(
             url,
             json=payload,
-            headers={"x-goog-api-key": self._api_key, **customer.headers(org)},
+            headers={"x-goog-api-key": self._api_key, **customer.headers(who)},
         )
         _raise_for_status(resp, _HEALTH)
         data: dict[str, Any] = resp.json()
@@ -87,15 +89,15 @@ class GeminiEmbedder:
     async def _embed_one_raw(self, text: str) -> list[float]:
         # Outside `recording`: an oversized text, or a call naming no customer,
         # is the caller's to fix, not a provider failure for /v1/health to report.
-        org = await customer.require()
+        who = await customer.require()
         check_size(text, _MAX_INPUT_TOKENS, "gemini-embedding-001")
         with recording(_HEALTH):
-            return await self._embed_one_raw_inner(text, org)
+            return await self._embed_one_raw_inner(text, who)
 
-    async def _embed_one_raw_inner(self, text: str, org: str) -> list[float]:
+    async def _embed_one_raw_inner(self, text: str, who: customer.Customer) -> list[float]:
         async for attempt in retrying():
             with attempt:
-                data = await self._post(self._endpoint, self._content_request(text), org)
+                data = await self._post(self._endpoint, self._content_request(text), who)
                 return vector(data["embedding"]["values"], self.dim)
         raise RuntimeError("embedding retry loop exited without result")
 
@@ -132,7 +134,7 @@ class GeminiEmbedder:
     async def _embed_many_raw(self, texts: list[str]) -> tuple[list[list[float]], list[str]]:
         """`(vectors in input order, cache_hit_texts)`; misses go to the API
         `_GEMINI_BATCH_LIMIT` at a time."""
-        org = await customer.require()  # before the cache: a hit must not hide a missed path
+        who = await customer.require()  # before the cache: a hit must not hide a missed path
         results, misses, hits = split_cached(self.model_name, texts)
         for start in range(0, len(misses), _GEMINI_BATCH_LIMIT):
             batch = misses[start : start + _GEMINI_BATCH_LIMIT]
@@ -144,7 +146,7 @@ class GeminiEmbedder:
             with recording(_HEALTH):
                 async for attempt in retrying():
                     with attempt:
-                        data = await self._post(self._batch_endpoint, payload, org)
+                        data = await self._post(self._batch_endpoint, payload, who)
                 # batchEmbedContents answers in request order with no per-entry
                 # index, so map by position; a short answer is a hard failure,
                 # never a silent misalignment.

@@ -691,6 +691,36 @@ def _deferred_ledgers_left_empty() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _worker_cursors_left_empty() -> Iterator[None]:
+    """A worker's next page must not depend on a previous test's pass."""
+    if module := sys.modules.get("server.memory.workers.projection_repair"):
+        module._after = None
+    yield
+    if module := sys.modules.get("server.memory.workers.projection_repair"):
+        module._after = None
+
+
+@pytest.fixture(autouse=True)
+def _model_call_holds_left_empty() -> Iterator[None]:
+    """Leave no job's held work, and no gateway hold, to the next test.
+
+    A job that met a held identity (`server.workers.holds`) leaves that work out of
+    its next selections, and the gateway holds an identity's job calls
+    (`server.llm.gateway`): either, kept, would make a later test's selection or call
+    depend on what an earlier test refused.
+    """
+    yield
+    from server.llm import gateway
+    from server.workers import holds
+
+    holds._reset_for_tests()
+    gateway._held.clear()
+    from server.llm import customer
+
+    customer._logged_at.clear()
+
+
+@pytest.fixture(autouse=True)
 def _identity_caches_left_cold() -> Iterator[None]:
     """Leave the search plane's per-namespace caches empty after every test.
 

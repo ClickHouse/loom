@@ -163,14 +163,14 @@ export function restorePlace(place: Place | null, viewChanged: boolean): void {
     if (viewChanged) arriveAt();
     return;
   }
-  let scrolled = !main || place.scrollTop === 0;
   let headingSaid = !viewChanged;
   let focused = false;
   cancelPending = untilDrawn(
     () => {
-      if (!scrolled && main && main.scrollHeight - main.clientHeight >= place.scrollTop) {
+      let moved = false;
+      if (main && main.scrollHeight - main.clientHeight >= place.scrollTop && main.scrollTop !== place.scrollTop) {
         main.scrollTop = place.scrollTop;
-        scrolled = true;
+        moved = true;
       }
       const h1 = viewHeading();
       if (!headingSaid && h1) {
@@ -182,16 +182,21 @@ export function restorePlace(place: Place | null, viewChanged: boolean): void {
         if (target) {
           target.focus({ preventScroll: true });
           focused = true;
+          moved = true;
         } else if (!place.focusKey && (!viewChanged || h1)) {
-          if (h1 && !focusHeldByDialog()) focusHeading(h1);
+          if (h1 && !focusHeldByDialog()) {
+            focusHeading(h1);
+            moved = true;
+          }
           focused = true;
         }
       }
-      return scrolled && headingSaid && focused;
+      // Scrolling and focus can resize contained rows: verify their offset next frame.
+      return !moved && (!main || main.scrollTop === place.scrollTop) && headingSaid && focused;
     },
     () => {
       // The page never grew as tall as it was (fewer rows now): scroll as far as it goes.
-      if (!scrolled && main) main.scrollTop = place.scrollTop;
+      if (main) main.scrollTop = place.scrollTop;
       const h1 = viewHeading();
       if (!focused && h1 && !focusHeldByDialog() && viewChanged) focusHeading(h1);
     },

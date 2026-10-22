@@ -410,7 +410,7 @@ async def _flush(
 ) -> None:
     if not pending:
         return
-    with customer.for_org(org):
+    with customer.for_org(org, namespace=ns):
         vectors = await embed_many(emb, [p["text"] for p in pending])
     rows = build_rows(
         org,

@@ -148,7 +148,8 @@ docker exec loom-server loom reembed --delete-old        # re-embed, then delete
 Loom never re-embeds on its own: after changing `LOOM_EMBEDDING_MODEL`, run
 `loom reembed`. It regenerates vectors from stored content and keeps every
 other column. `--in-database <named collection>` embeds inside ClickHouse with
-`aiEmbed` (ClickHouse 26.7 or later) as one `INSERT … SELECT` per table;
+`aiEmbed` (ClickHouse 26.7 or later) as one `INSERT … SELECT` per table, refused
+while a customer or identity header is set or the inference gateway is required;
 `--resume` continues after the row a previous run's `resume:` line names. See
 [Maintenance](../operations/maintenance.md).
 

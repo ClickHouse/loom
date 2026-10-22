@@ -420,6 +420,7 @@ async def test_a_key_held_in_many_sessions_leaves_room_for_flags_and_near_peers(
 def _mem(mid: str = "m1", **kw: Any) -> Any:
     base = dict(
         memory_id=mid,
+        actor="",
         memory_key="office_city",
         namespace="ns",
         agent="a",
@@ -1860,11 +1861,28 @@ async def test_an_answer_that_leaves_a_peer_out_is_asked_again_with_room(monkeyp
     assert caps == [300, 600] and set(got) == {p.memory_id for p in _PEERS}
 
 
-async def test_a_reask_that_fails_keeps_the_first_usable_answer(monkeypatch) -> None:
+@pytest.mark.parametrize("later", ["http", "refused", "deferred", "disabled", "unread"])
+@pytest.mark.parametrize("usable", [False, True])
+async def test_a_reask_that_fails_keeps_the_first_usable_answer(
+    monkeypatch, later: str, usable: bool
+) -> None:
     import httpx
 
     import server.llm.client as llm_client
+    from server.core.errors import ModelCallDeferred, ModelCallRefused
+    from server.llm import customer
 
+    req = httpx.Request("POST", "https://llm.example/v1")
+    errors = {
+        "http": httpx.HTTPStatusError(
+            "503", request=req, response=httpx.Response(503, request=req)
+        ),
+        "refused": ModelCallRefused("budget", hold_s=600),
+        "deferred": ModelCallDeferred("wait", hold_s=120),
+        "disabled": customer.ModelCallsDisabled("disabled"),
+        "unread": customer.SwitchUnread("unread"),
+    }
+    error = errors[later]
     calls = 0
 
     class LLM:
@@ -1872,15 +1890,18 @@ async def test_a_reask_that_fails_keeps_the_first_usable_answer(monkeypatch) -> 
             nonlocal calls
             calls += 1
             if calls == 2:
-                req = httpx.Request("POST", "https://llm.example/v1")
-                raise httpx.HTTPStatusError(
-                    "503", request=req, response=httpx.Response(503, request=req)
-                )
-            return NS(text=_answer(_entry("p1", "update", 0.97)), model="m")
+                raise error
+            text = _answer(_entry("p1", "update", 0.97)) if usable else _answer()
+            return NS(text=text, model="m")
 
     monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: LLM())
-    got, _ = await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
-    assert calls == 2 and list(got) == [_PEERS[0].memory_id]
+    if usable and later in {"http", "refused", "deferred"}:
+        got, model = await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
+        assert list(got) == [_PEERS[0].memory_id] and model == "m"
+    else:
+        with pytest.raises(type(error)):
+            await resolver.judge(cr.Note("n", "k", "v"), _PEERS)
+    assert calls == 2
 
 
 def test_the_resolver_client_never_falls_back_to_another_model(monkeypatch) -> None:

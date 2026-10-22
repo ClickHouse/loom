@@ -72,7 +72,8 @@ mistyped secret); a process whose root does not match it reports
 `keyring_root_mismatch`, and the keyring commands and `loom mint-token` refuse there.
 
 **Model calls behind the gateway.** While the gateway is required
-(`LOOM_INFERENCE_GATEWAY_REQUIRED`, or any token exchange), model calls and the memory
+(`LOOM_INFERENCE_GATEWAY_REQUIRED`, a token exchange, or the workload token sent as the
+bearer), model calls and the memory
 content posted to classifiers and rerankers go only to the hosts
 `LOOM_INFERENCE_GATEWAY_HOSTS` lists, matched exactly (`Settings.off_gateway`); an
 allow-list, so a cloud's own endpoint, an IP address or a look-alike name is refused as a

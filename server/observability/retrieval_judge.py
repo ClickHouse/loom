@@ -252,6 +252,9 @@ def submit(
     q = _q.ensure()
     if q is None:
         return False
+    from server.llm.customer import attribution
+
+    searcher = attribution()  # the judge's call is for whoever searched
     item = {
         "trace_id": trace_id,
         "query": query[:1000],
@@ -260,6 +263,8 @@ def submit(
         "excerpts": _excerpts(hits, 5),
         "org": org,
         "namespace": namespace,
+        "subject": searcher.subject,
+        "user_id": searcher.user_id,
     }
     try:
         q.put_nowait(item)
@@ -362,7 +367,15 @@ async def _judge_one(item: dict[str, Any]) -> None:
     try:
         # The prompt is the org's query and memory text, so the call is the org's,
         # metered to it and refused while its model calls are off.
-        with llm_stage("retrieval_judge"), customer.for_org(item["org"]):
+        with (
+            llm_stage("retrieval_judge"),
+            customer.for_org(
+                item["org"],
+                namespace=item["namespace"],
+                subject=item.get("subject", ""),
+                user_id=item.get("user_id", ""),
+            ),
+        ):
             out = await client.complete(
                 _JUDGE_SYSTEM,
                 user,

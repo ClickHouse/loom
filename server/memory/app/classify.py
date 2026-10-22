@@ -30,6 +30,7 @@ import logging
 
 import httpx
 
+from server.clients import _http
 from server.llm import customer
 from server.memory.app.log_once import LogOnce
 from server.memory.domain.classify_endpoints import classify_refusal
@@ -70,10 +71,16 @@ async def classify(
     # Outside the fail-open: a refused call is an error, not a kept type.
     headers = customer.headers(await customer.require())
     try:
-        async with httpx.AsyncClient(timeout=_timeout()) as client:
-            resp = await client.post(endpoint, json=body, headers=headers)
-            resp.raise_for_status()
-            payload = resp.json()
+        # The model client, never redirected (the URL is a namespace's): its hook refuses
+        # a host off the gateway, sends the identity headers only to the gateway's hosts,
+        # and reads a gateway's refusal of the call's identity (server/clients/_http.py).
+        resp = await _http.get_model_client().post(
+            endpoint, json=body, headers=headers, timeout=_timeout(), follow_redirects=False
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    except customer.HOLDS:
+        raise  # the gateway refused or held the call's identity: never "kept the caller's type"
     except Exception as e:  # noqa: BLE001 — a failed classifier keeps the caller's type
         log.warning("classify.call failed (%s); falling back to caller's type", e)
         _degradations.note("classify", "caller_type_kept", e)

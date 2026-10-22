@@ -32,8 +32,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.llm import customer
+from server.llm.identity import reads_writer
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.domain.sensitivity import value_reads_high
+from server.memory.domain.trust import subject_of
+from server.memory.store.reads import session_writers
 from server.memory.store.session_outcomes import insert_outcomes
 from server.observability.genai import llm_stage
 from server.settings.budgets import llm_max_tokens
@@ -251,6 +254,18 @@ _UNLABELLED_SQL = """
 """
 
 
+def _session_key(r: Any) -> tuple[str, str, str, str, str]:
+    cols = ("org", "namespace", "agent", "user_id", "session_id")
+    return tuple(str(r.get(c) or "") for c in cols)  # type: ignore[return-value]
+
+
+async def _writers(ch: Any, rows: list[Any]) -> dict[tuple[str, str, str, str, str], str]:
+    """Each session's writer, read only while identity headers name it."""
+    if not rows or not reads_writer():
+        return {}
+    return await session_writers([_session_key(r) for r in rows], ch=ch)
+
+
 async def label_sessions(ch: Any, llm: Any, cfg: DistillConfig, result: DistillResult) -> None:
     rows = await ch.query_all(
         _UNLABELLED_SQL,
@@ -262,13 +277,23 @@ async def label_sessions(ch: Any, llm: Any, cfg: DistillConfig, result: DistillR
         },
     )
     result.sessions_scanned = len(rows)
+    # The judge's call is for the session's writer, else its namespace's agent.
+    writers = await _writers(ch, rows)
     out_rows: list[dict[str, Any]] = []
     for r in rows:
         try:
             system, user = judge_prompt(
                 str(r.get("summary_text") or ""), list(r.get("key_facts") or [])
             )
-            with llm_stage("session_judge"), customer.for_org(str(r["org"])):
+            with (
+                llm_stage("session_judge"),
+                customer.for_org(
+                    str(r["org"]),
+                    namespace=str(r["namespace"]),
+                    subject=subject_of(writers.get(_session_key(r), "")),
+                    user_id=str(r.get("user_id") or ""),
+                ),
+            ):
                 res = await llm.complete(
                     system,
                     user,
@@ -415,12 +440,18 @@ async def distil_contrasts(
         },
     )
     result.contrast_candidates = len(negatives)
+    writers = await _writers(ch, negatives)
     for neg in negatives:
         sid = str(neg.get("session_id") or "")
         try:
             # The pair's LLM call and the reflection's write (which embeds) are
-            # both that org's.
-            with customer.for_org(str(neg["org"])):
+            # both that org's, and for the failed session's writer.
+            with customer.for_org(
+                str(neg["org"]),
+                namespace=str(neg["namespace"]),
+                subject=subject_of(writers.get(_session_key(neg), "")),
+                user_id=str(neg.get("user_id") or ""),
+            ):
                 written = await _contrast_pair(ch, llm, cfg, neg, writer)
         except customer.HOLDS:
             continue  # a held call is no failure: the pair is distilled once the org is back

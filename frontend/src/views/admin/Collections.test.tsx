@@ -230,7 +230,7 @@ describe("Collections: a collection's details", () => {
 
 describe("Collections: delete", () => {
   it("deletes only after the confirm, then reads the list again", async () => {
-    listCollections.mockResolvedValue(page(HANDBOOK));
+    listCollections.mockResolvedValueOnce(page(HANDBOOK)).mockResolvedValueOnce(page());
     deleteCollection.mockResolvedValue({
       namespace: "col-handbook",
       deleted: true,
@@ -255,8 +255,31 @@ describe("Collections: delete", () => {
     await waitFor(() => expect(deleteCollection).toHaveBeenCalledWith("acme", "col-handbook"));
     await waitFor(() => expect(listCollections).toHaveBeenCalledTimes(2));
     expect(toast).toHaveBeenCalledWith("Deleted col-handbook", "ok");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "col-handbook" })).toBeNull());
     // The read that drops the row hands focus to the search.
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Search collections" })).toHaveFocus());
+  });
+
+  it("keeps focus after a failed delete refresh and a later unrelated read", async () => {
+    let rejectRead!: (reason: unknown) => void;
+    const failedRead = new Promise<never>((_, reject) => {
+      rejectRead = reject;
+    });
+    listCollections.mockResolvedValueOnce(page(HANDBOOK)).mockReturnValueOnce(failedRead).mockResolvedValue(page());
+    deleteCollection.mockResolvedValue({ deleted: true, erasure_status: "completed" });
+    confirmAction.mockResolvedValueOnce(true);
+    render(<Collections />);
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for col-handbook" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await waitFor(() => expect(listCollections).toHaveBeenCalledTimes(2));
+    const newCollection = screen.getByRole("button", { name: "New collection" });
+    newCollection.focus();
+    act(() => rejectRead(new Error("Read failed")));
+    await screen.findByText("Couldn't load collections");
+    expect(newCollection).toHaveFocus();
+    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByText("No collections yet");
+    expect(screen.getByRole("button", { name: "Refresh" })).toHaveFocus();
   });
 
   it("says when erasing what it held failed and is being retried, with the erasure id", async () => {

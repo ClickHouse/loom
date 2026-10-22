@@ -131,7 +131,7 @@ def world(monkeypatch):
     async def insert(out):
         cleared.extend(out)
 
-    async def judge(claim, link, texts, head, budget):
+    async def judge(claim, link, texts, head, budget, *, writer=""):
         budget.judgements -= 1  # the judge was asked
         judged.append(str(link["memory_id"]))
         return {**link, "suggestion": "the fix"}
@@ -247,7 +247,7 @@ def _checked_long_ago(monkeypatch) -> datetime:
 
 @pytest.mark.asyncio
 async def test_a_failed_judgement_stays_due_behind_the_rest(world, monkeypatch) -> None:
-    async def judge(claim, link, texts, head, budget):
+    async def judge(claim, link, texts, head, budget, *, writer=""):
         budget.judgements -= 1
         if link["qualified_name"] == "a.f0":
             raise RuntimeError("provider 400")
@@ -916,7 +916,7 @@ async def test_revise_judges_every_changed_definition_and_keeps_the_unjudged_due
 ) -> None:
     asked: list[str] = []
 
-    async def judge(claim, link, texts, head, budget):
+    async def judge(claim, link, texts, head, budget, *, writer=""):
         budget.judgements -= 1  # the judge was asked
         asked.append(link["qualified_name"])
         return None if link["qualified_name"] == "a.f0" else {**link, "suggestion": "fix"}
@@ -955,7 +955,7 @@ async def test_a_policy_write_follows_the_version_it_read(world) -> None:
 
 @pytest.mark.asyncio
 async def test_a_hold_taken_during_judgement_only_flags(world, monkeypatch) -> None:
-    async def judge(claim, link, texts, head, budget):
+    async def judge(claim, link, texts, head, budget, *, writer=""):
         budget.judgements -= 1  # the judge was asked
         world.rows["m"]["lock_mode"] = "read_only"  # a person locked it meanwhile
         return {**link, "suggestion": "the fix"}
@@ -972,7 +972,7 @@ async def test_a_hold_taken_during_judgement_only_flags(world, monkeypatch) -> N
 async def test_only_links_still_due_spend_the_budget(world, monkeypatch) -> None:
     asked: list[str] = []
 
-    async def judge(claim, link, texts, head, budget):
+    async def judge(claim, link, texts, head, budget, *, writer=""):
         budget.judgements -= 1  # the judge was asked
         asked.append(link["qualified_name"])
         return {**link, "suggestion": "fix"}

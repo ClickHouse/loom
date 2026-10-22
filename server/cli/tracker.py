@@ -79,7 +79,7 @@ def _cmd_tracker_dupcheck_fit(args: argparse.Namespace) -> int:
 
         # The replay embeds the org's issue text: its model calls name the org, so the
         # switch holds them and the command fails rather than send them.
-        with customer.for_org(org):
+        with customer.for_org(org, namespace=str(args.namespace or "")):
             out = await df.refit_namespace(
                 src,
                 df.state_repo(),

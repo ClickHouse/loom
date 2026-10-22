@@ -134,7 +134,7 @@ async def _run(
         src = make(cfg.org, ns)
         try:
             # The refit replays the gold set through the vector leg: that org's embeds.
-            with customer.for_org(cfg.org):
+            with customer.for_org(cfg.org, namespace=ns):
                 await score_namespace(src, repo, cfg.org, ns, result=result, now=now or _now())
                 result.namespaces += 1
                 await refit_dupcheck(src, cfg.org, ns, result=result, now=now or _now())

@@ -140,7 +140,7 @@ class OpenAILLMClient:
         self.model = model
         self.reasoning_effort = reasoning_effort
         self._api_key = provider_key("openai") if api_key is None else api_key
-        if not self._api_key and not gateway.exchanging():
+        if not self._api_key and not gateway.keyless():
             raise RuntimeError(
                 "OPENAI_API_KEY not set; OpenAILLMClient requires a key. "
                 "Use LOOM_LLM_PROVIDER=fake for local dev."
@@ -156,7 +156,7 @@ class OpenAILLMClient:
     ) -> LLMResult:
         # Before the gateway token and outside `recording`: a call naming no
         # customer is the caller's to fix, not a provider failure.
-        org = await customer.require()
+        who = await customer.require()
         client = _http_client()
         data: dict[str, Any] = {}
         effort = self.reasoning_effort
@@ -179,7 +179,7 @@ class OpenAILLMClient:
                 headers = {
                     "Authorization": f"Bearer {bearer}",
                     "Content-Type": "application/json",
-                    **customer.headers(org),
+                    **customer.headers(who),
                 }
                 async for attempt in retrying():
                     with attempt:

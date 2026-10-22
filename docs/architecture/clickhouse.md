@@ -389,9 +389,10 @@ of three mechanisms:
    (`memory_expiry_sweep`) and TTLs (`retention_reconcile`).
 
 There is no queue service. A queue is a table whose rows carry their state:
-`memory_extraction_queue` rows move `pending → done | failed` as versions; an embedding row
-with `embedding_dim = 0` is a stub waiting for a vector; a `memory_projection_failures` row
-is a projection to replay. Read paths filter unfinished rows out.
+`memory_extraction_queue` rows move `pending → running → done | failed` (or `held` until a
+model-call hold ends) as versions; an embedding row with `embedding_dim = 0` is a stub
+waiting for a vector; a `memory_projection_failures` row is a projection to replay. Read
+paths filter unfinished rows out.
 
 ```mermaid
 flowchart LR
