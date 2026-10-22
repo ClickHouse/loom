@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from server.core.ch import get_client, sequential_reads
 from server.core.cursors import decode_cursor, encode_cursor
 from server.core.errors import AuthInsufficientError
+from server.core.naming import named
 from server.memory.api.models_temporal import MemoryRecallInput, MemoryRecallOutput, _RecallTurn
 from server.memory.domain import recall as svc
 
@@ -17,7 +18,7 @@ from server.memory.domain import recall as svc
 def _session_read(thread: str, scoped: MemoryRecallInput) -> str | None:
     """The session the read is bound to: `thread`, else the request's own. Under
     own_session, `thread` may not name another session."""
-    own = scoped.session_id if scoped.session_id and scoped.session_id != "-" else None
+    own = named(scoped.session_id)
     sid = thread or own
     if scoped.read_scope == "own_session" and sid != own:
         raise AuthInsufficientError("read_scope=own_session reads only the request's session_id")
@@ -45,7 +46,7 @@ async def handle_memory_recall(input: MemoryRecallInput) -> MemoryRecallOutput:
     # Read scope: the token's ceiling narrows the request; a pinned token never reads another
     # user's turns.
     scoped, _ = pin_read_filters(input, current_auth())
-    uid = scoped.user_id if scoped.user_id and scoped.user_id != "-" else None
+    uid = named(scoped.user_id)
     sid = _session_read(input.thread, scoped)
     order = svc.resolve_order(input.order, tokens)
 

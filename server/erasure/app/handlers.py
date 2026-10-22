@@ -7,6 +7,7 @@ store directly.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import Mapping
@@ -36,8 +37,10 @@ from server.erasure.store import exports as erasure_exports
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store.rows import RequestStatusRow
 from server.memory.app.provenance import writer_actor
+from server.memory.domain.sensitivity import reads_high
 from server.observability import audit
 from server.operations.base import Role
+from server.settings import settings
 
 
 def _org_wide_admin(auth: AuthInfo, org: str) -> bool:
@@ -130,18 +133,22 @@ async def _export_memory(
     return _page(rows, limit)
 
 
-async def _audit_high_rows(org: str, rows: list[dict[str, object]]) -> None:
+_MEMORY_SUBJECT = ("memory_key", "memory_id", "version")
+# Conversation rows carry no label; their text decides, as for raw evidence.
+_CONVERSATION_TEXT = ("content", "reasoning", "metadata")
+_CONVERSATION_SUBJECT = ("agent", "thread_id", "msg_id")
+_THREAD_TEXT = ("title", "metadata")
+_THREAD_SUBJECT = ("agent", "thread_id")
+
+
+async def _audit_high_rows(
+    org: str, rows: list[dict[str, object]], subject: tuple[str, ...] = _MEMORY_SUBJECT
+) -> None:
     """The export serves high rows on purpose; each one it serves is audited as a key read is."""
     by_ns: dict[str, list[dict[str, object]]] = {}
     for r in rows:
         if r.get("sensitivity") == "high":
-            by_ns.setdefault(str(r["namespace"]), []).append(
-                {
-                    "memory_key": r["memory_key"],
-                    "memory_id": r["memory_id"],
-                    "version": r["version"],
-                }
-            )
+            by_ns.setdefault(str(r["namespace"]), []).append({k: r[k] for k in subject})
     for ns, subjects in by_ns.items():
         await audit.emit_many(
             "memory.sensitive_read",
@@ -160,6 +167,13 @@ async def _export_knowledge(
         org, scope_type, scope_value, limit=limit + 1, shown=shown
     )
     return _page(rows, limit)
+
+
+def _label_high(rows: list[dict[str, object]], fields: tuple[str, ...]) -> None:
+    """Set `sensitivity` to 'high' on each row whose text reads as high, as a
+    labelled memory row carries it, so the export audits it the same way."""
+    for r in rows:
+        r["sensitivity"] = "high" if any(reads_high(str(r[f])) for f in fields) else ""
 
 
 async def _export_agent_events(
@@ -246,6 +260,31 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         limit=input.section_limit,
         shown=shown,
     )
+    turns, conv_trunc = await erasure_exports.export_conversations(
+        input.org,
+        input.scope_type,
+        input.scope_value,
+        include_tombstoned=input.include_tombstoned,
+        limit=input.section_limit,
+        max_bytes=settings.erasure_export_conversation_max_bytes,
+        as_of=now,
+        shown=shown,
+    )
+    # The read is already capped at `section_limit` and says whether it cut rows.
+    conv_rows = [_serialize_row(r) for r in turns]
+    conv_count = len(conv_rows)
+    threads = await erasure_exports.export_conversation_threads(
+        input.org,
+        input.scope_type,
+        input.scope_value,
+        include_tombstoned=input.include_tombstoned,
+        limit=input.section_limit + 1,
+        shown=shown,
+    )
+    thread_rows, thread_count, thread_trunc = _page(threads, input.section_limit)
+    # A turn can be megabytes long, so the check runs off the event loop.
+    await asyncio.to_thread(_label_high, conv_rows, _CONVERSATION_TEXT)
+    await asyncio.to_thread(_label_high, thread_rows, _THREAD_TEXT)
     evt_rows, evt_count, evt_trunc = await _export_agent_events(
         input.org,
         input.scope_type,
@@ -261,7 +300,17 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         shown=shown,
     )
     await _audit_high_rows(input.org, mem_rows)
+    await _audit_high_rows(input.org, conv_rows, _CONVERSATION_SUBJECT)
+    await _audit_high_rows(input.org, thread_rows, _THREAD_SUBJECT)
 
+    counts = {
+        "memory": mem_count,
+        "knowledge": know_count,
+        "conversations": conv_count,
+        "conversation_threads": thread_count,
+        "agent_events": evt_count,
+        "audit_log": aud_count,
+    }
     await audit.emit(
         event_type="erasure.exported",
         org=input.org,
@@ -270,12 +319,7 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         subject={
             "scope_type": input.scope_type,
             "scope_value": input.scope_value,
-            "counts": {
-                "memory": mem_count,
-                "knowledge": know_count,
-                "agent_events": evt_count,
-                "audit_log": aud_count,
-            },
+            "counts": counts,
         },
         request_id=str(uuid.uuid4()),
     )
@@ -286,14 +330,13 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         scope_type=input.scope_type,
         scope_value=input.scope_value,
         requester=input.requester,
-        counts={
-            "memory": mem_count,
-            "knowledge": know_count,
-            "agent_events": evt_count,
-            "audit_log": aud_count,
-        },
+        counts=counts,
         memory=ErasureExportSection(rows=mem_rows, count=mem_count, truncated=mem_trunc),
         knowledge=ErasureExportSection(rows=know_rows, count=know_count, truncated=know_trunc),
+        conversations=ErasureExportSection(rows=conv_rows, count=conv_count, truncated=conv_trunc),
+        conversation_threads=ErasureExportSection(
+            rows=thread_rows, count=thread_count, truncated=thread_trunc
+        ),
         agent_events=ErasureExportSection(rows=evt_rows, count=evt_count, truncated=evt_trunc),
         audit_log=ErasureExportSection(rows=aud_rows, count=aud_count, truncated=aud_trunc),
     )

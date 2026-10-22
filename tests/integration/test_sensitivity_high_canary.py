@@ -258,6 +258,8 @@ def test_payment_and_identity_numbers_are_labelled_on_write(
         "actor": "process:canary",
         "source_class": "asserted",
         "agent": "canary",
+        "user_id": "-",
+        "session_id": "-",
         "status": "active",
         "code": [],
         "superseded_by": "",

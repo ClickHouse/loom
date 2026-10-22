@@ -1376,6 +1376,13 @@ function browseRowsFixture(n: number): Record<string, unknown>[] {
     join_policy: i % 2 === 0 ? "approval" : "open",
     visibility: "public",
     my_status: "none",
+    // The last row has a guide whose summary is longer than a row's name column.
+    ...(i === n - 1
+      ? {
+          guide_revision: 4,
+          guide_summary: "One runbook per service under runbook/<service>; tag stale marks a superseded one",
+        }
+      : {}),
   }));
 }
 

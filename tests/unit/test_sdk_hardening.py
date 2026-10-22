@@ -285,6 +285,20 @@ async def test_post_with_meta_returns_the_server_metadata() -> None:
     await t.close()
 
 
+async def test_post_with_meta_sends_the_extra_headers() -> None:
+    seen: list[httpx.Headers] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req.headers)
+        return httpx.Response(200, json={"results": []})
+
+    t = Transport("http://x", api_key="k")
+    _mock(t, handler)
+    await t.post_with_meta("/v1/memory.search", {}, extra_headers={"X-Loom-Run-Id": "r1"})
+    assert seen[0]["X-Loom-Run-Id"] == "r1" and seen[0]["X-Request-Id"]
+    await t.close()
+
+
 async def test_agent_call_with_meta_stamps_identity_and_returns_metadata() -> None:
     bodies: list[dict[str, Any]] = []
 

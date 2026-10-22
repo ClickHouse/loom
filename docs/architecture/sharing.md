@@ -75,8 +75,7 @@ The same five ops serve both ways a chat runs in front of Loom:
 A save that is not indexed answers `indexed: false` with a `reason` (listed on the
 feature page). A client draws a conversation's saved state with one
 `conversation.saved_status` call, and a user erasure takes the user's conversation rows,
-saved ones included. A user-scope `erasure.export` reads no conversation rows, so a
-user's saved messages are not in their export.
+saved ones included.
 
 ## Identity
 
@@ -240,12 +239,12 @@ grants that named it, so a group made later under the same id starts with none.
 Collections that hold other writers' documents stay: Loom deletes only what its writer
 asked to delete. `collection.delete` purges what its collection held (a namespace erasure
 that takes the rows off disk) before the collection leaves the tree. A user-scope
-`erasure.export` returns the chunks that user wrote in the collections its caller may
-read, and in the user's own personal collection. Their saved messages are conversation
-rows, which the export does not read ([Saved messages](#saved-messages)). An org
-admin may erase a collection's rows without reading them; a platform admin sees every
-collection. Each section's read leaves out what the caller may not see before its limit,
-so a hidden row never takes a visible row's place on the page.
+`erasure.export` returns the chunks and the conversation rows (transcript turns, saved
+messages and threads) that user owns in the collections its caller may read, and in the
+user's own personal collection. An org admin may erase a collection's rows without
+reading them; a platform admin sees every collection. Each section's read leaves out what
+the caller may not see before its limit, so a hidden row never takes a visible row's place
+on the page.
 
 ## Namespace guides
 

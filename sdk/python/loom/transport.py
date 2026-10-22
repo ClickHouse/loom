@@ -430,6 +430,7 @@ class Transport:
         timeout_s: float | None = None,
         request_id: str | None = None,
         retry: RetryPolicy | dict[str, Any] | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> CallResult:
         """POST to /v1/{op} with retries on 5xx/429; return body and metadata.
 
@@ -447,6 +448,8 @@ class Transport:
             retry: A `RetryPolicy` or a dict of its fields overriding the
                 Transport's policy for this call (`{"max_attempts": 1}`
                 disables retries).
+            extra_headers: More request headers for this call, for example
+                `X-Loom-Run-Id`, which labels a read with a run.
 
         Returns:
             A `CallResult`: the decoded JSON body plus the request id, the
@@ -456,7 +459,7 @@ class Transport:
             RateLimited: On a 429 past the pacing budget (see `Transport`).
             LoomError: Any other failure, after the policy's retries.
         """
-        headers: dict[str, str] = {}
+        headers: dict[str, str] = dict(extra_headers or {})
         if idempotency_key is None and _replayed(op_path):
             idempotency_key = str(uuid.uuid4())
         if idempotency_key is not None:

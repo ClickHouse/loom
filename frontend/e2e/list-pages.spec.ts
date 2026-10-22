@@ -315,6 +315,32 @@ test.describe("a touch pointer at 375 px", () => {
     await expect(page.getByRole("dialog")).toBeVisible();
   });
 
+  // A member's guide summary in Spaces is a 12 px line of text, but its link is a button,
+  // and every button is a 44 px target under a coarse pointer: a tap near either edge opens
+  // the guide, not the row's join.
+  test("a Spaces row's guide summary link is a 44 px target", async ({ page }) => {
+    await installApi(page, {
+      browseRows: 3,
+      mine: [
+        { namespace: NAMESPACE, role: "writer", status: "active", visibility: "private", kind: "memory" },
+        { namespace: "team-002", role: "writer", status: "active", visibility: "public", kind: "memory" },
+      ],
+      claims: [NAMESPACE, "team-002"],
+    });
+    await page.goto("/spaces");
+    const link = page.locator("[data-guide-link]");
+    await expect(link).toBeVisible();
+    const box = await link.boundingBox();
+    if (!box) throw new Error("the guide link has no box");
+    expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
+    for (const dy of [3, box.height - 3]) {
+      await page.touchscreen.tap(box.x + 12, box.y + dy);
+      await expect(page.getByRole("dialog", { name: "Guide for team-002" })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+    }
+  });
+
   // A tag chip keeps its 24 px box, so the row keeps its height, and takes a 44 px tap: a
   // tap 8 px above the box filters by the tag instead of opening the row, and one 8 px below
   // takes the filter off (the row paints only its own box, content-visibility, and the hit
@@ -418,4 +444,31 @@ test("styles.css draws the Kbd and the score bar on radius tokens", () => {
   for (const selector of [".kbd", ".recall-bar", ".recall-bar > span"]) {
     expect(rule(selector), selector).toMatch(/border-radius: var\(--/);
   }
+});
+
+// The guide link is only as wide as its text: a click beside it on its line still opens
+// the row (a member's Request upgrade), not the guide.
+test.describe("1400 px, the guide summary line", () => {
+  test.use({ viewport: { width: 1400, height: 900 } });
+  test("a click beside a Spaces row's guide link is the row's", async ({ page }) => {
+    await installApi(page, {
+      browseRows: 3,
+      mine: [
+        { namespace: NAMESPACE, role: "writer", status: "active", visibility: "private", kind: "memory" },
+        { namespace: "team-002", role: "writer", status: "active", visibility: "public", kind: "memory" },
+      ],
+      claims: [NAMESPACE, "team-002"],
+    });
+    await page.goto("/spaces");
+    const link = page.locator("[data-guide-link]");
+    await expect(link).toBeVisible();
+    const box = await link.boundingBox();
+    const row = await page.locator(".list-row", { has: link }).boundingBox();
+    if (!box || !row) throw new Error("the guide link or its row has no box");
+    const beside = box.x + box.width + 24;
+    expect(beside).toBeLessThan(row.x + row.width / 2);
+    await page.mouse.click(beside, box.y + box.height / 2);
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Guide for team-002" })).toHaveCount(0);
+  });
 });

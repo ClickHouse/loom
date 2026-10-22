@@ -16,9 +16,10 @@ from server.memory.api.models_common import MemoryType, _Identity
 
 class MemoryDigestsInput(_Identity):
     """List the session digests of a namespace. `session_id`
-    "*" (the default of a namespace audit) lists every session; a concrete
+    "*" (the default of a namespace audit) or "-" lists every session; a concrete
     session id lists that one."""
 
+    # One session's digests; "*" or "-" = every session.
     session_id: str = "*"
     # At most this many digests, oldest session first; `truncated` says more exist.
     limit: int = Field(default=200, ge=1, le=2000)
@@ -315,6 +316,8 @@ class MemoryOutcomeRunInput(BaseModel):
     outcome: Literal["positive", "negative", "used"]
     # The recalled keys to apply the outcome to; empty derives them from `run_id`.
     memory_keys: list[str] = Field(default_factory=list)
+    # The run whose recalls supply the keys when memory_keys is empty; "" or "-" names
+    # no run.
     run_id: str = ""
     # How many events the outcome counts as on each key.
     weight: int = Field(default=1, ge=1, le=100)
