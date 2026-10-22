@@ -78,7 +78,8 @@ class _CH:
         if sql == CODEC_SETTINGS_SQL:
             return _R(self.codec_rows)
         if "toUnixTimestamp(metadata_modification_time)" in sql:
-            return _R([(TWIN_CREATED,)])  # a reused twin's creation
+            # a table this fake did not create (a reused twin) was created at TWIN_CREATED
+            return _R([(self.t.get(str(p.get("t")), {}).get("created", TWIN_CREATED),)])
         if sql == "SELECT toUnixTimestamp(now())":
             return _R([(COPY_STARTED,)])
         if sql.startswith("SHOW CREATE TABLE loom."):
@@ -135,7 +136,12 @@ class _CH:
             raise RuntimeError("Not enough privileges")
         w = s.replace("loom.", "").split()
         if s.startswith("CREATE TABLE"):
-            self.t[w[2]] = {"ddl": stmt, "rows": 0, "uuid": next(self.uuids)}
+            self.t[w[2]] = {
+                "ddl": stmt,
+                "rows": 0,
+                "uuid": next(self.uuids),
+                "created": COPY_STARTED,
+            }
         elif s.startswith("DROP TABLE"):
             self.t.pop(w[2])
         elif s.startswith("EXCHANGE TABLES"):
@@ -667,6 +673,18 @@ def test_a_mutation_finished_under_a_minute_ago_refuses_before_the_twin(capsys: 
     assert f"(NOT is_done OR create_time >= toDateTime({margin}))" in read
 
 
+def test_the_preflight_counts_mutations_since_a_reused_twin_was_created(capsys: Any) -> None:
+    """With --reuse the gate before the swap counts from the twin's creation; the preflight
+    counts from the same time, so a mutation finished since then refuses before the delta."""
+    ch = _CH(memory_chunks=_live(), memory_chunks_rebuild=_live())
+    ch.mutations = 1
+    assert _run(ch, "--yes", "--reuse") == tr.REFUSED
+    assert _writes(ch) == [] and "rerun in a minute" in capsys.readouterr().out
+    read = next(q for q in ch.queries if "system.mutations" in q)
+    margin = TWIN_CREATED - vcr.CLOCK_SKEW_MARGIN_S
+    assert f"(NOT is_done OR create_time >= toDateTime({margin}))" in read
+
+
 @pytest.mark.parametrize(("flags", "since"), [((), COPY_STARTED), (("--reuse",), TWIN_CREATED)])
 def test_a_mutation_since_the_copy_stops_the_swap_even_when_done(
     flags: tuple[str, ...], since: int, capsys: Any
@@ -758,10 +776,14 @@ def test_a_swap_names_its_next_step_with_the_run_s_layout_flags_in_the_summary(
     """The printed --drop-pre-rebuild runs as written: without the run's --method it would
     check the tables against the default layout and refuse."""
     ch = _CH(memory_chunks=_live())
-    assert _run(ch, "--method", "int8", "--index-granularity", "512", "--yes") == tr.OK
+    flags = ("--method", "int8", "--index-granularity", "512", "--cluster", "")
+    assert _run(ch, *flags, "--statement-timeout-s", "5000", "--yes") == tr.OK
     summary = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])
     assert summary["exit"] == tr.OK and "writers and erasure stopped" in summary["next"]
-    assert "--method int8 --index-granularity 512 --drop-pre-rebuild --yes" in summary["next"]
+    assert (
+        "--method int8 --index-granularity 512 --cluster '' --statement-timeout-s 5000 "
+        "--drop-pre-rebuild --yes"
+    ) in summary["next"]
 
 
 def test_columns_that_differ_by_name_after_the_swap_keep_both_tables(
@@ -900,6 +922,30 @@ def test_drop_pre_rebuild_after_a_rollback_keeps_a_change_only_the_new_layout_co
     ch.cons = (0, 2, 0)  # writes after the rollback reached only the live table
     assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.OK
     assert "memory_chunks_pre_rebuild" not in ch.t
+
+
+def test_drop_pre_rebuild_after_a_rebuild_on_the_target_layout_keeps_a_change_only_the_copy_holds(
+    capsys: Any,
+) -> None:
+    """A --require-patch-free run rebuilds a table already on the target layout, so both
+    tables hold it: --drop-pre-rebuild still compares them, after the swap and after a
+    rollback, and keeps the copy while it holds a change the live table lacks."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    ch = _CH(memory_chunks={"ddl": coded, "rows": 5, "uuid": "live"})
+    assert _run(ch, "--yes", "--require-patch-free") == tr.OK
+    capsys.readouterr()
+    ch.cons = (0, 1, 0)  # a key only the rollback copy holds
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+    assert "memory_chunks_pre_rebuild" in ch.t
+    assert "--rollback --yes" in capsys.readouterr().out
+    ch.cons = (0, 0, 0)
+    assert _run(ch, "--rollback", "--yes") == tr.OK
+    ch.cons = (0, 0, 1)  # a key only the new-layout copy holds after the rollback
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tr.REFUSED
+    assert "memory_chunks_pre_rebuild" in ch.t
+    out = capsys.readouterr().out
+    assert "loom.memory_chunks_pre_rebuild holds a change loom.memory_chunks lacks" in out
+    assert not any(c.startswith("DROP TABLE") for c in ch.commands)
 
 
 def _synced_before_the_last_read(ch: _CH, start: int) -> None:

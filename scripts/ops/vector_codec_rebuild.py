@@ -123,6 +123,9 @@ COPY_RECEIVE_TIMEOUT_S = 7200
 # The full copy and the rollback's catch-up copy run under this limit.
 # not a setting: stays below the client's read timeout
 COPY_EXECUTION_TIME_S = COPY_RECEIVE_TIMEOUT_S - 200
+# The defaults of --cluster and --statement-timeout-s; a printed next step names any other.
+DEFAULT_CLUSTER = "default"
+DEFAULT_STATEMENT_TIMEOUT_S = 1800.0
 # How far above the exact 20th distance a twin hit may read and still count.
 DISTANCE_TOLERANCE = 1e-6
 COUNT_SETTLE_ATTEMPTS = 8
@@ -608,8 +611,8 @@ class VectorRebuild:
 
     @property
     def run_line(self) -> str:
-        """The command line that runs this tool on this table with this run's layout
-        flags, up to its action flags."""
+        """The command line that runs this tool on this table with this run's layout,
+        cluster and timeout flags, up to its action flags."""
         line = (
             f"python -P -m scripts.ops.vector_codec_rebuild --table {self.t} "
             f"--columns {','.join(self.cols)} --method {self.a.method}"
@@ -618,6 +621,10 @@ class VectorRebuild:
             line += f" --chain {shlex.quote(self.chain)}"
         if self.a.index_granularity:
             line += f" --index-granularity {self.a.index_granularity}"
+        if self.a.cluster != DEFAULT_CLUSTER:
+            line += f" --cluster {shlex.quote(self.a.cluster)}"
+        if self.a.statement_timeout_s != DEFAULT_STATEMENT_TIMEOUT_S:
+            line += f" --statement-timeout-s {self.a.statement_timeout_s:g}"
         return line
 
     def report_state(self) -> str:
@@ -629,8 +636,9 @@ class VectorRebuild:
             )
         if self.recheck:
             return (
-                f"the checks could not run: fix the grant or connect directly to one replica "
-                f"and rerun `{run} --drop-pre-rebuild --yes`; loom.{self.pre} is kept"
+                "the checks could not run: fix the grant, connect directly to one replica, "
+                f"or raise --statement-timeout-s, and rerun `{run} --drop-pre-rebuild --yes`; "
+                f"loom.{self.pre} is kept"
             )
         if self.rollback_only:
             return (
@@ -686,7 +694,10 @@ class VectorRebuild:
                 f"loom.{self.twin} (created {twin[2]}, {tr.row_count(self.ch, self.twin)} rows) is "
                 "another run's lock or its leftover: --reuse continues from it, --restart drops it"
             )
-        if why := self.mutation_refusal():
+        since = self.since
+        if twin is not None and self.a.reuse and tr.row_count(self.ch, self.twin):
+            since = self.metadata_time(self.twin)  # the twin create_twin will reuse
+        if why := self.mutation_refusal(since):
             return why
         if why := self.drain_refusal(parse_engine(ddl)[0]):
             return why
@@ -695,11 +706,12 @@ class VectorRebuild:
         except ReplicaBehind as e:
             return str(e)
 
-    def mutation_refusal(self) -> str:
+    def mutation_refusal(self, since: int) -> str:
         """A stopped writer can leave mutations running on ClickHouse. The gate before the
-        swap counts every mutation since `self.since`, less the clock-skew margin, so the
-        preflight refuses on the same rule rather than after the copy."""
-        if self.mutations_since(self.t, self.since):
+        swap counts every mutation since `since` (this run's start, or a reused twin's
+        creation), less the clock-skew margin, so the preflight refuses on the same rule
+        rather than after the copy."""
+        if self.mutations_since(self.t, since):
             return (
                 f"loom.{self.t} has a mutation still running or one that finished under a "
                 "minute ago; wait for it to finish and rerun in a minute"
@@ -1285,22 +1297,25 @@ class VectorRebuild:
             log(f"REFUSED: neither loom.{self.t} nor loom.{self.pre} has the target layout")
             return REFUSED
         # after a swap or a rollback the copy may be the only copy of a change
-        if bool(live) != bool(pre):
-            try:
-                why, rollback = (
-                    self.swapped_change() if live else (self.rolled_back_change(), False)
-                )
-            except Exception as e:  # noqa: BLE001 - checks that cannot run keep the copy
-                self.recheck = True
-                log(
-                    f"REFUSED: the checks could not run ({str(e)[:160]}): fix the grant or "
-                    "connect directly to one replica and rerun --drop-pre-rebuild; "
-                    f"loom.{self.pre} is kept"
-                )
-                return REFUSED
-            if why:
-                log(f"REFUSED: {why}; loom.{self.pre} is kept. {self.keep_copy(rollback)}")
-                return REFUSED
+        try:
+            if live and pre:
+                # a --require-patch-free run rebuilds a table already on the target layout;
+                # the run's twin is the newer table, after a swap and after a rollback
+                swapped = self.metadata_time(self.t) > self.metadata_time(self.pre)
+            else:
+                swapped = bool(live)
+            why, rollback = self.swapped_change() if swapped else (self.rolled_back_change(), False)
+        except Exception as e:  # noqa: BLE001 - checks that cannot run keep the copy
+            self.recheck = True
+            log(
+                f"REFUSED: the checks could not run ({str(e)[:160]}): fix the grant, "
+                "connect directly to one replica, or raise --statement-timeout-s, and "
+                f"rerun --drop-pre-rebuild; loom.{self.pre} is kept"
+            )
+            return REFUSED
+        if why:
+            log(f"REFUSED: {why}; loom.{self.pre} is kept. {self.keep_copy(rollback)}")
+            return REFUSED
         log(f"drop: loom.{self.pre} ({tr.row_count(self.ch, self.pre)} rows); cannot be undone")
         if not self.a.yes:
             log("plan only: pass --yes to drop it")
@@ -1365,7 +1380,7 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
     twin.add_argument("--restart", action="store_true", help="drop a twin left by an earlier run")
     ap.add_argument(
         "--cluster",
-        default="default",
+        default=DEFAULT_CLUSTER,
         help="cluster whose replicas the preflight and monitor check; '' = this server only",
     )
     ap.add_argument(
@@ -1374,7 +1389,7 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument(
         "--statement-timeout-s",
         type=float,
-        default=1800.0,
+        default=DEFAULT_STATEMENT_TIMEOUT_S,
         help="seconds each read, delta and repair INSERT may run, after the swap included",
     )
     ap.add_argument(

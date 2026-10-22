@@ -218,8 +218,9 @@ in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-
 
 `vector_codec_rebuild.py` needs a maintenance window with every writer and erasure
 stopped and all in-flight writes drained. Before copying it refuses a source mutation
-still running or created in the minute before the run, the margin for replica clocks
-that the gate before the swap also counts (rerun a minute after the last one finishes),
+still running or created in the minute before the run (with `--reuse`, before the
+reused twin was created), the margin for replica clocks that the gate before the swap
+also counts (rerun a minute after the last one finishes),
 and it never repairs the live table. Its ClickHouse user needs the
 `SYSTEM FLUSH ASYNC INSERT QUEUE` and `SYSTEM SYNC REPLICA` privileges on the table and,
 on `ReplicatedMergeTree`, `SYSTEM SYNC REPLICA` on `loom.<table>_pre_rebuild`, the
@@ -234,17 +235,19 @@ needs the re-embed below.
 Keep writers and erasure stopped until the rebuild finishes or is abandoned and every
 `<table>_rebuild` twin and `<table>_pre_rebuild` rollback copy is removed; a successful
 swap prints that as its next step, in its log and in the summary line's `next`. Each next
-step that names a command carries the run's `--method`, `--chain` and
-`--index-granularity`, so it runs as printed. Use `--drop-pre-rebuild --yes` to remove the rollback
+step that names a command carries the run's `--method`, `--chain`,
+`--index-granularity`, `--cluster` and `--statement-timeout-s`, so it runs as printed. Use `--drop-pre-rebuild --yes` to remove the rollback
 copy after validation or rollback, and `DROP TABLE loom.<table>_rebuild SYNC` to remove
 an abandoned twin. `--drop-pre-rebuild` first compares the two tables again (after the
 same drain as the postcondition) and refuses (exit 3), keeping the copy, while the copy
-it would drop holds a change the live table lacks. After a swap, a change only the
+it would drop holds a change the live table lacks, also when both tables are on the
+target layout (a `--require-patch-free` rebuild of a table already on it). After a swap, a change only the
 rollback copy holds names `--rollback --yes`; a change the live table holds names no
 rollback (see after the swap below). After a rollback, a change only the new-layout copy
-holds keeps it. When the checks cannot run (a failed drain or sync, or a read on a
-replica that has not caught up), it also refuses and keeps the copy: fix the grant or
-connect directly to one replica and rerun `--drop-pre-rebuild`. The erasure saga does not
+holds keeps it. When the checks cannot run (a failed drain or sync, a read past the
+timeout, or a read on a replica that has not caught up), it also refuses and keeps the
+copy: fix the grant, connect directly to one replica, or raise `--statement-timeout-s`,
+and rerun `--drop-pre-rebuild`. The erasure saga does not
 cover these copies.
 
 - **Width.** The target width of a plain column is `LOOM_EMBEDDING_DIM` when the column
