@@ -424,10 +424,10 @@ FROM system.settings
 WHERE name IN ('enable_quantized_codec', 'allow_suspicious_codecs')
 ```
 
-A setting is fine when `value = 1`, read-only or not, or when `value = 0` and the user may
-change it. It is blocked when `value = 0` and the row has `readonly = 1`, `max = '0'` or `1`
-in `disallowed_values`. No row for `enable_quantized_codec` means the server is older than
-26.8.
+A setting is fine at `value = 1`, read-only or not, and blocked at `value = 0` when this
+user may not set it to 1 (the rules are in
+[gated settings](../architecture/clickhouse.md#gated-clickhouse-settings)). No row for
+`enable_quantized_codec` means the server is older than 26.8.
 
 - **Self-managed ClickHouse 26.8 or later.** Both settings are user-settable by default and
   Loom sends them with each `CREATE` that needs them, so a fresh install needs nothing.
@@ -485,10 +485,14 @@ the server does not change existing tables:
    (`target <table> dimension <n>`); skip the line while this query, with the line's first
    column, returns 0:
    `SELECT countIf(length(<column>) = <n> AND <column>[1] != 0) FROM loom.<table>`.
+   The gate can also fail where one `(org, namespace)` holds fewer than 20 real vectors
+   next to placeholder rows of the same width: their distance is NaN, which sorts last, so
+   the gate reads that namespace's recall as 0. Rebuild such a table once each namespace has
+   20 real vectors, or once its rows are embedded.
 
-   A run that stopped at the gate leaves its twin, `loom.<table>_rebuild`, a copy of the
-   table's rows that erasure does not reach: drop it with
-   `DROP TABLE loom.<table>_rebuild SYNC`, or pass `--restart` when you run that line again.
+   A run that stops before its swap (a failed gate, an abort file, an interrupt) leaves its
+   twin, `loom.<table>_rebuild`, a copy of the table's rows that erasure does not reach: drop
+   it with `DROP TABLE loom.<table>_rebuild SYNC`, or pass `--restart` when you run that line again.
 
 3. Once search looks right, drop the old copies: run the lines of the tables you rebuilt
    again with `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its old
