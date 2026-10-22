@@ -113,7 +113,8 @@ class _CH:
         if "system.mutations" in sql:
             return _R([(self.mutations_first.pop(0) if self.mutations_first else self.mutations,)])
         if "ORDER BY rand()" in sql:
-            return _R([("o", "n", [0.5] * DIM)])
+            name = sql.split("FROM loom.", 1)[1].split()[0]
+            return _R([("o", "n", [0.5] * DIM)] if self.t[name]["rows"] else [])
         if "round(cosineDistance" in sql:
             return _R([(0.1,)] * 20)
         if "INTERVAL 1 HOUR" in sql:
@@ -427,14 +428,24 @@ def test_a_width_refusal_names_loom_reembed_only_for_the_tables_it_re_embeds(
     assert "a width change with the same model goes through Settings -> Models & keys" in out
 
 
-def test_an_empty_source_refuses_before_the_twin(capsys: Any) -> None:
-    """The recall gate needs rows to probe, and an empty replicated table's log reads the
-    same as one its replica has not read: the preflight names the empty table instead."""
+def test_an_empty_source_is_rebuilt_without_probes(capsys: Any) -> None:
+    """A table never written is rebuilt at LOOM_EMBEDDING_DIM: the recall gate has nothing
+    to probe, and a source that holds rows but no probe still fails it."""
     ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 0, "uuid": "live"})
-    assert _run(ch, "--yes") == tr.REFUSED and _writes(ch) == []
+    assert _run(ch, "--yes") == tr.OK
     out = capsys.readouterr().out
-    assert "loom.memory_chunks holds no rows: nothing to copy" in out
-    assert "has not fetched every part" not in out
+    assert "recall gate: loom.memory_chunks holds no rows, nothing to probe" in out
+    assert any(c.startswith("EXCHANGE") for c in ch.commands)
+
+
+def test_a_rollback_names_the_drop_as_its_next_step(capsys: Any) -> None:
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    ch = _CH(
+        memory_chunks={"ddl": coded, "rows": 5, "uuid": "a"}, memory_chunks_pre_rebuild=_live()
+    )
+    assert _run(ch, "--rollback", "--yes") == tr.OK
+    step = json.loads(capsys.readouterr().out.rsplit("summary ", 1)[1])["next"]
+    assert "--drop-pre-rebuild --yes" in step and "keep writers and erasure stopped" in step
 
 
 def test_rows_only_the_twin_holds_fail_the_gate(capsys: Any) -> None:
@@ -969,7 +980,35 @@ def test_each_read_after_the_drain_checks_its_own_replica_in_the_same_statement(
         assert reads and all(q.startswith(DRAINED_READ) for q, _ in reads), needle
         assert tables <= {t for _, p in reads for t in p["tables"]}, needle
     assert "log_pointer > log_max_index" in vcr.REPLICA_SYNCED_SQL
+    assert "log_max_index = 0 AND log_pointer = 0 AND queue_size = 0" in vcr.REPLICA_SYNCED_SQL
     assert "system.replication_queue" in vcr.REPLICA_SYNCED_SQL
+
+
+def test_each_gate_read_of_a_replicated_twin_follows_its_sync() -> None:
+    """The copy, a delta or a repair writes log entries to the twin this replica may not
+    have pulled yet: each consistency read before the swap syncs the twin first."""
+    ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
+    ch.cons_first = [(0, 1, 0)]  # the first read finds a key to repair
+    assert _run(ch, "--yes") == tr.OK
+    seq = ch.sequence
+    swap = seq.index("EXCHANGE TABLES loom.memory_chunks AND loom.memory_chunks_rebuild")
+    reads = [i for i, q in enumerate(seq[:swap]) if "FULL OUTER JOIN" in q]
+    assert len(reads) == 3
+    sync = "SYSTEM SYNC REPLICA loom.memory_chunks_rebuild LIGHTWEIGHT"
+    assert any(
+        q.startswith("INSERT INTO loom.memory_chunks_rebuild") for q in seq[reads[0] : reads[1]]
+    )
+    for i in reads:
+        last = max(j for j in range(i) if seq[j] == sync)
+        assert not any(q.startswith("INSERT INTO loom.memory_chunks_rebuild") for q in seq[last:i])
+
+
+def test_a_refused_twin_sync_fails_the_gate(capsys: Any) -> None:
+    ch = _CH(memory_chunks={"ddl": REPLICATED, "rows": 5, "uuid": "live"})
+    ch.refuse_table = "loom.memory_chunks_rebuild"
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "one cause is a missing grant on the twin" in capsys.readouterr().out
 
 
 def test_a_postcondition_read_on_a_lagging_replica_keeps_the_copy_without_a_rollback(

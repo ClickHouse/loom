@@ -62,6 +62,17 @@ def replicated_ch(ch: Any, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
         ch.command(f"DROP DATABASE IF EXISTS {name} SYNC")
 
 
+def replicated_table(ch: Any) -> str:
+    """A new ReplicatedReplacingMergeTree in the Replicated database `ch` uses."""
+    table = f"vcr_it_{uuid.uuid4().hex[:8]}"
+    ch.command(
+        f"CREATE TABLE loom.{table} (org String, namespace String, id UInt64, "
+        "embedding Array(Float32), version UInt64, note String DEFAULT '') "
+        "ENGINE = ReplicatedReplacingMergeTree(version) ORDER BY (org, namespace, id)"
+    )
+    return table
+
+
 def args(table: str) -> list[str]:
     return ["--table", table, "--columns", "embedding", "--cluster", "", "--settle-s", "0"]
 
@@ -408,12 +419,7 @@ def test_a_quiet_rebuild_of_a_replicated_table_checks_each_read_s_replica(
     fetched every part, and the checks after the swap sync the rollback copy LIGHTWEIGHT;
     on a quiet table each of them passes."""
     ch = replicated_ch
-    table = f"vcr_it_{uuid.uuid4().hex[:8]}"
-    ch.command(
-        f"CREATE TABLE loom.{table} (org String, namespace String, id UInt64, "
-        "embedding Array(Float32), version UInt64, note String DEFAULT '') "
-        "ENGINE = ReplicatedReplacingMergeTree(version) ORDER BY (org, namespace, id)"
-    )
+    table = replicated_table(ch)
     vectors = {ident: [float(i == ident) for i in range(8)] for ident in range(1, 4)}
     for ident, vector in vectors.items():
         insert(ch, table, ident, vector)
@@ -426,26 +432,46 @@ def test_a_quiet_rebuild_of_a_replicated_table_checks_each_read_s_replica(
     assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
 
 
-def test_an_empty_replicated_table_refuses_as_empty(
-    replicated_ch: Any, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A ReplicatedMergeTree never written has an empty replication log: the run names
-    the empty table rather than a replica that has not caught up."""
+def test_an_empty_replicated_table_is_rebuilt(replicated_ch: Any) -> None:
+    """A ReplicatedMergeTree never written has an empty replication log, which every read
+    after the drain takes as caught up; the recall gate has nothing to probe."""
     ch = replicated_ch
-    table = f"vcr_it_{uuid.uuid4().hex[:8]}"
-    ch.command(
-        f"CREATE TABLE loom.{table} (org String, namespace String, id UInt64, "
-        "embedding Array(Float32), version UInt64, note String DEFAULT '') "
-        "ENGINE = ReplicatedReplacingMergeTree(version) ORDER BY (org, namespace, id)"
-    )
+    table = replicated_table(ch)
     job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
     if why := job.codec_refusal():
         pytest.skip(why)
-    assert vcr.main([*args(table), "--yes"], ch=ch) == tr.REFUSED
-    out = capsys.readouterr().out
-    assert f"loom.{table} holds no rows: nothing to copy" in out
-    assert "has not fetched every part" not in out
-    assert ch.query(f"EXISTS TABLE loom.{table}{tr.TWIN_SUFFIX}").result_rows == [(0,)]
+    assert vcr.main([*args(table), "--yes"], ch=ch) == tr.OK
+    assert job.target_state(table)
+    assert vcr.main([*args(table), "--drop-pre-rebuild", "--yes"], ch=ch) == tr.OK
+
+
+def test_a_repair_into_a_replicated_twin_syncs_it_before_the_next_read(
+    replicated_ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A row written after the copy at a version below the twin's highest one is missed
+    by the delta and inserted by the repair; the read after it syncs the twin first, so
+    it does not take the twin's new log entry for a replica behind."""
+    ch = replicated_ch
+    table = replicated_table(ch)
+    vectors = {ident: [float(i == ident) for i in range(8)] for ident in range(1, 4)}
+    for ident, vector in vectors.items():
+        insert(ch, table, ident, vector, version=5)
+    job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
+    if why := job.codec_refusal():
+        pytest.skip(why)
+    delta_into = vcr.VectorRebuild.delta_into
+    written: list[int] = []
+
+    def write_then_delta(self: vcr.VectorRebuild, *a: Any, **kw: Any) -> int:
+        if not written:
+            insert(ch, table, 9, [float(i == 4) for i in range(8)], version=1)
+            written.append(9)
+        return delta_into(self, *a, **kw)
+
+    monkeypatch.setattr(vcr.VectorRebuild, "delta_into", write_then_delta)
+    assert vcr.main([*args(table), "--yes"], ch=ch) == tr.OK
+    assert ch.query(f"SELECT count() FROM loom.{table} FINAL").result_rows == [(4,)]
+    assert vcr.main([*args(table), "--drop-pre-rebuild", "--yes"], ch=ch) == tr.OK
 
 
 def test_a_read_on_a_replica_that_has_not_fetched_a_part_refuses_the_run(

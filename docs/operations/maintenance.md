@@ -222,13 +222,15 @@ stopped and all in-flight writes drained. It never repairs the live table. Befor
 copying it refuses while a source mutation is still running or was created in the last
 minute (with `--reuse`, since the reused twin was created); the minute covers replica
 clock skew, and the gate before the swap counts it too. Rerun a minute after the last
-mutation finishes. It also refuses an empty table (exit 3): there is nothing to copy,
-and the recall gate needs rows to probe. Its ClickHouse user needs the
+mutation finishes. An empty table is rebuilt too, with the width `LOOM_EMBEDDING_DIM`
+sets; the recall gate has no rows to probe there. Its ClickHouse user needs the
 `SYSTEM FLUSH ASYNC INSERT QUEUE` and `SYSTEM SYNC REPLICA` privileges on the table and,
-on `ReplicatedMergeTree`, `SYSTEM SYNC REPLICA` on `loom.<table>_pre_rebuild`, the
+on `ReplicatedMergeTree`, `SYSTEM SYNC REPLICA` on the twin `loom.<table>_rebuild`, which
+the gates synchronize before each read of it, and on `loom.<table>_pre_rebuild`, the
 rollback copy the swap creates, which the checks after the swap and in
 `--drop-pre-rebuild` synchronize. The preflight runs the first two once and refuses
-(exit 3) when either fails, naming the error; the third can only run after the swap.
+(exit 3) when either fails, naming the error; the others can only run once their table
+exists, and a refused twin sync fails the gate (exit 5).
 `--dry-run` runs the first two as well, so it lands queued rows in the table and, on a
 lagging replica, waits for the sync, and writes nothing else. Where a gate fails
 (exit 5), stop writes and erasures and rerun with `--restart`; a width refusal (exit 3)
@@ -340,23 +342,30 @@ only the live table holds, and it would undo a mutation on the live table. It st
 old table's merges again, so an unfinished mutation on the rollback copy applies after
 it, and the `--drop-pre-rebuild` that follows shows the keys it touched as differing at
 one version. An unfinished `ALTER UPDATE` on the new-layout copy after a rollback does
-not show under `FINAL`, which is why a mutation on it counts.
+not show under `FINAL`, which is why a mutation on it counts. A rollback that succeeds
+names the next step in its summary: keep writers and erasure stopped and run
+`--drop-pre-rebuild --yes`, which checks the two tables before it drops the new-layout
+copy.
 A delete in the live table leaves its keys only in the rollback copy, so the first row
 names `--rollback` only while the live table has no mutation since the copy started.
 
 To inspect a difference by hand, keep writers and erasure stopped and list each key the
 two tables hold differently, with both sides' version column (`version` in Loom's
-tables). `<key>` is the table's sorting key, `<columns>` every column but the vector
-columns, and `<vectors>` each vector column as `CAST(<column> AS Array(BFloat16))`, so
-both layouts hash alike:
+tables). `<key>` is the table's sorting key and `<columns>` every column but the vector
+columns. `<copy_vectors>` and `<live_vectors>` list each vector column of that table.
+On the new-layout side (the live table after a swap, the copy after a rollback) a column
+is named as it is. On the old-layout side it is written as the rebuild writes it,
+`if(length(<column>) = <dim>, CAST(<column> AS Array(BFloat16)), arrayResize(CAST([] AS Array(BFloat16)), <dim>, toBFloat16(0)))`,
+where `<dim>` is the codec's width (`Quantized(<method>, <dim>, 0)` in the new
+layout's `SHOW CREATE TABLE`), so both layouts hash alike:
 
 ```sql
 SELECT <key>, s.version AS copy_version, t.version AS live_version,
        s.__present AS in_copy, t.__present AS in_live
-FROM (SELECT <key>, version, cityHash64(tuple(<columns>, <vectors>)) AS __hash,
+FROM (SELECT <key>, version, cityHash64(tuple(<columns>, <copy_vectors>)) AS __hash,
              1 AS __present FROM loom.<table>_pre_rebuild FINAL) AS s
 FULL OUTER JOIN
-     (SELECT <key>, version, cityHash64(tuple(<columns>, <vectors>)) AS __hash,
+     (SELECT <key>, version, cityHash64(tuple(<columns>, <live_vectors>)) AS __hash,
              1 AS __present FROM loom.<table> FINAL) AS t USING (<key>)
 WHERE s.__hash != t.__hash
 SETTINGS join_use_nulls = 0

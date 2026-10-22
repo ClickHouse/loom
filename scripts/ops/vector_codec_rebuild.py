@@ -56,7 +56,9 @@ fixed-length placeholders must be deployed first: a coded column rejects an
 empty vector). ReplicatedMergeTree runs connect directly to one replica throughout
 the run: each consistency and width read after the drain also reads, in the same
 statement, whether the replica answering it has fetched every part its replication
-log names, and fails the run when it has not.
+log names, and fails the run when it has not. Each consistency read of the twin
+follows a `SYSTEM SYNC REPLICA ... LIGHTWEIGHT` of it, which needs that privilege on
+`loom.<t>_rebuild` too. An empty table is rebuilt; the recall gate has nothing to probe.
 
 After a swap the tool compares the rollback copy with the live table. A change only
 the rollback copy holds names `--rollback`; a change the live table holds (a write
@@ -413,11 +415,12 @@ def newer_sql(old: str, new: str, fin: str, version: str | None, key: list[str])
 # Whether the replica answering a read has fetched every part of the tables in
 # {tables:Array(String)} that their replication logs name: it has copied the whole log
 # into its queue, and the queue holds nothing but merges, which keep the rows. A
-# mutation fails the run through the mutation count instead. An empty table is refused
-# before any such read: its log is empty, and log_pointer = log_max_index = 0 also
-# reads a log of one entry that this replica has not read.
+# mutation fails the run through the mutation count instead. A table never written has
+# an empty log, which reads as log_pointer = log_max_index = 0 with an empty queue.
 REPLICA_SYNCED_SQL = (
-    "(SELECT countIf(log_pointer > log_max_index) = length({tables:Array(String)}) "
+    "(SELECT countIf(log_pointer > log_max_index "
+    "OR (log_max_index = 0 AND log_pointer = 0 AND queue_size = 0)) "
+    "= length({tables:Array(String)}) "
     "FROM system.replicas WHERE database = currentDatabase() "
     "AND has({tables:Array(String)}, table)) "
     "AND (SELECT count() FROM system.replication_queue WHERE database = currentDatabase() "
@@ -492,7 +495,8 @@ def replicas_source(cluster: str) -> Callable[[str], str]:
 
 
 class ReplicaBehind(RuntimeError):
-    """A read after the drain was answered by a replica that has not fetched every part."""
+    """A read after the drain was answered by a replica that has not fetched every part,
+    or the twin's sync before such a read failed."""
 
 
 class VectorRebuild:
@@ -695,10 +699,6 @@ class VectorRebuild:
             return why
         if why := self.drain_refusal(parse_engine(ddl)[0]):
             return why
-        if not tr.row_count(self.ch, self.t):
-            # the recall gate needs rows to probe, and REPLICA_SYNCED_SQL cannot read an
-            # empty replication log as caught up
-            return f"loom.{self.t} holds no rows: nothing to copy"
         try:
             return self.width_refusal(ddl)
         except ReplicaBehind as e:
@@ -959,6 +959,22 @@ class VectorRebuild:
         row = self.q_drained(sql, [source, copy], join_use_nulls=0)[0]
         return int(row[0]), int(row[1]), int(row[2])
 
+    def twin_consistent(self, version: str | None, key: list[str]) -> tuple[int, int, int]:
+        """`consistent` for the live table and the twin. On ReplicatedMergeTree the twin is
+        synced first: the copy, a delta or a repair writes log entries this replica may
+        not have pulled yet, which the read would take for a replica behind."""
+        if self.replicated:
+            try:
+                self.cmd(f"SYSTEM SYNC REPLICA loom.{self.twin} LIGHTWEIGHT")
+            except tr.Interrupted:
+                raise
+            except Exception as e:  # a failed sync fails the gate, not the run
+                raise ReplicaBehind(
+                    f"SYSTEM SYNC REPLICA loom.{self.twin} LIGHTWEIGHT failed "
+                    f"({str(e)[:160]}); one cause is a missing grant on the twin"
+                ) from e
+        return self.consistent(version, key)
+
     def gate_failure(
         self, cons: tuple[int, int, int], version: str | None, key: list[str], why: str
     ) -> str:
@@ -1072,11 +1088,11 @@ class VectorRebuild:
             return GATE_FAILED
         limit = self.a.statement_timeout_s
         log("delta-1 rows into twin:", self.delta_into(self.twin, self.t, sel, version, key, limit))
-        cons = self.consistent(version, key)
+        cons = self.twin_consistent(version, key)
         log("consistency (mismatched, source_only, twin_only):", cons)
         if cons[0] or cons[1]:
             log("repair keys:", self.repair_into(sel, version, key))
-            cons = self.consistent(version, key)
+            cons = self.twin_consistent(version, key)
             log("consistency after repair:", cons)
         diverged = (
             "GATE FAILED: the twin diverges (a key's version, row count or content); no "
@@ -1086,13 +1102,19 @@ class VectorRebuild:
             log(failure)
             return GATE_FAILED
         drec = self.recall(ddl)
-        if not drec:
+        if drec:
+            log(
+                f"recall gate: distance recall mean {statistics.mean(drec):.3f} min {min(drec):.3f}"
+            )
+            if not (min(drec) >= 0.95 and statistics.mean(drec) >= 0.99):
+                log("GATE FAILED: recall; the twin is left for inspection")
+                return GATE_FAILED
+        elif tr.row_count(self.ch, self.t):
             log("GATE FAILED: no probe rows with a full-length vector")
             return GATE_FAILED
-        log(f"recall gate: distance recall mean {statistics.mean(drec):.3f} min {min(drec):.3f}")
-        if not (min(drec) >= 0.95 and statistics.mean(drec) >= 0.99):
-            log("GATE FAILED: recall; the twin is left for inspection")
-            return GATE_FAILED
+        else:
+            # the consistency gate found the twin as empty: there is nothing to probe
+            log(f"recall gate: loom.{self.t} holds no rows, nothing to probe")
         if self.a.require_patch_free:
             patches = self.q(patch_parts_sql(self.twin))[0][0]
             log("twin patch parts:", patches)
@@ -1113,7 +1135,7 @@ class VectorRebuild:
         if why := self.width_refusal(ddl):
             log(f"GATE FAILED: {why}; no swap")
             return GATE_FAILED
-        cons = self.consistent(version, key)
+        cons = self.twin_consistent(version, key)
         log("consistency before the swap:", cons)
         changed = (
             "GATE FAILED: the source changed during the gates (a write, an update or a "
@@ -1308,6 +1330,10 @@ class VectorRebuild:
         log(
             f"ROLLED BACK: loom.{self.t} is the old layout again; loom.{self.pre} holds the new one"
         )
+        self.next_step = (
+            f"keep writers and erasure stopped; run `{self.run_line} --drop-pre-rebuild "
+            "--yes`, which checks the two tables before it drops the new-layout copy"
+        )
         return OK
 
     def drain_after_swap(self) -> tuple[str, str | None, list[str]]:
@@ -1501,7 +1527,14 @@ def main(argv: list[str] | None = None, ch: Any = None) -> int:
     job = VectorRebuild(ch, a, client)
     action = action_of(a)
     body = {"rollback": job.rollback, "drop-pre-rebuild": job.drop_pre}.get(action, job.run)
-    return tr.run_reported(a.table, action, body, job.report_state, lambda: job.rows_copied)
+    return tr.run_reported(
+        a.table,
+        action,
+        body,
+        job.report_state,
+        lambda: job.rows_copied,
+        report_after=("rebuild", "rollback"),
+    )
 
 
 if __name__ == "__main__":
