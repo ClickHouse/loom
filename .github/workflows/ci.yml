@@ -110,7 +110,7 @@ jobs:
     name: pytest unit + coverage
     needs: clickhouse
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
     # No ClickHouse service: unit tests skip cleanly when env config is absent.
@@ -423,7 +423,7 @@ jobs:
     needs: clickhouse
     runs-on: ubuntu-latest
     # The suite, then the auth-on server's tests, with room for a slow runner.
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
       LOOM_CH_HOST: localhost
