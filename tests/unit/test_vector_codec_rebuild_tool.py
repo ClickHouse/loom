@@ -45,6 +45,8 @@ class _CH:
         # each read takes the next answer; the last one repeats
         self.widths: list[list[tuple[int, int]]] = [[]]  # (width, rows) the width check finds
         self.cons = [(0, 0, 0)]  # (mismatched, source_only, twin_only) the gate reads
+        self.gone: list[list[tuple[Any, ...]]] = [[]]  # the keys only the twin holds
+        self.sync_writable = ["alter_sync", "mutations_sync", "lightweight_deletes_sync"]
         self.queries: list[str] = []
         self.reads_before_exchange = 0  # len(queries) when the EXCHANGE was sent
 
@@ -53,6 +55,10 @@ class _CH:
         self.queries.append(sql)
         if sql == CODEC_SETTINGS_SQL:
             return _R(self.codec_rows)
+        if "FROM system.settings" in sql and "readonly = 0" in sql:
+            return _R([(n,) for n in self.sync_writable])
+        if sql == "SELECT 1":  # the wait level probe: 3 is accepted
+            return _R([(1,)])
         if sql.startswith("SHOW CREATE TABLE loom."):
             return _R([(self.t[sql.split("loom.", 1)[1]]["ddl"],)])
         if "FROM system.tables" in sql:
@@ -74,7 +80,7 @@ class _CH:
         if "topK(1)" in sql:
             return _R([([DIM],)])
         if "WHERE s.__present = 0" in sql:
-            return _R([("o", "n")])  # the keys only the twin holds
+            return _R(_next(self.gone))
         if "FULL OUTER JOIN" in sql:
             return _R([_next(self.cons)])
         if "GROUP BY w" in sql:
@@ -345,18 +351,46 @@ def test_rows_only_the_twin_holds_are_deleted_from_it_before_the_swap() -> None:
     would bring it back: the run deletes exactly those keys from the twin, by literal."""
     ch = _CH(memory_chunks=_live())
     ch.cons = [(0, 0, 2), (0, 0, 0)]
+    ch.gone = [[("o", "n")], []]
+    assert _run(ch, "--yes") == tr.OK
+    deletes = [(c, st) for c, st in ch.sent if c.startswith("DELETE")]
+    assert deletes == [
+        (
+            "DELETE FROM loom.memory_chunks_rebuild WHERE (org, namespace) IN (('o', 'n'))",
+            {"lightweight_deletes_sync": 3, "max_execution_time": 1800},
+        )
+    ]
+
+
+def test_a_fixed_string_key_is_deleted_by_its_hex() -> None:
+    """A FixedString key such as content_sha256 reads as bytes; its literal is unhex()."""
+    ch = _CH(memory_chunks=_live())
+    ch.cons = [(0, 0, 1), (0, 0, 0)]
+    ch.gone = [[("o", "n", b"3fa9")], []]
     assert _run(ch, "--yes") == tr.OK
     deletes = [c for c in ch.commands if c.startswith("DELETE")]
-    assert deletes[0] == (
-        "DELETE FROM loom.memory_chunks_rebuild WHERE (org, namespace) IN (('o', 'n'))"
-    )
-    assert all("memory_chunks_rebuild" in c.split(" WHERE ")[0] for c in deletes)
+    assert deletes == [
+        "DELETE FROM loom.memory_chunks_rebuild WHERE (org, namespace) IN "
+        "(('o', 'n', unhex('33666139')))"
+    ]
+
+
+def test_the_twin_delete_waits_only_where_this_user_may_say_so() -> None:
+    """A wait setting held readonly is not sent: the DELETE goes out without it."""
+    ch = _CH(memory_chunks=_live())
+    ch.cons = [(0, 0, 1), (0, 0, 0)]
+    ch.gone = [[("o", "n")], []]
+    ch.sync_writable = []
+    assert _run(ch, "--yes") == tr.OK
+    deletes = [st for c, st in ch.sent if c.startswith("DELETE")]
+    assert deletes == [{"max_execution_time": 1800}]
 
 
 def test_rows_that_stay_in_the_twin_only_fail_the_gate(capsys: Any) -> None:
     """Rows still removed from the source as the run deletes them: no swap, the twin is left."""
     ch = _CH(memory_chunks=_live())
     ch.cons = [(0, 0, 2)]
+    ch.gone = [[("o", "n")]]
     assert _run(ch, "--yes") == tr.GATE_FAILED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     assert "memory_chunks_rebuild" in ch.t
@@ -379,6 +413,7 @@ def test_a_delete_during_the_gates_stops_the_swap(capsys: Any) -> None:
     consistency read is still in the twin: the check runs again before the EXCHANGE."""
     ch = _CH(memory_chunks=_live())
     ch.cons = [(0, 0, 0), (0, 0, 1)]
+    ch.gone = [[("o", "n")]]
     assert _run(ch, "--yes") == tr.GATE_FAILED
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
     assert "1 keys are in the twin only" in capsys.readouterr().out
@@ -386,15 +421,19 @@ def test_a_delete_during_the_gates_stops_the_swap(capsys: Any) -> None:
 
 def test_the_twin_only_check_is_the_last_read_before_the_exchange() -> None:
     """The width scans read only the source and run first; a delete during them is
-    caught by the twin-only check that follows, and the EXCHANGE comes right after it."""
+    caught by the twin-only read that follows, and the EXCHANGE comes right after it.
+    Only when that read deleted keys does a consistency read recheck them."""
     ch = _CH(memory_chunks=_live())
-    ch.cons = [(0, 0, 0), (0, 0, 1), (0, 0, 0)]
     assert _run(ch, "--yes") == tr.OK
     before = ch.queries[: ch.reads_before_exchange]
-    assert "FULL OUTER JOIN" in before[-1]
-    widths = max(i for i, q in enumerate(before) if "GROUP BY w" in q)
-    deleted = max(i for i, q in enumerate(before) if "WHERE s.__present = 0" in q)
-    assert widths < deleted < len(before) - 1
+    assert "WHERE s.__present = 0" in before[-1]
+    assert max(i for i, q in enumerate(before) if "GROUP BY w" in q) < len(before) - 1
+
+    ch = _CH(memory_chunks=_live())
+    ch.gone = [[("o", "n")], []]
+    assert _run(ch, "--yes") == tr.OK
+    before = ch.queries[: ch.reads_before_exchange]
+    assert "FULL OUTER JOIN" in before[-1] and "WHERE s.__present = 0" in before[-2]
 
 
 def test_a_write_of_another_width_during_the_run_stops_the_swap(capsys: Any) -> None:

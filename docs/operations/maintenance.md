@@ -218,11 +218,14 @@ in [migrations](../development/migrations.md#changing-a-sort-key-or-a-partition-
 `vector_codec_rebuild.py` refuses, `--dry-run` included, while a named column holds
 non-empty vectors of another width than the target's: re-embed those rows first, since the
 copy would replace them with zero vectors, and every writer must produce the target width
-until the run ends. The twin keeps no row removed from the source during the run (an
-erasure or delete): the run deletes it from the twin too, and stops before the swap if such
-rows keep arriving faster than it deletes them; pause erasures and rerun with `--reuse`. It
-also stops when vectors of another width arrived during the run: re-embed them, then rerun
-with `--restart`. Both checks run again just before the swap.
+until the run ends. A row removed from the source during the run (an erasure or delete)
+is deleted from the twin too, in one pass; the run stops before the swap if any such key
+remains after it: pause erasures and rerun with `--reuse`. It also stops when vectors of
+another width arrived before the last delta: re-embed them, then rerun with `--restart`.
+Both checks run again before the swap, and the twin-only check is the last read before the
+`EXCHANGE`. A delete after it, or one still running at the `EXCHANGE`, reaches only
+`<t>_pre_rebuild` and stays undone in the live table: pause erasures across the swap or
+rerun them after it.
 
 ## Disk pressure hygiene
 

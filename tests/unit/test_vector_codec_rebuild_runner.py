@@ -222,6 +222,15 @@ def test_the_width_preflight_counts_other_non_empty_widths_as_loom_serves_them()
     assert "FINAL" not in vcr.mixed_width_sql("chunks", "embedding", "", dim=3072)
 
 
+def test_the_twin_only_read_keeps_the_twin_keys_the_source_lacks() -> None:
+    assert vcr.twin_only_keys_sql("t_rebuild", "t", ["org", "namespace"], " FINAL") == (
+        "SELECT org, namespace FROM (SELECT org, namespace FROM loom.t_rebuild FINAL) AS t "
+        "LEFT JOIN (SELECT org, namespace, 1 AS __present FROM loom.t FINAL) AS s "
+        "USING (org, namespace) WHERE s.__present = 0"
+    )
+    assert vcr.key_literal(b"\x3f\xa9") == "unhex('3fa9')"
+
+
 def test_parse_engine_reads_the_version_of_a_non_replicated_or_is_deleted_engine() -> None:
     shared = (
         "SharedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', created_at)"

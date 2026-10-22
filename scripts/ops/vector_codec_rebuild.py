@@ -43,9 +43,13 @@ The gates, each of which leaves the table as it is and exits 5:
 - Recall: both reads rank real vectors only (a zero placeholder's cosine
   distance is NaN), and each probe's recall is over the exact neighbours it
   found, at most 20.
-- Before the swap: the width check runs again, then the last delta and the
-  twin-only check, so a vector of another width or a delete that landed during
-  the gates stops the swap too (or, for a delete, is removed from the twin).
+- Before the swap: the width check runs again, then the last delta, then the
+  twin-only check, which is the last read before the EXCHANGE. A vector of
+  another width written before the last delta stops the swap; a key deleted
+  before the twin-only read is deleted from the twin, and the run fails if one
+  remains after that pass. A delete after it, or one still running at the
+  EXCHANGE, reaches only `<t>_pre_rebuild`: pause erasures across the swap or
+  rerun them after it.
 
 `--require-patch-free`: the twin-and-EXCHANGE also sheds the patch parts of
 past lightweight UPDATEs (`OPTIMIZE FINAL` / `APPLY PATCHES` do not). The flag
@@ -74,7 +78,8 @@ before the copy and before the swap, leaving the twin.
 
 Exit codes (shared with table_rebuild): 0 done or nothing to do, 2 aborted,
 3 refused, 4 needs `--yes`, 5 a gate failed (consistency, twin-only rows,
-recall, patch parts, a width that arrived during the run), 7 postcondition failed, 130 interrupted.
+recall, patch parts, a width that arrived during the run), 7 postcondition
+failed, 130 interrupted.
 """
 
 from __future__ import annotations
@@ -97,6 +102,7 @@ if (_ROOT := str(Path(__file__).resolve().parents[2])) not in sys.path:  # run a
     sys.path.insert(0, _ROOT)
 
 from server.core.ch_names import database, unqualify
+from server.core.schema import migrate
 from server.core.schema import table_rebuild as tr
 from server.core.schema.table_rebuild import (
     ABORTED,
@@ -151,6 +157,8 @@ def key_literal(v: Any) -> str:
     """A sorting-key value as a ClickHouse literal for a repair's key list. Pure."""
     if isinstance(v, uuid.UUID):
         return f"toUUID('{v}')"
+    if isinstance(v, bytes):  # a FixedString key, such as content_sha256, reads as bytes
+        return f"unhex('{v.hex()}')"
     return sql_literal(v)
 
 
@@ -304,6 +312,16 @@ def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
     )
 
 
+def twin_only_keys_sql(twin: str, source: str, key: list[str], fin: str) -> str:
+    """The sorting keys `twin` holds and `source` does not. Pure."""
+    ident = ", ".join(key)
+    return (
+        f"SELECT {ident} FROM (SELECT {ident} FROM loom.{twin}{fin}) AS t "
+        f"LEFT JOIN (SELECT {ident}, 1 AS __present FROM loom.{source}{fin}) AS s "
+        f"USING ({ident}) WHERE s.__present = 0"
+    )
+
+
 def twin_only_failure(n: int) -> str:
     """The gate's message for `n` keys the twin holds and the source no longer has. Pure."""
     return (
@@ -372,6 +390,11 @@ class VectorRebuild:
 
     def cmd(self, sql: str, **st: Any) -> None:
         self.ch.command(sql, settings=st or None)
+
+    @cached_property
+    def sync(self) -> migrate.SyncPolicy:
+        """Which wait settings this user may send, probed once as the migration runner does."""
+        return migrate.sync_policy(self.ch)
 
     @cached_property
     def codec(self) -> CodecSettings:
@@ -639,19 +662,12 @@ class VectorRebuild:
         removed during the run (an erasure or delete), which the swap would bring back.
         The keys are named as literals, as in `repair_into`."""
         ident = ", ".join(key)
-        gone = (
-            f"SELECT {ident} FROM (SELECT {ident} FROM loom.{self.twin}{fin}) AS t "
-            f"LEFT JOIN (SELECT {ident}, 1 AS __present FROM loom.{self.t}{fin}) AS s "
-            f"USING ({ident}) WHERE s.__present = 0"
-        )
+        gone = twin_only_keys_sql(self.twin, self.t, key, fin)
         keys = self.q(gone, join_use_nulls=0, max_execution_time=1800)
         for i in range(0, len(keys), REPAIR_BATCH):
             lits = key_literals(keys[i : i + REPAIR_BATCH])
-            self.cmd(
-                f"DELETE FROM loom.{self.twin} WHERE ({ident}) IN ({lits})",
-                lightweight_deletes_sync=2,
-                max_execution_time=1800,
-            )
+            stmt = f"DELETE FROM loom.{self.twin} WHERE ({ident}) IN ({lits})"
+            self.cmd(stmt, **self.sync.settings_for(stmt), max_execution_time=1800)
         return len(keys)
 
     def monitor(self, stop: threading.Event) -> None:
@@ -792,19 +808,18 @@ class VectorRebuild:
         if not self.still_ours():
             log(f"REFUSED: loom.{self.twin} is no longer the twin this run created; no swap")
             return REFUSED
-        # a wrong-width write or a delete during the gates would reach the swap; the
-        # twin-only check reads last, so the delete window ends there
+        # a wrong-width write or a delete during the gates would reach the swap. The
+        # width check covers writes up to the last delta; the twin-only read is the
+        # last read, and a delete after it reaches only the old table
         if why := self.mixed_widths(fin):
             log(f"GATE FAILED: {why}; no swap")
             return GATE_FAILED
         self.delta_into(self.twin, self.t, sel, version, key)
-        twin_only = self.consistent(fin, version, key)[2]
-        if twin_only:
-            log("twin-only keys deleted:", self.remove_twin_only(fin, key))
-            twin_only = self.consistent(fin, version, key)[2]
-        if twin_only:
-            log(twin_only_failure(twin_only))
-            return GATE_FAILED
+        if deleted := self.remove_twin_only(fin, key):
+            log("twin-only keys deleted:", deleted)
+            if twin_only := self.consistent(fin, version, key)[2]:
+                log(twin_only_failure(twin_only))
+                return GATE_FAILED
         tr.swap_in(self.ch, self.t)
         for _ in range(2):  # writes in flight at the exchange landed in the old table
             time.sleep(self.a.settle_s)
@@ -963,7 +978,6 @@ def main(argv: list[str] | None = None, ch: Any = None) -> int:
     a = parse(argv)
     client = None
     if ch is None:
-        from server.core.schema import migrate
 
         def client() -> Any:
             return migrate.client(receive_timeout_s=COPY_RECEIVE_TIMEOUT_S)

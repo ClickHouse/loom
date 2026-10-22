@@ -492,9 +492,12 @@ flush never fails a request; a crash loses the queue.
   whose served rows hold non-empty vectors of another width than the codec's (the copy
   would zero them; re-embed them first, and keep every writer on that width while it
   runs). A key the source no longer has (a row erased during the run) is deleted from
-  the twin before the swap, which does not run while one remains; the width check runs
-  again before the last delta and the twin-only check last, just before the swap. Its recall gate ranks real vectors
-  only, since a placeholder's cosine distance is NaN.
+  the twin in one pass, and the swap does not run while one remains. Before the swap the
+  width check runs again, then the last delta, then the twin-only check, which is the
+  last read before the `EXCHANGE`. A delete after it, or one still running at the
+  `EXCHANGE`, reaches only `<t>_pre_rebuild`: pause erasures across the swap or rerun
+  them after it. Its recall gate ranks real vectors only, since a placeholder's cosine
+  distance is NaN.
 - **Codes-first reads.** When a column is coded and its table has no patch parts, reads
   send `vector_search_use_quantized_codes = 1` (`LOOM_VECTOR_SEARCH_QUANTIZED_CODES`): a
   pass over the codes keeps `LIMIT × LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER`
