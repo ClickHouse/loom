@@ -141,10 +141,11 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
         async def recording_insert(
             table: str, rows: list[dict[str, Any]], settings: dict[str, Any] | None = None
         ) -> None:
-            calls.append((rows[0]["msg_id"], (settings or {}).get("async_insert")))
-            await insert(
-                table, rows, settings={**(settings or {}), "query_id": query_ids[rows[0]["msg_id"]]}
-            )
+            mode = (settings or {}).get("async_insert")
+            calls.append((rows[0]["msg_id"], mode))
+            # Only the batched send is tagged: the committed resend runs under its own id.
+            tag = {"query_id": query_ids[rows[0]["msg_id"]]} if mode == 1 else {}
+            await insert(table, rows, settings={**(settings or {}), **tag})
 
         c.insert = recording_insert  # type: ignore[method-assign]
 
@@ -160,16 +161,22 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
         good = [conversations.insert_embedding(cast(Any, row), ch=c) for row in rows]
         tasks = [asyncio.create_task(call) for call in [stale_width_insert(), *good]]
 
+        seen: list[Any] = []
+
         async def shared_buffer() -> bool:
             buffers = await c.query_all(
                 "SELECT entries.query_id AS ids FROM system.asynchronous_inserts"
                 " WHERE database = {db:String} AND table = 'conversation_embeddings'",
                 {"db": settings.ch_database},
             )
+            seen[:] = [sorted(buffer["ids"]) for buffer in buffers]
             return any(set(query_ids.values()) <= set(buffer["ids"]) for buffer in buffers)
 
-        await eventually(shared_buffer, max_wait=10, description="all 21 inserts in one buffer")
-        await c.execute("SYSTEM FLUSH ASYNC INSERT QUEUE")
+        try:
+            await eventually(shared_buffer, max_wait=10, description="all 21 inserts in one buffer")
+        except AssertionError as e:
+            raise AssertionError(f"{e}; buffers seen: {seen}") from e
+        await c.execute("SYSTEM FLUSH ASYNC INSERT QUEUE loom.conversation_embeddings")
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         stale_error = results[0]
@@ -207,12 +214,8 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
         assert any(mode == 0 for _, mode in calls)  # at least one row was resent committed
     finally:
         try:
-            if tasks:
-                try:
-                    await c.execute("SYSTEM FLUSH ASYNC INSERT QUEUE")
-                finally:
-                    await asyncio.wait_for(
-                        asyncio.gather(*tasks, return_exceptions=True), timeout=40
-                    )
+            if any(not t.done() for t in tasks):
+                await c.execute("SYSTEM FLUSH ASYNC INSERT QUEUE loom.conversation_embeddings")
+                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=40)
         finally:
             await c.disconnect()
