@@ -215,7 +215,11 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
     finally:
         try:
             if any(not t.done() for t in tasks):
-                await c.execute("SYSTEM FLUSH ASYNC INSERT QUEUE loom.conversation_embeddings")
-                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=40)
+                try:
+                    await c.execute("SYSTEM FLUSH ASYNC INSERT QUEUE loom.conversation_embeddings")
+                finally:
+                    await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True), timeout=40
+                    )
         finally:
             await c.disconnect()
