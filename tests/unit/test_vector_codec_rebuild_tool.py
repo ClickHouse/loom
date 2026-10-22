@@ -43,7 +43,9 @@ class _CH:
         self.codec_rows = codec_rows("writable", "writable")
         self.delta = 0  # rows a delta finds above the destination's version
         self.widths: list[tuple[int, int]] = []  # (width, rows) the width preflight finds
+        self.widths_first: list[list[tuple[int, int]]] = []  # earlier reads, before self.widths
         self.cons = (0, 0, 0)  # (mismatched, source_only, twin_only) the gate reads
+        self.cons_first: list[tuple[int, int, int]] = []  # earlier reads, before self.cons
         self.queries: list[str] = []
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _R:
@@ -72,9 +74,9 @@ class _CH:
         if "topK(1)" in sql:
             return _R([([DIM],)])
         if "FULL OUTER JOIN" in sql:
-            return _R([self.cons])
+            return _R([self.cons_first.pop(0) if self.cons_first else self.cons])
         if "GROUP BY w" in sql:
-            return _R(self.widths)
+            return _R(self.widths_first.pop(0) if self.widths_first else self.widths)
         if "ORDER BY rand()" in sql:
             return _R([("o", "n", [0.5] * DIM)])
         if "round(cosineDistance" in sql:
@@ -322,7 +324,7 @@ def test_vectors_of_another_width_refuse_before_the_twin_dry_run_included(capsys
     assert _run(ch, "--dry-run") == tr.REFUSED and _writes(ch) == []
     out = capsys.readouterr().out
     assert f"embedding holds vectors of another width than {DIM}" in out
-    assert "3 rows of width 768, 1 rows of width 3072" in out and "re-embed" in out
+    assert "width 768: 3 row(s), width 3072: 1 row(s)" in out and "re-embed" in out
     preflight = [q for q in ch.queries if "GROUP BY w" in q]
     assert preflight and all(" FINAL " in q and f"NOT IN (0, {DIM})" in q for q in preflight)
     assert _run(ch, "--yes") == tr.REFUSED and _writes(ch) == []
@@ -341,6 +343,30 @@ def test_rows_only_the_twin_holds_fail_the_gate(capsys: Any) -> None:
     out = capsys.readouterr().out
     assert "2 keys are in the twin only" in out
     assert "removed from the source during the copy" in out and "--restart" in out
+
+
+def test_a_delete_during_the_gates_stops_the_swap(capsys: Any) -> None:
+    """The twin-only check runs again after the last delta: a row erased from the source
+    while the recall gate ran fails the gate instead of coming back at the swap."""
+    ch = _CH(memory_chunks=_live())
+    ch.cons_first = [(0, 0, 0)]
+    ch.cons = (0, 0, 1)
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "1 keys are in the twin only" in capsys.readouterr().out
+
+
+def test_an_off_width_write_during_the_run_stops_the_swap(capsys: Any) -> None:
+    """The width check runs again before the swap: a row of another width written after
+    the preflight was zeroed in the twin, so the gate fails instead of serving it."""
+    ch = _CH(memory_chunks=_live())
+    ch.widths_first = [[]]
+    ch.widths = [(768, 2)]
+    assert _run(ch, "--yes") == tr.GATE_FAILED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    out = capsys.readouterr().out
+    assert "GATE FAILED: embedding holds vectors of another width" in out
+    assert "width 768: 2 row(s)" in out
 
 
 def test_the_recall_reads_rank_real_vectors_only() -> None:

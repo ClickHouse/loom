@@ -33,21 +33,26 @@ The dimension comes from the live table: a coded column states it, a
 plain column's vectors show it (the most common length), and an empty table
 takes `LOOM_EMBEDDING_DIM`. Every named column must agree.
 
-The gates, each of which leaves the table as it is:
+Run it in a maintenance window with every writer and erasure stopped: it
+fails closed and never repairs the live table. It refuses (exit 3), `--dry-run`
+included, while a named column holds non-empty vectors of another length among
+the rows Loom serves (under FINAL on a ReplacingMergeTree), printing each width
+and its row count, since the copy would replace them with zero vectors; re-embed
+those rows first. An empty vector is copied as a zero placeholder.
 
-- Widths (before the twin, `--dry-run` included): a named column holding
-  non-empty vectors of another length, among the rows Loom serves (under FINAL
-  on a ReplacingMergeTree), refuses the run with the widths and their row
-  counts, since the copy would replace them with zero vectors; re-embed those
-  rows first. An empty vector is copied as a zero placeholder.
+The gates (exit 5), each of which leaves the table as it is:
+
 - Consistency: a key whose newest version differs, or that the source holds
-  and the twin lacks, is repaired key by key and fails the run if it remains.
-  A key only the twin holds fails it too: rows were removed from the source
-  during the copy (an erasure or delete) and the swap would bring them back;
-  stop writes and rerun with `--restart`.
+  and the twin lacks, is repaired in the twin key by key and fails the run if
+  it remains. A key only the twin holds fails it too: rows were removed from
+  the source during the copy (an erasure or delete) and the swap would bring
+  them back; stop writes and rerun with `--restart`.
 - Recall: both reads rank real vectors only (a zero placeholder's cosine
   distance is NaN), and each probe's recall is over the exact neighbours it
   found, at most 20.
+- Before the swap, after the last delta: the twin-only check and the width
+  check run again, so a delete or an off-width write that landed during the
+  gates stops the swap.
 
 `--require-patch-free`: the twin-and-EXCHANGE also sheds the patch parts of
 past lightweight UPDATEs (`OPTIMIZE FINAL` / `APPLY PATCHES` do not). The flag
@@ -69,8 +74,8 @@ An `ABORT_REBUILD` file in `LOOM_REBUILD_DIR` (default `.`) stops the run
 before the copy and before the swap, leaving the twin.
 
 Exit codes (shared with table_rebuild): 0 done or nothing to do, 2 aborted,
-3 refused, 4 needs `--yes`, 5 a gate failed (consistency, recall, patch
-parts), 7 postcondition failed, 130 interrupted.
+3 refused (widths among them), 4 needs `--yes`, 5 a gate failed (consistency,
+recall, patch parts, the pre-swap checks), 7 postcondition failed, 130 interrupted.
 """
 
 from __future__ import annotations
@@ -295,6 +300,15 @@ def mixed_width_sql(table: str, column: str, fin: str, *, dim: int) -> str:
     )
 
 
+def twin_only_failure(n: int) -> str:
+    """The gate's message for keys only the twin holds. Pure."""
+    return (
+        f"GATE FAILED: {n} keys are in the twin only: rows were removed from the source "
+        "during the copy (an erasure or delete), and the swap would bring them back; no swap. "
+        "Stop writes and rerun with --restart"
+    )
+
+
 def replace_select(columns: list[str], *, dim: int) -> str:
     """The copy's SELECT: every named column padded to the fixed length (an empty vector
     becomes a zero placeholder; the preflight refuses any other width)."""
@@ -402,11 +416,14 @@ class VectorRebuild:
 
         name = self.t if self.exists(self.t) else self.pre
         ddl = self.ddl(name)
+        fin = read_final(parse_engine(ddl)[0])  # the width of the rows Loom serves
         dims: set[int] = set()
         for c in self.cols:
             d = vector_dim(ddl, c)
             if d is None:
-                seen = self.q(f"SELECT topK(1)(length({c})) FROM loom.{name} WHERE length({c}) > 0")
+                seen = self.q(
+                    f"SELECT topK(1)(length({c})) FROM loom.{name}{fin} WHERE length({c}) > 0"
+                )
                 d = int(seen[0][0][0]) if seen and seen[0][0] else int(settings.embedding_dim)
             dims.add(d)
         if len(dims) != 1:
@@ -458,21 +475,26 @@ class VectorRebuild:
             log("rows written in the last hour with an empty vector:", n)
             if n:
                 return "recent rows carry an empty vector: add this table to placeholders.PLACEHOLDER_COLUMNS and deploy first"
-        fin = read_final(parse_engine(ddl)[0])
-        for c in self.cols:
-            widths = self.q(mixed_width_sql(self.t, c, fin, dim=self.dim), max_execution_time=1800)
-            if widths:
-                found = ", ".join(f"{n} rows of width {w}" for w, n in widths)
-                return (
-                    f"{c} holds vectors of another width than {self.dim} ({found}): the copy "
-                    "would zero them; re-embed those rows first"
-                )
+        if why := self.width_refusal(read_final(parse_engine(ddl)[0])):
+            return why
         twin = tr.table_row(self.ch, self.twin)
         if twin is not None and not (self.a.reuse or self.a.restart):
             return (
                 f"loom.{self.twin} (created {twin[2]}, {tr.row_count(self.ch, self.twin)} rows) is "
                 "another run's lock or its leftover: --reuse continues from it, --restart drops it"
             )
+        return ""
+
+    def width_refusal(self, fin: str) -> str:
+        """Why a named column holds vectors the copy would zero, or ''."""
+        for c in self.cols:
+            widths = self.q(mixed_width_sql(self.t, c, fin, dim=self.dim), max_execution_time=1800)
+            if widths:
+                found = ", ".join(f"width {w}: {n} row(s)" for w, n in widths)
+                return (
+                    f"{c} holds vectors of another width than {self.dim} ({found}): the copy "
+                    "would zero them; re-embed those rows first"
+                )
         return ""
 
     # -- the run ------------------------------------------------------------
@@ -725,11 +747,7 @@ class VectorRebuild:
             log("GATE FAILED: the twin diverges; no swap")
             return GATE_FAILED
         if cons[2]:
-            log(
-                f"GATE FAILED: {cons[2]} keys are in the twin only: rows were removed from the "
-                "source during the copy (an erasure or delete), and the swap would bring them back; "
-                "no swap. Stop writes and rerun with --restart"
-            )
+            log(twin_only_failure(cons[2]))
             return GATE_FAILED
         drec = self.recall(ddl, fin)
         if not drec:
@@ -752,6 +770,15 @@ class VectorRebuild:
             log(f"REFUSED: loom.{self.twin} is no longer the twin this run created; no swap")
             return REFUSED
         self.delta_into(self.twin, self.t, sel, version, key)
+        # writers and erasure must be stopped; check again that nothing landed during the gates
+        if why := self.width_refusal(fin):
+            log(f"GATE FAILED: {why}; no swap")
+            return GATE_FAILED
+        cons = self.consistent(fin, version, key)
+        log("consistency before the swap:", cons)
+        if cons[2]:
+            log(twin_only_failure(cons[2]))
+            return GATE_FAILED
         tr.swap_in(self.ch, self.t)
         for _ in range(2):  # writes in flight at the exchange landed in the old table
             time.sleep(self.a.settle_s)
