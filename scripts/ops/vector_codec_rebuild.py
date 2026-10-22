@@ -687,6 +687,10 @@ class VectorRebuild:
             if n:
                 return "recent rows carry an empty vector: add this table to placeholders.PLACEHOLDER_COLUMNS and deploy first"
         twin = tr.table_row(self.ch, self.twin)
+        if twin is not None and self.metadata_time(self.twin) < self.metadata_time(self.t):
+            # older than the live table: an exchange ran without its rename, so the
+            # twin is the old table, the only rollback copy
+            return self.report_state()
         if twin is not None and not (self.a.reuse or self.a.restart):
             return (
                 f"loom.{self.twin} (created {twin[2]}, {tr.row_count(self.ch, self.twin)} rows) is "
@@ -1019,10 +1023,11 @@ class VectorRebuild:
     def recall(self, ddl: str) -> list[float]:
         """Distance recall per probe: exact on the source vs the twin read as the legs read it."""
         vcol, dim, fin = self.cols[0], self.dim, self.fin
-        # a fixed-length placeholder is all zeros: its cosine is NaN, never a probe
+        # a fixed-length placeholder is all zeros: its cosine is NaN, never a probe; the
+        # probes are the served rows, as the reads below see them
         real = vector_filter(vcol, dim=dim)
         probes = self.q(
-            f"SELECT org, namespace, {vcol} FROM loom.{self.t} WHERE {real} ORDER BY rand() LIMIT {self.a.probes}"
+            f"SELECT org, namespace, {vcol} FROM loom.{self.t}{fin} WHERE {real} ORDER BY rand() LIMIT {self.a.probes}"
         )
         src_v = exact_vector_expr(ddl, vcol)
         tol = DISTANCE_TOLERANCE

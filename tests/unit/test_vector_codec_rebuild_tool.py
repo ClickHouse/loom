@@ -216,6 +216,23 @@ def test_a_twin_left_behind_is_a_lock_until_reuse_or_restart(capsys: Any) -> Non
     assert _writes(ch)[0] == "DROP TABLE loom.memory_chunks_rebuild SYNC"
 
 
+@pytest.mark.parametrize("flag", ["--reuse", "--restart"])
+def test_a_twin_older_than_the_live_table_is_the_old_table_and_is_kept(
+    flag: str, capsys: Any
+) -> None:
+    """An exchange without its rename leaves the old table as the twin, older than the
+    live table: the run refuses and prints the rename instead of dropping it."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    old = {"ddl": ARRAY, "rows": 5, "uuid": "old", "created": TWIN_CREATED}
+    new = {"ddl": coded, "rows": 5, "uuid": "live", "created": COPY_STARTED}
+    ch = _CH(memory_chunks=new, memory_chunks_rebuild=old)
+    assert _run(ch, "--yes", "--require-patch-free", flag) == tr.REFUSED
+    assert _writes(ch) == [] and "memory_chunks_rebuild" in ch.t
+    assert "RENAME TABLE loom.memory_chunks_rebuild TO loom.memory_chunks_pre_rebuild" in (
+        capsys.readouterr().out
+    )
+
+
 def test_a_twin_with_patch_parts_is_never_swapped() -> None:
     ch = _CH(memory_chunks=_live())
     ch.patches["memory_chunks_rebuild"] = 2
@@ -750,6 +767,8 @@ def test_the_recall_reads_rank_real_vectors_only() -> None:
     )
     probe = next(q for q in ch.queries if "ORDER BY rand()" in q)
     assert vcr.vector_filter("embedding", dim=DIM) in probe
+    # an older version of a row whose newest one is a placeholder is never a probe
+    assert "FROM loom.memory_chunks FINAL WHERE" in probe
 
 
 def test_unfinished_mutations_refuse_the_rebuild(capsys: Any) -> None:

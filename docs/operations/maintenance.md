@@ -243,7 +243,10 @@ step that names a command carries the run's `--method`, `--chain`,
 `--index-granularity`, `--gate-fetch-multiplier`, `--probes`, `--require-patch-free`,
 `--cluster` and `--statement-timeout-s`, so it runs as printed. Use
 `--drop-pre-rebuild --yes` to remove the rollback copy after validation or rollback, and
-`DROP TABLE loom.<table>_rebuild SYNC` to remove an abandoned twin.
+`DROP TABLE loom.<table>_rebuild SYNC` to remove an abandoned twin, unless the run's
+next step is `RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild`: there the
+exchange ran without the rename, `<table>_rebuild` is the old table, and the tool refuses
+`--reuse` and `--restart` until the rename runs.
 `--drop-pre-rebuild` first compares the two tables again, after the same drain as the
 postcondition, also when both are on the target layout (a `--require-patch-free`
 rebuild of a table already on it), and refuses (exit 3) and keeps the copy on any

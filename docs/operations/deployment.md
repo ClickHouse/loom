@@ -551,7 +551,11 @@ WHERE database = 'loom' AND endsWith(name, '_rebuild')
 ```
 
 Drop a `<table>_rebuild` twin with `DROP TABLE IF EXISTS loom.<table>_rebuild SYNC`, and a
-`<table>_pre_rebuild` copy with `--drop-pre-rebuild --yes` as in step 3.
+`<table>_pre_rebuild` copy with `--drop-pre-rebuild --yes` as in step 3. When a table's
+run printed `next` with `RENAME TABLE loom.<table>_rebuild TO loom.<table>_pre_rebuild`,
+its exchange ran without the rename and `<table>_rebuild` is the old table, the rollback
+copy: run that step instead of the drop. The tool refuses `--reuse` and `--restart` in
+that state.
 
 Start Loom again after cleanup; each process reads the codec settings when it starts.
 
