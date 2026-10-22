@@ -467,12 +467,10 @@ flush never fails a request; a crash loses the queue.
 
 ## Vector storage
 
-- The vector columns of `CODED_TABLES` are `Array(BFloat16)`, created
-  `CODEC(Quantized('rabitq', <dim>, 0))` where the codec could be on at creation or after a
-  rebuild (below) and `CODEC(NONE)` otherwise. Loom's migrations code no other vector
-  column; a table named in `LOOM_CODE_VECTOR_TABLES` carries the codec width it was created
-  with.
-  `entity_vectors.entity_embedding` keeps `LZ4` because its vectors repeat. Coded, it keeps
+- The vector columns of `CODED_TABLES` are `Array(BFloat16)`, coded with `Quantized` or
+  plain depending on the install (when each is which is under Quantized codes, below).
+  Loom's migrations code no other vector column; a table named in `LOOM_CODE_VECTOR_TABLES`
+  keeps the layout and width it was created with. `entity_vectors.entity_embedding` keeps `LZ4` because its vectors repeat. Coded, it keeps
   the `LZ4` after `Quantized` only where `allow_suspicious_codecs` can be on; where it is
   held at 0, as on a ClickHouse Cloud service by default, the column is stored without it.
   How to add the chain back is in
