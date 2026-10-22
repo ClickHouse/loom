@@ -308,7 +308,8 @@ The erasure saga does not cover these copies.
 width, consistency, mutation, delta and recall reads, those after the swap and in
 `--drop-pre-rebuild` included, and each delta and repair before the swap. The small
 reads of a table's row count, columns and catalog row run without it, and the copy and
-the rollback's catch-up copy run under their own limit of 7000 seconds. A read that
+the rollback's catch-up copy, the reads that find its rows included, run under their own
+limit of 7000 seconds. A read that
 times out after the swap fails the postcondition (exit 7) with the rollback copy kept,
 and one in `--drop-pre-rebuild` keeps the copy. The width read that sets the target, and
 each width check (the preflight, before the swap, and on the rollback copy after it),
@@ -341,6 +342,41 @@ one version. An unfinished `ALTER UPDATE` on the new-layout copy after a rollbac
 not show under `FINAL`, which is why a mutation on it counts.
 A delete in the live table leaves its keys only in the rollback copy, so the first row
 names `--rollback` only while the live table has no mutation since the copy started.
+
+To inspect a difference by hand, keep writers and erasure stopped and list each key the
+two tables hold differently, with both sides' version column (`version` in Loom's
+tables). `<key>` is the table's sorting key, `<columns>` every column but the vector
+columns, and `<vectors>` each vector column as `CAST(<column> AS Array(BFloat16))`, so
+both layouts hash alike:
+
+```sql
+SELECT <key>, s.version AS copy_version, t.version AS live_version,
+       s.__present AS in_copy, t.__present AS in_live
+FROM (SELECT <key>, version, cityHash64(tuple(<columns>, <vectors>)) AS __hash,
+             1 AS __present FROM loom.<table>_pre_rebuild FINAL) AS s
+FULL OUTER JOIN
+     (SELECT <key>, version, cityHash64(tuple(<columns>, <vectors>)) AS __hash,
+             1 AS __present FROM loom.<table> FINAL) AS t USING (<key>)
+WHERE s.__hash != t.__hash
+SETTINGS join_use_nulls = 0
+```
+
+On a table without a version column, drop `FINAL` and `version`, and read
+`count() AS n, sum(cityHash64(...)) AS __hash ... GROUP BY <key>` on each side. Read the
+full rows of each listed key in both tables, and check `system.mutations` for a mutation
+that has not applied yet. Then:
+
+- When the live table holds every listed key's change as writers meant it, and any
+  mutation the checks counted has applied there, drop the copy with
+  `DROP TABLE loom.<table>_pre_rebuild SYNC`.
+- Otherwise, inside the window, copy each row only the copy holds into the live table
+  (`INSERT INTO loom.<table> (<all columns>) SELECT <all columns> FROM
+loom.<table>_pre_rebuild FINAL WHERE (<key>) IN (...)`; at one version the row inserted
+  last wins), run the read again until it lists only changes the live table should keep,
+  and drop the copy then.
+
+A hand drop removes the only copy of what that table alone holds, so it comes after the
+read, never before it.
 
 ## Disk pressure hygiene
 

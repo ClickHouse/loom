@@ -302,6 +302,35 @@ def test_a_lightweight_update_after_the_last_check_fails_the_postcondition(
     assert ch.query(f"SELECT note FROM {pre} FINAL WHERE id = 1").result_rows == [("late",)]
 
 
+def test_a_newer_version_after_the_last_check_names_rollback_and_rolls_back(
+    ch: Any, table: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A newer version written to the old table between the last check and the swap is
+    only in the rollback copy, so the run names --rollback, which brings it back."""
+    insert(ch, table, 1, [1.0] * 8)
+    insert(ch, table, 2, [1.0] * 8)
+    job = vcr.VectorRebuild(ch, vcr.parse(args(table)))
+    if why := job.codec_refusal():
+        pytest.skip(why)
+    swap_in = tr.swap_in
+
+    def write_then_swap(client: Any, name: str) -> None:
+        insert(ch, name, 1, [2.0] * 8, version=2)
+        swap_in(client, name)
+
+    monkeypatch.setattr(tr, "swap_in", write_then_swap)
+    assert vcr.main([*args(table), "--yes"], ch=ch) == tr.POSTCONDITION
+    out = capsys.readouterr().out
+    assert "0 key(s) only in loom." in out and "1 newer there" in out
+    assert "--rollback --yes" in out.rsplit("summary ", 1)[1]
+
+    assert vcr.main([*args(table), "--rollback", "--yes"], ch=ch) == tr.OK
+    rows = ch.query(f"SELECT version, embedding FROM loom.{table} FINAL WHERE id = 1")
+    assert rows.result_rows == [(2, [2.0] * 8)]
+    assert vcr.main([*args(table), "--drop-pre-rebuild", "--yes"], ch=ch) == tr.OK
+    assert ch.query(f"EXISTS TABLE loom.{table}{tr.PRE_SUFFIX}").result_rows == [(0,)]
+
+
 def test_a_finished_alter_update_during_recall_stops_the_swap(
     ch: Any, table: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

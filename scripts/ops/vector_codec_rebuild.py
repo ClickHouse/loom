@@ -876,17 +876,21 @@ class VectorRebuild:
     def delta_into(
         self, dst: str, src: str, sel: str, version: str | None, key: list[str], limit_s: float
     ) -> int:
-        """Copy the rows of `src` that `dst` lacks (newer versions, or absent keys), the
-        INSERT under `limit_s` seconds."""
+        """Copy the rows of `src` that `dst` lacks (newer versions, or absent keys); the
+        reads that find them and the INSERT each run under `limit_s` seconds."""
         if version:
-            above = self.q(f"SELECT max({version}) FROM loom.{dst}")[0][0]
+            above = self.q(f"SELECT max({version}) FROM loom.{dst}", max_execution_time=limit_s)[0][
+                0
+            ]
             if above is None:
                 return 0
             cond = f"{version} > {sql_literal(above)}"
         else:
             ident = ", ".join(key)
             cond = f"({ident}) NOT IN (SELECT {ident} FROM loom.{dst})"
-        n = int(self.q(f"SELECT count() FROM loom.{src} WHERE {cond}")[0][0])
+        n = int(
+            self.q(f"SELECT count() FROM loom.{src} WHERE {cond}", max_execution_time=limit_s)[0][0]
+        )
         if n:
             self.cmd(
                 f"INSERT INTO loom.{dst} {sel} FROM loom.{src} WHERE {cond}",
