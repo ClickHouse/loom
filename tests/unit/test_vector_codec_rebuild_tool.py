@@ -727,7 +727,8 @@ def test_the_target_width_counts_every_row_and_prefers_the_configured_width() ->
 
 def test_the_recall_reads_rank_real_vectors_only() -> None:
     """A zero placeholder's cosine distance is NaN and sorts last: left in, a namespace
-    with fewer than 20 real vectors would read recall 0."""
+    with fewer than 20 real vectors would read recall 0, and a placeholder picked as a
+    probe would too."""
     ch = _CH(memory_chunks=_live())
     assert _run(ch, "--yes") == tr.OK
     reads = [q for q in ch.queries if "round(cosineDistance" in q]
@@ -736,6 +737,8 @@ def test_the_recall_reads_rank_real_vectors_only() -> None:
         f"length(embedding) = {DIM} AND arrayExists(x -> x != 0, embedding) ORDER BY" in q
         for q in reads
     )
+    probe = next(q for q in ch.queries if "ORDER BY rand()" in q)
+    assert vcr.vector_filter("embedding", dim=DIM) in probe
 
 
 def test_unfinished_mutations_refuse_the_rebuild(capsys: Any) -> None:

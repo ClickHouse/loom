@@ -238,22 +238,14 @@ Keep writers and erasure stopped until the rebuild finishes or is abandoned and 
 swap prints that as its next step, in its log and in the summary line's `next`. Each next
 step that names a command carries the run's `--method`, `--chain`,
 `--index-granularity`, `--gate-fetch-multiplier`, `--probes`, `--require-patch-free`,
-`--cluster` and `--statement-timeout-s`, so it runs as printed. Use `--drop-pre-rebuild --yes` to remove the rollback
-copy after validation or rollback, and `DROP TABLE loom.<table>_rebuild SYNC` to remove
-an abandoned twin. `--drop-pre-rebuild` first compares the two tables again (after the
-same drain as the postcondition) and refuses (exit 3), keeping the copy, while the copy
-it would drop holds a change the live table lacks, also when both tables are on the
-target layout (a `--require-patch-free` rebuild of a table already on it). After a swap, a change only the
-rollback copy holds names `--rollback --yes`; a change the live table holds, a mutation on
-it since the copy started, or a column-name difference between the two tables names no
-rollback (see after the swap below). After a rollback, a change only the new-layout copy
-holds, a key that differs at one version, or a mutation on the copy since its creation
-(an unfinished `ALTER UPDATE` does not show under `FINAL`, and the rollback did not carry
-it back), keeps it. When the checks cannot run (a failed drain or sync, a read past the
-timeout, or a read on a replica that has not caught up), it also refuses and keeps the
-copy: fix the grant, connect directly to one replica, or raise `--statement-timeout-s`,
-and rerun `--drop-pre-rebuild`. The erasure saga does not
-cover these copies.
+`--cluster` and `--statement-timeout-s`, so it runs as printed. Use
+`--drop-pre-rebuild --yes` to remove the rollback copy after validation or rollback, and
+`DROP TABLE loom.<table>_rebuild SYNC` to remove an abandoned twin.
+`--drop-pre-rebuild` first compares the two tables again, after the same drain as the
+postcondition, also when both are on the target layout (a `--require-patch-free`
+rebuild of a table already on it), and refuses (exit 3) and keeps the copy on any
+difference in [what the checks after a swap find](#what-the-checks-after-a-swap-find).
+The erasure saga does not cover these copies.
 
 - **Width.** The target width of a plain column is `LOOM_EMBEDDING_DIM` when the column
   holds real vectors (not all zeros) of that width, else the most frequent width among
@@ -281,27 +273,26 @@ cover these copies.
   source and names them in its message. Run `OPTIMIZE TABLE loom.<table> FINAL` on the
   source inside the window, which leaves one row per key, then rerun with `--restart`.
 - **Before the swap.** The tool flushes the source's async insert queue (and, on a
-  replicated engine, runs `SYSTEM SYNC REPLICA`, which syncs only the replica that
-  answers it; on `ReplicatedMergeTree` with `LIGHTWEIGHT`, which waits for fetches and
-  not for merges). For `ReplicatedMergeTree`, connect directly to one replica throughout the
-  run. Each later consistency and width read also reads, in the same statement, whether
-  the replica answering it has copied the whole replication log of the tables it reads
-  and has no entry other than a merge or a mutation left in its queue; a read on a
-  replica that has not caught up refuses the run in the preflight (exit 3), fails the
-  gate before the swap (exit 5) and fails the postcondition after it (exit 7). Every
-  later gate read and the last delta use `select_sequential_consistency = 1`. On
-  `SharedMergeTree` this covers acknowledged writes even if another replica serves the
-  read. On `ReplicatedMergeTree` the setting only covers quorum inserts with
-  `insert_quorum_parallel = 0`; it does not replace the direct replica connection. The
-  width and consistency checks fail the gate on a delete, a write of another width, a
-  write the delta cannot pick up (a version below the twin's highest, or a row under a
-  key the twin holds on a table without a version column), and any change to a row's
-  columns that keeps its key and version, the rebuilt vectors included, such as a
-  lightweight `UPDATE` (the quarantine `memory.reject` writes) or an erasure tombstone,
-  whether or not its patch part is still there. Any other insert is copied in and the
-  swap goes ahead: the window, not the tool, keeps writers out. The gate also fails on
-  any source mutation still running or created since the copy started (with `--reuse`,
-  since the twin was created), less a minute for replica clocks.
+  replicated engine, runs `SYSTEM SYNC REPLICA`, which syncs only the replica that answers
+  it; on `ReplicatedMergeTree` with `LIGHTWEIGHT`, which waits for fetches and not for
+  merges). For `ReplicatedMergeTree`, connect directly to one replica throughout the run.
+  Each later consistency and width read also reads, in the same statement, whether the
+  replica answering it has copied the whole replication log of the tables it reads and has
+  no entry other than a merge or a mutation left in its queue; a read on a replica that
+  has not caught up refuses the run in the preflight (exit 3), fails the gate before the
+  swap (exit 5) and fails the postcondition after it (exit 7). Every later gate read and
+  the last delta use `select_sequential_consistency = 1`. On `SharedMergeTree` this covers
+  acknowledged writes even if another replica serves the read. On `ReplicatedMergeTree`
+  the setting only covers quorum inserts with `insert_quorum_parallel = 0`; it does not
+  replace the direct replica connection. The width and consistency checks fail the gate on
+  a delete, a write of another width, a write the delta cannot pick up (a version below
+  the twin's highest, or a row under a key the twin holds on a table without a version
+  column), and any change to a row's columns that keeps its key and version, the rebuilt
+  vectors included, such as a lightweight `UPDATE` (the quarantine `memory.reject` writes)
+  or an erasure tombstone, whether or not its patch part is still there. Any other insert
+  is copied in and the swap goes ahead: the window, not the tool, keeps writers out. The
+  gate also fails on any source mutation still running or created since the copy started
+  (with `--reuse`, since the twin was created), less a minute for replica clocks.
 - **After the swap (exit 7).** The tool runs the consistency check again, the rollback
   copy as the source and the new table as the twin, with the same read settings and
   replica check as the last gate reads, and counts both tables' mutations since the
@@ -309,39 +300,47 @@ cover these copies.
   on the rollback copy, which has its own replication queue: a write that reached
   another replica before the swap belongs to the copy after the rename. `LIGHTWEIGHT`,
   because the swap stops the copy's merges and a full sync would wait on a merge entry.
-  A key only the rollback copy holds, a newer version there, an unfinished `ALTER UPDATE`
-  on it (the swap stops the copy's merges), or an `UPDATE` that sets a vector of another
-  width (the hash zeroes such a vector on both sides, so the tool also reads the rollback
-  copy's widths) is a change the new table lacks: the run fails its postcondition and
-  names `--rollback --yes`, which puts the old table back with the change. The rollback
-  starts the old table's merges again, so the mutation applies after it, and the
-  `--drop-pre-rebuild` that follows shows the keys it touched as differing at one version
-  and keeps both tables. A key only the new table holds or a newer version there (a write
-  to the new table after the swap, or a delete in the old table after the last check) is
-  a change `--rollback` would drop, since it copies back only newer versions and absent
-  keys. A mutation on the new table since the copy started (a lightweight `DELETE`, such
-  as `loom reembed --delete-old` runs, or an `ALTER UPDATE`) is a change `--rollback`
-  would undo, and a key it deleted shows only in the rollback copy. A key whose content differs at one version (a lightweight `UPDATE` in either
-  table, merged or not, or an `ALTER UPDATE` that finished before the swap) may be in
-  either table; the hash shows only that the rows differ. In both cases the run fails its
-  postcondition, names no rollback, and asks for both tables to be kept and the
-  difference inspected by hand. A merge changes
-  neither table's rows and passes. When the checks cannot run (a refused sync of the
-  rollback copy, a read past the timeout, a replica that has not caught up), the run
-  fails its postcondition, keeps the copy and names `--drop-pre-rebuild`, which checks
-  again.
+  A merge changes neither table's rows and passes. Any difference fails the
+  postcondition and keeps the rollback copy; the next step it prints is in
+  [what the checks after a swap find](#what-the-checks-after-a-swap-find).
 
 `--statement-timeout-s` (default 1800, below 7200, the client's read timeout) caps the
 width, consistency, mutation, delta and recall reads, those after the swap and in
 `--drop-pre-rebuild` included, and each delta and repair before the swap. The small
 reads of a table's row count, columns and catalog row run without it, and the copy and
-the rollback's catch-up copy run under their own limit of 7000 seconds. A read that times out after the swap fails the
-postcondition (exit 7) with the rollback copy kept, and one in `--drop-pre-rebuild`
-keeps the copy. The width read that sets the target, and each width check (the
-preflight, before the swap, and on the rollback copy after it), reads every vector of a
-plain named column (under `FINAL` on a ReplacingMergeTree), and each consistency check
-(after the copy or the repair, before the swap, and after it) reads every row of both
-tables, vectors included, so set the timeout to cover one full read of the table.
+the rollback's catch-up copy run under their own limit of 7000 seconds. A read that
+times out after the swap fails the postcondition (exit 7) with the rollback copy kept,
+and one in `--drop-pre-rebuild` keeps the copy. The width read that sets the target, and
+each width check (the preflight, before the swap, and on the rollback copy after it),
+reads every vector of a plain named column (under `FINAL` on a ReplacingMergeTree), and
+each consistency check (after the copy or the repair, before the swap, and after it)
+reads every row of both tables, vectors included, so set the timeout to cover one full
+read of the table.
+
+### What the checks after a swap find
+
+The run after the swap fails its postcondition (exit 7) and `--drop-pre-rebuild`
+refuses (exit 3) on each finding below, and both keep the rollback copy. The summary
+line's `next` carries the step.
+
+| The checks find                                                                                                                                                                      | Next step printed                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| After a swap, a change only the rollback copy holds: a key only there, a newer version there, an unfinished `ALTER UPDATE` on it, or an `UPDATE` that sets a vector of another width | `--rollback --yes`, which puts the old table back with the change                                                |
+| After a swap, a key only the live table holds or a newer version there: a write to the new table after the swap, or a delete in the old table after the last check                   | keep both tables and inspect the difference by hand                                                              |
+| A key whose content differs at one version: a lightweight `UPDATE` in either table, merged or not, or an `ALTER UPDATE` that finished before the swap                                | keep both tables and inspect the difference by hand                                                              |
+| After a swap, a mutation on the live table since the copy started, such as the lightweight `DELETE` that `loom reembed --delete-old` runs                                            | keep both tables and inspect the difference by hand                                                              |
+| The two tables name other columns                                                                                                                                                    | keep both tables and inspect the difference by hand                                                              |
+| After a rollback, a change only the new-layout copy holds, or a mutation on it since its creation                                                                                    | keep both tables and inspect the difference by hand                                                              |
+| The checks could not run: a failed drain or sync, a read past the timeout, or a replica that has not caught up                                                                       | fix the grant, connect directly to one replica, or raise `--statement-timeout-s`, and rerun `--drop-pre-rebuild` |
+
+`--rollback` copies back only newer versions and absent keys, so it would drop a change
+only the live table holds, and it would undo a mutation on the live table. It starts the
+old table's merges again, so an unfinished mutation on the rollback copy applies after
+it, and the `--drop-pre-rebuild` that follows shows the keys it touched as differing at
+one version. An unfinished `ALTER UPDATE` on the new-layout copy after a rollback does
+not show under `FINAL`, which is why a mutation on it counts.
+A delete in the live table leaves its keys only in the rollback copy, so the first row
+names `--rollback` only while the live table has no mutation since the copy started.
 
 ## Disk pressure hygiene
 

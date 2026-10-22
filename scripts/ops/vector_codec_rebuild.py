@@ -1146,6 +1146,7 @@ class VectorRebuild:
             log("POSTCONDITION FAILED: the names do not hold what the swap leaves")
             return POSTCONDITION
         if self.columns_differ():
+            self.next_step = f"loom.{self.t} and loom.{self.pre} differ. {KEEP_BOTH}"
             log("POSTCONDITION FAILED: the rollback copy's columns differ by name")
             return POSTCONDITION
         if self.a.require_patch_free:
@@ -1162,7 +1163,8 @@ class VectorRebuild:
             )
             return POSTCONDITION
         if why:
-            log(f"POSTCONDITION FAILED: {why}. {self.keep_copy(rollback)}")
+            self.next_step = self.keep_copy(rollback)
+            log(f"POSTCONDITION FAILED: {why}. {self.next_step}")
             return POSTCONDITION
         self.next_step = (
             f"keep writers and erasure stopped; run `{self.run_line} --drop-pre-rebuild "
@@ -1171,13 +1173,9 @@ class VectorRebuild:
         return OK
 
     def columns_differ(self) -> bool:
-        """Whether the live table and the rollback copy name other columns, with the next
-        step recorded. Either table may have changed, so neither --rollback nor the drop
-        keeps it whole."""
-        if set(tr.columns(self.ch, self.t)) == set(tr.columns(self.ch, self.pre)):
-            return False
-        self.next_step = f"loom.{self.t} and loom.{self.pre} differ. {KEEP_BOTH}"
-        return True
+        """Whether the live table and the rollback copy name other columns. Either table
+        may have changed, so neither --rollback nor the drop keeps it whole."""
+        return set(tr.columns(self.ch, self.t)) != set(tr.columns(self.ch, self.pre))
 
     def recheck_step(self) -> str:
         """The next step when the checks after the swap could not run."""
@@ -1188,14 +1186,12 @@ class VectorRebuild:
         )
 
     def keep_copy(self, rollback: bool) -> str:
-        """The next step when the two tables differ, recorded for the summary: --rollback
-        when only the rollback copy holds the change, else inspection with both kept."""
+        """The next step when the two tables differ: --rollback when only the rollback copy
+        holds the change, else inspection with both kept."""
         if rollback:
             step = KEEP_AND_ROLL_BACK.format(run=self.run_line)
-            self.next_step = f"loom.{self.pre} holds a change the new table lacks. {step}"
-            return step
-        self.next_step = f"loom.{self.t} and loom.{self.pre} differ. {KEEP_BOTH}"
-        return KEEP_BOTH
+            return f"loom.{self.pre} holds a change the new table lacks. {step}"
+        return f"loom.{self.t} and loom.{self.pre} differ. {KEEP_BOTH}"
 
     def differences(
         self, version: str | None, key: list[str], old: str, new: str
@@ -1368,6 +1364,7 @@ class VectorRebuild:
         # after a swap or a rollback the copy may be the only copy of a change
         try:
             if self.columns_differ():
+                self.next_step = f"loom.{self.t} and loom.{self.pre} differ. {KEEP_BOTH}"
                 log(f"REFUSED: the rollback copy's columns differ by name. {KEEP_BOTH}")
                 return REFUSED
             if live and pre:
@@ -1381,14 +1378,11 @@ class VectorRebuild:
             raise
         except Exception as e:  # noqa: BLE001 - checks that cannot run keep the copy
             self.next_step = self.recheck_step()
-            log(
-                f"REFUSED: the checks could not run ({str(e)[:160]}): fix the grant, "
-                "connect directly to one replica, or raise --statement-timeout-s, and "
-                f"rerun --drop-pre-rebuild; loom.{self.pre} is kept"
-            )
+            log(f"REFUSED: the checks could not run ({str(e)[:160]}); {self.next_step}")
             return REFUSED
         if why:
-            log(f"REFUSED: {why}; loom.{self.pre} is kept. {self.keep_copy(rollback)}")
+            self.next_step = self.keep_copy(rollback)
+            log(f"REFUSED: {why}; loom.{self.pre} is kept. {self.next_step}")
             return REFUSED
         log(f"drop: loom.{self.pre} ({tr.row_count(self.ch, self.pre)} rows); cannot be undone")
         if not self.a.yes:
