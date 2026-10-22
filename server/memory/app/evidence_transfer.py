@@ -392,7 +392,7 @@ async def handle_memory_import_evidence(
             await ch.insert(
                 SOURCES_TABLE,
                 link_rows,
-                settings={"async_insert": 0, "wait_for_async_insert": 1},
+                settings=committed_insert_settings(),
             )
             out.links_written = len(link_rows)
 
@@ -437,7 +437,7 @@ async def handle_memory_import_evidence(
             await ch.insert(
                 "loom.session_summaries",
                 drows,
-                settings={"async_insert": 0, "wait_for_async_insert": 1},
+                settings=committed_insert_settings(),
             )
             out.digests_written = len(drows)
     return out
