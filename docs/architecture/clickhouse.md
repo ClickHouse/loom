@@ -125,9 +125,10 @@ two groups:
 - **Waited async inserts either way** (`async_insert_settings`): `auth_attempts`, the
   policy witness's `agent_events` and `memory_exposures` rows,
   `memory_projection_failures`, the graph Undo markers, the `namespace_write_marks`
-  flush, the usage-event flush, the carry-acknowledgement publish and withdraw, the
-  waited entity-graph inserts of `memory.set`, and a follow plan's successor inserts
-  (`entity_triple_memories`, `entity_triple_rows`, `entity_triples`).
+  flush, the usage-event flush, the carry-acknowledgement publish and withdraw, every
+  waited entity-graph insert (`memory.set`, `memory.bulk_set`; `graph_insert_settings`
+  with `wait=True`), and a follow plan's successor inserts (`entity_triple_memories`,
+  `entity_triple_rows`, `entity_triples`).
 
 ClickHouse collects the concurrent inserts into one table in one part per partition and
 answers each once those parts are written. On return the row is as durable and as
@@ -167,9 +168,9 @@ and part write, which queue up and grow under load. A `memory.set` waits on six 
 more: the audit row, the outbox row (webhook namespaces), the `entity_edges` and
 `entity_edge_memories` inserts, the `entity_triples` and `entity_triple_memories`
 inserts, plus `carry_acks` on a carried write; `memory.set_from_messages` waits on
-about ten. The four entity-graph inserts are waited async inserts, so
+about ten. The entity-graph inserts of both are waited async inserts, so
 `ch_batched_inserts = false` leaves them holding connections: a process taking mostly
-memory writes sizes its pool for them either way, or lowers
+memory or bulk writes sizes its pool for them either way, or lowers
 `ch_batched_insert_wait_max_ms`. One process taking 200 writes a second, two batched
 inserts each (`bench/write_rate.py --target client`), refused 3,367 of 12,000 writes
 with 503 `OVERLOADED` at `ch_pool_maxsize = 20`, the formula's bound, and none at 40 or
