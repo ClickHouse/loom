@@ -468,7 +468,7 @@ flush never fails a request; a crash loses the queue.
 ## Vector storage
 
 - The vector columns of `CODED_TABLES` are `Array(BFloat16)`, coded with `Quantized` or
-  plain depending on the install (when each is which is under Quantized codes, below).
+  plain depending on the install (the Quantized codes bullet below says which).
   Loom's migrations code no other vector column; a table named in `LOOM_CODE_VECTOR_TABLES`
   keeps the layout and width it was created with. `entity_vectors.entity_embedding` keeps
   `LZ4` because its vectors repeat. Coded, it keeps the `LZ4` after `Quantized` only where
