@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+from server.memory.app import graph_write_marks
+
 
 class _CH:
     def __init__(self, t: int, tm: int) -> None:
@@ -21,14 +23,6 @@ class _CH:
         self.executed.append(sql)
 
 
-@pytest.fixture
-def local_marks() -> Any:
-    """The graph-marks module; the suite's autouse teardown resets it after each test."""
-    from server.memory.app import graph_write_marks
-
-    return graph_write_marks
-
-
 async def _expire(monkeypatch: pytest.MonkeyPatch, ch: _CH) -> None:
     from server.memory.api.models_facts import FactsExpireByAdapterInput
     from server.memory.app import facts
@@ -40,16 +34,16 @@ async def _expire(monkeypatch: pytest.MonkeyPatch, ch: _CH) -> None:
 
 
 @pytest.mark.asyncio
-async def test_expiring_triples_marks_the_graph_written(monkeypatch, local_marks) -> None:
+async def test_expiring_triples_marks_the_graph_written(monkeypatch) -> None:
     ch = _CH(3, 2)
     await _expire(monkeypatch, ch)
     assert len(ch.executed) == 2
-    assert ("acme", "ns") in local_marks._unrecorded
+    assert ("acme", "ns") in graph_write_marks._unrecorded
 
 
 @pytest.mark.asyncio
-async def test_nothing_to_expire_leaves_the_graph_unmarked(monkeypatch, local_marks) -> None:
+async def test_nothing_to_expire_leaves_the_graph_unmarked(monkeypatch) -> None:
     ch = _CH(0, 0)
     await _expire(monkeypatch, ch)
     assert ch.executed == []
-    assert local_marks._unrecorded == set()
+    assert graph_write_marks._unrecorded == set()
