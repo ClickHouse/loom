@@ -527,6 +527,18 @@ first (`DROP TABLE IF EXISTS loom.<table>_pre_rebuild SYNC`).
 
    Skip that table's line while this returns rows: its layout stays as it is.
 
+   The copy replaces every vector whose width is not `<n>` with a zero vector, and no gate
+   reports it, so check each named column for other widths before its line:
+
+   ```sql
+   SELECT length(<column>) AS width, count() FROM loom.<table>
+   WHERE length(<column>) > 0 GROUP BY width
+   ```
+
+   Any width other than `<n>` (another model's rows, or rows written before a model change
+   that `loom reembed` has not reached) is lost in the rebuild. Re-embed those rows, or move
+   that model to its own `LOOM_CODE_VECTOR_TABLES` table, before the line; or skip it.
+
    To stop the block, create `ABORT_REBUILD` in `LOOM_REBUILD_DIR` (default: the directory
    you run from): the running line stops before its copy or its swap, and each later
    rebuild line stops before it starts. `--drop-pre-rebuild` and `--rollback` lines do not
