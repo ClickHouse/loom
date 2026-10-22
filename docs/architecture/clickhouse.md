@@ -163,12 +163,12 @@ R_request request-path and R_background background batched inserts a second ther
 hold at least R_request × `ch_batched_insert_wait_max_ms` / 1000 + R_background ×
 `ch_batched_insert_background_wait_max_ms` / 1000 connections: 100 `conversation.append`
 a second, two batched inserts each, hold at least 100 × 2 × 50 / 1000 = 10. That is a
-lower bound: a waiting insert
-holds its connection for the window and then the flush and part write, which queue up
-and grow under load. One process taking 200 writes a second, two batched inserts each
-(`bench/write_rate.py --target client`), refused 3,367 of 12,000 writes with 503
-`OVERLOADED` at `ch_pool_maxsize = 20`, the formula's bound, and none at 40 or 64. Size the ClickHouse connection pool
-(`ch_pool_maxsize`) at three times the bound or more, on top of the other statements: raise it when three times the bound passes the current value. A process at
+lower bound: a waiting insert holds its connection for the window and then the flush
+and part write, which queue up and grow under load. One process taking 200 writes a
+second, two batched inserts each (`bench/write_rate.py --target client`), refused
+3,367 of 12,000 writes with 503 `OVERLOADED` at `ch_pool_maxsize = 20`, the formula's
+bound, and none at 40 or 64. Size `ch_pool_maxsize` at three times the bound or more,
+plus the process's other statements. A process at
 that rate either raises `ch_pool_maxsize` or sets `ch_batched_inserts = false`; lowering
 `ch_batched_insert_wait_max_ms` also frees connections
 ([troubleshooting](../operations/troubleshooting.md)).

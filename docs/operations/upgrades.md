@@ -81,9 +81,10 @@ checkout.
    process's other statements, and raise it when that sum passes the current value. The
    default 64 leaves room for about 300 request-path batched inserts a second (three
    times the bound is 45) with about 20 connections for the process's other statements.
-   The 200 writes a second run that was clean at 64 (`bench/write_rate.py --target
-client`) sent only the two inserts. A
-   process that cannot grow its pool starts with `LOOM_CH_BATCHED_INSERTS=false`
+   The default 64 was measured clean at 200 `conversation.append` writes a second (two
+   batched inserts each, `bench/write_rate.py --target client`); memory writes send up
+   to four each, so count them at four. A process that cannot grow its pool starts with
+   `LOOM_CH_BATCHED_INSERTS=false`
    ([batched inserts](../architecture/clickhouse.md#batched-inserts)). After the
    rollout, watch `loom.ch.pool.in_use`, `loom.ch.pool.waiters` and
    `loom.ch.pool.overloaded_total`; if `waiters` stays above zero or `overloaded_total`

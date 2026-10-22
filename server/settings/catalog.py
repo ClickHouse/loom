@@ -5201,8 +5201,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.list": 150,
     "memory.lock": 40,
     # One memory.set (its budget is 200) plus the redirect version, its mirror
-    # restamp and the chunk tombstones.
-    "memory.move": 400,
+    # restamp and the chunk tombstones, + the redirect's outbox-row wait
+    # (webhook namespaces).
+    "memory.move": 450,
     "memory.outcome": 200,
     "memory.outcome_run": 500,
     "memory.outline": 250,
