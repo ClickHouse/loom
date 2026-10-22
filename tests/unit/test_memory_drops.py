@@ -500,11 +500,22 @@ def test_drops_cli_is_registered_and_runs(monkeypatch: pytest.MonkeyPatch, capsy
 
 
 @pytest.mark.asyncio
-async def test_reset_cancels_an_armed_flush_timer(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_reset_stops_an_armed_flush_from_writing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    import server.core.ch as chmod
+
+    inserts: list[str] = []
+
+    class _CH:
+        async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+            inserts.append(table)
+
+    monkeypatch.setattr(chmod, "get_client", lambda: _CH())
     monkeypatch.setattr(drops, "_flush_later", _real_flush_later)
+    monkeypatch.setattr(drops, "_FLUSH_DELAY_S", 0.01)
     drops.record_drop("o", "n", "parse", "empty", item="item")
-    timer = drops._timer
-    assert timer is not None
     drops._reset_for_tests()
-    assert timer.cancelled()
-    assert drops._timer is None
+    await asyncio.sleep(0.05)
+    assert inserts == []
+    assert not [t for t in asyncio.all_tasks() if t.get_name() == "loom-drops-flush"]

@@ -750,7 +750,8 @@ async def _tasks_left_as_found() -> Any:
     yield
     current = asyncio.current_task()
     # A cancelled task's done callback can re-arm a timer or spawn a graph-marks
-    # end task, so the reset and the sweep repeat, at most three passes.
+    # end task, so the reset and the sweep repeat; a task left after three passes
+    # fails the test rather than leak into the next one.
     for _ in range(3):
         _reset_deferred_ledgers()
         leaked = [t for t in asyncio.all_tasks() - before if t is not current and not t.done()]
@@ -759,7 +760,11 @@ async def _tasks_left_as_found() -> Any:
         for t in leaked:
             t.cancel()
         await asyncio.gather(*leaked, return_exceptions=True)
-    _reset_deferred_ledgers()
+    else:
+        _reset_deferred_ledgers()
+        left = [t for t in asyncio.all_tasks() - before if t is not current and not t.done()]
+        if left:
+            pytest.fail(f"tasks still pending after three teardown passes: {left}")
 
 
 @pytest.fixture(autouse=True)
