@@ -210,7 +210,7 @@ def test_a_held_conflict_leaves_its_attempts_and_room_for_other_writers(
     from tests.unit.clock_fake import ManualClock
 
     clock = ManualClock(t=1000)
-    monkeypatch.setattr(holds.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(holds, "time", clock)
     monkeypatch.setattr(settings, "memory_conflict_resolver_batch", 1)
     monkeypatch.setattr(settings, "memory_conflict_resolver_recheck_batch", 0)
     first = _q(memory_key="held")
