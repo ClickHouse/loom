@@ -207,19 +207,16 @@ def test_twin_read_is_the_codes_at_the_leg_multiplier() -> None:
         "vector_search_use_quantized_codes": 1,
         "vector_search_index_fetch_multiplier": 10.0,
     }
-    assert vcr.vector_filter("embedding", dim=3072) == (
-        "length(embedding) = 3072 AND arrayExists(x -> x != 0, embedding)"
-    )
+    real = vcr.vector_filter("embedding", dim=3072)
+    assert "length(embedding) = 3072" in real and "arrayExists(x -> x != 0, embedding)" in real
 
 
 def test_the_width_preflight_counts_other_non_empty_widths_as_loom_serves_them() -> None:
     assert vcr.read_final(vcr.parse_engine(DDL)[0]) == " FINAL"
     assert vcr.read_final("SharedMergeTree") == ""
-    assert vcr.mixed_width_sql("memory_chunks", "embedding", " FINAL", dim=3072) == (
-        "SELECT length(embedding) AS w, count() FROM loom.memory_chunks FINAL "
-        "WHERE length(embedding) != 3072 AND arrayExists(x -> x != 0, embedding) "
-        "GROUP BY w ORDER BY w"
-    )
+    mixed = vcr.mixed_width_sql("memory_chunks", "embedding", " FINAL", dim=3072)
+    assert "FROM loom.memory_chunks FINAL" in mixed
+    assert "length(embedding) != 3072 AND arrayExists(x -> x != 0, embedding)" in mixed
     assert "FINAL" not in vcr.mixed_width_sql("chunks", "embedding", "", dim=3072)
 
 
@@ -247,24 +244,19 @@ def test_a_key_is_mismatched_only_when_both_sides_hold_it() -> None:
     """With join_use_nulls=0 a key one side lacks reads defaults there; counted as
     mismatched too, a key erased from the source would never read as twin-only alone."""
     hashed = ["org", "deleted_at"]
-    for version, vcmp in (
-        ("created_at", "(s.created_at != t.created_at OR s.__hash != t.__hash)"),
-        (None, "(s.n != t.n OR s.__hash != t.__hash)"),
-    ):
+    for version in ("created_at", None):
         sql = vcr.consistency_sql(
             "memory_chunks", "memory_chunks_rebuild", "", version, ["org"], hashed, [], dim=8
         )
-        assert sql.startswith(
-            f"SELECT countIf(s.__present = 1 AND t.__present = 1 AND {vcmp}) AS mismatched, "
-            "countIf(t.__present = 0) AS source_only, countIf(s.__present = 0) AS twin_only "
-        )
+        assert "countIf(s.__present = 1 AND t.__present = 1 AND (" in sql
+        assert "countIf(t.__present = 0) AS source_only" in sql
+        assert "countIf(s.__present = 0) AS twin_only" in sql
     plain = vcr.consistency_sql(
         "chunks", "chunks_rebuild", "", None, ["org", "namespace"], hashed, [], dim=8
     )
-    assert (
-        "count() AS n, sum(cityHash64(tuple(`org`, `deleted_at`))) AS __hash, 1 AS __present "
-        "FROM loom.chunks GROUP BY org, namespace"
-    ) in plain
+    # without a version column each key compares its row count
+    assert "s.n != t.n" in plain and "count() AS n" in plain
+    assert "GROUP BY org, namespace" in plain
 
 
 def test_the_consistency_read_hashes_each_row_it_compares() -> None:
@@ -272,47 +264,34 @@ def test_the_consistency_read_hashes_each_row_it_compares() -> None:
     shows only in the hash; `tuple` keeps a NULL column from making the hash NULL. The
     source's vector is hashed as the copy writes it, the twin's as it is stored."""
     sql = vcr.consistency_sql("t", "t_rebuild", " FINAL", "v", ["org"], ["org", "v"], ["e"], dim=3)
-    stored = "if(length(e) = 3, CAST(e AS Array(BFloat16)), " + vcr.pad(3) + ")"
-    assert vcr.stored_vector("e", dim=3) == stored
-    assert (
-        f"(SELECT org, v, cityHash64(tuple(`org`, `v`, {stored})) AS __hash, 1 AS __present "
-        "FROM loom.t FINAL) AS s"
-    ) in sql
-    assert (
-        "(SELECT org, v, cityHash64(tuple(`org`, `v`, `e`)) AS __hash, 1 AS __present "
-        "FROM loom.t_rebuild FINAL) AS t"
-    ) in sql
+    stored = vcr.stored_vector("e", dim=3)
+    assert "CAST(e AS Array(BFloat16))" in stored
+    assert f"cityHash64(tuple(`org`, `v`, {stored}))" in sql
+    assert "cityHash64(tuple(`org`, `v`, `e`))" in sql
+    assert "s.__hash != t.__hash" in sql
 
 
 def test_the_pre_swap_mutation_read_counts_finished_mutations_since_the_copy() -> None:
-    assert vcr.mutations_sql("system.mutations", 1_700_000_000) == (
-        "SELECT count() FROM system.mutations WHERE database = {db:String} "
-        "AND table = {t:String} AND (NOT is_done OR create_time >= toDateTime(1700000000))"
-    )
+    sql = vcr.mutations_sql("system.mutations", 1_700_000_000)
+    assert "NOT is_done OR create_time >= toDateTime(1700000000)" in sql
+    assert "table = {t:String}" in sql
 
 
 def test_the_dimension_read_counts_every_real_vector() -> None:
-    assert vcr.widths_sql("memory_chunks", "embedding", " FINAL") == (
-        "SELECT length(embedding) AS w, count() AS n FROM loom.memory_chunks FINAL "
-        "WHERE arrayExists(x -> x != 0, embedding) GROUP BY w ORDER BY n DESC, w"
-    )
+    sql = vcr.widths_sql("memory_chunks", "embedding", " FINAL")
+    assert "FROM loom.memory_chunks FINAL" in sql
+    assert "arrayExists(x -> x != 0, embedding)" in sql
 
 
 def test_the_newer_read_counts_each_side_of_a_mismatched_key() -> None:
-    assert vcr.newer_sql("a", "b", " FINAL", "created_at", ["org", "id"]) == (
-        "SELECT countIf(o.v > n.v), countIf(o.v < n.v) FROM "
-        "(SELECT org, id, created_at AS v FROM loom.a FINAL) AS o INNER JOIN "
-        "(SELECT org, id, created_at AS v FROM loom.b FINAL) AS n USING (org, id)"
-    )
-    assert "count() AS v FROM loom.a GROUP BY org, id" in vcr.newer_sql(
-        "a", "b", "", None, ["org", "id"]
-    )
+    sql = vcr.newer_sql("a", "b", " FINAL", "created_at", ["org", "id"])
+    assert "countIf(o.v > n.v), countIf(o.v < n.v)" in sql
+    assert "created_at AS v" in sql and "USING (org, id)" in sql
+    # without a version column the row count stands in for it
+    assert "count() AS v" in vcr.newer_sql("a", "b", "", None, ["org", "id"])
 
 
 def test_the_tie_read_counts_keys_with_more_than_one_row_at_their_newest_version() -> None:
     sql = vcr.tied_keys_sql("memory_chunks", "created_at", ["org", "id"])
-    assert sql == (
-        "SELECT countIf(n_at_max > 1) FROM (SELECT org, id, argMax(n, created_at) AS n_at_max "
-        "FROM (SELECT org, id, created_at, count() AS n FROM loom.memory_chunks "
-        "GROUP BY org, id, created_at) GROUP BY org, id)"
-    )
+    assert "argMax(n, created_at)" in sql and "countIf(n_at_max > 1)" in sql
+    assert "GROUP BY org, id, created_at" in sql

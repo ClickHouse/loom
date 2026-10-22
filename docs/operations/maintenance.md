@@ -220,9 +220,10 @@ the vector-codec one in [recommended settings](deployment.md#recommended-clickho
 `vector_codec_rebuild.py` needs a maintenance window with every writer and erasure
 stopped and all in-flight writes drained. It never repairs the live table. Before
 copying it refuses while a source mutation is still running or was created in the last
-minute (with `--reuse`, since the reused twin was created); the minute covers replica
-clock skew, and the gate before the swap counts it too. Rerun a minute after the last
-mutation finishes. An empty table is rebuilt too, at the width the Width bullet below
+minute; the minute covers replica clock skew, and the gate before the swap counts it
+too. Rerun a minute after the last mutation finishes. With `--reuse` it counts every
+mutation since the reused twin was created, finished ones included: such a mutation
+makes the twin stale, and the rerun is `--restart --yes`, which copies again. An empty table is rebuilt too, at the width the Width bullet below
 gives (a coded column's own, else `LOOM_EMBEDDING_DIM`); the recall gate has no rows to probe there. Its ClickHouse user needs the
 `SYSTEM FLUSH ASYNC INSERT QUEUE` and `SYSTEM SYNC REPLICA` privileges on the table and,
 on `ReplicatedMergeTree`, `SYSTEM SYNC REPLICA` on the twin `loom.<table>_rebuild`, which
@@ -353,8 +354,13 @@ line's `next` carries the step.
 | After a rollback, a change only the new-layout copy holds, or a mutation on it since its creation                                                                                    | keep both tables and inspect the difference by hand                                                              |
 | The checks could not run: a failed drain or sync, a read past the timeout, or a replica that has not caught up                                                                       | fix the grant, connect directly to one replica, or raise `--statement-timeout-s`, and rerun `--drop-pre-rebuild` |
 
-`--rollback` copies back only newer versions and absent keys, so it would drop a change
-only the live table holds, and it would undo a mutation on the live table. It starts the
+`--rollback` copies back only the rows the old table lacks: on a table with a version
+column, the versions above the old table's highest, and on `chunks`, which has none, the
+keys the old table lacks. A lightweight `UPDATE` or `DELETE` or an erasure tombstone on
+the live table keeps its key and version, and a version written below the old table's
+highest is never copied back, so `--rollback` would lose such a change. It runs the
+checks above before its exchange and refuses (exit 3), exchanging nothing, on every
+finding whose next step is not `--rollback`. It starts the
 old table's merges again, so an unfinished mutation on the rollback copy applies after
 it, and the `--drop-pre-rebuild` that follows shows the keys it touched as differing at
 one version. An unfinished `ALTER UPDATE` on the new-layout copy after a rollback does

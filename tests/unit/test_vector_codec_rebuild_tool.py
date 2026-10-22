@@ -344,6 +344,29 @@ def test_rollback_and_drop_need_yes_and_check_their_result() -> None:
     assert "memory_chunks_pre_rebuild" not in ch.t
 
 
+@pytest.mark.parametrize(
+    ("mutations", "cons"),
+    [(1, (0, 0, 0)), (0, (0, 0, 1)), (0, (1, 0, 0))],
+    ids=["mutation-on-the-new-table", "key-only-in-the-new-table", "same-version-change"],
+)
+def test_a_rollback_that_would_lose_a_change_in_the_new_table_refuses(
+    mutations: int, cons: tuple[int, int, int], capsys: Any
+) -> None:
+    """--rollback copies back only newer versions and absent keys, so an erasure tombstone,
+    a lightweight UPDATE or a write on the new table after the swap would be lost: it runs
+    the checks --drop-pre-rebuild runs and exchanges nothing when they find such a change."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    ch = _CH(
+        memory_chunks={"ddl": coded, "rows": 5, "uuid": "a"}, memory_chunks_pre_rebuild=_live()
+    )
+    ch.mutations, ch.cons = mutations, cons
+    assert _run(ch, "--rollback", "--yes") == tr.REFUSED
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert ch.t["memory_chunks"]["ddl"] == coded
+    out = capsys.readouterr().out
+    assert "nothing is exchanged" in out and "inspect the difference by hand" in out
+
+
 def test_a_mutation_on_the_copy_after_a_rollback_keeps_it(capsys: Any) -> None:
     """An ALTER UPDATE on the new table after the swap, such as an erasure tombstone, is
     not copied back by --rollback and does not show under FINAL until it finishes, so
@@ -472,7 +495,8 @@ def test_a_chain_runs_only_where_suspicious_codecs_can_be_on(chain: str, capsys:
 @pytest.mark.parametrize("codec", STATES)
 def test_a_rollback_sends_the_codec_setting_only_where_it_is_writable(codec: str) -> None:
     """The way back to the plain layout works wherever the setting stands now, and its
-    catch-up copy runs under the full copy's limit, not the gate reads' timeout."""
+    catch-up copy runs under the full copy's limit, not the gate reads' timeout, with the
+    sequential reads of the checks that run before it."""
     coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
     ch = _CH(
         memory_chunks={"ddl": coded, "rows": 5, "uuid": "a"}, memory_chunks_pre_rebuild=_live()
@@ -485,6 +509,7 @@ def test_a_rollback_sends_the_codec_setting_only_where_it_is_writable(codec: str
         == {
             "max_execution_time": vcr.COPY_EXECUTION_TIME_S,
             **({"enable_quantized_codec": 1} if SENT[codec] else {}),
+            **tr.CONSISTENT,
         }
         for st in copies
     )
@@ -766,6 +791,7 @@ def test_a_mutation_rolled_back_shows_as_a_same_version_difference_in_the_drop(
     out = capsys.readouterr().out
     assert "A mutation applies after the rollback" in out
     assert "--rollback --yes" in json.loads(out.rsplit("summary ", 1)[1])["next"]
+    ch.mutations_first = [0]  # the rollback's check: none on the new table, one on the copy
     assert _run(ch, "--rollback", "--yes") == tr.OK
     assert "SYSTEM START MERGES loom.memory_chunks" in ch.commands
     capsys.readouterr()
@@ -888,7 +914,9 @@ def test_the_preflight_counts_mutations_since_a_reused_twin_was_created(capsys: 
     ch = _CH(memory_chunks=_live(), memory_chunks_rebuild=_live())
     ch.mutations = 1
     assert _run(ch, "--yes", "--reuse") == tr.REFUSED
-    assert _writes(ch) == [] and "rerun in a minute" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert _writes(ch) == [] and "rerun in a minute" not in out
+    assert "makes the twin stale; rerun with --restart --yes" in out
     read = next(q for q in ch.queries if "system.mutations" in q)
     margin = TWIN_CREATED - vcr.CLOCK_SKEW_MARGIN_S
     assert f"(NOT is_done OR create_time >= toDateTime({margin}))" in read

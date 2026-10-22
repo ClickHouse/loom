@@ -533,7 +533,9 @@ the only holder of a change: drop it by hand only after the read in
    `mode="--drop-pre-rebuild --yes"`. Until then each rebuilt table keeps its old copy as
    `loom.<table>_pre_rebuild`, a full second copy, its merges stopped by the tool. To go
    back instead, run that table's line with `mode="--rollback --yes"`; the coded copy then
-   sits in `loom.<table>_pre_rebuild`, so drop it the same way. Repeat the flags the table
+   sits in `loom.<table>_pre_rebuild`, so drop it the same way. `--rollback` compares the
+   two tables first and refuses, exchanging nothing, when the live table holds a change
+   it would lose. Repeat the flags the table
    was rebuilt with: the tool checks the layout it built, so `entity_vectors` needs
    `--chain LZ4` only if its rebuild had it.
 

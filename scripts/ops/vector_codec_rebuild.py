@@ -66,6 +66,8 @@ to it after the swap, or a delete in the old table after the last check) or a ke
 keeps both tables for inspection.
 `--drop-pre-rebuild` runs the same comparison first, after a swap and after a
 rollback, and refuses (keeping the copy) while the copy it would drop holds a change.
+`--rollback` runs it before its exchange and refuses, exchanging nothing, when the live
+table holds a change the copy back would lose.
 
 The twin is the run's lock: an existing twin refuses the run unless
 `--reuse` (continue from it) or `--restart` (drop it and copy again), and the
@@ -748,10 +750,8 @@ class VectorRebuild:
                 f"loom.{self.twin} (created {twin[2]}, {tr.row_count(self.ch, self.twin)} rows) is "
                 "another run's lock or its leftover: --reuse continues from it, --restart drops it"
             )
-        since = self.since
-        if twin is not None and self.a.reuse and tr.row_count(self.ch, self.twin):
-            since = self.metadata_time(self.twin)  # the twin create_twin will reuse
-        if why := self.mutation_refusal(since):
+        reused = twin is not None and self.a.reuse and tr.row_count(self.ch, self.twin) > 0
+        if why := self.mutation_refusal(reused):
             return why
         if why := self.drain_refusal(parse_engine(ddl)[0]):
             return why
@@ -760,17 +760,23 @@ class VectorRebuild:
         except ReplicaBehind as e:
             return str(e)
 
-    def mutation_refusal(self, since: int) -> str:
+    def mutation_refusal(self, reused: bool) -> str:
         """A stopped writer can leave mutations running on ClickHouse. The gate before the
-        swap counts every mutation since `since` (this run's start, or a reused twin's
-        creation), less the clock-skew margin, so the preflight refuses on the same rule
+        swap counts every mutation since this run's start, or since the reused twin was
+        created, less the clock-skew margin, so the preflight refuses on the same rule
         rather than after the copy."""
-        if self.mutations_since(self.t, since):
+        since = self.metadata_time(self.twin) if reused else self.since
+        if not self.mutations_since(self.t, since):
+            return ""
+        if reused:
             return (
-                f"loom.{self.t} has a mutation still running or one created under a minute "
-                "ago (the clock-skew margin); wait for it to finish and rerun in a minute"
+                f"loom.{self.t} has a mutation since the reused twin was created, which makes "
+                "the twin stale; rerun with --restart --yes to copy again"
             )
-        return ""
+        return (
+            f"loom.{self.t} has a mutation still running or one created under a minute "
+            "ago (the clock-skew margin); wait for it to finish and rerun in a minute"
+        )
 
     def drain_refusal(self, engine: str) -> str:
         """Why this user cannot run the pre-swap drain, or '': it runs once here, so a
@@ -1024,7 +1030,7 @@ class VectorRebuild:
                 self.cmd(f"SYSTEM SYNC REPLICA loom.{self.twin} LIGHTWEIGHT")
             except tr.Interrupted:
                 raise
-            except Exception as e:  # a failed sync fails the gate, not the run
+            except Exception as e:  # a failed twin sync fails the gate, not the run
                 raise ReplicaBehind(
                     f"SYSTEM SYNC REPLICA loom.{self.twin} LIGHTWEIGHT failed "
                     f"({str(e)[:160]}); one cause is a missing grant on the twin"
@@ -1362,6 +1368,20 @@ class VectorRebuild:
             log(f"REFUSED: no loom.{self.pre} to roll back to")
             return REFUSED
         self.dim = self.find_dim()
+        # the copy back takes only newer versions or absent keys, so a change only the
+        # new table holds, or a mutation on it, would be lost
+        try:
+            why, restores = self.swapped_change()
+        except tr.Interrupted:
+            raise
+        except Exception as e:  # noqa: BLE001 - checks that cannot run refuse the rollback
+            self.next_step = KEEP_BOTH
+            log(f"REFUSED: the checks could not run ({str(e)[:160]}); {self.next_step}")
+            return REFUSED
+        if why and not restores:
+            self.next_step = self.keep_copy(False)
+            log(f"REFUSED: {why}; nothing is exchanged. {self.next_step}")
+            return REFUSED
         log(f"rollback: loom.{self.pre} back in as loom.{self.t}, the rows written since copied")
         if not self.a.yes:
             log("plan only: pass --yes to roll back")
