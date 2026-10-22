@@ -227,7 +227,7 @@ def test_an_alter_of_the_live_table_during_the_copy_is_never_swapped(capsys: Any
     real = tool.Rebuild.verified
 
     def verified(job: tool.Rebuild) -> bool:
-        ch.t["code_test_facets"]["meta"] = "2000-01-01 00:00:09"  # ALTER ... ADD COLUMN
+        ch.t["code_test_facets"]["meta"] = "2000-01-01 00:00:09"  # ALTER ... ADD INDEX
         return real(job)
 
     tool.Rebuild.verified = verified  # type: ignore[method-assign]
@@ -239,11 +239,28 @@ def test_an_alter_of_the_live_table_during_the_copy_is_never_swapped(capsys: Any
     assert "was altered during the copy" in capsys.readouterr().out
 
 
+def test_an_alter_before_the_twin_is_checked_is_never_swapped() -> None:
+    ch = _CH(code_test_facets=_table(OLD, 5))
+    real = tr.same_columns
+
+    def same_columns(c: Any, table: str, twin: str) -> None:
+        ch.t["code_test_facets"]["meta"] = "2000-01-01 00:00:09"  # between the snapshot and here
+        real(c, table, twin)
+
+    tr.same_columns = same_columns  # type: ignore[assignment]
+    try:
+        assert _run(ch, "--yes") == tool.REFUSED
+    finally:
+        tr.same_columns = real  # type: ignore[assignment]
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+
+
 def test_a_table_no_migration_declares_is_refused_without_a_traceback(capsys: Any) -> None:
     ch = _CH(memory_chunks=_table(OLD, 5))
     argv = ["--table", "memory_chunks", "--migrations-dir", REBUILD_FIXTURE, "--dry-run"]
     assert tool.main(argv, ch=ch) == tool.REFUSED and ch.commands == []
-    assert "no migration declares" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "no migration declares" in out and "ClickHouse " in out and '"exit": 3' in out
 
 
 def test_preflight_refuses_an_engine_the_gate_cannot_check() -> None:

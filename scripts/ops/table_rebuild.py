@@ -36,9 +36,11 @@ and stops. The steps of a rebuild:
    another delta pass before it fails the run.
 5. Refuse to swap when a mutation (an erasure purge) or a lightweight update
    touched the live table after the copy started: the twin may hold rows it
-   removed. Refuse it too when an `ALTER` changed the live table's metadata
-   since the copy started: the twin was checked against the table before it. Rerun with
-   `--restart`.
+   removed. Rerun with `--restart`. Refuse it too when an `ALTER` (a dropped
+   or changed column, an index, a setting) moved the live table's metadata
+   time since the twin's columns were checked: a rebuild does not carry the
+   `ALTER` over, so restate it in the migration's target first. An added
+   column fails the next delta pass instead (exit 1, no swap).
 6. A last delta pass, then `EXCHANGE TABLES`, then the old table becomes
    `loom.<t>_pre_rebuild`, and its merges are stopped. Two delta passes
    `--settle-s` apart copy what in-flight writers put into it after the swap.
@@ -400,8 +402,10 @@ class Rebuild:
         return ""
 
     def altered(self) -> bool:
-        """An ALTER (a column, an index, a setting) changed the live table since
-        the copy started: the twin was checked against the table before it."""
+        """An ALTER (a dropped or changed column, an index, a setting) moved the
+        live table's metadata time since the twin was checked against it. The
+        time has one second's precision: two ALTERs in the snapshot's second
+        compare equal."""
         row = self.table_row(self.t)
         return row is None or row[2] != self.live_meta
 
@@ -410,12 +414,12 @@ class Rebuild:
         return row is not None and row[1] == self.twin_uuid
 
     def copy_and_swap(self) -> int:
+        row = self.table_row(self.t)  # before the twin's column check, so any later ALTER shows
+        self.live_meta = row[2] if row else None
         why = self.create_twin()
         if why:
             log("REFUSED:", why)
             return REFUSED
-        row = self.table_row(self.t)
-        self.live_meta = row[2] if row else None
         started = self.q("SELECT now()")[0][0]
         patches = self.patch_parts()
         t0 = time.time()
@@ -442,7 +446,8 @@ class Rebuild:
             return ABORTED
         if self.altered():
             log(
-                f"REFUSED: loom.{self.t} was altered during the copy; no swap. Rerun with --restart"
+                f"REFUSED: loom.{self.t} was altered during the copy; no swap. A rebuild does "
+                "not carry an ALTER over: restate it in the migration's target, then --restart"
             )
             return REFUSED
         if not self.still_ours():
@@ -572,8 +577,16 @@ def main(argv: list[str] | None = None, ch: Any = None) -> int:
     try:
         job = Rebuild(ch, args)
     except LookupError as e:  # no migration declares a rebuild of this table
-        log("REFUSED:", e)
-        return REFUSED
+        why = str(e)
+
+        def refuse() -> int:
+            tr.print_target(ch, args.table)
+            log("REFUSED:", why)
+            return REFUSED
+
+        return tr.run_reported(
+            args.table, action, refuse, lambda: "declare the target in a migration", lambda: 0
+        )
     return tr.run_reported(
         args.table, action, lambda: execute(job, action), job.report_state, lambda: job.rows_copied
     )

@@ -126,8 +126,10 @@ every row (not FINAL) into `loom.<t>_rebuild` in bounded batches, copies the par
 meanwhile, checks the row count under FINAL and the newest version of a sample of keys,
 swaps with `EXCHANGE TABLES`, and keeps the old table as `loom.<t>_pre_rebuild` for
 `--rollback` until `--drop-pre-rebuild`. It refuses to swap (exit 3, twin kept) when an
-`ALTER` changed the live table during the copy, and refuses a table no migration declares;
-rerun with `--restart` after such an `ALTER`. `loom migrate --dry-run --strict` fails while a
+`ALTER` (a dropped or changed column, an index, a setting) changed the live table during
+the copy; an added column fails the copy instead (exit 1, no swap). A rebuild does not
+carry an `ALTER` over: restate it in the target statement, then rerun with `--restart`.
+It also refuses a table no migration declares. `loom migrate --dry-run --strict` fails while a
 declared table still holds rows in the old layout, so the deploy preflight catches a
 skipped step.
 
