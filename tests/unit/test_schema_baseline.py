@@ -126,6 +126,7 @@ def test_the_journal_files() -> None:
         "071_projection_failure_ttl.sql",
         "072_namespace_guides.sql",
         "073_extraction_queue_enqueued_by.sql",
+        "075_machine_access_token_ttl.sql",
     ]
 
 

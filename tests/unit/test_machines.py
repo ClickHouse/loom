@@ -1,6 +1,6 @@
 """Bots and CI jobs at /oauth/token: a key's client assertion (RFC 7523) and a
-CI job's OIDC token (RFC 8693) each get an hour-long service-account token,
-once, and nothing else does."""
+CI job's OIDC token (RFC 8693) each get a service-account token (an hour, or
+the `expires_in` asked up to the bot's maximum), once, and nothing else does."""
 
 from __future__ import annotations
 
@@ -65,6 +65,7 @@ def bots(monkeypatch, auth_attempts) -> dict[str, Any]:
         m.setdefault("jwks_uri", "")
         m.setdefault("max_token_s", 3600)
         m.setdefault("max_agents", 1000)
+        m.setdefault("max_access_token_s", 3600)
     made: list[tuple[str, str, str]] = []
 
     async def ensure_namespace(m: machines.Machine, agent: str) -> str:
@@ -130,7 +131,10 @@ def _assertion(key: Any, **over: Any) -> str:
     return pyjwt.encode(claims, signer, algorithm="ES256")
 
 
-def _with_key(c: TestClient, assertion: str, client_id: str = "triage") -> Any:
+def _with_key(
+    c: TestClient, assertion: str, client_id: str = "triage", expires_in: str | None = None
+) -> Any:
+    asking = {} if expires_in is None else {"expires_in": expires_in}
     return c.post(
         "/oauth/token",
         data={
@@ -138,6 +142,7 @@ def _with_key(c: TestClient, assertion: str, client_id: str = "triage") -> Any:
             "client_id": client_id,
             "client_assertion_type": machines.ASSERTION_TYPE,
             "client_assertion": assertion,
+            **asking,
         },
     )
 
@@ -236,7 +241,10 @@ def _ci_token(bots: dict[str, Any], **over: Any) -> str:
     return pyjwt.encode(claims | over, bots["ci_key"], algorithm="RS256")
 
 
-def _exchange(c: TestClient, token: str, client_id: str = "deploy") -> Any:
+def _exchange(
+    c: TestClient, token: str, client_id: str = "deploy", expires_in: str | None = None
+) -> Any:
+    asking = {} if expires_in is None else {"expires_in": expires_in}
     return c.post(
         "/oauth/token",
         data={
@@ -244,6 +252,7 @@ def _exchange(c: TestClient, token: str, client_id: str = "deploy") -> Any:
             "client_id": client_id,
             "subject_token": token,
             "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            **asking,
         },
     )
 
@@ -332,6 +341,7 @@ async def test_a_saved_bot_writes_every_column(monkeypatch) -> None:
         "jwks_uri": "",
         "max_token_s": 3600,
         "max_agents": 1000,
+        "max_access_token_s": 86400,
     }
     await machines.save(bot, by="cli:root")
     await machines.save(bot, by="cli:root", active=False)
@@ -668,6 +678,7 @@ def test_a_control_planes_per_agent_token_is_taken_as_issued(bots, monkeypatch) 
         "jwks_uri": "https://keys.example/jwks.json",
         "max_token_s": 3600,
         "max_agents": 1000,
+        "max_access_token_s": 3600,
     }
     monkeypatch.setattr(oidc, "signing_key", lambda uri, token: key.public_key())
     now = int(time.time())
@@ -985,3 +996,149 @@ def test_a_release_that_fails_leaves_the_exchange_charged(auth_attempts, monkeyp
     with pytest.raises(oauth.OAuthError) as refused:
         asyncio.run(oauth._admit_exchange("fleet", "a1"))
     assert refused.value.status_code == 429
+
+
+# ── a token's lifetime: `expires_in` and the bot's `max_access_token_s` ──
+
+
+def _day_long(bots: dict[str, Any], name: str) -> None:
+    """Let bot `name` issue tokens of up to a day, from workload tokens of a day."""
+    bots["registered"][name] |= {"max_access_token_s": 86400, "max_token_s": 86400}
+
+
+@pytest.mark.parametrize(
+    ("maximum", "asked", "lives"),
+    [
+        (3600, None, 3600),  # nothing asked: an hour, as ever
+        (3600, "86400", 3600),  # more than the bot allows: its maximum, not a refusal
+        (86400, "86400", 86400),
+        (86400, "7200", 7200),
+        (86400, None, 3600),  # a day allowed is not a day given unasked
+        (600, None, 600),  # a maximum under an hour shortens the default too
+        (86400, "60", 60),
+        (86400, "99999999999999999999", 86400),
+        (86400, "9" * 5000, 86400),  # never converted whole: Python refuses that many digits
+        (86400, "0" * 40 + "7200", 7200),
+    ],
+)
+def test_a_bots_token_lives_what_it_asks_up_to_its_maximum(
+    bots, maximum: int, asked: str | None, lives: int
+) -> None:
+    bots["registered"]["triage"]["max_access_token_s"] = maximum
+    r = _with_key(TestClient(oauth_app()), _assertion(bots["key"]), expires_in=asked)
+    assert r.status_code == 200, r.text
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert claims["exp"] - claims["iat"] == lives
+    assert lives - 2 <= r.json()["expires_in"] <= lives
+
+
+@pytest.mark.parametrize(
+    "asked", ["0", "59", "-60", "1.5", "1e4", "an hour", " 3600", "\u0663\u0666"]
+)
+def test_a_lifetime_loom_does_not_issue_is_refused_before_anything_is_spent(
+    bots, asked: str
+) -> None:
+    bots["registered"]["triage"]["max_access_token_s"] = 86400
+    c, assertion = TestClient(oauth_app()), _assertion(bots["key"])
+    r = _with_key(c, assertion, expires_in=asked)
+    assert r.status_code == 400 and r.json()["error"] == "invalid_request"
+    assert "expires_in" in r.json()["error_description"]
+    assert _with_key(c, assertion).status_code == 200  # its assertion is still unspent
+    refused = _exchange(c, _ci_token(bots), expires_in=asked)
+    assert refused.status_code == 400 and refused.json()["error"] == "invalid_request"
+    assert bots["attempts"].rows == []  # an exchange refused so is never counted
+
+
+def test_a_ci_exchange_asking_for_a_day_never_outlives_its_workload_token(bots) -> None:
+    _day_long(bots, "deploy")
+    c = TestClient(oauth_app())
+    short = _exchange(c, _ci_token(bots), expires_in="86400")  # the job's token lives 5 minutes
+    assert short.status_code == 200 and 240 <= short.json()["expires_in"] <= 300
+    now = int(time.time())
+    day = _ci_token(bots, iat=now, exp=now + 86400)
+    long = _exchange(c, day, expires_in="86400")
+    assert long.status_code == 200, long.text
+    claims = pyjwt.decode(long.json()["access_token"], options={"verify_signature": False})
+    assert claims["exp"] == now + 86400 and long.json()["expires_in"] >= 86400 - 5
+    assert 3595 <= _exchange(c, day).json()["expires_in"] <= 3600  # unasked: an hour
+    bots["registered"]["deploy"]["max_access_token_s"] = 7200
+    capped = _exchange(c, day, expires_in="86400").json()["expires_in"]
+    assert 7195 <= capped <= 7200
+
+
+def test_a_day_long_agent_token_is_cut_by_every_revocation_of_it(bots, monkeypatch) -> None:
+    """Revocation judges a token by its subject, parents and issue time, never
+    by its expiry: a subject revoked for good, a cutoff past its issue time
+    (`revoke_subject` with or without `issued_before`, `loom revoke-token
+    --subject`) and the trust's disable or replace each refuse a token that has
+    a day left."""
+    from datetime import UTC, datetime
+
+    from server.auth.jwt import TokenError, verify_token
+
+    _day_long(bots, "fleet")
+    now = int(time.time())
+    proof = _ci_token(bots, agent_id="a1", iat=now, exp=now + 86400)
+    r = _exchange(TestClient(oauth_app()), proof, client_id="fleet", expires_in="86400")
+    token = r.json()["access_token"]
+    claims = pyjwt.decode(token, options={"verify_signature": False})
+    assert claims["exp"] - time.time() > 86000  # its expiry is a day away
+    cutoff = datetime.fromtimestamp(claims["iat"] + 1, UTC)
+    rows = [
+        {"jti": "sa:fleet:a1", "issued_before": None},  # for good
+        {"jti": revocation.CUTOFF_PREFIX + "sa:fleet:a1", "issued_before": cutoff},
+        {"jti": revocation.CUTOFF_PREFIX + "sa:fleet", "issued_before": cutoff},  # the trust's
+    ]
+    for row in rows:
+        monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())
+        monkeypatch.setattr(revocation, "_revoked_before", {})
+        monkeypatch.setattr(revocation, "_cut_off", {})
+        monkeypatch.setattr(revocation, "_recent", [])
+        assert verify_token(token).subject == "sa:fleet:a1"
+        revocation.remember_row({**row, "version": 1})  # as each writer folds its row in
+        with pytest.raises(TokenError, match="revoked"):
+            verify_token(token)
+
+
+async def test_a_subjects_revocation_outlasts_a_day_long_token(monkeypatch) -> None:
+    """`revoke_subject`'s outright row is kept as long as the table can hold
+    it, past any token's expiry; a cutoff's row likewise (`record_cutoff`)."""
+    from datetime import UTC, datetime, timedelta
+
+    rows: list[dict[str, Any]] = []
+
+    class _CH:
+        async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any]:
+            return {"v": len(rows) + 1}  # next_version's read
+
+        async def insert(self, table: str, batch: list[dict[str, Any]]) -> None:
+            rows.extend(batch)
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())
+    monkeypatch.setattr(revocation, "_recent", [])
+    await revocation.revoke("sa:fleet:a1", reason="left", revoked_by="ops")
+    day_on = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=1)
+    assert rows[0]["expires_at"] > day_on and revocation.never_lapses(rows[0])
+
+
+def test_logging_out_a_day_long_token_keeps_its_revocation_until_it_expires(
+    bots, monkeypatch
+) -> None:
+    from datetime import UTC, datetime
+
+    bots["registered"]["triage"]["max_access_token_s"] = 86400
+    c = TestClient(oauth_app())
+    token = _with_key(c, _assertion(bots["key"]), expires_in="86400").json()["access_token"]
+    written: list[dict[str, Any]] = []
+
+    async def revoke(key: str, **kw: Any) -> dict[str, Any]:
+        written.append({"jti": key, **kw})
+        return written[-1]
+
+    monkeypatch.setattr(revocation, "revoke", revoke)
+    assert c.post("/oauth/revoke", data={"token": token, "client_id": "triage"}).status_code == 200
+    claims = pyjwt.decode(token, options={"verify_signature": False})
+    assert [w["jti"] for w in written] == [claims["jti"]]
+    assert written[0]["expires_at"] == datetime.fromtimestamp(claims["exp"], UTC)
+    assert claims["exp"] - claims["iat"] == 86400

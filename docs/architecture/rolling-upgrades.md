@@ -250,6 +250,14 @@ schema. These rules keep that safe. The operator procedure is in
     deployment's processes (`loom.instances` of its kind): an older process outside it
     on the same ClickHouse, such as a branch server, is not counted.
 
+25. **A bot's longest token** (`loom.machine_identities.max_access_token_s`, migration
+    `075_machine_access_token_ttl.sql`): the column's `UInt32 DEFAULT 3600` reads an hour for
+    every bot made before it. N-1 ignores a request's `expires_in` and issues an hour, its
+    `/v1/admin/bots.create` refuses the field (422), and when it saves a bot (a disable, a
+    replace, a namespace release that drops one of its roles) it writes 3600 back. Each only
+    shortens tokens: raise a bot's maximum, and count on longer tokens, once no N-1 replica
+    serves, and raise it again if an N-1 save landed meanwhile.
+
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,

@@ -1939,7 +1939,8 @@ CREATE TABLE IF NOT EXISTS loom.machine_identities
     `agent_claim` String DEFAULT '',
     `jwks_uri` String DEFAULT '',
     `max_token_s` UInt32 DEFAULT 3600,
-    `max_agents` UInt32 DEFAULT 1000
+    `max_agents` UInt32 DEFAULT 1000,
+    `max_access_token_s` UInt32 DEFAULT 3600
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY name

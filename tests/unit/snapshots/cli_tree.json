@@ -9248,6 +9248,7 @@
             "claim",
             "jwks_uri",
             "max_token_age",
+            "max_access_token_ttl",
             "max_agents",
             "agent_claim",
             "replace"
@@ -9428,6 +9429,21 @@
            "type": "builtins:int",
            "required": false,
            "help": "CI trust: the longest a workload token may live (exp less iat) to be taken",
+           "metavar": "SECONDS"
+          },
+          {
+           "option_strings": [
+            "--max-access-token-ttl"
+           ],
+           "dest": "max_access_token_ttl",
+           "action": "_StoreAction",
+           "default": 3600,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "The longest token an exchange may ask for (expires_in, 60 to 86400); without expires_in a token lives an hour, or this when it is shorter",
            "metavar": "SECONDS"
           },
           {

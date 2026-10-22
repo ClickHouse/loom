@@ -338,10 +338,12 @@ def bot_from(
     jwks_uri: str = "",
     max_token_s: int = 3600,
     max_agents: int = 1000,
+    max_access_token_s: int = machines.TOKEN_TTL,
 ) -> machines.Machine:
     """A bot from what an operator gave; ValueError says what is wrong. With
     `agent_claim`, a trust whose agents each get their own subject and
-    namespace (server/auth/agents.py); its namespace roles are what they share."""
+    namespace (server/auth/agents.py); its namespace roles are what they share.
+    `max_access_token_s` is the longest token an exchange may ask it for."""
     from server.auth.authz import GRANT_ROLES
 
     if not _BOT_NAME.fullmatch(name):
@@ -386,6 +388,10 @@ def bot_from(
         )
     if not 60 <= max_token_s <= 86400 or max_agents < 1:
         raise ValueError("max_token_s is 60 to 86400 seconds, max_agents at least 1")
+    if not machines.MIN_TOKEN_TTL <= max_access_token_s <= machines.MAX_TOKEN_TTL:
+        raise ValueError(
+            f"max_access_token_s is {machines.MIN_TOKEN_TTL} to {machines.MAX_TOKEN_TTL} seconds"
+        )
     if not (trust or public_key_pem):
         raise ValueError("give the bot a public key or a CI trust")
     jwks_uri = jwks_uri.strip()
@@ -417,6 +423,7 @@ def bot_from(
         "jwks_uri": jwks_uri,
         "max_token_s": max_token_s,
         "max_agents": max_agents,
+        "max_access_token_s": max_access_token_s,
     }
 
 
@@ -450,7 +457,7 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
             await _refuse_shared_tokens(bot)
         await machines.save(bot, by=by)
     if existing is not None:
-        # Tokens from its old key or wider roles end now, not within the hour.
+        # Tokens from its old key or wider roles end now, not when they expire.
         # The cutoff is taken after the save, so a request that read the old
         # row falls under it; returning once it has passed lets the new key's
         # first token live.
@@ -463,7 +470,12 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
             org=org,
             namespace="-",
             actor=by,
-            subject={"name": name, "key": bool(bot["public_keys"]), "issuer": bot["issuer"]},
+            subject={
+                "name": name,
+                "key": bool(bot["public_keys"]),
+                "issuer": bot["issuer"],
+                "max_access_token_s": bot["max_access_token_s"],
+            },
         )
     except Exception as e:  # noqa: BLE001 — the bot is saved; its caller must keep the key
         log.warning("bot %s saved, but its audit row was not: %s", name, e)
@@ -548,8 +560,9 @@ async def provision_agent(name: str, agent: str, *, by: str) -> tuple[str, str]:
 
 
 async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
-    """A bot's or an agent's tokens live an hour; revoked now, not when they
-    run out. Returns the cutoff: past every token issued so far."""
+    """A bot's or an agent's tokens live an hour, or up to a day when asked;
+    revoked now, not when they run out, by a cutoff that never lapses. Returns
+    the cutoff: past every token issued so far."""
     cutoff = revocation.from_now_on()
     await revocation.cut_off(subject, issued_before=cutoff, reason=reason, revoked_by=by)
     return cutoff

@@ -71,6 +71,23 @@ def test_a_trust_issuer_is_kept_as_given_slash_and_all() -> None:
     assert bot["issuer"] == "https://sts.example/tenant/"
 
 
+@pytest.mark.parametrize(
+    ("given", "ok"), [(None, True), (60, True), (86400, True), (59, False), (86401, False)]
+)
+def test_a_bots_longest_token_is_a_minute_to_a_day(given: int | None, ok: bool) -> None:
+    def make() -> machines.Machine:
+        lifetime = {} if given is None else {"max_access_token_s": given}
+        return account_admin.bot_from(
+            name="b", org="acme", namespace_roles=["a=writer"], public_key_pem=_KEY, **lifetime
+        )
+
+    if ok:
+        assert make()["max_access_token_s"] == (3600 if given is None else given)
+    else:
+        with pytest.raises(ValueError, match="max_access_token_s is 60 to 86400 seconds"):
+            make()
+
+
 @pytest.fixture
 def world(monkeypatch) -> dict[str, Any]:
     state: dict[str, Any] = {"bots": {}, "revoked": [], "outright": set(), "namespaces": {"triage"}}
