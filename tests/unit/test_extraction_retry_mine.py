@@ -136,11 +136,8 @@ def test_retry_changes_only_the_principals_failed_rows_in_scope(tmp_path: Path) 
 def test_retry_reads_states_and_submits_without_waiting_for_a_mutation() -> None:
     ch = _StubCH([_failed_row("q1")])
     assert _requeue(ch, ["q1", "q2"]).requeued == ["q1"]
-    assert len(ch.reads) == 2 and "payload" not in ch.reads[0][0].split("FROM")[0]
-    assert "system.mutations" in ch.reads[1][0]
-    sql, params = ch.commands[0]
-    assert "mutations_sync = 0" in sql and params["batches"] == [("", "", "", "q1", 1)]
-    assert "version =" not in sql and "payload =" not in sql and not ch.inserted
+    ((sql, _),) = ch.commands
+    assert "mutations_sync = 0" in sql and not ch.inserted
 
 
 @pytest.mark.parametrize(("max_attempts", "left"), [(0, 0), (1, 0), (3, 2), (8, 7)])

@@ -518,6 +518,13 @@ async def pending_count(
     return int((row or {}).get("n") or 0)
 
 
+# What a status read reports of a batch: its state, never its payload.
+_STATUS_COLUMNS = (
+    "queue_id, agent, user_id, session_id, status, attempts, message_count, content_chars, "
+    "written, last_error, enqueued_at, updated_at"
+)
+
+
 async def list_status(
     *,
     org: str,
@@ -576,13 +583,6 @@ def status_of(row: dict[str, Any]) -> str:
     if row["status"] == STATUS_RUNNING and str(row.get("last_error") or "").startswith("held: "):
         return STATUS_HELD
     return str(row["status"])
-
-
-# What memory.extraction_status_mine reports of a batch: its state, never its payload.
-_STATUS_COLUMNS = (
-    "queue_id, agent, user_id, session_id, status, attempts, message_count, content_chars, "
-    "written, last_error, enqueued_at, updated_at"
-)
 
 
 async def _own_rows(
@@ -711,7 +711,9 @@ async def requeue_own_failed(
         for r in (states[qid] for qid in failed if qid not in submitted)
     ]
     if not batches:
-        return Requeued(failed, not_failed=waiting_or_done, model_calls_off=[], expired=expired)
+        return Requeued(
+            requeued=failed, not_failed=waiting_or_done, model_calls_off=[], expired=expired
+        )
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
@@ -741,7 +743,9 @@ async def requeue_own_failed(
         """,
         params=params,
     )
-    return Requeued(failed, not_failed=waiting_or_done, model_calls_off=[], expired=expired)
+    return Requeued(
+        requeued=failed, not_failed=waiting_or_done, model_calls_off=[], expired=expired
+    )
 
 
 async def _retries_unapplied(ch: Any, versions: list[tuple[str, int]]) -> set[str]:

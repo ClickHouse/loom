@@ -525,7 +525,7 @@ class MemoryExtractionStatusOutput(BaseModel):
     failed: int = 0
 
 
-# The most batch ids one memory.extraction_status_mine takes.
+# The most batch ids one memory.extraction_status_mine or extraction_retry_mine takes.
 MAX_OWN_BATCH_IDS = 20  # not a setting: a wire bound the request schema and SDKs publish
 
 
