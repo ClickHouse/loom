@@ -230,7 +230,7 @@ async def test_the_sweep_pages_through_every_linked_memory_and_drops_the_gone(
 
 @pytest.mark.asyncio
 async def test_a_long_path_or_commit_list_is_read_in_slices_under_the_field_cap() -> None:
-    from server.core.repo_base import _PARAM_BYTES
+    from server.core.ch_params import FIELD_BYTES
 
     # a week behind: thousands of changed paths and commits, each list past one field
     paths = [f"src/Storages/MergeTree/Part{i}/Reader{i}.cpp" for i in range(4000)]
@@ -241,7 +241,7 @@ async def test_a_long_path_or_commit_list_is_read_in_slices_under_the_field_cap(
     assert await store.for_paths("o", ["c"], paths, ch=ch) == [row]  # once, not per slice
     bound = [p["path"] for _, p in ch.sql]
     assert len(bound) > 1 and [p for part in bound for p in part] == paths
-    assert all(len(repr(part)) < 2 * _PARAM_BYTES for part in bound)
+    assert all(len(repr(part)) < 2 * FIELD_BYTES for part in bound)
     ch = _CH()
     await store.for_commits("o", ["c"], commits, ch=ch)
     assert len(ch.sql) > 1 and all("path" not in p for _, p in ch.sql)
@@ -255,7 +255,7 @@ async def test_a_long_path_or_commit_list_is_read_in_slices_under_the_field_cap(
 async def test_a_long_memory_id_list_is_read_in_slices() -> None:
     import uuid
 
-    from server.core.repo_base import _PARAM_BYTES
+    from server.core.ch_params import FIELD_BYTES
 
     # every memory a recheck marked due, or every one waiting on the first index
     ids = [str(uuid.UUID(int=i)) for i in range(5000)]
@@ -263,12 +263,12 @@ async def test_a_long_memory_id_list_is_read_in_slices() -> None:
         ch = _CH()
         await read("o", ids, ch=ch)
         assert len(ch.sql) > 1 and [i for _, p in ch.sql for i in p["ids"]] == ids
-        assert all(len(repr(p["ids"])) < 2 * _PARAM_BYTES for _, p in ch.sql)
+        assert all(len(repr(p["ids"])) < 2 * FIELD_BYTES for _, p in ch.sql)
 
 
 @pytest.mark.asyncio
 async def test_a_batch_of_identities_with_long_keys_is_read_in_slices() -> None:
-    from server.core.repo_base import _PARAM_BYTES
+    from server.core.ch_params import FIELD_BYTES
 
     # one queue batch: 500 writes under long keys, in a long agent namespace
     ns = "agent-" + "n" * 57
@@ -276,7 +276,7 @@ async def test_a_batch_of_identities_with_long_keys_is_read_in_slices() -> None:
     ch = _CH()
     await store.for_identities(idents, ch=ch)
     await store._heads(ch, idents)
-    assert len(ch.sql) > 2 and all(len(repr(p)) < 2 * _PARAM_BYTES for _, p in ch.sql)
+    assert len(ch.sql) > 2 and all(len(repr(p)) < 2 * FIELD_BYTES for _, p in ch.sql)
     assert sorted(i for _, p in ch.sql if "ids" in p for i in p["ids"]) == sorted(idents)
     assert sorted(i for _, p in ch.sql if "ident" in p for i in p["ident"]) == sorted(idents)
 

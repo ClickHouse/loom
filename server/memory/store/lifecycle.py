@@ -335,6 +335,10 @@ async def downgrade_consolidated_dependents(
 CLEAR_PAGE_ROWS = 1000
 
 
+# The columns a memory row and its embedding rows share.
+_IDENTITY = ("agent", "user_id", "session_id", "memory_key")
+
+
 async def bulk_tombstone_scope(
     *,
     org: str,
@@ -387,25 +391,21 @@ async def bulk_tombstone_scope(
     counts: dict[str, int] = {}
     for table in ("loom.memory", "loom.memory_embeddings"):
         where_sql = scope_sql
-        slices: list[dict[str, Any]] = [{}]
+        extra: dict[str, Any] = {}
         if table == "loom.memory":
             where_sql += f" AND {unlocked_predicate(now='{at:DateTime}')}"
         elif locked_n:
-            # A mutation takes no subquery either: read the identities to clear, then
-            # name them.
-            where_sql += f" AND {_IDENTITY} IN {{ids:Array(Tuple(String, String, String, String))}}"
-            ids = await _unlocked_embedding_ids(scope_sql, locked, params, ch=ch)
-            slices = [{"ids": part} for part in chunks(ids)]
-        counts[table] = 0
-        for extra in slices:
-            count_row = await ch.query_one(
-                f"SELECT count() AS n FROM {table} FINAL WHERE {where_sql}",
-                params={**params, **extra},
-            )
-            n = int((count_row or {}).get("n", 0) or 0)
-            counts[table] += n
-            if n == 0:
-                continue
+            # A mutation takes no subquery: the locked identities are read, then named,
+            # one parameter per slice so each fits a form field.
+            not_locked, extra = await _not_locked(scope_sql, locked, params, ch=ch)
+            where_sql += f" AND {not_locked}"
+        count_row = await ch.query_one(
+            f"SELECT count() AS n FROM {table} FINAL WHERE {where_sql}",
+            params={**params, **extra},
+        )
+        n = int((count_row or {}).get("n", 0) or 0)
+        counts[table] = n
+        if n:
             await ch.execute(
                 f"""
                 ALTER TABLE {table}
@@ -426,24 +426,22 @@ async def bulk_tombstone_scope(
     return counts
 
 
-_IDENTITY = "(agent, user_id, session_id, memory_key)"
-
-
-async def _unlocked_embedding_ids(
+async def _not_locked(
     scope_sql: str, locked: str, params: dict[str, Any], *, ch: _CHClient
-) -> list[tuple[str, ...]]:
-    """The identities of the live embedding rows in scope that no locked memory row
-    shares."""
+) -> tuple[str, dict[str, Any]]:
+    """A predicate, and its params, for the rows whose identity no locked memory row in
+    scope shares."""
+    cols = ", ".join(_IDENTITY)
     rows = await ch.query_all(
-        f"SELECT DISTINCT agent, user_id, session_id, memory_key "
-        f"FROM loom.memory_embeddings FINAL WHERE {scope_sql} AND {_IDENTITY} NOT IN "
-        f"(SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL "
-        f"WHERE {scope_sql} AND {locked})",
+        f"SELECT DISTINCT {cols} FROM loom.memory FINAL WHERE {scope_sql} AND {locked}",
         params=params,
     )
-    return sorted(
-        {tuple(str(r[c]) for c in ("agent", "user_id", "session_id", "memory_key")) for r in rows}
+    ids = sorted({tuple(str(r[c]) for c in _IDENTITY) for r in rows})
+    extra = {f"locked{i}": part for i, part in enumerate(chunks(ids))}
+    where = " AND ".join(
+        f"({cols}) NOT IN {{{name}:Array(Tuple(String, String, String, String))}}" for name in extra
     )
+    return where or "1", extra
 
 
 async def _page_tombstoned(

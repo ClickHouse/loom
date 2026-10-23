@@ -10,6 +10,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from server.core.ch_params import chunks
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
@@ -21,7 +22,6 @@ from server.erasure.store.predicates import (
     SUPPORTED_LEARNINGS,
     UID,
 )
-from server.erasure.store.scope_reads import slices
 from server.observability import events_stream
 from server.settings import settings
 
@@ -355,7 +355,7 @@ async def delete_learnings_queue_by_user(
         await ch.insert(
             "loom.learnings_queue", blank, settings={"async_insert": 0, "wait_for_async_insert": 1}
         )
-    for part in slices(pending):
+    for part in chunks(pending):
         # read right before the delete, which names its ids: a mutation takes no subquery
         backed = await ch.query_all(
             f"SELECT DISTINCT toString(candidate_id) AS id FROM {SUPPORTED_LEARNINGS} "

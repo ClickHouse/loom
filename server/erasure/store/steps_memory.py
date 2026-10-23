@@ -9,6 +9,7 @@ import json
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
+from server.core.ch_params import chunks
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.mutations import (
@@ -19,7 +20,7 @@ from server.erasure.store.mutations import (
     tombstone_scoped,
 )
 from server.erasure.store.predicates import CHUNK_KEYS_IN, NS_EQ, ORG_NS, ORG_UID, UID
-from server.erasure.store.scope_reads import slices, slices_or_none, tuples, user_key_pairs
+from server.erasure.store.scope_reads import hashes, slices_or_one_empty, tuples, user_key_pairs
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
 
@@ -220,7 +221,7 @@ async def tombstone_shared_embeddings_by_user(
         params={"org": org, "uid": user_id},
     )
     total = 0
-    for part in slices(sorted(str(r["memory_key"]) for r in rows)):
+    for part in chunks(sorted(str(r["memory_key"]) for r in rows)):
         total += await tombstone_scoped(
             "loom.memory_embeddings",
             org=org,
@@ -549,7 +550,7 @@ async def tombstone_memory_chunks_by_user(
     runs first and the chunks must follow it, not escape it)."""
     ch = ch or _default_client()
     total = 0
-    for part in slices_or_none(await user_key_pairs(org, user_id, ch=ch)):
+    for part in slices_or_one_empty(await user_key_pairs(org, user_id, ch=ch)):
         total += await tombstone_scoped(
             "loom.memory_chunks",
             org=org,
@@ -796,14 +797,15 @@ async def tombstone_documents_by_namespace(
 
 # Another writer's live versions of a document whose newest version is the user's:
 # what deleting the user's rows would otherwise bring back. `docs` holds the
-# documents read before the user's rows are deleted.
+# documents read before the user's rows are deleted, each as
+# `cityHash64(namespace, source_uri)`: nothing bounds a stored URI.
 _USERS_DOCUMENTS = (
-    "SELECT DISTINCT namespace, source_uri FROM loom.documents FINAL"
+    "SELECT DISTINCT cityHash64(namespace, source_uri) AS h FROM loom.documents FINAL"
     " WHERE org = {org:String} AND user_id = {uid:String}"
 )
 _REPLACED_BY_USER = (
     "org = {org:String} AND user_id != {uid:String} AND superseded_at IS NULL"
-    " AND (namespace, source_uri) IN {docs:Array(Tuple(String, String))}"
+    " AND cityHash64(namespace, source_uri) IN {docs:Array(UInt64)}"
 )
 
 
@@ -819,7 +821,7 @@ async def tombstone_documents_by_user(
     if purge_mode():
         ch = ch or _default_client()
         rows = await ch.query_all(_USERS_DOCUMENTS, params={"org": org, "uid": user_id})
-        for part in slices(tuples(rows, ("namespace", "source_uri"))):
+        for part in chunks(hashes(rows)):
             await count_then_mutate(
                 "loom.documents",
                 count_where=_REPLACED_BY_USER,
@@ -895,7 +897,7 @@ async def erase_blobs_by_user(org: str, user_id: str, *, ch: _CHClient | None = 
     writer's document has named since the first read stays."""
     ch = ch or _default_client()
     n = 0
-    for part in slices(await _users_own_blobs(org, user_id, ch)):
+    for part in chunks(await _users_own_blobs(org, user_id, ch)):
         still_own = await _users_own_blobs(org, user_id, ch, part)
         if still_own:
             n += await delete_scoped(

@@ -776,13 +776,13 @@ Undo weighs its facts: it reads with `apply_mutations_on_fly`, which applies the
 expressions are deterministic), rather than waiting on `system.mutations`. ClickHouse
 refuses that read for the whole table while any pending mutation on it has a subquery
 (Loom's own mutations bind their values instead). The Undo then writes nothing to the
-graph: the memory row is restored at once, the refusal is recorded as a `triples_reconcile` failure
-dated at the restore, and `projection_repair` replays it once that mutation has landed
-and the read works again (until then each pass fails it again and it stays active). A
-follow's repair of its successors and the repair of the values an Undo states again read
-the same way: the follow's own closes are queued just before, and a value they close
-read as still open would be taken for a newer one ("I live in London", undated, over
-Berlin from May 1), closing the successor as it starts.
+graph: the memory row is restored at once, the refusal is recorded as a
+`triples_reconcile` failure dated at the restore, and `projection_repair` replays it once
+that mutation has landed and the read works again (until then each pass fails it again and
+it stays active). A follow's repair of its successors and the repair of the values an Undo
+states again read the same way: the follow's own closes are queued just before, and a
+value they close read as still open would be taken for a newer one ("I live in London",
+undated, over Berlin from May 1), closing the successor as it starts.
 
 Its facts then go through the interval repair by the usual rule, as values seen at their
 markers: the retirement it undoes arrived earlier, so its value closes and its row stays
@@ -1219,9 +1219,12 @@ entities only the user's memories link (`server/erasure/store/predicates.py`). T
 counts with that predicate as written. A replicated table refuses a mutation with a
 subquery or with `now()`, so the step reads the subquery first and mutates by what it
 returned, bound as an array a slice at a time (`server/erasure/store/scope_reads.py`), and
-binds the time it stamps. A slice's mutation tag hashes its bound values but not the
-stamp, so each slice waits for its own mutation, and a step re-run after a crash reads the
-same slices again and waits for the ones still pending.
+binds the time it stamps. A key that holds stored free text (a triple, an edge, a
+community's entity or label, a document's `source_uri`) is bound as its `cityHash64`,
+computed by ClickHouse on both sides: nothing bounds a stored name, and one name can be
+longer than the form field a bound value travels in. A slice's mutation tag hashes its
+bound values but not the stamp, so each slice waits for its own mutation, and a step
+re-run after a crash reads the same slices again and waits for the ones still pending.
 
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no
@@ -1256,18 +1259,19 @@ hash, source class and verdict. The row hash and the checkpoint chain are descri
 After a write path's rows are in, it calls `announce` (`server/memory/app/webhooks.py`)
 with the event (`memory.written`, `memory.revised`, `memory.tombstoned`,
 `memory.restored`, `memory.redacted`; the erasure saga sends `memory.erased` after its
-census, which does not count those rows as residue). For each webhook of the namespace that takes the event it inserts one
-`loom.memory_webhook_outbox` row holding ids and the identity tuple, never content, and
-nothing rewrites it. Which namespaces have webhooks is a per-process copy of
-`loom.memory_webhooks`, read again every `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`: a
-namespace with no webhook pays no insert, and the first write after each interval waits
-for one registry read (`server/core/polled_copy.py`). A failed read keeps the last copy. A
-write on a cold copy waits for the first read; if that read fails, writes announce nothing
-(noted as a degradation) until a read lands. `memory.clear` tombstones with one mutation
-per table (when a lock keeps some rows, the embeddings by the identities it read, a slice
-at a time) and, only when a webhook of the namespace takes `memory.tombstoned`, reads back
-the rows that mutation stamped in one streamed read in sort-key order, so the scope is
-scanned once, with one outbox insert per 1000 rows.
+census, which does not count those rows as residue). For each webhook of the namespace
+that takes the event it inserts one `loom.memory_webhook_outbox` row holding ids and the
+identity tuple, never content, and nothing rewrites it. Which namespaces have webhooks is
+a per-process copy of `loom.memory_webhooks`, read again every
+`LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`: a namespace with no webhook pays no insert, and the
+first write after each interval waits for one registry read
+(`server/core/polled_copy.py`). A failed read keeps the last copy. A write on a cold copy
+waits for the first read; if that read fails, writes announce nothing (noted as a
+degradation) until a read lands. `memory.clear` tombstones with one mutation per table
+(when a lock keeps some rows, the embeddings one names the locked identities it read, one
+bound array per slice) and, only when a webhook of the namespace takes
+`memory.tombstoned`, reads back the rows that mutation stamped in one streamed read in
+sort-key order, so the scope is scanned once, with one outbox insert per 1000 rows.
 
 The `memory_webhook_deliver` worker reads the registry, marks dead in one statement each
 the events of webhooks removed in the last `memory_webhook_removal_window_leases` lease

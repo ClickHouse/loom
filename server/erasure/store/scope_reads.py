@@ -31,17 +31,19 @@ async def user_keys(org: str, user_id: str, *, ch: _CHClient) -> list[str]:
     return sorted(str(k) for k in (row or {}).get("keys") or [])
 
 
-def slices[T](values: Sequence[T]) -> list[list[T]]:
-    """`values` cut into lists that each bind as one parameter."""
-    return list(chunks(values))
-
-
-def slices_or_none[T](values: Sequence[T]) -> list[list[T]]:
-    """`slices`, or one empty slice when there are no values: for a predicate that
-    also matches rows by another column, which must run even then."""
-    return slices(values) or [[]]
+def slices_or_one_empty[T](values: Sequence[T]) -> list[list[T]]:
+    """`values` in slices (`chunks`), or one empty slice when there are none: for a
+    predicate that also matches rows by another column, which must run even then."""
+    return list(chunks(values)) or [[]]
 
 
 def tuples(rows: Sequence[dict[str, Any]], cols: Sequence[str]) -> list[tuple[str, ...]]:
     """`rows` as sorted tuples of `cols`, for an `Array(Tuple(...))` parameter."""
     return sorted({tuple(str(r[c]) for c in cols) for r in rows})
+
+
+def hashes(rows: Sequence[dict[str, Any]]) -> list[int]:
+    """The sorted `h` of `rows`, for an `Array(UInt64)` parameter. A step binds the
+    `cityHash64` of a key that holds stored free text (an entity name, a URI), which
+    nothing bounds: the key itself can outgrow a form field."""
+    return sorted({int(r["h"]) for r in rows})

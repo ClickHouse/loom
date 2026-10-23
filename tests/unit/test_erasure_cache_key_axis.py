@@ -225,10 +225,12 @@ def test_cache_and_precedent_user_deletes_match_by_window_key_within_the_org() -
 
 
 def test_communities_leave_when_only_the_users_memories_linked_the_entity() -> None:
-    ch = _RecCH(count=2, rows=[{"namespace": "ns", "entity": "alice"}])
+    ch = _RecCH(count=2, rows=[{"h": 7}])
     asyncio.run(graph_steps.delete_entity_communities_by_user("o", "alice", ch=ch))
     ((read_sql, read_params),) = ch.reads
-    assert read_sql.startswith("SELECT namespace, entity FROM (SELECT namespace, entity FROM (")
+    assert read_sql.startswith(
+        "SELECT cityHash64(namespace, entity) AS h FROM (SELECT namespace, entity FROM ("
+    )
     assert (
         "SELECT namespace, entity_a AS entity, memory_key FROM loom.entity_edge_memories FINAL WHERE org = {org:String} UNION ALL SELECT namespace, entity_b AS entity, memory_key FROM loom.entity_edge_memories FINAL"
         in read_sql
@@ -242,10 +244,10 @@ def test_communities_leave_when_only_the_users_memories_linked_the_entity() -> N
     # a row LABELLED by such an entity goes too: the label text is the residue
     assert sql.startswith(
         "ALTER TABLE loom.entity_communities DELETE WHERE (org = {org:String} AND "
-        "((namespace, entity) IN {entities:Array(Tuple(String, String))} "
-        "OR (namespace, label) IN {entities:Array(Tuple(String, String))}))"
+        "(cityHash64(namespace, entity) IN {entities:Array(UInt64)} "
+        "OR cityHash64(namespace, label) IN {entities:Array(UInt64)}))"
     )
-    assert params["entities"] == [("ns", "alice")]
+    assert params["entities"] == [7]
 
 
 def test_census_user_scope_counts_the_three_tables_with_the_step_predicates() -> None:

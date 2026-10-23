@@ -193,6 +193,77 @@ async def test_user_id_erasure_deletes_the_projection_failures_its_writes_left(
     assert [r[0] for r in rows] == ["bob"]
 
 
+# Each graph table, and its rows that name the entity: by length, as the name is too
+# long to bind.
+_NAMES_IT = {
+    "loom.entity_triple_memories": "length(object) > 100000",
+    "loom.entity_triples": "length(object) > 100000",
+    "loom.entity_edge_memories": "length(entity_a) > 100000",
+    "loom.entity_edges": "length(entity_a) > 100000",
+    "loom.entity_communities": "greatest(length(entity), length(label)) > 100000",
+}
+
+
+@pytest.mark.slow
+@pytest.mark.asyncio
+async def test_user_id_erasure_deletes_a_graph_with_an_entity_name_past_a_form_field(
+    admin_agent, ch_client
+) -> None:
+    """An entity name longer than one form field carries (a write cap bounds new names,
+    not stored ones): the user's triples, edges and communities naming it still go."""
+    from loom import Agent
+
+    ns = admin_agent.namespace
+    target = f"gail-{uuid.uuid4().hex[:6]}"
+    huge = "harbour " * 20_000  # 160 KB, past ClickHouse's 128 KiB field limit
+    async with Agent(
+        org="erasure-test-org",
+        namespace=ns,
+        agent="dwaine",
+        base_url=admin_agent.transport._base_url,
+    ) as a:
+        await a.memory.set("port", "The port is busy", memory_type="semantic", user_id=target)
+    org = "erasure-test-org"
+    ch_client.insert(
+        "loom.entity_triple_memories",
+        [[org, ns, "user", "works_at", huge, "port"]],
+        column_names=["org", "namespace", "subject", "relation", "object", "memory_key"],
+    )
+    ch_client.insert(
+        "loom.entity_triples",
+        [[org, ns, "user", "works_at", huge]],
+        column_names=["org", "namespace", "subject", "relation", "object"],
+    )
+    ch_client.insert(
+        "loom.entity_edge_memories",
+        [[org, ns, huge, "user", "port"]],
+        column_names=["org", "namespace", "entity_a", "entity_b", "memory_key"],
+    )
+    ch_client.insert(
+        "loom.entity_edges",
+        [[org, ns, huge, "user"]],
+        column_names=["org", "namespace", "entity_a", "entity_b"],
+    )
+    ch_client.insert(
+        "loom.entity_communities",
+        [[org, ns, huge, 1, huge], [org, ns, "user", 1, huge]],
+        column_names=["org", "namespace", "entity", "community_id", "label"],
+    )
+
+    result = await admin_agent.erasure.request_user_id(target, requester="ops@example.com")
+    assert result["status"] == "completed", result
+    steps = {s["step"]: s for s in result["steps"]}
+    assert steps["entity_graph.delete"]["rows_affected"] >= 2
+    assert steps["entity_communities.delete"]["rows_affected"] >= 2
+    for table, names_it in _NAMES_IT.items():
+        left = ch_client.query(
+            f"SELECT count() FROM {table} "
+            f"WHERE org = {{org:String}} AND namespace = {{ns:String}} AND {names_it}",
+            parameters={"org": org, "ns": ns},
+        ).result_rows[0][0]
+        assert left == 0, table
+
+
 @pytest.mark.asyncio
 async def test_erasure_writes_audit_chain(admin_agent, ch_client) -> None:
     """started + completed rows land in audit_log with consistent hashes."""

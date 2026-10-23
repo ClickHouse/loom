@@ -112,8 +112,10 @@ async def delete(
             "SELECT toUnixTimestamp64Milli(now64(3)) - {age:UInt32} * 1000 AS cutoff_ms",
             params={"age": int(min_age_s)},
         )
+        if row is None:
+            raise RuntimeError("ClickHouse returned no clock row")
         where += " AND created_at < fromUnixTimestamp64Milli({cutoff_ms:Int64})"
-        params["cutoff_ms"] = int((row or {})["cutoff_ms"])
+        params["cutoff_ms"] = int(row["cutoff_ms"])
     await ch.execute(f"DELETE FROM {TABLE} WHERE {where}", params=params)
     rows = await ch.query_all(
         f"SELECT DISTINCT toString(sha256) AS sha FROM {TABLE} "

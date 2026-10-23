@@ -10,11 +10,10 @@ from typing import Any
 from server.erasure.store import predicates as erasure_predicates
 from server.erasure.store import steps_graph as graph_steps
 
+# cityHash64 of each owned key, as ClickHouse returns it
 _OWNED = {
-    "loom.entity_triple_memories": [
-        {"namespace": "ns", "subject": "alice", "relation": "works_at", "object": "acme"}
-    ],
-    "loom.entity_edge_memories": [{"namespace": "ns", "entity_a": "alice", "entity_b": "acme"}],
+    "loom.entity_triple_memories": [{"h": 11}],
+    "loom.entity_edge_memories": [{"h": 22}, {"h": 21}],
 }
 
 
@@ -54,10 +53,11 @@ async def test_only_triples_and_edges_owned_by_the_user_alone_are_deleted() -> N
     assert n == 4
     tables = [c[0].split(" ")[2] for c in ch.commands]
     assert tables == ["loom.entity_triples", "loom.entity_edges"]
-    # ownership is read from the link tables, then the keys found are bound
+    # ownership is read from the link tables, then the keys found are bound by hash
     (tread, tread_params), (eread, _) = ch.reads
     assert tread.startswith(
-        "SELECT namespace, subject, relation, object FROM loom.entity_triple_memories FINAL"
+        "SELECT cityHash64(namespace, subject, relation, object) AS h "
+        "FROM loom.entity_triple_memories FINAL"
     )
     assert (
         "HAVING countIf((namespace, memory_key) IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})) > 0"
@@ -68,17 +68,16 @@ async def test_only_triples_and_edges_owned_by_the_user_alone_are_deleted() -> N
         in tread
     )
     assert tread_params == {"org": "o", "uid": "alice"}
-    assert eread.startswith("SELECT namespace, entity_a, entity_b FROM loom.entity_edge_memories")
-    tsql, tparams = ch.commands[0]
-    assert (
-        "(namespace, subject, relation, object) IN "
-        "{owned:Array(Tuple(String, String, String, String))}" in tsql
+    assert eread.startswith(
+        "SELECT cityHash64(namespace, entity_a, entity_b) AS h FROM loom.entity_edge_memories"
     )
-    assert tparams["owned"] == [("ns", "alice", "works_at", "acme")]
+    tsql, tparams = ch.commands[0]
+    assert "cityHash64(namespace, subject, relation, object) IN {owned:Array(UInt64)}" in tsql
+    assert tparams["owned"] == [11]
     assert "SELECT" not in tsql and "mutations_sync = 0" in tsql
     esql, eparams = ch.commands[1]
-    assert "(namespace, entity_a, entity_b) IN {owned:Array(Tuple(String, String, String))}" in esql
-    assert eparams["owned"] == [("ns", "alice", "acme")]
+    assert "cityHash64(namespace, entity_a, entity_b) IN {owned:Array(UInt64)}" in esql
+    assert eparams["owned"] == [21, 22]
     # the count reads the same predicate the mutation uses
     assert ch.queries[0][0].split("WHERE", 1)[1].strip() in tsql
 

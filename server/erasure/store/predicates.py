@@ -103,9 +103,10 @@ USER_COMMUNITY_ROWS = (
     f"((namespace, entity) IN {USER_COMMUNITY_ENTITIES} "
     f"OR (namespace, label) IN {USER_COMMUNITY_ENTITIES})"
 )
+# The entities by `cityHash64(namespace, entity)`: a stored name can outgrow a form field.
 COMMUNITY_ROWS_IN = (
-    "((namespace, entity) IN {entities:Array(Tuple(String, String))} "
-    "OR (namespace, label) IN {entities:Array(Tuple(String, String))})"
+    "(cityHash64(namespace, entity) IN {entities:Array(UInt64)} "
+    "OR cityHash64(namespace, label) IN {entities:Array(UInt64)})"
 )
 
 

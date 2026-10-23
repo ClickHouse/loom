@@ -17,6 +17,8 @@ from typing import Any, Protocol
 
 from clickhouse_connect.driver.external import ExternalData
 
+from server.core.ch_params import chunks
+
 
 class _CHClient(Protocol):
     async def query_one(
@@ -51,23 +53,9 @@ def _default_client() -> _CHClient:
     return get_client()
 
 
-# a bound parameter travels as one HTTP form field, which the server caps at 128 KiB
-_PARAM_BYTES = 64 << 10
-
-
 def param_slices(values: Sequence[Any]) -> list[list[Any]]:
-    """`values` cut into lists that each bind as one array parameter well under the
-    server's form-field cap."""
-    out: list[list[Any]] = []
-    size = 0
-    for v in values:
-        n = len(str(v).encode()) + 4  # quotes, comma, the odd escape
-        if not out or size + n > _PARAM_BYTES:
-            out.append([])
-            size = 0
-        out[-1].append(v)
-        size += n
-    return out
+    """`values` cut into lists that each bind as one array parameter (`ch_params.chunks`)."""
+    return list(chunks(values))
 
 
 async def query_all_sliced(

@@ -32,8 +32,8 @@ _LIGHT = re.compile(r"DELETE FROM\s+(\S+)")
 class _AnyRow(dict[str, Any]):
     """A read row with a value in every column."""
 
-    def __missing__(self, key: str) -> str:
-        return "x"
+    def __missing__(self, key: str) -> str | int:
+        return 1 if key == "h" else "x"  # `h` is a cityHash64
 
 
 class _TraceCH:
@@ -63,7 +63,7 @@ class _TraceCH:
             return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
         if sql.startswith("SELECT group_id FROM loom.principal_groups"):
             return [{"group_id": "g"}]
-        if sql.startswith(("SELECT DISTINCT", "SELECT namespace,")):
+        if sql.startswith(("SELECT DISTINCT", "SELECT namespace,", "SELECT cityHash64")):
             return [_AnyRow()]
         if "blob_path" in sql and "loom.documents" in sql:
             return [{"source_uri": "doc://a", "blob_path": "o/a/blob"}]

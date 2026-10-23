@@ -8,7 +8,8 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, NamedTuple
 
-from server.core.repo_base import _CHClient, _default_client, param_slices
+from server.core.ch_params import chunks
+from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.mutations import (
     delete_scoped,
     namespaces_of,
@@ -29,9 +30,8 @@ from server.erasure.store.predicates import (
     WINDOW_KEYS_IN,
 )
 from server.erasure.store.scope_reads import (
-    slices,
-    slices_or_none,
-    tuples,
+    hashes,
+    slices_or_one_empty,
     user_key_pairs,
     user_keys,
 )
@@ -92,7 +92,7 @@ async def tombstone_source_links_by_user(
     keys = await user_key_pairs(org, user_id, ch=ch)
     total = 0
     for t in _LINK_TABLES_TOMBSTONE:
-        for part in slices(keys):
+        for part in chunks(keys):
             total += await tombstone_scoped(
                 t, org=org, scope_where=PARENT_KEYS_IN, params={"keys": part}, ch=ch
             )
@@ -222,7 +222,7 @@ async def delete_orphan_row_links(
             "SETTINGS select_sequential_consistency = 1",
             params={"org": org, **orphans.params},
         )
-        for ids in param_slices(sorted(str(r["id"]) for r in found)):
+        for ids in chunks(sorted(str(r["id"]) for r in found)):
             kept = await _live_or_written_since(org, orphans, ids, ch=ch)
             still_orphans = [memory_id for memory_id in ids if memory_id not in kept]
             if not still_orphans:
@@ -276,7 +276,7 @@ async def delete_entity_vectors_by_user(
     ch = ch or _default_client()
     keys = await user_key_pairs(org, user_id, ch=ch)
     total = 0
-    for part in slices_or_none(keys):
+    for part in slices_or_one_empty(keys):
         total += await delete_scoped(
             "loom.entity_vectors",
             org=org,
@@ -289,13 +289,13 @@ async def delete_entity_vectors_by_user(
 
 
 def _graph_owned_only_sql(link_table: str, cols: tuple[str, ...]) -> str:
-    """The graph keys whose every linking memory belongs to the user. A triple or
-    edge shared with another user's memory stays: the other user still knows it.
-    `cols` names the graph key columns as they appear on both the graph table and
+    """The hashes of the graph keys whose every linking memory belongs to the user. A
+    triple or edge shared with another user's memory stays: the other user still knows
+    it. `cols` names the graph key columns as they appear on both the graph table and
     its link table."""
     key = ", ".join(cols)
     return (
-        f"SELECT namespace, {key} FROM {link_table} FINAL "
+        f"SELECT cityHash64(namespace, {key}) AS h FROM {link_table} FINAL "
         "WHERE org = {org:String} "
         f"GROUP BY namespace, {key} "
         f"HAVING countIf((namespace, memory_key) IN {USER_KEYS_SUBQ}) > 0 "
@@ -313,16 +313,18 @@ async def delete_entity_graph_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
     """Delete the triples and edges only this user's memories carried. Must
-    run BEFORE `graph_links.delete`: ownership is read from the link tables."""
+    run BEFORE `graph_links.delete`: ownership is read from the link tables.
+
+    The mutation names each key by its hash, computed by ClickHouse on both sides:
+    nothing bounds a stored entity name, and one name can outgrow a form field."""
     ch = ch or _default_client()
     total = 0
     for table, link_table, cols in _GRAPH_LINKS:
         rows = await ch.query_all(
             _graph_owned_only_sql(link_table, cols), params={"org": org, "uid": user_id}
         )
-        types = ", ".join(["String"] * (len(cols) + 1))
-        scope = f"(namespace, {', '.join(cols)}) IN {{owned:Array(Tuple({types}))}}"
-        for part in slices(tuples(rows, ("namespace", *cols))):
+        scope = f"cityHash64(namespace, {', '.join(cols)}) IN {{owned:Array(UInt64)}}"
+        for part in chunks(hashes(rows)):
             total += await delete_scoped(
                 table, org=org, scope_where=scope, params={"owned": part}, ch=ch
             )
@@ -339,7 +341,7 @@ async def delete_graph_links_by_user(org: str, user_id: str, *, ch: _CHClient | 
                 t, org=org, scope_where=UID, params={"uid": user_id}, ch=ch
             )
             continue
-        for part in slices(keys):
+        for part in chunks(keys):
             total += await delete_scoped(
                 t, org=org, scope_where=PARENT_KEYS_IN, params={"keys": part}, ch=ch
             )
@@ -384,7 +386,7 @@ async def tombstone_consolidated_dependents_by_user(
     links go too: a link's `suggestion` holds a rewrite of the row's text, and this
     tombstone is a mutation, so the link queue never sees it."""
     ch = ch or _default_client()
-    src = slices(["src:" + k for k in await user_keys(org, user_id, ch=ch)])
+    src = list(chunks(["src:" + k for k in await user_keys(org, user_id, ch=ch)]))
     total = 0
     for t in ("loom.memory", "loom.memory_embeddings"):
         for part in src:
@@ -401,7 +403,7 @@ async def tombstone_consolidated_dependents_by_user(
             params={"org": org, "src": part},
         )
         ids.update(str(r["id"]) for r in rows)
-    for part in slices(sorted(ids)):
+    for part in chunks(sorted(ids)):
         total += await delete_scoped(
             "loom.memory_code_links",
             org=org,
@@ -449,7 +451,7 @@ async def tombstone_records_by_user(org: str, user_id: str, *, ch: _CHClient | N
         ("loom.memory_record_fields", RECORD_IDS_IN),
         ("loom.memory_record_conflicts", CONFLICT_RECORD_IDS_IN),
     ):
-        for part in slices(ids):
+        for part in chunks(ids):
             total += await tombstone_scoped(
                 t, org=org, scope_where=scope, params={"ids": part}, ch=ch
             )
@@ -520,7 +522,7 @@ async def delete_llm_response_cache_by_user(
     """Cached answers whose rendered window held any of the user's memory keys."""
     ch = ch or _default_client()
     total = 0
-    for part in slices(await user_keys(org, user_id, ch=ch)):
+    for part in chunks(await user_keys(org, user_id, ch=ch)):
         total += await delete_scoped(
             "loom.llm_response_cache",
             org=org,
@@ -537,7 +539,7 @@ async def delete_ask_precedents_by_user(
     """Precedent answers whose window or citations held any of the user's keys."""
     ch = ch or _default_client()
     total = 0
-    for part in slices(await user_keys(org, user_id, ch=ch)):
+    for part in chunks(await user_keys(org, user_id, ch=ch)):
         total += await delete_scoped(
             "loom.memory_ask_precedents",
             org=org,
@@ -556,11 +558,11 @@ async def delete_entity_communities_by_user(
     from `entity_edge_memories`."""
     ch = ch or _default_client()
     rows = await ch.query_all(
-        f"SELECT namespace, entity FROM {USER_COMMUNITY_ENTITIES}",
+        f"SELECT cityHash64(namespace, entity) AS h FROM {USER_COMMUNITY_ENTITIES}",
         params={"org": org, "uid": user_id},
     )
     total = 0
-    for part in slices(tuples(rows, ("namespace", "entity"))):
+    for part in chunks(hashes(rows)):
         total += await delete_scoped(
             "loom.entity_communities",
             org=org,
