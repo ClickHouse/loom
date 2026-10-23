@@ -582,3 +582,33 @@ def test_making_a_disabled_bot_again_ends_its_old_tokens(world, monkeypatch) -> 
     world["revoked"].clear()
     asyncio.run(account_admin.create_bot(_bot(["triage=viewer"]), by="ops", replace=False))
     assert world["revoked"] == [("sa:triage", "bot replaced")]
+
+
+@pytest.mark.parametrize(
+    ("versions", "ready"),
+    [
+        ([], False),
+        ([76], False),
+        ([77, 76], False),
+        ([None], False),
+        ([77], True),
+        ([77, 78], True),
+    ],
+)
+async def test_the_maximum_waits_for_every_replica_at_migration_77(
+    versions: list[int | None], ready: bool
+) -> None:
+    from tests.unit.test_platform_admin_rollout import Fleet
+
+    fleet = Fleet([{"deployment": 0, "schema_version": v} for v in versions])
+    assert await _real_ready(fleet) is ready
+
+
+def test_the_maximum_floor_matches_the_physical_migration() -> None:
+    from pathlib import Path
+
+    path = (
+        Path(__file__).resolve().parents[2] / "schemas/migrations/077_machine_access_token_ttl.sql"
+    )
+    assert path.is_file()
+    assert int(path.name.split("_", 1)[0]) == machines._ACCESS_TOKEN_MIGRATION
