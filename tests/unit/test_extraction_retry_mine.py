@@ -167,7 +167,8 @@ def test_waiting_and_finished_batches_submit_no_retry() -> None:
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 def test_a_batch_past_its_last_day_is_expired_not_requeued(tmp_path: Path) -> None:
-    # enqueued_at is in the sort key: the old batch is written queued on its last day.
+    # enqueued_at is the partition key, which ALTER UPDATE cannot change: the old batch
+    # is inserted on its last day.
     old = _queued("old", by="process:sa:a", status="failed").replace(
         "enqueued_by) VALUES", "enqueued_by, enqueued_at) VALUES"
     )

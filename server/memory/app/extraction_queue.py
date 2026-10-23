@@ -13,6 +13,7 @@ Worker transitions mirror full rows; explicit retries update failed versions in 
                           |--error--> pending (attempts+1, backoff) | failed (>= max)
                           |--unreachable--> pending (backoff, no attempt spent)
                           \\--held--> held (until the hold ends, no attempt spent)
+    failed --retry_mine--> pending (attempts = max-1, in place, same version)
 
 `lease_until` is when a row may be claimed (again): a `running` row whose lease
 has passed is reclaimable, so a worker that died mid-extraction does not strand
@@ -558,9 +559,7 @@ async def list_status(
     where += scope_and(scope, params)
     rows = await ch.query_all(
         f"""
-        SELECT queue_id, agent, user_id, session_id, status, attempts,
-               message_count, content_chars, written, last_error,
-               enqueued_at, updated_at
+        SELECT {_STATUS_COLUMNS}
         FROM {TABLE} FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           {where}
@@ -699,16 +698,20 @@ async def requeue_own_failed(
     expired = [qid for qid in failed if int(states[qid]["past_last_day"])]
     failed = [qid for qid in failed if qid not in expired]
     if not failed:
-        return Requeued([], waiting_or_done, [], expired)
+        return Requeued(
+            requeued=[], not_failed=waiting_or_done, model_calls_off=[], expired=expired
+        )
     if await customer.switched_off(org):
-        return Requeued([], waiting_or_done, failed, expired)
-    submitted = await _retries_unapplied(ch, failed)
+        return Requeued(
+            requeued=[], not_failed=waiting_or_done, model_calls_off=failed, expired=expired
+        )
+    submitted = await _retries_unapplied(ch, [(q, int(states[q]["version"])) for q in failed])
     batches = [
         (r["agent"], r["user_id"], r["session_id"], r["queue_id"], int(r["version"]))
         for r in (states[qid] for qid in failed if qid not in submitted)
     ]
     if not batches:
-        return Requeued(failed, waiting_or_done, [], expired)
+        return Requeued(failed, not_failed=waiting_or_done, model_calls_off=[], expired=expired)
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
@@ -738,22 +741,23 @@ async def requeue_own_failed(
         """,
         params=params,
     )
-    return Requeued(failed, waiting_or_done, [], expired)
+    return Requeued(failed, not_failed=waiting_or_done, model_calls_off=[], expired=expired)
 
 
-async def _retries_unapplied(ch: Any, queue_ids: list[str]) -> set[str]:
-    """The ids among `queue_ids` an earlier retry's mutation still has to update."""
+async def _retries_unapplied(ch: Any, versions: list[tuple[str, int]]) -> set[str]:
+    """The ids among `versions` whose failed version an earlier retry's unfinished
+    mutation targets: the command keeps each batch tuple, ending `'<id>', <version>)`."""
     db, name = split_table(TABLE)
     rows = await ch.query_all(
         """
-        SELECT DISTINCT qid
+        SELECT DISTINCT b.1 AS qid
         FROM system.mutations
-        ARRAY JOIN {qids:Array(String)} AS qid
+        ARRAY JOIN {versions:Array(Tuple(String, UInt64))} AS b
         WHERE database = {db:String} AND table = {t:String} AND is_done = 0
           AND position(command, {pat:String}) > 0
-          AND position(command, concat(char(39), qid, char(39))) > 0
+          AND position(command, concat(char(39), b.1, char(39), ', ', toString(b.2), ')')) > 0
         """,
-        params={"db": db, "t": name, "qids": list(queue_ids), "pat": f"'{_RETRY_TAG}'"},
+        params={"db": db, "t": name, "versions": versions, "pat": f"'{_RETRY_TAG}'"},
     )
     return {str(r["qid"]) for r in rows}
 

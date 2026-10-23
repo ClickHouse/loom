@@ -108,3 +108,15 @@ def test_duplicate_acceptances_submit_one_update(tmp_path: Path) -> None:
     (row,) = ch.stored()
     assert (row["status"], row["attempts"], row["version"]) == ("pending", 2, 1)
     assert _requeue(ch, ["q1"]) == ([], ["q1"], [], [])
+
+
+def test_a_newer_failed_version_is_retried_while_an_older_retry_is_unfinished(
+    tmp_path: Path,
+) -> None:
+    ch = _DelayedMutationCH(tmp_path / "ch", _queued("q1", by="process:sa:a", status="failed"))
+    assert _requeue(ch, ["q1"]).requeued == ["q1"]
+    # The first retry applied to q1's part and the worker failed it again, as version 2,
+    # while the first mutation still shows unfinished.
+    run([_queued("q1", by="process:sa:a", status="failed", version=2)], "SELECT 1", path=ch.path)
+    assert _requeue(ch, ["q1"]).requeued == ["q1"]
+    assert [p["batches"][0][4] for _, p in ch.commands] == [1, 2]
