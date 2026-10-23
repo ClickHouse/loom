@@ -183,7 +183,8 @@ A searchable `memory.set` runs these checks in order:
    close to the new value are **peers**, compared closest first:
    - same canonical form (lowercased, punctuation stripped, whitespace collapsed) →
      `merge`: nothing written, the peer is reinforced, `merged_into_key` names it;
-   - cosine at or above the duplicate threshold with the same content words →
+   - cosine at or above the duplicate threshold with the same content words and no
+     differing value (a number, time, amount or unit; "27:10" / "26:30") →
      `duplicate`;
    - cosine at or above the conflict threshold but different → `conflict`, both rows
      `conflicted`;
