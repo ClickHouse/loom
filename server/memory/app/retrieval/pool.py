@@ -16,6 +16,7 @@ from server.memory.domain.search_types import (
     SearchHit,
     SearchQuery,
     _CHClient,
+    hit_row_key,
     hit_sort_key,
     row_identity,
 )
@@ -135,19 +136,20 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
     rank-neutral: a folded parent sits exactly where its chunk sat."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
-    # a chunk folds onto its parent in its own session: one key is a row per session
-    by_row: dict[tuple[str, str], SearchHit] = {}
+    # A chunk folds onto the row it was written under: same writer, session and key.
+    by_row: dict[tuple[str, ...], SearchHit] = {}
     out: list[SearchHit] = []
     for h in hits:
         if not _is_set_chunk(h):
             out.append(h)
             if (getattr(h, "source", "") or "fact") != "chunk":
-                by_row.setdefault((h.session_id, str(h.memory_key)), h)
+                by_row.setdefault(hit_row_key(h), h)
     for h in hits:
         if not _is_set_chunk(h):
             continue
         parent_key = str(h.parent_memory_key)
-        parent = by_row.get((h.session_id, parent_key))
+        parent_row = (*hit_row_key(h)[:4], parent_key)
+        parent = by_row.get(parent_row)
         if parent is None:
             idx_s = str(h.memory_key).rpartition(":")[2]
             converted = replace(
@@ -164,7 +166,7 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
                     "folded_lift": 1.0,
                 },
             )
-            by_row[(h.session_id, parent_key)] = converted
+            by_row[parent_row] = converted
             out.append(converted)
             continue
         components = dict(parent.score_components or {})
@@ -180,7 +182,7 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
             )
         else:
             merged = replace(parent, score_components=components)
-        by_row[(h.session_id, parent_key)] = merged
+        by_row[parent_row] = merged
         out[out.index(parent)] = merged
     out.sort(key=hit_sort_key)
     return out

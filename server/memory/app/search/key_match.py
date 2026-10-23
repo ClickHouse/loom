@@ -284,6 +284,8 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                 "ns": ns,
                 "stems": stems,
                 "limit": limit,
+                # a key holds a row per writer and session: as many as the window keeps
+                "per_key": int(_settings_km.memory_search_per_key_cap),
                 "qv": ctx.query_vec,
                 "model": ctx.embedder.model_name,
                 "min_strength": float(_settings_km.memory_search_key_match_min_strength),
@@ -344,7 +346,8 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                     eh.score_components["key_match"] = max(
                         float(eh.score_components.get("key_match", 0.0)), strength
                     )
-                row_key = (ns, str(row.get("session_id") or ""), mk)
+                who = row_identity(row) or ("", "", str(row.get("session_id") or ""))
+                row_key = (ns, *who, mk)
                 if component_only or row_key in pooled:
                     continue  # the row is pooled, or the statement only scores pooled keys
                 sim = float(row.get("similarity") or 0.0)

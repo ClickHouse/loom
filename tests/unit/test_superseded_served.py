@@ -196,6 +196,29 @@ async def test_annotation_names_the_successor_and_counts_only_when_asked(
 
 
 @pytest.mark.asyncio
+async def test_each_writers_superseded_row_names_its_own_successor(
+    successors: SimpleNamespace,
+) -> None:
+    def row(user_id: str, successor: str) -> dict[str, str]:
+        return {
+            "namespace": "ns",
+            "agent": "a",
+            "user_id": user_id,
+            "session_id": "-",
+            "memory_key": "k",
+            "superseded_by": successor,
+            "successor_key": successor,
+            "superseded_at": "2026-09-10 12:00:00",
+        }
+
+    successors.rows = [row("u1", "k_u1"), row("u2", "k_u2")]
+    hits = [_hit("k", rank=0.9, status="superseded"), _hit("k", rank=0.8, status="superseded")]
+    hits[0]._row_identity, hits[1]._row_identity = ("a", "u2", "-"), ("a", "u1", "-")
+    await ss.annotate_pool_superseded(_ctx(hits, include_superseded=True))
+    assert [h.superseded_by for h in hits] == ["k_u2", "k_u1"]
+
+
+@pytest.mark.asyncio
 async def test_a_bounded_read_names_no_successor_outside_its_scope(
     successors: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:

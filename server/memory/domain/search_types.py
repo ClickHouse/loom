@@ -289,8 +289,8 @@ class SearchHit:
     # rows and uses their text to mask the sentences that restate them.
     status: str = ""
     version: int = 0
-    # The stored memory's (agent, user_id, session_id) for a fact row; None for every
-    # other plane. Not on the wire.
+    # The stored row's (agent, user_id, session_id) for a fact, chunk or record row; None
+    # for every other plane. Not on the wire.
     identity: RowIdentity | None = None
 
 
@@ -302,16 +302,21 @@ def row_identity(row: Mapping[str, Any]) -> RowIdentity | None:
     return str(row["agent"]), str(row["user_id"]), str(row["session_id"])
 
 
-def hit_row_key(hit: Any, namespace: str = "") -> tuple[str, str, str]:
-    """(namespace, session_id, memory_key) of the stored row a hit is: one key holds a row
-    in each session that wrote it, so a key alone does not name one row."""
-    session = str(getattr(hit, "session_id", "") or "")
+# (namespace, agent, user_id, session_id, memory_key): one stored row.
+RowKey = tuple[str, str, str, str, str]
+
+
+def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
+    """(namespace, agent, user_id, session_id, memory_key) of the stored row a hit is: one
+    key holds a row for each writer and session, so a key alone does not name one row. A
+    hit whose leg read no identity has only its session."""
     identity = getattr(hit, "_row_identity", None) or getattr(hit, "identity", None)
-    if not session and identity:
-        session = identity[2]
+    agent, user_id, session_id = identity or ("", "", str(getattr(hit, "session_id", "") or ""))
     return (
         str(getattr(hit, "namespace", "") or namespace),
-        session,
+        agent,
+        user_id,
+        session_id,
         str(getattr(hit, "memory_key", "") or ""),
     )
 

@@ -23,7 +23,7 @@ from typing import Any
 
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
-from server.memory.domain.search_types import hit_row_key
+from server.memory.domain.search_types import RowKey, hit_row_key
 from server.memory.store.dedup import CanonicalRow, DuplicateStatus
 
 log = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ def _substitute(h: Any, row: CanonicalRow, ns: str) -> Any:
     return out
 
 
-_Truth = dict[tuple[str, str, str], DuplicateStatus]
+_Truth = dict[RowKey, DuplicateStatus]
 _Canon = dict[tuple[str, str], CanonicalRow]
 
 
@@ -95,7 +95,7 @@ async def _truth(org: str, namespaces: list[str], keys: list[str], scope: ReadFi
     import server.memory.store as memory_repo
 
     rows = await memory_repo.status_by_keys(org, namespaces, keys, scope=scope)
-    return {(r.namespace, r.session_id, r.memory_key): r for r in rows}
+    return {(r.namespace, r.agent, r.user_id, r.session_id, r.memory_key): r for r in rows}
 
 
 async def _canonicals(
@@ -109,8 +109,7 @@ async def _canonicals(
 
 
 def _duplicate_only(t: DuplicateStatus | None) -> bool:
-    """A session's key whose live rows are all duplicates. A key with an active or
-    conflicted row in the session is served by that row."""
+    """A row whose live version is a duplicate."""
     if not t:
         return False
     return t.served_rows == 0 and t.duplicate_rows > 0
@@ -176,9 +175,12 @@ def _rewrite_pool(
         ns = _hit_ns(h, ns_default)
         cid = truth[hit_row_key(h, ns_default)].canonical_id
         row = canon.get((ns, cid))
-        if row is None or (ns, row.session_id, row.memory_key) in present:
+        if row is None:
             continue
-        present.add((ns, row.session_id, row.memory_key))
+        canonical = (ns, row.agent, row.user_id, row.session_id, row.memory_key)
+        if canonical in present:
+            continue
+        present.add(canonical)
         out.append(_substitute(h, row, ns))
         resolved += 1
     work["duplicates_hidden"] = len(dups)

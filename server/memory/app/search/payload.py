@@ -299,11 +299,20 @@ async def _expand_unit_bodies(
     reads = await asyncio.gather(*(_read(ns, sid, group) for (ns, sid), group in by_scope.items()))
     # The read leaves 'high' rows out before it picks one per key, so the plain row the
     # search matched answers.
-    values: dict[tuple[str, str, str], Any] = {
-        (ns, sid, str(r.memory_key)): r.value
+    stored: dict[tuple[str, str, str], Any] = {
+        (ns, sid, str(r.memory_key)): r
         for (ns, sid), rows in zip(by_scope, reads, strict=True)
         for r in rows
     }
+
+    def _body_row(h: Any) -> Any:
+        # The read picks one row per key in a session: it answers only for its own writer.
+        r = stored.get((str(getattr(h, "namespace", "") or input.namespace), _sid(h), h.memory_key))
+        who = getattr(h, "_row_identity", None)
+        if r is not None and who and (r.agent, r.user_id) != who[:2]:
+            return None
+        return r
+
     returned = elided = tokens = 0
     spent = 0
     # When the query names entities, the budget buys one whole
@@ -325,8 +334,8 @@ async def _expand_unit_bodies(
     for h in order:
         if str(getattr(h, "source", "fact") or "fact") not in ("fact", "memory", "record"):
             continue
-        row = (str(getattr(h, "namespace", "") or input.namespace), _sid(h), str(h.memory_key))
-        if row not in values:
+        body_row = _body_row(h)
+        if body_row is None:
             # The row was not readable under any session we could name: say so. A clip that
             # claims to be the whole body is an invisible failure; body_truncated + next make it
             # visible and give the caller the one call that fetches it.
@@ -338,7 +347,7 @@ async def _expand_unit_bodies(
             except Exception:  # noqa: BLE001
                 pass
             continue
-        v = values[row]
+        v = body_row.value
         text = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
         cost = max(1, len(text) // 4)
         if spent + cost <= budget:

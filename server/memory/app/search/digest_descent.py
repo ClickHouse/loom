@@ -105,7 +105,8 @@ async def _run_digest_descent(ctx: SearchContext) -> None:
         for ns, sid, rows in results:
             for row in rows:
                 mk = str(row.get("memory_key") or "")
-                if not mk or (ns, sid, mk) in present:
+                row_key = (ns, *(row_identity(row) or ("", "", sid)), mk)
+                if not mk or row_key in present:
                     continue
                 sim = float(row.get("similarity") or 0.0)
                 raw = _anchor_rank_score(sim, pool_floor) if rrf else sim
@@ -133,7 +134,7 @@ async def _run_digest_descent(ctx: SearchContext) -> None:
                 )
                 _stamp_row_tags(hit, row.get("tags"))
                 hit._row_identity = row_identity(row)
-                present.add((ns, sid, mk))
+                present.add(row_key)
                 ctx.all_hits.append(hit)
                 added += 1
         ctx.actual_work["digest_descent_added"] = added

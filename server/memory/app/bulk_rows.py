@@ -499,18 +499,21 @@ def settle_steps(state: _BulkWriteState) -> None:
     rewritten: set[str] = set()  # ids of the rows landed so far
     for step in state.steps:
         key = step.result.memory_key
-        step.outcome = _decide(state, step, held.get(key) or _stored_held(state, key), rewritten)
+        step.outcome = _settle_step(
+            state, step, held.get(key) or _stored_held(state, key), rewritten
+        )
         if step.outcome in (LAND, RELABEL):
             landed = step.repeats or step
             held[key] = _held_by(landed)
             rewritten.add(str(landed.row["memory_id"]))
 
 
-def _decide(state: _BulkWriteState, step: _Step, held: _Held, rewritten: set[str]) -> str:
+def _settle_step(state: _BulkWriteState, step: _Step, held: _Held, rewritten: set[str]) -> str:
     """What a step comes to over what its key holds now, in the skip gate's order:
-    unchanged, then pinned or locked, then the verdict."""
+    unchanged, then pinned or locked, then the verdict. The row takes the labels and pin
+    it lands with."""
     if step.repeats is not None:
-        return _decide_repeat(step, step.repeats, held, rewritten)
+        return _settle_repeat(step, step.repeats, held, rewritten)
     row = step.row
     _relabel(state, step, held)
     same_bytes = held.sha == row["content_sha256"]
@@ -532,10 +535,11 @@ def _decide(state: _BulkWriteState, step: _Step, held: _Held, rewritten: set[str
     return RELABEL if same_bytes else LAND
 
 
-def _decide_repeat(step: _Step, src: _Step, held: _Held, rewritten: set[str]) -> str:
+def _settle_repeat(step: _Step, src: _Step, held: _Held, rewritten: set[str]) -> str:
     """An exact repeat takes the outcome of the entry it repeats. A merge whose target a
     landed row rewrote in between lands instead, as the repeat would serially: a copy of
-    the earlier row lands as this entry's write, and the earlier entry keeps its merge."""
+    the earlier row, with its vector, lands as this entry's write and result, and the
+    earlier entry keeps its merge."""
     if held.step is src:
         return UNCHANGED
     if src.outcome not in NOT_LANDING:
@@ -576,7 +580,7 @@ def _relabel(state: _BulkWriteState, step: _Step, held: _Held) -> None:
 def write_step_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
     """Each step's result, and the lists and counters it counts in, once the replay and
     the verdicts are done. A row that reached the verdicts has its result stamped there
-    (`apply_bulk_verdicts`), and a repeat that lands an earlier row by `_decide_repeat`."""
+    (`apply_bulk_verdicts`), and a repeat that lands an earlier row by `_settle_repeat`."""
     for step in state.steps:
         res, row = step.result, step.row
         if step.repeats is None and step.outcome in (UNCHANGED, PINNED, LOCKED):

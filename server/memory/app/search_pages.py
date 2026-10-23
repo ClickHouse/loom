@@ -30,7 +30,7 @@ from datetime import timedelta
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
-from server.memory.domain.search_types import hit_row_key
+from server.memory.domain.search_types import RowKey, hit_row_key
 from server.settings import settings
 
 PAGE_PREFIX = "page/"
@@ -44,7 +44,7 @@ def split_tail(pool: list[Any], final: list[Any]) -> tuple[int, list[Any]]:
     the count is by distinct row so "20 of 124" means 124 memories. The tail
     is every pool row absent from the served block, best rank first."""
     served = {hit_row_key(h) for h in final}
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[RowKey] = set()
     distinct: list[Any] = []
     for h in sorted(pool, key=lambda x: float(getattr(x, "rank_score", 0.0) or 0.0), reverse=True):
         k = hit_row_key(h)

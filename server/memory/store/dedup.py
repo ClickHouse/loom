@@ -102,10 +102,12 @@ class CanonicalRef:
 
 @dataclass(frozen=True, slots=True)
 class DuplicateStatus:
-    """Per served (namespace, session_id, memory_key): live served rows, duplicate rows,
-    and the newest duplicate's canonical id."""
+    """Per served (namespace, agent, user_id, session_id, memory_key): live served rows,
+    duplicate rows, and the newest duplicate's canonical id."""
 
     namespace: str
+    agent: str
+    user_id: str
     session_id: str
     memory_key: str
     served_rows: int
@@ -116,6 +118,8 @@ class DuplicateStatus:
     def from_row(cls, r: Mapping[str, Any]) -> DuplicateStatus:
         return cls(
             namespace=_s(r, "namespace"),
+            agent=_s(r, "agent"),
+            user_id=_s(r, "user_id"),
             session_id=_s(r, "session_id"),
             memory_key=_s(r, "memory_key"),
             served_rows=int(r.get("served_rows") or 0),
@@ -169,6 +173,8 @@ class SupersededSuccessor:
     live ('' otherwise), and when the row was retired."""
 
     namespace: str
+    agent: str
+    user_id: str
     session_id: str
     memory_key: str
     superseded_by: str
@@ -179,6 +185,8 @@ class SupersededSuccessor:
     def from_row(cls, r: Mapping[str, Any]) -> SupersededSuccessor:
         return cls(
             namespace=_s(r, "namespace"),
+            agent=_s(r, "agent"),
+            user_id=_s(r, "user_id"),
             session_id=_s(r, "session_id"),
             memory_key=_s(r, "memory_key"),
             superseded_by=_s(r, "superseded_by"),
@@ -400,17 +408,15 @@ async def status_by_keys(
     scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> list[DuplicateStatus]:
-    """Per (namespace, session_id, memory_key) over the served keys of one search: how
-    many live rows are served (active / conflicted), how many are
-    `duplicate`, and the newest duplicate's canonical id. One key holds a row in each
-    session that wrote it, so each session's rows answer for its own hit.
+    """Per stored row (namespace, agent, user_id, session_id, memory_key) over the served
+    keys of one search: how many live rows are served (active / conflicted), how many are
+    `duplicate`, and the newest duplicate's canonical id. One key holds a row for each
+    writer and session, so each row's status answers for its own hit.
 
     `loom.memory` is the truth for a row's status: older duplicates carry
     `active` on their `memory_embeddings` mirror, so the leg cannot tell
-    from its own row. One statement, the served keys only. A key
-    is hidden by the caller when the session has no served row under it — several
-    writers in one session may hold an active and a duplicate row under the same
-    key, and the active one answers.
+    from its own row. One statement, the served keys only. A row
+    is hidden by the caller when its newest live version is a duplicate.
 
     Never with sequential consistency, even inside a read-your-writes scope
     (one opens for a namespace this process wrote moments ago): under it the
@@ -431,7 +437,7 @@ async def status_by_keys(
     in_scope = scope_and(scope, params)
     rows = await ch.query_all(
         f"""
-        SELECT namespace, session_id, memory_key,
+        SELECT namespace, agent, user_id, session_id, memory_key,
                countIf(status IN ('active', 'conflicted')) AS served_rows,
                countIf(status = 'duplicate') AS duplicate_rows,
                argMaxIf(duplicate_of, version, status = 'duplicate') AS canonical_id
@@ -440,7 +446,7 @@ async def status_by_keys(
           AND namespace IN {{nss:Array(String)}}
           AND memory_key IN {{keys:Array(String)}}
           AND tombstoned_at IS NULL{in_scope}
-        GROUP BY namespace, session_id, memory_key
+        GROUP BY namespace, agent, user_id, session_id, memory_key
         SETTINGS select_sequential_consistency = 0
         """,
         params=params,
@@ -531,7 +537,8 @@ async def superseded_successors(
     scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> list[SupersededSuccessor]:
-    """Per superseded (namespace, session_id, memory_key) in one search's pool: the row's
+    """Per superseded row (namespace, agent, user_id, session_id, memory_key) in one search's
+    pool: the row's
     `superseded_by` id, the successor's memory_key when that row is still
     live, and the retirement instant (`invalid_at`, else the row's own
     `updated_at`). One statement, the served keys only; the
@@ -548,21 +555,21 @@ async def superseded_successors(
     in_scope = scope_and(scope, params)
     rows = await ch.query_all(
         f"""
-        SELECT m.namespace AS namespace, m.session_id AS session_id,
-               m.memory_key AS memory_key,
+        SELECT m.namespace AS namespace, m.agent AS agent, m.user_id AS user_id,
+               m.session_id AS session_id, m.memory_key AS memory_key,
                m.superseded_by AS superseded_by, s.memory_key AS successor_key,
                toString(coalesce(m.invalid_at, m.updated_at, m.created_at)) AS superseded_at
         FROM (
-            SELECT namespace, session_id, memory_key, superseded_by, invalid_at, updated_at,
-                   created_at
+            SELECT namespace, agent, user_id, session_id, memory_key, superseded_by,
+                   invalid_at, updated_at, created_at
             FROM loom.memory FINAL
             WHERE org = {{org:String}}
               AND namespace IN {{nss:Array(String)}}
               AND memory_key IN {{keys:Array(String)}}
               AND status = 'superseded'
               AND tombstoned_at IS NULL{in_scope}
-            ORDER BY namespace, session_id, memory_key, version DESC
-            LIMIT 1 BY namespace, session_id, memory_key
+            ORDER BY namespace, agent, user_id, session_id, memory_key, version DESC
+            LIMIT 1 BY namespace, agent, user_id, session_id, memory_key
         ) AS m
         LEFT JOIN (
             SELECT namespace, toString(memory_id) AS mid, memory_key

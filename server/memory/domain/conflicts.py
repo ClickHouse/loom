@@ -139,10 +139,8 @@ def value_tokens(text: str) -> set[str]:
     """Normalised value tokens in `text` ("27:12", "25:50", "$40", "5k")."""
     out: set[str] = set()
     for m in _VALUE_RE.finditer(text or ""):
-        tok = m.group(0).strip().lower().replace(" ", "")
-        # Strip a trailing unit so "5k run" and "5K" compare equal, but keep
-        # the digits+separators that carry the value.
-        out.add(tok)
+        # lowercased, with no space before a unit: "5K" and "5 k" read as "5k"
+        out.add(m.group(0).strip().lower().replace(" ", ""))
     return out
 
 

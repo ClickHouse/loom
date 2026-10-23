@@ -251,6 +251,8 @@ async def _search_memory_records(
         SELECT
             record_id,
             parent_memory_key,
+            agent,
+            user_id,
             session_id,
             schema_name,
             record_json,
@@ -273,6 +275,8 @@ async def _search_memory_records(
             SELECT
                 record_id,
                 parent_memory_key,
+                agent,
+                user_id,
                 session_id,
                 schema_name,
                 record_json,
@@ -290,6 +294,8 @@ async def _search_memory_records(
                 SELECT
                     toString(r.record_id) AS record_id,
                     ifNull(r.memory_key, '') AS parent_memory_key,
+                    r.identity_agent AS agent,
+                    r.user_id AS user_id,
                     r.session_id AS session_id,
                     toString(r.schema_name) AS schema_name,
                     r.record_json AS record_json,
@@ -327,6 +333,8 @@ async def _search_memory_records(
                 GROUP BY
                     r.record_id,
                     r.memory_key,
+                    r.identity_agent,
+                    r.user_id,
                     r.session_id,
                     r.schema_name,
                     r.record_json,
@@ -346,6 +354,11 @@ async def _search_memory_records(
         log.warning("_search_memory_records failed (fail-open): %s", e)
         return []
 
+    return _record_hits(rows)
+
+
+def _record_hits(rows: list[dict[str, Any]]) -> list[SearchHit]:
+    """The record leg's rows as hits, keyed by their parent memory when they have one."""
     out: list[SearchHit] = []
     for row in rows:
         record_id = str(row.get("record_id") or "")
@@ -373,6 +386,7 @@ async def _search_memory_records(
                 source="record",
                 source_resource_id=record_id,
                 session_id=str(row.get("session_id") or ""),
+                identity=row_identity(row),
                 score_components={
                     "record_lexical": float(row.get("lexical_score") or 0.0),
                     "rank_score": rank_score,
