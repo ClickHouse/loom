@@ -44,7 +44,7 @@ MAX_TOKEN_TTL = 86400
 # not a setting: a shorter one would run out before its first use (verify's leeway)
 MIN_TOKEN_TTL = 60
 _PLATFORM_ADMIN_MIGRATION = 76  # schemas/migrations/076_machine_platform_admin.sql
-_ACCESS_TOKEN_MIGRATION = 77  # schemas/migrations/077_machine_access_token_ttl.sql
+ACCESS_TOKEN_MIGRATION = 77  # schemas/migrations/077_machine_access_token_ttl.sql
 ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
 SUBJECT_TOKEN_TYPES = frozenset(
@@ -87,7 +87,7 @@ async def platform_admin_tokens_ready(ch: Any) -> bool:
 
 async def access_token_maximum_ready(ch: Any) -> bool:
     """Older replicas issue an hour whatever the maximum, and reset it when they save."""
-    return await fleet_at(ch, _ACCESS_TOKEN_MIGRATION)
+    return await fleet_at(ch, ACCESS_TOKEN_MIGRATION)
 
 
 async def fleet_at(ch: Any, migration: int) -> bool:

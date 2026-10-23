@@ -463,9 +463,9 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
         await machines.access_token_maximum_ready(get_client())
     ):
         raise ValueError(
-            "a maximum token lifetime other than 3600 s waits until replicas in"
-            " loom.instances all run migration 77 or later (an older one issues an hour"
-            " and resets the maximum when it saves the bot)"
+            f"a maximum token lifetime other than {machines.TOKEN_TTL} s waits until replicas"
+            f" in loom.instances all run migration {machines.ACCESS_TOKEN_MIGRATION} or later"
+            " (an older one issues an hour and resets the maximum when it saves the bot)"
         )
     if await revocation.revoked_outright(machines.subject(name)):
         raise ValueError(f"{machines.subject(name)} is revoked outright; it could never sign in")
