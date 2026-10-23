@@ -13,8 +13,9 @@
  *   (ACTIONS_ID_TOKEN_REQUEST_URL) for LOOM_WORKLOAD_AUDIENCE,
  *
  * and gets a token of an hour (less when the bot's maximum is shorter) from
- * /oauth/token, renewed before it runs out and kept in memory only. Node-only: `node:crypto` and `node:fs` are loaded
- * when a token is first fetched, so a browser bundle never pulls them.
+ * /oauth/token, renewed before it runs out and kept in memory only. Node-only:
+ * `node:crypto` and `node:fs` are loaded when a token is first fetched, so a
+ * browser bundle never pulls them.
  */
 
 import { AuthError, BackendUnavailable, LoomError, NETWORK_ERROR_CODE } from "./errors.js";

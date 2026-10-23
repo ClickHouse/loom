@@ -80,8 +80,8 @@ def register_bot_cli(sub: Any) -> None:
         type=int,
         default=3600,
         metavar="SECONDS",
-        help="The longest token an exchange may ask for (expires_in, 60 to 86400); without "
-        "expires_in a token lives an hour, or this when it is shorter",
+        help="The longest token the bot is issued when its request asks (expires_in, 60 to "
+        "86400); unasked, a token lives an hour, or this when it is shorter",
     )
     p_create.add_argument(
         "--max-agents",
@@ -180,7 +180,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
             proofs = ["key"] * bool(r["has_key"]) + [f"CI {r['issuer']}"] * bool(r["issuer"])
             proofs += [f"agents by {r['agent_claim']}"] * bool(r["agent_claim"])
             ttl = int(r["max_access_token_s"])
-            limit = f"  max token {ttl} s" * (ttl != machines.TOKEN_TTL)
+            limit = f"  max access token {ttl} s" * (ttl != machines.TOKEN_TTL)
             state = "active" if r["active"] else "disabled"
             roles = ", ".join(f"{ns}={role}" for ns, role in r["ns_roles"])
             roles = "platform_admin (every org)" if r.get("platform_admin") else roles

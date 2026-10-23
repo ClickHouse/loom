@@ -140,14 +140,15 @@ def asked_lifetime(raw: str | None) -> int | None:
     """Parse an optional lifetime in whole seconds, refusing invalid requests."""
     if raw is None or raw == "":
         return None
-    digits = raw.lstrip("0") if raw.isascii() and raw.isdigit() else ""
+    refused = f"expires_in is a whole number of seconds, {MIN_TOKEN_TTL} or more"
+    if not (raw.isascii() and raw.isdigit()):
+        raise Refused("invalid_request", refused)
+    digits = raw.lstrip("0")
     # Ten digits or more is past any maximum, and is cut to it: never converted
     # whole, as Python refuses a string of thousands of digits.
     value = MAX_TOKEN_TTL if len(digits) >= 10 else int(digits or "0")
     if value < MIN_TOKEN_TTL:
-        raise Refused(
-            "invalid_request", f"expires_in is a whole number of seconds, {MIN_TOKEN_TTL} or more"
-        )
+        raise Refused("invalid_request", refused)
     return value
 
 

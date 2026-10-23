@@ -96,5 +96,5 @@ def test_bot_list_shows_a_shorter_maximum_apart_from_the_proofs(monkeypatch, cap
     monkeypatch.setattr(machines, "listed", listed)
     assert bots._cmd_list(argparse.Namespace()) == 0
     hourly, brief = capsys.readouterr().out.splitlines()
-    assert hourly.endswith(" key") and "max token" not in hourly
-    assert brief.endswith(" key  max token 600 s")
+    assert hourly.endswith(" key") and "max access token" not in hourly
+    assert brief.endswith(" key  max access token 600 s")

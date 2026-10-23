@@ -1022,7 +1022,8 @@ def _day_long(bots: dict[str, Any], name: str) -> None:
 @pytest.mark.parametrize(
     ("maximum", "asked", "lives"),
     [
-        (3600, None, 3600),  # nothing asked: an hour, as ever
+        (3600, None, 3600),  # nothing asked: an hour
+        (86400, "", 3600),  # an empty value asks nothing
         (3600, "86400", 3600),  # more than the bot allows: its maximum, not a refusal
         (86400, "86400", 86400),
         (86400, "7200", 7200),

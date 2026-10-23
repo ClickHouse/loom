@@ -9460,7 +9460,7 @@
            "nargs": null,
            "type": "builtins:int",
            "required": false,
-           "help": "The longest token an exchange may ask for (expires_in, 60 to 86400); without expires_in a token lives an hour, or this when it is shorter",
+           "help": "The longest token the bot is issued when its request asks (expires_in, 60 to 86400); unasked, a token lives an hour, or this when it is shorter",
            "metavar": "SECONDS"
           },
           {
