@@ -141,16 +141,22 @@ async def handle_memory_extraction_status(
         status=input.status or None,
         limit=input.limit,
     )
-    pending = sum(
-        1
-        for r in rows
-        if r.get("status") in (*extraction_queue.WAITING, extraction_queue.STATUS_HELD)
-    )
-    failed = sum(1 for r in rows if r.get("status") == "failed")
+    pending, failed = _counts(rows)
     return MemoryExtractionStatusOutput(
         batches=[_ExtractionQueueRow.model_validate(r) for r in rows],
         pending=pending,
         failed=failed,
+    )
+
+
+def _counts(rows: list[dict[str, Any]]) -> tuple[int, int]:
+    """How many of `rows` still wait (pending, running or held) and how many failed."""
+    from server.memory.app import extraction_queue as q
+
+    waiting = (*q.WAITING, q.STATUS_HELD)
+    return (
+        sum(1 for r in rows if r.get("status") in waiting),
+        sum(1 for r in rows if r.get("status") == q.STATUS_FAILED),
     )
 
 
@@ -184,12 +190,12 @@ async def handle_memory_extraction_status_mine(
         scope=request_scope(),
     )
     found = {str(r.get("queue_id") or "") for r in rows}
-    finished = (extraction_queue.STATUS_DONE, extraction_queue.STATUS_FAILED)
+    pending, failed = _counts(rows)
     return MemoryExtractionStatusMineOutput(
         batches=[_ExtractionQueueRow.model_validate(r) for r in rows],
         unknown=[qid for qid in asked if qid not in found],
-        pending=sum(1 for r in rows if r.get("status") not in finished),
-        failed=sum(1 for r in rows if r.get("status") == extraction_queue.STATUS_FAILED),
+        pending=pending,
+        failed=failed,
     )
 
 
@@ -205,7 +211,7 @@ async def handle_memory_extraction_retry_mine(
     enqueuer = _own_enqueuer()
     if enqueuer is None:
         return MemoryExtractionRetryMineOutput(unknown=asked)
-    done = await extraction_queue.requeue_own_failed(
+    outcome = await extraction_queue.requeue_own_failed(
         org=input.org,
         namespace=input.namespace,
         queue_ids=asked,
@@ -213,12 +219,12 @@ async def handle_memory_extraction_retry_mine(
         scope=request_scope(),
         max_attempts=settings.extraction_queue_max_attempts,
     )
-    known = {*done.requeued, *done.not_failed, *done.model_calls_off, *done.expired}
+    known = {*outcome.requeued, *outcome.not_failed, *outcome.model_calls_off, *outcome.expired}
     return MemoryExtractionRetryMineOutput(
-        requeued=done.requeued,
-        not_failed=done.not_failed,
-        model_calls_off=done.model_calls_off,
-        expired=done.expired,
+        requeued=outcome.requeued,
+        not_failed=outcome.not_failed,
+        model_calls_off=outcome.model_calls_off,
+        expired=outcome.expired,
         unknown=[qid for qid in asked if qid not in known],
     )
 

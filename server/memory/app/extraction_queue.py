@@ -696,20 +696,20 @@ async def requeue_own_failed(
     failed = [qid for qid in queue_ids if states.get(qid, {}).get("status") == STATUS_FAILED]
     waiting_or_done = [qid for qid in queue_ids if qid in states and qid not in failed]
     expired = [qid for qid in failed if int(states[qid]["past_last_day"])]
-    failed = [qid for qid in failed if qid not in expired]
+    retryable = [qid for qid in failed if qid not in expired]
     # An earlier retry still to apply goes pending whatever the switch says now.
     submitted = (
-        await _retries_unapplied(ch, [(q, int(states[q]["version"])) for q in failed])
-        if failed
+        await _retries_unapplied(ch, [(q, int(states[q]["version"])) for q in retryable])
+        if retryable
         else set()
     )
-    fresh = [q for q in failed if q not in submitted]
+    fresh = [q for q in retryable if q not in submitted]
     off = fresh if fresh and await customer.switched_off(org) else []
     if fresh and not off:
-        rows = [states[q] for q in fresh]
-        await _submit_retry(ch, rows, org, namespace, enqueued_by, scope, max_attempts)
+        to_submit = [states[q] for q in fresh]
+        await _submit_retry(ch, to_submit, org, namespace, enqueued_by, scope, max_attempts)
     return Requeued(
-        requeued=[q for q in failed if q not in off],
+        requeued=[q for q in retryable if q not in off],
         not_failed=waiting_or_done,
         model_calls_off=off,
         expired=expired,
