@@ -60,6 +60,7 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
                 "jwks_uri": "",
                 "max_token_s": 3600,
                 "max_agents": 1000,
+                "max_access_token_s": 86400,
                 "platform_admin": 0,
                 "updated_by": "cli:root",
             }
@@ -154,6 +155,29 @@ def test_only_a_platform_admin_reaches_them(calls, monkeypatch) -> None:
         headers={"Authorization": f"Bearer {admin}"},
     )
     assert r.status_code == 200 and calls[-1] == ("disable", "triage")
+
+
+def test_a_bots_longest_token_reaches_it_and_its_listing(calls, monkeypatch) -> None:
+    saved: list[machines.Machine] = []
+
+    async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
+        saved.append(bot)
+
+    monkeypatch.setattr(account_admin, "create_bot", create_bot)
+    c = _client()
+    body = {"name": "fleet", "org": "acme", "namespace_roles": ["a=writer"], "generate_key": True}
+    assert c.post("/v1/admin/bots.create", json=body).status_code == 200
+    assert (
+        c.post("/v1/admin/bots.create", json={**body, "max_access_token_s": 86400}).status_code
+        == 200
+    )
+    assert [b["max_access_token_s"] for b in saved] == [3600, 86400]
+    for wrong in (59, 86401):
+        r = c.post("/v1/admin/bots.create", json={**body, "max_access_token_s": wrong})
+        assert r.status_code == 422 and "max_access_token_s" in r.text
+    assert len(saved) == 2
+    listed = c.post("/v1/admin/bots.list").json()["bots"][0]
+    assert listed["max_access_token_s"] == 86400
 
 
 def test_generating_a_key_and_giving_one_is_refused(calls) -> None:

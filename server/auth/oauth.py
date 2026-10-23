@@ -1465,7 +1465,7 @@ def _refused(e: machines.Refused) -> OAuthError:
 
 
 async def _client_credentials_grant(f: dict[str, str], audiences: list[str]) -> dict[str, Any]:
-    """A bot proving its key (RFC 7523 private_key_jwt): an hour-long token."""
+    """Exchange a bot's key proof for a token within its lifetime limit."""
     assertion = f.get("client_assertion", "")
     if f.get("client_assertion_type") != machines.ASSERTION_TYPE or not assertion:
         raise OAuthError(
@@ -1473,6 +1473,7 @@ async def _client_credentials_grant(f: dict[str, str], audiences: list[str]) -> 
         )
     since = int(time.time())  # before the bot is read: see _machine_tokens
     try:
+        asked = machines.asked_lifetime(f.get("expires_in"))  # before its assertion is spent
         m, proof = await machines.verify_assertion(assertion, f.get("client_id", ""), audiences)
     except machines.Refused as e:
         raise _refused(e) from None
@@ -1482,19 +1483,19 @@ async def _client_credentials_grant(f: dict[str, str], audiences: list[str]) -> 
         raise OAuthError(
             "invalid_client", 401, description="this client assertion was used already"
         )
-    return await _machine_tokens(m, since, since + machines.TOKEN_TTL, {"by": "key"})
+    ttl = machines.token_lifetime(m, asked)
+    return await _machine_tokens(m, since, since + ttl, {"by": "key"})
 
 
 async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
-    """A CI job's own OIDC token for the bot whose workload trust it meets
-    (RFC 8693). Exchanged as often as the job's clients need while it lives,
-    and the token issued never outlives it."""
+    """Exchange a workload token without outliving its proof or the bot's limit."""
     token = f.get("subject_token", "")
     if f.get("subject_token_type") not in machines.SUBJECT_TOKEN_TYPES or not token:
         raise OAuthError("invalid_request", description="send the workload's OIDC token as a jwt")
     since = int(time.time())  # before the bot is read: see _machine_tokens
     agent = own = ""
     try:
+        asked = machines.asked_lifetime(f.get("expires_in"))  # before anything is counted
         client_id = f.get("client_id", "")
         if client_id:
             m, proof = await machines.verify_workload(token, client_id)
@@ -1509,9 +1510,9 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
         raise _refused(e) from None
     except (GrantBusyError, BackendUnavailableError):  # its first exchange, made elsewhere now
         raise _unavailable() from None
-    # The token never outlives the proof, nor an hour from `since`: its issue
-    # time, which revocation is judged by.
-    ends = min(int(proof["exp"]), since + machines.TOKEN_TTL)
+    # The token never outlives the proof, nor its lifetime from `since`: its
+    # issue time, which revocation is judged by.
+    ends = min(int(proof["exp"]), since + machines.token_lifetime(m, asked))
     issued = await _machine_tokens(
         m, since, ends, {"by": "workload", "workload_sub": str(proof["sub"])}, agent, own
     )
@@ -1623,7 +1624,12 @@ async def _machine_tokens(
         org=m["org"],
         namespace="-",
         actor=subject,
-        subject={"jti": jti, **how, **({"platform_admin": True} if admin else {})},
+        subject={
+            "jti": jti,
+            **how,
+            "ttl_s": ends - since,
+            **({"platform_admin": True} if admin else {}),
+        },
     )
     return {"access_token": token, "token_type": "Bearer", "expires_in": ends - now}
 

@@ -12,9 +12,10 @@
  *   LOOM_WORKLOAD_TOKEN_FILE, or asked of GitHub Actions
  *   (ACTIONS_ID_TOKEN_REQUEST_URL) for LOOM_WORKLOAD_AUDIENCE,
  *
- * and gets an hour-long token from /oauth/token, renewed before it runs out
- * and kept in memory only. Node-only: `node:crypto` and `node:fs` are loaded
- * when a token is first fetched, so a browser bundle never pulls them.
+ * and gets a token of an hour (less when the bot's maximum is shorter) from
+ * /oauth/token, renewed before it runs out and kept in memory only. Node-only:
+ * `node:crypto` and `node:fs` are loaded when a token is first fetched, so a
+ * browser bundle never pulls them.
  */
 
 import { AuthError, BackendUnavailable, LoomError, NETWORK_ERROR_CODE } from "./errors.js";
@@ -77,7 +78,7 @@ export function machineLogin(
   });
 }
 
-/** Sends the bot's hour-long token, getting a new one before it expires and once more on a 401. */
+/** Sends the bot's token (an hour, or the bot's shorter maximum), renewed before it expires and on a 401. */
 export class MachineLogin implements TokenProvider {
   readonly baseUrl: string;
   readonly clientId: string;

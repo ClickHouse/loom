@@ -338,13 +338,15 @@ def bot_from(
     jwks_uri: str = "",
     max_token_s: int = 3600,
     max_agents: int = 1000,
+    max_access_token_s: int = machines.TOKEN_TTL,
     platform_admin: bool = False,
 ) -> machines.Machine:
     """A bot from what an operator gave; ValueError says what is wrong. With
     `agent_claim`, a trust whose agents each get their own subject and
     namespace (server/auth/agents.py); its namespace roles are what they share.
-    With `platform_admin`, every token it gets carries that role, which spans
-    every org: it names no namespace and tells no agents apart."""
+    `max_access_token_s` caps each token, the hour-long default included. With
+    `platform_admin`, every token carries that role, which spans every org: it
+    names no namespace and tells no agents apart."""
     from server.auth.authz import GRANT_ROLES
 
     if not _BOT_NAME.fullmatch(name):
@@ -386,6 +388,10 @@ def bot_from(
         )
     if not 60 <= max_token_s <= 86400 or max_agents < 1:
         raise ValueError("max_token_s is 60 to 86400 seconds, max_agents at least 1")
+    if not machines.MIN_TOKEN_TTL <= max_access_token_s <= machines.MAX_TOKEN_TTL:
+        raise ValueError(
+            f"max_access_token_s is {machines.MIN_TOKEN_TTL} to {machines.MAX_TOKEN_TTL} seconds"
+        )
     if not (trust or public_key_pem):
         raise ValueError("give the bot a public key or a CI trust")
     jwks_uri = jwks_uri.strip()
@@ -417,6 +423,7 @@ def bot_from(
         "jwks_uri": jwks_uri,
         "max_token_s": max_token_s,
         "max_agents": max_agents,
+        "max_access_token_s": max_access_token_s,
         "platform_admin": platform_admin,
     }
 
@@ -448,9 +455,18 @@ def _check_platform_admin(
 
 
 async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
+    from server.core.ch import get_client
     from server.identity.store import namespaces
 
     name, org = bot["name"], bot["org"]
+    if bot["max_access_token_s"] != machines.TOKEN_TTL and not (
+        await machines.access_token_maximum_ready(get_client())
+    ):
+        raise ValueError(
+            f"a maximum token lifetime other than {machines.TOKEN_TTL} s waits until replicas"
+            f" in loom.instances all run migration {machines.ACCESS_TOKEN_MIGRATION} or later"
+            " (an older one issues an hour and resets the maximum when it saves the bot)"
+        )
     if await revocation.revoked_outright(machines.subject(name)):
         raise ValueError(f"{machines.subject(name)} is revoked outright; it could never sign in")
     async with AsyncExitStack() as held:
@@ -477,7 +493,7 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
             await _refuse_shared_tokens(bot)
         await machines.save(bot, by=by)
     if existing is not None:
-        # Tokens from its old key or wider roles end now, not within the hour.
+        # Tokens from its old key or wider roles end now, not when they expire.
         # The cutoff is taken after the save, so a request that read the old
         # row falls under it; returning once it has passed lets the new key's
         # first token live.
@@ -494,6 +510,7 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
                 "name": name,
                 "key": bool(bot["public_keys"]),
                 "issuer": bot["issuer"],
+                "max_access_token_s": bot["max_access_token_s"],
                 "platform_admin": bool(bot.get("platform_admin", False)),
             },
         )
@@ -580,8 +597,7 @@ async def provision_agent(name: str, agent: str, *, by: str) -> tuple[str, str]:
 
 
 async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
-    """A bot's or an agent's tokens live an hour; revoked now, not when they
-    run out. Returns the cutoff: past every token issued so far."""
+    """Revoke existing bot or agent tokens with a permanent issue-time cutoff."""
     cutoff = revocation.from_now_on()
     await revocation.cut_off(subject, issued_before=cutoff, reason=reason, revoked_by=by)
     return cutoff

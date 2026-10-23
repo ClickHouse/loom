@@ -113,6 +113,10 @@ its bot. To prevent that, delete the documents tagged `source-kind:assistant_tur
 A namespace erasure the previous build runs once namespace guides exist leaves that
 namespace's guide; run the erasure again once the newer build serves
 ([rolling upgrades](../architecture/rolling-upgrades.md), rule 24).
+After a rollback to a build without bot token maximums, every bot's tokens last an hour,
+and a bot that build saves keeps 3600 as its maximum; reapply a shorter or longer one
+once the newer build serves
+([rolling upgrades](../architecture/rolling-upgrades.md), rule 26).
 There is no migration to undo: the previous build reads and writes the newer schema.
 Its version writes to `loom.memory` and the other `ReplacingMergeTree` memory tables
 keep the columns it does not know

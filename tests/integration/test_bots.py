@@ -1,12 +1,14 @@
 """A bot end to end against a real server: a platform admin registers it over
 the API with a generated key, the SDK with only LOOM_CLIENT_ID and the key
 file reads and writes as `sa:<name>` on hour-long tokens, and disabling it
-ends both its current token and any new one."""
+ends both its current token and any new one. A bot allowed day-long tokens
+gets one when its request asks, and revoking its subject ends it at once."""
 
 from __future__ import annotations
 
 import asyncio
 import sys
+import time
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -20,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
 
+import jwt as pyjwt  # noqa: E402
 from loom import Agent  # noqa: E402
 from loom.errors import AuthInvalid  # noqa: E402
 from loom.machine import MachineLogin  # noqa: E402
@@ -52,11 +55,7 @@ def _admin(base: str, path: str, body: dict, *, roles: list[str]) -> httpx.Respo
     )
 
 
-def test_a_bot_signs_in_with_its_key_and_is_cut_off_when_disabled(
-    base: str, ch_client: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    org, ns, name = unique_org("bots"), f"bot-{uuid.uuid4().hex[:6]}", f"b{uuid.uuid4().hex[:6]}"
-    # A bot is given namespaces that exist.
+def _namespace(ch_client: Any, org: str, ns: str) -> None:
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     ch_client.insert(
         "loom.namespaces",
@@ -71,6 +70,13 @@ def test_a_bot_signs_in_with_its_key_and_is_cut_off_when_disabled(
             "updated_at",
         ],
     )
+
+
+def test_a_bot_signs_in_with_its_key_and_is_cut_off_when_disabled(
+    base: str, ch_client: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, ns, name = unique_org("bots"), f"bot-{uuid.uuid4().hex[:6]}", f"b{uuid.uuid4().hex[:6]}"
+    _namespace(ch_client, org, ns)  # a bot is given namespaces that exist
     body = {"name": name, "org": org, "namespace_roles": [f"{ns}=writer"], "generate_key": True}
     assert _admin(base, "/v1/admin/bots.create", body, roles=["writer"]).status_code == 403
     r = _admin(base, "/v1/admin/bots.create", body, roles=["platform_admin"])
@@ -100,6 +106,62 @@ def test_a_bot_signs_in_with_its_key_and_is_cut_off_when_disabled(
     assert gone["authenticated"] is False and "revoked" in gone["reason"]
     with pytest.raises(AuthInvalid):
         MachineLogin(base, name, key_file=str(key)).token()
+
+
+def test_a_bot_allowed_a_day_gets_one_when_asked_and_its_revocation_ends_it(
+    base: str, ch_client: Any, tmp_path: Path
+) -> None:
+    org, ns, name = unique_org("bots"), f"bot-{uuid.uuid4().hex[:6]}", f"b{uuid.uuid4().hex[:6]}"
+    _namespace(ch_client, org, ns)
+    body = {
+        "name": name,
+        "org": org,
+        "namespace_roles": [f"{ns}=writer"],
+        "generate_key": True,
+        "max_access_token_s": 86400,
+    }
+    r = _admin(base, "/v1/admin/bots.create", body, roles=["platform_admin"])
+    assert r.status_code == 200, r.text
+    key = tmp_path / "bot.pem"
+    key.write_text(r.json()["private_key_pem"])
+    listing = _admin(base, "/v1/admin/bots.list", {}, roles=["platform_admin"]).json()["bots"]
+    assert [b["max_access_token_s"] for b in listing if b["name"] == name] == [86400]
+    meta = httpx.get(f"{base}/.well-known/oauth-authorization-server", timeout=30.0).json()
+
+    def issued(expires_in: str | None) -> dict[str, Any]:
+        # The SDK never asks for a lifetime: the form is built here, with its assertion.
+        now = int(time.time())
+        claims = {"iss": name, "sub": name, "aud": meta["token_endpoint"], "iat": now}
+        claims |= {"exp": now + 120, "jti": uuid.uuid4().hex}
+        assertion = pyjwt.encode(claims, key.read_bytes(), algorithm="ES256")
+        form = {
+            "grant_type": "client_credentials",
+            "client_id": name,
+            "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+            "client_assertion": assertion,
+            **({} if expires_in is None else {"expires_in": expires_in}),
+        }
+        answer = httpx.post(f"{base}/oauth/token", data=form, timeout=30.0)
+        assert answer.status_code == 200, answer.text
+        return answer.json()
+
+    assert 3590 <= issued(None)["expires_in"] <= 3600  # unasked: an hour
+    assert 86390 <= issued("999999")["expires_in"] <= 86400  # the bot's maximum
+    day = issued("86400")["access_token"]
+    claims = pyjwt.decode(day, options={"verify_signature": False})
+    assert claims["exp"] - claims["iat"] == 86400
+    headers = {"Authorization": f"Bearer {day}"}
+    assert httpx.get(f"{base}/v1/whoami", headers=headers).json()["subject"] == f"sa:{name}"
+
+    revoked = _admin(
+        base,
+        "/v1/admin/revoke_subject",
+        {"org": org, "subject": f"sa:{name}", "reason": "bots e2e"},
+        roles=["platform_admin"],
+    )
+    assert revoked.status_code == 200, revoked.text
+    gone = httpx.get(f"{base}/v1/whoami", headers=headers).json()
+    assert gone["authenticated"] is False and "revoked" in gone["reason"]
 
 
 def test_a_platform_admin_bot_exchanges_its_key_without_namespace_grants(

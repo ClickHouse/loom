@@ -2,8 +2,10 @@
 provider and never hold a long-lived secret.
 
 An operator registers one (`loom bot create`) with the namespaces its data
-belongs in and how it proves itself at /oauth/token; each proof gets an
-hour-long service-account token for `sa:<name>`:
+belongs in and how it proves itself at /oauth/token; each proof gets a
+service-account token for `sa:<name>`: an hour, or the identity's own maximum
+(`max_access_token_s`, at most a day) when shorter, unless the request asks for
+another lifetime (`expires_in`) up to that maximum:
 
 - a key: the bot signs a short assertion with its private key, the
   client-credentials grant with `private_key_jwt` (RFC 7523);
@@ -37,7 +39,12 @@ log = logging.getLogger(__name__)
 
 TABLE = "loom.machine_identities"
 TOKEN_TTL = 3600
+# not a setting: the ceiling an identity's own maximum may name, a product limit
+MAX_TOKEN_TTL = 86400
+# not a setting: a shorter one would run out before its first use (verify's leeway)
+MIN_TOKEN_TTL = 60
 _PLATFORM_ADMIN_MIGRATION = 76  # schemas/migrations/076_machine_platform_admin.sql
+ACCESS_TOKEN_MIGRATION = 77  # schemas/migrations/077_machine_access_token_ttl.sql
 ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
 SUBJECT_TOKEN_TYPES = frozenset(
@@ -65,6 +72,9 @@ class Machine(TypedDict):
     # the trust may make.
     max_token_s: int
     max_agents: int
+    # The longest token a proof may be issued when the request asks for one
+    # (`expires_in`); without one it gets an hour, or this when shorter.
+    max_access_token_s: int
     # Its tokens carry the platform_admin role, which spans every org; such a
     # bot names no namespace and tells no agents apart (`account_admin.bot_from`).
     platform_admin: bool
@@ -72,15 +82,23 @@ class Machine(TypedDict):
 
 async def platform_admin_tokens_ready(ch: Any) -> bool:
     """Older replicas accept admin JWTs without protecting human sign-in changes."""
+    return await fleet_at(ch, _PLATFORM_ADMIN_MIGRATION)
+
+
+async def access_token_maximum_ready(ch: Any) -> bool:
+    """Older replicas issue an hour whatever the maximum, and reset it when they save."""
+    return await fleet_at(ch, ACCESS_TOKEN_MIGRATION)
+
+
+async def fleet_at(ch: Any, migration: int) -> bool:
+    """Every live replica, in every deployment, runs `migration` or later."""
     from server.core import instances
 
     try:
         live = await instances.read_live(ch, all_deployments=True)
-        return bool(live) and all(
-            int(row["schema_version"] or 0) >= _PLATFORM_ADMIN_MIGRATION for row in live
-        )
-    except Exception as e:  # noqa: BLE001 — an unread fleet refuses an admin token
-        log.warning("admin token fleet check failed: %s", type(e).__name__)
+        return bool(live) and all(int(row["schema_version"] or 0) >= migration for row in live)
+    except Exception as e:  # noqa: BLE001 — an unread fleet refuses what it gates
+        log.warning("fleet check for migration %d failed: %s", migration, type(e).__name__)
         return False
 
 
@@ -122,8 +140,31 @@ def _machine(row: dict[str, Any]) -> Machine:
         "jwks_uri": row["jwks_uri"],
         "max_token_s": int(row["max_token_s"]),
         "max_agents": int(row["max_agents"]),
+        "max_access_token_s": int(row["max_access_token_s"]),
         "platform_admin": bool(row.get("platform_admin", 0)),  # a row of a build before it
     }
+
+
+def asked_lifetime(raw: str | None) -> int | None:
+    """Parse an optional lifetime in whole seconds, refusing invalid requests."""
+    if raw is None or raw == "":
+        return None
+    refused = f"expires_in is a whole number of seconds, {MIN_TOKEN_TTL} or more"
+    if not (raw.isascii() and raw.isdigit()):
+        raise Refused("invalid_request", refused)
+    digits = raw.lstrip("0")
+    # Ten digits or more is past any maximum, and is cut to it: never converted
+    # whole, as Python refuses a string of thousands of digits.
+    value = MAX_TOKEN_TTL if len(digits) >= 10 else int(digits or "0")
+    if value < MIN_TOKEN_TTL:
+        raise Refused("invalid_request", refused)
+    return value
+
+
+def token_lifetime(m: Machine, asked: int | None) -> int:
+    """Cap the requested or default lifetime at the bot's maximum (bot_from keeps it
+    within a day)."""
+    return min(TOKEN_TTL if asked is None else asked, m["max_access_token_s"])
 
 
 async def live_roles(m: Machine) -> list[tuple[str, str]]:
@@ -180,8 +221,8 @@ async def listed() -> list[dict[str, Any]]:
     with own_write_reads():  # a trust another replica saved a moment ago counts
         return await get_client().query_all(
             f"SELECT name, org, ns_roles, public_keys != '' AS has_key, issuer, audience, claims, "
-            f"agent_claim, jwks_uri, max_token_s, max_agents, platform_admin, active, updated_by, "
-            f"updated_at FROM {TABLE} FINAL "
+            f"agent_claim, jwks_uri, max_token_s, max_agents, max_access_token_s, "
+            f"platform_admin, active, updated_by, updated_at FROM {TABLE} FINAL "
             "ORDER BY name"
         )
 

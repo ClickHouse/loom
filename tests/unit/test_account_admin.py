@@ -71,9 +71,30 @@ def test_a_trust_issuer_is_kept_as_given_slash_and_all() -> None:
     assert bot["issuer"] == "https://sts.example/tenant/"
 
 
+@pytest.mark.parametrize(
+    ("given", "ok"), [(None, True), (60, True), (86400, True), (59, False), (86401, False)]
+)
+def test_a_bots_longest_token_is_a_minute_to_a_day(given: int | None, ok: bool) -> None:
+    def make() -> machines.Machine:
+        lifetime = {} if given is None else {"max_access_token_s": given}
+        return account_admin.bot_from(
+            name="b", org="acme", namespace_roles=["a=writer"], public_key_pem=_KEY, **lifetime
+        )
+
+    if ok:
+        assert make()["max_access_token_s"] == (3600 if given is None else given)
+    else:
+        with pytest.raises(ValueError, match="max_access_token_s is 60 to 86400 seconds"):
+            make()
+
+
+_real_ready = machines.access_token_maximum_ready
+
+
 @pytest.fixture
 def world(monkeypatch) -> dict[str, Any]:
     state: dict[str, Any] = {"bots": {}, "revoked": [], "outright": set(), "namespaces": {"triage"}}
+    state |= {"audited": [], "fleet_ready": True}
 
     async def get(name: str, *, active_only: bool = True) -> machines.Machine | None:
         bot = state["bots"].get(name)
@@ -98,9 +119,14 @@ def world(monkeypatch) -> dict[str, Any]:
         return None
 
     async def emit(event_type: str, **kw: Any) -> str:
+        state["audited"].append((event_type, kw["subject"]))
         return ""
 
+    async def fleet_ready(ch: Any) -> bool:
+        return state["fleet_ready"]
+
     monkeypatch.setattr(machines, "get", get)
+    monkeypatch.setattr(machines, "access_token_maximum_ready", fleet_ready)
     monkeypatch.setattr(machines, "save", save)
     monkeypatch.setattr(namespaces, "is_active", is_active)
     monkeypatch.setattr(revocation, "revoked_outright", revoked_outright)
@@ -119,6 +145,43 @@ def _bot(roles: list[str]) -> machines.Machine:
 def test_a_bot_on_a_namespace_that_does_not_exist_is_refused(world) -> None:
     with pytest.raises(ValueError, match="no namespace ghost"):
         asyncio.run(account_admin.create_bot(_bot(["ghost=writer"]), by="ops", replace=False))
+
+
+def _bot_allowed(seconds: int) -> machines.Machine:
+    return account_admin.bot_from(
+        name="triage",
+        org="acme",
+        namespace_roles=["triage=writer"],
+        public_key_pem=_KEY,
+        max_access_token_s=seconds,
+    )
+
+
+def test_a_maximum_other_than_an_hour_waits_for_the_whole_fleet(world) -> None:
+    world["fleet_ready"] = False
+    with pytest.raises(ValueError, match=f"all run migration {machines.ACCESS_TOKEN_MIGRATION} "):
+        asyncio.run(account_admin.create_bot(_bot_allowed(600), by="ops", replace=False))
+    assert world["bots"] == {}
+    asyncio.run(account_admin.create_bot(_bot_allowed(3600), by="ops", replace=False))
+    world["fleet_ready"] = True
+    asyncio.run(account_admin.create_bot(_bot_allowed(600), by="ops", replace=True))
+    assert world["bots"]["triage"]["max_access_token_s"] == 600
+    created = [s for e, s in world["audited"] if e == "auth.machine_created"]
+    assert [s["max_access_token_s"] for s in created] == [3600, 600]
+
+
+def test_an_unread_fleet_refuses_a_maximum_other_than_an_hour(world, monkeypatch) -> None:
+    from server.core import instances
+
+    async def unread(*a: Any, **kw: Any) -> list[dict[str, Any]]:
+        raise ConnectionError("offline")
+
+    monkeypatch.setattr(machines, "access_token_maximum_ready", _real_ready)
+    monkeypatch.setattr(instances, "read_live", unread)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: None)
+    with pytest.raises(ValueError, match=f"all run migration {machines.ACCESS_TOKEN_MIGRATION} "):
+        asyncio.run(account_admin.create_bot(_bot_allowed(600), by="ops", replace=False))
+    assert world["bots"] == {}
 
 
 def test_a_subject_revoked_outright_makes_no_bot(world) -> None:
@@ -519,3 +582,33 @@ def test_making_a_disabled_bot_again_ends_its_old_tokens(world, monkeypatch) -> 
     world["revoked"].clear()
     asyncio.run(account_admin.create_bot(_bot(["triage=viewer"]), by="ops", replace=False))
     assert world["revoked"] == [("sa:triage", "bot replaced")]
+
+
+@pytest.mark.parametrize(
+    ("versions", "ready"),
+    [
+        ([], False),
+        ([76], False),
+        ([77, 76], False),
+        ([None], False),
+        ([77], True),
+        ([77, 78], True),
+    ],
+)
+async def test_the_maximum_waits_for_every_replica_at_migration_77(
+    versions: list[int | None], ready: bool
+) -> None:
+    from tests.unit.test_platform_admin_rollout import Fleet
+
+    fleet = Fleet([{"deployment": 0, "schema_version": v} for v in versions])
+    assert await _real_ready(fleet) is ready
+
+
+def test_the_maximum_floor_matches_the_physical_migration() -> None:
+    from pathlib import Path
+
+    path = (
+        Path(__file__).resolve().parents[2] / "schemas/migrations/077_machine_access_token_ttl.sql"
+    )
+    assert path.is_file()
+    assert int(path.name.split("_", 1)[0]) == machines.ACCESS_TOKEN_MIGRATION

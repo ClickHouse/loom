@@ -150,6 +150,7 @@ class BotInput(_Input):
     jwks_uri: str = ""
     max_token_s: int = 3600
     max_agents: int = 1000
+    max_access_token_s: int = machines.TOKEN_TTL
     # Its tokens carry platform_admin, which spans every org.
     platform_admin: bool = False
     replace: bool = False
@@ -161,7 +162,7 @@ async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
     once: Loom keeps only the public half."""
     if input.platform_admin:
         # A token that carries platform_admin must not mint itself a lasting
-        # successor: a leaked hour-long token would become a permanent one.
+        # successor: a leaked token would become a permanent one.
         _only_a_person(info, "a platform-admin bot is registered", "loom bot create")
     if input.generate_key and input.public_key_pem:
         raise _invalid(ValueError("give a public key or ask for one to be generated, not both"))
@@ -179,6 +180,7 @@ async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
             jwks_uri=input.jwks_uri,
             max_token_s=input.max_token_s,
             max_agents=input.max_agents,
+            max_access_token_s=input.max_access_token_s,
             platform_admin=input.platform_admin,
         )
     except ValueError as e:
@@ -222,6 +224,7 @@ async def bots_list() -> dict[str, Any]:
                 "jwks_uri": r["jwks_uri"],
                 "max_token_s": int(r["max_token_s"]),
                 "max_agents": int(r["max_agents"]),
+                "max_access_token_s": int(r["max_access_token_s"]),
                 "platform_admin": bool(r.get("platform_admin", 0)),
                 "updated_by": r["updated_by"],
             }

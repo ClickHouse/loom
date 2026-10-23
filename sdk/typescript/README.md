@@ -227,7 +227,7 @@ A refresh holds the lock directory `~/.loom/.credentials.lock.d`, which the Pyth
 
 ### Bots and CI jobs
 
-A bot registered with `loom bot create` needs no long-lived secret. With `LOOM_CLIENT_ID` set and no `apiKey` / `LOOM_API_KEY`, the client gets its own hour-long token from `/oauth/token`, keeps it in memory only, renews it before it runs out and retries a 401 once with a fresh one. It proves itself with one of:
+A bot registered with `loom bot create` needs no long-lived secret. With `LOOM_CLIENT_ID` set and no `apiKey` / `LOOM_API_KEY`, the client gets its own token from `/oauth/token` (an hour, less when the bot's maximum is shorter), keeps it in memory only, renews it before it runs out and retries a 401 once with a fresh one. It proves itself with one of:
 
 - a key, set by exactly one of `LOOM_CLIENT_KEY_FILE` (a PEM file), `LOOM_CLIENT_KEY` (the PEM itself) or `LOOM_CLIENT_KEY_SECRET` (an AWS Secrets Manager id or ARN; install `@aws-sdk/client-secrets-manager`). The key is read again for each token, so rotation is picked up. P-256, Ed25519 and RSA keys sign as ES256, EdDSA and RS256.
 - a workload token: `LOOM_WORKLOAD_TOKEN`, or the file `LOOM_WORKLOAD_TOKEN_FILE` (re-read for each token), or, in GitHub Actions (`permissions: id-token: write`), one asked for `LOOM_WORKLOAD_AUDIENCE`.
