@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from server.memory.app import value_updates as vu
+from server.memory.domain.conflicts import value_tokens
 
 OLD = '"User recently set a personal best time of 27:12 in a charity 5K run."'
 NEW = '"User\'s personal best time for the 5K run is 25:50."'
@@ -19,9 +20,9 @@ TRAIN = (
 
 
 def test_value_tokens_find_times_money_and_units() -> None:
-    assert vu.value_tokens(OLD) == {"27:12", "5k"}
-    assert vu.value_tokens("paid $40 and 12% tax at 5:30pm") == {"$40", "12%", "5:30pm"}
-    assert vu.value_tokens("no numbers here") == set()
+    assert value_tokens(OLD) == {"27:12", "5k"}
+    assert value_tokens("paid $40 and 12% tax at 5:30pm") == {"$40", "12%", "5:30pm"}
+    assert value_tokens("no numbers here") == set()
 
 
 def test_content_tokens_drop_stopwords_and_numbers() -> None:

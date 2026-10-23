@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from server.memory.app.value_updates import date_tokens, is_value_update
+from server.memory.app.value_updates import is_value_update
+from server.memory.domain.conflicts import date_tokens
 
 START = "User started a solo camping trip to Yosemite National Park on 2023-05-15 and is excited."
 BACK = (

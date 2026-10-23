@@ -43,16 +43,11 @@ from server.memory.app.auto_resolution import (
     record_or_owe,
     retired_entry,
 )
+from server.memory.domain.conflicts import values_differ
 from server.memory.store.conflict_candidates import vector_param, vector_params
 
 log = logging.getLogger(__name__)
 
-# Value tokens: clock times (27:12, 5:30pm), dates, money, percentages, plain
-# numbers with optional unit suffix (5k, 10km, 3rd).
-_VALUE_RE = re.compile(
-    r"(?<![A-Za-z])(?:\$|€|£)?\d+(?:[.,:]\d+)*(?:\s?(?:%|am|pm|k|km|kg|lb|lbs|mi|hrs?|min|s))?(?![A-Za-z])",
-    re.IGNORECASE,
-)
 # Alphanumeric tokens that contain at least one letter ("5k" counts, "2023" does not).
 _WORD_RE = re.compile(r"[a-z0-9]*[a-z][a-z0-9']*")
 _STOP = frozenset(
@@ -63,35 +58,11 @@ _STOP = frozenset(
 )
 
 
-def value_tokens(text: str) -> set[str]:
-    """Normalised value tokens in `text` ("27:12", "25:50", "$40", "5k")."""
-    out: set[str] = set()
-    for m in _VALUE_RE.finditer(text or ""):
-        tok = m.group(0).strip().lower().replace(" ", "")
-        # Strip a trailing unit so "5k run" and "5K" compare equal, but keep
-        # the digits+separators that carry the value.
-        out.add(tok)
-    return out
-
-
 def content_tokens(text: str) -> set[str]:
     """Lowercase alphabetic tokens minus stopwords and minus value tokens —
     the words that say WHAT is being measured."""
     words = set(_WORD_RE.findall((text or "").lower()))
     return {w for w in words if len(w) >= 2 and w not in _STOP}
-
-
-_DATE_IN_TEXT_RE = re.compile(r"\b(20\d\d)-(\d\d)-(\d\d)\b")
-
-
-def date_tokens(text: str) -> set[str]:
-    """The value tokens that are only the pieces of an ISO day written into
-    the text ("2023", "05", "15" of "on 2023-05-15"). An event's date is its
-    anchor, not the value of an attribute."""
-    out: set[str] = set()
-    for m in _DATE_IN_TEXT_RE.finditer(text or ""):
-        out.update(m.groups())
-    return out
 
 
 def is_value_update(a: str, b: str, *, min_overlap: float = 0.5) -> bool:
@@ -105,13 +76,7 @@ def is_value_update(a: str, b: str, *, min_overlap: float = 0.5) -> bool:
     words and differ only in the day; read as one attribute updated, the
     start would be retired and "how many days did I spend" would lose its
     first date. Two rows that differ only in their dates are two events."""
-    va, vb = value_tokens(a) - date_tokens(a), value_tokens(b) - date_tokens(b)
-    if not va or not vb or va == vb:
-        return False
-    # One side restating the other's value plus extra numbers is not an
-    # update ("27:12" vs "27:12 in the 5k") — require at least one value on
-    # each side the other lacks.
-    if va <= vb or vb <= va:
+    if not values_differ(a, b):
         return False
     ca, cb = content_tokens(a), content_tokens(b)
     if not ca or not cb:

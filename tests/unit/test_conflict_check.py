@@ -161,6 +161,9 @@ def test_duplicate_step_requires_the_same_content_words() -> None:
         "Moshe Kahlon works in the field of politician",
         "Moshe Kahlon works in the field of soldier",
     )
+    # A new value in new words is an update, not a paraphrase.
+    assert not same_content_words("my PB is 27:10", "beat my PB, 26:30")
+    assert same_content_words("my PB is 27:10", "my PB is 27:10 in the 5k")
 
 
 def test_later_valid_peers_needs_both_dates() -> None:
