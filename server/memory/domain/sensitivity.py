@@ -426,23 +426,24 @@ _KEY_CAPS_WORDS = re.compile(r"[A-Z]{2,}|[A-Z]?[a-z0-9]+")
 
 _ASSIGNMENT_KEY = re.compile(rf"(?i)(?:{ASSIGNMENT_WORDS})")
 # A value that names where a secret lives rather than holding it: `env:OPENAI_API_KEY`,
-# `${DB_PASSWORD}`, `vault:kv/db`, a path.
-_SECRET_REFERENCE = re.compile(r"[$%{/~.]|[A-Za-z][\w.+-]*:")
+# `vault:kv/db`, `${DB_PASSWORD}`, a path.
+_SECRET_REFERENCE = re.compile(r"(?i)(?:env|vault|secret|ref):|\$\{|~?/|\./")
 
 
 def _keyed_credential(key: str, value: str) -> str:
     """`password: <value>` for a token-shaped string under a key that ends in a credential
     word (`password`, `dbPassword`, `client_secret`), for the assignment pattern to read; ''
-    otherwise. The value mixes at least two of letters, digits and symbols, so a form field
-    (`"required"`) or a mask (`"********"`) is not a credential."""
+    otherwise. The value holds a letter and a digit, so a form field (`"required"`), a mask
+    (`"********"`) or a placeholder (`"YOUR_API_KEY"`, `"<redacted>"`) is not a credential."""
     words = [w.lower() for w in _KEY_WORDS.findall(key)]
     if not any(_ASSIGNMENT_KEY.fullmatch("_".join(words[-n:])) for n in (1, 2) if len(words) >= n):
         return ""
     v = value.strip()
     if len(v) < 8 or any(c.isspace() for c in v) or _SECRET_REFERENCE.match(v):
         return ""
-    kinds = {"letter" if c.isalpha() else "digit" if c.isdigit() else "symbol" for c in v}
-    return f"password: {v}" if len(kinds) >= 2 else ""
+    if not (any(c.isalpha() for c in v) and any(c.isdigit() for c in v)):
+        return ""
+    return f"password: {v}"
 
 
 def _keyed_secret(key: str, value: Any) -> str:
@@ -477,7 +478,7 @@ def _keyed_secret(key: str, value: Any) -> str:
 # digits; a key reads at most 200 characters, so the scan stays linear.
 _KEYED_PAIR = re.compile(
     r'"((?:[^"\\]|\\.){1,200})"\s*:\s*'
-    r'(?:"\s*([^"\\\s]{1,256})\s*"|([0-9][0-9-]{0,15})(?![\w.-]))',
+    r'(?:"\s*((?:[^"\\\s]|\\.){1,256})\s*"|([0-9][0-9-]{0,15})(?![\w.-]))',
     re.ASCII,
 )
 

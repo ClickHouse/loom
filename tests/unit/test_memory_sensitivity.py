@@ -347,6 +347,12 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
         # two scalars never read as one: a form label then the next key, or a number list
         {"label": "Password:", "placeholder": "Enter your password"},
         {"label": "Secret:", "required": True},
+        {"api_key": "YOUR_API_KEY"},
+        {"password": "not_set_yet"},
+        {"client_secret": "<redacted>"},
+        {"password": "[REDACTED]"},
+        {"password": "${DB_PASSWORD}"},
+        {"password": "vault:kv/db/password1"},
         {"batch_sizes": [256, 512, 1024]},
     ],
 )
@@ -364,6 +370,9 @@ def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
         {"dbPassword": "hunter2xyz123"},
         {"client_secret": "9f8e7d6c5b4a3210ffee"},
         {"api.key": "abcd1234efgh"},
+        {"password": "admin:Passw0rd"},
+        {"password": "$ecr3tPass"},
+        {"password": "ab\\cd1234"},
     ],
 )
 def test_a_credential_under_a_credential_key_reads_high(value: object) -> None:
@@ -861,6 +870,8 @@ _PREFILTER_OBJECTS = [
     {"dbPassword": "hunter2xyz123"},
     {"api.key": "abcd1234efgh"},
     {"password": "required"},  # a form field, not a credential
+    {"password": "ab\\cd1234"},  # written `ab\\cd1234`
+    {"password": "p\u00e4ss1234"},  # written `p\u00e4ss1234`
     {"card": 4111111111111111},  # a lone card number
     {"note": "call 415\n555\n0123"},  # written `415\n555\n0123`
     {"note": "415\u00a0555\u00a00123"},  # written `415\u00a0555\u00a00123`
