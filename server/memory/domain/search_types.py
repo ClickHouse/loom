@@ -302,6 +302,20 @@ def row_identity(row: Mapping[str, Any]) -> RowIdentity | None:
     return str(row["agent"]), str(row["user_id"]), str(row["session_id"])
 
 
+def hit_row_key(hit: Any, namespace: str = "") -> tuple[str, str, str]:
+    """(namespace, session_id, memory_key) of the stored row a hit is: one key holds a row
+    in each session that wrote it, so a key alone does not name one row."""
+    session = str(getattr(hit, "session_id", "") or "")
+    identity = getattr(hit, "_row_identity", None) or getattr(hit, "identity", None)
+    if not session and identity:
+        session = identity[2]
+    return (
+        str(getattr(hit, "namespace", "") or namespace),
+        session,
+        str(getattr(hit, "memory_key", "") or ""),
+    )
+
+
 @dataclass(frozen=True)
 class SearchTraceHit(SearchHit):
     """memory.search_trace result. Adds the entity-boost contribution

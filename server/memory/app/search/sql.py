@@ -206,7 +206,7 @@ def key_match_sql(where_sql: str) -> str:
           AND (matched >= 2 OR (matched >= 1 AND matched = key_parts))
           AND strength >= {{min_strength:Float64}}
         ORDER BY strength DESC, cosineDistance(e.embedding, {{qv:Array(Float32)}}) ASC
-        LIMIT 1 BY e.memory_key
+        LIMIT 1 BY e.session_id, e.memory_key
         LIMIT {{limit:UInt32}}
     """
 

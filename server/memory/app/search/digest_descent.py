@@ -12,7 +12,7 @@ from server.memory.app.search.context import SearchContext
 from server.memory.app.search.scoring import _anchor_rank_score
 from server.memory.app.search.sql import _digest_descent_where, digest_descent_sql
 from server.memory.app.search_tag_filter import stamp_row_tags as _stamp_row_tags
-from server.memory.domain.search_types import row_identity
+from server.memory.domain.search_types import hit_row_key, row_identity
 
 log = logging.getLogger(__package__)
 
@@ -69,7 +69,7 @@ async def _run_digest_descent(ctx: SearchContext) -> None:
     if not targets:
         return
     ctx.actual_work["digest_descent_sessions"] = len(targets)
-    present = {(h.namespace or input.namespace, h.memory_key) for h in ctx.all_hits}
+    present = {hit_row_key(h, input.namespace) for h in ctx.all_hits}
     pool_floor = min(
         (
             float(h.score_components.get("rank_score_raw", h.rank_score))
@@ -105,7 +105,7 @@ async def _run_digest_descent(ctx: SearchContext) -> None:
         for ns, sid, rows in results:
             for row in rows:
                 mk = str(row.get("memory_key") or "")
-                if not mk or (ns, mk) in present:
+                if not mk or (ns, sid, mk) in present:
                     continue
                 sim = float(row.get("similarity") or 0.0)
                 raw = _anchor_rank_score(sim, pool_floor) if rrf else sim
@@ -133,7 +133,7 @@ async def _run_digest_descent(ctx: SearchContext) -> None:
                 )
                 _stamp_row_tags(hit, row.get("tags"))
                 hit._row_identity = row_identity(row)
-                present.add((ns, mk))
+                present.add((ns, sid, mk))
                 ctx.all_hits.append(hit)
                 added += 1
         ctx.actual_work["digest_descent_added"] = added

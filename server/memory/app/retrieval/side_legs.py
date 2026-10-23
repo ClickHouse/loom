@@ -251,6 +251,7 @@ async def _search_memory_records(
         SELECT
             record_id,
             parent_memory_key,
+            session_id,
             schema_name,
             record_json,
             field_text,
@@ -272,6 +273,7 @@ async def _search_memory_records(
             SELECT
                 record_id,
                 parent_memory_key,
+                session_id,
                 schema_name,
                 record_json,
                 field_text,
@@ -288,6 +290,7 @@ async def _search_memory_records(
                 SELECT
                     toString(r.record_id) AS record_id,
                     ifNull(r.memory_key, '') AS parent_memory_key,
+                    r.session_id AS session_id,
                     toString(r.schema_name) AS schema_name,
                     r.record_json AS record_json,
                     r.valid_at AS valid_at,
@@ -324,6 +327,7 @@ async def _search_memory_records(
                 GROUP BY
                     r.record_id,
                     r.memory_key,
+                    r.session_id,
                     r.schema_name,
                     r.record_json,
                     r.valid_at,
@@ -368,6 +372,7 @@ async def _search_memory_records(
                 valid_at=_iso_date(str(row.get("valid_at_iso", ""))),
                 source="record",
                 source_resource_id=record_id,
+                session_id=str(row.get("session_id") or ""),
                 score_components={
                     "record_lexical": float(row.get("lexical_score") or 0.0),
                     "rank_score": rank_score,

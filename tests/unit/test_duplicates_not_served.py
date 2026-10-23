@@ -69,7 +69,15 @@ def test_hide_duplicates_follows_the_call() -> None:
 # ---------------------------------------------------------------- search pool
 
 
-def _hit(key: str, *, rank: float, source: str = "fact", ns: str = "", tags: Any = None) -> Any:
+def _hit(
+    key: str,
+    *,
+    rank: float,
+    source: str = "fact",
+    ns: str = "",
+    tags: Any = None,
+    session: str = "",
+) -> Any:
     return _MemorySearchHit(
         memory_key=key,
         memory_type="semantic",
@@ -81,6 +89,7 @@ def _hit(key: str, *, rank: float, source: str = "fact", ns: str = "", tags: Any
         status="active",
         namespace=ns,
         tags=tags,
+        session_id=session,
     )
 
 
@@ -178,7 +187,9 @@ async def test_duplicate_whose_canonical_is_already_in_the_pool_is_dropped(
         "canon_a": {"served_rows": 1, "duplicate_rows": 0, "canonical_id": ""},
     }
     truth.canon = {"c-1": _canon("canon_a")}
-    ctx = _ctx([_hit("canon_a", rank=0.95), _hit("dup_a", rank=0.9), _hit("z", rank=0.5)])
+    ctx = _ctx(
+        [_hit("canon_a", rank=0.95, session="s1"), _hit("dup_a", rank=0.9), _hit("z", rank=0.5)]
+    )
     await sd.hide_pool_duplicates(ctx)
     assert [h.memory_key for h in ctx.all_hits] == ["canon_a", "z"]
     assert ctx.all_hits[0].resolved_from is None
@@ -208,8 +219,8 @@ async def test_duplicate_with_no_live_canonical_is_hidden_without_substitute(
 
 @pytest.mark.asyncio
 async def test_a_key_with_an_active_row_elsewhere_is_served(truth: SimpleNamespace) -> None:
-    """A store that writes one row per session may hold an active and a
-    duplicate row under one key: the active row answers, nothing is hidden."""
+    """Several writers in one session may hold an active and a duplicate row
+    under one key: the active row answers, nothing is hidden."""
     truth.status = {"k": {"served_rows": 1, "duplicate_rows": 3, "canonical_id": "c-1"}}
     ctx = _ctx([_hit("k", rank=0.9)])
     await sd.hide_pool_duplicates(ctx)
@@ -706,3 +717,25 @@ async def test_repo_readers_never_alias_an_aggregate_to_its_source_column() -> N
     # the two search-path reads never pay the read-your-writes Keeper round-trip
     assert all("select_sequential_consistency = 0" in sqls[i][0] for i in (0, 1))
     assert await memory_repo.restamp_embedding_rows([], status="duplicate", version=1, ch=ch) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_is_hidden_though_another_session_holds_its_key_active(
+    truth: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory import store as memory_repo
+
+    async def status_by_keys(
+        org: str, nss: list[str], keys: list[str], *, scope: Any = None, ch: Any = None
+    ) -> list[DuplicateStatus]:
+        rows = [
+            {"namespace": "ns", "session_id": "s1", "memory_key": "k", **_dup("c-1")},
+            {"namespace": "ns", "session_id": "s2", "memory_key": "k", "served_rows": 1},
+        ]
+        return [DuplicateStatus.from_row(r) for r in rows]
+
+    monkeypatch.setattr(memory_repo, "status_by_keys", status_by_keys)
+    truth.canon = {"c-1": _canon("canon_a")}
+    ctx = _ctx([_hit("k", rank=0.9, session="s1"), _hit("k", rank=0.8, session="s2")])
+    await sd.hide_pool_duplicates(ctx)
+    assert [(h.memory_key, h.session_id) for h in ctx.all_hits] == [("canon_a", "s1"), ("k", "s2")]

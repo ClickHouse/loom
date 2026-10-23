@@ -565,6 +565,7 @@ def _chunk_primary_hit(
         valid_at=_iso_date(str(r.get("valid_at", ""))),
         source="chunk",
         parent_memory_key=str(r.get("parent_memory_key") or ""),
+        session_id=str(r.get("session_id") or ""),
         score_components={
             "semantic": max(0.0, 1.0 - distance),
             "chunk_parent_boost": float(boost),
@@ -638,6 +639,7 @@ def _chunk_neighbor_hit(r: dict[str, Any], q: SearchQuery, q_tokens: set[str]) -
         valid_at=_iso_date(str(r.get("valid_at", ""))),
         source="chunk",
         parent_memory_key=str(r.get("parent_memory_key") or ""),
+        session_id=str(r.get("session_id") or ""),
         score_components={
             "semantic": max(0.0, 1.0 - distance),
             "token_density": float(density_bonus),

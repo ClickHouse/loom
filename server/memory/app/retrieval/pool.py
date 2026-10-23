@@ -135,18 +135,19 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
     rank-neutral: a folded parent sits exactly where its chunk sat."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
-    by_key: dict[str, SearchHit] = {}
+    # a chunk folds onto its parent in its own session: one key is a row per session
+    by_row: dict[tuple[str, str], SearchHit] = {}
     out: list[SearchHit] = []
     for h in hits:
         if not _is_set_chunk(h):
             out.append(h)
             if (getattr(h, "source", "") or "fact") != "chunk":
-                by_key.setdefault(str(h.memory_key), h)
+                by_row.setdefault((h.session_id, str(h.memory_key)), h)
     for h in hits:
         if not _is_set_chunk(h):
             continue
         parent_key = str(h.parent_memory_key)
-        parent = by_key.get(parent_key)
+        parent = by_row.get((h.session_id, parent_key))
         if parent is None:
             idx_s = str(h.memory_key).rpartition(":")[2]
             converted = replace(
@@ -163,7 +164,7 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
                     "folded_lift": 1.0,
                 },
             )
-            by_key[parent_key] = converted
+            by_row[(h.session_id, parent_key)] = converted
             out.append(converted)
             continue
         components = dict(parent.score_components or {})
@@ -179,7 +180,7 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
             )
         else:
             merged = replace(parent, score_components=components)
-        by_key[parent_key] = merged
+        by_row[(h.session_id, parent_key)] = merged
         out[out.index(parent)] = merged
     out.sort(key=hit_sort_key)
     return out

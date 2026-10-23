@@ -299,9 +299,9 @@ async def _expand_unit_bodies(
     reads = await asyncio.gather(*(_read(ns, sid, group) for (ns, sid), group in by_scope.items()))
     # The read leaves 'high' rows out before it picks one per key, so the plain row the
     # search matched answers.
-    values: dict[tuple[str, str], Any] = {
-        (ns, str(r.memory_key)): r.value
-        for (ns, _), rows in zip(by_scope, reads, strict=True)
+    values: dict[tuple[str, str, str], Any] = {
+        (ns, sid, str(r.memory_key)): r.value
+        for (ns, sid), rows in zip(by_scope, reads, strict=True)
         for r in rows
     }
     returned = elided = tokens = 0
@@ -325,8 +325,8 @@ async def _expand_unit_bodies(
     for h in order:
         if str(getattr(h, "source", "fact") or "fact") not in ("fact", "memory", "record"):
             continue
-        ns = str(getattr(h, "namespace", "") or input.namespace)
-        if (ns, str(h.memory_key)) not in values:
+        row = (str(getattr(h, "namespace", "") or input.namespace), _sid(h), str(h.memory_key))
+        if row not in values:
             # The row was not readable under any session we could name: say so. A clip that
             # claims to be the whole body is an invisible failure; body_truncated + next make it
             # visible and give the caller the one call that fetches it.
@@ -338,7 +338,7 @@ async def _expand_unit_bodies(
             except Exception:  # noqa: BLE001
                 pass
             continue
-        v = values[(ns, str(h.memory_key))]
+        v = values[row]
         text = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
         cost = max(1, len(text) // 4)
         if spent + cost <= budget:

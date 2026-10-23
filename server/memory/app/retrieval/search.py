@@ -38,6 +38,7 @@ from server.memory.domain.search_types import (
     SearchQuery,
     SearchTraceHit,
     _CHClient,
+    hit_row_key,
     row_identity,
 )
 
@@ -307,13 +308,11 @@ async def _merge_leg_hits(
         chunk_hits = [c for c in chunk_hits if c.content_excerpt[:60] not in fact_prefixes]
         hits.extend(chunk_hits)
 
-    # Merge the BM25-only union (from the gather), deduped against ANN/chunk
-    # keys here rather than during fetch.
-    existing_keys = {h.memory_key for h in hits}
+    # Merge the BM25-only union (from the gather), deduped against the rows the ANN and
+    # chunk legs found here rather than during fetch.
+    existing_rows = {hit_row_key(h) for h in hits}
     if lexical_pool:
-        lexical_hits = [h for h in lexical_pool if h.memory_key not in existing_keys]
-        if lexical_hits:
-            hits.extend(lexical_hits)
+        hits.extend(h for h in lexical_pool if hit_row_key(h) not in existing_rows)
 
     if record_hits:
         hits.extend(record_hits)
@@ -333,27 +332,23 @@ async def _merge_leg_hits(
             ):
                 deduped[dk] = hit
         # A record row is a projection of its parent fact: drop it when a
-        # stronger fact row exists for the same key.
-        best_fact: dict[str, SearchHit] = {}
+        # stronger fact row exists for the same row.
+        best_fact: dict[tuple[str, str, str], SearchHit] = {}
         for h in deduped.values():
             if h.source == "fact":
-                cur = best_fact.get(h.memory_key)
+                cur = best_fact.get(hit_row_key(h))
                 if cur is None or (h.rank_score, -h.distance) > (
                     cur.rank_score,
                     -cur.distance,
                 ):
-                    best_fact[h.memory_key] = h
+                    best_fact[hit_row_key(h)] = h
         hits = [
             h
             for h in deduped.values()
             if not (
                 h.source == "record"
-                and h.memory_key in best_fact
-                and (
-                    best_fact[h.memory_key].rank_score,
-                    -best_fact[h.memory_key].distance,
-                )
-                > (h.rank_score, -h.distance)
+                and (fact := best_fact.get(hit_row_key(h))) is not None
+                and (fact.rank_score, -fact.distance) > (h.rank_score, -h.distance)
             )
         ]
 

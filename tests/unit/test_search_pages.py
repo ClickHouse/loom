@@ -12,7 +12,7 @@ from server.memory.app import search_pages as sp
 from tests.unit._memory_search_pkg import patch_handler_name
 
 
-def _hit(key: str, rank: float, ns: str = "ns") -> _MemorySearchHit:
+def _hit(key: str, rank: float, ns: str = "ns", session: str = "") -> _MemorySearchHit:
     return _MemorySearchHit(
         memory_key=key,
         memory_type="semantic",
@@ -21,6 +21,7 @@ def _hit(key: str, rank: float, ns: str = "ns") -> _MemorySearchHit:
         similarity=rank,
         rank_score=rank,
         namespace=ns,
+        session_id=session,
     )
 
 
@@ -37,6 +38,12 @@ def test_split_tail_counts_distinct_keys_and_ranks_the_remainder() -> None:
     total, tail = sp.split_tail(pool, final)
     assert total == 4  # a, b, c, d — the duplicate a is one memory
     assert [h.memory_key for h in tail] == ["b", "c"]  # best rank first, served keys gone
+
+
+def test_split_tail_keeps_the_rows_one_key_holds_in_other_sessions() -> None:
+    pool = [_hit("a", 0.9, session="s1"), _hit("a", 0.8, session="s2")]
+    total, tail = sp.split_tail(pool, [_hit("a", 0.9, session="s1")])
+    assert total == 2 and [h.session_id for h in tail] == ["s2"]
 
 
 def test_split_tail_counts_a_served_hit_the_pool_never_held() -> None:

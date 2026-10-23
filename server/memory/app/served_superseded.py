@@ -25,6 +25,7 @@ import logging
 from typing import Any, TypedDict
 
 from server.identity.app.request_scope import request_scope
+from server.memory.domain.search_types import hit_row_key
 
 log = logging.getLogger(__name__)
 
@@ -106,9 +107,9 @@ async def annotate_pool_superseded(ctx: Any) -> None:
     except Exception as e:  # noqa: BLE001 — naming the successor never fails a search
         log.warning("memory.search: superseded successor read failed: %s", e)
         return
-    by_key = {(r.namespace, r.memory_key): r for r in rows}
+    by_row = {(r.namespace, r.session_id, r.memory_key): r for r in rows}
     for h in old:
-        r = by_key.get((str(getattr(h, "namespace", "") or ns_default), str(h.memory_key)))
+        r = by_row.get(hit_row_key(h, ns_default))
         if r is None:
             continue
         # A bounded read sees the raw id only when the successor resolved inside
