@@ -219,24 +219,24 @@ before the queue's 30-day TTL is dropped with a `loom.memory_drops` record.
 batches. Until a batch runs, `memory.search` and `memory.ask` report
 `pending_extraction`. With the worker off, deferred saves stay `pending`.
 
-`memory.extraction_status` is an HTTP and SDK view, hidden from MCP. An agent follows up on its
-own batches over MCP, through `loom_op`, with two ops that take the `queue_id`s its
-deferred calls returned, at most 20 a call:
+`memory.extraction_status` is an HTTP and SDK view, hidden from MCP. An agent follows up
+on its own batches over MCP, through `loom_op`, with two ops that take the `queue_id`s
+its deferred calls returned, at most 20 a call:
 
 - `memory.extraction_status_mine` reports each batch's state, attempts, sizes and last
   error.
 - `memory.extraction_retry_mine` accepts the caller's `failed` batches for one more
   attempt. `requeued` means the retry was accepted: an asynchronous in-place update
-  eventually changes status to `pending`. A failed replay ends `failed` again;
-  batches still waiting or done are left alone. The update targets the exact version
-  read, preserving newer worker results and never restoring an erased transcript.
-  While the org's model calls are switched off no new retry is accepted
-  (`model_calls_off`); one accepted earlier and not yet applied stays in `requeued`.
-  A batch queued 29 or more days ago is not accepted (`expired`): the queue drops it
-  before its 30-day TTL. A batch dropped while model calls were off can be retried once
-  they are back on; its `loom.memory_drops` record stays as the history of that drop. Asking again while an accepted retry is still unfinished in
-  `system.mutations` submits no second update; two calls at the same moment can each
-  submit one, and the later changes nothing.
+  eventually changes status to `pending`. A failed replay ends `failed` again; batches
+  still waiting or done are left alone. The update targets the exact version read,
+  preserving newer worker results and never restoring an erased transcript. While the
+  org's model calls are switched off no new retry is accepted (`model_calls_off`); one
+  accepted earlier and not yet applied stays in `requeued`. A batch queued 29 or more
+  days ago is not accepted (`expired`): the queue drops it before its 30-day TTL. A
+  batch dropped while model calls were off can be retried once they are back on; its
+  `loom.memory_drops` record stays as the history of that drop. Asking again while an
+  accepted retry is still unfinished in `system.mutations` submits no second update; two
+  calls at the same moment can each submit one, and the later changes nothing.
 
 Both answer only a batch the calling principal queued in that namespace, inside the
 token's read scope; every other id comes back in `unknown`, so an agent cannot learn
