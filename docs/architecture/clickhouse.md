@@ -467,15 +467,16 @@ flush never fails a request; a crash loses the queue.
 
 ## Vector storage
 
-- Vector columns are `Array(BFloat16)`, mostly `CODEC(NONE)`;
-  `entity_vectors.entity_embedding` keeps `LZ4` because its vectors repeat (LZ4 compresses
-  them about 4x). Coded, it keeps the `LZ4` after `Quantized` only where
-  `allow_suspicious_codecs` can be on; where it is held at 0, as on ClickHouse Cloud, the
-  column is stored without it, in about four times the space. The operator either enables
-  `allow_suspicious_codecs` for Loom's user and adds the chain back with
-  `scripts/ops/vector_codec_rebuild.py --table entity_vectors --columns entity_embedding --chain LZ4`,
-  or accepts the larger column. Query vectors bind as `Array(Float32)`. A memory carries up
-  to two vectors (value and key), so at 3072 dimensions up to 12 KiB of vectors.
+- The vector columns of `CODED_TABLES` are `Array(BFloat16)`, coded with `Quantized` or
+  plain depending on the install (the Quantized codes bullet below says which).
+  Loom's migrations code no other vector column; a table named in `LOOM_CODE_VECTOR_TABLES`
+  keeps the layout and width it was created with. `entity_vectors.entity_embedding` keeps
+  `LZ4` because its vectors repeat. Coded, it keeps the `LZ4` after `Quantized` only where
+  `allow_suspicious_codecs` can be on; where it is held at 0, as on a ClickHouse Cloud
+  service by default, the column is stored without it. How to add the chain back is in
+  [recommended settings](../operations/deployment.md#recommended-clickhouse-settings).
+  Query vectors bind as `Array(Float32)`. A memory carries up to two vectors (value and
+  key), so at 3072 dimensions up to 12 KiB of vectors.
 - **No table has a vector-similarity (HNSW) index.** Search is an exact `cosineDistance`
   scan over the rows the identity predicates leave. The bytes a read scans therefore
   grow with namespace size, not corpus size.
@@ -887,19 +888,19 @@ flags set in the session first.
 Supported server versions are in
 [ClickHouse requirements](../operations/deployment.md#clickhouse-requirements).
 
-| Area                               | Self-hosted (single node)                                                                 | ClickHouse Cloud                                                                                                                                                   |
-| ---------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Connection                         | HTTP on 8123                                                                              | TLS on 8443 (`LOOM_CH_PORT=8443` or `LOOM_CH_SECURE=true`). Keep `LOOM_CH_KEEPALIVE_TIMEOUT` below the load balancer's idle cutoff.                                |
-| Read-your-writes                   | A waited insert is visible to the next read.                                              | Replicas may lag; see [Read-your-writes](#read-your-writes).                                                                                                       |
-| Rolling upgrades                   | One version.                                                                              | Replicas can differ for a while; setting support is probed per replica, and a rejected setting is dropped and the read retried.                                    |
-| NLP functions                      | `stem()` available.                                                                       | `allow_experimental_nlp_functions` is read-only; migrations run without it. The lemma column is filled by the application on both.                                 |
-| Codecs                             | `Quantized` needs 26.8+; both codec settings are writable.                                | Read-only: `enable_quantized_codec` at its default 0 until the operator enables it (plain install), then 1 (coded); `allow_suspicious_codecs` at 0 (no LZ4 chain). |
-| `MODIFY SETTING index_granularity` | Rejected by OSS `ReplacingMergeTree` (code 472); tolerated.                               | Accepted.                                                                                                                                                          |
-| Lightweight updates                | Supported on recent versions; `ALTER UPDATE` fallback otherwise.                          | Each `UPDATE` is a patch part plus a Keeper entry; statements are batched and back off while mutations are pending.                                                |
-| `OPTIMIZE … FINAL`                 | Returns after the merge.                                                                  | Returns before the merge completes; code compaction polls `system.merges` on every replica.                                                                        |
-| Filesystem cache                   | No effect on a local disk.                                                                | The client sends `enable_filesystem_cache = 1` on every session.                                                                                                   |
-| Keeper                             | Required: the bundled stack runs an embedded one (`deploy/clickhouse-config/keeper.xml`). | Keeper is available.                                                                                                                                               |
-| Durability                         | A single node has no replication or backups unless you add them.                          | Replication and backups are managed by the service.                                                                                                                |
+| Area                               | Self-hosted (single node)                                                                 | ClickHouse Cloud                                                                                                                                                                                                                       |
+| ---------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connection                         | HTTP on 8123                                                                              | TLS on 8443 (`LOOM_CH_PORT=8443` or `LOOM_CH_SECURE=true`). Keep `LOOM_CH_KEEPALIVE_TIMEOUT` below the load balancer's idle cutoff.                                                                                                    |
+| Read-your-writes                   | A waited insert is visible to the next read.                                              | Replicas may lag; see [Read-your-writes](#read-your-writes).                                                                                                                                                                           |
+| Rolling upgrades                   | One version.                                                                              | Replicas can differ for a while; setting support is probed per replica, and a rejected setting is dropped and the read retried.                                                                                                        |
+| NLP functions                      | `stem()` available.                                                                       | `allow_experimental_nlp_functions` is read-only; migrations run without it. The lemma column is filled by the application on both.                                                                                                     |
+| Codecs                             | `Quantized` needs 26.8+; both codec settings are writable.                                | Read-only: `enable_quantized_codec` at its default 0 until the operator enables it (plain install), then 1 (coded); `allow_suspicious_codecs` at 0 until enabled for Loom's user (then the LZ4 chain on a fresh install or a rebuild). |
+| `MODIFY SETTING index_granularity` | Rejected by OSS `ReplacingMergeTree` (code 472); tolerated.                               | Accepted.                                                                                                                                                                                                                              |
+| Lightweight updates                | Supported on recent versions; `ALTER UPDATE` fallback otherwise.                          | Each `UPDATE` is a patch part plus a Keeper entry; statements are batched and back off while mutations are pending.                                                                                                                    |
+| `OPTIMIZE … FINAL`                 | Returns after the merge.                                                                  | Returns before the merge completes; code compaction polls `system.merges` on every replica.                                                                                                                                            |
+| Filesystem cache                   | No effect on a local disk.                                                                | The client sends `enable_filesystem_cache = 1` on every session.                                                                                                                                                                       |
+| Keeper                             | Required: the bundled stack runs an embedded one (`deploy/clickhouse-config/keeper.xml`). | Keeper is available.                                                                                                                                                                                                                   |
+| Durability                         | A single node has no replication or backups unless you add them.                          | Replication and backups are managed by the service.                                                                                                                                                                                    |
 
 Before 26.8, a vector-search read with a `WHERE` clause can record wrong entries in the
 query condition cache, and a later plain `SELECT` with the same condition can return fewer

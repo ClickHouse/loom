@@ -73,7 +73,9 @@ creates them coded ([ClickHouse](../architecture/clickhouse.md#gated-clickhouse-
 | Threads per fact statement | `LOOM_MEMORY_SEARCH_FACT_LEG_MAX_THREADS` (0 = unpinned)                                          | Pinning bounds CPU and peak memory per statement at some latency.                                                                                              |
 
 To move an existing table onto a codec or layout, use `scripts/ops/vector_codec_rebuild.py`
-(twin table, consistency and recall gates, `EXCHANGE`), never an `ALTER` in a migration.
+(twin table, consistency and recall gates, `EXCHANGE`;
+[steps](../operations/deployment.md#recommended-clickhouse-settings)), never an `ALTER` in a
+migration.
 
 ## ClickHouse connections and deadlines
 

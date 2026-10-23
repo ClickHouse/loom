@@ -4,6 +4,7 @@ as the lock, postconditions, signals over the exchange)."""
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 from pathlib import Path
@@ -75,6 +76,7 @@ class _CH:
         self.t = tables
         self.commands: list[str] = []
         self.fail_create = False
+        self.mutation_count = 0
         self.uuids = iter(f"u{i}" for i in range(100))
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _Result:
@@ -87,7 +89,9 @@ class _CH:
             if row is None:
                 return _Result([])
             if "engine" in sql:
-                return _Result([(row["engine"], row["uuid"], "2000-01-01 00:00:00")])
+                return _Result(
+                    [(row["engine"], row["uuid"], row.get("meta", "2000-01-01 00:00:00"))]
+                )
             return _Result([(row["layout"].sorting_key, row["layout"].partition_key)])
         if "system.columns" in sql:
             return _Result(COLS)
@@ -97,7 +101,9 @@ class _CH:
             return _Result([])
         if "system.parts" in sql:
             return _Result([(1024,)])
-        if "system.mutations" in sql or "WHERE version >" in sql:
+        if "system.mutations" in sql:
+            return _Result([(self.mutation_count,)])
+        if "WHERE version >" in sql:
             return _Result([(0,)])
         if sql == "SELECT now()":
             return _Result([("2000-01-01 00:00:00",)])
@@ -219,6 +225,64 @@ def test_a_twin_replaced_by_another_run_is_never_swapped() -> None:
     assert not any(c.startswith("EXCHANGE") for c in ch.commands)
 
 
+def test_an_alter_of_the_live_table_during_the_copy_is_never_swapped(capsys: Any) -> None:
+    ch = _CH(code_test_facets=_table(OLD, 5))
+    real = tool.Rebuild.verified
+
+    def verified(job: tool.Rebuild) -> bool:
+        ch.t["code_test_facets"]["meta"] = "2000-01-01 00:00:09"  # ALTER ... ADD INDEX
+        return real(job)
+
+    tool.Rebuild.verified = verified  # type: ignore[method-assign]
+    try:
+        assert _run(ch, "--yes") == tool.REFUSED
+    finally:
+        tool.Rebuild.verified = real  # type: ignore[method-assign]
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "was altered during the copy" in capsys.readouterr().out
+
+
+def test_an_alter_run_as_a_mutation_during_the_copy_is_never_swapped(capsys: Any) -> None:
+    ch = _CH(code_test_facets=_table(OLD, 5))
+    real = tool.Rebuild.converge
+
+    def converge(job: tool.Rebuild) -> None:
+        ch.mutation_count = 1  # ALTER ... DROP COLUMN
+        real(job)
+
+    tool.Rebuild.converge = converge  # type: ignore[method-assign]
+    try:
+        assert _run(ch, "--yes") == tool.TOUCHED
+    finally:
+        tool.Rebuild.converge = real  # type: ignore[method-assign]
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+    assert "restate a schema ALTER" in capsys.readouterr().out
+
+
+def test_an_alter_before_the_twin_is_checked_is_never_swapped() -> None:
+    ch = _CH(code_test_facets=_table(OLD, 5))
+    real = tr.same_columns
+
+    def same_columns(c: Any, table: str, twin: str) -> None:
+        ch.t["code_test_facets"]["meta"] = "2000-01-01 00:00:09"  # between the snapshot and here
+        real(c, table, twin)
+
+    tr.same_columns = same_columns  # type: ignore[assignment]
+    try:
+        assert _run(ch, "--yes") == tool.REFUSED
+    finally:
+        tr.same_columns = real  # type: ignore[assignment]
+    assert not any(c.startswith("EXCHANGE") for c in ch.commands)
+
+
+def test_a_table_no_migration_declares_is_refused_without_a_traceback(capsys: Any) -> None:
+    ch = _CH(memory_chunks=_table(OLD, 5))
+    argv = ["--table", "memory_chunks", "--migrations-dir", REBUILD_FIXTURE, "--dry-run"]
+    assert tool.main(argv, ch=ch) == tool.REFUSED and ch.commands == []
+    out = capsys.readouterr().out
+    assert "no migration declares" in out and "ClickHouse " in out and '"exit": 3' in out
+
+
 def test_preflight_refuses_an_engine_the_gate_cannot_check() -> None:
     ch = _CH(code_test_facets=_table(OLD, 5, engine="MergeTree"))
     assert _run(ch, "--yes") == tool.REFUSED and ch.commands == []
@@ -234,15 +298,41 @@ def test_rollback_and_drop_need_yes_and_check_their_result() -> None:
     assert "code_test_facets_pre_rebuild" not in ch.t
 
 
+def _next(out: str) -> str:
+    return str(json.loads(out.rsplit("summary ", 1)[1])["next"])
+
+
+def test_a_successful_rebuild_names_its_next_step_and_a_rollback_names_none(
+    capsys: Any,
+) -> None:
+    """The swap leaves the rollback copy to keep or drop, so a successful rebuild names
+    both; a table already on the target layout says so; a successful rollback or drop
+    leaves nothing to do."""
+    ch = _CH(code_test_facets=_table(OLD, 5))
+    assert _run(ch, "--yes") == tool.OK
+    step = _next(capsys.readouterr().out)
+    assert "--rollback --yes" in step and "--drop-pre-rebuild --yes" in step
+    assert _run(ch, "--rollback", "--yes") == tool.OK
+    assert _next(capsys.readouterr().out) == ""
+    assert _run(ch, "--drop-pre-rebuild", "--yes") == tool.OK
+    assert _next(capsys.readouterr().out) == ""
+    ch = _CH(code_test_facets=_table(NEW, 5))
+    assert _run(ch, "--yes") == tool.OK
+    assert "nothing to do" in _next(capsys.readouterr().out)
+
+
 def test_the_next_step_follows_what_the_three_names_hold() -> None:
     g = lambda live, twin, pre: tr.guidance("t", "run", live, twin, pre)  # noqa: E731
-    assert "RENAME TABLE loom.t_rebuild TO loom.t_pre_rebuild" in g(True, True, None)
-    assert "`run --rollback --yes`" in g(True, False, False)
-    assert "nothing to do" in g(True, False, None)
-    assert "`run --drop-pre-rebuild --yes`" in g(False, False, True)
+    assert "RENAME TABLE loom.t_rebuild TO loom.t_pre_rebuild" in g(True, False, None)
+    both = g(True, True, None)
+    assert "compare" in both and "RENAME" not in both and "--restart" not in both
+    assert "`run --rollback --yes`" in g(True, None, False)
+    assert "nothing to do" in g(True, None, None)
+    assert "`run --drop-pre-rebuild --yes`" in g(False, None, True)
     assert "`run --restart --yes`" in g(False, True, None)
+    assert "`run --restart --yes`" in g(False, False, None)
     assert "by hand" in g(None, True, False)
-    assert "blocks a new run" in g(False, False, False)
+    assert "blocks a new run" in g(False, None, False)
 
 
 def test_the_tool_reports_the_layouts_as_on_or_off_target(capsys: Any) -> None:

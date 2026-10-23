@@ -46,6 +46,7 @@ _ITEM_MAX_LEN = 256
 _buffer: list[dict[str, Any]] = []
 _lock = threading.Lock()
 _flush_scheduled = False
+_timer: asyncio.TimerHandle | None = None
 
 
 def _row(org: str, namespace: str, stage: str, reason: str, item: str, n: int) -> dict[str, Any]:
@@ -118,16 +119,18 @@ def _flush_later(delay: float) -> bool:
     dropped silently and the rows stay buffered for flush_drops(). Returns
     False when there is no running loop to arm.
     """
+    global _timer
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return False
-    loop.call_later(delay, _fire_flush)
+    _timer = loop.call_later(delay, _fire_flush)
     return True
 
 
 def _fire_flush() -> None:
-    global _flush_scheduled
+    global _flush_scheduled, _timer
+    _timer = None
     try:
         from server.core.background import detached_task, register_deferred_task
 
@@ -213,10 +216,13 @@ def _peek_for_tests() -> list[dict[str, Any]]:
 
 
 def _reset_for_tests() -> None:
-    global _flush_scheduled
+    global _flush_scheduled, _timer
     with _lock:
         _buffer.clear()
         _flush_scheduled = False
+    if _timer is not None:
+        _timer.cancel()
+        _timer = None
 
 
 __all__ = ["TABLE", "flush_drops", "pending_count", "record_drop"]
