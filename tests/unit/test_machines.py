@@ -1036,14 +1036,22 @@ def _day_long(bots: dict[str, Any], name: str) -> None:
     ],
 )
 def test_a_bots_token_lives_what_it_asks_up_to_its_maximum(
-    bots, maximum: int, asked: str | None, lives: int
+    bots, monkeypatch, maximum: int, asked: str | None, lives: int
 ) -> None:
+    audited: list[dict[str, Any]] = []
+
+    async def emit(event_type: str, **kw: Any) -> str:
+        audited.append(kw["subject"])
+        return ""
+
+    monkeypatch.setattr(oauth.audit, "emit", emit)
     bots["registered"]["triage"]["max_access_token_s"] = maximum
     r = _with_key(TestClient(oauth_app()), _assertion(bots["key"]), expires_in=asked)
     assert r.status_code == 200, r.text
     claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
     assert claims["exp"] - claims["iat"] == lives
     assert lives - 2 <= r.json()["expires_in"] <= lives
+    assert [a["ttl_s"] for a in audited] == [lives]
 
 
 @pytest.mark.parametrize(

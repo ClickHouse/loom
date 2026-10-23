@@ -16,6 +16,8 @@ from server.cli._ch import run_connected
 
 
 def register_bot_cli(sub: Any) -> None:
+    from server.auth import machines
+
     p_bot = sub.add_parser(
         "bot", help="Bots and CI jobs that sign in with a key or their CI's identity."
     )
@@ -78,7 +80,7 @@ def register_bot_cli(sub: Any) -> None:
     p_create.add_argument(
         "--max-access-token-ttl",
         type=int,
-        default=3600,
+        default=machines.TOKEN_TTL,
         metavar="SECONDS",
         help="The longest token the bot is issued when its request asks (expires_in, 60 to "
         "86400); unasked, a token lives an hour, or this when it is shorter",

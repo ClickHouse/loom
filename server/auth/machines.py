@@ -44,6 +44,7 @@ MAX_TOKEN_TTL = 86400
 # not a setting: a shorter one would run out before its first use (verify's leeway)
 MIN_TOKEN_TTL = 60
 _PLATFORM_ADMIN_MIGRATION = 76  # schemas/migrations/076_machine_platform_admin.sql
+_ACCESS_TOKEN_MIGRATION = 77  # schemas/migrations/077_machine_access_token_ttl.sql
 ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
 SUBJECT_TOKEN_TYPES = frozenset(
@@ -81,15 +82,23 @@ class Machine(TypedDict):
 
 async def platform_admin_tokens_ready(ch: Any) -> bool:
     """Older replicas accept admin JWTs without protecting human sign-in changes."""
+    return await fleet_at(ch, _PLATFORM_ADMIN_MIGRATION)
+
+
+async def access_token_maximum_ready(ch: Any) -> bool:
+    """Older replicas issue an hour whatever the maximum, and reset it when they save."""
+    return await fleet_at(ch, _ACCESS_TOKEN_MIGRATION)
+
+
+async def fleet_at(ch: Any, migration: int) -> bool:
+    """Every live replica, in every deployment, runs `migration` or later."""
     from server.core import instances
 
     try:
         live = await instances.read_live(ch, all_deployments=True)
-        return bool(live) and all(
-            int(row["schema_version"] or 0) >= _PLATFORM_ADMIN_MIGRATION for row in live
-        )
-    except Exception as e:  # noqa: BLE001 — an unread fleet refuses an admin token
-        log.warning("admin token fleet check failed: %s", type(e).__name__)
+        return bool(live) and all(int(row["schema_version"] or 0) >= migration for row in live)
+    except Exception as e:  # noqa: BLE001 — an unread fleet refuses what it gates
+        log.warning("fleet check for migration %d failed: %s", migration, type(e).__name__)
         return False
 
 

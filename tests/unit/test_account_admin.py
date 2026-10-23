@@ -91,6 +91,7 @@ def test_a_bots_longest_token_is_a_minute_to_a_day(given: int | None, ok: bool) 
 @pytest.fixture
 def world(monkeypatch) -> dict[str, Any]:
     state: dict[str, Any] = {"bots": {}, "revoked": [], "outright": set(), "namespaces": {"triage"}}
+    state |= {"audited": [], "fleet_ready": True}
 
     async def get(name: str, *, active_only: bool = True) -> machines.Machine | None:
         bot = state["bots"].get(name)
@@ -115,9 +116,14 @@ def world(monkeypatch) -> dict[str, Any]:
         return None
 
     async def emit(event_type: str, **kw: Any) -> str:
+        state["audited"].append((event_type, kw["subject"]))
         return ""
 
+    async def fleet_ready(ch: Any) -> bool:
+        return state["fleet_ready"]
+
     monkeypatch.setattr(machines, "get", get)
+    monkeypatch.setattr(machines, "access_token_maximum_ready", fleet_ready)
     monkeypatch.setattr(machines, "save", save)
     monkeypatch.setattr(namespaces, "is_active", is_active)
     monkeypatch.setattr(revocation, "revoked_outright", revoked_outright)
@@ -136,6 +142,29 @@ def _bot(roles: list[str]) -> machines.Machine:
 def test_a_bot_on_a_namespace_that_does_not_exist_is_refused(world) -> None:
     with pytest.raises(ValueError, match="no namespace ghost"):
         asyncio.run(account_admin.create_bot(_bot(["ghost=writer"]), by="ops", replace=False))
+
+
+def _bot_allowed(seconds: int) -> machines.Machine:
+    return account_admin.bot_from(
+        name="triage",
+        org="acme",
+        namespace_roles=["triage=writer"],
+        public_key_pem=_KEY,
+        max_access_token_s=seconds,
+    )
+
+
+def test_a_maximum_other_than_an_hour_waits_for_the_whole_fleet(world) -> None:
+    world["fleet_ready"] = False
+    with pytest.raises(ValueError, match="every replica runs migration 77"):
+        asyncio.run(account_admin.create_bot(_bot_allowed(600), by="ops", replace=False))
+    assert world["bots"] == {}
+    asyncio.run(account_admin.create_bot(_bot_allowed(3600), by="ops", replace=False))
+    world["fleet_ready"] = True
+    asyncio.run(account_admin.create_bot(_bot_allowed(600), by="ops", replace=True))
+    assert world["bots"]["triage"]["max_access_token_s"] == 600
+    created = [s for e, s in world["audited"] if e == "auth.machine_created"]
+    assert [s["max_access_token_s"] for s in created] == [3600, 600]
 
 
 def test_a_subject_revoked_outright_makes_no_bot(world) -> None:
