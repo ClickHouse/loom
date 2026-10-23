@@ -271,8 +271,9 @@ schema. These rules keep that safe. The operator procedure is in
     replace, a namespace release that drops one of its roles) it writes 3600 back. This can
     lengthen a token requested or capped below an hour, or shorten one allowed longer.
     Finish the rollout before relying on any nondefault maximum or requested lifetime,
-    and reapply the maximum if an N-1 save landed meanwhile. The mixed-version gate does
-    not check this rule.
+    and reapply the maximum if an N-1 save landed meanwhile (`loom bot create --replace`
+    with the bot's key or trust and roles as registered, which also ends its tokens). The
+    mixed-version gate does not check this rule.
 
 ## What checks them
 

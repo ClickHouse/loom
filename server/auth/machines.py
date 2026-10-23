@@ -3,9 +3,9 @@ provider and never hold a long-lived secret.
 
 An operator registers one (`loom bot create`) with the namespaces its data
 belongs in and how it proves itself at /oauth/token; each proof gets a
-service-account token for `sa:<name>`, an hour long unless the request asks
-for another lifetime (`expires_in`), which the identity's own maximum
-(`max_access_token_s`, at most a day) bounds:
+service-account token for `sa:<name>`: an hour, or the identity's own maximum
+(`max_access_token_s`, at most a day) when shorter, unless the request asks for
+another lifetime (`expires_in`) up to that maximum:
 
 - a key: the bot signs a short assertion with its private key, the
   client-credentials grant with `private_key_jwt` (RFC 7523);
@@ -154,6 +154,7 @@ def asked_lifetime(raw: str | None) -> int | None:
 
 def token_lifetime(m: Machine, asked: int | None) -> int:
     """Cap the requested or default lifetime at the bot's maximum and one day."""
+    # The day holds for a row written outside bot_from, which refuses a longer maximum.
     return min(TOKEN_TTL if asked is None else asked, m["max_access_token_s"], MAX_TOKEN_TTL)
 
 

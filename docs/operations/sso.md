@@ -137,8 +137,8 @@ The provider can never grant admin.
 A bot never signs in at the provider, and should hold no long-lived secret.
 Register it with the namespaces its data belongs in (usually a team namespace
 with more than one admin, registered first, in one org); its tokens are for
-`sa:<name>`, last an hour unless the bot allows longer and its request asks
-(below), and its writes are stamped `actor=process:sa:<name>`.
+`sa:<name>`, last an hour, or the bot's maximum when shorter, unless its request
+asks for another lifetime up to that maximum (below), and its writes are stamped `actor=process:sa:<name>`.
 
 - **A key.** Loom keeps the public half; the bot signs a short assertion for
   each token (OAuth client credentials with `private_key_jwt`).
@@ -309,8 +309,10 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   Finish the server rollout before relying on a lifetime other than an hour.
   An older server ignores `expires_in` and the maximum, issues an hour, and
   resets the maximum to 3600 when it saves a bot. This can lengthen a token
-  capped below an hour as well as shorten a longer one. Reapply the maximum
-  if an older server saved the bot during the rollout.
+  capped below an hour as well as shorten a longer one. If an older server
+  saved the bot during the rollout, reapply the maximum with
+  `loom bot create --replace`, the bot's key or trust and roles as registered and
+  `--max-access-token-ttl`; replacing a bot also ends the tokens it holds.
 
   A longer token is no harder to end: disabling or replacing the bot,
   `loom revoke-token --subject`, `/v1/admin/revoke_subject` (with or without

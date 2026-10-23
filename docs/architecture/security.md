@@ -456,17 +456,18 @@ code or coming back from the provider, finds it already used and is told to run
 
 **Bots and CI** (`server/auth/machines.py`, `loom.machine_identities`). A bot is
 registered by an operator or a platform admin with the namespaces it may use, and proves
-itself at `/oauth/token` for a service-account token of an hour, or of the `expires_in`
-its request asks up to the bot's `max_access_token_s` (60 s to a day, set at
-registration): with a key, by a client assertion it signs (RFC 7523 `private_key_jwt`:
-issuer and subject its name, audience this token endpoint, at most five minutes long, its
-`jti` spent once in Keeper, ES256, RS256 or EdDSA only), or as a CI job, by token exchange
-(RFC 8693) of the OIDC token its platform issued for the run, checked against the
-registered issuer's keys (fetched only for a registered issuer), the audience and every
-registered claim. A CI token may be exchanged again while it lives (every client of the
-job, each renewal), and the token issued never outlives it. A CI trust must name at least
-one claim: any job on a platform can ask for any audience. A token is issued as of the
-moment before the bot is read, so a disable landing during the exchange still cuts it off.
+itself at `/oauth/token` for a service-account token of an hour, or of the bot's
+`max_access_token_s` (60 s to a day, set at registration) when shorter, unless its request
+asks for another `expires_in` up to that maximum: with a key, by a client assertion it
+signs (RFC 7523 `private_key_jwt`: issuer and subject its name, audience this token
+endpoint, at most five minutes long, its `jti` spent once in Keeper, ES256, RS256 or EdDSA
+only), or as a CI job, by token exchange (RFC 8693) of the OIDC token its platform issued
+for the run, checked against the registered issuer's keys (fetched only for a registered
+issuer), the audience and every registered claim. A CI token may be exchanged again while
+it lives (every client of the job, each renewal), and the token issued never outlives it.
+A CI trust must name at least one claim: any job on a platform can ask for any audience. A
+token is issued as of the moment before the bot is read, so a disable landing during the
+exchange still cuts it off.
 An exchange whose subject token verifies is counted, before an agent's namespace is made,
 against its trust (`LOOM_WORKLOAD_EXCHANGES_PER_TRUST`, 50,000) and, for a trust with an
 agent claim, its agent (`LOOM_WORKLOAD_EXCHANGES_PER_AGENT`, 300), per 10 minutes, as rows
