@@ -159,7 +159,7 @@ def _bot_allowed(seconds: int) -> machines.Machine:
 
 def test_a_maximum_other_than_an_hour_waits_for_the_whole_fleet(world) -> None:
     world["fleet_ready"] = False
-    with pytest.raises(ValueError, match="every replica runs migration 77"):
+    with pytest.raises(ValueError, match="all run migration 77"):
         asyncio.run(account_admin.create_bot(_bot_allowed(600), by="ops", replace=False))
     assert world["bots"] == {}
     asyncio.run(account_admin.create_bot(_bot_allowed(3600), by="ops", replace=False))
@@ -179,7 +179,7 @@ def test_an_unread_fleet_refuses_a_maximum_other_than_an_hour(world, monkeypatch
     monkeypatch.setattr(machines, "access_token_maximum_ready", _real_ready)
     monkeypatch.setattr(instances, "read_live", unread)
     monkeypatch.setattr("server.core.ch.get_client", lambda: None)
-    with pytest.raises(ValueError, match="every replica runs migration 77"):
+    with pytest.raises(ValueError, match="all run migration 77"):
         asyncio.run(account_admin.create_bot(_bot_allowed(600), by="ops", replace=False))
     assert world["bots"] == {}
 

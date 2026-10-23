@@ -162,9 +162,9 @@ def asked_lifetime(raw: str | None) -> int | None:
 
 
 def token_lifetime(m: Machine, asked: int | None) -> int:
-    """Cap the requested or default lifetime at the bot's maximum and one day."""
-    # The day holds for a row written outside bot_from, which refuses a longer maximum.
-    return min(TOKEN_TTL if asked is None else asked, m["max_access_token_s"], MAX_TOKEN_TTL)
+    """Cap the requested or default lifetime at the bot's maximum (bot_from keeps it
+    within a day)."""
+    return min(TOKEN_TTL if asked is None else asked, m["max_access_token_s"])
 
 
 async def live_roles(m: Machine) -> list[tuple[str, str]]:
