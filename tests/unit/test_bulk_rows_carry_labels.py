@@ -50,6 +50,15 @@ class _Embedder:
 
 async def _build(monkeypatch: pytest.MonkeyPatch, stored: MemoryRow | None, *entries: dict) -> Any:
     """The state after one bulk of `entries` over `stored` is built and embedded."""
+    state, _emb_idx_of = await _build_embedded(monkeypatch, stored, *entries)
+    return state
+
+
+async def _build_embedded(
+    monkeypatch: pytest.MonkeyPatch, stored: MemoryRow | None, *entries: dict
+) -> Any:
+    """The state and the embedding rows' memory-row indexes after one bulk of `entries`
+    over `stored` is built and embedded."""
     import server.memory.store as memory_repo
     from server.memory.app import blacklist_guard
     from server.memory.app.bulk_rows import _bulk_build_rows, _bulk_embed_rows, _BulkWriteState
@@ -64,11 +73,29 @@ async def _build(monkeypatch: pytest.MonkeyPatch, stored: MemoryRow | None, *ent
     monkeypatch.setattr(blacklist_guard, "find_match", no_match)
     monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", live_rows)
     inp = MemoryBulkSetInput(org="o", namespace="n", agent="a", entries=list(entries))
-    state = _BulkWriteState()
+    state = _BulkWriteState(now_utc=NOW)
     await _bulk_existing_lookup(None, inp, state)
-    await _bulk_build_rows(inp, state, {}, {}, NOW)
-    await _bulk_embed_rows(inp, state, _Embedder(), {}, NS(mark=lambda _s: None), NOW)
-    return state
+    await _bulk_build_rows(inp, state, {}, {})
+    emb_idx_of, _vectors, _entities = await _bulk_embed_rows(
+        inp, state, _Embedder(), {}, NS(mark=lambda _s: None), NOW
+    )
+    return state, emb_idx_of
+
+
+async def _settled(
+    monkeypatch: pytest.MonkeyPatch, stored: MemoryRow | None, verdicts: dict, *entries: dict
+) -> Any:
+    """The state and verdict plan after one bulk of `entries` over `stored`, given the
+    conflict `verdicts` (by built row)."""
+    from server.memory.app import bulk_set
+
+    async def given(*_a: Any, **_kw: Any) -> dict:
+        return verdicts
+
+    monkeypatch.setattr(bulk_set, "_bulk_conflict_verdicts", given)
+    state, emb_idx_of = await _build_embedded(monkeypatch, stored, *entries)
+    plan = await bulk_set._bulk_verdicts(None, state, emb_idx_of, [], NS(mark=lambda _s: None))
+    return state, plan
 
 
 async def test_the_embedding_row_carries_the_rows_label_tags(monkeypatch) -> None:
@@ -123,17 +150,17 @@ async def test_a_repeat_that_names_no_level_is_not_a_label_change(monkeypatch) -
     # Entry 0 relabels the stored value 'high' but merges elsewhere, so the key keeps ''.
     # Entry 1 repeats the value naming no level: serially it is unchanged, whatever label
     # it took from entry 0's row when it was built.
-    from server.memory.app.bulk_rows import settle_batch_rows
+    from server.memory.app.bulk_rows import UNCHANGED
 
     value = "Alice lives in Berlin"
-    state = await _build(
+    state, _plan = await _settled(
         monkeypatch,
         _stored(value),
+        {0: NS(verdict="merge", existing_memory_id="X")},
         {"memory_key": "k", "value": value, "sensitivity": "high"},
         {"memory_key": "k", "value": value, "entities": ["Alice"]},
     )
-    replay = settle_batch_rows(state, {0: NS(verdict="merge", existing_memory_id="X")})
-    assert replay.drop == {1}
+    assert [s.outcome for s in state.steps] == ["merge", UNCHANGED]
 
 
 async def test_a_repeat_of_the_stored_bytes_keeps_a_live_expiry(monkeypatch) -> None:
@@ -205,16 +232,15 @@ async def test_a_repeat_keeps_the_expiry_of_the_batch_row_it_repeats(monkeypatch
 async def test_a_relabelling_repeat_still_reinforces_the_row(monkeypatch) -> None:
     # memory.set counts the same bytes as a restatement even when the write changes a
     # label: the row lands and is reinforced once.
-    from server.memory.app.bulk_rows import settle_batch_rows
+    from server.memory.app.bulk_rows import RELABEL
 
     value = "Alice lives in Berlin"
     for entry in (
         {"memory_key": "k", "value": value, "sensitivity": "medium"},
         {"memory_key": "k", "value": value, "pinned": True},
     ):
-        state = await _build(monkeypatch, _stored(value), entry)
-        replay = settle_batch_rows(state, {})
-        assert replay.drop == set() and len(replay.landed) == 1
+        state, _plan = await _settled(monkeypatch, _stored(value), {}, entry)
+        assert [s.outcome for s in state.steps] == [RELABEL]
         assert state.restated_ids == [STORED_ID]
 
 
@@ -229,3 +255,53 @@ async def test_a_ttl_only_repeat_on_a_read_only_row_is_locked(monkeypatch) -> No
     assert state.memory_rows == [] and state.skipped_locked == ["k"]
     assert state.skipped_unchanged == 0 and state.restated_ids == []
     assert state.results[0].conflict_verdict == "locked"
+
+
+async def test_a_repeat_after_a_value_that_did_not_land_keeps_the_stored_labels(
+    monkeypatch,
+) -> None:
+    # Stored k is 'high' with an expiry. Entry 0 writes another value and merges elsewhere,
+    # so k keeps its row; entry 1 says the stored value again, naming no level. Serially it
+    # is unchanged, and with a pin it lands still 'high', with the stored expiry, unembedded.
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitive_retention_days", 0)
+    value = "Alice lives in Berlin"
+    soon = (NOW + timedelta(days=10)).replace(tzinfo=None, microsecond=0)
+    stored = _stored(value, sensitivity="high", expires_at=soon)
+    other = {"memory_key": "k", "value": "Alice lives in Paris"}
+    merge = {0: NS(verdict="merge", existing_memory_id="X", peers=[])}
+    again = {"memory_key": "k", "value": value}
+    state, plan = await _settled(monkeypatch, stored, merge, other, again)
+    assert plan.memory_rows == [] and plan.embedding_rows == []
+    assert [r.version for r in state.results] == [0, 0]
+    assert state.skipped_unchanged == 1 and state.restated_ids == [STORED_ID]
+    state, plan = await _settled(monkeypatch, stored, merge, other, {**again, "pinned": True})
+    (row,) = plan.memory_rows
+    assert row["sensitivity"] == "high" and "sensitivity:high" in row["tags"]
+    assert row["expires_at"] == soon and row["pinned"] == 1
+    assert plan.embedding_rows == []
+
+
+async def test_a_repeat_of_a_batch_value_that_did_not_land_takes_no_labels_from_it(
+    monkeypatch,
+) -> None:
+    # Entry 0 writes k with a ttl and a level, and is merged or refused; entry 1 writes the
+    # same bytes with a pin. Serially entry 1 meets no row: no expiry, the detected level.
+    from server.memory.domain.sensitivity import resolve_sensitivity
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitive_retention_days", 0)
+    value = "Alice lives in Berlin"
+    first = {"memory_key": "k", "value": value, "ttl_seconds": 600, "sensitivity": "medium"}
+    pin = {"memory_key": "k", "value": value, "pinned": True}
+    for verdict in ("merge", "rejected"):
+        dropped = {0: NS(verdict=verdict, existing_memory_id="X", peers=[])}
+        state, plan = await _settled(monkeypatch, None, dropped, first, pin)
+        (row,) = plan.memory_rows
+        assert row["expires_at"] is None and row["pinned"] == 1
+        assert row["sensitivity"] == resolve_sensitivity("", f'"{value}"')
+        assert "sensitivity:medium" not in row["tags"]
+        (emb,) = plan.embedding_rows
+        assert emb["tags"] == row["tags"] and emb["expires_at"] is None
+        assert state.results[1].version == row["version"]

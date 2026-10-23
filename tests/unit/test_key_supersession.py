@@ -800,7 +800,7 @@ async def test_a_verdict_lands_on_its_rows_result_after_a_skipped_entry(monkeypa
 
     from server.memory.api.models_bulk import _BulkSetResult
     from server.memory.app import bulk_set
-    from server.memory.app.bulk_rows import _BulkWriteState
+    from server.memory.app.bulk_rows import _BulkWriteState, _keep_row
     from server.memory.app.search.clock import StageClock
 
     async def verdicts(*args, **kwargs):
@@ -808,14 +808,10 @@ async def test_a_verdict_lands_on_its_rows_result_after_a_skipped_entry(monkeypa
 
     monkeypatch.setattr(bulk_set, "_bulk_conflict_verdicts", verdicts)
     state = _BulkWriteState()
-    state.results = [
-        _BulkSetResult(memory_key="user_pinned", version=0),
-        _BulkSetResult(memory_key="user_city", version=1),
-    ]
-    state.memory_rows = [
-        {**_row("n1", _d(30)), "memory_key": "user_city", "content_sha256": "s1", "pinned": 0}
-    ]
-    state.row_results = [1]
+    state.results = [_BulkSetResult(memory_key="user_pinned", version=0)]
+    row = {**_row("n1", _d(30)), "memory_key": "user_city", "content_sha256": "s1", "pinned": 0}
+    city = _BulkSetResult(memory_key="user_city", version=1)
+    _keep_row(state, row, SimpleNamespace(memory_key="user_city"), city)
     await bulk_set._bulk_verdicts(None, state, [], [], StageClock({}))
     assert [r.conflict_verdict for r in state.results] == ["", "clear"]
     # The rows that land are known now: their keys by id, for the settling steps.

@@ -212,8 +212,8 @@ def apply_bulk_verdicts(
     duplicate_of on both rows; `conflict` keeps the row and records the peers
     to cross-link after the insert. Rows without a verdict pass through.
     `stale_rows` are the `id()` of the rows whose verdict is stale
-    (`settle_batch_rows`): they land as clear. `landed_rows` are the `id()` of the rows
-    that land (`settle_batch_rows`); a peer one of them rewrites is not marked or retired."""
+    (`settle_steps`): they land as clear. `landed_rows` are the `id()` of the rows
+    that land (`settle_steps`); a peer one of them rewrites is not marked or retired."""
     plan = BulkVerdictPlan()
     drop: set[int] = set()
     dup_idx: set[int] = set()

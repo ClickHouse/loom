@@ -43,12 +43,22 @@ def _entry(state, key: str, memory_id: str, sha: str, **labels: Any) -> None:
 
     entry = NS(memory_key=key, **labels)
     assert not _bulk_skip_gate(entry, sha, state, {})
-    state.row_results.append(len(state.results))
-    state.results.append(_BulkSetResult(memory_key=key, version=1, memory_id=memory_id))
+    result = _BulkSetResult(memory_key=key, version=1, memory_id=memory_id)
     state.entry_metas.append(None)
     state.n_updated += 1
     row = {"memory_key": key, "memory_id": memory_id, "content_sha256": sha, "pinned": False}
-    _keep_row(state, {**row, **labels}, entry)
+    _keep_row(state, {**row, **labels}, entry, result, own_level=labels.get("sensitivity", ""))
+
+
+def _settle(state, verdicts: dict) -> set[int]:
+    """Replay the batch and fold its `verdicts`; the indexes of the built rows the
+    replay kept out."""
+    from server.memory.app.bulk_rows import LOCKED, PINNED, UNCHANGED
+    from server.memory.app.bulk_set import _apply_verdicts
+
+    _apply_verdicts(state, [], verdicts)
+    built = [s for s in state.steps if s.repeats is None]
+    return {i for i, s in enumerate(built) if s.outcome in (UNCHANGED, PINNED, LOCKED)}
 
 
 def test_no_verdicts_is_a_pass_through() -> None:
@@ -264,20 +274,17 @@ def _batch(stored_sha: str, *entries: tuple[str, bool]):
     for sha, pinned in entries:
         if _bulk_skip_gate(NS(memory_key="k"), sha, state, {}):
             continue
-        state.row_results.append(len(state.results))
-        state.results.append(_BulkSetResult(memory_key="k", version=1, memory_id="e1"))
+        result = _BulkSetResult(memory_key="k", version=1, memory_id="e1")
         state.entry_metas.append(None)  # type: ignore[arg-type]
         state.n_updated += 1
         row = {"memory_key": "k", "memory_id": "e1", "content_sha256": sha, "pinned": pinned}
-        _keep_row(state, row, NS(memory_key="k"))
+        _keep_row(state, row, NS(memory_key="k"), result)
     return state
 
 
 def test_a_pin_from_a_landed_bulk_row_refuses_a_later_value() -> None:
-    from server.memory.app.bulk_rows import settle_batch_rows
-
     state = _batch("s0", ("s1", True), ("s2", False))
-    assert settle_batch_rows(state, {}).drop == {1}
+    assert _settle(state, {}) == {1}
     assert state.skipped_pinned == ["k"]
     assert [r.conflict_verdict for r in state.results] == ["", "pinned"]
 
@@ -285,24 +292,22 @@ def test_a_pin_from_a_landed_bulk_row_refuses_a_later_value() -> None:
 def test_a_pinning_write_replaces_a_pinned_value() -> None:
     # memory.set lets a pinning write change a pinned value; so does a bulk, whether the
     # pin is stored or an earlier entry landed it.
-    from server.memory.app.bulk_rows import _bulk_skip_gate, settle_batch_rows
+    from server.memory.app.bulk_rows import _bulk_skip_gate
 
     state = _stored(k=("K1", "s0"))
     state.existing_pinned = {"k": True}
     assert not _bulk_skip_gate(NS(memory_key="k", pinned=True), "s1", state, {})
     assert state.skipped_pinned == []
     state = _batch("s0", ("s1", True), ("s2", True))
-    assert settle_batch_rows(state, {}).drop == set()
+    assert _settle(state, {}) == set()
     assert state.skipped_pinned == []
 
 
 def test_returning_to_the_stored_value_after_a_rejected_row_is_unchanged() -> None:
     # Serially the rejected value never lands, so "s0" again restates the stored row.
-    from server.memory.app.bulk_rows import settle_batch_rows
-
     state = _batch("s0", ("s1", False), ("s0", False))
-    replay = settle_batch_rows(state, {0: NS(verdict="rejected")})
-    assert replay.drop == {1} and state.results[1].version == 0
+    assert _settle(state, {0: NS(verdict="rejected", peers=[])}) == {1}
+    assert state.results[1].version == 0
     assert state.skipped_unchanged == 1 and state.restated_ids == ["e1"]
 
 
@@ -390,7 +395,7 @@ def test_a_repeat_with_other_labels_is_not_a_restatement() -> None:
         state = _stored()
         _entry(state, "a", "A1", "berlin")
         assert not _bulk_skip_gate(NS(memory_key="a", **changed), "berlin", state, {})
-        assert state.restatements == []
+        assert [s.repeats for s in state.steps] == [None]
 
 
 def test_a_stored_value_repeated_with_a_new_label_is_written() -> None:
@@ -415,14 +420,11 @@ def test_a_stored_value_repeated_with_a_new_label_is_written() -> None:
 def test_a_repeat_that_relabels_a_landed_row_lands_and_keeps_its_pin() -> None:
     # k=v lands pinned; k=v again as 'high' lands too, still pinned (the same bytes keep
     # the pin); a third with the same labels but another source is unchanged.
-    from server.memory.app.bulk_rows import settle_batch_rows
-
     state = _stored()
     _entry(state, "k", "id1", "s1", pinned=True)
     _entry(state, "k", "id1", "s1", sensitivity="high")
     _entry(state, "k", "id1", "s1", sensitivity="high", source_trace="again")
-    replay = settle_batch_rows(state, {})
-    assert replay.drop == {2}
+    assert _settle(state, {}) == {2}
     assert state.memory_rows[1]["pinned"] == 1
 
 
