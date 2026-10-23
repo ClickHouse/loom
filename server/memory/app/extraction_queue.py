@@ -32,6 +32,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple
 
+from server.core.ch_names import split_table
 from server.core.datetimes import utc_now as _now
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
@@ -658,6 +659,12 @@ class Requeued(NamedTuple):
     not_failed: list[str]
     # `failed`, but the org's model calls are switched off: left `failed`.
     model_calls_off: list[str]
+    # `failed` and queued over `_LAST_DAY` days ago: `drop_expiring` would drop a retry.
+    expired: list[str]
+
+
+# Names the retry's mutation in system.mutations, so a repeated retry finds it.
+_RETRY_TAG = "extraction_retry"
 
 
 async def requeue_own_failed(
@@ -670,9 +677,10 @@ async def requeue_own_failed(
     max_attempts: int,
     ch: Any | None = None,
 ) -> Requeued:
-    """Submit an in-place retry with one attempt left; status changes asynchronously."""
+    """Submit an in-place retry with one attempt left; status changes asynchronously.
+    A batch whose earlier retry is still unapplied is answered `requeued` again, with
+    no second mutation."""
     from server.core.ch import get_client
-    from server.llm import customer
 
     ch = ch or get_client()
     own: dict[str, Any] = {
@@ -682,26 +690,36 @@ async def requeue_own_failed(
         "scope": scope,
     }
     rows = await _own_rows(
-        ch, "queue_id, agent, user_id, session_id, status, version", queue_ids=queue_ids, **own
+        ch,
+        "queue_id, agent, user_id, session_id, status, version, "
+        # drop_expiring's cutoff, on the same clock.
+        f"enqueued_at < now64(3) - toIntervalDay({_LAST_DAY}) AS past_last_day",
+        queue_ids=queue_ids,
+        **own,
     )
     states = {str(r["queue_id"]): r for r in rows}
     failed = [qid for qid in queue_ids if states.get(qid, {}).get("status") == STATUS_FAILED]
     waiting_or_done = [qid for qid in queue_ids if qid in states and qid not in failed]
+    expired = [qid for qid in failed if int(states[qid]["past_last_day"])]
+    failed = [qid for qid in failed if qid not in expired]
     if not failed:
-        return Requeued([], waiting_or_done, [])
+        return Requeued([], waiting_or_done, [], expired)
     if await customer.switched_off(org):
-        return Requeued([], waiting_or_done, failed)
-    failed_rows = [states[qid] for qid in failed]
+        return Requeued([], waiting_or_done, failed, expired)
+    submitted = await _retries_unapplied(ch, failed)
+    batches = [
+        (r["agent"], r["user_id"], r["session_id"], r["queue_id"], int(r["version"]))
+        for r in (states[qid] for qid in failed if qid not in submitted)
+    ]
+    if not batches:
+        return Requeued(failed, waiting_or_done, [], expired)
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
-        "batches": [
-            (r["agent"], r["user_id"], r["session_id"], r["queue_id"], int(r["version"]))
-            for r in failed_rows
-        ],
+        "batches": batches,
         "by": enqueued_by,
         "attempts": max(0, int(max_attempts) - 1),
-        "updated": _now().strftime("%Y-%m-%d %H:%M:%S.%f"),
+        "tag": _RETRY_TAG,
     }
     in_scope = scope_and(scope, params)
     # Updating stored rows cannot restore a payload deleted while the request was in flight.
@@ -710,8 +728,9 @@ async def requeue_own_failed(
         ALTER TABLE loom.memory_extraction_queue
         UPDATE status = 'pending', attempts = {{attempts:UInt32}},
                lease_until = toDateTime64(0, 3, 'UTC'),
-               updated_at = toDateTime64({{updated:String}}, 3, 'UTC')
+               updated_at = now64(3, 'UTC')
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND ({{tag:String}} = {{tag:String}})
           AND (agent, user_id, session_id, queue_id, version)
               IN {{batches:Array(Tuple(String, String, String, String, UInt64))}}
           AND status = 'failed'
@@ -722,7 +741,24 @@ async def requeue_own_failed(
         """,
         params=params,
     )
-    return Requeued(failed, waiting_or_done, [])
+    return Requeued(failed, waiting_or_done, [], expired)
+
+
+async def _retries_unapplied(ch: Any, queue_ids: list[str]) -> set[str]:
+    """The ids among `queue_ids` an earlier retry's mutation still has to update."""
+    db, name = split_table(TABLE)
+    rows = await ch.query_all(
+        """
+        SELECT DISTINCT qid
+        FROM system.mutations
+        ARRAY JOIN {qids:Array(String)} AS qid
+        WHERE database = {db:String} AND table = {t:String} AND is_done = 0
+          AND position(command, {tag:String}) > 0
+          AND position(command, concat('\'', qid, '\'')) > 0
+        """,
+        params={"db": db, "t": name, "qids": list(queue_ids), "tag": f"'{_RETRY_TAG}'"},
+    )
+    return {str(r["qid"]) for r in rows}
 
 
 __all__ = [

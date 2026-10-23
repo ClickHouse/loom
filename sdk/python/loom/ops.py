@@ -11598,6 +11598,7 @@ class MemoryExtractionRetryMineOutput(TypedDict, total=False):
     requeued: NotRequired[list[str]]
     not_failed: NotRequired[list[str]]
     model_calls_off: NotRequired[list[str]]
+    expired: NotRequired[list[str]]
     unknown: NotRequired[list[str]]
 
 

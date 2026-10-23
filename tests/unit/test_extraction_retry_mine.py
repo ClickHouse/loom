@@ -36,6 +36,8 @@ class _StubCH:
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
         self.reads.append((sql, dict(params or {})))
+        if "system.mutations" in sql:
+            return []
         return [dict(r) for r in self.rows]
 
     async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
@@ -83,6 +85,7 @@ def _failed_row(queue_id: str = "q1", attempts: int = 3) -> dict[str, Any]:
         "attempts": attempts,
         "version": 1,
         "last_error": "ExtractionError: boom",
+        "past_last_day": 0,
     }
 
 
@@ -116,7 +119,7 @@ def test_retry_changes_only_the_principals_failed_rows_in_scope(tmp_path: Path) 
     )
     before = {r["queue_id"]: r for r in ch.stored()}
     scope = ReadFilters(scope="own_user", user_id="u1", session_id=None)
-    assert _requeue(ch, list(before), scope=scope) == (["q1"], ["q2", "q3"], [])
+    assert _requeue(ch, list(before), scope=scope) == (["q1"], ["q2", "q3"], [], [])
     after = {r["queue_id"]: r for r in ch.stored()}
     for qid, old in before.items():
         if qid != "q1":
@@ -133,7 +136,8 @@ def test_retry_changes_only_the_principals_failed_rows_in_scope(tmp_path: Path) 
 def test_retry_reads_states_and_submits_without_waiting_for_a_mutation() -> None:
     ch = _StubCH([_failed_row("q1")])
     assert _requeue(ch, ["q1", "q2"]).requeued == ["q1"]
-    assert len(ch.reads) == 1 and "payload" not in ch.reads[0][0].split("FROM")[0]
+    assert len(ch.reads) == 2 and "payload" not in ch.reads[0][0].split("FROM")[0]
+    assert "system.mutations" in ch.reads[1][0]
     sql, params = ch.commands[0]
     assert "mutations_sync = 0" in sql and params["batches"] == [("", "", "", "q1", 1)]
     assert "version =" not in sql and "payload =" not in sql and not ch.inserted
@@ -157,14 +161,27 @@ def test_a_failed_replay_ends_failed_again(max_attempts: int) -> None:
 
 def test_waiting_and_finished_batches_submit_no_retry() -> None:
     ch = _StubCH([{"queue_id": "q1", "status": "held"}, {"queue_id": "q2", "status": "done"}])
-    assert _requeue(ch, ["q1", "q2", "q9"]) == ([], ["q1", "q2"], [])
+    assert _requeue(ch, ["q1", "q2", "q9"]) == ([], ["q1", "q2"], [], [])
     assert not ch.commands
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_a_batch_past_its_last_day_is_expired_not_requeued(tmp_path: Path) -> None:
+    # enqueued_at is in the sort key: the old batch is written queued on its last day.
+    old = _queued("old", by="process:sa:a", status="failed").replace(
+        "enqueued_by) VALUES", "enqueued_by, enqueued_at) VALUES"
+    )
+    old = f"{old[:-1]}, now64(3) - toIntervalDay({q.TTL_DAYS - 1}))"
+    ch = _MutationCH(tmp_path / "ch", old, _queued("new", by="process:sa:a", status="failed"))
+    assert _requeue(ch, ["old", "new"]) == (["new"], [], [], ["old"])
+    assert [p["batches"] for _, p in ch.commands] == [[("a", "u1", "s1", "new", 1)]]
+    assert asyncio.run(q.drop_expiring(ch=ch)) == 0
 
 
 def test_switched_off_orgs_leave_failed_batches_unchanged() -> None:
     ch = _StubCH([_failed_row()])
     switch_off("o")
-    assert _requeue(ch, ["q1"]) == ([], [], ["q1"])
+    assert _requeue(ch, ["q1"]) == ([], [], ["q1"], [])
     assert not ch.commands
     switch_off()
     assert _requeue(ch, ["q1"]).requeued == ["q1"]
@@ -189,23 +206,24 @@ def test_the_handler_requeues_for_the_callers_principal_and_scope(
 
     async def _requeue_own(**kw: Any) -> q.Requeued:
         seen.update(kw)
-        return q.Requeued(["q2"], ["q1"], ["q3"])
+        return q.Requeued(["q2"], ["q1"], ["q3"], ["q4"])
 
     monkeypatch.setattr(q, "requeue_own_failed", _requeue_own)
     monkeypatch.setattr(settings, "extraction_queue_max_attempts", 5)
     inp = MemoryExtractionRetryMineInput(
-        org="o", namespace="n", queue_ids=["q1", "q2", "q1", "q3", "q9"]
+        org="o", namespace="n", queue_ids=["q1", "q2", "q1", "q3", "q4", "q9"]
     )
     out = _in_context(
         _auth(read_user_id="u1"), lambda: asyncio.run(handle_memory_extraction_retry_mine(inp))
     )
-    assert seen["queue_ids"] == ["q1", "q2", "q3", "q9"]
+    assert seen["queue_ids"] == ["q1", "q2", "q3", "q4", "q9"]
     assert (seen["enqueued_by"], seen["max_attempts"]) == ("process:sa:chat-agent", 5)
     assert seen["scope"] == ReadFilters(scope="own_user", user_id="u1", session_id=None)
-    assert (out.requeued, out.not_failed, out.model_calls_off, out.unknown) == (
+    assert (out.requeued, out.not_failed, out.model_calls_off, out.expired, out.unknown) == (
         ["q2"],
         ["q1"],
         ["q3"],
+        ["q4"],
         ["q9"],
     )
 
@@ -247,7 +265,7 @@ def test_loom_op_runs_it_but_not_on_a_readonly_connection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def _requeue_own(**kw: Any) -> q.Requeued:
-        return q.Requeued(list(kw["queue_ids"]), [], [])
+        return q.Requeued(list(kw["queue_ids"]), [], [], [])
 
     monkeypatch.setattr(q, "requeue_own_failed", _requeue_own)
     _defaults(monkeypatch)

@@ -751,6 +751,7 @@ Replay your failed deferred memory.set_from_messages batches once more, by queue
 | `requeued` | `list[str]` | The asked batches accepted for one more attempt, in the order asked. |
 | `not_failed` | `list[str]` | The asked batches you queued that had not failed (`pending`, `running`, `held` or `done`): nothing to replay. |
 | `model_calls_off` | `list[str]` | The asked failed batches left `failed` because the org's model calls are switched off: a replay could only wait. |
+| `expired` | `list[str]` | The asked failed batches queued 29 or more days ago: the queue drops them before its 30-day TTL, so a replay could not run. |
 | `unknown` | `list[str]` | The asked ids no batch of yours answers to, as memory.extraction_status_mine's. |
 
 ## `memory.extraction_status`

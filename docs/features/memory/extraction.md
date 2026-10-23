@@ -231,6 +231,9 @@ deferred calls returned, at most 20 a call:
   batches still waiting or done are left alone. The update targets the exact version
   read, preserving newer worker results and never restoring an erased transcript.
   While the org's model calls are switched off nothing is accepted (`model_calls_off`).
+  A batch queued 29 or more days ago is not accepted (`expired`): the queue drops it
+  before its 30-day TTL. Asking again before an accepted retry applies submits no
+  second update.
 
 Both answer only a batch the calling principal queued in that namespace, inside the
 token's read scope; every other id comes back in `unknown`, so an agent cannot learn

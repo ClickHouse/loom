@@ -19,6 +19,13 @@ class _DelayedMutationCH(_MutationCH):
     async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
         self.commands.append((sql, dict(params or {})))
 
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+        if "system.mutations" not in sql:
+            return await super().query_all(sql, params)
+        # clickhouse-local keeps no unfinished mutation: the unapplied commands stand in.
+        pending = {b[3] for _, p in self.commands for b in p.get("batches", [])}
+        return [{"qid": qid} for qid in (params or {})["qids"] if qid in pending]
+
     def finish(self) -> None:
         for sql, params in self.commands:
             self.apply(sql, params)
@@ -83,11 +90,12 @@ def test_a_stale_retry_cannot_change_a_newer_worker_version(tmp_path: Path, stat
     assert ch.stored() == before
 
 
-def test_duplicate_acceptances_buy_one_attempt(tmp_path: Path) -> None:
+def test_duplicate_acceptances_submit_one_update(tmp_path: Path) -> None:
     ch = _DelayedMutationCH(tmp_path / "ch", _queued("q1", by="process:sa:a", status="failed"))
     assert _requeue(ch, ["q1"]).requeued == ["q1"]
     assert _requeue(ch, ["q1"]).requeued == ["q1"]
+    assert len(ch.commands) == 1
     ch.finish()
     (row,) = ch.stored()
     assert (row["status"], row["attempts"], row["version"]) == ("pending", 2, 1)
-    assert _requeue(ch, ["q1"]) == ([], ["q1"], [])
+    assert _requeue(ch, ["q1"]) == ([], ["q1"], [], [])

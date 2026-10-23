@@ -565,7 +565,7 @@ class MemoryExtractionRetryMineInput(MemoryExtractionStatusMineInput):
     Each `failed` batch the calling principal queued in this namespace, inside the token's
     read scope, is accepted for one more replay. Status changes to `pending`
     asynchronously; a failed replay ends `failed` again. While the org's model calls
-    are switched off nothing is accepted.
+    are switched off nothing is accepted, and a batch queued 29 or more days ago never is.
     Batches still waiting or done are left alone; any other id is listed in `unknown`, as
     an id never queued is.
     """
@@ -581,5 +581,8 @@ class MemoryExtractionRetryMineOutput(BaseModel):
     # The asked failed batches left `failed` because the org's model calls are switched
     # off: a replay could only wait. Ask again once they are back on.
     model_calls_off: list[str] = Field(default_factory=list)
+    # The asked failed batches queued 29 or more days ago: the queue drops them before its
+    # 30-day TTL, so a replay could not run.
+    expired: list[str] = Field(default_factory=list)
     # The asked ids no batch of yours answers to, as memory.extraction_status_mine's.
     unknown: list[str] = Field(default_factory=list)

@@ -4541,6 +4541,7 @@ export interface MemoryExtractionRetryMineOutput {
   requeued?: string[];
   not_failed?: string[];
   model_calls_off?: string[];
+  expired?: string[];
   unknown?: string[];
 }
 

@@ -213,11 +213,12 @@ async def handle_memory_extraction_retry_mine(
         scope=request_scope(),
         max_attempts=settings.extraction_queue_max_attempts,
     )
-    known = {*done.requeued, *done.not_failed, *done.model_calls_off}
+    known = {*done.requeued, *done.not_failed, *done.model_calls_off, *done.expired}
     return MemoryExtractionRetryMineOutput(
         requeued=done.requeued,
         not_failed=done.not_failed,
         model_calls_off=done.model_calls_off,
+        expired=done.expired,
         unknown=[qid for qid in asked if qid not in known],
     )
 
