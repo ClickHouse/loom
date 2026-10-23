@@ -663,20 +663,6 @@ def _trace_tasks_left_as_found() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _deferred_ledgers_left_empty() -> Iterator[None]:
-    """Leave no buffered writes or delayed ledger flushes for the next test."""
-    yield
-    from server.core import namespace_write_marks
-    from server.memory.app import drops, graph_write_marks
-    from server.memory.store import usage as memory_repo_usage
-
-    memory_repo_usage._reset_for_tests()
-    drops._reset_for_tests()
-    namespace_write_marks._reset_for_tests()
-    graph_write_marks._reset_for_tests()
-
-
-@pytest.fixture(autouse=True)
 def _worker_cursors_left_empty() -> Iterator[None]:
     """A worker's next page must not depend on a previous test's pass."""
     if module := sys.modules.get("server.memory.workers.projection_repair"):
@@ -727,6 +713,17 @@ def _identity_caches_left_cold() -> Iterator[None]:
     summaries._SUMMARY_ENTITY_CACHE.clear()
 
 
+def _reset_deferred_ledgers() -> None:
+    from server.core import namespace_write_marks
+    from server.memory.app import drops, graph_write_marks
+    from server.memory.store import usage as memory_repo_usage
+
+    memory_repo_usage._reset_for_tests()
+    drops._reset_for_tests()
+    namespace_write_marks._reset_for_tests()
+    graph_write_marks._reset_for_tests()
+
+
 @pytest.fixture(autouse=True)
 async def _tasks_left_as_found() -> Any:
     """Cancel the tasks a test started on the session loop and left pending.
@@ -743,15 +740,37 @@ async def _tasks_left_as_found() -> Any:
     test, so a leak stops at the test that caused it instead of failing a
     bystander. Tasks that existed before the test (session fixtures'
     servers, the loop's own) are left alone.
+
+    Each pass first empties the deferred ledgers (usage, drops, namespace and
+    graph write marks) and stops their timers and flusher: a flush left armed
+    would write into a later test's client and leave a deferred task that
+    `drain_task_sets` counts.
     """
     before = set(asyncio.all_tasks())
     yield
     current = asyncio.current_task()
-    leaked = [t for t in asyncio.all_tasks() - before if t is not current and not t.done()]
-    for t in leaked:
-        t.cancel()
-    if leaked:
+
+    def pending() -> list[asyncio.Task[Any]]:
+        return [t for t in asyncio.all_tasks() - before if t is not current and not t.done()]
+
+    # A cancelled task's done callback can re-arm a timer or spawn a graph-marks
+    # end task, so the reset and the sweep repeat. A task still pending after
+    # three passes is cancelled too, and fails the test unless something (the
+    # ledger reset, for the usage flusher) was already cancelling it.
+    unstopped: list[asyncio.Task[Any]] = []
+    for last in (False, False, False, True):
+        _reset_deferred_ledgers()
+        leaked = pending()
+        if not leaked:
+            return
+        if last:
+            unstopped = [t for t in leaked if not t.cancelling()]
+        for t in leaked:
+            t.cancel()
         await asyncio.gather(*leaked, return_exceptions=True)
+    _reset_deferred_ledgers()
+    if unstopped:
+        pytest.fail(f"cancelling the tasks a test left kept starting new ones: {unstopped}")
 
 
 @pytest.fixture(autouse=True)

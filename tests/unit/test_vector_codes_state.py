@@ -458,14 +458,13 @@ def test_rebuild_runner_sets_the_twin_granularity() -> None:
     )
 
 
-def test_rebuild_gate_reads_the_served_multiplier_and_skips_placeholders() -> None:
+def test_rebuild_gate_reads_the_served_multiplier() -> None:
     from scripts.ops import vector_codec_rebuild as vcr
 
     _, st = vcr.twin_read("embedding", "[1]", 10.0)
     assert st["vector_search_index_fetch_multiplier"] == 10.0
     src = (ROOT / "scripts/ops/vector_codec_rebuild.py").read_text()
     assert "twin_read(vcol, lit, self.a.gate_fetch_multiplier)" in src
-    assert "{vcol}[1] != 0" in src
 
 
 def test_each_serving_column_is_held_to_the_width_its_writes_carry(

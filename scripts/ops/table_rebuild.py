@@ -36,7 +36,14 @@ and stops. The steps of a rebuild:
    another delta pass before it fails the run.
 5. Refuse to swap when a mutation (an erasure purge) or a lightweight update
    touched the live table after the copy started: the twin may hold rows it
-   removed. Rerun with `--restart`.
+   removed; an `ALTER` that ClickHouse runs as a mutation (dropping, renaming
+   or retyping a column, dropping an index, a TTL) is refused here too. Rerun with
+   `--restart`, after restating a schema `ALTER` in the migration's target.
+   Refuse it too (exit 3) when an `ALTER` that is not a mutation (an index,
+   a setting, a column's default or codec) moved the live table's
+   metadata time since the twin's columns were checked: a rebuild does not
+   carry it over either. An added column fails the next copy pass (exit 1, no
+   swap), or the run exits 3 once the last verify pass ran.
 6. A last delta pass, then `EXCHANGE TABLES`, then the old table becomes
    `loom.<t>_pre_rebuild`, and its merges are stopped. Two delta passes
    `--settle-s` apart copy what in-flight writers put into it after the swap.
@@ -165,6 +172,7 @@ class Rebuild:
         self.copied: set[str] = set()
         self.rows_copied = 0
         self.twin_uuid = ""
+        self.live_meta: Any = None
         self.mod = 1
         self.abort = Path(args.abort_file) if args.abort_file else None
 
@@ -352,12 +360,12 @@ class Rebuild:
         )
 
     def report_state(self) -> str:
-        live, pre = tr.live_layout(self.ch, self.t), tr.live_layout(self.ch, self.pre)
+        live, twin, pre = (tr.live_layout(self.ch, n) for n in (self.t, self.twin, self.pre))
         return tr.guidance(
             self.t,
             f"python -P -m scripts.ops.table_rebuild --table {self.t}",
             None if live is None else live == self.target,
-            self.exists(self.twin),
+            None if twin is None else twin == self.target,
             None if pre is None else pre == self.target,
         )
 
@@ -396,11 +404,20 @@ class Rebuild:
         self.twin_uuid = row[1] if row else ""
         return ""
 
+    def altered(self) -> bool:
+        """A non-mutation ALTER (an index, a setting, a column's default or codec)
+        moved the live table's metadata time since the twin's columns were checked
+        (one second's precision)."""
+        row = self.table_row(self.t)
+        return row is None or row[2] != self.live_meta
+
     def still_ours(self) -> bool:
         row = self.table_row(self.twin)
         return row is not None and row[1] == self.twin_uuid
 
     def copy_and_swap(self) -> int:
+        row = self.table_row(self.t)  # before the twin's column check, so any later ALTER shows
+        self.live_meta = row[2] if row else None
         why = self.create_twin()
         if why:
             log("REFUSED:", why)
@@ -414,7 +431,7 @@ class Rebuild:
         if self.touched(started, patches):
             log(
                 "REFUSED: a mutation or lightweight update touched the table during the copy; "
-                "rerun with --restart"
+                "rerun with --restart (restate a schema ALTER in the migration's target first)"
             )
             return TOUCHED
         if not self.verified():
@@ -423,12 +440,18 @@ class Rebuild:
         if self.touched(started, patches):
             log(
                 "REFUSED: a mutation or lightweight update touched the table during the check; "
-                "rerun with --restart"
+                "rerun with --restart (restate a schema ALTER in the migration's target first)"
             )
             return TOUCHED
         if self.aborted():
             log("abort file present; no swap")
             return ABORTED
+        if self.altered():
+            log(
+                f"REFUSED: loom.{self.t} was altered during the copy; no swap. A rebuild does "
+                "not carry an ALTER over: restate it in the migration's target, then --restart"
+            )
+            return REFUSED
         if not self.still_ours():
             log(f"REFUSED: loom.{self.twin} is no longer the twin this run created; no swap")
             return REFUSED
@@ -553,7 +576,23 @@ def main(argv: list[str] | None = None, ch: Any = None) -> int:
         from server.core.schema.migrate import client
 
         ch = client()
-    job = Rebuild(ch, args)
+    try:
+        job = Rebuild(ch, args)
+    except LookupError as e:  # no migration declares a rebuild of this table
+        why = str(e)
+
+        def refuse() -> int:
+            tr.print_target(ch, args.table)
+            log("REFUSED:", why)
+            return REFUSED
+
+        return tr.run_reported(
+            args.table,
+            action,
+            refuse,
+            lambda: "check --table: only a table a migration declares can be rebuilt",
+            lambda: 0,
+        )
     return tr.run_reported(
         args.table, action, lambda: execute(job, action), job.report_state, lambda: job.rows_copied
     )

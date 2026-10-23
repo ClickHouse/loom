@@ -207,7 +207,17 @@ def test_twin_read_is_the_codes_at_the_leg_multiplier() -> None:
         "vector_search_use_quantized_codes": 1,
         "vector_search_index_fetch_multiplier": 10.0,
     }
-    assert vcr.vector_filter("embedding", dim=3072) == "length(embedding) = 3072"
+    real = vcr.vector_filter("embedding", dim=3072)
+    assert "length(embedding) = 3072" in real and "arrayExists(x -> x != 0, embedding)" in real
+
+
+def test_the_width_preflight_counts_other_non_empty_widths_as_loom_serves_them() -> None:
+    assert vcr.read_final(vcr.parse_engine(DDL)[0]) == " FINAL"
+    assert vcr.read_final("SharedMergeTree") == ""
+    mixed = vcr.mixed_width_sql("memory_chunks", "embedding", " FINAL", dim=3072)
+    assert "FROM loom.memory_chunks FINAL" in mixed
+    assert "length(embedding) != 3072 AND arrayExists(x -> x != 0, embedding)" in mixed
+    assert "FINAL" not in vcr.mixed_width_sql("chunks", "embedding", "", dim=3072)
 
 
 def test_parse_engine_reads_the_version_of_a_non_replicated_or_is_deleted_engine() -> None:
@@ -228,3 +238,54 @@ def test_a_coded_live_table_is_on_target_and_a_chained_ask_is_not() -> None:
     )
     assert vcr.on_target(coded, cols, None, "rabitq", 3072)
     assert vcr.on_target(ME_DDL, cols, "LZ4", "rabitq", 3072) is False
+
+
+def test_a_key_is_mismatched_only_when_both_sides_hold_it() -> None:
+    """With join_use_nulls=0 a key one side lacks reads defaults there; counted as
+    mismatched too, a key erased from the source would never read as twin-only alone."""
+    hashed = ["org", "deleted_at"]
+    for version in ("created_at", None):
+        sql = vcr.consistency_sql(
+            "memory_chunks", "memory_chunks_rebuild", "", version, ["org"], hashed, [], dim=8
+        )
+        assert "countIf(s.__present = 1 AND t.__present = 1 AND (" in sql
+        assert "countIf(t.__present = 0) AS source_only" in sql
+        assert "countIf(s.__present = 0) AS twin_only" in sql
+    plain = vcr.consistency_sql(
+        "chunks", "chunks_rebuild", "", None, ["org", "namespace"], hashed, [], dim=8
+    )
+    # without a version column each key compares its row count
+    assert "s.n != t.n" in plain and "count() AS n" in plain
+    assert "GROUP BY org, namespace" in plain
+
+
+def test_the_consistency_read_hashes_each_row_it_compares() -> None:
+    """A change that keeps the key and its version (an UPDATE of any column, a tombstone)
+    shows only in the hash; `tuple` keeps a NULL column from making the hash NULL. The
+    source's vector is hashed as the copy writes it, the twin's as it is stored."""
+    sql = vcr.consistency_sql("t", "t_rebuild", " FINAL", "v", ["org"], ["org", "v"], ["e"], dim=3)
+    stored = vcr.stored_vector("e", dim=3)
+    assert "CAST(e AS Array(BFloat16))" in stored
+    assert f"cityHash64(tuple(`org`, `v`, {stored}))" in sql
+    assert "cityHash64(tuple(`org`, `v`, `e`))" in sql
+    assert "s.__hash != t.__hash" in sql
+
+
+def test_the_pre_swap_mutation_read_counts_finished_mutations_since_the_copy() -> None:
+    sql = vcr.mutations_sql("system.mutations", 1_700_000_000)
+    assert "NOT is_done OR create_time >= toDateTime(1700000000)" in sql
+    assert "table = {t:String}" in sql
+
+
+def test_the_newer_read_counts_each_side_of_a_mismatched_key() -> None:
+    sql = vcr.newer_sql("a", "b", " FINAL", "created_at", ["org", "id"])
+    assert "countIf(o.v > n.v), countIf(o.v < n.v)" in sql
+    assert "created_at AS v" in sql and "USING (org, id)" in sql
+    # without a version column the row count stands in for it
+    assert "count() AS v" in vcr.newer_sql("a", "b", "", None, ["org", "id"])
+
+
+def test_the_tie_read_counts_keys_with_more_than_one_row_at_their_newest_version() -> None:
+    sql = vcr.tied_keys_sql("memory_chunks", "created_at", ["org", "id"])
+    assert "argMax(n, created_at)" in sql and "countIf(n_at_max > 1)" in sql
+    assert "GROUP BY org, id, created_at" in sql

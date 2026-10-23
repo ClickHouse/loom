@@ -12,6 +12,7 @@ CH-free: the flush target and every downstream leg are stubbed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -22,28 +23,13 @@ from server.settings import settings
 
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
+_real_flush_later = drops._flush_later
+
 
 @pytest.fixture(autouse=True)
-def _quiet_ledger(monkeypatch: pytest.MonkeyPatch):
-    """Keep rows in the buffer (no background flush task) so tests can
-    inspect them; reset between tests.
-
-    `_flush_and_rearm` is stubbed too: a test elsewhere that recorded a drop
-    without this fixture armed a real `call_later(2.0, _fire_flush)` on the
-    session loop, and that timer fires inside whichever test runs two
-    seconds later — under random order, one of these — draining the buffer
-    the assertion is about to read. The timer keeps its `_fire_flush`, but
-    that looks `_flush_and_rearm` up at fire time, so the stub catches it.
-    """
-    drops._reset_for_tests()
-
-    async def _no_flush() -> None:
-        return None
-
+def _quiet_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep drops buffered for assertions; each test's teardown clears them."""
     monkeypatch.setattr(drops, "_flush_later", lambda delay: True)
-    monkeypatch.setattr(drops, "_flush_and_rearm", _no_flush)
-    yield
-    drops._reset_for_tests()
 
 
 def _pairs() -> list[tuple[str, str]]:
@@ -512,3 +498,26 @@ def test_drops_cli_is_registered_and_runs(monkeypatch: pytest.MonkeyPatch, capsy
     assert rc == 0
     out = capsys.readouterr().out
     assert "chunk.split" in out and "truncated" in out
+
+
+@pytest.mark.asyncio
+async def test_reset_stops_an_armed_flush_from_writing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import server.core.ch as chmod
+
+    inserts: list[str] = []
+
+    class _CH:
+        async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+            inserts.append(table)
+
+    monkeypatch.setattr(chmod, "get_client", lambda: _CH())
+    monkeypatch.setattr(drops, "_flush_later", _real_flush_later)
+    monkeypatch.setattr(drops, "_FLUSH_DELAY_S", 0.01)
+    drops.record_drop("o", "n", "parse", "empty", item="item")
+    drops._reset_for_tests()
+    # A row only the first timer could flush: this one arms no timer of its own.
+    monkeypatch.setattr(drops, "_flush_later", lambda delay: True)
+    drops.record_drop("o", "n", "parse", "empty", item="after")
+    await asyncio.sleep(0.05)
+    assert inserts == []
+    assert drops.pending_count() == 1
