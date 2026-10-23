@@ -239,6 +239,9 @@ _FIRST_PERSON_FORMS = frozenset(
 SELF_SUBJECT = "user"
 # The most triples one memory row states; the triple writer keeps the first ones.
 MAX_TRIPLES_PER_ROW = 8  # not a setting: a wire bound of `relations`
+# The longest entity name kept, as written. Longer text is not a name, and a read binds
+# names as query parameters, which ClickHouse caps at 128 KiB each.
+MAX_ENTITY_CHARS = 256  # not a setting: a wire bound of a triple's subject and object
 
 # Singularize the head noun so distinct-thing COUNTs don't split on
 # plural/singular surface forms ("data breach" vs "data breaches", "kit" vs
@@ -441,9 +444,12 @@ def canonical_entity(raw: str) -> CanonicalEntity:
 
     Collapses first-person forms (i / me / user / ...) to "user" to match the
     read side (graph seeds and query triples use `canonical_entity_text`); the original
-    surface form is preserved in `aliases` for provenance and recall."""
+    surface form is preserved in `aliases` for provenance and recall. Text longer than
+    `MAX_ENTITY_CHARS` is no entity: its text is empty."""
 
     original = str(raw or "").strip()
+    if len(original) > MAX_ENTITY_CHARS:
+        return CanonicalEntity(text="", entity_id="")
     text = _normalise(original.lower())
     entity_id = text.replace(" ", "_")
     return CanonicalEntity(text=text, entity_id=entity_id, aliases=[original] if original else [])

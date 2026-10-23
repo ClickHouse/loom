@@ -16,6 +16,7 @@ from server.core.ch import get_client
 from server.core.llm_free import reads_llm_free
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.query_plan import _enrichment_parser_gate_active
+from server.memory.domain.graph_quality import MAX_ENTITY_CHARS
 
 log = logging.getLogger(__package__)
 
@@ -124,8 +125,10 @@ async def _settle_namespaces(
 
 def _entity_filter(input: MemorySearchInput, llm_query_entities: list[str]) -> list[str]:
     """The entity filter before canonicalisation: the caller's own wins over the
-    entities the intent parser found."""
-    return list(input.entity_filter or []) or list(llm_query_entities)
+    entities the intent parser found. A name too long to be one is left out, so a failed
+    canonical lookup never binds it."""
+    names = list(input.entity_filter or []) or list(llm_query_entities)
+    return [n for n in names if len(n.strip()) <= MAX_ENTITY_CHARS]
 
 
 async def _prelaunch_canonical_lookup(

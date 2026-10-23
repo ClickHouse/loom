@@ -1212,18 +1212,17 @@ async def test_a_drop_whose_edge_end_fails_leaves_its_links_for_the_replay(
     assert await _open_edge_pairs(ch, org) == {("alice smith", "bob lane")}
 
 
-async def test_a_bulk_made_high_with_a_huge_declared_entity_drops_and_ends_its_other_pairs(
+async def test_a_bulk_made_high_with_a_longest_declared_entity_drops_and_ends_its_other_pairs(
     ch, org
 ) -> None:
-    """A row naming a 32 KB entity, re-set high declaring it and one other: each link
-    with the huge name binds alone if it must, the pairs with the undeclared name end,
-    and the declared pair stays."""
+    """A row naming an entity as long as a name may be, re-set high declaring it and one
+    other: the pairs with the undeclared name end, and the declared pair stays."""
     from server.memory.api.models_bulk import MemoryBulkSetInput
     from server.memory.app import after_write, intent_marks
     from server.memory.app.bulk_set import handle_memory_bulk_set
-    from server.memory.domain.graph_quality import canonical_entity_text
+    from server.memory.domain.graph_quality import MAX_ENTITY_CHARS, canonical_entity_text
 
-    huge = "Rome" + " District" * 3600
+    huge = ("Rome" + " District" * 40)[:MAX_ENTITY_CHARS]
     big = canonical_entity_text(huge)
 
     def write(sensitivity: str, entities: list[str]) -> MemoryBulkSetInput:
