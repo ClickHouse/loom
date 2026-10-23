@@ -344,8 +344,9 @@ def bot_from(
     """A bot from what an operator gave; ValueError says what is wrong. With
     `agent_claim`, a trust whose agents each get their own subject and
     namespace (server/auth/agents.py); its namespace roles are what they share.
-    `max_access_token_s` caps the requested lifetime. A platform-admin bot
-    names no namespace and cannot provision individual agents."""
+    `max_access_token_s` caps each token, the hour-long default included. With
+    `platform_admin`, every token carries that role, which spans every org: it
+    names no namespace and tells no agents apart."""
     from server.auth.authz import GRANT_ROLES
 
     if not _BOT_NAME.fullmatch(name):

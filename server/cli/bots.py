@@ -180,11 +180,11 @@ def _cmd_list(args: argparse.Namespace) -> int:
             proofs = ["key"] * bool(r["has_key"]) + [f"CI {r['issuer']}"] * bool(r["issuer"])
             proofs += [f"agents by {r['agent_claim']}"] * bool(r["agent_claim"])
             ttl = int(r["max_access_token_s"])
-            proofs += [f"tokens up to {ttl} s"] * (ttl != machines.TOKEN_TTL)
+            limit = f"  max token {ttl} s" * (ttl != machines.TOKEN_TTL)
             state = "active" if r["active"] else "disabled"
             roles = ", ".join(f"{ns}={role}" for ns, role in r["ns_roles"])
             roles = "platform_admin (every org)" if r.get("platform_admin") else roles
-            print(f"  {r['name']:<24} {state:<8} {r['org']:<16} {roles:<40} {' + '.join(proofs)}")
+            print(f"  {r['name']:<24} {state:<8} {r['org']:<16} {roles:<40} {' + '.join(proofs)}{limit}")
         return 0
 
     return run_connected(_run)

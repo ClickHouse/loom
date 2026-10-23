@@ -25,8 +25,8 @@ The package ships `py.typed` and passes `mypy --strict`.
 The constructor's `profile` names a `loom login` session and its server.
 Otherwise its `base_url` and `api_key` win, and the SDK reads `LOOM_BASE_URL`
 (default `http://localhost:7777`), then `LOOM_API_KEY`, then a bot's
-`LOOM_CLIENT_ID` with its key or workload token (`loom.machine`, hour-long
-tokens it renews itself), then the session `loom.login()` / `loom login`
+`LOOM_CLIENT_ID` with its key or workload token (`loom.machine`, tokens of an
+hour, or the bot's shorter maximum, that it renews itself), then the session `loom.login()` / `loom login`
 stored in `~/.loom/credentials` for that server (profile `LOOM_PROFILE`,
 default `default`; it refreshes itself), and finally the first line of
 `~/.loom/token`, the file `loom mint-token --save` writes. A stored session is
