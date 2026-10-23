@@ -20,6 +20,7 @@ from server.core import bm25
 from server.core.ch import caller_shaped, own_write_reads, sequential_reads
 from server.core.ch_errors import WIDTH_MISMATCH_CODE, error_code
 from server.core.ch_writes import batched_insert_settings, committed_insert_settings
+from server.core.datetimes import naive_utc_now
 from server.core.errors import OverloadedError
 from server.core.repo_base import _CHClient, _default_client, param_slices
 from server.core.vectors import codes_state
@@ -442,7 +443,7 @@ async def mark_message_saved(
         f"""
         ALTER TABLE {table}
         UPDATE is_saved = true, user_id = {{uid:String}},
-               saved_at = coalesce(saved_at, now64(3))
+               saved_at = coalesce(saved_at, {{at:DateTime64(3, 'UTC')}})
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND agent = {{agent:String}} AND thread_id = {{tid:String}}
           AND msg_id = {{mid:String}} AND tombstoned_at IS NULL
@@ -457,6 +458,8 @@ async def mark_message_saved(
             "tid": thread_id,
             "mid": msg_id,
             "uid": user_id,
+            # bound: a replicated table refuses now64() in a mutation
+            "at": naive_utc_now(),
         },
     )
 

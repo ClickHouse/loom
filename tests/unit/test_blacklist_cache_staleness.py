@@ -4,6 +4,8 @@ refreshes when the version moves or the TTL runs out. CH-free."""
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 import server.memory.app.blacklist_guard as bl
@@ -83,7 +85,10 @@ async def test_refusals_are_coalesced_into_one_write_per_pattern_per_interval(en
         clock["t"] += 0.1
         await bl.note_hit("00000000-0000-0000-0000-000000000001")
     # 10 s of refusals, a 30 s interval: the first one writes, the rest wait
-    assert executed == [{"pid": "00000000-0000-0000-0000-000000000001", "n": 1}]
+    assert [{k: p[k] for k in ("pid", "n")} for p in executed] == [
+        {"pid": "00000000-0000-0000-0000-000000000001", "n": 1}
+    ]
+    assert isinstance(executed[0]["at"], datetime)  # bound: a replicated table refuses now()
     clock["t"] += 30.0
     await bl.note_hit("00000000-0000-0000-0000-000000000001")
     assert executed[-1]["n"] == 100  # every refusal counted, in one mutation

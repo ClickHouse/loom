@@ -21,6 +21,7 @@ from server.erasure.store.predicates import (
     SUPPORTED_LEARNINGS,
     UID,
 )
+from server.erasure.store.scope_reads import slices
 from server.observability import events_stream
 from server.settings import settings
 
@@ -322,9 +323,10 @@ async def delete_learnings_queue_by_user(
     survives (holding the rule) and the census's residue reopens this step to blank
     it: a pending candidate loses only its `pending` rows, a decided one only its
     rows that hold the rule at a version no newer than the one it read for that
-    candidate. A pending candidate a supporter backed after the read is kept: the
-    delete re-checks for supporter rows, and a filing writes its supporter row before
-    its candidate row."""
+    candidate. A pending candidate a supporter backed after the read is kept: each
+    slice re-reads the supporter rows right before its delete, and a filing writes its
+    supporter row before its candidate row. Only a supporter landing between that read
+    and its delete can still lose its candidate."""
     ch = ch or _default_client()
     n = await delete_scoped(
         "loom.learnings_supporters", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
@@ -353,17 +355,22 @@ async def delete_learnings_queue_by_user(
         await ch.insert(
             "loom.learnings_queue", blank, settings={"async_insert": 0, "wait_for_async_insert": 1}
         )
-    if pending:
-        n += await delete_scoped(
-            "loom.learnings_queue",
-            org=org,
-            scope_where=(
-                "candidate_id IN {cids:Array(UUID)} AND status = 'pending' "
-                f"AND candidate_id NOT IN {SUPPORTED_LEARNINGS}"
-            ),
-            params={"cids": pending},
-            ch=ch,
+    for part in slices(pending):
+        # read right before the delete, which names its ids: a mutation takes no subquery
+        backed = await ch.query_all(
+            f"SELECT DISTINCT toString(candidate_id) AS id FROM {SUPPORTED_LEARNINGS} "
+            "WHERE candidate_id IN {cids:Array(UUID)}",
+            params={"org": org, "cids": part},
         )
+        unbacked = sorted(set(part) - {str(r["id"]) for r in backed})
+        if unbacked:
+            n += await delete_scoped(
+                "loom.learnings_queue",
+                org=org,
+                scope_where="candidate_id IN {cids:Array(UUID)} AND status = 'pending'",
+                params={"cids": unbacked},
+                ch=ch,
+            )
     if decided:
         n += await delete_scoped(
             "loom.learnings_queue",

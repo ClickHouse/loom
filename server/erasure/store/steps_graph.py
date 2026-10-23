@@ -10,22 +10,30 @@ from typing import Any, NamedTuple
 
 from server.core.repo_base import _CHClient, _default_client, param_slices
 from server.erasure.store.mutations import (
-    count_then_mutate,
     delete_scoped,
     namespaces_of,
     tombstone_scoped,
 )
 from server.erasure.store.predicates import (
+    COMMUNITY_ROWS_IN,
+    CONFLICT_RECORD_IDS_IN,
     NS_EQ,
     NS_IN,
+    PARENT_KEYS_IN,
+    PRECEDENT_KEYS_IN,
+    RECORD_IDS_IN,
     UID,
-    USER_COMMUNITY_ROWS,
-    USER_CONFLICT_RECORD_IDS,
+    USER_COMMUNITY_ENTITIES,
     USER_KEYS_SUBQ,
-    USER_PARENT_KEYS,
-    USER_PRECEDENT_KEYS,
-    USER_RECORD_IDS,
-    USER_WINDOW_KEYS,
+    USER_RECORDS_SUBQ,
+    WINDOW_KEYS_IN,
+)
+from server.erasure.store.scope_reads import (
+    slices,
+    slices_or_none,
+    tuples,
+    user_key_pairs,
+    user_keys,
 )
 
 # ---------------------------------------------------------------------------
@@ -41,14 +49,14 @@ _LINK_TABLES_TOMBSTONE = (
     "loom.memory_chunk_sources",
 )
 
-# Entity-graph link tables: no soft-delete column → ALTER DELETE.
-# Each with how a user's links are found: a key link by the user's keys, a row
-# link by the writer it carries, which outlives the row.
+# Entity-graph link tables: no soft-delete column → ALTER DELETE. A user's key
+# links are found by the user's keys, row links (`ROW_LINK_TABLES`) by the writer
+# they carry, which outlives the row.
 _LINK_TABLES_DELETE = (
-    ("loom.entity_triple_memories", USER_PARENT_KEYS),
-    ("loom.entity_triple_rows", UID),
-    ("loom.entity_edge_memories", USER_PARENT_KEYS),
-    ("loom.entity_edge_rows", UID),
+    "loom.entity_triple_memories",
+    "loom.entity_triple_rows",
+    "loom.entity_edge_memories",
+    "loom.entity_edge_rows",
 )
 # The entity graph itself: edges and triples carry the namespace's subjects,
 # relations and objects verbatim and have no soft-delete column (invalidation
@@ -80,11 +88,14 @@ async def tombstone_source_links_by_namespace(
 async def tombstone_source_links_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
+    ch = ch or _default_client()
+    keys = await user_key_pairs(org, user_id, ch=ch)
     total = 0
     for t in _LINK_TABLES_TOMBSTONE:
-        total += await tombstone_scoped(
-            t, org=org, scope_where=USER_PARENT_KEYS, params={"uid": user_id}, ch=ch
-        )
+        for part in slices(keys):
+            total += await tombstone_scoped(
+                t, org=org, scope_where=PARENT_KEYS_IN, params={"keys": part}, ch=ch
+            )
     return total
 
 
@@ -92,7 +103,7 @@ async def delete_graph_links_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
     total = 0
-    for t, _ in _LINK_TABLES_DELETE:
+    for t in _LINK_TABLES_DELETE:
         total += await delete_scoped(
             t, org=org, scope_where="namespace = {ns:String}", params={"ns": namespace}, ch=ch
         )
@@ -262,34 +273,39 @@ async def delete_entity_vectors_by_user(
     """The rows carry the memory's `user_id` (written from the same input),
     and the parent-key match reaches a row whose memory carried it under a
     different one — both sides of the (namespace, memory_key) identity."""
-    return await delete_scoped(
-        "loom.entity_vectors",
-        org=org,
-        scope_where=f"(user_id = {{uid:String}} OR {USER_PARENT_KEYS})",
-        params={"uid": user_id},
-        lightweight=True,
-        ch=ch,
-    )
+    ch = ch or _default_client()
+    keys = await user_key_pairs(org, user_id, ch=ch)
+    total = 0
+    for part in slices_or_none(keys):
+        total += await delete_scoped(
+            "loom.entity_vectors",
+            org=org,
+            scope_where=f"(user_id = {{uid:String}} OR {PARENT_KEYS_IN})",
+            params={"uid": user_id, "keys": part},
+            lightweight=True,
+            ch=ch,
+        )
+    return total
 
 
-def _graph_owned_only_where(link_table: str, cols: str) -> str:
-    """Rows of a graph table whose every linking memory belongs to the user.
-    A triple or edge shared with another user's memory
-    stays: the other user still knows it. `cols` names the graph key
-    columns as they appear on both the graph table and its link table."""
+def _graph_owned_only_sql(link_table: str, cols: tuple[str, ...]) -> str:
+    """The graph keys whose every linking memory belongs to the user. A triple or
+    edge shared with another user's memory stays: the other user still knows it.
+    `cols` names the graph key columns as they appear on both the graph table and
+    its link table."""
+    key = ", ".join(cols)
     return (
-        f"org = {{org:String}} AND (namespace, {cols}) IN ("
-        f"SELECT namespace, {cols} FROM {link_table} FINAL "
-        f"WHERE org = {{org:String}} "
-        f"GROUP BY namespace, {cols} "
+        f"SELECT namespace, {key} FROM {link_table} FINAL "
+        "WHERE org = {org:String} "
+        f"GROUP BY namespace, {key} "
         f"HAVING countIf((namespace, memory_key) IN {USER_KEYS_SUBQ}) > 0 "
-        f"AND countIf((namespace, memory_key) NOT IN {USER_KEYS_SUBQ}) = 0)"
+        f"AND countIf((namespace, memory_key) NOT IN {USER_KEYS_SUBQ}) = 0"
     )
 
 
-_GRAPH_LINKS: tuple[tuple[str, str, str], ...] = (
-    ("loom.entity_triples", "loom.entity_triple_memories", "subject, relation, object"),
-    ("loom.entity_edges", "loom.entity_edge_memories", "entity_a, entity_b"),
+_GRAPH_LINKS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("loom.entity_triples", "loom.entity_triple_memories", ("subject", "relation", "object")),
+    ("loom.entity_edges", "loom.entity_edge_memories", ("entity_a", "entity_b")),
 )
 
 
@@ -301,25 +317,32 @@ async def delete_entity_graph_by_user(
     ch = ch or _default_client()
     total = 0
     for table, link_table, cols in _GRAPH_LINKS:
-        where = _graph_owned_only_where(link_table, cols)
-        total += await count_then_mutate(
-            table,
-            count_where=where,
-            mutation="DELETE",
-            mutation_where=where,
-            params={"org": org, "uid": user_id},
-            final=False,
-            ch=ch,
+        rows = await ch.query_all(
+            _graph_owned_only_sql(link_table, cols), params={"org": org, "uid": user_id}
         )
+        types = ", ".join(["String"] * (len(cols) + 1))
+        scope = f"(namespace, {', '.join(cols)}) IN {{owned:Array(Tuple({types}))}}"
+        for part in slices(tuples(rows, ("namespace", *cols))):
+            total += await delete_scoped(
+                table, org=org, scope_where=scope, params={"owned": part}, ch=ch
+            )
     return total
 
 
 async def delete_graph_links_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
+    ch = ch or _default_client()
+    keys = await user_key_pairs(org, user_id, ch=ch)
     total = 0
-    for t, user_scope in _LINK_TABLES_DELETE:
-        total += await delete_scoped(
-            t, org=org, scope_where=user_scope, params={"uid": user_id}, ch=ch
-        )
+    for t in _LINK_TABLES_DELETE:
+        if t in ROW_LINK_TABLES:
+            total += await delete_scoped(
+                t, org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+            )
+            continue
+        for part in slices(keys):
+            total += await delete_scoped(
+                t, org=org, scope_where=PARENT_KEYS_IN, params={"keys": part}, ch=ch
+            )
     return total
 
 
@@ -351,13 +374,7 @@ async def tombstone_summaries_by_user(
 # verbatim by design, tagged `src:<key>`. The per-user tombstone above never
 # reaches it. Any overlap with the erased user's keys retires the summary;
 # the next dense pass rebuilds one from the surviving sources.
-USER_SRC_TAGS = (
-    "(SELECT groupArray(concat('src:', memory_key)) FROM loom.memory "
-    "WHERE org = {org:String} AND user_id = {uid:String})"
-)
-
-
-_CONSOLIDATED = f"has(tags, 'consolidated') AND hasAny(tags, {USER_SRC_TAGS})"
+_CONSOLIDATED = "has(tags, 'consolidated') AND hasAny(tags, {src:Array(String)})"
 
 
 async def tombstone_consolidated_dependents_by_user(
@@ -366,23 +383,32 @@ async def tombstone_consolidated_dependents_by_user(
     """The consolidated rows the user's memories fed, under another identity. Their code
     links go too: a link's `suggestion` holds a rewrite of the row's text, and this
     tombstone is a mutation, so the link queue never sees it."""
+    ch = ch or _default_client()
+    src = slices(["src:" + k for k in await user_keys(org, user_id, ch=ch)])
     total = 0
     for t in ("loom.memory", "loom.memory_embeddings"):
-        total += await tombstone_scoped(
-            t, org=org, scope_where=_CONSOLIDATED, params={"uid": user_id}, ch=ch
-        )
+        for part in src:
+            total += await tombstone_scoped(
+                t, org=org, scope_where=_CONSOLIDATED, params={"src": part}, ch=ch
+            )
     # after the tombstones, as every link delete: a link written meanwhile for a row read
     # as live goes too
-    total += await delete_scoped(
-        "loom.memory_code_links",
-        org=org,
-        scope_where=(
-            "memory_id IN (SELECT memory_id FROM loom.memory "
-            f"WHERE org = {{org:String}} AND {_CONSOLIDATED})"
-        ),
-        params={"uid": user_id},
-        ch=ch,
-    )
+    ids: set[str] = set()
+    for part in src:
+        rows = await ch.query_all(
+            "SELECT DISTINCT toString(memory_id) AS id FROM loom.memory "
+            f"WHERE org = {{org:String}} AND {_CONSOLIDATED}",
+            params={"org": org, "src": part},
+        )
+        ids.update(str(r["id"]) for r in rows)
+    for part in slices(sorted(ids)):
+        total += await delete_scoped(
+            "loom.memory_code_links",
+            org=org,
+            scope_where="memory_id IN {ids:Array(UUID)}",
+            params={"ids": part},
+            ch=ch,
+        )
     return total
 
 
@@ -406,21 +432,27 @@ async def tombstone_records_by_namespace(
 
 async def tombstone_records_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
     """Records carry user_id; their fields and conflicts do not — reach them
-    through the record ids. Fields/conflicts first so the record subquery
-    still sees the (tombstoned or not) parent rows.
+    through the record ids, read before the records are tombstoned.
 
     The records' version history (loom.memory_record_versions) is deleted,
     not tombstoned, in both scopes: a tombstone is an ALTER UPDATE, which the
     mirror's view never sees, so the history would keep serving erased
     records."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"SELECT DISTINCT toString(record_id) AS id FROM {USER_RECORDS_SUBQ}",
+        params={"org": org, "uid": user_id},
+    )
+    ids = sorted(str(r["id"]) for r in rows)
     total = 0
     for t, scope in (
-        ("loom.memory_record_fields", USER_RECORD_IDS),
-        ("loom.memory_record_conflicts", USER_CONFLICT_RECORD_IDS),
+        ("loom.memory_record_fields", RECORD_IDS_IN),
+        ("loom.memory_record_conflicts", CONFLICT_RECORD_IDS_IN),
     ):
-        total += await tombstone_scoped(
-            t, org=org, scope_where=scope, params={"uid": user_id}, ch=ch
-        )
+        for part in slices(ids):
+            total += await tombstone_scoped(
+                t, org=org, scope_where=scope, params={"ids": part}, ch=ch
+            )
     total += await tombstone_scoped(
         "loom.memory_records",
         org=org,
@@ -486,26 +518,34 @@ async def delete_llm_response_cache_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
     """Cached answers whose rendered window held any of the user's memory keys."""
-    return await delete_scoped(
-        "loom.llm_response_cache",
-        org=org,
-        scope_where=USER_WINDOW_KEYS,
-        params={"uid": user_id},
-        ch=ch,
-    )
+    ch = ch or _default_client()
+    total = 0
+    for part in slices(await user_keys(org, user_id, ch=ch)):
+        total += await delete_scoped(
+            "loom.llm_response_cache",
+            org=org,
+            scope_where=WINDOW_KEYS_IN,
+            params={"keys": part},
+            ch=ch,
+        )
+    return total
 
 
 async def delete_ask_precedents_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
     """Precedent answers whose window or citations held any of the user's keys."""
-    return await delete_scoped(
-        "loom.memory_ask_precedents",
-        org=org,
-        scope_where=USER_PRECEDENT_KEYS,
-        params={"uid": user_id},
-        ch=ch,
-    )
+    ch = ch or _default_client()
+    total = 0
+    for part in slices(await user_keys(org, user_id, ch=ch)):
+        total += await delete_scoped(
+            "loom.memory_ask_precedents",
+            org=org,
+            scope_where=PRECEDENT_KEYS_IN,
+            params={"keys": part},
+            ch=ch,
+        )
+    return total
 
 
 async def delete_entity_communities_by_user(
@@ -514,10 +554,18 @@ async def delete_entity_communities_by_user(
     """Community rows for (or labelled by) the entities only this user's
     memories carried. Must run BEFORE `graph_links.delete`: ownership is read
     from `entity_edge_memories`."""
-    return await delete_scoped(
-        "loom.entity_communities",
-        org=org,
-        scope_where=USER_COMMUNITY_ROWS,
-        params={"uid": user_id},
-        ch=ch,
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"SELECT namespace, entity FROM {USER_COMMUNITY_ENTITIES}",
+        params={"org": org, "uid": user_id},
     )
+    total = 0
+    for part in slices(tuples(rows, ("namespace", "entity"))):
+        total += await delete_scoped(
+            "loom.entity_communities",
+            org=org,
+            scope_where=COMMUNITY_ROWS_IN,
+            params={"entities": part},
+            ch=ch,
+        )
+    return total

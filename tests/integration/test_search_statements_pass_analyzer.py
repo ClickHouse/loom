@@ -879,13 +879,22 @@ async def test_chunk_provenance_and_rollup_statements_pass_the_analyzer(ch_clien
     statements: list[tuple[str, dict[str, Any]]] = []
     params = {"org": "o", "ns": "n", "sessions": ["s1", "s2"]}
     statements.append((cl.KEYS_SQL, params))
-    ch = _RecordingCH()
+
+    class _KeysCH(_RecordingCH):
+        """The user-scope step's read of the user's keys finds one."""
+
+        async def query_all(self, sql, params=None):
+            self.calls.append((sql, params or {}))
+            return [{"namespace": "n", "memory_key": "k"}] if "FROM loom.memory " in sql else []
+
+    ch = _KeysCH()
     await erasure_census.residue_census("o", "user_id", "alice", ch=ch)  # type: ignore[arg-type]
     await graph_steps.tombstone_source_links_by_user("o", "alice", ch=ch)  # type: ignore[arg-type]
     await graph_steps.tombstone_source_links_by_namespace("o", ["a", "b"], ch=ch)  # type: ignore[arg-type]
     links = [(sql, p) for sql, p in ch.calls if "loom.memory_chunk_sources" in sql]
     assert len(links) >= 3, [sql[:80] for sql, _ in links]
     statements += links
+    statements += [(sql, p) for sql, p in ch.calls if "FROM loom.memory " in sql]
     for view in ("agent_cost_rollup_refresh", "memory_exposure_breadth_hourly_refresh"):
         statements.append((view_select(view), {}))
     # cost.summary: the roll-up's states UNION ALL the live tail, merged.
@@ -1414,7 +1423,7 @@ async def test_uncounted_table_erasure_statements_pass_the_analyzer(ch_client, m
 
     mutations: list[tuple[str, str, dict[str, Any]]] = []
 
-    async def _rec(table, *, mutation="DELETE", where, params, ch=None, wait_s=None):
+    async def _rec(table, *, mutation="DELETE", where, params, stamp=None, ch=None, wait_s=None):
         mutations.append((table, where, params))
         return None
 

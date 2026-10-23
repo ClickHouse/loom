@@ -775,8 +775,8 @@ A close is an `ALTER UPDATE`, so the retirement's closes may still be pending wh
 Undo weighs its facts: it reads with `apply_mutations_on_fly`, which applies them (their
 expressions are deterministic), rather than waiting on `system.mutations`. ClickHouse
 refuses that read for the whole table while any pending mutation on it has a subquery
-(another tenant's erasure delete does). The Undo then writes nothing to the graph: the
-memory row is restored at once, the refusal is recorded as a `triples_reconcile` failure
+(Loom's own mutations bind their values instead). The Undo then writes nothing to the
+graph: the memory row is restored at once, the refusal is recorded as a `triples_reconcile` failure
 dated at the restore, and `projection_repair` replays it once that mutation has landed
 and the read works again (until then each pass fails it again and it stays active). A
 follow's repair of its successors and the repair of the values an Undo states again read
@@ -1213,6 +1213,16 @@ resumed saga re-runs the owning step of any table the last census found rows in.
 polled to completion. `tests/unit/test_every_table_is_classified.py` fails on a table in
 none of the three lists.
 
+A user-scope step reaches a table with no `user_id` column through a predicate that holds
+a subquery: the user's memory keys, record ids or shared keys, or the graph keys and
+entities only the user's memories link (`server/erasure/store/predicates.py`). The census
+counts with that predicate as written. A replicated table refuses a mutation with a
+subquery or with `now()`, so the step reads the subquery first and mutates by what it
+returned, bound as an array a slice at a time (`server/erasure/store/scope_reads.py`), and
+binds the time it stamps. A slice's mutation tag hashes its bound values but not the
+stamp, so each slice waits for its own mutation, and a step re-run after a crash reads the
+same slices again and waits for the ones still pending.
+
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no
 namespace or user, and hold vectors, never text. It is a derived cache, so deleting more
@@ -1254,7 +1264,8 @@ namespace with no webhook pays no insert, and the first write after each interva
 for one registry read (`server/core/polled_copy.py`). A failed read keeps the last copy. A
 write on a cold copy waits for the first read; if that read fails, writes announce nothing
 (noted as a degradation) until a read lands. `memory.clear` tombstones with one mutation
-per table and, only when a webhook of the namespace takes `memory.tombstoned`, reads back
+per table (when a lock keeps some rows, the embeddings by the identities it read, a slice
+at a time) and, only when a webhook of the namespace takes `memory.tombstoned`, reads back
 the rows that mutation stamped in one streamed read in sort-key order, so the scope is
 scanned once, with one outbox insert per 1000 rows.
 

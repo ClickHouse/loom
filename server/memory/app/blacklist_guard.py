@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from fastapi import HTTPException
 
 from server.core.ch import get_client, sequential_reads
+from server.core.datetimes import naive_utc_now_seconds
 from server.memory.store import blacklist as _repo
 from server.settings import settings
 
@@ -288,9 +289,10 @@ async def _write_hits(pattern_id: str, n: int) -> None:
         ch = get_client()
         await ch.execute(
             "ALTER TABLE loom.blacklist "
-            "UPDATE hit_count = hit_count + {n:UInt64}, last_hit_at = now() "
+            "UPDATE hit_count = hit_count + {n:UInt64}, last_hit_at = {at:DateTime} "
             "WHERE pattern_id = {pid:UUID} SETTINGS mutations_sync=0",
-            params={"pid": pattern_id, "n": int(n)},
+            # bound: a replicated table refuses now() in a mutation
+            params={"pid": pattern_id, "n": int(n), "at": naive_utc_now_seconds()},
         )
     except Exception:  # noqa: BLE001 — hit counting must not block the refusal
         pass

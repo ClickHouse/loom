@@ -13,7 +13,13 @@ from typing import Any
 
 from server.core.ch import get_client
 from server.core.ch_writes import async_insert_settings
-from server.core.datetimes import as_aware_utc, naive_utc_now, parse_iso_dt, to_naive_utc
+from server.core.datetimes import (
+    as_aware_utc,
+    naive_utc_now,
+    naive_utc_now_seconds,
+    parse_iso_dt,
+    to_naive_utc,
+)
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
     WHOLE_NAMESPACE,
@@ -291,12 +297,13 @@ async def mark_projection_failures_resolved(
     await ch.execute(
         """
         ALTER TABLE loom.memory_projection_failures
-        UPDATE status = 'resolved', resolved_at = now()
+        UPDATE status = 'resolved', resolved_at = {at:DateTime}
         WHERE org IN {orgs:Array(String)}
           AND toString(failure_id) IN {failure_ids:Array(String)}
           AND status = 'active'
         """,
-        params={"orgs": orgs, "failure_ids": ids},
+        # bound: a replicated table refuses now() in a mutation
+        params={"orgs": orgs, "failure_ids": ids, "at": naive_utc_now_seconds()},
     )
     return len(ids)
 

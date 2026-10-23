@@ -23,12 +23,23 @@ from tests.unit.test_llm_response_cache import _CH, _Inner, _mem, _settle
 
 
 class _RecCH:
-    def __init__(self, count: int = 3) -> None:
+    """`keys` answers the read of the user's keys; `rows` every other read that is not
+    a system.mutations poll."""
+
+    def __init__(
+        self, count: int = 3, keys: list[str] | None = None, rows: list[dict] | None = None
+    ) -> None:
         self.count = count
+        self.keys = keys or []
+        self.rows = rows or []
         self.queries: list[tuple[str, dict[str, Any]]] = []
+        self.reads: list[tuple[str, dict[str, Any]]] = []
         self.commands: list[tuple[str, dict[str, Any]]] = []
 
     async def query_one(self, sql, params=None):
+        if " AS keys" in sql:
+            self.reads.append((" ".join(sql.split()), dict(params or {})))
+            return {"keys": self.keys}
         self.queries.append((" ".join(sql.split()), dict(params or {})))
         return {"n": self.count}
 
@@ -38,6 +49,9 @@ class _RecCH:
     async def query_all(self, sql, params=None):
         if "startsWith(t.name, '_provider_rebuild_')" in sql:
             return []
+        if "system.mutations" not in sql:
+            self.reads.append((" ".join(sql.split()), dict(params or {})))
+            return self.rows
         return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
 
 
@@ -175,49 +189,63 @@ def test_registry_gives_the_three_tables_a_user_predicate_and_an_owner() -> None
 
 
 def test_cache_and_precedent_user_deletes_match_by_window_key_within_the_org() -> None:
-    ch = _RecCH(count=3)
+    ch = _RecCH(count=3, keys=["k1", "k2"])
     n = asyncio.run(graph_steps.delete_llm_response_cache_by_user("o", "alice", ch=ch))
     assert n == 3
+    # the user's keys are read with the census's own subquery, then bound
+    ((read_sql, read_params),) = ch.reads
+    assert read_sql == f"SELECT {_USER_KEYS} AS keys" and read_params == {
+        "org": "o",
+        "uid": "alice",
+    }
     ((count_sql, count_params),) = ch.queries
     ((mut_sql, mut_params),) = ch.commands
-    assert count_sql.startswith(
-        "SELECT count() AS n FROM loom.llm_response_cache WHERE org = {org:String} AND hasAny(window_keys,"
+    assert count_sql == (
+        "SELECT count() AS n FROM loom.llm_response_cache WHERE org = {org:String} "
+        "AND hasAny(window_keys, {keys:Array(String)})"
     )
-    assert "FINAL" not in count_sql  # no soft-delete column: every row counts
     assert mut_sql.startswith(
-        "ALTER TABLE loom.llm_response_cache DELETE WHERE (org = {org:String} AND hasAny(window_keys,"
+        "ALTER TABLE loom.llm_response_cache DELETE WHERE (org = {org:String} "
+        "AND hasAny(window_keys, {keys:Array(String)}))"
     )
-    # the mutation and the count share one predicate
-    assert count_sql.split("WHERE", 1)[1].strip() in mut_sql
-    assert count_params == {"org": "o", "uid": "alice"} and mut_params["uid"] == "alice"
+    assert count_params == {"org": "o", "keys": ["k1", "k2"]} and mut_params["keys"] == ["k1", "k2"]
     assert "namespace" not in count_sql  # an all_mine window spans namespaces; the key is the axis
 
-    ch = _RecCH(count=1)
+    ch = _RecCH(count=1, keys=["k1"])
     asyncio.run(graph_steps.delete_ask_precedents_by_user("o", "alice", ch=ch))
     sql, _ = ch.commands[0]
     assert sql.startswith(
-        "ALTER TABLE loom.memory_ask_precedents DELETE WHERE (org = {org:String} AND hasAny(arrayConcat(window_keys, cited_keys),"
+        "ALTER TABLE loom.memory_ask_precedents DELETE WHERE (org = {org:String} "
+        "AND hasAny(arrayConcat(window_keys, cited_keys), {keys:Array(String)}))"
     )
+    # no keys, no statement
+    ch = _RecCH(count=1)
+    assert asyncio.run(graph_steps.delete_ask_precedents_by_user("o", "alice", ch=ch)) == 0
+    assert ch.commands == [] and ch.queries == []
 
 
 def test_communities_leave_when_only_the_users_memories_linked_the_entity() -> None:
-    ch = _RecCH(count=2)
+    ch = _RecCH(count=2, rows=[{"namespace": "ns", "entity": "alice"}])
     asyncio.run(graph_steps.delete_entity_communities_by_user("o", "alice", ch=ch))
-    sql, params = ch.commands[0]
-    assert sql.startswith(
-        "ALTER TABLE loom.entity_communities DELETE WHERE (org = {org:String} AND ((namespace, entity) IN (SELECT namespace, entity FROM ("
-    )
+    ((read_sql, read_params),) = ch.reads
+    assert read_sql.startswith("SELECT namespace, entity FROM (SELECT namespace, entity FROM (")
     assert (
         "SELECT namespace, entity_a AS entity, memory_key FROM loom.entity_edge_memories FINAL WHERE org = {org:String} UNION ALL SELECT namespace, entity_b AS entity, memory_key FROM loom.entity_edge_memories FINAL"
-        in sql
+        in read_sql
     )
     assert (
         "HAVING countIf((namespace, memory_key) IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})) > 0 AND countIf((namespace, memory_key) NOT IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})) = 0"
-        in sql
+        in read_sql
     )
+    assert read_params == {"org": "o", "uid": "alice"}
+    sql, params = ch.commands[0]
     # a row LABELLED by such an entity goes too: the label text is the residue
-    assert "OR (namespace, label) IN (SELECT namespace, entity FROM (" in sql
-    assert params["uid"] == "alice"
+    assert sql.startswith(
+        "ALTER TABLE loom.entity_communities DELETE WHERE (org = {org:String} AND "
+        "((namespace, entity) IN {entities:Array(Tuple(String, String))} "
+        "OR (namespace, label) IN {entities:Array(Tuple(String, String))}))"
+    )
+    assert params["entities"] == [("ns", "alice")]
 
 
 def test_census_user_scope_counts_the_three_tables_with_the_step_predicates() -> None:

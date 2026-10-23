@@ -24,8 +24,9 @@ from server.erasure.store import steps_graph as graph_steps
 class _CH:
     """Records every statement; counts come from `count`, mutations poll done."""
 
-    def __init__(self, count: int = 3) -> None:
+    def __init__(self, count: int = 3, rows: list[dict[str, Any]] | None = None) -> None:
         self.count = count
+        self.rows = rows or []  # every read but a system.mutations poll
         self.queries: list[tuple[str, dict[str, Any]]] = []
         self.commands: list[tuple[str, dict[str, Any]]] = []
 
@@ -36,6 +37,8 @@ class _CH:
     async def query_all(self, sql, params=None):
         if "startsWith(t.name, '_provider_rebuild_')" in sql:
             return []
+        if "system.mutations" not in sql:
+            return self.rows
         return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
 
     async def execute(self, sql, params=None):
@@ -583,12 +586,18 @@ async def test_entity_vectors_delete_is_lightweight_in_every_mode() -> None:
 
 
 async def test_entity_vectors_delete_by_user_reaches_both_identities() -> None:
-    ch = _CH(count=2)
+    ch = _CH(count=2, rows=[{"namespace": "ns", "memory_key": "k"}])
     await graph_steps.delete_entity_vectors_by_user("o", "alice", ch=ch)
     msql, params = ch.commands[0]
     assert msql.startswith("DELETE FROM loom.entity_vectors")
     assert "user_id = {uid:String}" in msql and params["uid"] == "alice"
-    assert "(namespace, memory_key) IN (SELECT namespace, memory_key FROM loom.memory" in msql
+    assert "(namespace, memory_key) IN {keys:Array(Tuple(String, String))}" in msql
+    assert params["keys"] == [("ns", "k")] and "SELECT" not in msql
+    # a user with no memory keys still loses the vectors stamped with their id
+    ch = _CH(count=2)
+    await graph_steps.delete_entity_vectors_by_user("o", "alice", ch=ch)
+    ((msql, params),) = ch.commands
+    assert params["uid"] == "alice" and params["keys"] == []
 
 
 async def test_other_deletes_stay_alter_delete_outside_a_purge() -> None:

@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from typing import Any
 
+from server.core.ch_params import chunks
 from server.core.datetimes import naive_utc_now, naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
@@ -374,43 +375,46 @@ async def bulk_tombstone_scope(
     # The skipped rows are counted under `locked_skipped`.
     from server.memory.domain.lock import locked_predicate, unlocked_predicate
 
+    # One timestamp for the whole clear, so the rows it tombstoned can be read back; and a
+    # bound one, as a mutation on a replicated table refuses now().
+    params["at"] = naive_utc_now_seconds()
+    locked = locked_predicate(now="{at:DateTime}")
     locked_row = await ch.query_one(
-        f"SELECT count() AS n FROM loom.memory FINAL WHERE {scope_sql} AND {locked_predicate()}",
+        f"SELECT count() AS n FROM loom.memory FINAL WHERE {scope_sql} AND {locked}",
         params=params,
     )
     locked_n = int((locked_row or {}).get("n", 0) or 0)
-    where_by_table = {
-        "loom.memory": f"{scope_sql} AND {unlocked_predicate()}",
-        "loom.memory_embeddings": scope_sql,
-    }
-    if locked_n:
-        where_by_table["loom.memory_embeddings"] = (
-            f"{scope_sql} AND (agent, user_id, session_id, memory_key) NOT IN "
-            "(SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL "
-            f"WHERE {scope_sql} AND {locked_predicate()})"
-        )
-    # One timestamp for the whole clear, so the rows it tombstoned can be read back.
-    params["at"] = naive_utc_now_seconds()
     counts: dict[str, int] = {}
     for table in ("loom.memory", "loom.memory_embeddings"):
-        where_sql = where_by_table[table]
-        count_row = await ch.query_one(
-            f"SELECT count() AS n FROM {table} FINAL WHERE {where_sql}",
-            params=params,
-        )
-        n = int((count_row or {}).get("n", 0) or 0)
-        counts[table] = n
-        if n == 0:
-            continue
-        await ch.execute(
-            f"""
-            ALTER TABLE {table}
-            UPDATE tombstoned_at = {{at:DateTime}}
-            WHERE {where_sql}
-            SETTINGS mutations_sync = 2
-            """,
-            params=params,
-        )
+        where_sql = scope_sql
+        slices: list[dict[str, Any]] = [{}]
+        if table == "loom.memory":
+            where_sql += f" AND {unlocked_predicate(now='{at:DateTime}')}"
+        elif locked_n:
+            # A mutation takes no subquery either: read the identities to clear, then
+            # name them.
+            where_sql += f" AND {_IDENTITY} IN {{ids:Array(Tuple(String, String, String, String))}}"
+            ids = await _unlocked_embedding_ids(scope_sql, locked, params, ch=ch)
+            slices = [{"ids": part} for part in chunks(ids)]
+        counts[table] = 0
+        for extra in slices:
+            count_row = await ch.query_one(
+                f"SELECT count() AS n FROM {table} FINAL WHERE {where_sql}",
+                params={**params, **extra},
+            )
+            n = int((count_row or {}).get("n", 0) or 0)
+            counts[table] += n
+            if n == 0:
+                continue
+            await ch.execute(
+                f"""
+                ALTER TABLE {table}
+                UPDATE tombstoned_at = {{at:DateTime}}
+                WHERE {where_sql}
+                SETTINGS mutations_sync = 2
+                """,
+                params={**params, **extra},
+            )
         # Announced before the embeddings step, so a failure there cannot lose
         # the events: a retry finds no live memory rows and announces nothing.
         if table == "loom.memory" and on_tombstoned is not None:
@@ -420,6 +424,26 @@ async def bulk_tombstone_scope(
                 degradations.note("memory.webhook", "not_announced", e)
     counts["locked_skipped"] = locked_n
     return counts
+
+
+_IDENTITY = "(agent, user_id, session_id, memory_key)"
+
+
+async def _unlocked_embedding_ids(
+    scope_sql: str, locked: str, params: dict[str, Any], *, ch: _CHClient
+) -> list[tuple[str, ...]]:
+    """The identities of the live embedding rows in scope that no locked memory row
+    shares."""
+    rows = await ch.query_all(
+        f"SELECT DISTINCT agent, user_id, session_id, memory_key "
+        f"FROM loom.memory_embeddings FINAL WHERE {scope_sql} AND {_IDENTITY} NOT IN "
+        f"(SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL "
+        f"WHERE {scope_sql} AND {locked})",
+        params=params,
+    )
+    return sorted(
+        {tuple(str(r[c]) for c in ("agent", "user_id", "session_id", "memory_key")) for r in rows}
+    )
 
 
 async def _page_tombstoned(

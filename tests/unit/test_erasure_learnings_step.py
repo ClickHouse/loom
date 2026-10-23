@@ -50,8 +50,9 @@ def _supporter(cid: str, user_id: str) -> dict[str, Any]:
 class _LocalCH:
     """A client over one clickhouse-local database kept in `path`: the step's statements
     run on real tables, in order. `late` rows ({table: rows}) land after everything the
-    step read and wrote and before its first delete of loom.learnings_queue, the window
-    a review or a filing can race into."""
+    step read and wrote and before it re-reads the supporters of its pending candidates
+    or first deletes from loom.learnings_queue, the window a review or a filing can race
+    into."""
 
     def __init__(self, path, rows: dict[str, list[dict[str, Any]]], late=None) -> None:
         self.path, self.late = path, late or {}
@@ -75,16 +76,21 @@ class _LocalCH:
         rows = await self.query_all(sql, params)
         return rows[0] if rows else None
 
+    def _land_late(self) -> None:
+        for table, rows in self.late.items():
+            self._write(table, rows)
+        self.late = {}
+
     async def query_all(self, sql, params=None):
         if "system.mutations" in sql:  # execute ran each mutation to the end
             return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
+        if "FROM loom.learnings_supporters" in sql and "{cids:Array(UUID)}" in sql:
+            self._land_late()
         return run([], sql, params, path=self.path)
 
     async def execute(self, sql, params=None):
         if "ALTER TABLE loom.learnings_queue" in sql:
-            for table, rows in self.late.items():
-                self._write(table, rows)
-            self.late = {}
+            self._land_late()
         self.statements.append(sql)
         # The step waits for its mutation; a synchronous one is the same wait.
         sync = sql.replace("mutations_sync = 0", "mutations_sync = 2")
@@ -189,8 +195,8 @@ def test_a_candidate_a_supporter_backed_after_the_read_survives_the_pending_dele
     tmp_path,
 ) -> None:
     """The step read a pending candidate with no supporter; a filing then wrote its
-    supporter row before the delete was submitted. The delete re-checks for
-    supporter rows, so the candidate stays."""
+    supporter row before the delete. The step re-reads the supporter rows right before
+    the delete, so the candidate stays."""
     filed = _candidate(_CANDIDATE, "pending", '"r"', 1)
     ch = _LocalCH(
         tmp_path,

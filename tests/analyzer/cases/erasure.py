@@ -22,6 +22,8 @@ STEP_MODULES = (
 CENSUS_MODULE = "server.erasure.store.census"
 EXPORTS_MODULE = "server.erasure.store.exports"
 
+_ID = "00000000-0000-0000-0000-0000000000a1"
+
 # The mutation runner: the count says "one row" so the ALTER renders; the
 # poll finds its mutation done; a saga's pending-mutation lookup finds none.
 _ROWS = rows_by_substring(
@@ -31,6 +33,27 @@ _ROWS = rows_by_substring(
             {"mutation_id": "m1", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}
         ],
         "count()": [{"n": 1}],
+        # A user-scope step's scope reads find one row each, so its bound mutation renders.
+        " AS keys": [{"keys": ["k"]}],
+        "SELECT DISTINCT namespace, memory_key FROM (": [{"namespace": "n", "memory_key": "k"}],
+        "SELECT namespace, subject, relation, object FROM": [
+            {"namespace": "n", "subject": "s", "relation": "r", "object": "o"}
+        ],
+        "SELECT namespace, entity_a, entity_b FROM": [
+            {"namespace": "n", "entity_a": "a", "entity_b": "b"}
+        ],
+        "SELECT namespace, entity FROM (": [{"namespace": "n", "entity": "e"}],
+        "AS id FROM (SELECT record_id": [{"id": _ID}],
+        "AS id FROM loom.memory ": [{"id": _ID}],
+        "SELECT DISTINCT memory_key FROM loom.shared": [{"memory_key": "k"}],
+        "SELECT DISTINCT namespace, source_uri FROM loom.documents": [
+            {"namespace": "n", "source_uri": "doc://a"}
+        ],
+        "AS sha FROM loom.document_blobs": [{"namespace": "n", "sha": "a" * 64}],
+        "SELECT DISTINCT candidate_id FROM loom.learnings_queue": [{"candidate_id": _ID}],
+        "SELECT * FROM loom.learnings_queue FINAL": [
+            {"candidate_id": _ID, "status": "pending", "proposed_value": "r", "version": 1}
+        ],
         # The conversation export's size pass finds one turn, so its text read renders.
         "AS bytes_before_previous": [
             {

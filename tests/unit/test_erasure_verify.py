@@ -17,9 +17,13 @@ from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
 class _StubCH:
-    def __init__(self, counts: list[int]) -> None:
+    """`counts` answer the counts in order; `rows` every read but a system.mutations poll."""
+
+    def __init__(self, counts: list[int], rows: list[dict[str, Any]] | None = None) -> None:
         self.counts = list(counts)
+        self.rows = rows or []
         self.query_one_calls: list[tuple[str, dict[str, Any]]] = []
+        self.read_calls: list[tuple[str, dict[str, Any]]] = []
         self.execute_calls: list[tuple[str, dict[str, Any]]] = []
 
     async def query_one(self, sql, params=None):
@@ -32,6 +36,9 @@ class _StubCH:
     async def query_all(self, sql, params=None):
         if "startsWith(t.name, '_provider_rebuild_')" in sql:
             return []
+        if "system.mutations" not in sql:
+            self.read_calls.append((sql, params or {}))
+            return self.rows
         return [
             {
                 "mutation_id": "mutation_1.txt",
@@ -60,14 +67,16 @@ def test_source_links_tombstone_both_tables_in_namespace_scope() -> None:
 
 
 def test_user_scope_reaches_link_tables_through_parent_keys() -> None:
-    ch = _StubCH([1, 1])
+    ch = _StubCH([1, 1], rows=[{"namespace": "ns", "memory_key": "k"}])
     asyncio.run(graph_steps.tombstone_source_links_by_user("o", "alice", ch=ch))
+    ((read_sql, read_params),) = ch.read_calls
+    assert "FROM (SELECT namespace, memory_key FROM loom.memory" in read_sql
+    assert "user_id = {uid:String}" in read_sql and read_params["uid"] == "alice"
     assert len(ch.execute_calls) == 2
     for sql, params in ch.execute_calls:
-        assert (
-            "(namespace, memory_key) IN (SELECT namespace, memory_key FROM loom.memory" in sql
-        )  # Key alone collides across namespaces
-        assert "user_id = {uid:String}" in sql and params["uid"] == "alice"
+        # Key alone collides across namespaces
+        assert "(namespace, memory_key) IN {keys:Array(Tuple(String, String))}" in sql
+        assert "SELECT" not in sql and params["keys"] == [("ns", "k")]
 
 
 def test_graph_links_are_hard_deleted() -> None:
@@ -80,7 +89,8 @@ def test_graph_links_are_hard_deleted() -> None:
 
 
 def test_records_user_scope_reaches_fields_and_conflicts_before_the_parent() -> None:
-    ch = _StubCH([1, 1, 1, 1])
+    record = "00000000-0000-0000-0000-0000000000d1"
+    ch = _StubCH([1, 1, 1, 1], rows=[{"id": record}])
     asyncio.run(graph_steps.tombstone_records_by_user("o", "alice", ch=ch))
     assert _tables(ch) == [
         "loom.memory_record_fields",
@@ -88,7 +98,14 @@ def test_records_user_scope_reaches_fields_and_conflicts_before_the_parent() -> 
         "loom.memory_records",
         "loom.memory_record_versions",
     ]
-    assert "record_id IN (SELECT record_id FROM loom.memory_records" in ch.execute_calls[0][0]
+    # the user's record ids are read first, then bound
+    ((read_sql, read_params),) = ch.read_calls
+    assert "FROM (SELECT record_id FROM loom.memory_records" in read_sql
+    assert read_params == {"org": "o", "uid": "alice"}
+    fields_sql, fields_params = ch.execute_calls[0]
+    assert "record_id IN {ids:Array(UUID)}" in fields_sql and fields_params["ids"] == [record]
+    conflicts_sql = ch.execute_calls[1][0]
+    assert "prior_record_id IN {ids:Array(UUID)} OR incoming_record_id IN" in conflicts_sql
     assert "user_id = {uid:String}" in ch.execute_calls[2][0]
     # The history mirror is deleted, not tombstoned: its view never sees the
     # tombstone's ALTER UPDATE, so a tombstoned mirror row would still serve.

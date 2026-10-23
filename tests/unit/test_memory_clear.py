@@ -259,23 +259,11 @@ async def test_a_clear_keeps_vectors_only_for_the_locked_identity_in_clickhouse(
     rows: list[tuple[str, str, str, str, str]],
     live: list[tuple[str, str, str, str]],
 ) -> None:
-    """The embeddings mutation a clear builds, run on schema.sql's tables: a key locked
-    under one identity keeps that identity's vector, and only that one."""
+    """The embeddings read and mutation a clear builds, run on schema.sql's tables: a key
+    locked under one identity keeps that identity's vector, and only that one."""
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app.handlers import handle_memory_clear
     from tests.unit.ch_fake import RecordingCH
-
-    ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 1}], times=1)
-    ch.on("SELECT count() AS n", [{"n": 1}])
-    ch.install(monkeypatch)
-    subject = agent if user_id == "*" else user_id
-    out = await handle_memory_clear(
-        MemoryClearInput(
-            org="o", namespace="n", user_id=user_id, agent=agent, confirm_subject=subject
-        )
-    )
-    assert out.locked_skipped == 1
-    (emb_alter,) = ch.statements("ALTER TABLE loom.memory_embeddings", kind="execute")
 
     cols = "org, namespace, agent, user_id, session_id, memory_key, version"
     setup = [
@@ -294,10 +282,26 @@ async def test_a_clear_keeps_vectors_only_for_the_locked_identity_in_clickhouse(
             " arrayWithConstant(3072, 0.), arrayWithConstant(3072, 0.)"
             for a, u, s, k, _ in rows
         ),
-        emb_alter.sql,
     ]
+    ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 1}], times=1)
+    ch.on("SELECT count() AS n", [{"n": 1}])
+    # the identities to clear are read from the same tables the mutation then runs on
+    ch.on(
+        "SELECT DISTINCT agent, user_id, session_id, memory_key FROM loom.memory_embeddings",
+        lambda sql, params: run(setup, sql, params),
+    )
+    ch.install(monkeypatch)
+    subject = agent if user_id == "*" else user_id
+    out = await handle_memory_clear(
+        MemoryClearInput(
+            org="o", namespace="n", user_id=user_id, agent=agent, confirm_subject=subject
+        )
+    )
+    assert out.locked_skipped == 1
+    (emb_alter,) = ch.statements("ALTER TABLE loom.memory_embeddings", kind="execute")
+    assert "SELECT" not in emb_alter.sql and "now()" not in emb_alter.sql
     got = run(
-        setup,
+        [*setup, emb_alter.sql],
         "SELECT agent, user_id, session_id, memory_key FROM loom.memory_embeddings FINAL"
         " WHERE tombstoned_at IS NULL ORDER BY agent, user_id, session_id, memory_key",
         emb_alter.params,

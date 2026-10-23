@@ -29,17 +29,28 @@ _ALTER = re.compile(r"ALTER TABLE\s+(\S+)\s+(UPDATE|DELETE)\b")
 _LIGHT = re.compile(r"DELETE FROM\s+(\S+)")
 
 
+class _AnyRow(dict[str, Any]):
+    """A read row with a value in every column."""
+
+    def __missing__(self, key: str) -> str:
+        return "x"
+
+
 class _TraceCH:
-    """One live row per count; every mutation is done at the first poll."""
+    """One live row per count, one row for each scope read a step mutates by; every
+    mutation is done at the first poll."""
 
     def __init__(self, trace: dict[str, list[tuple[str, str]]]) -> None:
         self.trace = trace
         # (step, table): a step's INSERT ... SELECT rewrite makes its rows stop matching.
         self.rewritten: set[tuple[str, str]] = set()
+        self.executed: list[str] = []  # every statement sent to execute, in order
 
     async def query_one(self, sql: str, params: Any = None, **kw: Any) -> Any:
         if "system.tables" in sql:
             return {"engine": "KeeperMap"}
+        if " AS keys" in sql:
+            return {"keys": ["k"]}
         if "count()" not in sql:
             return None
         done = any(f"FROM {t} " in sql for step, t in self.rewritten if step == _STEP.get())
@@ -52,6 +63,8 @@ class _TraceCH:
             return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
         if sql.startswith("SELECT group_id FROM loom.principal_groups"):
             return [{"group_id": "g"}]
+        if sql.startswith(("SELECT DISTINCT", "SELECT namespace,")):
+            return [_AnyRow()]
         if "blob_path" in sql and "loom.documents" in sql:
             return [{"source_uri": "doc://a", "blob_path": "o/a/blob"}]
         return []
@@ -66,6 +79,7 @@ class _TraceCH:
             if sql.startswith("INSERT INTO "):
                 self.rewritten.add((_STEP.get(), sql.split()[2]))
         self.trace.setdefault(_STEP.get(), []).append(entry)
+        self.executed.append(sql)
 
 
 @pytest.fixture
@@ -99,11 +113,14 @@ def run(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     monkeypatch.setattr(saga, "_do_step", _traced)
 
-    async def _run(scope_type: str, scope_value: str) -> list[tuple[str, tuple[Any, ...]]]:
+    async def _run(
+        scope_type: str, scope_value: str, purge: bool = False
+    ) -> list[tuple[str, tuple[Any, ...]]]:
         order.clear()
         trace.clear()
+        ch.executed.clear()
         inp = ErasureRequestInput(
-            org="o", scope_type=scope_type, scope_value=scope_value, requester="ops"
+            org="o", scope_type=scope_type, scope_value=scope_value, requester="ops", purge=purge
         )
         inp, row, erasure_id, now = await saga.begin_erasure(inp)
         out = await saga.run_saga(
@@ -119,6 +136,7 @@ def run(monkeypatch: pytest.MonkeyPatch) -> Any:
         return [(name, tuple(trace.get(name, ()))) for name in order]
 
     _run.last = last  # type: ignore[attr-defined]
+    _run.ch = ch  # type: ignore[attr-defined]
     return _run
 
 

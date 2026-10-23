@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import contextvars
 import hashlib
+import json
 import logging
 import re
 import time
@@ -78,14 +79,18 @@ def saga_scope(erasure_id: str) -> Iterator[None]:
         _SAGA_ID.reset(token)
 
 
-def mutation_tag(table: str, mutation: str, where: str) -> str:
-    """Deterministic within a saga: (saga, table, statement) → one tag. Two
-    statements on one table in one saga differ in `mutation`/`where`, so they
-    get different tags. Without a saga in context the tag is unique per call."""
+def mutation_tag(
+    table: str, mutation: str, where: str, params: dict[str, Any] | None = None
+) -> str:
+    """Deterministic within a saga: (saga, table, statement, bound values) → one tag.
+    Two statements on one table in one saga differ in `mutation`/`where` or in the
+    values bound to them (the slices of one step), so they get different tags. Without
+    a saga in context the tag is unique per call."""
     saga = _SAGA_ID.get()
     if not saga:
         return f"erasure:{uuid.uuid4().hex}"
-    digest = hashlib.sha1(f"{table}\n{mutation}\n{where}".encode()).hexdigest()[:12]
+    bound = json.dumps(params or {}, sort_keys=True, default=str)
+    digest = hashlib.sha1(f"{table}\n{mutation}\n{where}\n{bound}".encode()).hexdigest()[:12]
     return f"erasure:{saga}:{digest}"
 
 
@@ -150,15 +155,18 @@ async def run_mutation(
     mutation: str,
     where: str,
     params: dict[str, Any],
+    stamp: dict[str, Any] | None = None,
     ch: _CHClient | None = None,
     wait_s: float | None = None,
 ) -> MutationRow | None:
     """`ALTER TABLE {table} {mutation} WHERE {where}`, submitted asynchronously
     and awaited. Returns the final system.mutations row, or None when the
-    mutation was never observed (see the grace note above)."""
+    mutation was never observed (see the grace note above). `stamp` holds the
+    values bound beside `params` but kept out of the tag: a re-run stamps a later
+    time on the same rows and must still find its own pending mutation."""
     return await _submit_and_wait(
         table,
-        tag=mutation_tag(table, mutation, where),
+        tag=mutation_tag(table, mutation, where, params),
         statement=f"""
         ALTER TABLE {table}
         {mutation}
@@ -166,7 +174,7 @@ async def run_mutation(
           AND ({{{_MUTATION_TAG_PARAM}:String}} = {{{_MUTATION_TAG_PARAM}:String}})
         SETTINGS mutations_sync = 0
         """,
-        params=params,
+        params={**params, **(stamp or {})},
         ch=ch or _default_client(),
         wait_s=wait_s,
     )
@@ -210,7 +218,7 @@ async def run_lightweight_delete(
     carries the WHERE text verbatim, tag included."""
     return await _submit_and_wait(
         table,
-        tag=mutation_tag(table, "LIGHTWEIGHT DELETE", where),
+        tag=mutation_tag(table, "LIGHTWEIGHT DELETE", where, params),
         statement=f"""
         DELETE FROM {table}
         WHERE ({where})
@@ -371,14 +379,14 @@ async def count_then_mutate(
     n = int(row["n"]) if row else 0
     if n == 0:
         return 0
-    mutation_params = dict(params)
-    if set_now_param in mutation and set_now_param not in mutation_params:
-        mutation_params[set_now_param] = _now_naive()
     if mutation == "DELETE" and (purge_mode() or lightweight) and table in LIGHTWEIGHT_PURGE_TABLES:
-        await run_lightweight_delete(table, where=mutation_where, params=mutation_params, ch=ch)
+        await run_lightweight_delete(table, where=mutation_where, params=params, ch=ch)
     else:
+        stamp = {}
+        if set_now_param in mutation and set_now_param not in params:
+            stamp[set_now_param] = _now_naive()
         await run_mutation(
-            table, mutation=mutation, where=mutation_where, params=mutation_params, ch=ch
+            table, mutation=mutation, where=mutation_where, params=params, stamp=stamp, ch=ch
         )
     return n
 
