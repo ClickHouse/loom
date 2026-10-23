@@ -762,20 +762,25 @@ def restates_current(
     return [r.old_object for r in verdict] == [repair.new_object]
 
 
+def _names(values: list[str]) -> list[str]:
+    return [v for v in values if len(v.strip()) <= MAX_ENTITY_CHARS]
+
+
 def facet_triples(
     agent: str, fact_verbs: list[str], files: list[str], concepts: list[str], topics: list[str]
 ) -> Iterator[tuple[str, str, str]]:
     """The facet triples Loom mints for one entry, about its actor (the agent).
     Files and concepts become code nodes, so facts.traverse answers "what touches
-    this file"; topics hang off `about`, so a topic never passes for a library."""
+    this file"; topics hang off `about`, so a topic never passes for a library. An item too
+    long to be a name (`MAX_ENTITY_CHARS`) mints no node."""
     subject = canonical_entity_text(agent or "user") or "user"
-    for path in files:
+    for path in _names(files):
         yield (
             subject,
             code_facet_relation("file", fact_verbs),
             canonical_entity_text(path) or path.lower(),
         )
-    for concept in concepts:
+    for concept in _names(concepts):
         lowered = concept.lower()
         node = (
             lowered
@@ -783,5 +788,5 @@ def facet_triples(
             else (canonical_entity_text(concept) or lowered)
         )
         yield subject, code_facet_relation(classify_code_concept(concept), fact_verbs), node
-    for topic in topics:
+    for topic in _names(topics):
         yield subject, "about", canonical_entity_text(topic) or topic.lower()
