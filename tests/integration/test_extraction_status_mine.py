@@ -1,4 +1,6 @@
-"""Caller-bound deferred extraction status and retry over HTTP and MCP."""
+"""Caller-bound deferred extraction status and retry over HTTP and MCP. The server runs
+with LOOM_BACKGROUND_WORKERS=off, as in CI: a worker would claim the batches these
+tests leave pending or requeue."""
 
 from __future__ import annotations
 

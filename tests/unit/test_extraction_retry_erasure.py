@@ -120,3 +120,19 @@ def test_a_newer_failed_version_is_retried_while_an_older_retry_is_unfinished(
     run([_queued("q1", by="process:sa:a", status="failed", version=2)], "SELECT 1", path=ch.path)
     assert _requeue(ch, ["q1"]).requeued == ["q1"]
     assert [p["batches"][0][4] for _, p in ch.commands] == [1, 2]
+
+
+def test_an_unfinished_retry_stays_requeued_after_the_org_is_switched_off(
+    tmp_path: Path,
+) -> None:
+    from tests.unit.switch_state import switch_off
+
+    ch = _DelayedMutationCH(
+        tmp_path / "ch",
+        _queued("q1", by="process:sa:a", status="failed"),
+        _queued("q2", by="process:sa:a", status="failed"),
+    )
+    assert _requeue(ch, ["q1"]).requeued == ["q1"]
+    switch_off("o")
+    assert _requeue(ch, ["q1", "q2"]) == (["q1"], [], ["q2"], [])
+    assert len(ch.commands) == 1

@@ -701,11 +701,15 @@ async def requeue_own_failed(
         return Requeued(
             requeued=[], not_failed=waiting_or_done, model_calls_off=[], expired=expired
         )
+    # An earlier retry still to apply goes pending whatever the switch says now.
+    submitted = await _retries_unapplied(ch, [(q, int(states[q]["version"])) for q in failed])
     if await customer.switched_off(org):
         return Requeued(
-            requeued=[], not_failed=waiting_or_done, model_calls_off=failed, expired=expired
+            requeued=[q for q in failed if q in submitted],
+            not_failed=waiting_or_done,
+            model_calls_off=[q for q in failed if q not in submitted],
+            expired=expired,
         )
-    submitted = await _retries_unapplied(ch, [(q, int(states[q]["version"])) for q in failed])
     batches = [
         (r["agent"], r["user_id"], r["session_id"], r["queue_id"], int(r["version"]))
         for r in (states[qid] for qid in failed if qid not in submitted)
