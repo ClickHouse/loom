@@ -80,45 +80,20 @@ def _in_context(auth: Any, fn: Any) -> Any:
     return contextvars.Context().run(go)
 
 
-def test_the_read_binds_the_namespace_the_ids_and_the_enqueuer() -> None:
+def test_the_read_never_selects_the_transcript() -> None:
     ch = _RecordingCH()
     asyncio.run(
         q.list_own_status(
             org="o",
             namespace="n",
-            queue_ids=["q1", "q2"],
+            queue_ids=["q1"],
             enqueued_by="process:sa:chat-agent",
             scope=WHOLE_NAMESPACE,
             ch=ch,
         )
     )
-    sql, params = ch.calls[0]
-    assert params == {
-        "org": "o",
-        "ns": "n",
-        "qids": ["q1", "q2"],
-        "by": "process:sa:chat-agent",
-        "lim": 2,
-    }
-    prewhere, where = sql.split("PREWHERE", 1)[1].split("WHERE if(enqueued_by", 1)
-    assert "queue_id IN {qids:Array(String)}" in prewhere and "namespace = {ns:String}" in prewhere
-    assert ", enqueued_by, JSONExtractString(payload, 'enqueued_by')) = {by:String}" in where
     # The transcript is the caller's own and never part of the answer.
-    assert "payload" not in sql.split("FROM", 1)[0]
-
-
-def test_a_token_bounded_to_one_user_reads_only_that_users_batches() -> None:
-    ch = _RecordingCH()
-    scope = ReadFilters(scope="own_session", user_id="u1", session_id="s1")
-    asyncio.run(
-        q.list_own_status(
-            org="o", namespace="n", queue_ids=["q1"], enqueued_by="process:sa:b", scope=scope, ch=ch
-        )
-    )
-    sql, params = ch.calls[0]
-    prewhere = sql.split("PREWHERE", 1)[1].split("WHERE if(enqueued_by", 1)[0]
-    assert "user_id = {scope_uid:String}" in prewhere and params["scope_uid"] == "u1"
-    assert "session_id = {scope_sid:String}" in prewhere and params["scope_sid"] == "s1"
+    assert "payload" not in ch.calls[0][0].split("FROM", 1)[0]
 
 
 class _LocalCH:
@@ -136,6 +111,7 @@ def _queued(
     org: str = "o",
     namespace: str = "n",
     user_id: str = "u1",
+    session_id: str = "s1",
     status: str = "pending",
     version: int = 1,
     last_error: str = "",
@@ -145,7 +121,7 @@ def _queued(
     return (
         "INSERT INTO loom.memory_extraction_queue (org, namespace, agent, user_id, session_id, "
         "queue_id, payload, message_count, content_chars, status, version, last_error, enqueued_by) VALUES "
-        f"('{org}', '{namespace}', 'a', '{user_id}', 's1', '{queue_id}', '{payload}', 2, 40, "
+        f"('{org}', '{namespace}', 'a', '{user_id}', '{session_id}', '{queue_id}', '{payload}', 2, 40, "
         f"'{status}', {version}, '{last_error}', '{column_by}')"
     )
 
@@ -164,8 +140,9 @@ def test_only_the_enqueuers_batches_in_the_namespace_and_scope_answer() -> None:
         _queued("q4", by="process:sa:a", user_id="u2", status="failed"),
         _queued("q5", by=None),  # queued by a dev-mode server: no principal stored
         _queued("q6", by="process:sa:a", org="o2"),  # the same subject in another org
+        _queued("q7", by="process:sa:a", session_id="s2"),  # the same user, another session
     )
-    asked = ["q1", "q2", "q3", "q4", "q5", "q6"]
+    asked = ["q1", "q2", "q3", "q4", "q5", "q6", "q7"]
 
     def ids(
         namespace: str, by: str, scope: ReadFilters = WHOLE_NAMESPACE, org: str = "o"
@@ -177,9 +154,11 @@ def test_only_the_enqueuers_batches_in_the_namespace_and_scope_answer() -> None:
         )
         return sorted((r["queue_id"], r["status"]) for r in rows)
 
-    assert ids("n", "process:sa:a") == [("q1", "done"), ("q4", "failed")]
+    assert ids("n", "process:sa:a") == [("q1", "done"), ("q4", "failed"), ("q7", "pending")]
     one_user = ReadFilters(scope="own_user", user_id="u1", session_id=None)
-    assert ids("n", "process:sa:a", one_user) == [("q1", "done")]
+    assert ids("n", "process:sa:a", one_user) == [("q1", "done"), ("q7", "pending")]
+    one_session = ReadFilters(scope="own_session", user_id="u1", session_id="s1")
+    assert ids("n", "process:sa:a", one_session) == [("q1", "done")]
     assert ids("n", "process:sa:b") == [("q2", "pending")]
     assert ids("n2", "process:sa:a") == [("q3", "pending")]
     assert ids("n", "") == [("q5", "pending")]
