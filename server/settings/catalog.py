@@ -5364,7 +5364,12 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.evidence": 150,
     "memory.export_evidence": 800,
     "memory.exposure_summary": 300,
+    # Status read, the system.mutations lookup, the model-call switch and one
+    # asynchronous update of the observed failed versions.
+    "memory.extraction_retry_mine": 150,
     "memory.extraction_status": 80,
+    # One read of at most 20 batches by id.
+    "memory.extraction_status_mine": 80,
     # One FINAL scan filtered by array predicates;
     # it sits on the PreToolUse path, so the hook bounds it at 3 s anyway.
     "memory.for_file": 150,

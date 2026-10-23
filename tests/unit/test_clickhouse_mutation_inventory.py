@@ -29,6 +29,8 @@ _EXPECTED_MUTATIONS = Counter(
         # written meanwhile holds (rare: only in that race), and end_triples_now,
         # which ends now a dropped fact that ends later (only when one does).
         ("server/memory/app/projections.py", "entity_triples", "UPDATE"): 3,
+        # In-place retries cannot recreate a transcript erased before a delayed command lands.
+        ("server/memory/app/extraction_queue.py", "memory_extraction_queue", "UPDATE"): 1,
         ("server/memory/store/blacklist.py", "blacklist", "UPDATE"): 1,
         ("server/memory/store/conflicts.py", "conflict_allowlist", "UPDATE"): 1,
         ("server/knowledge/store/conversations.py", "conversation_threads", "UPDATE"): 1,

@@ -7,7 +7,11 @@ from server.memory.api.models_bulk import (
     MemoryBulkGetOutput,
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
+    MemoryExtractionRetryMineInput,
+    MemoryExtractionRetryMineOutput,
     MemoryExtractionStatusInput,
+    MemoryExtractionStatusMineInput,
+    MemoryExtractionStatusMineOutput,
     MemoryExtractionStatusOutput,
     MemoryImportCuratedInput,
     MemoryImportCuratedOutput,
@@ -17,7 +21,9 @@ from server.memory.api.models_bulk import (
 from server.memory.app.bulk_set import handle_memory_bulk_set
 from server.memory.app.curation import handle_memory_import_curated
 from server.memory.app.extract.handler import (
+    handle_memory_extraction_retry_mine,
     handle_memory_extraction_status,
+    handle_memory_extraction_status_mine,
     handle_memory_set_from_messages,
 )
 from server.memory.app.query import handle_memory_bulk_get
@@ -55,6 +61,32 @@ memory_extraction_status = Operation(
     handler=handle_memory_extraction_status,
     idempotent=True,
     required_role=Role.VIEWER,
+    audit=False,
+)
+
+# The caller's own batches by id, at most MAX_OWN_BATCH_IDS: what an agent polls over
+# MCP, where the namespace-wide memory.extraction_status is hidden.
+memory_extraction_status_mine = Operation(
+    name="memory.extraction_status_mine",
+    maturity="experimental",
+    input_model=MemoryExtractionStatusMineInput,
+    output_model=MemoryExtractionStatusMineOutput,
+    handler=handle_memory_extraction_status_mine,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+# A retry targets the observed failed version; repeated submissions cannot change
+# a newer worker result or create another copy of the queued transcript.
+memory_extraction_retry_mine = Operation(
+    name="memory.extraction_retry_mine",
+    maturity="experimental",
+    input_model=MemoryExtractionRetryMineInput,
+    output_model=MemoryExtractionRetryMineOutput,
+    handler=handle_memory_extraction_retry_mine,
+    idempotent=True,
+    required_role=Role.WRITER,
     audit=False,
 )
 

@@ -114,6 +114,8 @@ _MAINTAIN = {
     "memory.sweep_expired",
     "memory.health",
     "memory.extraction_status",
+    "memory.extraction_status_mine",
+    "memory.extraction_retry_mine",
     "memory.search_trace",
     "memory.search_trace_log",
     "memory.agents_list",

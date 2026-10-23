@@ -6,13 +6,14 @@ returns; `server/memory/workers/extraction_queue.py` replays it through the same
 handler later, so the deferred write lands identical memories — evidence
 rows, conflict surfacing, blacklist, chunk projections — only later.
 
-Row lifecycle on `loom.memory_extraction_queue` (ReplacingMergeTree(version),
-every transition is a full mirrored row):
+Row lifecycle on `loom.memory_extraction_queue` (ReplacingMergeTree(version)):
+Worker transitions mirror full rows; explicit retries update failed versions in place.
 
     pending --claim--> running --done--> done
                           |--error--> pending (attempts+1, backoff) | failed (>= max)
                           |--unreachable--> pending (backoff, no attempt spent)
                           \\--held--> held (until the hold ends, no attempt spent)
+    failed --retry_mine--> pending (attempts = max-1, in place, same version)
 
 `lease_until` is when a row may be claimed (again): a `running` row whose lease
 has passed is reclaimable, so a worker that died mid-extraction does not strand
@@ -30,8 +31,9 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
+from server.core.ch_names import split_table
 from server.core.datetimes import utc_now as _now
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
@@ -64,6 +66,9 @@ _BACKOFF_S = (15, 60, 300, 1800)  # not a setting: 15 s, a minute, 5 minutes, 30
 TTL_DAYS = 30  # not a setting: the table's DDL (schemas/schema.sql) sets it
 _LAST_DAY = TTL_DAYS - 1  # not a setting: follows the table's TTL
 _DROP_PER_PASS = 500  # not a setting: the rest are dropped on the next passes
+
+# Who queued a row: N-1 stores the enqueuer only in the payload; new rows use the column.
+_ENQUEUER = "if(enqueued_by != '', enqueued_by, JSONExtractString(payload, 'enqueued_by'))"
 
 # Columns of the queue table, in insert order. A new column belongs here AND in
 # `_mirror` — the RMT contract is the same as loom.memory's.
@@ -135,8 +140,9 @@ async def enqueue(
     input: Any, *, scope: ReadFilters, rule_agent: str = "", ch: Any | None = None
 ) -> str:
     """Persist one deferred set_from_messages request, with the agent a rule it
-    files is for ('' files nothing). Returns the queue_id the caller can poll with
-    `memory.extraction_status`."""
+    files is for ('' files nothing). Returns the queue_id the enqueuing principal
+    polls with `memory.extraction_status_mine` and replays, once failed, with
+    `memory.extraction_retry_mine`; `memory.extraction_status` reports it too."""
     from server.core.ch import get_client
 
     ch = ch or get_client()
@@ -231,16 +237,14 @@ async def claim_batch(
         scope += " AND org NOT IN {xo:Array(String)}"
         params["xo"] = sorted(exclude_orgs)
     cols = ", ".join(COLUMNS)
-    # N-1 stores the enqueuer only in the payload; new rows use the column.
-    enqueuer = "if(enqueued_by != '', enqueued_by, JSONExtractString(payload, 'enqueued_by'))"
     rows = await ch.query_all(
         f"""
         SELECT {cols}
         FROM {TABLE} FINAL
         WHERE status IN {{waiting:Array(String)}} AND lease_until < now64(3)
           -- an enqueuer, namespace and user with a request held now: none claimed
-          AND (org, namespace, user_id, {enqueuer}) NOT IN (
-              SELECT org, namespace, user_id, {enqueuer}
+          AND (org, namespace, user_id, {_ENQUEUER}) NOT IN (
+              SELECT org, namespace, user_id, {_ENQUEUER}
               FROM {TABLE} FINAL
               WHERE status = {{running:String}}
                 AND startsWith(last_error, 'held: ') AND lease_until >= now64(3)
@@ -514,6 +518,13 @@ async def pending_count(
     return int((row or {}).get("n") or 0)
 
 
+# What a status read reports of a batch: its state, never its payload.
+_STATUS_COLUMNS = (
+    "queue_id, agent, user_id, session_id, status, attempts, message_count, content_chars, "
+    "written, last_error, enqueued_at, updated_at"
+)
+
+
 async def list_status(
     *,
     org: str,
@@ -555,9 +566,7 @@ async def list_status(
     where += scope_and(scope, params)
     rows = await ch.query_all(
         f"""
-        SELECT queue_id, agent, user_id, session_id, status, attempts,
-               message_count, content_chars, written, last_error,
-               enqueued_at, updated_at
+        SELECT {_STATUS_COLUMNS}
         FROM {TABLE} FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           {where}
@@ -576,11 +585,208 @@ def status_of(row: dict[str, Any]) -> str:
     return str(row["status"])
 
 
+async def _own_rows(
+    ch: Any,
+    columns: str,
+    *,
+    org: str,
+    namespace: str,
+    queue_ids: list[str],
+    enqueued_by: str,
+    scope: ReadFilters,
+) -> list[dict[str, Any]]:
+    """Read the requested batches in the caller's principal and read scope."""
+    from server.core.ch import own_write_reads
+
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "qids": list(queue_ids),
+        "by": enqueued_by,
+        "lim": len(queue_ids),
+    }
+    in_scope = scope_and(scope, params)
+    # PREWHERE runs before FINAL: only sort-key columns here, so every version of a batch
+    # filters alike, and the payload the enqueuer may be read from is read for the asked
+    # ids only.
+    with own_write_reads():
+        rows = await ch.query_all(
+            f"""
+            SELECT {columns}
+            FROM {TABLE} FINAL
+            PREWHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND queue_id IN {{qids:Array(String)}}{in_scope}
+            WHERE {_ENQUEUER} = {{by:String}}
+            ORDER BY enqueued_at DESC
+            LIMIT {{lim:UInt32}}
+            """,
+            params=params,
+        )
+    return [dict(r) for r in rows]
+
+
+async def list_own_status(
+    *,
+    org: str,
+    namespace: str,
+    queue_ids: list[str],
+    enqueued_by: str,
+    scope: ReadFilters,
+    ch: Any | None = None,
+) -> list[dict[str, Any]]:
+    """The batches among `queue_ids` that `enqueued_by` queued in (org, namespace),
+    inside `scope`, newest first, payload excluded: `memory.extraction_status_mine`."""
+    from server.core.ch import get_client
+
+    rows = await _own_rows(
+        ch or get_client(),
+        _STATUS_COLUMNS,
+        org=org,
+        namespace=namespace,
+        queue_ids=queue_ids,
+        enqueued_by=enqueued_by,
+        scope=scope,
+    )
+    return [{**r, "status": status_of(r)} for r in rows]
+
+
+class Requeued(NamedTuple):
+    """What `requeue_own_failed` did with each asked id the principal queued, in the
+    order asked."""
+
+    # Accepted for an asynchronous transition to `pending`.
+    requeued: list[str]
+    # Not `failed` (waiting or done): left alone.
+    not_failed: list[str]
+    # `failed`, but the org's model calls are switched off: left `failed`.
+    model_calls_off: list[str]
+    # `failed` and queued over `_LAST_DAY` days ago: `drop_expiring` would drop a retry.
+    expired: list[str]
+
+
+# Names the retry's mutation in system.mutations, so a repeated retry finds it.
+_RETRY_TAG = "extraction_retry"
+
+
+async def requeue_own_failed(
+    *,
+    org: str,
+    namespace: str,
+    queue_ids: list[str],
+    enqueued_by: str,
+    scope: ReadFilters,
+    max_attempts: int,
+    ch: Any | None = None,
+) -> Requeued:
+    """Submit an in-place retry with one attempt left; status changes asynchronously.
+    A batch whose earlier retry is still unapplied is answered `requeued` again, with
+    no second mutation."""
+    from server.core.ch import get_client
+
+    ch = ch or get_client()
+    rows = await _own_rows(
+        ch,
+        "queue_id, agent, user_id, session_id, status, version, "
+        # drop_expiring's cutoff, on the same clock.
+        f"enqueued_at < now64(3) - toIntervalDay({_LAST_DAY}) AS past_last_day",
+        org=org,
+        namespace=namespace,
+        queue_ids=queue_ids,
+        enqueued_by=enqueued_by,
+        scope=scope,
+    )
+    states = {str(r["queue_id"]): r for r in rows}
+    failed = [qid for qid in queue_ids if states.get(qid, {}).get("status") == STATUS_FAILED]
+    waiting_or_done = [qid for qid in queue_ids if qid in states and qid not in failed]
+    expired = [qid for qid in failed if int(states[qid]["past_last_day"])]
+    retryable = [qid for qid in failed if qid not in expired]
+    # An earlier retry still to apply goes pending whatever the switch says now.
+    submitted = (
+        await _retries_unapplied(ch, [(q, int(states[q]["version"])) for q in retryable])
+        if retryable
+        else set()
+    )
+    fresh = [q for q in retryable if q not in submitted]
+    off = fresh if fresh and await customer.switched_off(org) else []
+    if fresh and not off:
+        to_submit = [states[q] for q in fresh]
+        await _submit_retry(ch, to_submit, org, namespace, enqueued_by, scope, max_attempts)
+    return Requeued(
+        requeued=[q for q in retryable if q not in off],
+        not_failed=waiting_or_done,
+        model_calls_off=off,
+        expired=expired,
+    )
+
+
+async def _submit_retry(
+    ch: Any,
+    rows: list[dict[str, Any]],
+    org: str,
+    namespace: str,
+    enqueued_by: str,
+    scope: ReadFilters,
+    max_attempts: int,
+) -> None:
+    """The in-place update of `rows`' exact failed versions, not waited for."""
+    batches = [
+        (r["agent"], r["user_id"], r["session_id"], r["queue_id"], int(r["version"])) for r in rows
+    ]
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "batches": batches,
+        "by": enqueued_by,
+        "attempts": max(0, int(max_attempts) - 1),
+        "tag": _RETRY_TAG,
+        # Bound, not now64(): a replicated table refuses a non-deterministic mutation.
+        "updated_ms": int(_now().timestamp() * 1000),
+    }
+    in_scope = scope_and(scope, params)
+    # Updating stored rows cannot restore a payload deleted while the request was in flight.
+    await ch.execute(
+        f"""
+        ALTER TABLE loom.memory_extraction_queue
+        UPDATE status = 'pending', attempts = {{attempts:UInt32}},
+               lease_until = toDateTime64(0, 3, 'UTC'),
+               updated_at = fromUnixTimestamp64Milli({{updated_ms:Int64}}, 'UTC')
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND ({{tag:String}} = {{tag:String}})
+          AND (agent, user_id, session_id, queue_id, version)
+              IN {{batches:Array(Tuple(String, String, String, String, UInt64))}}
+          AND status = 'failed'
+          AND {_ENQUEUER} = {{by:String}}
+          {in_scope}
+        SETTINGS mutations_sync = 0
+        """,
+        params=params,
+    )
+
+
+async def _retries_unapplied(ch: Any, versions: list[tuple[str, int]]) -> set[str]:
+    """The ids among `versions` whose failed version an earlier retry's unfinished
+    mutation targets: the command keeps each batch tuple, ending `'<id>', <version>)`."""
+    db, name = split_table(TABLE)
+    rows = await ch.query_all(
+        """
+        SELECT DISTINCT b.1 AS qid
+        FROM system.mutations
+        ARRAY JOIN {versions:Array(Tuple(String, UInt64))} AS b
+        WHERE database = {db:String} AND table = {t:String} AND is_done = 0
+          AND position(command, {pat:String}) > 0
+          AND position(command, concat(char(39), b.1, char(39), ', ', toString(b.2), ')')) > 0
+        """,
+        params={"db": db, "t": name, "versions": versions, "pat": f"'{_RETRY_TAG}'"},
+    )
+    return {str(r["qid"]) for r in rows}
+
+
 __all__ = [
     "COLUMNS",
     "ENQUEUED_BY_KEY",
     "READ_SCOPE_KEY",
     "RULE_AGENT_KEY",
+    "Requeued",
     "STATUS_DONE",
     "STATUS_FAILED",
     "STATUS_HELD",
@@ -594,6 +800,7 @@ __all__ = [
     "drop_expiring",
     "enqueue",
     "enqueued_actor",
+    "list_own_status",
     "list_status",
     "mark_done",
     "mark_error",
@@ -601,6 +808,7 @@ __all__ = [
     "mark_unreachable",
     "payload_for",
     "pending_count",
+    "requeue_own_failed",
 ]
 
 

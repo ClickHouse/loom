@@ -890,9 +890,16 @@ replayed by `projection_repair`; it never reaches the caller.
 | `observe.record` / `observe.crystallize`                                       | Tool-trace observations as episodic rows, marked ready by `crystallize` | `observe_extract` (off by default, needs an LLM) replays each ready session through `set_from_messages`.                                                                                                                                                                                                                                          |
 
 Until a queued request is done, `memory.search` and `memory.ask` report
-`pending_extraction` for the scope, and `memory.extraction_status` reads the row. The
-canonical-hash dedup makes a double claim harmless. With `extraction_queue` off, deferred
-saves stay `pending`.
+`pending_extraction` for the scope. `memory.extraction_status` reads the namespace's
+rows, and `memory.extraction_status_mine` the caller's own by `queue_id`: the rows whose
+enqueuer matches its principal, inside its read scope.
+`memory.extraction_retry_mine` accepts the caller's own `failed` batches for one more
+attempt, unless the org's model calls are switched off. It submits an asynchronous
+in-place update of the exact versions read; status eventually becomes `pending`.
+The update preserves the payload, identity and version, so a newer worker result stays
+current and a delayed command cannot restore a transcript that erasure deleted.
+Both operations read with sequential consistency. The canonical-hash dedup makes a
+double claim harmless. With `extraction_queue` off, deferred saves stay `pending`.
 
 ## `memory.search`
 

@@ -639,6 +639,12 @@ with `purge=true` and runner state.
 - **Remaining `ALTER … UPDATE/DELETE` call sites** are listed in
   `tests/unit/test_clickhouse_mutation_inventory.py`, which fails on a new one until it is
   classified there.
+- **Extraction retries** (`memory.extraction_retry_mine`) update failed queue rows in
+  place, asynchronously. The update targets the exact identity and version observed, with
+  the caller's namespace, principal and read scope. Copying the transcript into a new
+  version could restore it after a concurrent erasure; this mutation changes no payload or
+  version and cannot create a row. The request returns when the mutation is accepted, and
+  a retry asked again while its mutation is unfinished in `system.mutations` submits none.
 - **Provider lock recovery** takes over one `loom._migration_lock` Keeper key with a
   conditional `UPDATE` under strict mode, once the key expired and the previous
   owner's participant counts as stopped (retired, or no heartbeat for its
