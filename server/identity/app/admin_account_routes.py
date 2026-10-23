@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict
 from server.auth import agents, machines, oauth, revocation, subject_revocation
 from server.auth.grant_claims import NotClaimed
 from server.auth.jwt import AuthInfo
-from server.core.errors import GrantBusyError
+from server.core.errors import GrantBusyError, OverloadedError
 from server.core.principals import org_of_end_user_revocation
 from server.identity.app import account_admin
 from server.insights.app.admin_routes import require_admin
@@ -192,8 +192,8 @@ async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
         await account_admin.create_bot(bot, by=_by(info), replace=input.replace)
     except ValueError as e:
         raise _invalid(e) from None
-    except (GrantBusyError, NotClaimed):
-        raise  # its claim was not had: nothing is saved, so the key is worth nothing
+    except (GrantBusyError, NotClaimed, OverloadedError):
+        raise  # its claim or the fleet was not had: nothing is saved, so the key is worth nothing
     except Exception:  # it may be saved: its only key must not be lost
         if not private:
             raise

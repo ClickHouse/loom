@@ -121,7 +121,7 @@ def _fail(message: str) -> int:
 def _cmd_create(args: argparse.Namespace) -> int:
     from server.auth import machines
     from server.auth.grant_claims import NotClaimed
-    from server.core.errors import GrantBusyError
+    from server.core.errors import GrantBusyError, OverloadedError
     from server.identity.app import account_admin
 
     try:
@@ -157,7 +157,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
                 f.write(private)
         try:
             await account_admin.create_bot(bot, by=f"cli:{getpass.getuser()}", replace=args.replace)
-        except (ValueError, GrantBusyError, NotClaimed) as e:  # nothing was saved
+        except (ValueError, GrantBusyError, NotClaimed, OverloadedError) as e:  # nothing saved
             if args.generate_key:
                 os.remove(args.generate_key)
             return _fail(str(e))

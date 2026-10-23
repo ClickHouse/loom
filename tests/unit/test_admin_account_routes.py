@@ -180,6 +180,19 @@ def test_a_bots_longest_token_reaches_it_and_its_listing(calls, monkeypatch) -> 
     assert listed["max_access_token_s"] == 86400
 
 
+def test_a_maximum_the_fleet_cannot_honour_yet_is_raised_as_retryable(calls, monkeypatch) -> None:
+    from server.core.errors import OverloadedError
+
+    async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
+        raise OverloadedError("replicas below migration 77", retry_after_s=60)
+
+    monkeypatch.setattr(account_admin, "create_bot", create_bot)
+    body = {"name": "fleet", "org": "acme", "namespace_roles": ["a=writer"], "generate_key": True}
+    # Raised on to the app's handler (503 OVERLOADED), not answered with the unsaved key.
+    with pytest.raises(OverloadedError):
+        _client().post("/v1/admin/bots.create", json={**body, "max_access_token_s": 600})
+
+
 def test_generating_a_key_and_giving_one_is_refused(calls) -> None:
     r = _client().post(
         "/v1/admin/bots.create",

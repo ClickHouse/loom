@@ -270,13 +270,13 @@ schema. These rules keep that safe. The operator procedure is in
     its `/v1/admin/bots.create` refuses the field (422), and when it saves a bot (a disable,
     a replace, a namespace release that drops one of its roles) it writes 3600 back. This
     can lengthen a token requested or capped below an hour, or shorten one allowed longer.
-    So `create_bot` (the admin route and `loom bot create`) refuses a maximum other than
-    3600 until a fresh fleet view shows every replica, in every deployment, at migration 77
-    or later; an unread or empty view (no server registered yet) refuses too. A request's
-    `expires_in` needs no gate: N-1 answers it with an hour. After a rollback, reapply each
-    maximum once N serves again (`loom bot create --replace` with the bot's key or trust and
-    roles as registered, which also ends its tokens). The mixed-version gate does not check
-    this rule.
+    So `create_bot` (the admin route and `loom bot create`) answers 503 `OVERLOADED` to a
+    maximum other than 3600 until a fresh fleet view shows every replica, in every
+    deployment, at migration 77 or later; an unread or empty view (no server registered yet)
+    refuses too. A request's `expires_in` needs no gate: N-1 answers it with an hour. After
+    a rollback, reapply each maximum once N serves again (`loom bot create --replace` with
+    the bot's key or trust and roles as registered, which also ends its tokens). The
+    mixed-version gate does not check this rule.
 
 ## What checks them
 

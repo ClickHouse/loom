@@ -12,7 +12,7 @@ import pytest
 
 from server.auth.grant_claims import NotClaimed
 from server.cli import bots
-from server.core.errors import BackendUnavailableError, GrantBusyError
+from server.core.errors import BackendUnavailableError, GrantBusyError, OverloadedError
 from server.identity.app import account_admin
 
 
@@ -47,6 +47,7 @@ def _offline(monkeypatch) -> None:
         (ValueError("bot exists"), False),
         (GrantBusyError("a namespace is changing"), False),  # its claim not had: nothing saved
         (NotClaimed("a namespace is changing", operation="grant_change"), False),
+        (OverloadedError("replicas below migration 77"), False),  # the fleet gate: nothing saved
         (BackendUnavailableError("timeout", operation="grant_change"), True),  # maybe saved
         (RuntimeError("CH away"), True),
     ],

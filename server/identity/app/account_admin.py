@@ -456,16 +456,20 @@ def _check_platform_admin(
 
 async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
     from server.core.ch import get_client
+    from server.core.errors import OverloadedError
     from server.identity.store import namespaces
 
     name, org = bot["name"], bot["org"]
     if bot["max_access_token_s"] != machines.TOKEN_TTL and not (
         await machines.access_token_maximum_ready(get_client())
     ):
-        raise ValueError(
+        # Retryable, as the rollout ends: an older replica issues an hour and resets the
+        # maximum when it saves the bot.
+        raise OverloadedError(
             f"a maximum token lifetime other than {machines.TOKEN_TTL} s waits until replicas"
-            f" in loom.instances all run migration {machines.ACCESS_TOKEN_MIGRATION} or later"
-            " (an older one issues an hour and resets the maximum when it saves the bot)"
+            f" in loom.instances all run migration {machines.ACCESS_TOKEN_MIGRATION} or later,"
+            " or until loom.instances can be read",
+            retry_after_s=60,
         )
     if await revocation.revoked_outright(machines.subject(name)):
         raise ValueError(f"{machines.subject(name)} is revoked outright; it could never sign in")

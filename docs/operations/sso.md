@@ -308,14 +308,15 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   An `expires_in` that is not a whole number of seconds, or is under 60, is
   refused with `invalid_request` before the proof is spent or counted.
 
-  A maximum other than an hour is refused until every replica runs a server that
-  honours it (migration 77), and while no running server has registered in
-  `loom.instances` yet: an older server ignores `expires_in` and the maximum,
-  issues an hour, and resets the maximum to 3600 when it saves a bot. After a
-  rollback to such a server, every bot's tokens last an hour again, and its
-  saves reset the maximum; reapply it once the newer server serves again, with
-  `loom bot create --replace`, the bot's key or trust and roles as registered
-  and `--max-access-token-ttl`. Replacing a bot also ends the tokens it holds.
+  A maximum other than an hour is refused (503 `OVERLOADED`, retry later) until
+  every replica runs a server that honours it (migration 77), and while no
+  running server has registered in `loom.instances` yet: an older server ignores
+  `expires_in` and the maximum, issues an hour, and resets the maximum to 3600
+  when it saves a bot. After a rollback to such a server, every bot's tokens
+  last an hour again, and its saves reset the maximum; reapply it once the newer
+  server serves again, with `loom bot create --replace`, the bot's key or trust
+  and roles as registered and `--max-access-token-ttl`. Replacing a bot also
+  ends the tokens it holds.
 
   A longer token is no harder to end: disabling or replacing the bot,
   `loom revoke-token --subject` without `--expires-at`,
