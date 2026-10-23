@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from tests.unit.clickhouse_local import CLICKHOUSE, run
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 from tests.unit.test_extraction_retry_mine import _MutationCH, _requeue
 from tests.unit.test_extraction_status_mine import _queued
 
@@ -22,9 +22,18 @@ class _DelayedMutationCH(_MutationCH):
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
         if "system.mutations" not in sql:
             return await super().query_all(sql, params)
-        # clickhouse-local keeps no unfinished mutation: the unapplied commands stand in.
-        pending = {b[3] for _, p in self.commands for b in p.get("batches", [])}
-        return [{"qid": qid} for qid in (params or {})["qids"] if qid in pending]
+        # The real lookup, on a fresh table with one part and its merges stopped, so the
+        # commands not yet applied stay unfinished in system.mutations.
+        bound: dict[str, Any] = {}
+        for _, p in self.commands:
+            bound |= p
+        setup = [
+            ddl("memory_extraction_queue"),
+            _queued("part", by=None),
+            "SYSTEM STOP MERGES loom.memory_extraction_queue",
+            *(c for c, _ in self.commands),
+        ]
+        return run(setup, sql, bound | (params or {}))
 
     def finish(self) -> None:
         for sql, params in self.commands:

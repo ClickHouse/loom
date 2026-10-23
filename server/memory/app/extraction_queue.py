@@ -66,6 +66,9 @@ TTL_DAYS = 30  # not a setting: the table's DDL (schemas/schema.sql) sets it
 _LAST_DAY = TTL_DAYS - 1  # not a setting: follows the table's TTL
 _DROP_PER_PASS = 500  # not a setting: the rest are dropped on the next passes
 
+# Who queued a row: N-1 stores the enqueuer only in the payload; new rows use the column.
+_ENQUEUER = "if(enqueued_by != '', enqueued_by, JSONExtractString(payload, 'enqueued_by'))"
+
 # Columns of the queue table, in insert order. A new column belongs here AND in
 # `_mirror` — the RMT contract is the same as loom.memory's.
 COLUMNS = (
@@ -233,16 +236,14 @@ async def claim_batch(
         scope += " AND org NOT IN {xo:Array(String)}"
         params["xo"] = sorted(exclude_orgs)
     cols = ", ".join(COLUMNS)
-    # N-1 stores the enqueuer only in the payload; new rows use the column.
-    enqueuer = "if(enqueued_by != '', enqueued_by, JSONExtractString(payload, 'enqueued_by'))"
     rows = await ch.query_all(
         f"""
         SELECT {cols}
         FROM {TABLE} FINAL
         WHERE status IN {{waiting:Array(String)}} AND lease_until < now64(3)
           -- an enqueuer, namespace and user with a request held now: none claimed
-          AND (org, namespace, user_id, {enqueuer}) NOT IN (
-              SELECT org, namespace, user_id, {enqueuer}
+          AND (org, namespace, user_id, {_ENQUEUER}) NOT IN (
+              SELECT org, namespace, user_id, {_ENQUEUER}
               FROM {TABLE} FINAL
               WHERE status = {{running:String}}
                 AND startsWith(last_error, 'held: ') AND lease_until >= now64(3)
@@ -606,8 +607,6 @@ async def _own_rows(
         "lim": len(queue_ids),
     }
     in_scope = scope_and(scope, params)
-    # N-1 rows can carry their enqueuer only in the replay payload.
-    enqueuer = "if(enqueued_by != '', enqueued_by, JSONExtractString(payload, 'enqueued_by'))"
     with own_write_reads():
         rows = await ch.query_all(
             f"""
@@ -615,7 +614,7 @@ async def _own_rows(
             FROM {TABLE} FINAL
             PREWHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND queue_id IN {{qids:Array(String)}}{in_scope}
-            WHERE {enqueuer} = {{by:String}}
+            WHERE {_ENQUEUER} = {{by:String}}
             ORDER BY enqueued_at DESC
             LIMIT {{lim:UInt32}}
             """,
@@ -683,19 +682,16 @@ async def requeue_own_failed(
     from server.core.ch import get_client
 
     ch = ch or get_client()
-    own: dict[str, Any] = {
-        "org": org,
-        "namespace": namespace,
-        "enqueued_by": enqueued_by,
-        "scope": scope,
-    }
     rows = await _own_rows(
         ch,
         "queue_id, agent, user_id, session_id, status, version, "
         # drop_expiring's cutoff, on the same clock.
         f"enqueued_at < now64(3) - toIntervalDay({_LAST_DAY}) AS past_last_day",
+        org=org,
+        namespace=namespace,
         queue_ids=queue_ids,
-        **own,
+        enqueued_by=enqueued_by,
+        scope=scope,
     )
     states = {str(r["queue_id"]): r for r in rows}
     failed = [qid for qid in queue_ids if states.get(qid, {}).get("status") == STATUS_FAILED]
@@ -720,6 +716,8 @@ async def requeue_own_failed(
         "by": enqueued_by,
         "attempts": max(0, int(max_attempts) - 1),
         "tag": _RETRY_TAG,
+        # Bound, not now64(): a replicated table refuses a non-deterministic mutation.
+        "updated_ms": int(_now().timestamp() * 1000),
     }
     in_scope = scope_and(scope, params)
     # Updating stored rows cannot restore a payload deleted while the request was in flight.
@@ -728,14 +726,13 @@ async def requeue_own_failed(
         ALTER TABLE loom.memory_extraction_queue
         UPDATE status = 'pending', attempts = {{attempts:UInt32}},
                lease_until = toDateTime64(0, 3, 'UTC'),
-               updated_at = now64(3, 'UTC')
+               updated_at = fromUnixTimestamp64Milli({{updated_ms:Int64}}, 'UTC')
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND ({{tag:String}} = {{tag:String}})
           AND (agent, user_id, session_id, queue_id, version)
               IN {{batches:Array(Tuple(String, String, String, String, UInt64))}}
           AND status = 'failed'
-          AND if(enqueued_by != '', enqueued_by,
-                 JSONExtractString(payload, 'enqueued_by')) = {{by:String}}
+          AND {_ENQUEUER} = {{by:String}}
           {in_scope}
         SETTINGS mutations_sync = 0
         """,
@@ -753,10 +750,10 @@ async def _retries_unapplied(ch: Any, queue_ids: list[str]) -> set[str]:
         FROM system.mutations
         ARRAY JOIN {qids:Array(String)} AS qid
         WHERE database = {db:String} AND table = {t:String} AND is_done = 0
-          AND position(command, {tag:String}) > 0
-          AND position(command, concat('\'', qid, '\'')) > 0
+          AND position(command, {pat:String}) > 0
+          AND position(command, concat(char(39), qid, char(39))) > 0
         """,
-        params={"db": db, "t": name, "qids": list(queue_ids), "tag": f"'{_RETRY_TAG}'"},
+        params={"db": db, "t": name, "qids": list(queue_ids), "pat": f"'{_RETRY_TAG}'"},
     )
     return {str(r["qid"]) for r in rows}
 

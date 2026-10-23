@@ -642,6 +642,7 @@ _FAILED_BATCH = {
     "session_id": "s1",
     "status": "failed",
     "version": 1,
+    "past_last_day": 0,
 }
 
 
