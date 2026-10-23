@@ -176,6 +176,17 @@ def test_a_batch_past_its_last_day_is_expired_not_requeued(tmp_path: Path) -> No
     assert asyncio.run(q.drop_expiring(ch=ch)) == 0
 
 
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_a_batch_dropped_while_model_calls_were_off_can_be_retried(tmp_path: Path) -> None:
+    dropped = "dropped: model calls switched off"
+    ch = _MutationCH(
+        tmp_path / "ch", _queued("q1", by="process:sa:a", status="failed", last_error=dropped)
+    )
+    assert _requeue(ch, ["q1"]).requeued == ["q1"]
+    (row,) = ch.stored()
+    assert row["status"] == "pending" and not ch.inserted  # its drop record is left as is
+
+
 def test_switched_off_orgs_leave_failed_batches_unchanged() -> None:
     ch = _StubCH([_failed_row()])
     switch_off("o")

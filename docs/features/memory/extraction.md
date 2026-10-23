@@ -233,7 +233,8 @@ deferred calls returned, at most 20 a call:
   While the org's model calls are switched off no new retry is accepted
   (`model_calls_off`); one accepted earlier and not yet applied stays in `requeued`.
   A batch queued 29 or more days ago is not accepted (`expired`): the queue drops it
-  before its 30-day TTL. Asking again while an accepted retry is still unfinished in
+  before its 30-day TTL. A batch dropped while model calls were off can be retried once
+  they are back on; its `loom.memory_drops` record stays as the history of that drop. Asking again while an accepted retry is still unfinished in
   `system.mutations` submits no second update; two calls at the same moment can each
   submit one, and the later changes nothing.
 

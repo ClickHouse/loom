@@ -80,22 +80,6 @@ def _in_context(auth: Any, fn: Any) -> Any:
     return contextvars.Context().run(go)
 
 
-def test_the_read_never_selects_the_transcript() -> None:
-    ch = _RecordingCH()
-    asyncio.run(
-        q.list_own_status(
-            org="o",
-            namespace="n",
-            queue_ids=["q1"],
-            enqueued_by="process:sa:chat-agent",
-            scope=WHOLE_NAMESPACE,
-            ch=ch,
-        )
-    )
-    # The transcript is the caller's own and never part of the answer.
-    assert "payload" not in ch.calls[0][0].split("FROM", 1)[0]
-
-
 class _LocalCH:
     def __init__(self, *setup: str) -> None:
         self.setup = list(setup)
@@ -152,6 +136,8 @@ def test_only_the_enqueuers_batches_in_the_namespace_and_scope_answer() -> None:
                 org=org, namespace=namespace, queue_ids=asked, enqueued_by=by, scope=scope, ch=ch
             )
         )
+        # The transcript is the caller's own and never part of the answer.
+        assert all("payload" not in r for r in rows)
         return sorted((r["queue_id"], r["status"]) for r in rows)
 
     assert ids("n", "process:sa:a") == [("q1", "done"), ("q4", "failed"), ("q7", "pending")]
