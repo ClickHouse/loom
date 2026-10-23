@@ -92,11 +92,15 @@ def _key_words(keys: Iterable[tuple[str, ...]]) -> str:
 
 _PIN_KEYS = _key_words(w for w, label in KEYED_SECRET_WORDS.items() if label == "pin")
 _OTHER_KEYS = _key_words(w for w, label in KEYED_SECRET_WORDS.items() if label != "pin")
+# A credential key's words, with any separator run between them (`api.key`, `apiKey`).
+_CREDENTIAL_KEYS = ASSIGNMENT_WORDS.replace("[_-]?", _KEY_SEP)
 # A key that ends in a label, then its value (3-5 digits under a `pin` key, so a postal
-# code is not selected): a superset of the detector's key rule, as security.md describes.
+# code is not selected; 8 token characters under a credential key): a superset of the
+# detector's key rule, as security.md describes.
 _COARSE_KEYED = (
     rf"(?i:(?:{_PIN_KEYS}){_KEY_VALUE}[0-9]{{3,5}}(?:[^0-9]|$)"
-    rf"|(?:{_OTHER_KEYS}|{_key_words(SSN_KEYS)}){_KEY_VALUE}[0-9]{{3}})"
+    rf"|(?:{_OTHER_KEYS}|{_key_words(SSN_KEYS)}){_KEY_VALUE}[0-9]{{3}}"
+    rf"|(?:{_CREDENTIAL_KEYS}){_KEY_VALUE}[^\s\"\\]{{8}})"
 )
 
 # The whitespace the detector's Unicode `\s` reads (`str.isspace`; U+3000 is the last), as

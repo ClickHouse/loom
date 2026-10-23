@@ -424,12 +424,35 @@ _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")  # `PIN`, `badge`, `
 _KEY_CAPS_WORDS = re.compile(r"[A-Z]{2,}|[A-Z]?[a-z0-9]+")
 
 
+_ASSIGNMENT_KEY = re.compile(rf"(?i)(?:{ASSIGNMENT_WORDS})")
+# A value that names where a secret lives rather than holding it: `env:OPENAI_API_KEY`,
+# `${DB_PASSWORD}`, `vault:kv/db`, a path.
+_SECRET_REFERENCE = re.compile(r"[$%{/~.]|[A-Za-z][\w.+-]*:")
+
+
+def _keyed_credential(key: str, value: str) -> str:
+    """`password: <value>` for a token-shaped string under a key that ends in a credential
+    word (`password`, `dbPassword`, `client_secret`), for the assignment pattern to read; ''
+    otherwise. The value mixes at least two of letters, digits and symbols, so a form field
+    (`"required"`) or a mask (`"********"`) is not a credential."""
+    words = [w.lower() for w in _KEY_WORDS.findall(key)]
+    if not any(_ASSIGNMENT_KEY.fullmatch("_".join(words[-n:])) for n in (1, 2) if len(words) >= n):
+        return ""
+    v = value.strip()
+    if len(v) < 8 or any(c.isspace() for c in v) or _SECRET_REFERENCE.match(v):
+        return ""
+    kinds = {"letter" if c.isalpha() else "digit" if c.isdigit() else "symbol" for c in v}
+    return f"password: {v}" if len(kinds) >= 2 else ""
+
+
 def _keyed_secret(key: str, value: Any) -> str:
     """The stated form of a secret held under a key that names it ("pin is 4471" for
-    `{"badge_pin": "4471"}`, "cvv is 123" for `{"cvv_2": "123"}`), for the detector to read;
-    '' when the key names none."""
+    `{"badge_pin": "4471"}`, "cvv is 123" for `{"cvv_2": "123"}`, "password: hunter2xyz" for
+    `{"db_password": "hunter2xyz"}`), for the detector to read; '' when the key names none."""
     if not isinstance(value, str | int) or isinstance(value, bool):
         return ""
+    if isinstance(value, str) and (credential := _keyed_credential(key, value)):
+        return credential
     # the last one, two and three words of both splits, lowercased
     tails = [
         tuple(w.lower() for w in words[-n:])
@@ -450,11 +473,11 @@ def _keyed_secret(key: str, value: Any) -> str:
 
 
 # A `"key": value` pair in raw JSON text, for `reads_high`. A quoted value must be the
-# whole string and a bare number must end at its digits; a key reads at most 200
-# characters, so the scan stays linear.
+# whole string, one token of at most 256 characters, and a bare number must end at its
+# digits; a key reads at most 200 characters, so the scan stays linear.
 _KEYED_PAIR = re.compile(
     r'"((?:[^"\\]|\\.){1,200})"\s*:\s*'
-    r'(?:"\s*([0-9][0-9-]{0,15})\s*"|([0-9][0-9-]{0,15})(?![\w.-]))',
+    r'(?:"\s*([^"\\\s]{1,256})\s*"|([0-9][0-9-]{0,15})(?![\w.-]))',
     re.ASCII,
 )
 
@@ -464,8 +487,9 @@ def detector_text(value: Any) -> str:
     and scalar is its own line, so a token after a newline keeps its word boundary. The lines
     are joined by `_SCALAR_SEP`, which no pattern crosses, so two scalars never read as one
     (`Password:` then the next key, or `256`, `512`, `1024` as a phone number). A key that
-    names a PIN-like secret or an SSN adds its value's stated form (`_keyed_secret`), so
-    `{"pin": "4471"}` reads as `pin is 4471` does; other keys label nothing. Iterative, so a
+    names a PIN-like secret, an SSN or a credential adds its value's stated form
+    (`_keyed_secret`), so `{"pin": "4471"}` reads as `pin is 4471` does; other keys label
+    nothing. Iterative, so a
     deeply nested value cannot stop a worker pass."""
     if isinstance(value, str):
         text = value
@@ -518,8 +542,8 @@ def reads_high(text: str) -> bool:
     chunk), which has no label of its own or carries one a later sweep may not have set
     yet. Text holding JSON (a chunk of an object value) is read with its string escapes
     undone too, where a token after `\\n` or a quoted password keeps its word boundary, and
-    its `"key": value` pairs with a digits-and-dashes value are read as `detector_text`
-    reads them (`{"badge_pin": "4471"}`)."""
+    its `"key": value` pairs are read as `detector_text` reads them (`{"badge_pin": "4471"}`,
+    `{"password": "hunter2xyz"}`)."""
     texts = {text, _JSON_ESCAPE.sub(_json_unescape, text)}
     if any(_reads_high_text(t) for t in texts):
         return True

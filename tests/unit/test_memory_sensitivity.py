@@ -23,6 +23,7 @@ from server.memory.domain.sensitivity import (
     contact_intent,
     detect_sensitivity,
     detector_text,
+    high_spans,
     reads_high,
     resolve_sensitivity,
     value_reads_high,
@@ -353,6 +354,23 @@ def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
     # Each key and scalar is its own line, joined by a separator no pattern crosses: a config
     # object reads as the stored JSON always did, neither high nor medium.
     assert detect_sensitivity(detector_text(value)) == ""
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"password": "hunter2xyz123"},
+        {"db": {"password": "Tr0ub4dor&3"}},
+        {"dbPassword": "hunter2xyz123"},
+        {"client_secret": "9f8e7d6c5b4a3210ffee"},
+        {"api.key": "abcd1234efgh"},
+    ],
+)
+def test_a_credential_under_a_credential_key_reads_high(value: object) -> None:
+    stored = json.dumps(value)
+    assert value_reads_high(value)
+    assert reads_high(stored)  # a raw chunk of the stored object
+    assert high_spans(stored)
 
 
 @pytest.mark.asyncio
@@ -838,6 +856,11 @@ _PREFILTER_OBJECTS = [
     {"note": "pin 128 rows"},
     {"note": "deploy:\npassword=hunter2222"},  # written `\npassword`
     {"note": "api_key = abcdefgh12345678"},
+    {"password": "hunter2xyz123"},
+    {"db": {"password": "Tr0ub4dor&3"}},
+    {"dbPassword": "hunter2xyz123"},
+    {"api.key": "abcd1234efgh"},
+    {"password": "required"},  # a form field, not a credential
     {"card": 4111111111111111},  # a lone card number
     {"note": "call 415\n555\n0123"},  # written `415\n555\n0123`
     {"note": "415\u00a0555\u00a00123"},  # written `415\u00a0555\u00a00123`
@@ -924,4 +947,5 @@ def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -
         '{"unpin": "1234"}',
         '{"Spin": 1200}',
         '{"ATMPIN": "4471"}',
+        '{"password": "required"}',
     }
