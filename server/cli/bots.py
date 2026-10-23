@@ -184,7 +184,8 @@ def _cmd_list(args: argparse.Namespace) -> int:
             state = "active" if r["active"] else "disabled"
             roles = ", ".join(f"{ns}={role}" for ns, role in r["ns_roles"])
             roles = "platform_admin (every org)" if r.get("platform_admin") else roles
-            print(f"  {r['name']:<24} {state:<8} {r['org']:<16} {roles:<40} {' + '.join(proofs)}{limit}")
+            shown = " + ".join(proofs) + limit
+            print(f"  {r['name']:<24} {state:<8} {r['org']:<16} {roles:<40} {shown}")
         return 0
 
     return run_connected(_run)
