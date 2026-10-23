@@ -249,7 +249,8 @@ def read_scope(op: Operation, auth: AuthInfo | None, input_obj: Any) -> Any:
 
 
 def _read_scope_error(op: Operation, e: Exception) -> Exception:
-    """Explain an incomplete scope when the op cannot accept the missing identity."""
+    """Explain an incomplete scope for an op whose input has neither user_id nor
+    session_id, so the request body cannot complete it."""
     fields = op.input_model.model_fields
     if not isinstance(e, IdentityIncompleteError) or "user_id" in fields or "session_id" in fields:
         return e
