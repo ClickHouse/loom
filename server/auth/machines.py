@@ -131,7 +131,7 @@ def _machine(row: dict[str, Any]) -> Machine:
         "jwks_uri": row["jwks_uri"],
         "max_token_s": int(row["max_token_s"]),
         "max_agents": int(row["max_agents"]),
-        "max_access_token_s": int(row.get("max_access_token_s", TOKEN_TTL)),
+        "max_access_token_s": int(row["max_access_token_s"]),
         "platform_admin": bool(row.get("platform_admin", 0)),  # a row of a build before it
     }
 

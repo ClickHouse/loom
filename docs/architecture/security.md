@@ -456,18 +456,17 @@ code or coming back from the provider, finds it already used and is told to run
 
 **Bots and CI** (`server/auth/machines.py`, `loom.machine_identities`). A bot is
 registered by an operator or a platform admin with the namespaces it may use, and proves
-itself at `/oauth/token` for a service-account token of an hour, or of the `expires_in` its
-request asks up to the bot's `max_access_token_s` (60 s to a day, set at registration): with
-a key, by a client
-assertion it signs (RFC 7523 `private_key_jwt`: issuer and subject its name, audience
-this token endpoint, at most five minutes long, its `jti` spent once in Keeper, ES256,
-RS256 or EdDSA only), or as a CI job, by token exchange (RFC 8693) of the OIDC token its
-platform issued for the run, checked against the registered issuer's keys (fetched only
-for a registered issuer), the audience and every registered claim. A CI token may be
-exchanged again while it lives (every client of the job, each renewal), and the token
-issued never outlives it. A CI trust must name at least one claim: any job on a platform
-can ask for any audience. A token is issued as of the moment before the bot is read, so a
-disable landing during the exchange still cuts it off.
+itself at `/oauth/token` for a service-account token of an hour, or of the `expires_in`
+its request asks up to the bot's `max_access_token_s` (60 s to a day, set at
+registration): with a key, by a client assertion it signs (RFC 7523 `private_key_jwt`:
+issuer and subject its name, audience this token endpoint, at most five minutes long, its
+`jti` spent once in Keeper, ES256, RS256 or EdDSA only), or as a CI job, by token exchange
+(RFC 8693) of the OIDC token its platform issued for the run, checked against the
+registered issuer's keys (fetched only for a registered issuer), the audience and every
+registered claim. A CI token may be exchanged again while it lives (every client of the
+job, each renewal), and the token issued never outlives it. A CI trust must name at least
+one claim: any job on a platform can ask for any audience. A token is issued as of the
+moment before the bot is read, so a disable landing during the exchange still cuts it off.
 An exchange whose subject token verifies is counted, before an agent's namespace is made,
 against its trust (`LOOM_WORKLOAD_EXCHANGES_PER_TRUST`, 50,000) and, for a trust with an
 agent claim, its agent (`LOOM_WORKLOAD_EXCHANGES_PER_AGENT`, 300), per 10 minutes, as rows
@@ -481,12 +480,13 @@ exchange refused at the first count is not recorded, and one recorded then refus
 recount (renewals of one agent racing, on any replica) is released under every gate it was
 counted under with an `.ok` row, as a sign-in is.
 Disabling a bot refuses later proofs and revokes its tokens; no refresh token exists to
-outlive it. No revocation waits for a token's expiry: a subject's revocation, a cutoff and a
-parent's revocation refuse a token by its subject and issue time, and are kept for good (or
-until an operator's own `--expires-at`), so a day-long token ends with them; only
-`/oauth/revoke`'s row for one token lapses, at that token's own expiry. The cutoffs an operator action writes (a bot replaced or disabled, an account
-adopted) sit in their own revocation row beside the subject's, so an outright revocation
-written at any moment is never replaced by one.
+outlive it. No revocation waits for a token's expiry: a subject's revocation, a cutoff and
+a parent's revocation refuse a token by its subject and issue time, and are kept for good
+(or until an operator's own `--expires-at`), so a day-long token ends with them; only
+`/oauth/revoke`'s row for one token lapses, at that token's own expiry. The cutoffs an
+operator action writes (a bot replaced or disabled, an account adopted) sit in their own
+revocation row beside the subject's, so an outright revocation written at any moment is
+never replaced by one.
 
 **Agents of one trust** (`server/auth/agents.py`). A workload trust with an agent claim
 issues each agent its own subject, `sa:<trust>:<agent>`, and namespace, `<trust>-<agent>`:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -125,12 +126,14 @@ def test_a_bot_allowed_a_day_gets_one_when_asked_and_its_revocation_ends_it(
     key.write_text(r.json()["private_key_pem"])
     listing = _admin(base, "/v1/admin/bots.list", {}, roles=["platform_admin"]).json()["bots"]
     assert [b["max_access_token_s"] for b in listing if b["name"] == name] == [86400]
-    login = MachineLogin(base, name, key_file=str(key))
+    meta = httpx.get(f"{base}/.well-known/oauth-authorization-server", timeout=30.0).json()
 
     def issued(expires_in: str | None) -> dict[str, Any]:
-        assertion = login._assertion(
-            login._audience_of_assertion(), key.read_bytes(), "LOOM_CLIENT_KEY_FILE"
-        )
+        # The SDK never asks for a lifetime: the form is built here, with its assertion.
+        now = int(time.time())
+        claims = {"iss": name, "sub": name, "aud": meta["token_endpoint"], "iat": now}
+        claims |= {"exp": now + 120, "jti": uuid.uuid4().hex}
+        assertion = pyjwt.encode(claims, key.read_bytes(), algorithm="ES256")
         form = {
             "grant_type": "client_credentials",
             "client_id": name,

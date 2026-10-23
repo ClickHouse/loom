@@ -12,8 +12,8 @@ either
   or asked of the CI platform when it offers one on request
   (ACTIONS_ID_TOKEN_REQUEST_URL), for LOOM_WORKLOAD_AUDIENCE,
 
-and gets an hour-long token from /oauth/token, renewed before it runs out and
-kept in memory only.
+and gets a token of an hour (less when the bot's maximum is shorter) from
+/oauth/token, renewed before it runs out and kept in memory only.
 """
 
 from __future__ import annotations
@@ -55,8 +55,8 @@ def machine_login(server: str) -> MachineLogin | None:
 
 
 class MachineLogin(httpx.Auth):
-    """httpx auth that sends the bot's hour-long token, getting a new one
-    before it expires and once more when the server answers 401."""
+    """httpx auth that sends the bot's token (an hour, or the bot's shorter maximum),
+    getting a new one before it expires and once more when the server answers 401."""
 
     def __init__(
         self,
