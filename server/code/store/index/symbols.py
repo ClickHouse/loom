@@ -19,7 +19,7 @@ from server.code.store.index.symbol_rank import (
     demote_noise_paths,
     return_type_from_signature,
 )
-from server.core.repo_base import param_slices
+from server.core.ch_params import chunks
 
 
 class SymbolsMixin(CodeRepoBase):
@@ -706,9 +706,9 @@ class SymbolsMixin(CodeRepoBase):
             return []
         # a long list is read a slice at a time, names and qualified names apart
         found = []
-        for part in param_slices(sorted(set(names or ()))):
+        for part in chunks(sorted(set(names or ()))):
             found += await self._parser_definitions(org, ns, part, [])
-        for part in param_slices(sorted(set(qualified_names or ()))):
+        for part in chunks(sorted(set(qualified_names or ()))):
             found += await self._parser_definitions(org, ns, [], part)
         return list({(r["qualified_name"], r["symbol_id"], r["path"]): r for r in found}.values())
 

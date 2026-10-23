@@ -173,6 +173,37 @@ async def test_the_user_steps_and_a_clear_mutate_replicated_tables(
     assert superseded == [("u2", True)]
 
 
+async def test_a_clear_past_one_mutations_locks_runs_bucket_mutations(
+    raw: Any, db: str, ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.store import lifecycle
+
+    monkeypatch.setattr(lifecycle, "_LOCKED_PER_MUTATION", 100)
+    org = unique_org("erasure-repl")
+    for table, extra_cols, extra_vals in (
+        (
+            "memory",
+            ", memory_id, lock_mode",
+            ", generateUUIDv4(), if(number < 250, 'read_only', '')",
+        ),
+        ("memory_embeddings", ", embedding, memory_key_embedding", f", {_VECTOR}, {_VECTOR}"),
+    ):
+        raw.command(
+            f"INSERT INTO {db}.{table} (org, namespace, agent, user_id, session_id, memory_key,"
+            f" version{extra_cols})"
+            f" SELECT '{org}', '{NS}', 'a', '{USER}', 's1', concat('k', toString(number)), 1"
+            f"{extra_vals} FROM numbers(300)"
+        )
+    counts = await lifecycle.bulk_tombstone_scope(org=org, namespace=NS, user_id=USER, ch=ch)
+    assert counts == {"loom.memory": 50, "loom.memory_embeddings": 50, "locked_skipped": 250}
+    live = raw.query(
+        f"SELECT count() FROM {db}.memory_embeddings FINAL"
+        " WHERE org = %(o)s AND tombstoned_at IS NULL",
+        {"o": org},
+    ).result_rows
+    assert live == [(250,)]
+
+
 def test_a_mutation_with_a_subquery_is_refused(raw: Any, db: str) -> None:
     """What the steps avoid: the form they replaced, refused on the same tables."""
     from clickhouse_connect.driver.exceptions import DatabaseError

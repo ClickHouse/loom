@@ -9,6 +9,7 @@ with chunk ids; folded, a chunk is a path to its fact, not a result.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -202,3 +203,14 @@ def test_a_folded_row_is_rank_neutral_no_asserted_tiebreak() -> None:
     assert "asserted" not in converted.score_components
     assert "asserted" not in lifted.score_components
     assert kept.score_components["asserted"] == 1.0 and plain.score_components["asserted"] == 1.0
+
+
+def test_a_chunk_folds_onto_its_own_writers_row_of_the_key() -> None:
+    mine = replace(_hit("lesson_a", 0.5), identity=("a", "u1", "s1"))
+    theirs = replace(_hit("lesson_a", 0.4), identity=("a", "u2", "s2"))
+    chunk = replace(_set_chunk("lesson_a", 0, 0.9), identity=("a", "u2", "s2"))
+    out = fold_set_chunks([mine, theirs, chunk])
+    by_writer = {h.identity: h for h in out}
+    assert len(out) == 2
+    assert by_writer[("a", "u2", "s2")].rank_score == 0.9  # lifted by its own chunk
+    assert by_writer[("a", "u1", "s1")].rank_score == 0.5

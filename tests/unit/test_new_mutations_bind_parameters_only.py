@@ -92,7 +92,7 @@ async def test_a_clear_mutates_by_bound_parameters_only(locked: int) -> None:
         async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
             return {"n": locked if "lock_mode != ''" in sql else 1}
 
-    ch = _ClearCH([{"agent": "a", "user_id": "u", "session_id": "-", "memory_key": "k"}])
+    ch = _ClearCH([{"h": 1}])  # the locked identities, read as hashes
     counts = await bulk_tombstone_scope(org="o", namespace="ns", user_id="u", ch=ch)
     assert counts["loom.memory"] == 1 and counts["loom.memory_embeddings"] == 1
     assert len(ch.executed) == 2 and _refused(ch.executed) == []

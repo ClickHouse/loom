@@ -105,7 +105,7 @@ async def _run_digest_descent(ctx: SearchContext) -> None:
         for ns, sid, rows in results:
             for row in rows:
                 mk = str(row.get("memory_key") or "")
-                row_key = (ns, *(row_identity(row) or ("", "", sid)), mk)
+                row_key = (ns, str(row.get("agent")), str(row.get("user_id")), sid, mk)
                 if not mk or row_key in present:
                     continue
                 sim = float(row.get("similarity") or 0.0)

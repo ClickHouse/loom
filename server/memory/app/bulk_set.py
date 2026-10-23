@@ -500,12 +500,16 @@ def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
     """memory_key -> (identity key, version) of each key whose winning row (the
     highest version in the batch) lands unembedded and may have a live vector: the
     batch embedded an earlier entry of it, the replaced version was embedded, or the
-    lookup failed and nobody knows."""
+    lookup failed and nobody knows. A row the replay left without the vector its level
+    takes lands unembedded too."""
     winners = kept_versions(state.memory_rows)
     batch_embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
     out: dict[str, tuple[Any, int]] = {}
     for key, r in winners.items():
-        if is_embedded(str(r.get("memory_type")), str(r.get("sensitivity") or "")):
+        vectorless = key in state.vectorless_keys and key not in batch_embedded
+        if not vectorless and is_embedded(
+            str(r.get("memory_type")), str(r.get("sensitivity") or "")
+        ):
             continue
         prev = state.existing_rows.get(key)
         prev_embedded = prev is not None and is_embedded(
@@ -979,14 +983,13 @@ async def handle_memory_bulk_set(
     - `reinforce=False`: no `evidence` event for a restatement, merge or identity duplicate."""
     ch = get_client()
     embedder = get_embedder()
-    now_utc = datetime.now(UTC)
     # The write names its phases on the response.
     from server.memory.app.search.clock import StageClock
 
     _bulk_work: dict[str, Any] = {}
     _bulk_clock = StageClock(_bulk_work)
     state = _BulkWriteState(
-        now_utc=now_utc,
+        now_utc=datetime.now(UTC),
         conflict_check_cap=conflict_check_cap,
         reinforce=reinforce,
     )
@@ -1004,7 +1007,7 @@ async def handle_memory_bulk_set(
         await codes_state.refuse_width("memory_embeddings", embedder.dim)
 
     emb_idx_of, value_vectors, entity_embeddings = await _bulk_embed_rows(
-        input, state, embedder, entity_resolution, _bulk_clock, now_utc
+        input, state, embedder, entity_resolution, _bulk_clock
     )
 
     plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)

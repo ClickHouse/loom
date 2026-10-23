@@ -88,6 +88,7 @@
 0a8192fba06f	ALTER TABLE loom.memory_categories UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_
 0a96e5fd0ce8	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 0ad01b9b53ed	SELECT ts, org, namespace, agent, user_id, session_id, operation, request_id, trace_id, latency_ms, input_tokens, output_tokens, embedding_tokens, upstream_cost_usd, bytes_written, success, error_code
+0b0c34b379f4	SELECT count() AS n FROM loom.documents WHERE org = {org:String} AND user_id != {uid:String} AND superseded_at IS NULL AND cityHash64(namespace, source_uri) IN {docs:Array(UInt64)}
 0b2d5876bfed	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 0b4f7cc315ea	SELECT count() AS n FROM loom.memory_record_fields FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 0b9b692a0146	SELECT version, pinned, lock_mode, lock_until, sensitivity, tags FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND user_id = {uid:String} AND agent = ? AND session_id = ?
@@ -158,6 +159,7 @@
 1648d25bdb6d	SELECT count() OVER () AS total, memory_key, toString(valid_at) AS said_on, substring(JSONExtractString(value), ?, ?) AS text FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String
 167fa87844b1	ALTER TABLE loom.entity_summaries DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 1683de848d27	SELECT count() AS n FROM loom.entity_edges WHERE org = {org:String} AND namespace = {ns:String} AND ?
+16856971c616	SELECT count() AS n FROM loom.entity_triples WHERE org = {org:String} AND cityHash64(namespace, subject, relation, object) IN {owned:Array(UInt64)}
 16a2b5def24b	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 16cf9f836a3a	SELECT count() AS n FROM loom.entity_vectors WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 16df003ef8b4	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
@@ -423,6 +425,7 @@
 3b05a28d96f2	SELECT count() AS cnt, sum(numeric_value) AS s, avg(numeric_value) AS a, min(occurred_at) AS first_at, max(occurred_at) AS last_at FROM loom.derived_facts WHERE org = {org:String} AND namespace = {ns:
 3b4b4580cc9a	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 3b9d5b20d17a	SELECT memory_id, version, confidence, source_trace, pinned, created_at, updated_at, expires_at, tombstoned_at, redacted_at, redaction_reason, actor, source_class, agent, status, conflict_with, tags,
+3ba235828531	ALTER TABLE loom.documents UPDATE superseded_at = {now:DateTime} WHERE (org = {org:String} AND user_id != {uid:String} AND superseded_at IS NULL AND cityHash64(namespace, source_uri) IN {docs:Array(UI
 3bcf2270da8d	SELECT count() AS n FROM loom.query_nodes WHERE org = {org:String} AND namespace = {ns:String}
 3be87fe8aafa	SELECT memory_key, toString(memory_id) AS mid, agent, memory_type, -- a high value is readable by key only if(sensitivity = ?, ?, substring(value, ?, ?)) AS preview, sensitivity, tags, toString(create
 3c31742569aa	SELECT path, count() AS chunks, min(start_line) AS first_line, count() OVER () AS total FROM ( SELECT path, start_line, tombstoned_at FROM loom.code_chunks WHERE org = {org:String} AND namespace = {ns
@@ -503,6 +506,7 @@
 4513efbe8bcb	SELECT count() AS n FROM loom.blob_uploads WHERE org = {org:String} AND user_id = {uid:String} AND ?
 453a40a43a57	SELECT mutation_id, is_done, parts_to_do, latest_fail_reason FROM system.mutations WHERE database = {db:String} AND table = {t:String} AND command LIKE {pat:String} ORDER BY create_time DESC LIMIT ?
 454339363b2d	SELECT m.org, m.namespace, m.agent, m.user_id, m.session_id, m.memory_key, m.memory_type, m.value AS content_excerpt, m.run_id, m.entities, m.tags, m.files, m.concepts, m.valid_at, m.valid_to, m.expir
+4547fa4a3268	SELECT count() AS n FROM loom.entity_edges WHERE org = {org:String} AND cityHash64(namespace, entity_a, entity_b) IN {owned:Array(UInt64)}
 45734717bae5	SELECT count() AS n FROM loom.memory_code_link_queue WHERE org = {org:String} AND namespace = {ns:String}
 45b2ddeb9077	SELECT count() AS n FROM loom.memory_projection_failures WHERE org = {org:String} AND namespace = {ns:String} AND ?
 460fbc2150ef	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
@@ -1184,6 +1188,7 @@ a28f385fb356	SELECT agent AS name, count() AS n, count() OVER () AS total FROM l
 a2facce0f48a	SELECT count() AS n FROM loom.task_events WHERE org = {org:String} AND namespace = {ns:String} AND ?
 a2fd7cdaba22	SELECT countIf(n > ?) / greatest(count(), ?) AS reused_share FROM ( SELECT memory_key, count() AS n FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstone
 a3026b597969	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
+a30c520d6647	ALTER TABLE loom.entity_edges DELETE WHERE (org = {org:String} AND cityHash64(namespace, entity_a, entity_b) IN {owned:Array(UInt64)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String
 a30e0be090a8	SELECT count() AS n FROM loom.agent_runs FINAL WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND session_id = {sid:String} AND (positionCaseInsensitiveUTF8(goal, {q:S
 a30fe8e84093	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 a339b1bc6929	ALTER TABLE loom.memory_chunks UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {eras
@@ -1256,6 +1261,7 @@ ab03466b06f2	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.
 ab17d11c52d3	SELECT count() AS n FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND agent = {agent:String} AND user_id = {uid:String} AND session_id = {sid:St
 ab17dd911c04	SELECT DISTINCT toString(memory_id) AS mid FROM loom.memory FINAL WHERE org = {org:String} AND namespace IN {nss:Array(String)} AND memory_id IN {ids:Array(UUID)} AND tombstoned_at IS NULL AND user_id
 ab2e6d0e3298	SELECT count() AS n FROM loom.memory_chunks FINAL WHERE org = {org:String} AND (user_id = {uid:String} OR (namespace, parent_memory_key) IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {
+ab6563a97507	ALTER TABLE loom.entity_triples DELETE WHERE (org = {org:String} AND cityHash64(namespace, subject, relation, object) IN {owned:Array(UInt64)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_t
 ab7b1d37942f	SELECT count() AS n FROM loom.memory_exposures WHERE org = {org:String} AND namespace = {ns:String} AND ?
 abaca5d7137b	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 abc727fc102d	SELECT test_name, sum(runs) AS runs_in_window, sum(fails) AS fails_in_window, count() OVER () AS matches FROM loom.qa_test_daily FINAL WHERE org = {org:String} AND qa_namespace = {ns:String} AND day >

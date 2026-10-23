@@ -309,7 +309,7 @@ async def _expand_unit_bodies(
         # The read picks one row per key in a session: it answers only for its own writer.
         r = stored.get((str(getattr(h, "namespace", "") or input.namespace), _sid(h), h.memory_key))
         who = getattr(h, "_row_identity", None)
-        if r is not None and who and (r.agent, r.user_id) != who[:2]:
+        if r is not None and who and (r.agent, r.user_id, r.session_id) != who:
             return None
         return r
 

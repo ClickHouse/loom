@@ -36,19 +36,11 @@ _ROWS = rows_by_substring(
         # A user-scope step's scope reads find one row each, so its bound mutation renders.
         " AS keys": [{"keys": ["k"]}],
         "SELECT DISTINCT namespace, memory_key FROM (": [{"namespace": "n", "memory_key": "k"}],
-        "SELECT namespace, subject, relation, object FROM": [
-            {"namespace": "n", "subject": "s", "relation": "r", "object": "o"}
-        ],
-        "SELECT namespace, entity_a, entity_b FROM": [
-            {"namespace": "n", "entity_a": "a", "entity_b": "b"}
-        ],
-        "SELECT namespace, entity FROM (": [{"namespace": "n", "entity": "e"}],
+        # graph keys and document uris are read as hashes of their key columns
+        ") AS h FROM ": [{"h": 1}],
         "AS id FROM (SELECT record_id": [{"id": _ID}],
         "AS id FROM loom.memory ": [{"id": _ID}],
         "SELECT DISTINCT memory_key FROM loom.shared": [{"memory_key": "k"}],
-        "SELECT DISTINCT namespace, source_uri FROM loom.documents": [
-            {"namespace": "n", "source_uri": "doc://a"}
-        ],
         "AS sha FROM loom.document_blobs": [{"namespace": "n", "sha": "a" * 64}],
         "SELECT DISTINCT candidate_id FROM loom.learnings_queue": [{"candidate_id": _ID}],
         "SELECT * FROM loom.learnings_queue FINAL": [

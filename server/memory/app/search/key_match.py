@@ -10,7 +10,7 @@ from typing import Any
 
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app.search.context import SearchContext
-from server.memory.app.search.scoring import _anchor_rank_score
+from server.memory.app.search.scoring import _anchor_rank_score, rows_per_key
 from server.memory.app.search.sql import (
     _key_match_where,
     key_match_component_sql,
@@ -236,8 +236,6 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
     component_only = False
     if mode == "gated":
         # Skip the read when it cannot change the served window.
-        from server.settings import settings as _gate_settings
-
         reason = key_match_gate(
             query=str(input.query or ""),
             stems=stems,
@@ -252,7 +250,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                 )
                 for h in ctx.all_hits
             ],
-            per_key_cap=int(_gate_settings.memory_search_per_key_cap),
+            per_key_cap=rows_per_key(ctx.query_shape),
             top_k=int(input.top_k),
         )
         ctx.actual_work["key_match_gate"] = reason or "skip"
@@ -285,7 +283,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                 "stems": stems,
                 "limit": limit,
                 # a key holds a row per writer and session: as many as the window keeps
-                "per_key": int(_settings_km.memory_search_per_key_cap),
+                "per_key": rows_per_key(ctx.query_shape) or limit,
                 "qv": ctx.query_vec,
                 "model": ctx.embedder.model_name,
                 "min_strength": float(_settings_km.memory_search_key_match_min_strength),
@@ -346,10 +344,11 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                     eh.score_components["key_match"] = max(
                         float(eh.score_components.get("key_match", 0.0)), strength
                     )
-                who = row_identity(row) or ("", "", str(row.get("session_id") or ""))
-                row_key = (ns, *who, mk)
-                if component_only or row_key in pooled:
-                    continue  # the row is pooled, or the statement only scores pooled keys
+                if component_only:
+                    continue  # the statement only scores the pooled keys
+                row_key = (ns, str(row["agent"]), str(row["user_id"]), str(row["session_id"]), mk)
+                if row_key in pooled:
+                    continue
                 sim = float(row.get("similarity") or 0.0)
                 hit = _MemorySearchHit(
                     memory_key=mk,

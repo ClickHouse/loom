@@ -1268,8 +1268,9 @@ first write after each interval waits for one registry read
 (`server/core/polled_copy.py`). A failed read keeps the last copy. A write on a cold copy
 waits for the first read; if that read fails, writes announce nothing (noted as a
 degradation) until a read lands. `memory.clear` tombstones with one mutation per table
-(when a lock keeps some rows, the embeddings one names the locked identities it read, one
-bound array per slice) and, only when a webhook of the namespace takes
+(when a lock keeps some rows, the embeddings one names the hashes of the locked identities
+it read; past 10,000 of them the scope is split into hash buckets, one mutation each, so a
+mutation's command stays small in Keeper) and, only when a webhook of the namespace takes
 `memory.tombstoned`, reads back the rows that mutation stamped in one streamed read in
 sort-key order, so the scope is scanned once, with one outbox insert per 1000 rows.
 

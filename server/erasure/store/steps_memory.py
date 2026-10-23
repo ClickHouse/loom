@@ -20,7 +20,7 @@ from server.erasure.store.mutations import (
     tombstone_scoped,
 )
 from server.erasure.store.predicates import CHUNK_KEYS_IN, NS_EQ, ORG_NS, ORG_UID, UID
-from server.erasure.store.scope_reads import hashes, slices_or_one_empty, tuples, user_key_pairs
+from server.erasure.store.scope_reads import hashes, slices_or_one_empty, user_key_pairs
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
 
@@ -885,7 +885,7 @@ async def _users_own_blobs(
         f"FROM loom.document_blobs WHERE {where}",
         params=params,
     )
-    return tuples(rows, ("namespace", "sha"))
+    return sorted({(str(r["namespace"]), str(r["sha"])) for r in rows})
 
 
 async def erase_blobs_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:

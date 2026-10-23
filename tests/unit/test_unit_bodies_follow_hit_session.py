@@ -95,3 +95,23 @@ async def test_a_high_row_is_never_a_search_body(monkeypatch):
     h = _hit("k1")
     await _expand_unit_bodies([h], _input())
     assert h.content_excerpt == CLIP and "vault" not in h.content_excerpt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stored_as", [("a", "u2", "s1"), ("a", "u1", "s9")], ids=["another-user", "another-session"]
+)
+async def test_a_body_read_for_another_writer_is_not_served(monkeypatch, stored_as):
+    # The read picks one row per key: a row of another user or session is not this hit's body.
+    agent, user_id, session_id = stored_as
+
+    async def fake_get_many(identity, keys, **_):
+        row = {"agent": agent, "user_id": user_id, "session_id": session_id}
+        return [SimpleNamespace(memory_key="k", value="their body", sensitivity="", **row)]
+
+    monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
+    h = _hit("k", session_id="s1")
+    h._row_identity = ("a", "u1", "s1")
+    returned, elided, _ = await _expand_unit_bodies([h], _input())
+    assert h.content_excerpt == CLIP and h.body_truncated is True
+    assert (returned, elided) == (0, 1)

@@ -15,6 +15,7 @@ from server.memory.app.search.digest_descent import (
     _run_digest_descent,
     digest_descent_enabled,
 )
+from server.memory.app.search.scoring import rows_per_key
 from server.memory.app.search.telemetry import _staged
 from server.memory.app.search.vector_legs import _plane_fields, _stamp_leg_tags
 from server.memory.app.search_tag_filter import enforce_hard_tag_filter as _enforce_hard_tag_filter
@@ -170,12 +171,7 @@ async def _assemble_final_hits(
 
     from server.settings import settings as _asm_settings
 
-    # Per-key diversity: the same key once per session means one attribute can fill the whole
-    # top ten. Aggregational and temporal-difference shapes want every row of the key and take
-    # no cap.
-    per_key_cap = int(_asm_settings.memory_search_per_key_cap)
-    if ctx.query_shape in ("aggregational", "temporal_diff"):
-        per_key_cap = 0
+    per_key_cap = rows_per_key(ctx.query_shape)
     # Per-speaker quota (retrieve per conversation participant), per request; 0 = off.
     per_speaker_quota = int(getattr(input, "per_speaker_quota", None) or 0)
     # Per-session cap, per request; aggregational shapes want every row and take no cap.

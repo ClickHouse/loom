@@ -474,13 +474,19 @@ def _keyed_secret(key: str, value: Any) -> str:
 
 
 # A `"key": value` pair in raw JSON text, for `reads_high`. A quoted value must be the
-# whole string, one token of at most 256 characters, and a bare number must end at its
-# digits; a key reads at most 200 characters, so the scan stays linear.
+# whole string, one token of at most 1024 characters (a longer one is read decoded only,
+# by `detector_text`), and a bare number must end at its digits; a key reads at most 200
+# characters, so the scan stays linear.
 _KEYED_PAIR = re.compile(
     r'"((?:[^"\\]|\\.){1,200})"\s*:\s*'
-    r'(?:"\s*((?:[^"\\\s]|\\.){1,256})\s*"|([0-9][0-9-]{0,15})(?![\w.-]))',
+    r'(?:"\s*((?:[^"\\\s]|\\.){1,1024})\s*"|([0-9][0-9-]{0,15})(?![\w.-]))',
     re.ASCII,
 )
+
+
+def _pair_secret(key: str, quoted: str | None, bare: str | None) -> str:
+    """`_keyed_secret` of a raw pair, its quoted value decoded as `detector_text` reads it."""
+    return _keyed_secret(key, _JSON_ESCAPE.sub(_json_unescape, quoted) if quoted else bare or "")
 
 
 def detector_text(value: Any) -> str:
@@ -549,7 +555,7 @@ def reads_high(text: str) -> bool:
     if any(_reads_high_text(t) for t in texts):
         return True
     return any(
-        _reads_high_text(_keyed_secret(k, quoted or bare))
+        _reads_high_text(_pair_secret(k, quoted, bare))
         for t in texts
         for k, quoted, bare in _KEYED_PAIR.findall(t)
     )
@@ -563,7 +569,7 @@ def _high_text_spans(text: str) -> list[tuple[int, int]]:
     spans += [
         m.span()
         for m in _KEYED_PAIR.finditer(text)
-        if _reads_high_text(_keyed_secret(m.group(1), m.group(2) or m.group(3)))
+        if _reads_high_text(_pair_secret(m.group(1), m.group(2), m.group(3)))
     ]
     return spans
 

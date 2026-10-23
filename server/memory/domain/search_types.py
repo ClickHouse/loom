@@ -308,8 +308,10 @@ RowKey = tuple[str, str, str, str, str]
 
 def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
     """(namespace, agent, user_id, session_id, memory_key) of the stored row a hit is: one
-    key holds a row for each writer and session, so a key alone does not name one row. A
-    hit whose leg read no identity has only its session."""
+    key holds a row for each writer and session, so a key alone does not name one row.
+    For a `SearchHit` or a wire hit alike: the identity is `identity` on the first and the
+    private `_row_identity` on the second. A hit whose leg read no identity has only its
+    session."""
     identity = getattr(hit, "_row_identity", None) or getattr(hit, "identity", None)
     agent, user_id, session_id = identity or ("", "", str(getattr(hit, "session_id", "") or ""))
     return (

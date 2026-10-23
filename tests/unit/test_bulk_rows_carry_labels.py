@@ -77,7 +77,7 @@ async def _build_embedded(
     await _bulk_existing_lookup(None, inp, state)
     await _bulk_build_rows(inp, state, {}, {})
     emb_idx_of, _vectors, _entities = await _bulk_embed_rows(
-        inp, state, _Embedder(), {}, NS(mark=lambda _s: None), NOW
+        inp, state, _Embedder(), {}, NS(mark=lambda _s: None)
     )
     return state, emb_idx_of
 
@@ -305,3 +305,30 @@ async def test_a_repeat_of_a_batch_value_that_did_not_land_takes_no_labels_from_
         (emb,) = plan.embedding_rows
         assert emb["tags"] == row["tags"] and emb["expires_at"] is None
         assert state.results[1].version == row["version"]
+
+
+@pytest.mark.parametrize("vectorless", [True, False])
+def test_a_row_landing_without_its_vector_retires_the_keys_old_one(vectorless: bool) -> None:
+    # The replay can land an embeddable row with no embed call left: the old value's
+    # vector would answer for the new value, so it retires.
+    from server.memory.app.bulk_rows import _BulkWriteState
+    from server.memory.app.bulk_set import _vectors_to_retire
+
+    state = _BulkWriteState(now_utc=NOW, existing_lookup_ok=True)
+    state.existing_rows["k"] = NS(memory_type="semantic", sensitivity="")
+    state.memory_rows = [
+        {
+            "org": "o",
+            "namespace": "n",
+            "agent": "a",
+            "user_id": "-",
+            "session_id": "-",
+            "memory_key": "k",
+            "memory_type": "semantic",
+            "sensitivity": "",
+            "version": 2,
+        }
+    ]
+    if vectorless:
+        state.vectorless_keys.add("k")
+    assert ("k" in _vectors_to_retire(state)) is vectorless

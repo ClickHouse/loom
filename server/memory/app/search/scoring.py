@@ -174,3 +174,14 @@ def _score_explanation(input: MemorySearchInput) -> str:
     if input.tags:
         bits.append("tags=filtered")
     return ", ".join(bits)
+
+
+def rows_per_key(query_shape: str) -> int:
+    """How many rows of one key the final block keeps; 0 = every one. Extraction writes a
+    key once per session, so one attribute could fill the window; an aggregational or
+    temporal-difference query wants every row of the key."""
+    from server.settings import settings
+
+    if query_shape in ("aggregational", "temporal_diff"):
+        return 0
+    return int(settings.memory_search_per_key_cap)

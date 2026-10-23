@@ -339,11 +339,15 @@ async def delete_learnings_queue_by_user(
     cids = [str(r["candidate_id"]) for r in rows]
     if not cids:
         return n
-    latest = await ch.query_all(
-        "SELECT * FROM loom.learnings_queue FINAL "
-        "WHERE org = {org:String} AND candidate_id IN {cids:Array(UUID)}",
-        params={"org": org, "cids": cids},
-    )
+    latest = [
+        r
+        for part in chunks(cids)
+        for r in await ch.query_all(
+            "SELECT * FROM loom.learnings_queue FINAL "
+            "WHERE org = {org:String} AND candidate_id IN {cids:Array(UUID)}",
+            params={"org": org, "cids": part},
+        )
+    ]
     pending = [str(r["candidate_id"]) for r in latest if r["status"] == "pending"]
     decided = [r for r in latest if r["status"] != "pending"]
     blank = [
@@ -371,7 +375,8 @@ async def delete_learnings_queue_by_user(
                 params={"cids": unbacked},
                 ch=ch,
             )
-    if decided:
+    read = [(str(r["candidate_id"]), int(r["version"])) for r in decided]
+    for read_part in chunks(read):
         n += await delete_scoped(
             "loom.learnings_queue",
             org=org,
@@ -380,7 +385,7 @@ async def delete_learnings_queue_by_user(
                 "proposed_value != '' AND arrayExists(r -> r.1 = candidate_id "
                 "AND version <= r.2, {read:Array(Tuple(UUID, UInt64))})"
             ),
-            params={"read": [(str(r["candidate_id"]), int(r["version"])) for r in decided]},
+            params={"read": read_part},
             ch=ch,
         )
     return n

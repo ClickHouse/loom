@@ -176,6 +176,9 @@ class _BulkWriteState:
     n_unknown: int = 0
     # The write's clock: a row's expiry is settled against it at build and at replay.
     now_utc: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Keys whose row the replay settled to land without the vector its level takes: the
+    # key's older vector must not answer for it.
+    vectorless_keys: set[str] = field(default_factory=set)
 
 
 # Columns a bulk version row sets from the live row under its key before the rest of
@@ -425,7 +428,6 @@ def _changes_locked_expiry(
     entry: Any,
     entry_sha: str,
     expires_at: datetime | None,
-    now_utc: datetime,
 ) -> bool:
     """Whether an entry repeating a read_only row's bytes would change its expiry, by its
     `ttl_seconds` or by the sensitive retention: the lock refuses it (memory.set: 423,
@@ -435,7 +437,8 @@ def _changes_locked_expiry(
         return False
     if entry.ttl_seconds is not None:
         return True
-    return to_naive_utc(expires_at) != _not_lapsed(_stored_held(state, key).expires_at, now_utc)
+    stored_expiry = _not_lapsed(_stored_held(state, key).expires_at, state.now_utc)
+    return to_naive_utc(expires_at) != stored_expiry
 
 
 def _bulk_append_pending(state: _BulkWriteState, entry: Any, serialized_value: str) -> None:
@@ -525,7 +528,7 @@ def _settle_step(state: _BulkWriteState, step: _Step, held: _Held, rewritten: se
     if held.pinned and not same_bytes and not row["pinned"]:
         return PINNED
     sha, expires_at = str(row["content_sha256"]), row.get("expires_at")
-    if _changes_locked_expiry(state, step.entry, sha, expires_at, state.now_utc):
+    if _changes_locked_expiry(state, step.entry, sha, expires_at):
         return LOCKED
     target = verdict_target(step.verdict)
     step.stale = bool(target) and target in rewritten
@@ -568,7 +571,8 @@ def _relabel(state: _BulkWriteState, step: _Step, held: _Held) -> None:
     row.update(sensitivity=level, expires_at=expires_at, on_expire=on_expire, tags=tags)
     if step.embedding is None:
         # Built unembedded (a type search skips, or a guess of 'high'): it lands without a
-        # vector, as no embed call is left to make one.
+        # vector, as no embed call is left to make one, and the key's old vector retires.
+        state.vectorless_keys.add(str(row["memory_key"]))
         return
     if level == "high":
         # A high row has no vector, and so no conflict check.
@@ -672,7 +676,7 @@ async def _bulk_build_rows(
         entry_sensitivity, expires_at, entry_on_expire = _labels(
             state, entry, entry_sha, own_level, held
         )
-        if _changes_locked_expiry(state, entry, entry_sha, expires_at, now_utc):
+        if _changes_locked_expiry(state, entry, entry_sha, expires_at):
             _refuse_locked(state, entry.memory_key)
             continue
         # Per-entry char_limit enforcement — same shape as handle_memory_set.
@@ -874,7 +878,6 @@ async def _bulk_embed_rows(
     embedder: Any,
     entity_resolution: dict[str, str],
     clock: StageClock,
-    now_utc: datetime,
 ) -> tuple[list[int], list[list[float]], dict[str, list[float]]]:
     """Phase 6: ONE embed call for the value, key and entity texts; one
     full-column embedding row per pending item appended to
@@ -943,7 +946,7 @@ async def _bulk_embed_rows(
                     memory_key_embedding_dim=embedder.dim if key_text else 0,
                     confidence=float(entry.confidence),
                     tombstoned_at=None,
-                    created_at=now_utc.replace(tzinfo=None),
+                    created_at=state.now_utc.replace(tzinfo=None),
                     tags=e_tags,
                     entities=e_ents,
                     files=list(getattr(entry, "files", None) or []),

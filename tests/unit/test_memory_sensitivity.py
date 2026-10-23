@@ -353,6 +353,7 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
         {"password": "[REDACTED]"},
         {"password": "${DB_PASSWORD}"},
         {"password": "vault:kv/db/password1"},
+        {"password": "/etc/key1x"},
         {"batch_sizes": [256, 512, 1024]},
     ],
 )
@@ -380,6 +381,16 @@ def test_a_credential_under_a_credential_key_reads_high(value: object) -> None:
     assert value_reads_high(value)
     assert reads_high(stored)  # a raw chunk of the stored object
     assert high_spans(stored)
+
+
+@pytest.mark.parametrize(
+    ("raw", "high"),
+    [(r'{"password": "\/etc\/key1x"}', False), (r'{"password": "ab\/cd1234"}', True)],
+)
+def test_a_raw_pair_reads_its_value_decoded(raw: str, high: bool) -> None:
+    # JSON may escape a slash: the raw text and the decoded value agree on a path.
+    assert reads_high(raw) is high
+    assert value_reads_high(json.loads(raw)) is high
 
 
 @pytest.mark.asyncio

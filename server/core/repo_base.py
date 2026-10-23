@@ -12,7 +12,6 @@ back to it, so tests inject a fake and production gets the real one.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any, Protocol
 
 from clickhouse_connect.driver.external import ExternalData
@@ -53,17 +52,12 @@ def _default_client() -> _CHClient:
     return get_client()
 
 
-def param_slices(values: Sequence[Any]) -> list[list[Any]]:
-    """`values` cut into lists that each bind as one array parameter (`ch_params.chunks`)."""
-    return list(chunks(values))
-
-
 async def query_all_sliced(
     ch: _CHClient, sql: str, params: dict[str, Any], key: str
 ) -> list[dict[str, Any]]:
     """`query_all` with the list `params[key]` bound a slice at a time: every slice's
     rows, in order. An empty list sends no statement and reads no row."""
     rows: list[dict[str, Any]] = []
-    for part in param_slices(params[key]):
+    for part in chunks(params[key]):
         rows += await ch.query_all(sql, params | {key: part})
     return rows

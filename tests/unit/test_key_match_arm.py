@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from server.code.domain.facets import extract_code_facets, has_code_signal
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.key_match import (
@@ -287,6 +289,7 @@ async def _ctx_for(monkeypatch, *, mode: str, pool_keys: list[str], top_k: int =
         query_vec=[0.1, 0.2],
         embedder=SimpleNamespace(model_name="m"),
         endpoint=None,
+        query_shape="",
     )
     await _run_key_match_pool(ctx)
     return ctx, calls
@@ -360,6 +363,7 @@ async def test_gated_pool_key_reason_reads_components_only(monkeypatch) -> None:
         query_vec=[0.1],
         embedder=SimpleNamespace(model_name="m"),
         endpoint=None,
+        query_shape="",
     )
     await _run_key_match_pool(ctx)
     assert ctx.actual_work["key_match_gate"] == "pool_key"
@@ -388,9 +392,11 @@ class _RecordingCH:
     def __init__(self, answers):
         self.answers = answers
         self.statements: list[str] = []
+        self.params: list[dict] = []
 
     async def query_all(self, sql, params=None):
         self.statements.append(sql)
+        self.params.append(params or {})
         for needle, rows in self.answers:
             if needle in sql:
                 return rows
@@ -409,10 +415,11 @@ def _pool_ctx():
         query_vec=[0.0] * 8,
         embedder=SimpleNamespace(model_name="m"),
         endpoint=None,
+        query_shape="",
     )
 
 
-def _run_pool(monkeypatch, ch):
+def _run_pool(monkeypatch, ch, shape=""):
     import asyncio
 
     import server.core.ch as ch_mod
@@ -421,6 +428,7 @@ def _run_pool(monkeypatch, ch):
     monkeypatch.setattr(settings, "memory_search_key_match_mode", "always")
     monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
     ctx = _pool_ctx()
+    ctx.query_shape = shape
     asyncio.run(_run_key_match_pool(ctx))
     return ctx
 
@@ -434,7 +442,14 @@ def test_precheck_skips_the_wide_statement_when_no_key_can_qualify(monkeypatch) 
 
 
 def test_precheck_hands_over_to_the_wide_statement_when_a_key_qualifies(monkeypatch) -> None:
-    wide_row = {"memory_key": "user_task_worktree", "similarity": 0.7, "strength": 0.9}
+    wide_row = {
+        "memory_key": "user_task_worktree",
+        "similarity": 0.7,
+        "strength": 0.9,
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+    }
     ch = _RecordingCH([("SELECT 1 AS any_key", [{"any_key": 1}]), ("AS n_keys", [wide_row])])
     ctx = _run_pool(monkeypatch, ch)
     assert len(ch.statements) == 2
@@ -442,3 +457,20 @@ def test_precheck_hands_over_to_the_wide_statement_when_a_key_qualifies(monkeypa
     assert ctx.actual_work["key_match_precheck_skipped"] == 0
     assert ctx.actual_work["key_match_added"] == 1
     assert [h.memory_key for h in ctx.all_hits] == ["user_task_worktree"]
+
+
+@pytest.mark.parametrize(
+    ("cap", "shape", "per_key"),
+    [(3, "", 3), (0, "", 20), (3, "aggregational", 20), (3, "temporal_diff", 20)],
+)
+def test_the_wide_statement_keeps_as_many_rows_of_a_key_as_the_window(
+    monkeypatch, cap, shape, per_key
+) -> None:
+    # 0 is no cap: the statement then keeps a key's rows up to its own limit (20 here).
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_search_per_key_cap", cap)
+    ch = _RecordingCH([("SELECT 1 AS any_key", [{"any_key": 1}])])
+    _run_pool(monkeypatch, ch, shape)
+    (wide,) = [p for sql, p in zip(ch.statements, ch.params, strict=True) if "AS n_keys" in sql]
+    assert wide["per_key"] == per_key

@@ -37,11 +37,6 @@ def slices_or_one_empty[T](values: Sequence[T]) -> list[list[T]]:
     return list(chunks(values)) or [[]]
 
 
-def tuples(rows: Sequence[dict[str, Any]], cols: Sequence[str]) -> list[tuple[str, ...]]:
-    """`rows` as sorted tuples of `cols`, for an `Array(Tuple(...))` parameter."""
-    return sorted({tuple(str(r[c]) for c in cols) for r in rows})
-
-
 def hashes(rows: Sequence[dict[str, Any]]) -> list[int]:
     """The sorted `h` of `rows`, for an `Array(UInt64)` parameter. A step binds the
     `cityHash64` of a key that holds stored free text (an entity name, a URI), which

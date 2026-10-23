@@ -13,7 +13,6 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from typing import Any
 
-from server.core.ch_params import chunks
 from server.core.datetimes import naive_utc_now, naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
@@ -336,7 +335,6 @@ CLEAR_PAGE_ROWS = 1000
 
 
 # The columns a memory row and its embedding rows share.
-_IDENTITY = ("agent", "user_id", "session_id", "memory_key")
 
 
 async def bulk_tombstone_scope(
@@ -390,31 +388,16 @@ async def bulk_tombstone_scope(
     locked_n = int((locked_row or {}).get("n", 0) or 0)
     counts: dict[str, int] = {}
     for table in ("loom.memory", "loom.memory_embeddings"):
-        where_sql = scope_sql
-        extra: dict[str, Any] = {}
+        parts: list[tuple[str, dict[str, Any]]]
         if table == "loom.memory":
-            where_sql += f" AND {unlocked_predicate(now='{at:DateTime}')}"
+            parts = [(f"{scope_sql} AND {unlocked_predicate(now='{at:DateTime}')}", {})]
         elif locked_n:
-            # A mutation takes no subquery: the locked identities are read, then named,
-            # one parameter per slice so each fits a form field.
-            not_locked, extra = await _not_locked(scope_sql, locked, params, ch=ch)
-            where_sql += f" AND {not_locked}"
-        count_row = await ch.query_one(
-            f"SELECT count() AS n FROM {table} FINAL WHERE {where_sql}",
-            params={**params, **extra},
-        )
-        n = int((count_row or {}).get("n", 0) or 0)
-        counts[table] = n
-        if n:
-            await ch.execute(
-                f"""
-                ALTER TABLE {table}
-                UPDATE tombstoned_at = {{at:DateTime}}
-                WHERE {where_sql}
-                SETTINGS mutations_sync = 2
-                """,
-                params={**params, **extra},
-            )
+            parts = await _unlocked_parts(scope_sql, locked, params, ch=ch)
+        else:
+            parts = [(scope_sql, {})]
+        counts[table] = 0
+        for where_sql, extra in parts:
+            counts[table] += await _tombstone_where(table, where_sql, {**params, **extra}, ch=ch)
         # Announced before the embeddings step, so a failure there cannot lose
         # the events: a retry finds no live memory rows and announces nothing.
         if table == "loom.memory" and on_tombstoned is not None:
@@ -426,22 +409,52 @@ async def bulk_tombstone_scope(
     return counts
 
 
-async def _not_locked(
+async def _tombstone_where(table: str, where_sql: str, params: dict[str, Any], *, ch: Any) -> int:
+    """Tombstone the live rows of `table` that match, and return how many there were."""
+    row = await ch.query_one(
+        f"SELECT count() AS n FROM {table} FINAL WHERE {where_sql}", params=params
+    )
+    n = int((row or {}).get("n", 0) or 0)
+    if n:
+        await ch.execute(
+            f"""
+            ALTER TABLE {table}
+            UPDATE tombstoned_at = {{at:DateTime}}
+            WHERE {where_sql}
+            SETTINGS mutations_sync = 2
+            """,
+            params=params,
+        )
+    return n
+
+
+# The most locked identities one mutation names. A replicated table keeps a mutation's
+# command, bound values included, in Keeper, so the command stays small.
+_LOCKED_PER_MUTATION = 10_000
+_IDENTITY_HASH = "cityHash64(agent, user_id, session_id, memory_key)"
+
+
+async def _unlocked_parts(
     scope_sql: str, locked: str, params: dict[str, Any], *, ch: _CHClient
-) -> tuple[str, dict[str, Any]]:
-    """A predicate, and its params, for the rows whose identity no locked memory row in
-    scope shares."""
-    cols = ", ".join(_IDENTITY)
+) -> list[tuple[str, dict[str, Any]]]:
+    """Predicates, with their params, that together cover the embedding rows whose identity
+    no locked memory row in scope shares. A mutation takes no subquery, so the locked
+    identities are read first and named by hash; past `_LOCKED_PER_MUTATION` the scope is
+    split into hash buckets, each naming only its own locked identities."""
     rows = await ch.query_all(
-        f"SELECT DISTINCT {cols} FROM loom.memory FINAL WHERE {scope_sql} AND {locked}",
+        f"SELECT DISTINCT {_IDENTITY_HASH} AS h FROM loom.memory FINAL"
+        f" WHERE {scope_sql} AND {locked}",
         params=params,
     )
-    ids = sorted({tuple(str(r[c]) for c in _IDENTITY) for r in rows})
-    extra = {f"locked{i}": part for i, part in enumerate(chunks(ids))}
-    where = " AND ".join(
-        f"({cols}) NOT IN {{{name}:Array(Tuple(String, String, String, String))}}" for name in extra
-    )
-    return where or "1", extra
+    hashes = sorted({int(r["h"]) for r in rows})
+    buckets = max(1, -(-len(hashes) // _LOCKED_PER_MUTATION))
+    parts = []
+    for b in range(buckets):
+        where = f"{scope_sql} AND {_IDENTITY_HASH} NOT IN {{locked:Array(UInt64)}}"
+        if buckets > 1:
+            where += f" AND {_IDENTITY_HASH} % {buckets} = {b}"
+        parts.append((where, {"locked": [h for h in hashes if h % buckets == b]}))
+    return parts
 
 
 async def _page_tombstoned(

@@ -287,7 +287,7 @@ async def test_a_clear_keeps_vectors_only_for_the_locked_identity_in_clickhouse(
     ch.on("SELECT count() AS n", [{"n": 1}])
     # the locked identities are read from the same tables the mutation then runs on
     ch.on(
-        "SELECT DISTINCT agent, user_id, session_id, memory_key FROM loom.memory FINAL",
+        "SELECT DISTINCT cityHash64(agent, user_id, session_id, memory_key) AS h",
         lambda sql, params: run(setup, sql, params),
     )
     ch.install(monkeypatch)
@@ -317,32 +317,32 @@ def _identities(prefix: str, n: int) -> list[dict[str, str]]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("locked_n", [1, 4000], ids=["one-lock", "locks-past-one-field"])
-async def test_a_clear_with_locks_runs_one_embeddings_mutation(
-    monkeypatch: pytest.MonkeyPatch, locked_n: int
+@pytest.mark.parametrize(("locked_n", "mutations"), [(1, 1), (25_000, 3)])
+async def test_a_clear_names_a_bounded_number_of_locked_identities_per_mutation(
+    monkeypatch: pytest.MonkeyPatch, locked_n: int, mutations: int
 ) -> None:
-    """However many identities a clear tombstones, and however many are locked, the
-    embeddings step is one mutation that names the locked side."""
-    from server.core.ch_params import chunks
+    """However many identities a clear tombstones, the embeddings step is one mutation
+    until the locked side passes what one mutation names; then each hash bucket of the
+    scope is one mutation naming only its own locked identities."""
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app.handlers import handle_memory_clear
+    from server.memory.store.lifecycle import _LOCKED_PER_MUTATION
     from tests.unit.ch_fake import RecordingCH
 
-    locked = _identities("locked", locked_n)
+    hashes = [{"h": 7919 * i + 1} for i in range(locked_n)]
     ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": locked_n}], times=1)
     ch.on("SELECT count() AS n", [{"n": 100_000}])
-    ch.on("FROM loom.memory_embeddings", _identities("open", 100_000))
-    ch.on("SELECT DISTINCT agent, user_id, session_id, memory_key FROM loom.memory FINAL", locked)
+    ch.on("SELECT DISTINCT cityHash64(agent, user_id, session_id, memory_key) AS h", hashes)
     ch.install(monkeypatch)
     await handle_memory_clear(
         MemoryClearInput(org="o", namespace="n", user_id="u1", confirm_subject="u1")
     )
-    (emb_alter,) = ch.statements("ALTER TABLE loom.memory_embeddings", kind="execute")
-    assert "SELECT" not in emb_alter.sql
-    bound = [v for k, v in emb_alter.params.items() if k.startswith("locked")]
-    assert sorted(t for part in bound for t in part) == sorted(tuple(r.values()) for r in locked)
-    assert len(bound) == len(list(chunks(sorted(tuple(r.values()) for r in locked))))
-    assert (len(bound) > 1) == (locked_n > 1)
+    alters = ch.statements("ALTER TABLE loom.memory_embeddings", kind="execute")
+    assert len(alters) == mutations
+    assert all("SELECT" not in a.sql for a in alters)
+    bound = [a.params["locked"] for a in alters]
+    assert all(len(part) <= _LOCKED_PER_MUTATION for part in bound)
+    assert sorted(h for part in bound for h in part) == [r["h"] for r in hashes]
 
 
 @pytest.mark.asyncio
