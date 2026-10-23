@@ -131,7 +131,8 @@ export class MachineLogin implements TokenProvider {
       const [token, expiresAt] = await this.#fetchToken();
       this.#token = token;
       this.#expiresAt = expiresAt;
-      // Five minutes before it runs out, or halfway for a token a short-lived CI proof capped.
+      // Five minutes before it runs out, or halfway for a shorter token (a capped CI proof,
+      // or the bot's own maximum).
       const life = expiresAt - this.#now();
       this.#renewAt = expiresAt - Math.min(RENEW_BEFORE_MS, life / 2);
     } catch (e) {

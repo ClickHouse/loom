@@ -85,8 +85,8 @@ class MachineLogin(httpx.Auth):
             if not self._token or self._token == refused or time.time() > self._renew_at:
                 try:
                     self._token, self._expires_at = self._fetch()
-                    # Five minutes before it runs out, or halfway for a token
-                    # a short-lived CI proof capped.
+                    # Five minutes before it runs out, or halfway for a shorter
+                    # token (a capped CI proof, or the bot's own maximum).
                     life = self._expires_at - time.time()
                     self._renew_at = self._expires_at - min(_RENEW_BEFORE_S, life / 2)
                 except (LoomError, httpx.HTTPError, OSError, ValueError, KeyError, TypeError):
