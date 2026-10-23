@@ -334,9 +334,6 @@ async def downgrade_consolidated_dependents(
 CLEAR_PAGE_ROWS = 1000
 
 
-# The columns a memory row and its embedding rows share.
-
-
 async def bulk_tombstone_scope(
     *,
     org: str,
@@ -386,30 +383,36 @@ async def bulk_tombstone_scope(
         params=params,
     )
     locked_n = int((locked_row or {}).get("n", 0) or 0)
-    counts: dict[str, int] = {}
-    for table in ("loom.memory", "loom.memory_embeddings"):
-        parts: list[tuple[str, dict[str, Any]]]
-        if table == "loom.memory":
-            parts = [(f"{scope_sql} AND {unlocked_predicate(now='{at:DateTime}')}", {})]
-        elif locked_n:
-            parts = await _unlocked_parts(scope_sql, locked, params, ch=ch)
-        else:
-            parts = [(scope_sql, {})]
-        counts[table] = 0
-        for where_sql, extra in parts:
-            counts[table] += await _tombstone_where(table, where_sql, {**params, **extra}, ch=ch)
-        # Announced before the embeddings step, so a failure there cannot lose
-        # the events: a retry finds no live memory rows and announces nothing.
-        if table == "loom.memory" and on_tombstoned is not None:
-            try:
-                await _page_tombstoned(" AND ".join(scope), params, on_tombstoned, ch=ch)
-            except Exception as e:  # noqa: BLE001 — the rows are tombstoned; the clear must not fail
-                degradations.note("memory.webhook", "not_announced", e)
+    counts = {
+        "loom.memory": await _tombstone_where(
+            "loom.memory",
+            f"{scope_sql} AND {unlocked_predicate(now='{at:DateTime}')}",
+            params,
+            ch=ch,
+        )
+    }
+    # Announced before the embeddings step, so a failure there cannot lose
+    # the events: a retry finds no live memory rows and announces nothing.
+    if on_tombstoned is not None:
+        try:
+            await _page_tombstoned(" AND ".join(scope), params, on_tombstoned, ch=ch)
+        except Exception as e:  # noqa: BLE001 — the rows are tombstoned; the clear must not fail
+            degradations.note("memory.webhook", "not_announced", e)
+    parts = (
+        await _unlocked_parts(scope_sql, locked, params, ch=ch) if locked_n else [(scope_sql, {})]
+    )
+    counts["loom.memory_embeddings"] = 0
+    for where_sql, extra in parts:
+        counts["loom.memory_embeddings"] += await _tombstone_where(
+            "loom.memory_embeddings", where_sql, {**params, **extra}, ch=ch
+        )
     counts["locked_skipped"] = locked_n
     return counts
 
 
-async def _tombstone_where(table: str, where_sql: str, params: dict[str, Any], *, ch: Any) -> int:
+async def _tombstone_where(
+    table: str, where_sql: str, params: dict[str, Any], *, ch: _CHClient
+) -> int:
     """Tombstone the live rows of `table` that match, and return how many there were."""
     row = await ch.query_one(
         f"SELECT count() AS n FROM {table} FINAL WHERE {where_sql}", params=params
@@ -428,9 +431,10 @@ async def _tombstone_where(table: str, where_sql: str, params: dict[str, Any], *
     return n
 
 
-# The most locked identities one mutation names. A replicated table keeps a mutation's
-# command, bound values included, in Keeper, so the command stays small.
-_LOCKED_PER_MUTATION = 10_000
+# The most locked identities one mutation names: a hash renders in about 21 bytes, so a
+# bucket's list stays well inside one bound field (128 KiB) even when hashing leaves it
+# larger than the average. A replicated table keeps the command in Keeper, so it stays small.
+_LOCKED_PER_MUTATION = 2_500  # not a setting: a bound of the ClickHouse form field
 _IDENTITY_HASH = "cityHash64(agent, user_id, session_id, memory_key)"
 
 

@@ -91,11 +91,11 @@ _Truth = dict[RowKey, DuplicateStatus]
 _Canon = dict[tuple[str, str], CanonicalRow]
 
 
-async def _truth(org: str, namespaces: list[str], keys: list[str], scope: ReadFilters) -> _Truth:
+async def _truth(org: str, rows: list[RowKey], scope: ReadFilters) -> _Truth:
     import server.memory.store as memory_repo
 
-    rows = await memory_repo.status_by_keys(org, namespaces, keys, scope=scope)
-    return {(r.namespace, r.agent, r.user_id, r.session_id, r.memory_key): r for r in rows}
+    found = await memory_repo.status_by_rows(org, rows, scope=scope)
+    return {(r.namespace, r.agent, r.user_id, r.session_id, r.memory_key): r for r in found}
 
 
 async def _canonicals(
@@ -108,17 +108,14 @@ async def _canonicals(
     return {(r.namespace, r.canonical_id): r for r in rows if r.sensitivity != "high"}
 
 
-def _duplicate_only(t: DuplicateStatus | None) -> bool:
-    """A row whose live version is a duplicate."""
-    if not t:
-        return False
-    return t.served_rows == 0 and t.duplicate_rows > 0
+def _is_duplicate(t: DuplicateStatus | None) -> bool:
+    return t is not None and t.status == "duplicate"
 
 
 async def hide_pool_duplicates(ctx: Any) -> None:
     """Drop the pool's duplicate rows and seat their canonicals before the
     window is cut (after `exclude_keys`), so the window stays
-    `top_k` long. One statement over the served keys; a second, over the
+    `top_k` long. One read of the pooled rows; a second, over the
     canonical ids, only when a duplicate was in the pool. Fail-open: a failed
     read leaves the pool as the legs ranked it. Under `as_of` a duplicate is
     hidden but not substituted — the canonical's own validity window was not
@@ -132,16 +129,11 @@ async def hide_pool_duplicates(ctx: Any) -> None:
     ns_default = str(input.namespace)
     scope = request_scope()
     try:
-        truth = await _truth(
-            input.org,
-            sorted({_hit_ns(h, ns_default) for h in facts}),
-            [str(h.memory_key) for h in facts],
-            scope,
-        )
+        truth = await _truth(input.org, [hit_row_key(h, ns_default) for h in facts], scope)
     except Exception as e:  # noqa: BLE001 — hiding is a filter, never a failure
         log.warning("memory.search: duplicate status read failed: %s", e)
         return
-    dups = [h for h in facts if _duplicate_only(truth.get(hit_row_key(h, ns_default)))]
+    dups = [h for h in facts if _is_duplicate(truth.get(hit_row_key(h, ns_default)))]
     if not dups:
         return
     canon: _Canon = {}

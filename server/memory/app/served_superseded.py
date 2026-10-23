@@ -99,10 +99,7 @@ async def annotate_pool_superseded(ctx: Any) -> None:
         import server.memory.store as memory_repo
 
         rows = await memory_repo.superseded_successors(
-            input.org,
-            sorted({str(getattr(h, "namespace", "") or ns_default) for h in old}),
-            [str(h.memory_key) for h in old],
-            scope=scope,
+            input.org, [hit_row_key(h, ns_default) for h in old], scope=scope
         )
     except Exception as e:  # noqa: BLE001 — naming the successor never fails a search
         log.warning("memory.search: superseded successor read failed: %s", e)

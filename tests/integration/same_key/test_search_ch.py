@@ -73,8 +73,10 @@ async def test_two_users_rows_of_one_key_are_served_with_their_own_text(ch: Any,
     out = await handle_memory_search(
         MemorySearchInput(org=org, namespace=NS, agent="*", query="employer", bodies="unit")
     )
-    texts = sorted(h.content_excerpt for h in out.results if h.memory_key == "user_employer")
+    hits = [h for h in out.results if h.memory_key == "user_employer"]
+    texts = sorted(h.content_excerpt for h in hits)
     assert len(texts) == 2 and "Acme" in texts[0] and "Globex" in texts[1], out.results
+    assert not any(h.body_truncated for h in hits)
 
 
 async def test_one_key_in_many_sessions_leaves_room_for_another_key(ch: Any, org: str) -> None:

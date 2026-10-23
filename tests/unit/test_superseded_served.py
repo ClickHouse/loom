@@ -137,10 +137,10 @@ def successors(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     env = SimpleNamespace(rows=[], calls=0, fail=False)
 
     async def superseded_successors(
-        org: str, nss: list[str], keys: list[str], *, scope: Any = None, ch: Any = None
+        org: str, rows: list[tuple[str, ...]], *, scope: Any = None, ch: Any = None
     ) -> list[SupersededSuccessor]:
         env.calls += 1
-        env.last = (org, nss, keys)
+        env.last = (org, rows)
         env.scope = scope
         if env.fail:
             raise RuntimeError("boom")
@@ -182,8 +182,7 @@ async def test_annotation_names_the_successor_and_counts_only_when_asked(
     await ss.annotate_pool_superseded(ctx)
     assert successors.calls == 1 and successors.last == (
         "o",
-        ["ns"],
-        ["deploy_window", "db_engine"],
+        [("ns", "", "", "", "deploy_window"), ("ns", "", "", "", "db_engine")],
     )
     a, b, c, d = ctx.all_hits
     assert (a.superseded_by, a.superseded_at) == ("deploy_window", "2026-09-10 12:00:00")
@@ -256,7 +255,9 @@ async def test_successor_statement_scopes_both_reads() -> None:
             return []
 
     one_session = ReadFilters(scope="own_session", user_id="u", session_id="s")
-    await memory_repo.superseded_successors("o", ["n"], ["k"], scope=one_session, ch=_CH())
+    await memory_repo.superseded_successors(
+        "o", [("n", "a", "u", "s", "k")], scope=one_session, ch=_CH()
+    )
     [(sql, params)] = sqls
     # once in the superseded-row read, once in the successor join
     assert sql.count("user_id = {scope_uid:String}") == 2

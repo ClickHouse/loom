@@ -98,20 +98,20 @@ async def test_a_high_row_is_never_a_search_body(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "stored_as", [("a", "u2", "s1"), ("a", "u1", "s9")], ids=["another-user", "another-session"]
-)
-async def test_a_body_read_for_another_writer_is_not_served(monkeypatch, stored_as):
-    # The read picks one row per key: a row of another user or session is not this hit's body.
-    agent, user_id, session_id = stored_as
+async def test_two_writers_of_one_key_in_one_session_each_get_their_own_body(monkeypatch):
+    # The read picks one row per key: each hit is read under the row it names.
+    bodies = {("a", "u1", "s1"): "the first user's body", ("a", "u2", "s1"): "the second's"}
+    reads = []
 
     async def fake_get_many(identity, keys, **_):
-        row = {"agent": agent, "user_id": user_id, "session_id": session_id}
-        return [SimpleNamespace(memory_key="k", value="their body", sensitivity="", **row)]
+        who = (identity.agent, identity.user_id, identity.session_id)
+        reads.append(who)
+        return [SimpleNamespace(memory_key="k", value=bodies[who], sensitivity="")]
 
     monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
-    h = _hit("k", session_id="s1")
-    h._row_identity = ("a", "u1", "s1")
-    returned, elided, _ = await _expand_unit_bodies([h], _input())
-    assert h.content_excerpt == CLIP and h.body_truncated is True
-    assert (returned, elided) == (0, 1)
+    hits = [_hit("k", session_id="s1"), _hit("k", session_id="s1")]
+    hits[0]._row_identity, hits[1]._row_identity = ("a", "u1", "s1"), ("a", "u2", "s1")
+    returned, elided, _ = await _expand_unit_bodies(hits, _input())
+    assert sorted(reads) == sorted(bodies)
+    assert [h.content_excerpt for h in hits] == ["the first user's body", "the second's"]
+    assert (returned, elided) == (2, 0)

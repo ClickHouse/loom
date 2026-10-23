@@ -309,27 +309,21 @@ async def test_a_clear_keeps_vectors_only_for_the_locked_identity_in_clickhouse(
     assert [(r["agent"], r["user_id"], r["session_id"], r["memory_key"]) for r in got] == live
 
 
-def _identities(prefix: str, n: int) -> list[dict[str, str]]:
-    return [
-        {"agent": "a", "user_id": "u1", "session_id": "-", "memory_key": f"{prefix}/{i:05d}"}
-        for i in range(n)
-    ]
-
-
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("locked_n", "mutations"), [(1, 1), (25_000, 3)])
+@pytest.mark.parametrize(("locked_n", "mutations"), [(1, 1), (25_000, 10)])
 async def test_a_clear_names_a_bounded_number_of_locked_identities_per_mutation(
     monkeypatch: pytest.MonkeyPatch, locked_n: int, mutations: int
 ) -> None:
     """However many identities a clear tombstones, the embeddings step is one mutation
     until the locked side passes what one mutation names; then each hash bucket of the
     scope is one mutation naming only its own locked identities."""
+    from server.core.ch_params import chunks
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app.handlers import handle_memory_clear
     from server.memory.store.lifecycle import _LOCKED_PER_MUTATION
     from tests.unit.ch_fake import RecordingCH
 
-    hashes = [{"h": 7919 * i + 1} for i in range(locked_n)]
+    hashes = [{"h": 2**63 + 7919 * i} for i in range(locked_n)]  # full-width UInt64s
     ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": locked_n}], times=1)
     ch.on("SELECT count() AS n", [{"n": 100_000}])
     ch.on("SELECT DISTINCT cityHash64(agent, user_id, session_id, memory_key) AS h", hashes)
@@ -342,6 +336,8 @@ async def test_a_clear_names_a_bounded_number_of_locked_identities_per_mutation(
     assert all("SELECT" not in a.sql for a in alters)
     bound = [a.params["locked"] for a in alters]
     assert all(len(part) <= _LOCKED_PER_MUTATION for part in bound)
+    # each list binds as one form field, which ClickHouse caps at 128 KiB
+    assert all(len(list(chunks(part, limit=128 << 10))) == 1 for part in bound)
     assert sorted(h for part in bound for h in part) == [r["h"] for r in hashes]
 
 

@@ -173,7 +173,7 @@ async def test_the_user_steps_and_a_clear_mutate_replicated_tables(
     assert superseded == [("u2", True)]
 
 
-async def test_a_clear_past_one_mutations_locks_runs_bucket_mutations(
+async def test_a_clear_past_one_mutations_worth_of_locks_runs_one_mutation_per_bucket(
     raw: Any, db: str, ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.memory.store import lifecycle

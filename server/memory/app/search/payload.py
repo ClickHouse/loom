@@ -270,23 +270,25 @@ async def _expand_unit_bodies(
         # another session wrote — and silently: no body returned, no flag.
         return str(getattr(h, "session_id", "") or "") or read_sid
 
-    by_scope: dict[tuple[str, str], list[Any]] = {}
-    for h in hits:
-        if str(getattr(h, "source", "fact") or "fact") not in ("fact", "memory", "record"):
-            continue
+    def _writer(h: Any) -> tuple[str, str, str, str]:
+        # A hit that names its row is read under that row's identity, so two writers of
+        # one key in one session each get their own body; otherwise under the caller's.
         ns = str(getattr(h, "namespace", "") or input.namespace)
-        by_scope.setdefault((ns, _sid(h)), []).append(h)
+        who = getattr(h, "_row_identity", None)
+        if who:
+            return (ns, *who)
+        return (ns, str(getattr(input, "agent", "*") or "*"), _reader_user_id(input), _sid(h))
 
-    async def _read(ns: str, sid: str, group: list[Any]) -> list[Any]:
+    by_writer: dict[tuple[str, str, str, str], list[Any]] = {}
+    for h in hits:
+        if str(getattr(h, "source", "fact") or "fact") in ("fact", "memory", "record"):
+            by_writer.setdefault(_writer(h), []).append(h)
+
+    async def _read(writer: tuple[str, str, str, str], group: list[Any]) -> list[Any]:
+        ns, agent, user_id, sid = writer
         try:
             return await get_many_by_keys(
-                Identity(
-                    org=input.org,
-                    namespace=ns,
-                    agent=str(getattr(input, "agent", "*") or "*"),
-                    user_id=_reader_user_id(input),
-                    session_id=sid,
-                ),
+                Identity(org=input.org, namespace=ns, agent=agent, user_id=user_id, session_id=sid),
                 [str(h.memory_key) for h in group],
                 scope=request_scope(),
                 exclude_high_sensitivity=True,
@@ -295,23 +297,18 @@ async def _expand_unit_bodies(
             log.debug("unit bodies read failed for %s/%s: %s", ns, sid, e)
             return []
 
-    # one read per (namespace, session) the hits span, overlapped
-    reads = await asyncio.gather(*(_read(ns, sid, group) for (ns, sid), group in by_scope.items()))
+    # one read per writer the hits span, overlapped
+    reads = await asyncio.gather(*(_read(w, group) for w, group in by_writer.items()))
     # The read leaves 'high' rows out before it picks one per key, so the plain row the
     # search matched answers.
-    stored: dict[tuple[str, str, str], Any] = {
-        (ns, sid, str(r.memory_key)): r
-        for (ns, sid), rows in zip(by_scope, reads, strict=True)
+    stored: dict[tuple[str, ...], Any] = {
+        (*writer, str(r.memory_key)): r
+        for writer, rows in zip(by_writer, reads, strict=True)
         for r in rows
     }
 
     def _body_row(h: Any) -> Any:
-        # The read picks one row per key in a session: it answers only for its own writer.
-        r = stored.get((str(getattr(h, "namespace", "") or input.namespace), _sid(h), h.memory_key))
-        who = getattr(h, "_row_identity", None)
-        if r is not None and who and (r.agent, r.user_id, r.session_id) != who:
-            return None
-        return r
+        return stored.get((*_writer(h), str(h.memory_key)))
 
     returned = elided = tokens = 0
     spent = 0

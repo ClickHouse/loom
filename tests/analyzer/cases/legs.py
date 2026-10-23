@@ -396,11 +396,12 @@ async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
         if c["user_id"]
         else WHOLE_NAMESPACE
     )
-    await M.status_by_keys(ORG, [NS], ["k1", "k2"], scope=dup_scope, ch=ch)
+    rows = [(NS, "a", "-", "-", "k1"), (NS, "a", "-", "-", "k2")]
+    await M.status_by_rows(ORG, rows, scope=dup_scope, ch=ch)
     await M.canonical_rows_by_ids(
         ORG, [NS], ["00000000-0000-0000-0000-000000000001"], scope=dup_scope, ch=ch
     )
-    await M.superseded_successors(ORG, [NS], ["k1"], scope=dup_scope, ch=ch)
+    await M.superseded_successors(ORG, rows[:1], scope=dup_scope, ch=ch)
     await M.live_ids_in_scope(
         ORG, [NS], ["00000000-0000-0000-0000-000000000001"], scope=dup_scope, ch=ch
     )
