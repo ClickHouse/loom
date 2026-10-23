@@ -279,7 +279,8 @@ SCOPED_OPS = frozenset(
         "memory.bulk_get",
         "memory.digests",
         "memory.evidence",
-        # The caller's own batches by id, inside its scope as well as its principal's.
+        # extraction_retry_mine and extraction_status_mine: the caller's own batches by
+        # id, inside its scope as well as its principal's.
         "memory.extraction_retry_mine",
         "memory.extraction_status",
         "memory.extraction_status_mine",

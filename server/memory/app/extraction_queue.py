@@ -697,27 +697,38 @@ async def requeue_own_failed(
     waiting_or_done = [qid for qid in queue_ids if qid in states and qid not in failed]
     expired = [qid for qid in failed if int(states[qid]["past_last_day"])]
     failed = [qid for qid in failed if qid not in expired]
-    if not failed:
-        return Requeued(
-            requeued=[], not_failed=waiting_or_done, model_calls_off=[], expired=expired
-        )
     # An earlier retry still to apply goes pending whatever the switch says now.
-    submitted = await _retries_unapplied(ch, [(q, int(states[q]["version"])) for q in failed])
-    if await customer.switched_off(org):
-        return Requeued(
-            requeued=[q for q in failed if q in submitted],
-            not_failed=waiting_or_done,
-            model_calls_off=[q for q in failed if q not in submitted],
-            expired=expired,
-        )
+    submitted = (
+        await _retries_unapplied(ch, [(q, int(states[q]["version"])) for q in failed])
+        if failed
+        else set()
+    )
+    fresh = [q for q in failed if q not in submitted]
+    off = fresh if fresh and await customer.switched_off(org) else []
+    if fresh and not off:
+        rows = [states[q] for q in fresh]
+        await _submit_retry(ch, rows, org, namespace, enqueued_by, scope, max_attempts)
+    return Requeued(
+        requeued=[q for q in failed if q not in off],
+        not_failed=waiting_or_done,
+        model_calls_off=off,
+        expired=expired,
+    )
+
+
+async def _submit_retry(
+    ch: Any,
+    rows: list[dict[str, Any]],
+    org: str,
+    namespace: str,
+    enqueued_by: str,
+    scope: ReadFilters,
+    max_attempts: int,
+) -> None:
+    """The in-place update of `rows`' exact failed versions, not waited for."""
     batches = [
-        (r["agent"], r["user_id"], r["session_id"], r["queue_id"], int(r["version"]))
-        for r in (states[qid] for qid in failed if qid not in submitted)
+        (r["agent"], r["user_id"], r["session_id"], r["queue_id"], int(r["version"])) for r in rows
     ]
-    if not batches:
-        return Requeued(
-            requeued=failed, not_failed=waiting_or_done, model_calls_off=[], expired=expired
-        )
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
@@ -746,9 +757,6 @@ async def requeue_own_failed(
         SETTINGS mutations_sync = 0
         """,
         params=params,
-    )
-    return Requeued(
-        requeued=failed, not_failed=waiting_or_done, model_calls_off=[], expired=expired
     )
 
 

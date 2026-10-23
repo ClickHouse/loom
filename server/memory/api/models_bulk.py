@@ -565,7 +565,8 @@ class MemoryExtractionRetryMineInput(MemoryExtractionStatusMineInput):
     Each `failed` batch the calling principal queued in this namespace, inside the token's
     read scope, is accepted for one more replay. Status changes to `pending`
     asynchronously; a failed replay ends `failed` again. While the org's model calls
-    are switched off nothing is accepted, and a batch queued 29 or more days ago never is.
+    are switched off no new retry is accepted (one accepted earlier and not yet applied
+    stays `requeued`), and a batch queued 29 or more days ago never is.
     Batches still waiting or done are left alone; any other id is listed in `unknown`, as
     an id never queued is.
     """

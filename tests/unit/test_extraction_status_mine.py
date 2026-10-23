@@ -281,6 +281,21 @@ def test_a_scope_the_body_cannot_complete_is_refused_in_words_that_fit(
     assert "request body" not in str(e.value)
 
 
+def test_every_scoped_op_without_identity_fields_gets_the_same_refusal() -> None:
+    """The wording follows the input model, not the op: memory.get_by_id takes neither
+    field either, while memory.list still asks for one in the body."""
+    from server.core.errors import IdentityIncompleteError
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import gates
+
+    auth = _auth(read_scope="own_user")
+    for name, says in (("memory.get_by_id", "takes no user_id"), ("memory.list", "request body")):
+        op = OPERATIONS_BY_NAME[name]
+        inp = op.input_model.model_construct(org="o", namespace="n")
+        with pytest.raises(IdentityIncompleteError, match=says):
+            contextvars.Context().run(gates.read_scope, op, auth, inp)
+
+
 @pytest.mark.parametrize(
     "ids",
     [[], [f"q{i}" for i in range(MAX_OWN_BATCH_IDS + 1)], ["x" * 65], [""]],

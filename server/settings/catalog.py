@@ -5364,7 +5364,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.evidence": 150,
     "memory.export_evidence": 800,
     "memory.exposure_summary": 300,
-    # Status read plus one asynchronous update of the observed failed versions.
+    # Status read, the system.mutations lookup, the model-call switch and one
+    # asynchronous update of the observed failed versions.
     "memory.extraction_retry_mine": 150,
     "memory.extraction_status": 80,
     # One read of at most 20 batches by id.

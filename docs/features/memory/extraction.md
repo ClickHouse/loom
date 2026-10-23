@@ -230,10 +230,12 @@ deferred calls returned, at most 20 a call:
   eventually changes status to `pending`. A failed replay ends `failed` again;
   batches still waiting or done are left alone. The update targets the exact version
   read, preserving newer worker results and never restoring an erased transcript.
-  While the org's model calls are switched off nothing is accepted (`model_calls_off`).
+  While the org's model calls are switched off no new retry is accepted
+  (`model_calls_off`); one accepted earlier and not yet applied stays in `requeued`.
   A batch queued 29 or more days ago is not accepted (`expired`): the queue drops it
-  before its 30-day TTL. Asking again before an accepted retry applies submits no
-  second update.
+  before its 30-day TTL. Asking again while an accepted retry is still unfinished in
+  `system.mutations` submits no second update; two calls at the same moment can each
+  submit one, and the later changes nothing.
 
 Both answer only a batch the calling principal queued in that namespace, inside the
 token's read scope; every other id comes back in `unknown`, so an agent cannot learn
