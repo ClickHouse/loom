@@ -8602,7 +8602,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "When the revocation may lapse — the token's own exp. Omit for a token without exp: the row is kept for good (to 2105).",
+       "help": "When the revocation may lapse: no earlier than the last expiry of the tokens it must end (up to a day for a bot allowed one). Omit to keep the row for good (to 2105).",
        "metavar": "ISO8601"
       },
       {

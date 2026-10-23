@@ -317,10 +317,11 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   tokens it holds.
 
   A longer token is no harder to end: disabling or replacing the bot,
-  `loom revoke-token --subject`, `/v1/admin/revoke_subject` (with or without
-  `issued_before`) and `loom claim-release` refuse its tokens at once, whatever
-  their expiry, and `/oauth/revoke` keeps one token's revocation until that
-  token expires. What a token names is read when it is issued: a share or grant
+  `loom revoke-token --subject` without `--expires-at`, `/v1/admin/revoke_subject`
+  (with or without `issued_before`) and `loom claim-release` refuse its tokens at
+  once, whatever their expiry, and `/oauth/revoke` keeps one token's revocation
+  until that token expires. An `--expires-at` earlier than a bot token's own
+  expiry lets that token back in once the revocation lapses. What a token names is read when it is issued: a share or grant
   made later reaches an agent at its next token, up to a day later with
   day-long tokens, while revoking one does not wait for that. Deleting a
   namespace (`namespace.delete`) does not end the bot tokens that name it, as

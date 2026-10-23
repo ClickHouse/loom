@@ -679,8 +679,9 @@ def _add_revoke_token_parser(sub: Any) -> None:
         "--expires-at",
         default=None,
         metavar="ISO8601",
-        help="When the revocation may lapse — the token's own exp. Omit for a "
-        "token without exp: the row is kept for good (to 2105).",
+        help="When the revocation may lapse: no earlier than the last expiry of the "
+        "tokens it must end (up to a day for a bot allowed one). Omit to keep the row "
+        "for good (to 2105).",
     )
     p_revoke.add_argument("--json", action="store_true", help="Machine-readable output.")
     p_revoke.set_defaults(func=_cmd_revoke_token)
