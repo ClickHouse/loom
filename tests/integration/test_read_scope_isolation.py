@@ -110,12 +110,10 @@ def _mint(org: str, ns: str, *, subject: str = "", **claims: Any) -> str:
 
 
 def _write(base: str, tok: str, op: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Post `op` and expect 200; used for the reads of this module too."""
     r = _post(base, tok, op, body)
     assert r.status_code == 200, f"{op}: {r.status_code} {r.text}"
     return r.json()
-
-
-_read = _write  # the same call and check, named for an op that only reads
 
 
 def _seed_user(base: str, tok: str, s: _Seed, user: str, nonce: str) -> list[str]:
@@ -1151,11 +1149,11 @@ def test_a_pinned_token_reads_only_its_users_deferred_batches(
         queued[user] = out["queue_id"]
     ask = {"org": seed.org, "namespace": ns, "queue_ids": [queued[U], queued[V]]}
 
-    out = _read(control_plane_url, pinned[U], "memory.extraction_status_mine", ask)
+    out = _write(control_plane_url, pinned[U], "memory.extraction_status_mine", ask)
     assert [(b["queue_id"], b["user_id"]) for b in out["batches"]] == [(queued[U], U)], out
     assert out["unknown"] == [queued[V]], out
 
-    out = _read(control_plane_url, whole, "memory.extraction_status_mine", ask)
+    out = _write(control_plane_url, whole, "memory.extraction_status_mine", ask)
     assert sorted(b["queue_id"] for b in out["batches"]) == sorted(queued.values()), out
     assert out["unknown"] == [], out
 

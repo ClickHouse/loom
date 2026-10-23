@@ -606,6 +606,9 @@ async def _own_rows(
         "lim": len(queue_ids),
     }
     in_scope = scope_and(scope, params)
+    # PREWHERE runs before FINAL: only sort-key columns here, so every version of a batch
+    # filters alike, and the payload the enqueuer may be read from is read for the asked
+    # ids only.
     with own_write_reads():
         rows = await ch.query_all(
             f"""
