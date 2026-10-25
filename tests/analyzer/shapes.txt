@@ -648,7 +648,6 @@
 5d8fbc4e4072	SELECT count() AS n FROM loom.memory_record_versions WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 5da02e185da3	SELECT ? AS present FROM loom.code_files WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL LIMIT ?
 5df15c3b47a5	SELECT toString(tier) AS tier, count() AS edges, max(created_at) AS last_at FROM loom.code_edges FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL GROUP BY tier
-5e179f1065e8	SELECT g.namespace AS namespace, g.role AS role, ifNull(toString(g.status), ?) AS status, g.pending_role AS pending_role, g.pending_since AS pending_since, g.granted_at AS joined_at, toString(ifNull(n
 5e8b03fa60c0	SELECT session_id FROM loom.session_summaries FINAL WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND user_id = {uid:String} AND tombstoned_at IS NULL AND session_id
 5e9d05fdddf9	SELECT * FROM loom.code_scip_batches FINAL WHERE org = {org:String} AND namespace = {ns:String} AND batch_id = {bid:UUID}
 5ec97b63360b	SELECT namespace, memory_key, countIf(status IN (?, ?)) AS served_rows, countIf(status = ?) AS duplicate_rows, argMaxIf(duplicate_of, version, status = ?) AS canonical_id FROM loom.memory FINAL WHERE
@@ -1360,6 +1359,7 @@ ba2843155ed7	SELECT queue_id, agent, user_id, session_id, status, version, enque
 ba28d3f48cd1	SELECT ts, org, namespace, agent, user_id, session_id, operation, request_id, mode, decision, enforced, determining_rules, errors, detail, latency_ms FROM loom.policy_decisions WHERE org = {org:String
 ba3aa58d4a58	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 ba505cefcdfd	SELECT subject, namespace, role, granted_at, pending_role, is_owner FROM ( SELECT subject, namespace, toString(role) AS role, granted_at, pending_role, ? AS is_owner FROM loom.namespace_grants FINAL W
+ba584d8417fd	SELECT g.namespace AS namespace, g.role AS role, ifNull(toString(g.status), ?) AS status, g.pending_role AS pending_role, g.pending_since AS pending_since, g.granted_at AS joined_at, toString(ifNull(n
 bae938b1364f	SELECT namespace, sum(upstream_cost_usd) AS cost_usd, sum(toUInt64(input_tokens) + toUInt64(output_tokens)) AS tokens, sum(toUInt64(embedding_tokens)) AS embed_tokens, count() AS ops, countIf(success
 bb02b0e3dee7	SELECT symbol_id, qualified_name, name, signature, path, start_line, end_line, tier, kind FROM loom.code_symbols FINAL WHERE org = {org:String} AND namespace = {ns:String} AND path = {path:String} AND
 bb04945353ff	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g

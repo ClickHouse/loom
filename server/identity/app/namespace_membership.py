@@ -396,9 +396,14 @@ _MEMBERSHIP_SQL = """
         FROM (SELECT * FROM loom.namespace_grants FINAL) AS g
         LEFT JOIN (SELECT * FROM loom.namespaces FINAL) AS n
             ON n.org = g.org AND n.namespace = g.namespace
-        LEFT JOIN (SELECT * FROM loom.namespace_visits FINAL) AS v
+        LEFT JOIN (
+            -- a visit under any of the person's spellings clears `is_new`
+            SELECT org, namespace, max(last_seen_at) AS last_seen_at
+            FROM loom.namespace_visits FINAL
+            WHERE org = {org:String} AND subject IN {subs:Array(String)}
+            GROUP BY org, namespace
+        ) AS v
             ON v.org = g.org AND v.namespace = g.namespace
-               AND v.subject = g.subject
         WHERE g.org = {org:String} AND g.subject IN {subs:Array(String)}
           AND g.revoked_at IS NULL
           AND ifNull(n.active, true) = true
@@ -413,6 +418,23 @@ async def _membership_rows(ch: Any, org: str, subjects: list[str]) -> list[dict[
         await ch.query_all(_MEMBERSHIP_SQL, params={"org": org, "subs": subjects})
     )
     return rows
+
+
+def _one_per_namespace(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per namespace when a person holds grants under more than one
+    spelling (`server.auth.aliases`): the first row (newest grant) stands, the
+    highest role wins, and the namespace is new only if no spelling has seen it."""
+    by_ns: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        ns = str(r.get("namespace") or "")
+        head = by_ns.get(ns)
+        if head is None:
+            by_ns[ns] = dict(r)
+            continue
+        if grant_rank(str(r.get("role"))) > grant_rank(str(head.get("role"))):
+            head["role"] = r.get("role")
+        head["is_new"] = int(bool(head.get("is_new")) and bool(r.get("is_new")))
+    return list(by_ns.values())
 
 
 async def _inherited_rows(ch: Any, org: str, caller: str, skip: set[str]) -> list[dict[str, Any]]:
@@ -463,10 +485,14 @@ async def handle_namespace_list_mine(
     """List namespaces the caller is a member of in `org`.
 
     Union of the JWT's `namespaces` claim and the caller's active rows in
-    `loom.namespace_grants`. Also auto-claims `personal-<sub>` if it
-    doesn't yet exist — the dashboard calls this on load, so the
-    personal namespace lazily-creates on first visit.
+    `loom.namespace_grants` — under the caller's subject or any spelling the
+    directory ties to it (`server.auth.aliases`: a person's login handle and
+    email are one principal, as the read gate counts them). Also auto-claims
+    `personal-<sub>` if it doesn't yet exist — the dashboard calls this on
+    load, so the personal namespace lazily-creates on first visit.
     """
+    from server.auth.aliases import subject_aliases
+
     ch = get_client()
     caller = _registry.resolve_subject(input.subject)
 
@@ -476,8 +502,13 @@ async def handle_namespace_list_mine(
     # this handler stays read-only.
     # Union of grant rows + JWT namespaces. LEFT JOIN namespace_visits
     # for the `is_new` flag — true when the caller hasn't visited since
-    # the grant was made.
-    grant_rows = await _membership_rows(ch, input.org, [caller])
+    # the grant was made. A grant written under the person's email before
+    # their first sign-in (an operator's, an invitation's, a sync's) is
+    # theirs as much as one under the login handle: the gate reads both,
+    # so this list names both — else the dashboard would refuse a namespace
+    # the server serves.
+    subjects = await subject_aliases(input.org, caller, ch=ch)
+    grant_rows = _one_per_namespace(await _membership_rows(ch, input.org, subjects))
     seen = {r["namespace"] for r in grant_rows}
     # Only resolve admins for rows with a pending_role.
     needs_admins = {r["namespace"] for r in grant_rows if r.get("pending_role")}
