@@ -34,6 +34,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple
 
 from server.core.ch_names import split_table
+from server.core.datetimes import epoch_ms
 from server.core.datetimes import utc_now as _now
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
@@ -740,7 +741,7 @@ async def _submit_retry(
         "attempts": max(0, int(max_attempts) - 1),
         "tag": _RETRY_TAG,
         # Bound, not now64(): a replicated table refuses a non-deterministic mutation.
-        "updated_ms": int(_now().timestamp() * 1000),
+        "updated_ms": epoch_ms(_now()),
     }
     in_scope = scope_and(scope, params)
     # Updating stored rows cannot restore a payload deleted while the request was in flight.

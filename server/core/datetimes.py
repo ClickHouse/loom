@@ -15,7 +15,7 @@ The parser's canonical behaviour:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, overload
 
 # ClickHouse DateTime is 32-bit epoch-seconds: it can only represent
@@ -96,3 +96,15 @@ def as_aware_utc(value: Any) -> datetime | None:
     if not isinstance(value, datetime):
         return None
     return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+_UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def epoch_ms(dt: datetime) -> int:
+    """`dt` as whole milliseconds since the Unix epoch — the value a
+    `DateTime64(3)` is bound from (`fromUnixTimestamp64Milli`) when a query
+    must carry a fixed time, as a mutation must. A naive `dt` is UTC by
+    convention. Integer arithmetic: never a float's rounding, and never a
+    ReplacingMergeTree version, which is nanoseconds (`next_version`)."""
+    return (as_aware_utc(dt) - _UNIX_EPOCH) // timedelta(milliseconds=1)
