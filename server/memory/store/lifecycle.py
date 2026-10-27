@@ -393,7 +393,7 @@ async def bulk_tombstone_scope(
     }
     # Announced before the embeddings step, so a failure there cannot lose
     # the events: a retry finds no live memory rows and announces nothing.
-    if on_tombstoned is not None:
+    if on_tombstoned is not None and counts["loom.memory"]:
         try:
             await _page_tombstoned(" AND ".join(scope), params, on_tombstoned, ch=ch)
         except Exception as e:  # noqa: BLE001 — the rows are tombstoned; the clear must not fail

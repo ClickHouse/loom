@@ -455,6 +455,29 @@ async def test_clear_with_no_subscribers_reads_no_rows(monkeypatch: pytest.Monke
 
 
 @pytest.mark.asyncio
+async def test_a_clear_that_tombstones_nothing_announces_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A subscriber's namespace pays no read-back when the clear stamped no row."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app import webhooks
+    from server.memory.app.handlers import handle_memory_clear
+    from tests.unit.ch_fake import RecordingCH
+
+    webhooks._registry._reset_for_tests(
+        {("acme", "chat"): (("wh1", frozenset({"memory.tombstoned"})),)},
+        read_age_s=0.0,
+        due_in_s=float("inf"),
+    )
+    ch = RecordingCH().on("SELECT count() AS n", [{"n": 0}]).install(monkeypatch)
+    out = await handle_memory_clear(
+        MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
+    )
+    assert out.rows_affected == {"loom.memory": 0, "loom.memory_embeddings": 0}
+    assert ch.statements("ORDER BY agent, user_id, session_id, memory_key") == []
+
+
+@pytest.mark.asyncio
 async def test_clear_announces_what_it_tombstoned_a_page_at_a_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -173,6 +173,22 @@ async def test_the_user_steps_and_a_clear_mutate_replicated_tables(
     assert superseded == [("u2", True)]
 
 
+async def test_a_user_with_chunks_and_no_memory_keys_binds_an_empty_slice(
+    raw: Any, db: str, ch: Any
+) -> None:
+    """A transcript chunk under the user, with no memory row naming its key: the step
+    still runs once, binding no keys, and reaches the chunk by its `user_id`."""
+    from server.erasure.store import steps_memory
+
+    org = unique_org("erasure-repl")
+    raw.command(
+        f"INSERT INTO {db}.memory_chunks (org, namespace, agent, user_id, session_id,"
+        " parent_memory_key, chunk_index, content, embedding)"
+        f" SELECT '{org}', '{NS}', 'a', '{USER}', 's1', 'k1', 0, 'chunk', {_VECTOR}"
+    )
+    assert await steps_memory.tombstone_memory_chunks_by_user(org, USER, ch=ch) == 1
+
+
 async def test_a_clear_past_one_mutations_worth_of_locks_runs_one_mutation_per_bucket(
     raw: Any, db: str, ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

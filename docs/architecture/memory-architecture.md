@@ -1241,8 +1241,9 @@ bot the rule was said to, so it names that bot without its candidate. A user era
 `assistant_turn` candidate left with no supporter. A pending one is deleted. A decided
 one keeps its decision on a new version with the rule blanked, so a rejected rule never
 comes back as pending. Both deletes are bounded to the rows the step read, so a review
-or a supporter that lands meanwhile survives, and the census reopens the step for
-whatever still holds the rule. A candidate carries no `user_id`, and once a user's
+that lands meanwhile survives, and the census reopens the step for whatever still holds
+the rule. A pending candidate's supporters are re-read right before its delete, so only a
+supporter that lands between that read and the delete can lose its candidate. A candidate carries no `user_id`, and once a user's
 supporter rows are gone nothing ties an unsupported candidate to that user, so the
 census counts every unsupported candidate that still holds its rule in the org,
 whichever erasure left it.
@@ -1269,7 +1270,7 @@ first write after each interval waits for one registry read
 waits for the first read; if that read fails, writes announce nothing (noted as a
 degradation) until a read lands. `memory.clear` tombstones with one mutation per table
 (when a lock keeps some rows, the embeddings one names the hashes of the locked identities
-it read; past 10,000 of them the scope is split into hash buckets, one mutation each, so a
+it read; past 2,500 of them the scope is split into hash buckets, one mutation each, so a
 mutation's command stays small in Keeper) and, only when a webhook of the namespace takes
 `memory.tombstoned`, reads back the rows that mutation stamped in one streamed read in
 sort-key order, so the scope is scanned once, with one outbox insert per 1000 rows.
