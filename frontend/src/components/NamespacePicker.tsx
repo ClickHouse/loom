@@ -115,24 +115,24 @@ function NamespacePickerMenu() {
       <Tip content={current} disabled={!cut || open}>
         <PopoverTrigger>
           <button
-          ref={triggerRef}
-          type="button"
-          className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-2 sm:px-3 rounded-sm hover:bg-surface-2 transition-colors text-sm text-text"
-          aria-label={`Namespace: ${current}${isCode ? ", code index" : ""}`}
-        >
-          {isCode ? (
-            <Icon name="code" size="sm" aria-hidden="true" />
-          ) : (
-            <span className="text-text-muted" aria-hidden="true">
-              ns
+            ref={triggerRef}
+            type="button"
+            className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-2 sm:px-3 rounded-sm hover:bg-surface-2 transition-colors text-sm text-text"
+            aria-label={`Namespace: ${current}${isCode ? ", code index" : ""}`}
+          >
+            {isCode ? (
+              <Icon name="code" size="sm" aria-hidden="true" />
+            ) : (
+              <span className="text-text-muted" aria-hidden="true">
+                ns
+              </span>
+            )}
+            <span ref={setNameEl} className="font-medium truncate">
+              {current}
             </span>
-          )}
-          <span ref={setNameEl} className="font-medium truncate">
-            {current}
-          </span>
-          {isCode && <Badge text="code" state="neutral" size="sm" aria-hidden="true" />}
-          <Icon name="chevron-down" size="xs" aria-hidden="true" />
-        </button>
+            {isCode && <Badge text="code" state="neutral" size="sm" aria-hidden="true" />}
+            <Icon name="chevron-down" size="xs" aria-hidden="true" />
+          </button>
         </PopoverTrigger>
       </Tip>
       <Popover.Content
