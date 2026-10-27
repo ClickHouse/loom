@@ -374,6 +374,7 @@ def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
         {"password": "admin:Passw0rd"},
         {"password": "$ecr3tPass"},
         {"password": "ab\\cd1234"},
+        {"password": "abc\bdef12"},
     ],
 )
 def test_a_credential_under_a_credential_key_reads_high(value: object) -> None:
@@ -883,6 +884,7 @@ _PREFILTER_OBJECTS = [
     {"password": "required"},  # a form field, not a credential
     {"password": "ab\\cd1234"},  # written `ab\\cd1234`
     {"password": "p\u00e4ss1234"},  # written `p\u00e4ss1234`
+    {"password": "abc\bdef12"},  # written `abc\bdef12`
     {"card": 4111111111111111},  # a lone card number
     {"note": "call 415\n555\n0123"},  # written `415\n555\n0123`
     {"note": "415\u00a0555\u00a00123"},  # written `415\u00a0555\u00a00123`

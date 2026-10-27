@@ -93,7 +93,7 @@ def _key_words(keys: Iterable[tuple[str, ...]]) -> str:
 _PIN_KEYS = _key_words(w for w, label in KEYED_SECRET_WORDS.items() if label == "pin")
 _OTHER_KEYS = _key_words(w for w, label in KEYED_SECRET_WORDS.items() if label != "pin")
 # One character of a JSON string value as stored: a plain one or an escape.
-_VALUE_CHAR = r'(?:[^\s"\\]|\\u[0-9a-fA-F]{4}|\\[\\/"])'
+_VALUE_CHAR = r'(?:[^\s"\\]|\\u[0-9a-fA-F]{4}|\\[\\/"b])'
 # A credential key's words, with any separator run between them (`api.key`, `apiKey`).
 _CREDENTIAL_KEYS = ASSIGNMENT_WORDS.replace("[_-]?", _KEY_SEP)
 # A key that ends in a label, then its value (3-5 digits under a `pin` key, so a postal

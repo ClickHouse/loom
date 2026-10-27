@@ -1243,10 +1243,10 @@ one keeps its decision on a new version with the rule blanked, so a rejected rul
 comes back as pending. Both deletes are bounded to the rows the step read, so a review
 that lands meanwhile survives, and the census reopens the step for whatever still holds
 the rule. A pending candidate's supporters are re-read right before its delete, so only a
-supporter that lands between that read and the delete can lose its candidate. A candidate carries no `user_id`, and once a user's
-supporter rows are gone nothing ties an unsupported candidate to that user, so the
-census counts every unsupported candidate that still holds its rule in the org,
-whichever erasure left it.
+supporter that lands between that read and the delete can lose its candidate. A candidate
+carries no `user_id`, and once a user's supporter rows are gone nothing ties an
+unsupported candidate to that user, so the census counts every unsupported candidate that
+still holds its rule in the org, whichever erasure left it.
 
 ## Audit rows
 

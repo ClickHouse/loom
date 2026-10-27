@@ -332,3 +332,26 @@ def test_a_row_landing_without_its_vector_retires_the_keys_old_one(vectorless: b
     if vectorless:
         state.vectorless_keys.add("k")
     assert ("k" in _vectors_to_retire(state)) is vectorless
+
+
+async def test_a_vectorless_winner_retires_the_vector_an_earlier_entry_embedded(
+    monkeypatch,
+) -> None:
+    # Entry 0 pins A; entry 1 writes B as 'high' and the pin refuses it; entry 2 pins B,
+    # built 'high' after entry 1 and so unembedded, and the replay finds it is not. It
+    # lands without a vector: A's vector from entry 0 must not answer for B.
+    from server.memory.app.bulk_set import _vectors_to_retire
+
+    a, b = "Alice lives in Berlin", "Alice lives in Paris"
+    state, plan = await _settled(
+        monkeypatch,
+        None,
+        {},
+        {"memory_key": "k", "value": a, "pinned": True},
+        {"memory_key": "k", "value": b, "sensitivity": "high"},
+        {"memory_key": "k", "value": b, "pinned": True},
+    )
+    winner = max(plan.memory_rows, key=lambda r: int(r["version"]))
+    assert winner["value"] == f'"{b}"' and winner["sensitivity"] != "high"
+    assert [e["memory_key"] for e in plan.embedding_rows] == ["k"]
+    assert "k" in _vectors_to_retire(state)

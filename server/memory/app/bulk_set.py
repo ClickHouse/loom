@@ -504,9 +504,11 @@ def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
     takes lands unembedded too."""
     winners = kept_versions(state.memory_rows)
     batch_embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
+    # an earlier entry's vector is not the winner's: match the row by its version
+    batch_vectors = {(str(r.get("memory_key")), int(r["version"])) for r in state.embedding_rows}
     out: dict[str, tuple[Any, int]] = {}
     for key, r in winners.items():
-        vectorless = key in state.vectorless_keys and key not in batch_embedded
+        vectorless = key in state.vectorless_keys and (key, int(r["version"])) not in batch_vectors
         if not vectorless and is_embedded(
             str(r.get("memory_type")), str(r.get("sensitivity") or "")
         ):
