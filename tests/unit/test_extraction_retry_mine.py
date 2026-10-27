@@ -107,7 +107,10 @@ def _requeue(
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-def test_retry_changes_only_the_principals_failed_rows_in_scope(tmp_path: Path) -> None:
+def test_retry_changes_only_the_principals_failed_rows_in_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(q, "_now", lambda: datetime(2026, 10, 25, 12, 0, 0, 250_999, tzinfo=UTC))
     ch = _MutationCH(
         tmp_path / "ch",
         _queued("q1", by="process:sa:a", status="failed"),
@@ -127,20 +130,12 @@ def test_retry_changes_only_the_principals_failed_rows_in_scope(tmp_path: Path) 
             assert after[qid] == old
     row = after["q1"]
     assert (row["status"], row["attempts"]) == ("pending", 2)
+    assert row["updated_at"] == "2026-10-25 12:00:00.250"
     changed = {"status", "attempts", "lease_until", "updated_at"}
     assert {k: v for k, v in row.items() if k not in changed} == {
         k: v for k, v in before["q1"].items() if k not in changed
     }
     assert not ch.inserted
-
-
-def test_retry_binds_updated_at_as_epoch_milliseconds(monkeypatch: pytest.MonkeyPatch) -> None:
-    at = datetime(2026, 10, 25, 12, 0, 0, 250_999, tzinfo=UTC)
-    monkeypatch.setattr(q, "_now", lambda: at)
-    ch = _StubCH([_failed_row("q1")])
-    _requeue(ch, ["q1"])
-    ((_, params),) = ch.commands
-    assert params["updated_ms"] == 1_792_929_600_250
 
 
 def test_retry_reads_states_and_submits_without_waiting_for_a_mutation() -> None:

@@ -75,6 +75,7 @@ from typing import Any, Protocol
 from clickhouse_connect.driver.external import ExternalData
 
 from server.core.ch_names import split_table
+from server.core.datetimes import UNIX_EPOCH
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import record_pass
@@ -90,10 +91,9 @@ UPDATE_CHUNK_ROWS = 500
 # a heavy mutation queued in Keeper makes a Keeper incident worse.
 _LIGHTWEIGHT_UNSUPPORTED_CODES = (48, 62, 344)
 
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _UINT32_MAX = 2**32 - 1
 
-_watermark: datetime = _EPOCH
+_watermark: datetime = UNIX_EPOCH
 _watermark_derived: bool = False
 
 
@@ -143,7 +143,7 @@ class UsageFoldResult:
     skipped_no_memory: int = 0
     batches: int = 0
     statements: int = 0
-    watermark: datetime = _EPOCH
+    watermark: datetime = UNIX_EPOCH
     # Unfinished mutations seen on the destination table when the pass was
     # skipped for backpressure (0 = the pass ran).
     skipped_pending_mutations: int = 0
@@ -158,9 +158,9 @@ def reset_watermark() -> None:
     """Reset the process-local watermarks (boot state). Test hook."""
     global _watermark, _watermark_derived, _acted_watermark, _acted_watermark_derived
     global _credits_warned
-    _watermark = _EPOCH
+    _watermark = UNIX_EPOCH
     _watermark_derived = False
-    _acted_watermark = _EPOCH
+    _acted_watermark = UNIX_EPOCH
     _acted_watermark_derived = False
     _acted_recent.clear()
     _credits_warned = False
@@ -173,7 +173,7 @@ def current_watermark() -> datetime:
 def _utc(dt: datetime | None) -> datetime:
     """Normalize a CH-returned datetime to tz-aware UTC."""
     if dt is None:
-        return _EPOCH
+        return UNIX_EPOCH
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC)
@@ -261,7 +261,7 @@ class _Target:
     memory_key: str
     evidence: int  # loom.memory.evidence_count floor (1 + evidence_total)
     recall: int  # loom.memory.recall_count floor
-    last_recalled: datetime  # _EPOCH when never recalled
+    last_recalled: datetime  # UNIX_EPOCH when never recalled
     reinforcement: int | None  # None: no reinforcing activity, embeddings untouched
     last_activity: datetime
 
@@ -442,7 +442,7 @@ async def _derive_cold_start_watermark(ch: _CHClient, hwm: datetime) -> datetime
         """
     )
     first = _utc((row or {}).get("first_unfolded"))
-    if first <= _EPOCH:
+    if first <= UNIX_EPOCH:
         return hwm
     return first - timedelta(seconds=1)
 
@@ -589,7 +589,7 @@ ACTED_EXPOSURE_LOOKBACK_SECONDS = 24 * 3600
 # events-stream flush) before the watermark moves past them.
 ACTED_WRITE_LAG_SECONDS = 120
 
-_acted_watermark: datetime = _EPOCH
+_acted_watermark: datetime = UNIX_EPOCH
 _acted_watermark_derived: bool = False
 # (org, namespace, run_id, key) credited inside the current lag window.
 _acted_recent: set[tuple[str, str, str, str]] = set()
@@ -671,7 +671,7 @@ async def _derive_acted_watermark(ch: _CHClient, now: datetime) -> datetime:
         "SELECT max(ts) AS last FROM loom.memory_usage_events WHERE event_type = 'acted'"
     )
     last = _utc((row or {}).get("last"))
-    if last <= _EPOCH:
+    if last <= UNIX_EPOCH:
         return now - timedelta(days=1)
     return last - timedelta(seconds=ACTED_WRITE_LAG_SECONDS)
 
@@ -734,7 +734,7 @@ async def acted_pass(
     result = result or UsageFoldResult()
     now = now or datetime.now(UTC)
     started = time.monotonic()
-    if not _acted_watermark_derived and _acted_watermark <= _EPOCH:
+    if not _acted_watermark_derived and _acted_watermark <= UNIX_EPOCH:
         _acted_watermark = await _derive_acted_watermark(ch, now)
         _acted_watermark_derived = True
         log.info("usage fold: acted watermark derived as %s", _acted_watermark.isoformat())
@@ -834,10 +834,10 @@ async def run_pass(
         # has landed since the last pass.
         probe = await ch.query_one("SELECT max(bumped_at) AS hwm FROM loom.memory_usage_totals")
         hwm = _utc((probe or {}).get("hwm"))
-        if hwm <= _EPOCH:
+        if hwm <= UNIX_EPOCH:
             return _done({"candidates": 0, "folded": 0, "skipped_no_memory": 0})
 
-        if not _watermark_derived and _watermark <= _EPOCH:
+        if not _watermark_derived and _watermark <= UNIX_EPOCH:
             _watermark = await _derive_cold_start_watermark(ch, hwm)
             _watermark_derived = True
             log.info("usage fold: cold-start watermark derived as %s", _watermark.isoformat())
