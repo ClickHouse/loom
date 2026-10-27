@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import { Suspense, forwardRef, lazy, useEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Popover } from "@clickhouse/click-ui/Popover";
@@ -8,6 +8,8 @@ import { useStore } from "../lib/state";
 import { WILDCARD_NAMESPACE } from "../lib/namespace";
 import { Loading } from "./ui";
 import { PopoverTrigger } from "./ui/Menu";
+import { TextClamp, useClamped } from "./ui/TextClamp";
+import { Tip } from "./ui/Tooltip";
 // The create dialog loads when first opened.
 const CreateNamespaceDialog = lazy(() =>
   import("../flows/CreateNamespaceDialog").then((m) => ({ default: m.CreateNamespaceDialog })),
@@ -32,14 +34,19 @@ export function NamespacePicker() {
   // default. Render the namespace as static context. The menu is its own component so
   // every hook in it runs unconditionally.
   if (isAuthDisabled()) {
-    return (
-      <div className="inline-flex items-center gap-1.5 h-8 px-3 text-sm text-text">
-        <span className="text-text-muted">ns</span>
-        <span className="font-medium">{identity?.namespace ?? "local"}</span>
-      </div>
-    );
+    return <StaticNamespace name={identity?.namespace ?? "local"} />;
   }
   return <NamespacePickerMenu />;
+}
+
+/** The one namespace, not a control. A cut name is focusable, whole in a tooltip. */
+function StaticNamespace({ name }: { name: string }) {
+  return (
+    <div className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-3 text-sm text-text">
+      <span className="text-text-muted">ns</span>
+      <TextClamp text={name} reach="tooltip" className="font-medium" />
+    </div>
+  );
 }
 
 function NamespacePickerMenu() {
@@ -92,23 +99,7 @@ function NamespacePickerMenu() {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger>
-        <button
-          ref={triggerRef}
-          type="button"
-          className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-2 sm:px-3 rounded-sm hover:bg-surface-2 transition-colors text-sm text-text"
-          aria-label={`Namespace: ${current}${isCode ? ", code index" : ""}`}
-        >
-          {isCode ? (
-            <Icon name="code" size="sm" aria-hidden="true" />
-          ) : (
-            <span className="text-text-muted" aria-hidden="true">
-              ns
-            </span>
-          )}
-          <span className="font-medium truncate">{current}</span>
-          {isCode && <Badge text="code" state="neutral" size="sm" aria-hidden="true" />}
-          <Icon name="chevron-down" size="xs" aria-hidden="true" />
-        </button>
+        <NamespaceTrigger ref={triggerRef} name={current} isCode={isCode} panelOpen={open} />
       </PopoverTrigger>
       <Popover.Content
         align="start"
@@ -157,3 +148,39 @@ function NamespacePickerMenu() {
     </Popover>
   );
 }
+
+/** The picker's button. A cut name is whole in a tooltip on hover and focus, shut while the
+ *  panel is open. Inside the popover's trigger, so the popover's `data-state` wins. */
+const NamespaceTrigger = forwardRef<
+  HTMLButtonElement,
+  ComponentPropsWithoutRef<"button"> & { name: string; isCode: boolean; panelOpen: boolean }
+>(function NamespaceTrigger({ name, isCode, panelOpen, ...rest }, ref) {
+  const [nameEl, setNameEl] = useState<HTMLElement | null>(null);
+  const cut = useClamped(nameEl, name);
+  return (
+    <Tip content={name} disabled={!cut || panelOpen}>
+      <button
+        ref={ref}
+        type="button"
+        className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-2 sm:px-3 rounded-sm hover:bg-surface-2 transition-colors text-sm text-text"
+        aria-label={`Namespace: ${name}${isCode ? ", code index" : ""}`}
+        {...rest}
+        // The tooltip only repeats the name the label already says.
+        aria-describedby={undefined}
+      >
+        {isCode ? (
+          <Icon name="code" size="sm" aria-hidden="true" />
+        ) : (
+          <span className="text-text-muted" aria-hidden="true">
+            ns
+          </span>
+        )}
+        <span ref={setNameEl} className="font-medium truncate">
+          {name}
+        </span>
+        {isCode && <Badge text="code" state="neutral" size="sm" aria-hidden="true" />}
+        <Icon name="chevron-down" size="xs" aria-hidden="true" />
+      </button>
+    </Tip>
+  );
+});

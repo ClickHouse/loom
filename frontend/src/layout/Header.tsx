@@ -57,8 +57,9 @@ export function Header() {
 
   return (
     <header className="min-h-14 border-b border-border bg-surface flex flex-wrap md:flex-nowrap items-center gap-x-2 gap-y-1.5 md:gap-3 px-3 py-2 md:px-5 md:py-0 shrink-0">
-      {/* Left cluster — namespace context. */}
-      <div className="shrink min-w-0 max-w-[60%] md:max-w-none md:shrink-0">
+      {/* Left cluster — namespace context. Capped so a long namespace truncates
+          instead of squeezing the search. */}
+      <div className="shrink min-w-0 max-w-[60%] md:min-w-24 md:max-w-[min(320px,24vw)]">
         <RichNamespacePicker />
       </div>
 
@@ -72,7 +73,7 @@ export function Header() {
           its own, shown only after the search button reveals it. */}
       <div
         id="header-search"
-        className={`min-w-0 order-last basis-full md:order-none md:basis-auto md:flex-1 md:max-w-[680px] ${mobileSearch ? "" : "hidden md:block"}`}
+        className={`min-w-0 order-last basis-full md:order-none md:basis-auto md:flex-1 md:min-w-18 lg:min-w-40 md:max-w-[680px] ${mobileSearch ? "" : "hidden md:block"}`}
       >
         <DeferredHeaderSearch autoFocus={mobileSearch} />
       </div>
