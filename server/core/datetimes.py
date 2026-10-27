@@ -98,13 +98,10 @@ def as_aware_utc(value: Any) -> datetime | None:
     return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
-_UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def epoch_ms(dt: datetime) -> int:
-    """`dt` as whole milliseconds since the Unix epoch — the value a
-    `DateTime64(3)` is bound from (`fromUnixTimestamp64Milli`) when a query
-    must carry a fixed time, as a mutation must. A naive `dt` is UTC by
-    convention. Integer arithmetic: never a float's rounding, and never a
-    ReplacingMergeTree version, which is nanoseconds (`next_version`)."""
-    return (as_aware_utc(dt) - _UNIX_EPOCH) // timedelta(milliseconds=1)
+    """`dt` as whole milliseconds since the epoch (naive is UTC), to bind a `DateTime64(3)`
+    through `fromUnixTimestamp64Milli`. Not a ReplacingMergeTree version: those are nanoseconds."""
+    return (as_aware_utc(dt) - UNIX_EPOCH) // timedelta(milliseconds=1)

@@ -30,10 +30,11 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any, NamedTuple
 
 from server.core.ch_names import split_table
+from server.core.datetimes import UNIX_EPOCH as _EPOCH
 from server.core.datetimes import epoch_ms
 from server.core.datetimes import utc_now as _now
 from server.identity.domain.read_scope import (
@@ -95,7 +96,6 @@ COLUMNS = (
 )
 
 _SYNC = {"async_insert": 0, "wait_for_async_insert": 1}
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 # The token-stamped principal (`kind:subject`) rides the replay payload and the
