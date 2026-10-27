@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -131,6 +132,15 @@ def test_retry_changes_only_the_principals_failed_rows_in_scope(tmp_path: Path) 
         k: v for k, v in before["q1"].items() if k not in changed
     }
     assert not ch.inserted
+
+
+def test_retry_binds_updated_at_as_epoch_milliseconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    at = datetime(2026, 10, 25, 12, 0, 0, 250_999, tzinfo=UTC)
+    monkeypatch.setattr(q, "_now", lambda: at)
+    ch = _StubCH([_failed_row("q1")])
+    _requeue(ch, ["q1"])
+    ((_, params),) = ch.commands
+    assert params["updated_ms"] == 1_792_929_600_250
 
 
 def test_retry_reads_states_and_submits_without_waiting_for_a_mutation() -> None:

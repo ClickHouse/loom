@@ -1,5 +1,6 @@
 """Datetime helpers shared across the write and read paths: the clock, the
-naive-UTC convention ClickHouse DateTime columns use, and the ISO-8601 parser.
+naive-UTC convention ClickHouse DateTime columns use, the ISO-8601 parser, and the
+epoch-millisecond conversion.
 
 The parser's canonical behaviour:
 
@@ -29,6 +30,7 @@ from typing import Any, overload
 # (Sub-1970 anchors would need a DateTime64 column to retain; out of scope.)
 _DT_MIN = datetime(1970, 1, 1)
 _DT_MAX = datetime(2106, 1, 1)
+UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def _in_dt_range(dt: datetime) -> datetime | None:
@@ -96,9 +98,6 @@ def as_aware_utc(value: Any) -> datetime | None:
     if not isinstance(value, datetime):
         return None
     return value if value.tzinfo else value.replace(tzinfo=UTC)
-
-
-UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def epoch_ms(dt: datetime) -> int:

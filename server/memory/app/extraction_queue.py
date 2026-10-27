@@ -34,8 +34,7 @@ from datetime import timedelta
 from typing import Any, NamedTuple
 
 from server.core.ch_names import split_table
-from server.core.datetimes import UNIX_EPOCH as _EPOCH
-from server.core.datetimes import epoch_ms
+from server.core.datetimes import UNIX_EPOCH, epoch_ms
 from server.core.datetimes import utc_now as _now
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
@@ -162,7 +161,7 @@ async def enqueue(
         "content_chars": chars,
         "status": STATUS_PENDING,
         "attempts": 0,
-        "lease_until": _EPOCH,
+        "lease_until": UNIX_EPOCH,
         "last_error": "",
         "written": 0,
         "enqueued_at": now,
@@ -183,7 +182,7 @@ def _mirror(row: dict[str, Any], **changes: Any) -> dict[str, Any]:
     out["version"] = next_version()
     # Defaults for columns a partial projection may have left None.
     if out.get("lease_until") is None:
-        out["lease_until"] = _EPOCH
+        out["lease_until"] = UNIX_EPOCH
     for c in ("attempts", "written", "message_count", "content_chars"):
         if out.get(c) is None:
             out[c] = 0
@@ -272,7 +271,7 @@ async def mark_done(row: dict[str, Any], *, written: int, ch: Any | None = None)
     ch = ch or get_client()
     await ch.insert(
         TABLE,
-        [_mirror(row, status=STATUS_DONE, written=int(written), lease_until=_EPOCH)],
+        [_mirror(row, status=STATUS_DONE, written=int(written), lease_until=UNIX_EPOCH)],
         settings=_SYNC,
     )
 
@@ -300,7 +299,9 @@ async def mark_error(
                 status=STATUS_FAILED if failed else STATUS_PENDING,
                 attempts=attempts,
                 last_error=str(error)[:2000],
-                lease_until=_EPOCH if failed else _now() + timedelta(seconds=backoff_s(attempts)),
+                lease_until=UNIX_EPOCH
+                if failed
+                else _now() + timedelta(seconds=backoff_s(attempts)),
             )
         ],
         settings=_SYNC,
@@ -416,7 +417,10 @@ async def drop_waiting(
     why = f"dropped: model calls switched off, waited over {older_than_days} days"
     await ch.insert(
         TABLE,
-        [_mirror(dict(r), status=STATUS_FAILED, last_error=why, lease_until=_EPOCH) for r in rows],
+        [
+            _mirror(dict(r), status=STATUS_FAILED, last_error=why, lease_until=UNIX_EPOCH)
+            for r in rows
+        ],
         settings=_SYNC,
     )
     return len(rows)
@@ -475,7 +479,7 @@ async def drop_expiring(
                 dict(r),
                 status=STATUS_FAILED,
                 last_error=f"{why} ({r.get('last_error') or 'never run'})"[:2000],
-                lease_until=_EPOCH,
+                lease_until=UNIX_EPOCH,
             )
             for r in rows
         ],
