@@ -9,6 +9,7 @@ import { WILDCARD_NAMESPACE } from "../lib/namespace";
 import { Loading } from "./ui";
 import { PopoverTrigger } from "./ui/Menu";
 import { useClamped } from "./ui/TextClamp";
+import { TipTarget } from "./ui/TipTarget";
 import { Tip } from "./ui/Tooltip";
 // The create dialog loads when first opened.
 const CreateNamespaceDialog = lazy(() =>
@@ -46,16 +47,9 @@ function StaticNamespace({ name }: { name: string }) {
   return (
     <div className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-3 text-sm text-text">
       <span className="text-text-muted">ns</span>
-      <Tip content={name} disabled={!cut}>
-        <span
-          ref={setEl}
-          tabIndex={cut ? 0 : undefined}
-          role={cut ? "note" : undefined}
-          className="font-medium truncate rounded-sm"
-        >
-          {name}
-        </span>
-      </Tip>
+      <TipTarget ref={setEl} tip={name} disabled={!cut} className="font-medium truncate rounded-sm">
+        {name}
+      </TipTarget>
     </div>
   );
 }

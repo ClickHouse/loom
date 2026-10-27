@@ -158,7 +158,23 @@ for (const [width, searchFloor] of [
     expect((await boxOf(trigger)).width).toBeGreaterThanOrEqual(96);
     expect((await boxOf(page.locator("#header-search"))).width).toBeGreaterThanOrEqual(searchFloor);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    // Keyboard focus and hover each show the whole name.
+    await trigger.focus();
+    await expect(page.getByRole("tooltip")).toHaveText(long);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
     await trigger.hover();
     await expect(page.getByRole("tooltip")).toHaveText(long);
   });
 }
+
+test("a namespace that fits has no tooltip", async ({ page }) => {
+  await installApi(page);
+  await page.goto("/memories");
+  await expect(page.locator("main h1").first()).toBeVisible();
+  const trigger = page.getByRole("button", { name: `Namespace: ${NAMESPACE}` });
+  await trigger.hover();
+  await trigger.focus();
+  await expect(trigger).not.toHaveAttribute("aria-describedby");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+});
