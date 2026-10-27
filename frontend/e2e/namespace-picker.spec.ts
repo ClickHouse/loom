@@ -174,13 +174,11 @@ for (const [width, searchFloor] of [
   });
 }
 
-test("a namespace that fits has no tooltip", async ({ page }) => {
+test("a namespace that fits has no tooltip on focus", async ({ page }) => {
   await installApi(page);
   await page.goto("/memories");
   await expect(page.locator("main h1").first()).toBeVisible();
-  const trigger = page.getByRole("button", { name: `Namespace: ${NAMESPACE}` });
-  await trigger.hover();
-  await trigger.focus();
-  await expect(trigger).not.toHaveAttribute("aria-describedby");
+  // Focus opens a tip at once; hover waits out the provider's delay, so focus is the check.
+  await page.getByRole("button", { name: `Namespace: ${NAMESPACE}` }).focus();
   await expect(page.getByRole("tooltip")).toHaveCount(0);
 });

@@ -8,8 +8,7 @@ import { useStore } from "../lib/state";
 import { WILDCARD_NAMESPACE } from "../lib/namespace";
 import { Loading } from "./ui";
 import { PopoverTrigger } from "./ui/Menu";
-import { useClamped } from "./ui/TextClamp";
-import { TipTarget } from "./ui/TipTarget";
+import { TextClamp, useClamped } from "./ui/TextClamp";
 import { Tip } from "./ui/Tooltip";
 // The create dialog loads when first opened.
 const CreateNamespaceDialog = lazy(() =>
@@ -42,14 +41,10 @@ export function NamespacePicker() {
 
 /** The one namespace, not a control. A cut name is focusable, whole in a tooltip. */
 function StaticNamespace({ name }: { name: string }) {
-  const [el, setEl] = useState<HTMLElement | null>(null);
-  const cut = useClamped(el, name);
   return (
     <div className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-3 text-sm text-text">
       <span className="text-text-muted">ns</span>
-      <TipTarget ref={setEl} tip={name} disabled={!cut} className="font-medium truncate rounded-sm">
-        {name}
-      </TipTarget>
+      <TextClamp text={name} reach="tooltip" className="font-medium" />
     </div>
   );
 }
