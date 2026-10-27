@@ -140,21 +140,23 @@ for (const width of [1400, 375]) {
 // search share the row from the `md` breakpoint up: each keeps its floor (the search's is
 // wider from `lg`, where the account name joins the right cluster) and the page never
 // scrolls sideways.
-for (const [width, searchFloor] of [
-  [1400, 160],
-  [1024, 160],
-  [768, 72],
-]) {
-  test(`a long namespace truncates and leaves the header search its width at ${width} px`, async ({ page }) => {
+for (const [width, searchFloor, kind] of [
+  [1400, 160, "memory"],
+  [1024, 160, "memory"],
+  [768, 72, "memory"],
+  // A code index's icon and badge take more of the trigger; its name still shows.
+  [768, 72, "code"],
+] as const) {
+  test(`a long ${kind} namespace truncates and leaves the header search its width at ${width} px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const long = `team-${"0123abcd-".repeat(8)}end`;
-    await installApi(page, { mine: [row(long, "memory", "admin")], claims: [long], savedNamespace: long });
+    await installApi(page, { mine: [row(long, kind, "admin")], claims: [long], savedNamespace: long });
     await page.goto("/memories");
     await expect(page.locator("main h1").first()).toBeVisible();
-    const trigger = page.getByRole("button", { name: `Namespace: ${long}` });
+    const trigger = page.getByRole("button", { name: new RegExp(`^Namespace: ${long}`) });
     const name = trigger.getByText(long);
     await expect(name).toBeVisible();
-    expect(await name.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+    expect(await name.evaluate((el) => el.scrollWidth > el.clientWidth && el.clientWidth > 0)).toBe(true);
     expect((await boxOf(trigger)).width).toBeGreaterThanOrEqual(96);
     expect((await boxOf(page.locator("#header-search"))).width).toBeGreaterThanOrEqual(searchFloor);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

@@ -99,7 +99,7 @@ function NamespacePickerMenu() {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger>
-        <NamespaceTrigger ref={triggerRef} name={current} isCode={isCode} tipOff={open} />
+        <NamespaceTrigger ref={triggerRef} name={current} isCode={isCode} panelOpen={open} />
       </PopoverTrigger>
       <Popover.Content
         align="start"
@@ -153,12 +153,12 @@ function NamespacePickerMenu() {
  *  panel is open. Inside the popover's trigger, so the popover's `data-state` wins. */
 const NamespaceTrigger = forwardRef<
   HTMLButtonElement,
-  ComponentPropsWithoutRef<"button"> & { name: string; isCode: boolean; tipOff: boolean }
->(function NamespaceTrigger({ name, isCode, tipOff, ...rest }, ref) {
+  ComponentPropsWithoutRef<"button"> & { name: string; isCode: boolean; panelOpen: boolean }
+>(function NamespaceTrigger({ name, isCode, panelOpen, ...rest }, ref) {
   const [nameEl, setNameEl] = useState<HTMLElement | null>(null);
   const cut = useClamped(nameEl, name);
   return (
-    <Tip content={name} disabled={!cut || tipOff}>
+    <Tip content={name} disabled={!cut || panelOpen}>
       <button
         ref={ref}
         type="button"
