@@ -1,5 +1,4 @@
-"""Unit tests for server.core.datetimes: the shared ISO-8601 parser (parse_iso_dt)
-and epoch_ms.
+"""Unit tests for the shared ISO-8601 parser (server.core.datetimes.parse_iso_dt).
 
 It is the one parser on the write + read paths, so its
 behaviour is load-bearing: entity-edge/triple validity intervals, the
@@ -9,9 +8,9 @@ depend on it. Pure function — no env / CH / API key needed.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 
-from server.core.datetimes import epoch_ms, parse_iso_dt
+from server.core.datetimes import parse_iso_dt
 
 
 def test_date_only_becomes_midnight() -> None:
@@ -77,20 +76,3 @@ def test_chronological_ordering_is_not_lexical() -> None:
     c = parse_iso_dt("2024-12-31T23:59:59Z")  # later
     assert a is not None and b is not None and c is not None
     assert a < b < c
-
-
-def test_whole_milliseconds_since_the_epoch() -> None:
-    assert epoch_ms(datetime(1970, 1, 1, tzinfo=UTC)) == 0
-    assert epoch_ms(datetime(1970, 1, 1, 0, 0, 1, 500_000, tzinfo=UTC)) == 1_500
-    # sub-millisecond digits are dropped, never rounded up into the next ms
-    assert epoch_ms(datetime(1970, 1, 1, 0, 0, 0, 999, tzinfo=UTC)) == 0
-    assert epoch_ms(datetime(1970, 1, 1, 0, 0, 0, 1_000, tzinfo=UTC)) == 1
-
-
-def test_naive_is_utc_and_an_offset_is_honoured() -> None:
-    at = datetime(2026, 10, 25, 12, 0, 0, 250_000)
-    expect = int((at.replace(tzinfo=UTC) - datetime(1970, 1, 1, tzinfo=UTC)).total_seconds()) * 1000
-    assert epoch_ms(at) == expect + 250
-    assert epoch_ms(at.replace(tzinfo=UTC)) == epoch_ms(at)
-    plus_two = at.replace(tzinfo=timezone(timedelta(hours=2)))
-    assert epoch_ms(plus_two) == epoch_ms(at) - 2 * 3_600_000

@@ -1,6 +1,6 @@
 """Datetime helpers shared across the write and read paths: the clock, the
-naive-UTC convention ClickHouse DateTime columns use, the ISO-8601 parser, and the
-epoch-millisecond conversion.
+naive-UTC convention ClickHouse DateTime columns use, the epoch, and the ISO-8601
+parser.
 
 The parser's canonical behaviour:
 
@@ -16,7 +16,7 @@ The parser's canonical behaviour:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, overload
 
 # ClickHouse DateTime is 32-bit epoch-seconds: it can only represent
@@ -30,7 +30,6 @@ from typing import Any, overload
 # (Sub-1970 anchors would need a DateTime64 column to retain; out of scope.)
 _DT_MIN = datetime(1970, 1, 1)
 _DT_MAX = datetime(2106, 1, 1)
-UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def _in_dt_range(dt: datetime) -> datetime | None:
@@ -56,6 +55,10 @@ def parse_iso_dt(raw: object) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+# The tz-aware epoch: the "never" value of lease and watermark columns.
+UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 # ClickHouse DateTime columns hold naive UTC; these are the clock and the
@@ -98,9 +101,3 @@ def as_aware_utc(value: Any) -> datetime | None:
     if not isinstance(value, datetime):
         return None
     return value if value.tzinfo else value.replace(tzinfo=UTC)
-
-
-def epoch_ms(dt: datetime) -> int:
-    """`dt` as whole milliseconds since the epoch (naive is UTC), to bind a `DateTime64(3)`
-    through `fromUnixTimestamp64Milli`. Not a ReplacingMergeTree version: those are nanoseconds."""
-    return (as_aware_utc(dt) - UNIX_EPOCH) // timedelta(milliseconds=1)
