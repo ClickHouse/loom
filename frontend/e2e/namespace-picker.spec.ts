@@ -136,7 +136,7 @@ for (const width of [1400, 375]) {
   });
 }
 
-// A long name truncates in the header, whole in a tooltip on hover. The picker and the
+// A long name truncates in the header, whole in a tooltip on hover and focus. The picker and the
 // search share the row from the `md` breakpoint up: each keeps its floor (the search's is
 // wider from `lg`, where the account name joins the right cluster) and the page never
 // scrolls sideways.
@@ -165,6 +165,12 @@ for (const [width, searchFloor] of [
     await expect(page.getByRole("tooltip")).toHaveCount(0);
     await trigger.hover();
     await expect(page.getByRole("tooltip")).toHaveText(long);
+    // The label already says the name: the tip is not read again as a description.
+    await expect(trigger).not.toHaveAttribute("aria-describedby");
+    // The open panel shuts the tip, and the button says the panel is open.
+    await trigger.click();
+    await expect(trigger).toHaveAttribute("data-state", "open");
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
   });
 }
 

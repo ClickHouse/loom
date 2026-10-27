@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import { Suspense, forwardRef, lazy, useEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Popover } from "@clickhouse/click-ui/Popover";
@@ -65,7 +65,6 @@ function NamespacePickerMenu() {
   const [createOpen, setCreateOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const [nameEl, setNameEl] = useState<HTMLElement | null>(null);
 
   // The panel's code loads on idle after first paint, so the first open draws it at once.
   useEffect(() => {
@@ -90,8 +89,6 @@ function NamespacePickerMenu() {
   }, [pickerRequested, openNamespacePicker]);
 
   const current = identity?.namespace || "—";
-  // A cut name is whole in a tooltip on the trigger, so hover and keyboard focus both show it.
-  const cut = useClamped(nameEl, current);
   const isCode = stored?.find((r) => r.namespace === current)?.kind === "code";
   // `*` is an access wildcard, never a namespace to switch into.
   const allowed = (whoami?.namespaces || []).filter((ns) => ns !== WILDCARD_NAMESPACE);
@@ -106,29 +103,9 @@ function NamespacePickerMenu() {
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <Tip content={current} disabled={!cut || open}>
-        <PopoverTrigger>
-          <button
-            ref={triggerRef}
-            type="button"
-            className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-2 sm:px-3 rounded-sm hover:bg-surface-2 transition-colors text-sm text-text"
-            aria-label={`Namespace: ${current}${isCode ? ", code index" : ""}`}
-          >
-            {isCode ? (
-              <Icon name="code" size="sm" aria-hidden="true" />
-            ) : (
-              <span className="text-text-muted" aria-hidden="true">
-                ns
-              </span>
-            )}
-            <span ref={setNameEl} className="font-medium truncate">
-              {current}
-            </span>
-            {isCode && <Badge text="code" state="neutral" size="sm" aria-hidden="true" />}
-            <Icon name="chevron-down" size="xs" aria-hidden="true" />
-          </button>
-        </PopoverTrigger>
-      </Tip>
+      <PopoverTrigger>
+        <NamespaceTrigger ref={triggerRef} name={current} isCode={isCode} tipOff={open} />
+      </PopoverTrigger>
       <Popover.Content
         align="start"
         aria-label="Namespaces"
@@ -176,3 +153,39 @@ function NamespacePickerMenu() {
     </Popover>
   );
 }
+
+/** The picker's button. A cut name is whole in a tooltip on hover and focus, shut while the
+ *  panel is open. Inside the popover's trigger, so the popover's `data-state` wins. */
+const NamespaceTrigger = forwardRef<
+  HTMLButtonElement,
+  ComponentPropsWithoutRef<"button"> & { name: string; isCode: boolean; tipOff: boolean }
+>(function NamespaceTrigger({ name, isCode, tipOff, ...rest }, ref) {
+  const [nameEl, setNameEl] = useState<HTMLElement | null>(null);
+  const cut = useClamped(nameEl, name);
+  return (
+    <Tip content={name} disabled={!cut || tipOff}>
+      <button
+        ref={ref}
+        type="button"
+        className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-2 sm:px-3 rounded-sm hover:bg-surface-2 transition-colors text-sm text-text"
+        aria-label={`Namespace: ${name}${isCode ? ", code index" : ""}`}
+        {...rest}
+        // The tooltip only repeats the name the label already says.
+        aria-describedby={undefined}
+      >
+        {isCode ? (
+          <Icon name="code" size="sm" aria-hidden="true" />
+        ) : (
+          <span className="text-text-muted" aria-hidden="true">
+            ns
+          </span>
+        )}
+        <span ref={setNameEl} className="font-medium truncate">
+          {name}
+        </span>
+        {isCode && <Badge text="code" state="neutral" size="sm" aria-hidden="true" />}
+        <Icon name="chevron-down" size="xs" aria-hidden="true" />
+      </button>
+    </Tip>
+  );
+});
