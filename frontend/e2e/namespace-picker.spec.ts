@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
-import { CODE_NS, installApi, NAMESPACE } from "./fixtures";
+import { boxOf, CODE_NS, installApi, NAMESPACE } from "./fixtures";
 
 // The header namespace picker with memory namespaces, code indexes and tracker records:
 // the code and tracker groups fold, the open picker is axe-clean at desktop and phone
@@ -136,17 +136,29 @@ for (const width of [1400, 375]) {
   });
 }
 
-// A long name truncates in the header, with the whole name in its title, and leaves the
-// search its width: the picker is capped, the search keeps a floor.
-test("a long namespace truncates and leaves the header search its width", async ({ page }) => {
-  const long = `team-${"0123abcd-".repeat(8)}end`;
-  await installApi(page, { mine: [row(long, "memory", "admin")], claims: [long], savedNamespace: long });
-  await page.goto("/memories");
-  await expect(page.locator("main h1").first()).toBeVisible();
-  const name = page.getByRole("button", { name: `Namespace: ${long}` }).getByTitle(long);
-  await expect(name).toBeVisible();
-  expect(await name.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
-  const search = await page.locator("#header-search").boundingBox();
-  if (!search) throw new Error("search not drawn");
-  expect(search.width).toBeGreaterThanOrEqual(240);
-});
+// A long name truncates in the header, whole in a tooltip on hover. The picker and the
+// search share the row from the `md` breakpoint up: each keeps its floor (the search's is
+// wider from `lg`, where the account name joins the right cluster) and the page never
+// scrolls sideways.
+for (const [width, searchFloor] of [
+  [1400, 160],
+  [1024, 160],
+  [768, 72],
+]) {
+  test(`a long namespace truncates and leaves the header search its width at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const long = `team-${"0123abcd-".repeat(8)}end`;
+    await installApi(page, { mine: [row(long, "memory", "admin")], claims: [long], savedNamespace: long });
+    await page.goto("/memories");
+    await expect(page.locator("main h1").first()).toBeVisible();
+    const trigger = page.getByRole("button", { name: `Namespace: ${long}` });
+    const name = trigger.getByText(long);
+    await expect(name).toBeVisible();
+    expect(await name.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+    expect((await boxOf(trigger)).width).toBeGreaterThanOrEqual(96);
+    expect((await boxOf(page.locator("#header-search"))).width).toBeGreaterThanOrEqual(searchFloor);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await trigger.hover();
+    await expect(page.getByRole("tooltip")).toHaveText(long);
+  });
+}

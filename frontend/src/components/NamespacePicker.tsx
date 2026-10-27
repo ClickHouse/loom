@@ -8,6 +8,8 @@ import { useStore } from "../lib/state";
 import { WILDCARD_NAMESPACE } from "../lib/namespace";
 import { Loading } from "./ui";
 import { PopoverTrigger } from "./ui/Menu";
+import { useClamped } from "./ui/TextClamp";
+import { Tip } from "./ui/Tooltip";
 // The create dialog loads when first opened.
 const CreateNamespaceDialog = lazy(() =>
   import("../flows/CreateNamespaceDialog").then((m) => ({ default: m.CreateNamespaceDialog })),
@@ -32,16 +34,30 @@ export function NamespacePicker() {
   // default. Render the namespace as static context. The menu is its own component so
   // every hook in it runs unconditionally.
   if (isAuthDisabled()) {
-    return (
-      <div className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-3 text-sm text-text">
-        <span className="text-text-muted">ns</span>
-        <span className="font-medium truncate" title={identity?.namespace ?? "local"}>
-          {identity?.namespace ?? "local"}
-        </span>
-      </div>
-    );
+    return <StaticNamespace name={identity?.namespace ?? "local"} />;
   }
   return <NamespacePickerMenu />;
+}
+
+/** The one namespace, not a control. A cut name is focusable, whole in a tooltip. */
+function StaticNamespace({ name }: { name: string }) {
+  const [el, setEl] = useState<HTMLElement | null>(null);
+  const cut = useClamped(el, name);
+  return (
+    <div className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-3 text-sm text-text">
+      <span className="text-text-muted">ns</span>
+      <Tip content={name} disabled={!cut}>
+        <span
+          ref={setEl}
+          tabIndex={cut ? 0 : undefined}
+          role={cut ? "note" : undefined}
+          className="font-medium truncate rounded-sm"
+        >
+          {name}
+        </span>
+      </Tip>
+    </div>
+  );
 }
 
 function NamespacePickerMenu() {
@@ -55,6 +71,7 @@ function NamespacePickerMenu() {
   const [createOpen, setCreateOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const [nameEl, setNameEl] = useState<HTMLElement | null>(null);
 
   // The panel's code loads on idle after first paint, so the first open draws it at once.
   useEffect(() => {
@@ -79,6 +96,8 @@ function NamespacePickerMenu() {
   }, [pickerRequested, openNamespacePicker]);
 
   const current = identity?.namespace || "—";
+  // A cut name is whole in a tooltip on the trigger, so hover and keyboard focus both show it.
+  const cut = useClamped(nameEl, current);
   const isCode = stored?.find((r) => r.namespace === current)?.kind === "code";
   // `*` is an access wildcard, never a namespace to switch into.
   const allowed = (whoami?.namespaces || []).filter((ns) => ns !== WILDCARD_NAMESPACE);
@@ -93,8 +112,9 @@ function NamespacePickerMenu() {
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger>
-        <button
+      <Tip content={current} disabled={!cut || open}>
+        <PopoverTrigger>
+          <button
           ref={triggerRef}
           type="button"
           className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-2 sm:px-3 rounded-sm hover:bg-surface-2 transition-colors text-sm text-text"
@@ -107,13 +127,14 @@ function NamespacePickerMenu() {
               ns
             </span>
           )}
-          <span className="font-medium truncate" title={current}>
+          <span ref={setNameEl} className="font-medium truncate">
             {current}
           </span>
           {isCode && <Badge text="code" state="neutral" size="sm" aria-hidden="true" />}
           <Icon name="chevron-down" size="xs" aria-hidden="true" />
         </button>
-      </PopoverTrigger>
+        </PopoverTrigger>
+      </Tip>
       <Popover.Content
         align="start"
         aria-label="Namespaces"
