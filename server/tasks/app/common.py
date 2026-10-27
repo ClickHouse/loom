@@ -499,7 +499,7 @@ async def _release_lease(task: TaskRow, *, status: str) -> None:
         str(task["task_id"]),
         fence=int(task.get("fence") or 0),
         owner="",
-        lease_until=_naive(UNIX_EPOCH) or datetime(1970, 1, 1),
+        lease_until=_naive(UNIX_EPOCH),
         status=status,
     )
 
