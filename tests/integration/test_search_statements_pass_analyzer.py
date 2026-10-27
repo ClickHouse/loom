@@ -578,6 +578,7 @@ async def test_key_match_statements_pass_the_analyzer(ch_client) -> None:
         "run_id": "r",
         "stems": ["task", "worktre", "path"],
         "limit": 30,
+        "per_key": 30,
         "min_strength": 0.5,
         "qv": [0.0] * 8,
         "pool_keys": ["user_task_worktree", "user_task_status"],
