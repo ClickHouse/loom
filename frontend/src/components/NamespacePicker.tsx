@@ -33,9 +33,11 @@ export function NamespacePicker() {
   // every hook in it runs unconditionally.
   if (isAuthDisabled()) {
     return (
-      <div className="inline-flex items-center gap-1.5 h-8 px-3 text-sm text-text">
+      <div className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-3 text-sm text-text">
         <span className="text-text-muted">ns</span>
-        <span className="font-medium">{identity?.namespace ?? "local"}</span>
+        <span className="font-medium truncate" title={identity?.namespace ?? "local"}>
+          {identity?.namespace ?? "local"}
+        </span>
       </div>
     );
   }
@@ -105,7 +107,9 @@ function NamespacePickerMenu() {
               ns
             </span>
           )}
-          <span className="font-medium truncate">{current}</span>
+          <span className="font-medium truncate" title={current}>
+            {current}
+          </span>
           {isCode && <Badge text="code" state="neutral" size="sm" aria-hidden="true" />}
           <Icon name="chevron-down" size="xs" aria-hidden="true" />
         </button>

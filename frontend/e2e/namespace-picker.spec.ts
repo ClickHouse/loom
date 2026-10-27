@@ -135,3 +135,18 @@ for (const width of [1400, 375]) {
     expect(footer.width).toBeCloseTo(current.width, 0);
   });
 }
+
+// A long name truncates in the header, with the whole name in its title, and leaves the
+// search its width: the picker is capped, the search keeps a floor.
+test("a long namespace truncates and leaves the header search its width", async ({ page }) => {
+  const long = `team-${"0123abcd-".repeat(8)}end`;
+  await installApi(page, { mine: [row(long, "memory", "admin")], claims: [long], savedNamespace: long });
+  await page.goto("/memories");
+  await expect(page.locator("main h1").first()).toBeVisible();
+  const name = page.getByRole("button", { name: `Namespace: ${long}` }).getByTitle(long);
+  await expect(name).toBeVisible();
+  expect(await name.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  const search = await page.locator("#header-search").boundingBox();
+  if (!search) throw new Error("search not drawn");
+  expect(search.width).toBeGreaterThanOrEqual(240);
+});
