@@ -235,10 +235,13 @@ conflict verdict. Every entry gets the conflict check, whatever
   through `memory.set` or `memory.bulk_set`, a re-run does not reinforce a row its own key
   holds; a fact found under another key (a merge, or the same text there) is reinforced as
   on any write.
-- **What was deleted or retired stays so:** before the write, the import reads each key's
-  newest version in every session of the identity, a tombstone or a superseded row
-  included. A key its owner deleted comes back `skipped` (`deleted`), and one a newer fact
-  retired `skipped` (`superseded`); neither is written again.
+- **What was deleted, retired or rejected stays so:** before the write, the import reads
+  each key's newest version in every session of the identity, tombstones and rows of every
+  status included. A key its owner deleted comes back `skipped` (`deleted`), one a newer
+  fact retired `skipped` (`superseded`) and one marked wrong (`memory.reject`) `skipped`
+  (`rejected`); none is written again. A key holding a proposal comes back `skipped`
+  (`proposed`): only `memory.proposal_decide` moves a fact out of its trial. A status the
+  import does not recognise leaves the key as it is too, as `skipped` (`unknown`).
 - **Provenance:** every row is `source_class=imported`, `valid_at` is the source's time
   and `created_at` the import's. An entry with no `source_trace` is traced by its key.
 - **Categories:** a `category` the namespace registered (`namespace.register_category`) is
@@ -256,12 +259,12 @@ conflict verdict. Every entry gets the conflict check, whatever
 Each result carries the entry's `index`, its `key`, an `outcome` and, when the entry was
 not plainly written, a `reason`:
 
-| `outcome`    | `reason`                                                                                                                                                                                                            |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `written`    | Empty, or the status the row was stored with: `duplicate` or `conflicted`.                                                                                                                                          |
-| `reinforced` | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key); that memory was reinforced.                                                                               |
-| `skipped`    | `unchanged` (the key holds the fact already), `deleted` or `superseded` (the key's newest version is a tombstone or a retired row), or `repeated` (an earlier entry of the request with the same text was written). |
-| `refused`    | `blacklist`, `pinned` (the key holds another pinned value), `locked` (the key is `read_only`) or `conflict` (too close to a pinned memory).                                                                         |
+| `outcome`    | `reason`                                                                                                                                                                                                                                                                                                                                                |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `written`    | Empty, or the status the row was stored with: `duplicate` or `conflicted`.                                                                                                                                                                                                                                                                              |
+| `reinforced` | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key); that memory was reinforced.                                                                                                                                                                                                                   |
+| `skipped`    | `unchanged` (the key holds the fact already, in this session or another), `deleted`, `superseded`, `rejected` or `proposed` (the key's newest version), `repeated` (an earlier entry of the request with the same text was written) or `unknown` (logged: a state the import does not recognise, or a result it cannot explain; no category is linked). |
+| `refused`    | `blacklist`, `pinned` (the key holds another pinned value), `locked` (the key is `read_only`) or `conflict` (too close to a pinned memory).                                                                                                                                                                                                             |
 
 An entry with the same text as an earlier one answers as that entry did, except after a
 write, when it is `skipped` (`repeated`).

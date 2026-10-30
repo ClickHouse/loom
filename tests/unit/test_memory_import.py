@@ -18,6 +18,7 @@ from typing import Any
 import pydantic
 import pytest
 
+import server.memory.store as memory_repo
 from server.cli.import_recall import _recall_memory_key
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value
@@ -408,13 +409,91 @@ def test_every_verdict_a_bulk_write_refuses_names_its_check() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_result_no_outcome_matches_is_raised_not_reported_as_held(
-    harness, monkeypatch
+@pytest.mark.parametrize("session", ["s", "earlier"])
+async def test_a_rejected_key_is_left_rejected_in_every_session(harness, session: str) -> None:
+    """memory.reject flips the status in place, with no tombstone: the live-row lookup
+    still sees the row, and identity dedup does not. The key stays rejected, whichever
+    session imports it, and nothing is written or linked."""
+    value = "Dog is Biscuit."
+    rejected = _row(
+        memory_key=import_key(value),
+        session_id=session,
+        content_sha256=sha256_value(value),
+        status="rejected",
+    )
+    ch = _StoreCH([rejected], registry={"pets": "cat-1"})
+    rec = harness(ch)
+    out = await handle_memory_import(
+        _input({"value": value, "category": "pets"}, {"value": "Cat is Miso."})
+    )
+    assert _outcomes(out) == [("skipped", "rejected"), ("written", "")]
+    assert [r["memory_key"] for r in ch.rows_for("loom.memory")] == [import_key("Cat is Miso.")]
+    assert ch.rows_for("loom.memory_categories") == [] and rec.events == []
+
+
+@pytest.mark.asyncio
+async def test_a_proposed_key_is_left_on_trial(harness) -> None:
+    """A proposal moves only through memory.proposal_decide: importing its text does not
+    write a new row or promote it."""
+    value = "Deploys happen on Tuesday."
+    proposal = _row(
+        memory_key=import_key(value), content_sha256=sha256_value(value), status="proposed"
+    )
+    ch = _StoreCH([proposal])
+    harness(ch)
+    out = await handle_memory_import(_input({"value": value}))
+    assert _outcomes(out) == [("skipped", "proposed")]
+    assert ch.rows_for("loom.memory") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session", ["s", "earlier"])
+async def test_a_concurrent_import_landing_after_the_read_is_unchanged(
+    harness, monkeypatch, session: str
 ) -> None:
-    """A version-0 result with no verdict, under a key that holds nothing and no other
-    key's copy, is no outcome the import knows: it raises rather than answer `unchanged`
-    (and link a category to a key that holds nothing)."""
-    harness(_StoreCH(registry={"pets": "cat-1"}))
+    """Another import of the same text lands between this import's read of the key and
+    the bulk write's lookup: the skip gate (same session) or identity dedup (another
+    session) finds the row, and the entry is skipped as unchanged, not crashed on."""
+    value = "Dog is Biscuit."
+    ch = _StoreCH()
+    rec = harness(ch)
+    read = memory_repo.key_heads_across_sessions
+
+    async def _read_then_race(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        heads = await read(*args, **kwargs)
+        ch.rows.append(
+            _row(
+                memory_key=import_key(value), session_id=session, content_sha256=sha256_value(value)
+            )
+        )
+        return heads
+
+    monkeypatch.setattr(memory_repo, "key_heads_across_sessions", _read_then_race)
+    out = await handle_memory_import(_input({"value": value}))
+    assert _outcomes(out) == [("skipped", "unchanged")]
+    assert ch.rows_for("loom.memory") == [] and rec.events == []
+
+
+@pytest.mark.asyncio
+async def test_a_key_in_a_state_the_import_does_not_know_is_left_as_it_is(harness, caplog) -> None:
+    value = "Dog is Biscuit."
+    odd = _row(memory_key=import_key(value), content_sha256=sha256_value(value), status="archived")
+    ch = _StoreCH([odd])
+    harness(ch)
+    out = await handle_memory_import(_input({"value": value}))
+    assert _outcomes(out) == [("skipped", "unknown")]
+    assert ch.rows_for("loom.memory") == [] and "no state it knows" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_bulk_result_no_outcome_matches_is_logged_never_raised(
+    harness, monkeypatch, caplog
+) -> None:
+    """No real path reaches this today: a version-0 result with no verdict that neither the
+    skip gate nor identity dedup explains. The write has committed by then, so the entry
+    is answered skipped/unknown and logged, and its category is not linked."""
+    ch = _StoreCH(registry={"pets": "cat-1"})
+    harness(ch)
     value = "Dog is Biscuit."
 
     async def _bulk(_input: Any, **_: Any) -> MemoryBulkSetOutput:
@@ -423,8 +502,10 @@ async def test_a_result_no_outcome_matches_is_raised_not_reported_as_held(
         )
 
     monkeypatch.setattr(_import_mod, "handle_memory_bulk_set", _bulk)
-    with pytest.raises(RuntimeError, match="matches no outcome"):
-        await handle_memory_import(_input({"value": value, "category": "pets"}))
+    out = await handle_memory_import(_input({"value": value, "category": "pets"}))
+    assert _outcomes(out) == [("skipped", "unknown")]
+    assert "matches no outcome" in caplog.text
+    assert ch.rows_for("loom.memory_categories") == []
 
 
 # ---- the inherited checks, per entry ---------------------------------------
@@ -539,6 +620,8 @@ async def test_a_dry_run_answers_every_outcome_the_real_run_does(harness) -> Non
         "held": "Lunch is at noon.",
         "deleted": "Standup is at nine.",
         "retired": "Retro is on Friday.",
+        "rejected": "Lunch moved to one.",
+        "proposed": "Demos are on Thursday.",
     }
     deleted = _row(
         memory_key=import_key(texts["deleted"]),
@@ -562,6 +645,17 @@ async def test_a_dry_run_answers_every_outcome_the_real_run_does(harness) -> Non
                 session_id="earlier",
                 content_sha256=sha256_value(texts["retired"]),
                 status="superseded",
+            ),
+            _row(
+                memory_key=import_key(texts["rejected"]),
+                content_sha256=sha256_value(texts["rejected"]),
+                status="rejected",
+            ),
+            _row(
+                memory_key=import_key(texts["proposed"]),
+                session_id="earlier",
+                content_sha256=sha256_value(texts["proposed"]),
+                status="proposed",
             ),
         ]
     )
@@ -589,6 +683,8 @@ async def test_a_dry_run_answers_every_outcome_the_real_run_does(harness) -> Non
         ("skipped", "unchanged"),
         ("skipped", "deleted"),
         ("skipped", "superseded"),
+        ("skipped", "rejected"),
+        ("skipped", "proposed"),
         ("skipped", "repeated"),
         ("refused", "blacklist"),
     ]

@@ -6,21 +6,22 @@ Each entry becomes a memory.bulk_set entry under the key its text derives
 so an import makes every check a bulk write makes: the identity's content-hash dedup,
 the skip gate, the lock and pin guards, the blacklist, the sensitivity rule, inline
 embedding and the conflict verdicts; and it leaves the bulk write's hash-only audit
-row. A key whose newest version, in any session of the identity, is a tombstone or a
-superseded row is left as it is: a re-run never brings back what its owner deleted or a
-newer fact retired. A dry run makes the same checks and writes no row, link, audit row or
-usage event (the embeddings are paid for and a blacklist hit is counted). A category the
-namespace has registered is linked to the entry's key as memory.assign_category links
-one (`server.memory.store.categories`).
+row. A key whose newest version, in any session the caller's token may read, is a
+tombstone or a superseded, rejected or proposed row is left as it is: a re-run never
+brings back what its owner deleted, a newer fact retired or someone marked wrong, nor
+decides a proposal on trial. A dry run makes the same checks and writes no row, link,
+audit row or usage event (the embeddings are paid for and a blacklist hit is counted). A
+category the namespace has registered is linked to the entry's key as
+memory.assign_category links one (`server.memory.store.categories`).
 """
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 
 import server.memory.store as memory_repo
 from server.core.datetimes import to_naive_utc
-from server.core.hashing import sha256_value
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_bulk import (
     BLACKLISTED,
@@ -46,6 +47,7 @@ from server.memory.domain.memory_import import (
     CATEGORY_REFUSED,
     CATEGORY_UNREGISTERED,
     UNCHANGED,
+    UNKNOWN,
     KeyState,
     Outcome,
     holds_item,
@@ -55,6 +57,8 @@ from server.memory.domain.memory_import import (
 )
 from server.memory.store import categories
 from server.observability import audit
+
+log = logging.getLogger(__name__)
 
 # The check behind each verdict of `models_bulk.REFUSED`, the entries a bulk write refuses.
 _CHECK_OF: dict[str, str] = {
@@ -69,9 +73,9 @@ _STORED_AS: dict[str, str] = {"duplicate": "duplicate", "conflict": "conflicted"
 
 async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
     """Write the first entry of each text through memory.bulk_set (a later one shares
-    its key), unless its key is deleted or superseded, then link the registered
-    categories of the entries whose key holds the item. Answers each entry's outcome and
-    the totals."""
+    its key), unless its key's newest version leaves it as it is, then link the
+    registered categories of the entries whose key holds the item. Answers each entry's
+    outcome and the totals."""
     keys = [import_key(entry.value) for entry in input.entries]
     first: dict[str, int] = {}
     for i, key in enumerate(keys):
@@ -120,18 +124,22 @@ async def _write(
     first: dict[str, int],
     states: dict[str, KeyState],
 ) -> dict[str, tuple[Outcome, str]]:
-    """Key → the outcome of the first entry of its text. A key whose newest version is a
-    tombstone or superseded is skipped; the rest go through memory.bulk_set."""
+    """Key → the outcome of the first entry of its text. A key whose newest version leaves
+    it as it is (a tombstone, a superseded, rejected or proposed row, or a state the import
+    does not recognise) is skipped with that reason; the rest go through memory.bulk_set."""
     outcomes: dict[str, tuple[Outcome, str]] = {}
     pending: list[int] = []
     for key, i in first.items():
-        retired = states.get(key, KeyState()).retired
-        if retired:
-            outcomes[key] = ("skipped", retired)
+        reason = states.get(key, KeyState()).skip_reason
+        if reason == UNKNOWN:
+            log.warning("memory.import: %r's newest version is in no state it knows; left", key)
+        if reason:
+            outcomes[key] = ("skipped", reason)
         else:
             pending.append(i)
     if not pending:
         return outcomes
+    unchanged: list[str] = []
     written = await handle_memory_bulk_set(
         _bulk_input(input, [(input.entries[i], keys[i]) for i in pending]),
         dry_run=input.dry_run,
@@ -139,44 +147,42 @@ async def _write(
         conflict_check_cap=MAX_IMPORT_ENTRIES,
         # A re-run reinforces nothing its own keys already hold.
         reinforce_own_key=False,
+        unchanged_into=unchanged,
     )
     for i, result in zip(pending, written.written, strict=True):
         key = keys[i]
         outcomes[key] = _entry_outcome(
             key,
-            sha256_value(input.entries[i].value),
             result,
+            unchanged=key in unchanged,
             held_by=written.identity_duplicates.get(key),
-            state=states.get(key, KeyState()),
         )
     return outcomes
 
 
 def _entry_outcome(
-    key: str,
-    entry_sha: str,
-    result: _BulkSetResult,
-    *,
-    held_by: str | None,
-    state: KeyState,
+    key: str, result: _BulkSetResult, *, unchanged: bool, held_by: str | None
 ) -> tuple[Outcome, str]:
     """The outcome and reason of an entry the bulk write answered: written (with the
     status its row was stored with when that is not `active`), refused by the check
     named, reinforced (a merge, or the same text under another key), or skipped as
-    unchanged when its key holds its text in a live row of any session. Raises on any
-    other result, so nothing unexpected is reported as an item already held."""
+    unchanged when the skip gate found this session's row under the key holding the text,
+    or identity dedup found the key itself holding it in another session. Any other result
+    is logged and answered skipped/unknown, linking no category: the write has committed by
+    then, so one odd row never fails the batch."""
     verdict = result.conflict_verdict
     if result.version:
         return "written", _STORED_AS.get(verdict, "")
     if verdict in REFUSED:
-        return "refused", _CHECK_OF[verdict]
+        return "refused", _CHECK_OF.get(verdict, verdict)
     if verdict == "merge":
         return "reinforced", "merge"
-    if entry_sha in state.held:
+    if unchanged or held_by == key:
         return "skipped", UNCHANGED
-    if held_by is not None and held_by != key:
+    if held_by is not None:
         return "reinforced", "identity_duplicate"
-    raise RuntimeError(f"memory.import: the bulk write's result for {key!r} matches no outcome")
+    log.warning("memory.import: the bulk write's result for %r matches no outcome: %r", key, result)
+    return "skipped", UNKNOWN
 
 
 def _bulk_input(

@@ -88,11 +88,12 @@ class _ImportEntryResult(BaseModel):
     # Why, when the outcome is not a plain write. refused: blacklist | pinned (the key
     # holds another pinned value) | locked (the key is read_only) | conflict (too close to
     # a pinned memory). reinforced: merge (the same fact after canonicalisation) |
-    # identity_duplicate (the same text under another key). skipped: unchanged (a
-    # re-run) | deleted | superseded (the key's newest version is a tombstone or a retired
-    # row) | repeated (an earlier entry with the same text was written; a repeat of any
-    # other entry answers as that entry did). written: duplicate or conflicted, the status
-    # the row was stored with.
+    # identity_duplicate (the same text under another key). skipped: unchanged (the key
+    # holds the text already, in this session or another) | deleted | superseded |
+    # rejected | proposed (the key's newest version: left as it is) | repeated (an earlier
+    # entry with the same text was written; a repeat of any other entry answers as that
+    # entry did) | unknown (logged: a state or a result the import does not recognise).
+    # written: duplicate or conflicted, the status the row was stored with.
     reason: str = ""
     # Why the entry's category was not linked: `category_unregistered` (the namespace has
     # not registered it) or `category_refused` (the token is bounded to one user, and a

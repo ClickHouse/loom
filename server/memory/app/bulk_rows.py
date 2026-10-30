@@ -87,6 +87,9 @@ class _BulkWriteState:
     # re-run reinforces nothing it already holds; a merge or the same bytes under another
     # key still reinforce that row.
     reinforce_own_key: bool = True
+    # The keys the skip gate found unchanged: a live row of this session under the key
+    # already holds the entry's bytes and labels. memory.import passes its own list in.
+    unchanged_keys: list[str] = field(default_factory=list)
     existing_ids: dict[str, str] = field(default_factory=dict)
     # Ids minted for keys with no row yet: a key written twice in one batch is one row.
     new_ids: dict[str, str] = field(default_factory=dict)
@@ -281,6 +284,7 @@ def _bulk_skip_gate(
         return True
     if batch_row is None and restated and _same_labels_as_stored(state, entry):
         state.skipped_unchanged += 1
+        state.unchanged_keys.append(entry.memory_key)
         _note_restatement(state, state.existing_ids.get(entry.memory_key, ""))
         state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
         return True
