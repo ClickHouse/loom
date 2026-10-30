@@ -589,24 +589,13 @@ async def handle_memory_link(input: MemoryLinkInput) -> MemoryLinkOutput:
 async def handle_memory_assign_category(
     input: MemoryAssignCategoryInput,
 ) -> MemoryAssignCategoryOutput:
+    """Link the key to the named category, or rescind the link; a name the namespace
+    has not registered is a 404."""
+    from server.memory.store import categories
 
-    from server.core.ch import get_client
-
-    ch = get_client()
-    row = await ch.query_one(
-        """
-        SELECT category_id FROM loom.categories FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND name = {name:String} AND tombstoned_at IS NULL
-        LIMIT 1
-        """,
-        params={
-            "org": input.org,
-            "ns": input.namespace,
-            "name": input.category_name,
-        },
-    )
-    if not row:
+    ids = await categories.registered_ids(input.org, input.namespace, [input.category_name])
+    cat_id = ids.get(input.category_name)
+    if cat_id is None:
         from fastapi import HTTPException
 
         raise HTTPException(
@@ -620,20 +609,8 @@ async def handle_memory_assign_category(
                 ),
             },
         )
-    cat_id = row["category_id"]
-    now = naive_utc_now()
-    await ch.insert(
-        "loom.memory_categories",
-        [
-            {
-                "org": input.org,
-                "namespace": input.namespace,
-                "memory_key": input.memory_key,
-                "category_id": cat_id,
-                "created_at": now,
-                "tombstoned_at": now if input.tombstone else None,
-            }
-        ],
+    await categories.link(
+        input.org, input.namespace, [(input.memory_key, cat_id)], tombstone=input.tombstone
     )
     return MemoryAssignCategoryOutput(
         assigned=not input.tombstone,
