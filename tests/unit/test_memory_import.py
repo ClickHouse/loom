@@ -1,10 +1,11 @@
 """memory.import: items another memory system distilled, written through the bulk
 write path under keys their text derives.
 
-The key is a digest of the text, so a re-run writes nothing new; every check the
-bulk write makes answers per entry; a dry run makes the checks and writes nothing; a
-registered category is linked through the statements memory.assign_category uses, and
-an unregistered one is noted, not refused.
+The key is a digest of the text, so a re-run writes nothing new and the item is embedded
+and lexically indexed by its value alone; every check the bulk write makes answers per
+entry; a dry run makes the checks and writes nothing; a registered category is linked
+through the statements memory.assign_category uses, and an unregistered one is noted,
+not refused.
 """
 
 from __future__ import annotations
@@ -34,7 +35,9 @@ from server.memory.app import bulk_set as _bulk_set_mod
 from server.memory.app import memory_import as _import_mod
 from server.memory.app.memory_import import handle_memory_import
 from server.memory.domain.conflicts import ConflictResult
-from server.memory.domain.memory_import import import_key
+from server.memory.domain.embed_text import embedding_texts
+from server.memory.domain.excerpt import EXCERPT_LIMIT, build_excerpt
+from server.memory.domain.memory_import import import_key, is_digest_key
 from server.operations.base import Role
 from tests.unit.bulk_stubs import BatchEmbedder, StubCH, no_delete_in_flight, wire_stubs
 from tests.unit.memory_rows import projection_row
@@ -221,6 +224,105 @@ def test_the_key_hashes_the_text_as_the_recall_importer_does(value: str) -> None
     digest = import_key(value).removeprefix("import:")
     assert _recall_memory_key("memories", None, value) == f"recall_memories_{digest}"
     assert import_key(value) != import_key(value + " ")
+
+
+# ---- the embedded text -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "key",
+    [import_key("Prefers dark roast."), "import:" + "0" * 24, "import:0123456789abcdef01234567"],
+)
+def test_a_key_of_the_derived_shape_is_a_digest_key(key: str) -> None:
+    assert is_digest_key(key)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "import:" + "0" * 23,
+        "import:" + "0" * 25,
+        "import:" + "A" * 24,  # import_key derives lower case only
+        "import:" + "g" * 24,
+        "Import:" + "0" * 24,
+        "imported:" + "0" * 24,
+        "recall_memories_" + "0" * 24,
+        " import:" + "0" * 24,
+        "import:" + "0" * 24 + "\n",
+        "import:" + "0" * 24 + "_notes",
+        "import:dark_roast",
+        "import:",
+        "",
+    ],
+)
+def test_any_other_key_is_not_a_digest_key(key: str) -> None:
+    assert not is_digest_key(key)
+
+
+def test_a_digest_key_adds_nothing_to_the_text_and_a_readable_key_keeps_its_suffix() -> None:
+    value = json.dumps("Prefers dark roast coffee.")
+    digest = import_key("Prefers dark roast coffee.")
+    assert embedding_texts("semantic", value, value, digest) == (value, value, "")
+    framed = f"{value} (#coffee_order)"
+    assert embedding_texts("semantic", value, value, "coffee_order") == (
+        framed,
+        framed,
+        "coffee order",
+    )
+    # A key that only resembles a digest keeps its words.
+    near = "import:" + "0" * 23
+    assert build_excerpt(value, memory_key=near) == f"{value} (#{near})"
+    # With no suffix to make room for, a long value keeps the whole clip.
+    long = "x" * (EXCERPT_LIMIT + 50)
+    assert build_excerpt(long, memory_key=digest) == "x" * EXCERPT_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_an_imported_item_is_embedded_and_indexed_by_its_value_alone(harness) -> None:
+    """The key is a digest with no words in it: the text embedded and lexically indexed
+    is the value as stored, with no `(#key)` suffix, and no key-axis vector is built."""
+    ch = _StoreCH()
+    rec = harness(ch)
+    await handle_memory_import(_input({"value": "Prefers dark roast coffee."}))
+    (row,) = ch.rows_for("loom.memory")
+    assert row["value"] == json.dumps("Prefers dark roast coffee.")
+    assert {text for batch in rec.embedder.batches for text in batch} == {row["value"]}
+    (embedding,) = rec.embedded
+    assert embedding["content_excerpt"] == row["value"]
+    assert embedding["memory_key_embedding_dim"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_readable_key_still_frames_its_value(harness) -> None:
+    ch = _StoreCH()
+    rec = harness(ch)
+    bulk = MemoryBulkSetInput(
+        **_IDENT, entries=[_BulkSetEntry(memory_key="coffee_order", value="Dark roast.")]
+    )
+    await _bulk_set_mod.handle_memory_bulk_set(bulk)
+    framed = json.dumps("Dark roast.") + " (#coffee_order)"
+    assert {text for batch in rec.embedder.batches for text in batch} == {framed, "coffee order"}
+    (embedding,) = rec.embedded
+    assert embedding["content_excerpt"] == framed
+    assert embedding["memory_key_embedding_dim"] == rec.embedder.dim
+
+
+@pytest.mark.asyncio
+async def test_a_restatement_of_an_imported_key_is_embedded_as_the_import_was(harness) -> None:
+    """memory.set (whose texts `embedding_texts` builds) and memory.bulk_set write a digest
+    key's item under the text the import wrote, so the two vectors stay comparable."""
+    value = "Prefers dark roast coffee."
+    stored = json.dumps(value)
+    assert embedding_texts("semantic", value, stored, import_key(value)) == (stored, stored, "")
+    ch = _StoreCH()
+    rec = harness(ch)
+    bulk = MemoryBulkSetInput(
+        **_IDENT, entries=[_BulkSetEntry(memory_key=import_key(value), value=value)]
+    )
+    await _bulk_set_mod.handle_memory_bulk_set(bulk)
+    assert {text for batch in rec.embedder.batches for text in batch} == {stored}
+    (embedding,) = rec.embedded
+    assert (embedding["content_excerpt"], embedding["memory_key_embedding_dim"]) == (stored, 0)
 
 
 # ---- writes ----------------------------------------------------------------

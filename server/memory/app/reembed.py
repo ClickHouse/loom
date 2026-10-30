@@ -103,7 +103,9 @@ def rewrite_row(
 ) -> dict[str, Any]:
     """Pure: return a copy of `row` re-pointed at the new model/dim/vector,
     preserving every other column. `version` handling per the table engine.
-    `vec=None` keeps the row's own value vector (key-only re-embed)."""
+    `vec=None` keeps the row's own value vector (key-only re-embed); an empty
+    `key_vec` (a key without axis text) leaves the row without a key vector, at
+    key dim 0 as a write leaves it."""
     out = dict(row)
     if vec is not None:
         out[cfg["vec"]] = vec
@@ -111,7 +113,7 @@ def rewrite_row(
     out["embedding_dim"] = dim
     if cfg.get("key_vec") and key_vec is not None:
         out[cfg["key_vec"]] = key_vec
-        out[cfg["key_dim"]] = dim
+        out[cfg["key_dim"]] = dim if key_vec else 0
     if cfg["version"] == "version":
         # One above the row it was read from: it replaces that row (the
         # key-only rewrite shares its sort key) and loses to any version a
@@ -357,9 +359,14 @@ async def _rewrite_page(
                     for i, v in zip(positions, await embedder.embed_many(texts), strict=True):
                         vecs[i] = v
                 if kvecs is not None:
-                    keys = [_key_input(chunk[i]) for i in positions]
-                    for i, v in zip(positions, await embedder.embed_many(keys), strict=True):
-                        kvecs[i] = v
+                    # A key without axis text (an imported item's digest) is never sent: its
+                    # row is written without a key vector, as every write path leaves it.
+                    key_texts = {i: _key_input(chunk[i]) for i in positions}
+                    keyed = [i for i in positions if key_texts[i]]
+                    if keyed:
+                        vectors = await embedder.embed_many([key_texts[i] for i in keyed])
+                        for i, v in zip(keyed, vectors, strict=True):
+                            kvecs[i] = v
         except customer.GROUP_HOLDS:
             # Switched off since the run began, or the identity refused, asked to wait
             # or unread: its rows wait, and the other groups' vectors are written.

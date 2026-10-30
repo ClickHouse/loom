@@ -1,17 +1,28 @@
-"""The key-axis text: one builder for every write path and the re-embed, a
-key-only re-embed that leaves value vectors alone, and the bench's instance
-scoring."""
+"""The key-axis text: one builder for every write path and the re-embed, none
+for an imported item's digest key (which the re-embed never sends), a key-only
+re-embed that leaves value vectors alone, and the bench's instance scoring."""
 
 from __future__ import annotations
+
+from typing import Any
+
+import pytest
 
 from bench.k_curve import QuestionAtK, gold_instances, instance_in, score, summarise
 from server.memory.app.reembed import _TABLES, _key_input, rewrite_row, where_sql
 from server.memory.domain.embed_text import key_axis_text
+from server.memory.domain.memory_import import import_key
 
 
 def test_key_axis_text_is_the_humanized_key() -> None:
     assert key_axis_text("melanie_me_time_activities") == "melanie me time activities"
     assert key_axis_text("") == ""
+
+
+def test_a_digest_key_has_no_key_axis_text() -> None:
+    digest = import_key("Prefers dark roast.")
+    assert key_axis_text(digest) == "" and _key_input({"memory_key": digest}) == ""
+    assert key_axis_text("import:dark_roast") == "import:dark roast"
 
 
 def test_reembed_key_input_uses_the_same_builder() -> None:
@@ -51,6 +62,77 @@ def test_key_only_rewrite_keeps_the_value_vector() -> None:
     assert out["embedding"] == [1.0, 2.0]
     assert out["memory_key_embedding"] == [0.5, 0.5] and out["memory_key_embedding_dim"] == 2
     assert out["version"] > 1
+
+
+def test_a_rewrite_without_a_key_vector_leaves_the_key_dim_at_zero() -> None:
+    cfg = _TABLES["memory_embeddings"]
+    row = {
+        "memory_key": import_key("Prefers dark roast."),
+        "embedding": [1.0, 2.0],
+        "memory_key_embedding": [0.5, 0.5],
+        "memory_key_embedding_dim": 2,
+        "embedding_model": "m",
+        "embedding_dim": 2,
+        "version": 1,
+    }
+    out = rewrite_row(row, cfg, "m2", 2, [3.0, 4.0], [])
+    assert out["memory_key_embedding"] == [] and out["memory_key_embedding_dim"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_reembed_never_sends_a_digest_key_to_the_embedder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.llm import customer
+    from server.memory.app import reembed
+
+    class _Emb:
+        model_name, dim = "m2", 2
+
+        def __init__(self) -> None:
+            self.batches: list[list[str]] = []
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            self.batches.append(list(texts))
+            return [[0.1, 0.2] for _ in texts]
+
+    class _CH:
+        rows: list[dict[str, Any]] = []
+
+        async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+            self.rows = rows
+
+    async def _no_writers(_rows: Any) -> dict[tuple[str, ...], str]:
+        return {}
+
+    async def _one_group(rows: Any) -> dict[Any, list[int]]:
+        return {customer.Attribution(): list(range(len(list(rows))))}
+
+    monkeypatch.setattr(reembed, "memory_writers", _no_writers)
+    monkeypatch.setattr(customer, "groups", _one_group)
+    digest = import_key("Prefers dark roast.")
+    stored = {
+        "org": "o",
+        "namespace": "n",
+        "embedding_model": "m1",
+        "embedding_dim": 2,
+        "memory_key_embedding": [0.0, 0.0],
+        "memory_key_embedding_dim": 0,
+        "version": 1,
+    }
+    chunk = [
+        {**stored, "memory_key": digest, "content_excerpt": '"Prefers dark roast."'},
+        {**stored, "memory_key": "coffee_order", "content_excerpt": '"Dark." (#coffee_order)'},
+    ]
+    emb, ch = _Emb(), _CH()
+    await reembed._rewrite_page(ch, emb, "memory_embeddings", chunk, key_only=False)
+    assert emb.batches == [['"Prefers dark roast."', '"Dark." (#coffee_order)'], ["coffee order"]]
+    dims = {r["memory_key"]: r["memory_key_embedding_dim"] for r in ch.rows}
+    assert dims == {digest: 0, "coffee_order": 2}
+    # A key-only pass over digest keys alone calls the embedder not at all.
+    emb = _Emb()
+    await reembed._rewrite_page(ch, emb, "memory_embeddings", chunk[:1], key_only=True)
+    assert emb.batches == [] and [r["memory_key_embedding_dim"] for r in ch.rows] == [0]
 
 
 def test_gold_instances_split_set_answers_and_drop_counts() -> None:

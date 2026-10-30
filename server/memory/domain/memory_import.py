@@ -9,6 +9,7 @@ often it is imported, and a re-run of an import writes nothing new.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final, Literal
@@ -20,6 +21,8 @@ IMPORT_KEY_PREFIX: Final = "import:"
 # The hex characters of the text's SHA-256 a key keeps (96 bits), as the recall
 # importer's content-hash keys keep.
 IMPORT_KEY_HEX: Final = 24
+# A key `import_key` derives, exactly: the prefix and that many lowercase hex characters.
+_DIGEST_KEY: Final = re.compile(f"{re.escape(IMPORT_KEY_PREFIX)}[0-9a-f]{{{IMPORT_KEY_HEX}}}")
 
 Outcome = Literal["written", "reinforced", "skipped", "refused"]
 
@@ -52,6 +55,15 @@ def import_key(value: str) -> str:
     hex characters of the SHA-256 of the text as UTF-8, taken as given (the recall
     importer hashes content the same way)."""
     return IMPORT_KEY_PREFIX + sha256_text(value)[:IMPORT_KEY_HEX]
+
+
+def is_digest_key(memory_key: str) -> bool:
+    """Whether `memory_key` has exactly the shape `import_key` derives: `import:` and 24
+    lowercase hex characters, nothing before or after. Such a key is a digest, not words
+    about the item, so the text a row is embedded and lexically indexed by leaves it out
+    (`build_excerpt`, `key_axis_text`) whichever write stores the row; a key of any other
+    shape keeps its words there."""
+    return _DIGEST_KEY.fullmatch(memory_key) is not None
 
 
 @dataclass(frozen=True)

@@ -411,7 +411,10 @@ superseded, rejected or proposed, as it is. An entry is `unchanged` when the ski
 so (`unchanged_into`) or identity dedup finds the key itself in another session; any other
 result after the write is logged and answered `unknown`, never raised. Each item's key is
 `import:` and 24 hex characters of the SHA-256 of its text (`import_key` in
-`memory/domain/memory_import.py`), and each entry declares `source_class=imported`. It
+`memory/domain/memory_import.py`), and each entry declares `source_class=imported`. A key
+of exactly that shape (`is_digest_key`) gets no `(#key)` suffix from `build_excerpt` and no
+text from `key_axis_text`, whichever write stores it, so the row is embedded and lexically
+indexed by its value alone. It
 passes its own `conflict_check_cap`, so the conflict check reaches every entry whatever
 `bulk_conflict_check_max_entries` says, and `reinforce_own_key=False`, so a re-run records no
 `evidence` event for a row under the entry's own key (a merge or the same bytes under

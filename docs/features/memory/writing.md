@@ -235,6 +235,12 @@ conflict verdict. Every entry gets the conflict check, whatever
   through `memory.set` or `memory.bulk_set`, a re-run does not reinforce a row its own key
   holds; a fact found under another key (a merge, or the same text there) is reinforced as
   on any write.
+- **The text is embedded and indexed alone:** a key that is only the digest (`import:` and
+  24 lowercase hex characters, nothing else) puts no `(#key)` suffix on the excerpt a row
+  is embedded and lexically indexed by, and builds no key-axis vector, so an imported fact
+  relates to other memories through its text, as a hand-written one does. A later
+  `memory.set` or `memory.bulk_set` of the same key follows the same rule, so its vector
+  stays comparable with the imported one; a key of any other shape keeps its suffix.
 - **What was deleted, retired or rejected stays so:** before the write, the import reads
   each key's newest version in every session of the identity that the token may read (only
   its own session for an `own_session` token), tombstones and rows of every status
