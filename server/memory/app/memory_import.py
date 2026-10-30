@@ -42,6 +42,7 @@ from server.memory.api.models_import import (
 from server.memory.app.bulk_set import handle_memory_bulk_set
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.memory_import import (
+    CATEGORY_REFUSED,
     CATEGORY_UNREGISTERED,
     UNCHANGED,
     KeyState,
@@ -74,30 +75,42 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
     first: dict[str, int] = {}
     for i, key in enumerate(keys):
         first.setdefault(key, i)
+    scope = request_scope()
+    # A token bounded to one user links no category: a link has no user axis, so it would
+    # reach every user's row under the key (memory.assign_category is refused such a token).
+    linkable = not scope.narrowed
+    named = [entry.category for entry in input.entries if entry.category] if linkable else []
     # Read before anything is written, so a failed read leaves nothing half done.
-    category_ids = await categories.registered_ids(
-        input.org, input.namespace, [entry.category for entry in input.entries if entry.category]
-    )
+    category_ids = await categories.registered_ids(input.org, input.namespace, named)
     heads = await memory_repo.key_heads_across_sessions(
-        input.org, input.namespace, input.agent, input.user_id, list(first), scope=request_scope()
+        input.org, input.namespace, input.agent, input.user_id, list(first), scope=scope
     )
     outcomes = await _write(input, keys, first, key_states(heads))
     results: list[_ImportEntryResult] = []
     for i, (entry, key) in enumerate(zip(input.entries, keys, strict=True)):
         outcome, reason = outcomes[key] if first[key] == i else repeat_outcome(outcomes[key])
-        unregistered = bool(entry.category) and entry.category not in category_ids
         results.append(
             _ImportEntryResult(
                 index=i,
                 key=key,
                 outcome=outcome,
                 reason=reason,
-                note=CATEGORY_UNREGISTERED if unregistered else "",
+                note=_category_note(entry.category, category_ids, linkable=linkable),
             )
         )
-    if not input.dry_run:
+    if linkable and not input.dry_run:
         await _link_categories(input, results, category_ids)
     return _output(input, results)
+
+
+def _category_note(category: str, registered: dict[str, str], *, linkable: bool) -> str:
+    """The note on an entry's category: refused under a token bounded to one user,
+    unregistered when the namespace holds no such category, else none."""
+    if not category:
+        return ""
+    if not linkable:
+        return CATEGORY_REFUSED
+    return "" if category in registered else CATEGORY_UNREGISTERED
 
 
 async def _write(

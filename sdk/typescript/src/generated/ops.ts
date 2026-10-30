@@ -9865,7 +9865,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.get_by_id", group: "memory", method: "getById", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 50, audit: false, readOnly: true },
   { name: "memory.health", group: "memory", method: "health", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "memory.history", group: "memory", method: "history", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
-  { name: "memory.import", group: "memory", method: "import", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 600, audit: false, readOnly: false },
+  { name: "memory.import", group: "memory", method: "import", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
   { name: "memory.import_curated", group: "memory", method: "importCurated", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "memory.import_evidence", group: "memory", method: "importEvidence", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "memory.keys", group: "memory", method: "keys", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 2000, audit: false, readOnly: true },

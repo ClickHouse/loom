@@ -30,8 +30,10 @@ UNCHANGED: Final = "unchanged"
 REPEATED: Final = "repeated"
 DELETED: Final = "deleted"
 SUPERSEDED: Final = "superseded"
-# The note of an entry naming a category the namespace has not registered.
+# The notes of an entry naming a category the namespace has not registered, and of one
+# naming a category under a token bounded to one user, which links none.
 CATEGORY_UNREGISTERED: Final = "category_unregistered"
+CATEGORY_REFUSED: Final = "category_refused"
 
 # The statuses of a live row that holds its fact; a superseded row is retired.
 _HOLDING: Final = frozenset({"active", "duplicate", "conflicted"})

@@ -244,7 +244,9 @@ conflict verdict. Every entry gets the conflict check, whatever
 - **Categories:** a `category` the namespace registered (`namespace.register_category`) is
   linked to the key once the key holds the fact, as `memory.assign_category` links one. An
   unregistered name links nothing, and the entry comes back with `note`
-  `category_unregistered`; the fact is still imported.
+  `category_unregistered`. A token bounded to one user links no category, since a link has
+  no user axis (it is refused `memory.assign_category` too): `note` `category_refused`.
+  Either way the fact is still imported.
 - **`dry_run=true`** makes every check and writes nothing.
 
 Each result carries the entry's `index`, its `key`, an `outcome` and, when the entry was
@@ -261,7 +263,8 @@ An entry with the same text as an earlier one answers as that entry did, except 
 write, when it is `skipped` (`repeated`).
 
 `totals` counts the outcomes, and `dry_run` says whether anything was written. A request
-with more than 200 entries is refused with 422. The op is listed on no MCP toolset: an MCP
+with more than 200 entries is refused with 422, and each call draws from its own
+[rate-limit class](../../reference/http-api.md#rate-limits), `memory.import`. The op is listed on no MCP toolset: an MCP
 client calls `loom_memory_import` by name. Fields:
 [operations reference](../../reference/operations/memory.md#memoryimport).
 

@@ -44,7 +44,8 @@ class _ImportEntry(BaseModel):
     # A category registered in the namespace (namespace.register_category) that the
     # item's key is linked to, as memory.assign_category links one, once the key holds the
     # item. A name the namespace has not registered links nothing and is noted
-    # `category_unregistered`; the entry is still imported. '' = none.
+    # `category_unregistered`, and a token bounded to one user links none and is noted
+    # `category_refused`; the entry is still imported. '' = none.
     category: str = Field(default="", max_length=MAX_IMPORT_CATEGORY_CHARS)
     # Sensitivity tier; '' = detect from the value, as memory.bulk_set does.
     sensitivity: Literal["", "low", "medium", "high"] = ""
@@ -90,8 +91,9 @@ class _ImportEntryResult(BaseModel):
     # other entry answers as that entry did). written: duplicate or conflicted, the status
     # the row was stored with.
     reason: str = ""
-    # `category_unregistered` when the entry names a category the namespace has not
-    # registered: nothing was linked. '' otherwise.
+    # Why the entry's category was not linked: `category_unregistered` (the namespace has
+    # not registered it) or `category_refused` (the token is bounded to one user, and a
+    # category link has no user axis). '' otherwise.
     note: str = ""
 
 

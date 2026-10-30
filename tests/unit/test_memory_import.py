@@ -589,6 +589,27 @@ async def test_a_rerun_links_a_category_registered_since(harness) -> None:
     assert [r["memory_key"] for r in links] == [import_key("Dog is Biscuit.")]
 
 
+@pytest.mark.asyncio
+async def test_a_token_bounded_to_one_user_links_no_category(harness, monkeypatch) -> None:
+    """A category link has no user axis, so a user-pinned token links none (it is refused
+    memory.assign_category too); the item is still written."""
+    from server.identity.domain.read_scope import ReadFilters
+
+    ch = _StoreCH(registry={"pets": "cat-1"})
+    harness(ch)
+    pinned = ReadFilters(scope="own_user", user_id="u", session_id=None)
+    monkeypatch.setattr(_import_mod, "request_scope", lambda: pinned)
+    out = await handle_memory_import(
+        _input({"value": "Dog is Biscuit.", "category": "pets"}, {"value": "Cat is Miso."})
+    )
+    assert [(r.outcome, r.note) for r in out.results] == [
+        ("written", "category_refused"),
+        ("written", ""),
+    ]
+    assert ch.rows_for("loom.memory_categories") == []
+    assert len(ch.rows_for("loom.memory")) == 2
+
+
 # ---- bounds and declaration ------------------------------------------------
 
 
@@ -689,3 +710,26 @@ def test_the_op_is_an_experimental_writer_op_called_by_name_over_mcp() -> None:
     )
     assert op.mcp_tool_name == "loom_memory_import" and not op.read_only
     assert op.name not in _MCP_HIDDEN_OPS and op_toolsets(op.name) == []
+
+
+def test_the_op_has_its_own_rate_class_and_an_import_budget() -> None:
+    from server.core.ratelimit import DEFAULT_LIMITS, Limit, op_class_for
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    assert op_class_for("memory.import") == "memory.import"
+    assert DEFAULT_LIMITS["memory.import"] == Limit(capacity=10, rate=2)
+    assert DEFAULT_LIMITS["memory.import"] == DEFAULT_LIMITS["knowledge.add"]
+    budgets = {
+        n: OPERATIONS_BY_NAME[n].budget_p99_ms for n in ("memory.import", "memory.import_curated")
+    }
+    assert budgets == {"memory.import": 30000, "memory.import_curated": 30000}
+
+
+def test_the_op_counts_as_a_write_wherever_bulk_set_does() -> None:
+    from server.identity.app.me_routes import _SHARING_WRITE_OPS
+    from server.identity.domain.read_scope import NARROW_SAFE_OPS, honours_read_scope
+    from server.insights.app.mentor_rules import SETS
+
+    assert honours_read_scope("memory.import") and "memory.import" in NARROW_SAFE_OPS
+    assert {"memory.bulk_set", "memory.import"} <= set(_SHARING_WRITE_OPS)
+    assert {"memory.bulk_set", "memory.import"} <= set(SETS)
