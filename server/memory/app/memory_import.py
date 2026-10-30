@@ -8,7 +8,8 @@ the skip gate, the lock and pin guards, the blacklist, the sensitivity rule, inl
 embedding and the conflict verdicts; and it leaves the bulk write's hash-only audit
 row. A key whose newest version, in any session of the identity, is a tombstone or a
 superseded row is left as it is: a re-run never brings back what its owner deleted or a
-newer fact retired. A dry run makes the same checks and writes nothing. A category the
+newer fact retired. A dry run makes the same checks and writes no row, link, audit row or
+usage event (the embeddings are paid for and a blacklist hit is counted). A category the
 namespace has registered is linked to the entry's key as memory.assign_category links
 one (`server.memory.store.categories`).
 """

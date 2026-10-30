@@ -69,8 +69,11 @@ class MemoryImportInput(_Identity):
     # The items to import, 1 to 200: each one's text, and optionally its tags, the time
     # the source first knew it, its source pointer, a category and a sensitivity tier.
     entries: list[_ImportEntry] = Field(..., min_length=1, max_length=MAX_IMPORT_ENTRIES)
-    # Make every check and answer the outcome each entry would have, writing nothing: no
-    # memory row, embedding, category link, audit row or usage event.
+    # Make every check and answer the outcome each entry would have, writing no memory row,
+    # embedding, category link, audit row or usage event. The checks still embed every entry
+    # (the conflict check reads the vectors) and count a blacklist pattern's hit, and a
+    # `conflicted` entry is previewed before the peer marks a real write settles: it may
+    # land unflagged if its peers change first.
     dry_run: bool = False
 
 

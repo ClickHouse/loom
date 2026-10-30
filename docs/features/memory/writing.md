@@ -247,7 +247,11 @@ conflict verdict. Every entry gets the conflict check, whatever
   `category_unregistered`. A token bounded to one user links no category, since a link has
   no user axis (it is refused `memory.assign_category` too): `note` `category_refused`.
   Either way the fact is still imported.
-- **`dry_run=true`** makes every check and writes nothing.
+- **`dry_run=true`** makes every check and writes no memory row, embedding, category link,
+  audit row or usage event. It still pays for every entry's embedding, since the conflict
+  check reads the vectors, and counts a blacklist pattern's hit. A `conflicted` entry is
+  previewed before the peer marks a real write settles, so it may land unflagged if its
+  peers change first.
 
 Each result carries the entry's `index`, its `key`, an `outcome` and, when the entry was
 not plainly written, a `reason`:

@@ -524,6 +524,86 @@ async def test_a_dry_run_makes_every_check_and_writes_nothing(harness) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_dry_run_answers_every_outcome_the_real_run_does(harness) -> None:
+    """One request reaching every outcome and reason answers the same dry and for real,
+    and the dry run writes no row, vector, event or audit row."""
+    texts = {
+        "plain": "Deploys happen on Tuesday.",
+        "secret": "The launch code is zq-1.",
+        "pinned": "Dog is Biscuit.",
+        "locked": "Cat is Miso.",
+        "close": "Deploys happen on Friday.",
+        "same": "Prod deploys are Tuesdays.",
+        "near": "Prod deploys happen Tuesdays.",
+        "elsewhere": "The wiki lives at docs.example.test.",
+        "held": "Lunch is at noon.",
+        "deleted": "Standup is at nine.",
+        "retired": "Retro is on Friday.",
+    }
+    deleted = _row(
+        memory_key=import_key(texts["deleted"]),
+        content_sha256=sha256_value(texts["deleted"]),
+        version=1,
+    )
+    ch = _StoreCH(
+        [
+            _row(memory_key=import_key(texts["pinned"]), content_sha256="0" * 64, pinned=1),
+            _row(
+                memory_key=import_key(texts["locked"]),
+                content_sha256="1" * 64,
+                lock_mode="read_only",
+            ),
+            _row(memory_key="wiki_location", content_sha256=sha256_value(texts["elsewhere"])),
+            _row(memory_key=import_key(texts["held"]), content_sha256=sha256_value(texts["held"])),
+            deleted,
+            _tombstone(deleted),
+            _row(
+                memory_key=import_key(texts["retired"]),
+                session_id="earlier",
+                content_sha256=sha256_value(texts["retired"]),
+                status="superseded",
+            ),
+        ]
+    )
+    rec = harness(ch, blacklist="launch code")
+    rec.verdicts[texts["close"]] = ConflictResult(
+        verdict="rejected", peers=[], pinned_blocker_id="m-pin"
+    )
+    rec.verdicts[texts["same"]] = ConflictResult(
+        verdict="merge", peers=[], existing_memory_id="m-keep"
+    )
+    rec.verdicts[texts["near"]] = ConflictResult(
+        verdict="duplicate", peers=[], duplicate_of_id="m-peer"
+    )
+    entries = [{"value": text} for text in texts.values()]
+    entries += [{"value": texts["plain"]}, {"value": texts["secret"]}]
+    expected = [
+        ("written", ""),
+        ("refused", "blacklist"),
+        ("refused", "pinned"),
+        ("refused", "locked"),
+        ("refused", "conflict"),
+        ("reinforced", "merge"),
+        ("written", "duplicate"),
+        ("reinforced", "identity_duplicate"),
+        ("skipped", "unchanged"),
+        ("skipped", "deleted"),
+        ("skipped", "superseded"),
+        ("skipped", "repeated"),
+        ("refused", "blacklist"),
+    ]
+    dry = await handle_memory_import(_input(*entries, dry_run=True))
+    assert _outcomes(dry) == expected and dry.dry_run is True
+    assert ch.insert_calls == [] and rec.embedded == []
+    assert rec.events == [] and rec.audits == []
+    real = await handle_memory_import(_input(*entries))
+    assert _outcomes(real) == expected and real.dry_run is False
+    assert sorted(r["memory_key"] for r in ch.rows_for("loom.memory")) == sorted(
+        [import_key(texts["plain"]), import_key(texts["near"])]
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_bulk_dry_run_persists_no_entity_mapping(harness, monkeypatch) -> None:
     """Entity resolution writes the mappings it decides, and no check reads them: the
     dry run leaves it out."""
