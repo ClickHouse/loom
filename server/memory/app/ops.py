@@ -590,7 +590,7 @@ async def handle_memory_assign_category(
     input: MemoryAssignCategoryInput,
 ) -> MemoryAssignCategoryOutput:
     """Link the key to the named category, or rescind the link; a name the namespace
-    has not registered is a 404."""
+    has not registered is a 404. memory.import links through the same statements."""
     from server.memory.store import categories
 
     ids = await categories.registered_ids(input.org, input.namespace, [input.category_name])

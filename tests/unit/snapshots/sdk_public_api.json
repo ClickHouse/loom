@@ -1001,6 +1001,10 @@
               "body",
               "options"
             ],
+            "import_": [
+              "body",
+              "options"
+            ],
             "import_curated": [
               "body",
               "options"

@@ -4785,6 +4785,48 @@ export interface MemoryHistoryOutput {
   rows: MemoryHistoryRow[];
 }
 
+export interface ImportEntry {
+  value: string;
+  tags?: string[];
+  valid_at?: string | null;
+  source_trace?: string;
+  category?: string;
+  sensitivity?: "" | "low" | "medium" | "high";
+}
+
+export interface MemoryImportInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id?: string;
+  session_id?: string;
+  run_id?: string;
+  entries: ImportEntry[];
+  dry_run?: boolean;
+}
+
+export interface ImportTotals {
+  written?: number;
+  reinforced?: number;
+  skipped?: number;
+  refused?: number;
+}
+
+export interface ImportEntryResult {
+  index: number;
+  key: string;
+  outcome: "written" | "reinforced" | "skipped" | "refused";
+  reason?: string;
+  note?: string;
+}
+
+export interface MemoryImportOutput {
+  totals: ImportTotals;
+  results: ImportEntryResult[];
+  dry_run?: boolean;
+  unchecked?: number;
+}
+
 export interface MemoryImportCuratedInput {
   org: string;
   namespace: string;
@@ -9142,6 +9184,7 @@ export type OpName =
   | "memory.get_by_id"
   | "memory.health"
   | "memory.history"
+  | "memory.import"
   | "memory.import_curated"
   | "memory.import_evidence"
   | "memory.keys"
@@ -9482,6 +9525,7 @@ export interface OpMap {
   "memory.get_by_id": { input: MemoryGetByIdInput; output: MemoryGetByIdOutput };
   "memory.health": { input: MemoryHealthInput; output: MemoryHealthOutput };
   "memory.history": { input: MemoryHistoryInput; output: MemoryHistoryOutput };
+  "memory.import": { input: MemoryImportInput; output: MemoryImportOutput };
   "memory.import_curated": { input: MemoryImportCuratedInput; output: MemoryImportCuratedOutput };
   "memory.import_evidence": { input: MemoryImportEvidenceInput; output: MemoryImportEvidenceOutput };
   "memory.keys": { input: MemoryKeysInput; output: MemoryKeysOutput };
@@ -9822,6 +9866,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.get_by_id", group: "memory", method: "getById", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 50, audit: false, readOnly: true },
   { name: "memory.health", group: "memory", method: "health", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "memory.history", group: "memory", method: "history", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
+  { name: "memory.import", group: "memory", method: "import", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 600, audit: false, readOnly: false },
   { name: "memory.import_curated", group: "memory", method: "importCurated", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "memory.import_evidence", group: "memory", method: "importEvidence", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "memory.keys", group: "memory", method: "keys", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 2000, audit: false, readOnly: true },

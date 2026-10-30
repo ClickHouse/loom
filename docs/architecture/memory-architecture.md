@@ -401,6 +401,16 @@ blacklisted entry is skipped, not raised; pinned and locked keys come back in
 `skipped_pinned` and `skipped_locked`. One hash-only `memory.bulk_set` audit row records
 the write.
 
+`memory.import` (`handle_memory_import` in `memory/app/memory_import.py`) writes through
+`handle_memory_bulk_set`, so an imported item meets every check above. Each item's key is
+`import:` and 24 hex characters of the SHA-256 of its text (`import_key` in
+`memory/domain/memory_import.py`), and each entry declares `source_class=imported`. Its
+dry run passes `dry_run=True` to the bulk write, which returns once the verdicts are in:
+every check has run, and nothing is written but a blacklist pattern's hit count, as on a
+`memory.set` dry run. Category links go through `memory/store/categories.py`, the
+statements `memory.assign_category` runs, and leave one `memory.import` audit row of keys
+and category names.
+
 `memory.set_from_messages` runs a step pipeline over a `WorkflowState`
 (`memory/app/pipeline.py`, `DEFAULT_PIPELINE`) and writes through the bulk path:
 
@@ -1277,6 +1287,7 @@ writes no outbox rows ([rule 22](rolling-upgrades.md#the-rules)).
 | `server/memory/app/update.py`                                                                                                                                   | `memory.update`, `memory.update_by_id`.                                                             |
 | `server/memory/app/extract/handler.py`                                                                                                                          | `set_from_messages`.                                                                                |
 | `server/memory/app/bulk_set.py`, `server/memory/app/bulk_rows.py`, `server/memory/app/bulk_verdicts.py`                                                         | `bulk_set`, its rows, `apply_bulk_verdicts`.                                                        |
+| `server/memory/app/memory_import.py`, `server/memory/domain/memory_import.py`, `server/memory/store/categories.py`                                              | `memory.import`, its keys and outcomes, and the category links it shares with `assign_category`.    |
 | `server/memory/app/pipeline.py`                                                                                                                                 | `DEFAULT_PIPELINE`, `register_step`, `run_pipeline`; its text rules are in `server/memory/domain/`. |
 | `server/memory/app/{conflicts,conflict_resolver,key_supersession}.py`, `server/memory/workers/conflict_resolver.py`                                             | Verdicts, the conflict resolver and supersession.                                                   |
 | `server/memory/app/search/`, `server/memory/app/retrieval/`, `server/memory/domain/search_sql.py`                                                               | Search phases and leg SQL.                                                                          |

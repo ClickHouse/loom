@@ -1643,6 +1643,14 @@ class MemoryOps:
             "_ops.MemoryHistoryOutput", await self._agent.call("memory.history", body, **options)
         )
 
+    async def import_(
+        self, body: _ops.MemoryImportBody | None = None, /, **options: Any
+    ) -> _ops.MemoryImportOutput:
+        """`memory.import`."""
+        return cast(
+            "_ops.MemoryImportOutput", await self._agent.call("memory.import", body, **options)
+        )
+
     async def import_curated(
         self, body: _ops.MemoryImportCuratedBody | None = None, /, **options: Any
     ) -> _ops.MemoryImportCuratedOutput:

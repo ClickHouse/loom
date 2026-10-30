@@ -55,6 +55,7 @@ _SKIP_OPS = {
     "memory.consolidate",
     "memory.reindex",
     "memory.import_curated",
+    "memory.import",
     "memory.copy_to",
     "memory.cross_promote",
     "memory.set_from_messages",

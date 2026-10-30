@@ -1,5 +1,5 @@
-"""memory.bulk_set, the batch write path set_from_messages writes through:
-the live-row lookup, identity dedup, entity resolution, conflict verdicts,
+"""memory.bulk_set, the batch write path set_from_messages and memory.import write
+through: the live-row lookup, identity dedup, entity resolution, conflict verdicts,
 the insert, and the projections and audit that follow it."""
 
 from __future__ import annotations
@@ -948,10 +948,17 @@ async def _bulk_follow_row_supersessions(
 
 
 async def handle_memory_bulk_set(
-    input: MemoryBulkSetInput,
+    input: MemoryBulkSetInput, *, dry_run: bool = False
 ) -> MemoryBulkSetOutput:
     """One CH insert for all rows; one more for embeddings. Versions are
-    each unique (nanosecond) to preserve LWW semantics."""
+    each unique (nanosecond) to preserve LWW semantics.
+
+    `dry_run` (memory.import's) stops once the verdicts are in: every check the write
+    makes has run (the live-row and identity lookups, the skip gate, the lock and pin
+    guards, the blacklist, the sensitivity rule, the embedding and the conflict
+    verdicts), and the answer is the result each entry would get. It writes no row,
+    embedding, entity mapping, link, projection, audit row or usage event; a blacklist
+    match still counts a hit on its pattern, as memory.set's dry run does."""
     ch = get_client()
     embedder = get_embedder()
     now_utc = datetime.now(UTC)
@@ -966,7 +973,8 @@ async def handle_memory_bulk_set(
     identity_dupes = await _bulk_identity_dupes(ch, input)
 
     _bulk_clock.mark("existing_lookup")
-    entity_resolution = await _bulk_resolve_entities(ch, input)
+    # Resolution persists the mappings it decides, and no check reads them.
+    entity_resolution = {} if dry_run else await _bulk_resolve_entities(ch, input)
 
     _bulk_clock.mark("entity_resolution")
     await _bulk_build_rows(input, state, identity_dupes, entity_resolution, now_utc)
@@ -979,6 +987,9 @@ async def handle_memory_bulk_set(
     )
 
     plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)
+    if dry_run:
+        _bulk_clock.finish()
+        return _bulk_output(state, plan, _bulk_work)
     # After the verdicts: settling the batch moves entries to unchanged or pinned.
     _bulk_log_skips(state)
 
@@ -1011,7 +1022,13 @@ async def handle_memory_bulk_set(
         _bulk_clock,
     )
     _bulk_clock.finish()
+    return _bulk_output(state, plan, _bulk_work)
 
+
+def _bulk_output(
+    state: _BulkWriteState, plan: BulkVerdictPlan, work: dict[str, Any]
+) -> MemoryBulkSetOutput:
+    """The response: each entry's result, the verdict lists and the write's phase times."""
     return MemoryBulkSetOutput(
         written=state.results,
         retyped=state.retyped,
@@ -1027,7 +1044,7 @@ async def handle_memory_bulk_set(
         unchecked=plan.unchecked,
         identity_duplicates=state.identity_duplicates,
         skipped_blacklisted=state.skipped_blacklisted,
-        stage_ms=dict(_bulk_work.get("stage_ms", {})),
+        stage_ms=dict(work.get("stage_ms", {})),
     )
 
 

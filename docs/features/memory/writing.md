@@ -24,6 +24,7 @@ merge, duplicate, conflict or rejected. The verdicts and conflict policies are i
 | Apply one change to many existing rows                | `memory.apply`                  | Dry run by default.                                                             |
 | Clear an agent's or a user's rows                     | `memory.clear`                  | Admin; needs `confirm_subject`.                                                 |
 | Import a curated Markdown file section by section     | `memory.import_curated`         | One memory per heading at `heading_level` (default 2).                          |
+| Import facts another memory system already distilled  | `memory.import`                 | Up to 500 `entries`; see [importing](#importing-from-another-memory-system).    |
 | Mark a candidate fact as wrong                        | `memory.reject`                 | Keeps it from being re-extracted.                                               |
 | Try a fact out before it is served                    | `memory.set(proposed=true)`     | See [proposals](#proposals).                                                    |
 | Store a row with exact typed fields                   | `memory.record.write`           | See [typed records](#typed-records).                                            |
@@ -217,6 +218,43 @@ A row expires only when its writer or the namespace owner asks: `ttl_seconds`,
 `demote` or `anonymize`. `clear_expiry=true` overrides type and namespace defaults. An
 edit to other fields keeps a live expiry. See
 [retention and erasure](./retention-and-erasure.md#writer-set-expiry).
+
+## Importing from another memory system
+
+`memory.import` writes up to 500 facts another memory system already distilled. Each
+entry is the fact's text plus, optionally, `tags`, `valid_at` (when the source first knew
+it), `source_trace` (its id or path there), `category` and `sensitivity`. The write is a
+`memory.bulk_set` underneath, so each entry meets the same checks: identity dedup, the
+lock and pin guards, the blacklist, the sensitivity rule, inline embedding and the
+conflict verdict.
+
+- **The key comes from the text:** `import:` and the first 24 hex characters of the
+  SHA-256 of the text as given. The same text always lands on the same key, so a re-run
+  writes nothing new: its entries come back `skipped` (`unchanged`), and, as any
+  restatement does, each reinforces its stored row.
+- **Provenance:** every row is `source_class=imported`, `valid_at` is the source's time
+  and `created_at` the import's. An entry with no `source_trace` is traced by its key.
+- **Categories:** a `category` the namespace registered (`namespace.register_category`) is
+  linked to the key once the key holds the fact, as `memory.assign_category` links one. An
+  unregistered name links nothing, and the entry comes back with `note`
+  `category_unregistered`; the fact is still imported.
+- **`dry_run=true`** makes every check and writes nothing.
+
+Each result carries the entry's `index`, its `key`, an `outcome` and, when the entry was
+not plainly written, a `reason`:
+
+| `outcome`    | `reason`                                                                                                                                    |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `written`    | Empty, or the status the row was stored with: `duplicate` or `conflicted`.                                                                  |
+| `reinforced` | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key); that memory was reinforced.       |
+| `skipped`    | `unchanged` (the key holds the fact already) or `repeated` (an earlier entry of the request has the same text).                             |
+| `refused`    | `blacklist`, `pinned` (the key holds another pinned value), `locked` (the key is `read_only`) or `conflict` (too close to a pinned memory). |
+
+`totals` counts the outcomes. `unchecked` counts the written entries past
+`LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` (200), which the conflict check does not reach; send
+at most that many to have every entry checked. The op is listed on no MCP toolset: an MCP
+client calls `loom_memory_import` by name. Fields:
+[operations reference](../../reference/operations/memory.md#memoryimport).
 
 ## Proposals
 

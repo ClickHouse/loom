@@ -5377,6 +5377,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.get_by_id": 50,
     "memory.health": 400,
     "memory.history": 80,
+    # memory.bulk_set's write of up to 500 items, then one category read and one link insert.
+    "memory.import": 600,
     # ~50 sections × per-section memory.set; embed-on-write dominates.
     "memory.import_curated": 30000,
     # one embed_many over ≤256 chunks + two synchronous inserts
