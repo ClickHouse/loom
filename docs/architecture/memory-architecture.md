@@ -404,8 +404,10 @@ the write.
 `memory.import` (`handle_memory_import` in `memory/app/memory_import.py`) writes through
 `handle_memory_bulk_set`, so an imported item meets every check above. Each item's key is
 `import:` and 24 hex characters of the SHA-256 of its text (`import_key` in
-`memory/domain/memory_import.py`), and each entry declares `source_class=imported`. Its
-dry run passes `dry_run=True` to the bulk write, which returns once the verdicts are in:
+`memory/domain/memory_import.py`), and each entry declares `source_class=imported`. It
+passes its own `conflict_check_cap`, so the conflict check reaches every entry whatever
+`bulk_conflict_check_max_entries` says. Its dry run passes `dry_run=True` to the bulk
+write, which returns once the verdicts are in:
 every check has run, and nothing is written but a blacklist pattern's hit count, as on a
 `memory.set` dry run. Category links go through `memory/store/categories.py`, the
 statements `memory.assign_category` runs, and leave one `memory.import` audit row of keys

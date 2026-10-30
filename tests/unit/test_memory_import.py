@@ -452,29 +452,55 @@ def test_201_entries_are_refused_and_200_accepted() -> None:
         MemoryImportInput(**_IDENT, entries=[])
 
 
-def test_an_import_never_holds_more_entries_than_a_bulk_write_conflict_checks() -> None:
-    """Every entry gets the conflict check: the bound is the bulk write's default cap."""
-    from server.settings import Settings
-
-    cap = Settings.model_fields["bulk_conflict_check_max_entries"].default
-    assert MAX_IMPORT_ENTRIES == cap == 200
-
-
 @pytest.mark.asyncio
-async def test_a_full_import_checks_every_entry(harness, monkeypatch) -> None:
+@pytest.mark.parametrize("bulk_cap", [0, 50, 200])
+async def test_every_entry_is_checked_whatever_the_bulk_cap_says(
+    harness, monkeypatch, bulk_cap: int
+) -> None:
+    """With the bulk write's cap at 50 (or 0), a full import still checks every entry:
+    the 151st, too close to a pinned memory, is refused rather than written unchecked."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "bulk_conflict_check_max_entries", bulk_cap)
     rec = harness(_StoreCH())
+    entries = [{"value": f"Fact number {i}."} for i in range(MAX_IMPORT_ENTRIES)]
+    rec.verdicts["Fact number 150."] = ConflictResult(
+        verdict="rejected", peers=[], pinned_blocker_id="m-pin"
+    )
     checked: list[str] = []
 
     async def _check(**kw: Any) -> ConflictResult:
-        checked.append(json.loads(kw["new_value"]))
-        return ConflictResult(verdict="clear", peers=[])
+        value = json.loads(kw["new_value"])
+        checked.append(value)
+        return rec.verdicts.get(value, ConflictResult(verdict="clear", peers=[]))
 
     monkeypatch.setattr("server.memory.app.conflicts.check_on_commit", _check)
-    entries = [{"value": f"Fact number {i}."} for i in range(MAX_IMPORT_ENTRIES)]
     out = await handle_memory_import(_input(*entries))
-    assert out.totals.written == MAX_IMPORT_ENTRIES
     assert sorted(checked) == sorted(e["value"] for e in entries)
-    assert len(rec.embedded) == MAX_IMPORT_ENTRIES
+    assert (out.results[150].outcome, out.results[150].reason) == ("refused", "conflict")
+    assert out.totals.model_dump() == {
+        "written": MAX_IMPORT_ENTRIES - 1,
+        "reinforced": 0,
+        "skipped": 0,
+        "refused": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_bulk_write_checks_up_to_its_setting_unless_its_caller_names_a_cap(
+    harness, monkeypatch
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "bulk_conflict_check_max_entries", 1)
+    harness(_StoreCH())
+    bulk = MemoryBulkSetInput(
+        **_IDENT,
+        entries=[_BulkSetEntry(memory_key=f"k{i}", value=f"Fact {i}.") for i in range(3)],
+    )
+    by_setting = await _bulk_set_mod.handle_memory_bulk_set(bulk, dry_run=True)
+    named = await _bulk_set_mod.handle_memory_bulk_set(bulk, dry_run=True, conflict_check_cap=3)
+    assert (by_setting.unchecked, named.unchecked) == (2, 0)
 
 
 @pytest.mark.parametrize(

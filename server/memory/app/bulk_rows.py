@@ -79,6 +79,9 @@ class _BulkWriteState:
     """Request-scoped state that flows between the phases of
     `handle_memory_bulk_set`; created at the top of the call, never shared."""
 
+    # How many entries the conflict check reaches: None = bulk_conflict_check_max_entries.
+    # memory.import names its own cap, so every entry it writes is checked.
+    conflict_check_cap: int | None = None
     existing_ids: dict[str, str] = field(default_factory=dict)
     # Ids minted for keys with no row yet: a key written twice in one batch is one row.
     new_ids: dict[str, str] = field(default_factory=dict)

@@ -255,7 +255,12 @@ async def _bulk_verdicts(
     # so a merge or a pinned rejection never lands a row; duplicate / conflicted are stamped
     # on the rows.
     verdicts = await _bulk_conflict_verdicts(
-        input, state.memory_rows, state.entry_metas, state.pending, value_vectors
+        input,
+        state.memory_rows,
+        state.entry_metas,
+        state.pending,
+        value_vectors,
+        cap=state.conflict_check_cap,
     )
     clock.mark("verdicts")
     plan = _apply_verdicts(state, emb_idx_of, verdicts)
@@ -948,7 +953,10 @@ async def _bulk_follow_row_supersessions(
 
 
 async def handle_memory_bulk_set(
-    input: MemoryBulkSetInput, *, dry_run: bool = False
+    input: MemoryBulkSetInput,
+    *,
+    dry_run: bool = False,
+    conflict_check_cap: int | None = None,
 ) -> MemoryBulkSetOutput:
     """One CH insert for all rows; one more for embeddings. Versions are
     each unique (nanosecond) to preserve LWW semantics.
@@ -958,7 +966,10 @@ async def handle_memory_bulk_set(
     guards, the blacklist, the sensitivity rule, the embedding and the conflict
     verdicts), and the answer is the result each entry would get. It writes no row,
     embedding, entity mapping, link, projection, audit row or usage event; a blacklist
-    match still counts a hit on its pattern, as memory.set's dry run does."""
+    match still counts a hit on its pattern, as memory.set's dry run does.
+
+    `conflict_check_cap` (memory.import's) is how many entries the conflict check
+    reaches, in place of `bulk_conflict_check_max_entries`."""
     ch = get_client()
     embedder = get_embedder()
     now_utc = datetime.now(UTC)
@@ -967,7 +978,7 @@ async def handle_memory_bulk_set(
 
     _bulk_work: dict[str, Any] = {}
     _bulk_clock = StageClock(_bulk_work)
-    state = _BulkWriteState()
+    state = _BulkWriteState(conflict_check_cap=conflict_check_cap)
     await _bulk_existing_lookup(ch, input, state)
 
     identity_dupes = await _bulk_identity_dupes(ch, input)
@@ -1081,13 +1092,16 @@ async def _bulk_conflict_verdicts(
     entry_metas: list[tuple[Any, ...]],
     pending: list[tuple[Any, ...]],
     value_vectors: list[list[float]],
+    *,
+    cap: int | None = None,
 ) -> dict[int, Any]:
     """check_on_commit for every searchable entry, concurrency-bounded. Keys
     are indexes into memory_rows; values are ConflictResults. A bulk past the
-    cap checks the first N and writes the rest unchecked (the caller counts
-    them); a check that errors counts as clear — the write must not fail
-    because the check could not run — except one the model-call switch holds
-    (`customer.HOLDS`), which the write answers as its own embeds would."""
+    cap (`cap`, else bulk_conflict_check_max_entries) checks the first N and writes
+    the rest unchecked (the caller counts them); a check that errors counts as clear —
+    the write must not fail because the check could not run — except one the
+    model-call switch holds (`customer.HOLDS`), which the write answers as its own
+    embeds would."""
     import asyncio
 
     from server.memory.app.conflicts import check_on_commit
@@ -1095,7 +1109,7 @@ async def _bulk_conflict_verdicts(
 
     if not pending or not value_vectors:
         return {}
-    cap = max(int(_settings.bulk_conflict_check_max_entries), 0)
+    cap = max(int(_settings.bulk_conflict_check_max_entries if cap is None else cap), 0)
     sem = asyncio.Semaphore(int(_settings.bulk_conflict_check_concurrency))
     out: dict[int, Any] = {}
 

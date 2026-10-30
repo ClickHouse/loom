@@ -18,6 +18,7 @@ from collections import Counter
 from server.core.datetimes import to_naive_utc
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry
 from server.memory.api.models_import import (
+    MAX_IMPORT_ENTRIES,
     MemoryImportInput,
     MemoryImportOutput,
     _ImportEntry,
@@ -51,7 +52,10 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
         input.org, input.namespace, [entry.category for entry in input.entries if entry.category]
     )
     written = await handle_memory_bulk_set(
-        _bulk_input(input, [(input.entries[i], keys[i]) for i in kept]), dry_run=input.dry_run
+        _bulk_input(input, [(input.entries[i], keys[i]) for i in kept]),
+        dry_run=input.dry_run,
+        # Every entry is checked, whatever bulk_conflict_check_max_entries caps a bulk at.
+        conflict_check_cap=MAX_IMPORT_ENTRIES,
     )
     outcomes = {
         keys[i]: entry_outcome(

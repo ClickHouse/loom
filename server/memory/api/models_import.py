@@ -12,8 +12,8 @@ from server.memory.api.models_common import _Identity
 from server.memory.domain.delete_marks import caller_trace
 from server.memory.domain.memory_import import Outcome
 
-# The most entries one memory.import takes: as many as memory.bulk_set conflict-checks in
-# one call by default (LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES), so every entry gets the check.
+# The most entries one memory.import takes. The bulk write conflict-checks every one of
+# them, whatever LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES caps a memory.bulk_set at.
 MAX_IMPORT_ENTRIES = 200  # not a setting: a wire bound the request schema and SDKs publish
 # The longest item text, in characters: past the embedder's token cap, about 30,000
 # characters, nothing of a value is embedded, so search could not find a longer item.

@@ -226,9 +226,8 @@ entry is the fact's text plus, optionally, `tags`, `valid_at` (when the source f
 it), `source_trace` (its id or path there), `category` and `sensitivity`. The write is a
 `memory.bulk_set` underneath, so each entry meets the same checks: identity dedup, the
 lock and pin guards, the blacklist, the sensitivity rule, inline embedding and the
-conflict verdict. 200 is the default `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`, the entries
-one bulk write conflict-checks, so every entry gets the conflict check unless an operator
-lowers that setting.
+conflict verdict. Every entry gets the conflict check, whatever
+`LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` caps a `memory.bulk_set` at.
 
 - **The key comes from the text:** `import:` and the first 24 hex characters of the
   SHA-256 of the text as given. The same text always lands on the same key, so a re-run
