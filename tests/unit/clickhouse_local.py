@@ -7,9 +7,10 @@ the host's zone."""
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -60,3 +61,55 @@ def run(
     if out.returncode != 0:
         raise AssertionError(out.stderr.strip()[-2000:])
     return [json.loads(line) for line in out.stdout.splitlines() if line.strip()]
+
+
+_DATETIME = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$")
+
+
+class KeptCH:
+    """A ClickHouse client over clickhouse-local whose database is kept under `path`, so
+    each statement sees what the earlier ones wrote. A table the test did not create reads
+    as empty and takes no writes, as a table the test does not read."""
+
+    def __init__(self, path: Path, *setup: str) -> None:
+        self.path = path
+        self.create(*setup)
+
+    def create(self, *statements: str) -> None:
+        """Run DDL (with any session `SET` it needs) in one session."""
+        run(list(statements), "SELECT 1", path=self.path)
+
+    def _run(self, setup: list[str], sql: str, params: dict[str, Any] | None) -> list[Any]:
+        try:
+            return run(setup, sql, params, path=self.path)
+        except AssertionError as e:
+            if "UNKNOWN_TABLE" not in str(e):
+                raise
+            return []
+
+    async def execute(
+        self, sql: str, params: dict[str, Any] | None = None, *, settings: Any = None
+    ) -> None:
+        self._run([sql], "SELECT 1", params)
+
+    async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        for r in rows:
+            cols = ", ".join(r)
+            data = json.dumps(r, default=str)
+            await self.execute(
+                f"INSERT INTO {table} ({cols}) SELECT {cols} FROM format(JSONEachRow, $${data}$$)"
+            )
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+        # A DateTime as the driver answers it: a datetime, not JSON text.
+        return [
+            {
+                k: datetime.fromisoformat(v) if isinstance(v, str) and _DATETIME.match(v) else v
+                for k, v in row.items()
+            }
+            for row in self._run([], sql, params)
+        ]
+
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        rows = await self.query_all(sql, params)
+        return rows[0] if rows else None

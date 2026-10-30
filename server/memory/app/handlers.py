@@ -1147,22 +1147,12 @@ async def _retire_derived(
             log.warning("%s: procedure_runs cascade failed for %s: %s", op, existing.memory_key, e)
     # A decision's record goes with its row, or decision.chain and decision.precedents keep
     # serving it. Best-effort like the ledger above: the row tombstone stands.
-    if getattr(existing, "memory_type", "") == "decision":
-        from server.memory.app.decisions import SCHEMA_NAME as DECISION_SCHEMA
-
+    if existing.memory_type == "decision":
         try:
-            await memory_repo.tombstone_record_of_deleted_row(
-                existing.org,
-                existing.namespace,
-                DECISION_SCHEMA,
-                existing.memory_key,
-                memory_type="decision",
-                deleted=(existing.agent, existing.user_id, existing.session_id),
-                version=version,
-                ch=ch,
-            )
+            await memory_repo.tombstone_decision_record(existing, version=version, ch=ch)
         except Exception as e:  # noqa: BLE001 — the tombstone stands
             log.warning("%s: decision record not retired for %s: %s", op, existing.memory_key, e)
+            degradations.note(op, "decision_record_kept", e)
     # A summary built from this row now says something its evidence no
     # longer supports. If none of its sources survive it goes too; otherwise
     # it is downgraded to `conflicted` (review queue) with a

@@ -20,6 +20,7 @@ imports only the ones above it:
 - `embeddings`  — the memory_embeddings mirror: live rows, re-emits, status
                   reconciliation
 - `lifecycle`   — status and tombstone writes that cascade onto the mirror
+- `records`     — version rows that close a key's active typed record
 - `dedup`       — duplicate and supersession reads
 - `lookups`     — memory.ask's identifier, facet, prefix and term finders
 - `entities`    — the entity extractor's reads and writes
@@ -104,7 +105,6 @@ from server.memory.store.lifecycle import (
     supersede_duplicates,
     tombstone_by_id,
     tombstone_cascade_by_ids,
-    tombstone_record_of_deleted_row,
     write_versions_by_ids,
 )
 from server.memory.store.lookups import (
@@ -138,6 +138,10 @@ from server.memory.store.reads import (
     session_writers,
     statuses_by_ids,
     versions_above,
+)
+from server.memory.store.records import (
+    supersede_active_record,
+    tombstone_decision_record,
 )
 from server.memory.store.redaction import (
     delete_ask_precedents_by_key,
@@ -298,13 +302,14 @@ __all__ = [
     "status_divergence_sql",
     "statuses_by_ids",
     "stored_value_text",
+    "supersede_active_record",
     "supersede_duplicates",
     "superseded_successors",
     "tombstone_by_id",
     "tombstone_cascade_by_ids",
+    "tombstone_decision_record",
     "tombstone_embeddings_for_key",
     "tombstone_entity_vectors_for_keys",
-    "tombstone_record_of_deleted_row",
     "tombstone_vectors_of",
     "unsupersede_embeddings",
     "uuid_or_none",

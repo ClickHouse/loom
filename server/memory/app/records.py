@@ -36,7 +36,7 @@ from server.memory.api.models_records import (
 )
 from server.memory.domain import record_constraints
 from server.memory.domain.record_values import FIELD_RE, _check_record_fields, coerce_record_value
-from server.memory.store import next_version
+from server.memory.store import next_version, supersede_active_record
 from server.memory.store.record_query import _build_record_query, active_record_tally
 
 _FIELD_TYPES = {"string", "number", "integer", "boolean"}
@@ -201,7 +201,7 @@ async def handle_memory_schema_list(
                 schema_id=str(row["schema_id"]),
                 name=str(row["name"]),
                 description=str(row.get("description") or ""),
-                status=row.get("status") or "active",
+                status=str(row.get("status") or "active"),
                 fields=[
                     SchemaFieldOutput(
                         name=str(f["field_name"]),
@@ -396,57 +396,6 @@ async def _fold_onto_active_record(
     return _RecordFold(record_json, fold_out, superseded_id, conflict_rows, filled_fields)
 
 
-async def _supersede_active_record(
-    ch: CHClient,
-    input: MemoryRecordWriteInput,
-    memory_key: str,
-    *,
-    version: int,
-    now: datetime,
-) -> None:
-    """Close the key's active record ahead of the new one; a no-op for an anonymous record."""
-    if memory_key:
-        await ch.execute(
-            """
-            INSERT INTO loom.memory_records
-                (record_id, org, namespace, schema_id, schema_name, memory_key,
-                 memory_id, identity_agent, user_id, session_id, record_json,
-                 status, valid_at, valid_to, version, created_at, updated_at,
-                 tombstoned_at)
-            SELECT
-                record_id, org, namespace, schema_id, schema_name, memory_key,
-                memory_id, identity_agent, user_id, session_id, record_json,
-                -- Computed columns must NOT reuse source column names
-                -- (`AS status` would shadow the column and turn the
-                -- `status = 'active'` predicate below into
-                -- 'superseded' = 'active' — constant false, silent no-op;
-                -- see server/code/store/index/edges.py live_edges_for_path). INSERT..SELECT
-                -- maps by POSITION, so the alias names are free.
-                'superseded' AS new_status, valid_at,
-                if(valid_to IS NULL, {close:DateTime}, valid_to) AS new_valid_to,
-                {ver:UInt64} AS new_version, created_at,
-                {now:DateTime} AS new_updated_at,
-                tombstoned_at
-            FROM loom.memory_records FINAL
-            WHERE org = {org:String}
-              AND namespace = {ns:String}
-              AND schema_name = {schema:String}
-              AND memory_key = {key:String}
-              AND status = 'active'
-              AND tombstoned_at IS NULL
-            """,
-            params={
-                "org": input.org,
-                "ns": input.namespace,
-                "schema": input.schema_name,
-                "key": memory_key,
-                "close": input.valid_at or now,
-                "ver": version,
-                "now": now,
-            },
-        )
-
-
 def _record_field_rows(
     input: MemoryRecordWriteInput,
     field_map: dict[str, dict[str, Any]],
@@ -580,7 +529,17 @@ async def handle_memory_record_write(
     # memory_key both stay 'active'. Close the prior validity interval
     # (valid_to := new fact's valid_at, or now() when world-time is unknown) so
     # as-of reads still see it. No-op for anonymous ("") records.
-    await _supersede_active_record(ch, input, memory_key, version=version, now=now)
+    if memory_key:
+        await supersede_active_record(
+            ch,
+            input.org,
+            input.namespace,
+            input.schema_name,
+            memory_key,
+            close_at=input.valid_at or now,
+            version=version,
+            now=now,
+        )
 
     await get_client().insert(
         "loom.memory_records",

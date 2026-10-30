@@ -7,11 +7,11 @@ absent: their best-effort retires log, and the row tombstone stands."""
 from __future__ import annotations
 
 import json
-import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -28,7 +28,7 @@ from server.memory.api.models_crud import (
 from server.memory.app import set_commit
 from server.memory.store import key_write_lock
 from server.memory.store.rows import build_first_version_row
-from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, ddl, run
+from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, KeptCH, ddl
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 
@@ -46,52 +46,6 @@ def _versions_view() -> str:
     schema = (ROOT / "schemas" / "schema.sql").read_text()
     head = "CREATE MATERIALIZED VIEW IF NOT EXISTS loom.memory_versions_mv"
     return head + schema.split(head, 1)[1].split(";", 1)[0]
-
-
-class _StatefulCH:
-    """clickhouse-local that keeps every insert: each query runs after all of them."""
-
-    def __init__(self) -> None:
-        self.setup = [
-            ddl("memory"),
-            ddl("memory_versions"),
-            _versions_view(),
-            ddl("delete_version_checks"),
-        ]
-
-    async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
-        if not any(f"CREATE TABLE {table}\n" in stmt for stmt in self.setup):
-            return  # a table this test does not hold, as a write the test does not read
-        for r in rows:
-            cols = ", ".join(r)
-            data = json.dumps(r, default=str)
-            self.setup.append(
-                f"INSERT INTO {table} ({cols}) SELECT {cols} FROM format(JSONEachRow, $${data}$$)"
-            )
-
-    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
-        try:
-            rows = run(self.setup, sql, params)
-        except AssertionError as e:
-            if "UNKNOWN_TABLE" not in str(e):
-                raise
-            return []  # a table this test does not hold reads as empty
-        return [_as_driver(r) for r in rows]
-
-    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
-        rows = await self.query_all(sql, params)
-        return rows[0] if rows else None
-
-
-_DATETIME = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$")
-
-
-def _as_driver(row: dict[str, Any]) -> dict[str, Any]:
-    """A DateTime column as the driver answers it: a datetime, not JSON text."""
-    return {
-        k: datetime.fromisoformat(v) if isinstance(v, str) and _DATETIME.match(v) else v
-        for k, v in row.items()
-    }
 
 
 def _row(value: str, version: int) -> dict[str, Any]:
@@ -114,7 +68,7 @@ def _row(value: str, version: int) -> dict[str, Any]:
     )
 
 
-async def _recorded_checks(ch: _StatefulCH) -> list[dict[str, Any]]:
+async def _recorded_checks(ch: KeptCH) -> list[dict[str, Any]]:
     """Every check delete_version recorded, done or not, oldest tombstone first."""
     return await ch.query_all(
         "SELECT checked, tombstone, done FROM loom.delete_version_checks FINAL ORDER BY tombstone"
@@ -126,8 +80,14 @@ async def _times_out(*_a: Any, **_k: Any) -> Any:
 
 
 @pytest.fixture
-def ch(monkeypatch: pytest.MonkeyPatch) -> _StatefulCH:
-    ch = _StatefulCH()
+def ch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> KeptCH:
+    ch = KeptCH(
+        tmp_path,
+        ddl("memory"),
+        ddl("memory_versions"),
+        _versions_view(),
+        ddl("delete_version_checks"),
+    )
 
     @asynccontextmanager
     async def _no_lease(*_key: str) -> AsyncIterator[None]:
@@ -158,14 +118,14 @@ def _in_flight_set(version: int) -> set_commit._SetWrite:
     return w
 
 
-async def _read_back(ch: _StatefulCH) -> Any:
+async def _read_back(ch: KeptCH) -> Any:
     return await memory_repo.get_by_key(
         memory_repo.Identity(**_ID), _KEY, strong=True, scope=WHOLE_NAMESPACE, ch=ch
     )
 
 
 async def _delete_during_the_set(
-    ch: _StatefulCH, op: str, *, head_row: dict[str, Any] | None = None
+    ch: KeptCH, op: str, *, head_row: dict[str, Any] | None = None
 ) -> set_commit._SetWrite:
     head_row = head_row or _row("Tuesdays", time.time_ns() - 10_000_000_000)
     head = int(head_row["version"])
@@ -183,7 +143,7 @@ async def _delete_during_the_set(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("op", ["memory.delete_version", "memory.delete"])
-async def test_a_set_in_flight_during_a_delete_keeps_its_row(ch: _StatefulCH, op: str) -> None:
+async def test_a_set_in_flight_during_a_delete_keeps_its_row(ch: KeptCH, op: str) -> None:
     w = await _delete_during_the_set(ch, op)
     await set_commit._set_plain_insert(w, ch)
     got = await _read_back(ch)
@@ -191,7 +151,7 @@ async def test_a_set_in_flight_during_a_delete_keeps_its_row(ch: _StatefulCH, op
 
 
 @pytest.mark.asyncio
-async def test_without_the_lift_the_tombstone_hides_the_set(ch: _StatefulCH) -> None:
+async def test_without_the_lift_the_tombstone_hides_the_set(ch: KeptCH) -> None:
     # The race the lift closes: the same insert at the version drawn before the delete.
     w = await _delete_during_the_set(ch, "memory.delete_version")
     await ch.insert("loom.memory", [w.memory_row])
@@ -199,7 +159,7 @@ async def test_without_the_lift_the_tombstone_hides_the_set(ch: _StatefulCH) -> 
 
 
 @pytest.mark.asyncio
-async def test_a_tombstone_older_than_the_write_leaves_its_version(ch: _StatefulCH) -> None:
+async def test_a_tombstone_older_than_the_write_leaves_its_version(ch: KeptCH) -> None:
     # The key was deleted before this write began: the version drawn at its start stands.
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
@@ -214,7 +174,7 @@ async def test_a_tombstone_older_than_the_write_leaves_its_version(ch: _Stateful
 
 
 @pytest.mark.asyncio
-async def test_a_conditional_set_in_flight_during_a_delete_is_refused(ch: _StatefulCH) -> None:
+async def test_a_conditional_set_in_flight_during_a_delete_is_refused(ch: KeptCH) -> None:
     # Its precondition read the row the delete removed; landing would undo the delete. The
     # refusal is memory.set's own precondition answer, so the write is counted as one.
     from fastapi import HTTPException
@@ -230,7 +190,7 @@ async def test_a_conditional_set_in_flight_during_a_delete_is_refused(ch: _State
 
 @pytest.mark.asyncio
 async def test_a_key_a_sweep_caught_and_restore_brought_back_deletes_as_a_delete(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The sweep's marker stays on its tombstone: the restored row does not carry it, so a
     # later delete of the key is a delete to the write fence.
@@ -260,7 +220,7 @@ async def test_a_key_a_sweep_caught_and_restore_brought_back_deletes_as_a_delete
 
 
 @pytest.mark.asyncio
-async def test_a_write_drawn_after_the_delete_keeps_winning(ch: _StatefulCH) -> None:
+async def test_a_write_drawn_after_the_delete_keeps_winning(ch: KeptCH) -> None:
     # A set drawn after the delete lands first; the set in flight across the delete then
     # reaches its fence. The key's newest version is no tombstone, so it is not lifted.
     w = await _delete_during_the_set(ch, "memory.delete")
@@ -273,7 +233,7 @@ async def test_a_write_drawn_after_the_delete_keeps_winning(ch: _StatefulCH) -> 
 
 
 @pytest.mark.asyncio
-async def test_a_blacklist_sweeps_tombstone_keeps_the_write_under_it(ch: _StatefulCH) -> None:
+async def test_a_blacklist_sweeps_tombstone_keeps_the_write_under_it(ch: KeptCH) -> None:
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
     w = _in_flight_set(head + 5_000_000)
@@ -291,7 +251,7 @@ async def test_a_blacklist_sweeps_tombstone_keeps_the_write_under_it(ch: _Statef
 
 @pytest.mark.asyncio
 async def test_two_writes_lifted_over_one_delete_differ_under_clock_skew(
-    ch: _StatefulCH,
+    ch: KeptCH,
 ) -> None:
     # The deleting replica's clock runs ahead. Both writes read the fence before either
     # lands: each sits just above the tombstone, offset by a hash of its row. The versions
@@ -314,7 +274,7 @@ async def test_two_writes_lifted_over_one_delete_differ_under_clock_skew(
 
 @pytest.mark.asyncio
 async def test_writes_drawn_on_a_microsecond_clock_lifted_together_differ(
-    ch: _StatefulCH,
+    ch: KeptCH,
 ) -> None:
     # A clock that reports microseconds draws versions 1,000 ns apart: their offsets come
     # from a hash of the row, not from the clock's last digits.
@@ -334,7 +294,7 @@ async def test_writes_drawn_on_a_microsecond_clock_lifted_together_differ(
 
 @pytest.mark.asyncio
 async def test_a_write_the_key_moved_past_before_the_delete_stays_deleted(
-    ch: _StatefulCH,
+    ch: KeptCH,
 ) -> None:
     # Drawn before a later write replaced it; the delete then removed that later write.
     # Lifting it would bring back a value the key had already moved past.
@@ -347,7 +307,7 @@ async def test_a_write_the_key_moved_past_before_the_delete_stays_deleted(
 
 
 @pytest.mark.asyncio
-async def test_a_write_drawn_after_the_delete_stays_above_a_lifted_one(ch: _StatefulCH) -> None:
+async def test_a_write_drawn_after_the_delete_stays_above_a_lifted_one(ch: KeptCH) -> None:
     # The older write reaches its fence first and is lifted; the write drawn after the
     # delete lands later and still wins.
     w = await _delete_during_the_set(ch, "memory.delete")
@@ -378,7 +338,7 @@ async def test_a_fence_that_cannot_read_keeps_the_drawn_version() -> None:
 
 @pytest.mark.asyncio
 async def test_a_bulk_write_in_flight_during_a_delete_lands_with_its_vectors(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.memory.api.models_bulk import _BulkSetResult
     from server.memory.app import bulk_set
@@ -387,7 +347,7 @@ async def test_a_bulk_write_in_flight_during_a_delete_lands_with_its_vectors(
     async def _noop(*_a: Any, **_k: Any) -> int:
         return 0
 
-    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_embeddings")]
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
     for name in ("index_late_rows", "retire_vectors_for_keys"):
         monkeypatch.setattr(memory_repo, name, _noop)
     monkeypatch.setattr(bulk_set, "fence_high", _noop)
@@ -429,14 +389,14 @@ async def test_a_bulk_write_in_flight_during_a_delete_lands_with_its_vectors(
 
 @pytest.mark.asyncio
 async def test_an_embedded_set_in_flight_during_a_delete_lands_with_its_vector(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # memory.set's embedded path builds its vector from the lifted version.
 
     async def _noop(*_a: Any, **_k: Any) -> int:
         return 0
 
-    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_embeddings")]
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
     monkeypatch.setattr(memory_repo, "index_late_rows", _noop)
     w = await _delete_during_the_set(ch, "memory.delete")
     w.input = w.input.model_copy(update={"memory_type": "semantic"})
@@ -456,7 +416,7 @@ async def test_an_embedded_set_in_flight_during_a_delete_lands_with_its_vector(
 
 
 async def _set_through_phases(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, *, sha: str, after_build: Any = None
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch, *, sha: str, after_build: Any = None
 ) -> Any:
     """memory.set's phases against the stateful clickhouse-local (a procedural row,
     embedded), with `if_match_sha256` when `sha` is set; `after_build` runs once the row
@@ -490,7 +450,7 @@ async def _set_through_phases(
 
 @pytest.mark.asyncio
 async def test_a_conditional_set_whose_check_passed_lands_above_the_row_it_checked(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The row it checks was written after the set began: its version is drawn after the
     # check, so it lands above that row instead of beneath it.
@@ -510,7 +470,7 @@ async def test_a_conditional_set_whose_check_passed_lands_above_the_row_it_check
 
 @pytest.mark.asyncio
 async def test_a_delete_after_a_conditional_sets_check_answers_409(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from fastapi import HTTPException
 
@@ -583,7 +543,7 @@ def test_a_bulk_write_does_not_carry_a_sweeps_marker() -> None:
 
 @pytest.mark.asyncio
 async def test_a_set_and_a_touch_do_not_carry_a_sweeps_marker(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A row an older build restored from a sweep still holds the marker; the next touch or
     # set of the key writes a version without it.
@@ -609,7 +569,7 @@ async def test_a_set_and_a_touch_do_not_carry_a_sweeps_marker(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("op", ["memory.delete_version", "memory.delete"])
 async def test_a_delete_of_a_row_still_holding_a_sweeps_marker_is_a_delete(
-    ch: _StatefulCH, op: str
+    ch: KeptCH, op: str
 ) -> None:
     # The row was restored from a sweep by an older build and never written since: the
     # delete's tombstone does not take the marker, so the set in flight keeps its row.
@@ -625,7 +585,7 @@ async def test_a_delete_of_a_row_still_holding_a_sweeps_marker_is_a_delete(
 
 @pytest.mark.asyncio
 async def test_a_write_committed_between_the_check_and_the_tombstone_is_put_back(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A plain set takes no key lock: it commits after delete_version read the old head and
     # before its tombstone. The delete then finds it and writes it back above the tombstone,
@@ -650,7 +610,7 @@ async def test_a_write_committed_between_the_check_and_the_tombstone_is_put_back
 
 @pytest.mark.asyncio
 async def test_a_write_whose_fence_read_missed_a_conditional_delete_lifts_after_its_insert(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The set reads its fence, then the whole delete_version runs (the set is not in yet,
     # so nothing is put back), then the set inserts under the tombstone. Its read after the
@@ -681,7 +641,7 @@ async def test_a_write_whose_fence_read_missed_a_conditional_delete_lifts_after_
 
 @pytest.mark.asyncio
 async def test_a_batch_keeps_a_row_already_above_the_tombstone_where_it_is(
-    ch: _StatefulCH,
+    ch: KeptCH,
 ) -> None:
     # Two entries of one key straddle a delete: the earlier moves just above the
     # tombstone, the later keeps its version, so a delayed write drawn between them
@@ -716,7 +676,7 @@ async def test_a_batch_keeps_a_row_already_above_the_tombstone_where_it_is(
 
 @pytest.mark.asyncio
 async def test_a_plain_delete_drawn_above_the_tombstone_is_not_undone(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A set lands, then a plain memory.delete removes it, both after delete_version's check
     # and after it drew its tombstone's version: the plain delete removed the key, not this
@@ -747,7 +707,7 @@ async def test_a_plain_delete_drawn_above_the_tombstone_is_not_undone(
 
 @pytest.mark.asyncio
 async def test_a_plain_delete_below_the_tombstone_answers_not_found_and_restores_its_row(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A set lands and a plain memory.delete removes it after delete_version's check and
     # before it draws its tombstone's version: the plain delete came first, so the key was
@@ -801,7 +761,7 @@ async def test_a_plain_delete_below_the_tombstone_answers_not_found_and_restores
     ("column", "changed"), [("tags", ["reviewed"]), ("expire_reason", "contract ends")]
 )
 async def test_a_plain_delete_of_a_same_value_write_is_copied_with_its_metadata(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, column: str, changed: Any
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch, column: str, changed: Any
 ) -> None:
     # After delete_version's check a set writes the same value with other metadata, and a
     # plain memory.delete removes it. The delete's own tombstone has the value but not the
@@ -840,7 +800,7 @@ async def test_a_plain_delete_of_a_same_value_write_is_copied_with_its_metadata(
 
 @pytest.mark.asyncio
 async def test_a_restored_key_does_not_carry_the_delete_version_marker(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The marker stays on delete_version's tombstone; the row memory.restore brings back,
     # and every version after it, drops it.
@@ -861,7 +821,7 @@ async def test_a_restored_key_does_not_carry_the_delete_version_marker(
 
 @pytest.mark.asyncio
 async def test_a_later_write_listed_but_not_read_leaves_the_check_owed(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The version list saw a later write that the row read then missed: the delete cannot
     # tell what the write was, so it answers 503 and retires nothing, and the check stays
@@ -895,7 +855,7 @@ async def test_a_later_write_listed_but_not_read_leaves_the_check_owed(
 
 @pytest.mark.asyncio
 async def test_a_batch_whose_fence_read_missed_a_conditional_delete_lands_with_its_vectors(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Two entries of the key, a delete_version landing between the batch's fence read and
     # its insert: after the insert both entries move above the tombstone, in order, with
@@ -907,7 +867,7 @@ async def test_a_batch_whose_fence_read_missed_a_conditional_delete_lands_with_i
     async def _noop(*_a: Any, **_k: Any) -> int:
         return 0
 
-    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_embeddings")]
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
     for name in ("index_late_rows", "retire_vectors_for_keys"):
         monkeypatch.setattr(memory_repo, name, _noop)
     monkeypatch.setattr(bulk_set, "fence_high", _noop)
@@ -958,13 +918,13 @@ async def test_a_batch_whose_fence_read_missed_a_conditional_delete_lands_with_i
 
 @pytest.mark.asyncio
 async def test_an_embedded_set_whose_fence_read_missed_a_conditional_delete_keeps_its_vector(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 
     async def _noop(*_a: Any, **_k: Any) -> int:
         return 0
 
-    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_embeddings")]
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
     monkeypatch.setattr(memory_repo, "index_late_rows", _noop)
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
@@ -1012,7 +972,7 @@ def test_no_caller_writes_a_delete_version_trace() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("other", ["memory.delete", "sweep"])
 async def test_a_write_after_a_written_back_tombstone_lifts_over_it(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, other: str
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch, other: str
 ) -> None:
     # A newer value lands and another delete (or a sweep) removes it after delete_version's
     # check; a set that began after it reads its fence before the tombstone lands and
@@ -1064,7 +1024,7 @@ async def test_a_write_after_a_written_back_tombstone_lifts_over_it(
 
 @pytest.mark.asyncio
 async def test_a_sweep_above_the_tombstone_answers_not_found_and_retires_nothing(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
@@ -1096,7 +1056,7 @@ async def test_a_sweep_above_the_tombstone_answers_not_found_and_retires_nothing
 @pytest.mark.asyncio
 @pytest.mark.parametrize("remover", ["sweep", "dedup"])
 async def test_a_by_id_tombstone_of_the_checked_row_is_not_copied(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, remover: str
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch, remover: str
 ) -> None:
     # A sweep or a dedup tombstones the very row delete_version checked, after its check:
     # the delete's own tombstone already carries that row, its status and (under a sweep's
@@ -1136,7 +1096,7 @@ async def test_a_by_id_tombstone_of_the_checked_row_is_not_copied(
 
 @pytest.mark.asyncio
 async def test_a_write_the_sweep_caught_stays_under_it(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A sweep removes the key after delete_version's check; a write drawn before the sweep's
     # tombstone (one the sweep caught) lands after the delete's tombstone. The sweep's own
@@ -1188,7 +1148,7 @@ async def test_a_write_the_sweep_caught_stays_under_it(
 
 @pytest.mark.asyncio
 async def test_a_check_that_fails_after_the_tombstone_is_finished_by_the_worker(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A plain set commits between delete_version's check and its tombstone, and the read
     # after the tombstone fails. The delete answers 503 and retires nothing; its check
@@ -1235,7 +1195,7 @@ async def test_a_check_that_fails_after_the_tombstone_is_finished_by_the_worker(
 
 @pytest.mark.asyncio
 async def test_a_delete_that_cannot_record_its_check_deletes_nothing(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
@@ -1252,7 +1212,7 @@ async def test_a_delete_that_cannot_record_its_check_deletes_nothing(
 
 
 @pytest.mark.asyncio
-async def test_a_delete_that_stands_closes_its_check(ch: _StatefulCH) -> None:
+async def test_a_delete_that_stands_closes_its_check(ch: KeptCH) -> None:
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
     out = await hm.handle_memory_delete_version(
@@ -1291,11 +1251,11 @@ def _chunk_rows(value: Any) -> list[dict[str, Any]]:
 
 
 async def _seed_long_value_with_chunks(
-    ch: _StatefulCH,
+    ch: KeptCH,
 ) -> tuple[int, list[dict[str, Any]], list[dict[str, Any]]]:
     """A long semantic head of the key with its chunks, and a newer value's chunks of the
     key beside them: the head's version, the head's chunk rows and the newer ones."""
-    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_chunks")]
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_chunks"))
     head = time.time_ns() - 10_000_000_000
     removed_value = " ".join(f"old passage {i} about the deploy window." for i in range(400))
     newer_value = " ".join(f"new passage {i} about the release train." for i in range(400))
@@ -1308,7 +1268,7 @@ async def _seed_long_value_with_chunks(
 
 @pytest.mark.asyncio
 async def test_delete_version_retires_only_the_removed_versions_chunks(
-    ch: _StatefulCH,
+    ch: KeptCH,
 ) -> None:
     # A newer value's chunks of the key stay when a delete_version that stands retires
     # what the version it removed derived.
@@ -1326,12 +1286,12 @@ async def test_delete_version_retires_only_the_removed_versions_chunks(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("newer_state", ["live", "high", "deleted again"])
 async def test_a_set_after_the_check_keeps_the_chunks_it_shares_with_the_removed_version(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, newer_state: str
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch, newer_state: str
 ) -> None:
     # A newer value that keeps the removed value's opening passages lands after the
     # delete's check, before its chunks retire: its shared chunks stay live with the rest.
     # They stay retired when search serves none of it: a high row, or a key deleted again.
-    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_chunks")]
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_chunks"))
     head = time.time_ns() - 10_000_000_000
     opening = " ".join(f"old passage {i} about the deploy window." for i in range(60))
     removed_value = opening + " " + " ".join(f"old tail {i} of the note." for i in range(300))
@@ -1373,13 +1333,13 @@ async def test_a_set_after_the_check_keeps_the_chunks_it_shares_with_the_removed
 
 @pytest.mark.asyncio
 async def test_a_delete_racing_the_chunk_restore_leaves_no_chunk_live(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A memory.delete of the newer value commits after the restore read the key and before
     # it put the shared chunks back: the read after the restore retires them again.
     from server.memory.app import set_chunks
 
-    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_chunks")]
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_chunks"))
     head = time.time_ns() - 10_000_000_000
     opening = " ".join(f"old passage {i} about the deploy window." for i in range(60))
     removed_value = opening + " " + " ".join(f"old tail {i} of the note." for i in range(300))
@@ -1416,11 +1376,11 @@ async def test_a_delete_racing_the_chunk_restore_leaves_no_chunk_live(
 
 @pytest.mark.asyncio
 async def test_a_restore_whose_head_read_fails_retires_the_chunks_again(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The read after the restore fails: the restored chunks retire again rather than stay
     # live on a head nobody checked.
-    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_chunks")]
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_chunks"))
     head = time.time_ns() - 10_000_000_000
     opening = " ".join(f"old passage {i} about the deploy window." for i in range(60))
     removed_value = opening + " " + " ".join(f"old tail {i} of the note." for i in range(300))
@@ -1462,7 +1422,7 @@ async def test_a_restore_whose_head_read_fails_retires_the_chunks_again(
 
 
 async def _owed_after_a_failed_check(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, *, clock_ahead_ns: int = 0
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch, *, clock_ahead_ns: int = 0
 ) -> int:
     """A delete_version of the key's head whose check fails after the tombstone, with a
     plain set committing between its version check and its tombstone: the 503, and the
@@ -1492,7 +1452,7 @@ async def _owed_after_a_failed_check(
 
 @pytest.mark.asyncio
 async def test_a_retry_after_the_503_runs_the_owed_check(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # An SDK retries the 503: the retry finds the key deleted and the check owed, runs it,
     # and answers as the delete would have (the set after the version check moved the key
@@ -1509,7 +1469,7 @@ async def test_a_retry_after_the_503_runs_the_owed_check(
 
 @pytest.mark.asyncio
 async def test_running_a_finished_check_again_changes_nothing(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The check ran (the set's row is written back) but was not marked done: the worker
     # runs it again, which answers the same and writes no second copy.
@@ -1531,7 +1491,7 @@ async def test_running_a_finished_check_again_changes_nothing(
 
 @pytest.mark.asyncio
 async def test_recovery_on_a_clock_behind_the_tombstone_writes_the_set_above_it(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The delete ran on a host whose clock is a minute ahead; the worker's is not. The
     # set's row still goes back above the tombstone, not at the worker's clock below it.
@@ -1550,7 +1510,7 @@ async def test_recovery_on_a_clock_behind_the_tombstone_writes_the_set_above_it(
     assert got.version > int(check["tombstone"]) + LIFT_BAND_NS
 
 
-async def _tombstone_held_back(ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch) -> tuple[int, Any]:
+async def _tombstone_held_back(ch: KeptCH, monkeypatch: pytest.MonkeyPatch) -> tuple[int, Any]:
     """A delete_version of the key's head whose tombstone insert times out but is still
     queued: the version it named, and the call that commits the insert late."""
     head = time.time_ns() - 10_000_000_000
@@ -1579,7 +1539,7 @@ async def _tombstone_held_back(ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch)
 
 @pytest.mark.asyncio
 async def test_a_check_whose_tombstone_is_missing_finishes_the_delete(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The tombstone insert timed out (503). The worker finds no tombstone, writes one at a
     # new version (the namespace's watermark moves past the write it draws after) and runs
@@ -1611,7 +1571,7 @@ async def test_a_check_whose_tombstone_is_missing_finishes_the_delete(
     "failure", ["the check record", "the tombstone insert", "the check after it", "a retry"]
 )
 async def test_a_503_writes_its_audit_row_and_the_worker_none(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, failure: str
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     # The transport audits only a call that succeeds. A call that answers the deferred 503
     # writes its own row, outcome `deferred`, as the transport would name it; a retry that
@@ -1672,7 +1632,7 @@ async def test_a_503_writes_its_audit_row_and_the_worker_none(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("refusal", ["a locked row", "an unread head"])
 async def test_a_refusal_or_another_503_writes_no_deferred_audit_row(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, refusal: str
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch, refusal: str
 ) -> None:
     # Only a delete that may still finish writes the deferred row: a 423 on a locked row,
     # or a 503 before anything is recorded (the head unread), writes none.
@@ -1714,7 +1674,7 @@ async def test_a_refusal_or_another_503_writes_no_deferred_audit_row(
 
 @pytest.mark.asyncio
 async def test_a_check_whose_tombstone_is_missing_leaves_a_later_set_alone(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The caller sets the key after the 503 of a failed tombstone insert. The worker finds
     # the key moved on: it writes no tombstone, and the set stays the head.
@@ -1738,7 +1698,7 @@ async def test_a_check_whose_tombstone_is_missing_leaves_a_later_set_alone(
 
 @pytest.mark.asyncio
 async def test_a_set_under_a_late_tombstone_of_the_same_delete_is_written_back(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The SDK retries the 503 of a timed-out tombstone insert. While the retry writes its
     # own tombstone, a plain set drawn before the first commits, and then the first
@@ -1766,7 +1726,7 @@ async def test_a_set_under_a_late_tombstone_of_the_same_delete_is_written_back(
 
 @pytest.mark.asyncio
 async def test_a_plain_delete_above_a_late_tombstone_of_the_same_delete_is_copied(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The SDK retries the 503 of a timed-out tombstone insert. After the retry's version
     # check the first tombstone commits, then a set and a plain memory.delete of it, all
@@ -1803,7 +1763,7 @@ async def test_a_plain_delete_above_a_late_tombstone_of_the_same_delete_is_copie
 
 @pytest.mark.asyncio
 async def test_a_recovered_check_run_again_stands_on_the_tombstone_it_wrote(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The worker wrote the missing tombstone, but its done mark was lost: the next run
     # stands on that tombstone, answers the same and writes nothing.
@@ -1825,7 +1785,7 @@ async def test_a_recovered_check_run_again_stands_on_the_tombstone_it_wrote(
 
 @pytest.mark.asyncio
 async def test_a_check_whose_tombstone_is_missing_finishes_on_the_retrys(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The first tombstone insert failed for good; the retry deleted the key again. The first
     # check, run later, stands on the retry's tombstone, the one that committed.
@@ -1843,7 +1803,7 @@ async def test_a_check_whose_tombstone_is_missing_finishes_on_the_retrys(
 
 @pytest.mark.asyncio
 async def test_a_retry_whose_first_tombstone_commits_late_still_retires(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The SDK retries the 503 of a timed-out tombstone insert; the original commits while
     # the retry runs its check. It is a delete of the same version, not another delete:
@@ -1879,7 +1839,7 @@ async def test_a_retry_whose_first_tombstone_commits_late_still_retires(
 
 @pytest.mark.asyncio
 async def test_a_set_landing_while_a_missing_tombstone_is_written_stays(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A plain set commits between the worker's read and its tombstone write, below the
     # tombstone: the check after the tombstone writes the set back above it.
@@ -1904,7 +1864,7 @@ async def test_a_set_landing_while_a_missing_tombstone_is_written_stays(
 
 @pytest.mark.asyncio
 async def test_a_late_tombstone_does_not_hide_a_set_written_before_its_check_ran(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A plain set lands while the tombstone insert is still queued, at a version below it;
     # the worker writes the set above the tombstone before the insert commits.
@@ -1923,7 +1883,7 @@ async def test_a_late_tombstone_does_not_hide_a_set_written_before_its_check_ran
 
 @pytest.mark.asyncio
 async def test_the_worker_leaves_a_check_to_its_delete_during_the_grace(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.memory.workers import delete_version_check
     from server.settings import settings
@@ -1940,7 +1900,7 @@ async def test_the_worker_leaves_a_check_to_its_delete_during_the_grace(
 
 @pytest.mark.asyncio
 async def test_a_retry_after_the_503_of_a_delete_that_stands_retires_its_version(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The common 503: the check's read failed and no write raced the delete. The retry
     # answers tombstoned at the delete's own tombstone, retires the removed version's
@@ -1973,7 +1933,7 @@ async def test_a_retry_after_the_503_of_a_delete_that_stands_retires_its_version
 
 @pytest.mark.asyncio
 async def test_a_retry_whose_check_fails_again_answers_503_and_leaves_it_owed(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.core.errors import BackendUnavailableError
 
@@ -1989,7 +1949,7 @@ async def test_a_retry_whose_check_fails_again_answers_503_and_leaves_it_owed(
 
 @pytest.mark.asyncio
 async def test_a_worker_pass_runs_at_most_its_batch(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Two owed checks of two keys, a batch of one: each pass runs one.
     from server.memory.workers import delete_version_check

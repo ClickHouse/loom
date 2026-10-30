@@ -133,23 +133,12 @@ async def _write_decision(
     tags: list[str],
     valid_at: datetime | None,
 ) -> str:
-    """Record + memory row under one key. Returns the record_id."""
+    """Memory row + record under one key. Returns the record_id. The row goes first:
+    memory.delete of another identity's row keeps the record while a live row holds the
+    key, so it must see this row before the record exists."""
     from server.memory.app.records import handle_memory_record_write
     from server.memory.app.write import handle_memory_set
 
-    rec_out = await handle_memory_record_write(
-        MemoryRecordWriteInput(
-            org=org,
-            namespace=namespace,
-            schema_name=svc.SCHEMA_NAME,
-            memory_key=key,
-            agent=agent,
-            user_id=user_id or "-",
-            session_id=session_id or "-",
-            fields=svc.record_fields(payload),  # type: ignore[arg-type]
-            valid_at=valid_at,
-        )
-    )
     conf = payload.get("confidence")
     await handle_memory_set(
         MemorySetInput(
@@ -165,6 +154,19 @@ async def _write_decision(
             tags=tags,
             confidence=float(conf) if isinstance(conf, (int, float)) and conf > 0 else 1.0,
             source_trace=f"run:{run_id}" if named(run_id) else "decision",
+            valid_at=valid_at,
+        )
+    )
+    rec_out = await handle_memory_record_write(
+        MemoryRecordWriteInput(
+            org=org,
+            namespace=namespace,
+            schema_name=svc.SCHEMA_NAME,
+            memory_key=key,
+            agent=agent,
+            user_id=user_id or "-",
+            session_id=session_id or "-",
+            fields=svc.record_fields(payload),  # type: ignore[arg-type]
             valid_at=valid_at,
         )
     )

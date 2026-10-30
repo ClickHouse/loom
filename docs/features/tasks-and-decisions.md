@@ -261,9 +261,9 @@ was `caused_by` or `influenced_by`. It writes:
 
 `memory.delete` or `memory.delete_version` of the decision row also tombstones its record, so `decision.chain`,
 `decision.precedents` and `decision.outcome` stop serving it, and `memory.record.history` shows the last version
-with `status="tombstoned"`. The record has no identity of its own, so while another agent or session still holds a
-live decision row under the key, the record stays active. `memory.restore` revives the row but not the record; call
-`decision.record` again to bring it back.
+with `status="tombstoned"`. The record has no identity of its own, so while another agent, user or session still
+holds a live decision row under the key, the record stays active. `memory.restore` revives the row but not the
+record; call `decision.record` again to bring it back.
 
 | Operation             | Role   | Does                                                                                               |
 | --------------------- | ------ | -------------------------------------------------------------------------------------------------- |
