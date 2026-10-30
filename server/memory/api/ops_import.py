@@ -15,7 +15,8 @@ memory_import = Operation(
     input_model=MemoryImportInput,
     output_model=MemoryImportOutput,
     handler=handle_memory_import,
-    # Keys derive from the text: a retry finds its own rows and writes nothing new.
+    # Keys derive from the text: a retry finds its own rows, writes nothing new and
+    # records no usage event for them.
     idempotent=True,
     required_role=Role.WRITER,
     audit=False,

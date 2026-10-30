@@ -56,6 +56,8 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
         dry_run=input.dry_run,
         # Every entry is checked, whatever bulk_conflict_check_max_entries caps a bulk at.
         conflict_check_cap=MAX_IMPORT_ENTRIES,
+        # A re-run reinforces nothing its own keys already hold.
+        reinforce_own_key=False,
     )
     outcomes = {
         keys[i]: entry_outcome(

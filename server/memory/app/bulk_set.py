@@ -957,6 +957,7 @@ async def handle_memory_bulk_set(
     *,
     dry_run: bool = False,
     conflict_check_cap: int | None = None,
+    reinforce_own_key: bool = True,
 ) -> MemoryBulkSetOutput:
     """One CH insert for all rows; one more for embeddings. Versions are
     each unique (nanosecond) to preserve LWW semantics.
@@ -969,7 +970,10 @@ async def handle_memory_bulk_set(
     match still counts a hit on its pattern, as memory.set's dry run does.
 
     `conflict_check_cap` (memory.import's) is how many entries the conflict check
-    reaches, in place of `bulk_conflict_check_max_entries`."""
+    reaches, in place of `bulk_conflict_check_max_entries`. `reinforce_own_key=False`
+    (memory.import's) records no `evidence` event for an entry its own key already holds,
+    in this session or another: a re-run of an import reinforces nothing, while a merge or
+    the same bytes under another key still reinforce that row."""
     ch = get_client()
     embedder = get_embedder()
     now_utc = datetime.now(UTC)
@@ -978,7 +982,9 @@ async def handle_memory_bulk_set(
 
     _bulk_work: dict[str, Any] = {}
     _bulk_clock = StageClock(_bulk_work)
-    state = _BulkWriteState(conflict_check_cap=conflict_check_cap)
+    state = _BulkWriteState(
+        conflict_check_cap=conflict_check_cap, reinforce_own_key=reinforce_own_key
+    )
     await _bulk_existing_lookup(ch, input, state)
 
     identity_dupes = await _bulk_identity_dupes(ch, input)

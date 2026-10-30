@@ -406,7 +406,9 @@ the write.
 `import:` and 24 hex characters of the SHA-256 of its text (`import_key` in
 `memory/domain/memory_import.py`), and each entry declares `source_class=imported`. It
 passes its own `conflict_check_cap`, so the conflict check reaches every entry whatever
-`bulk_conflict_check_max_entries` says. Its dry run passes `dry_run=True` to the bulk
+`bulk_conflict_check_max_entries` says, and `reinforce_own_key=False`, so a re-run records no
+`evidence` event for a row under the entry's own key (a merge or the same bytes under
+another key still reinforce that row). Its dry run passes `dry_run=True` to the bulk
 write, which returns once the verdicts are in:
 every check has run, and nothing is written but a blacklist pattern's hit count, as on a
 `memory.set` dry run. Category links go through `memory/store/categories.py`, the

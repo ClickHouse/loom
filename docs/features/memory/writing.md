@@ -231,9 +231,10 @@ conflict verdict. Every entry gets the conflict check, whatever
 
 - **The key comes from the text:** `import:` and the first 24 hex characters of the
   SHA-256 of the text as given. The same text always lands on the same key, so a re-run
-  writes nothing new: its entries come back `skipped` (`unchanged`). A re-run still
-  reinforces each stored row once, as any restatement through `memory.set` or
-  `memory.bulk_set` does.
+  writes nothing new: its entries come back `skipped` (`unchanged`). Unlike a restatement
+  through `memory.set` or `memory.bulk_set`, a re-run does not reinforce a row its own key
+  holds; a fact found under another key (a merge, or the same text there) is reinforced as
+  on any write.
 - **Provenance:** every row is `source_class=imported`, `valid_at` is the source's time
   and `created_at` the import's. An entry with no `source_trace` is traced by its key.
 - **Categories:** a `category` the namespace registered (`namespace.register_category`) is

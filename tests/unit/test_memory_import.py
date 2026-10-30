@@ -209,23 +209,31 @@ async def test_each_item_is_written_under_its_key_as_imported(harness) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_rerun_writes_nothing_new(harness) -> None:
+async def test_reruns_write_nothing_new_and_reinforce_nothing(harness) -> None:
+    """Three re-runs of two items add no row, no vector and no usage event."""
     ch = _StoreCH()
     rec = harness(ch)
     items = ({"value": "Dog is Biscuit."}, {"value": "Deploys happen on Tuesday."})
     first = await handle_memory_import(_input(*items))
     assert first.totals.written == 2
     rows, vectors = len(ch.rows_for("loom.memory")), len(rec.embedded)
-    again = await handle_memory_import(_input(*items))
-    assert _outcomes(again) == [("skipped", "unchanged"), ("skipped", "unchanged")]
-    assert again.totals.model_dump() == {"written": 0, "reinforced": 0, "skipped": 2, "refused": 0}
+    for _ in range(3):
+        again = await handle_memory_import(_input(*items))
+        assert _outcomes(again) == [("skipped", "unchanged"), ("skipped", "unchanged")]
+        assert again.totals.model_dump() == {
+            "written": 0,
+            "reinforced": 0,
+            "skipped": 2,
+            "refused": 0,
+        }
     assert (len(ch.rows_for("loom.memory")), len(rec.embedded)) == (rows, vectors) == (2, 2)
+    assert rec.events == []
 
 
 @pytest.mark.asyncio
 async def test_the_item_imported_in_another_session_is_skipped(harness) -> None:
     """Identity dedup spans sessions: the key holding the text in another session of the
-    identity is the item already imported."""
+    identity is the item already imported, and it is not reinforced again."""
     value = "Dog is Biscuit."
     ch = _StoreCH(
         [
@@ -237,10 +245,10 @@ async def test_the_item_imported_in_another_session_is_skipped(harness) -> None:
             )
         ]
     )
-    harness(ch)
+    rec = harness(ch)
     out = await handle_memory_import(_input({"value": value}))
     assert _outcomes(out) == [("skipped", "unchanged")]
-    assert ch.rows_for("loom.memory") == []
+    assert ch.rows_for("loom.memory") == [] and rec.events == []
 
 
 @pytest.mark.asyncio
