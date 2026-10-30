@@ -12004,7 +12004,6 @@ class MemoryImportOutput(TypedDict, total=False):
     totals: Required["ImportTotals"]
     results: Required[list["ImportEntryResult"]]
     dry_run: NotRequired[bool]
-    unchecked: NotRequired[int]
 
 
 class ImportTotals(TypedDict, total=False):

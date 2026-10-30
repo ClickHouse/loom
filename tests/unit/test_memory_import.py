@@ -442,14 +442,39 @@ async def test_a_rerun_links_a_category_registered_since(harness) -> None:
 # ---- bounds and declaration ------------------------------------------------
 
 
-def test_501_entries_are_refused_and_500_accepted() -> None:
+def test_201_entries_are_refused_and_200_accepted() -> None:
     entries = [{"value": f"fact {i}"} for i in range(MAX_IMPORT_ENTRIES + 1)]
     with pytest.raises(pydantic.ValidationError) as caught:
         MemoryImportInput(**_IDENT, entries=entries)
     assert [(e["loc"], e["type"]) for e in caught.value.errors()] == [(("entries",), "too_long")]
-    assert len(MemoryImportInput(**_IDENT, entries=entries[:-1]).entries) == 500
+    assert len(MemoryImportInput(**_IDENT, entries=entries[:-1]).entries) == 200
     with pytest.raises(pydantic.ValidationError):
         MemoryImportInput(**_IDENT, entries=[])
+
+
+def test_an_import_never_holds_more_entries_than_a_bulk_write_conflict_checks() -> None:
+    """Every entry gets the conflict check: the bound is the bulk write's default cap."""
+    from server.settings import Settings
+
+    cap = Settings.model_fields["bulk_conflict_check_max_entries"].default
+    assert MAX_IMPORT_ENTRIES == cap == 200
+
+
+@pytest.mark.asyncio
+async def test_a_full_import_checks_every_entry(harness, monkeypatch) -> None:
+    rec = harness(_StoreCH())
+    checked: list[str] = []
+
+    async def _check(**kw: Any) -> ConflictResult:
+        checked.append(json.loads(kw["new_value"]))
+        return ConflictResult(verdict="clear", peers=[])
+
+    monkeypatch.setattr("server.memory.app.conflicts.check_on_commit", _check)
+    entries = [{"value": f"Fact number {i}."} for i in range(MAX_IMPORT_ENTRIES)]
+    out = await handle_memory_import(_input(*entries))
+    assert out.totals.written == MAX_IMPORT_ENTRIES
+    assert sorted(checked) == sorted(e["value"] for e in entries)
+    assert len(rec.embedded) == MAX_IMPORT_ENTRIES
 
 
 @pytest.mark.parametrize(

@@ -4824,7 +4824,6 @@ export interface MemoryImportOutput {
   totals: ImportTotals;
   results: ImportEntryResult[];
   dry_run?: boolean;
-  unchecked?: number;
 }
 
 export interface MemoryImportCuratedInput {

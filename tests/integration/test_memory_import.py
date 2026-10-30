@@ -197,12 +197,12 @@ def test_the_gateway_calls_the_mcp_tool_with_the_identity_its_token_carries(
     assert sc["totals"]["written"] == 1 and sc["results"][0]["key"] == _key(value), sc
 
 
-def test_more_than_500_entries_are_refused(ctx: dict[str, str]) -> None:
+def test_more_than_200_entries_are_refused(ctx: dict[str, str]) -> None:
     body = {
         "org": ctx["org"],
         "namespace": ctx["ns"],
         "agent": AGENT,
-        "entries": [{"value": f"fact {i}"} for i in range(501)],
+        "entries": [{"value": f"fact {i}"} for i in range(201)],
     }
     r = _post(ctx["base"], ctx["token"], "memory.import", body)
     assert r.status_code == 422, r.text[:400]

@@ -12,8 +12,9 @@ from server.memory.api.models_common import _Identity
 from server.memory.domain.delete_marks import caller_trace
 from server.memory.domain.memory_import import Outcome
 
-# The most entries one memory.import takes.
-MAX_IMPORT_ENTRIES = 500  # not a setting: a wire bound the request schema and SDKs publish
+# The most entries one memory.import takes: as many as memory.bulk_set conflict-checks in
+# one call by default (LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES), so every entry gets the check.
+MAX_IMPORT_ENTRIES = 200  # not a setting: a wire bound the request schema and SDKs publish
 # The longest item text, in characters: past the embedder's token cap, about 30,000
 # characters, nothing of a value is embedded, so search could not find a longer item.
 MAX_IMPORT_VALUE_CHARS = 30_000  # not a setting: a wire bound
@@ -64,7 +65,7 @@ class MemoryImportInput(_Identity):
     makes every check and answers the outcome each entry would have.
     """
 
-    # The items to import, 1 to 500: each one's text, and optionally its tags, the time
+    # The items to import, 1 to 200: each one's text, and optionally its tags, the time
     # the source first knew it, its source pointer, a category and a sensitivity tier.
     entries: list[_ImportEntry] = Field(..., min_length=1, max_length=MAX_IMPORT_ENTRIES)
     # Make every check and answer the outcome each entry would have, writing nothing: no
@@ -110,6 +111,3 @@ class MemoryImportOutput(BaseModel):
     results: list[_ImportEntryResult]
     # True when nothing was written: each outcome is what the import would do.
     dry_run: bool = False
-    # Written entries the conflict check did not reach: those past the first
-    # LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES (200) of a call, as memory.bulk_set counts them.
-    unchecked: int = 0

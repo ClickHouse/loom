@@ -1004,7 +1004,7 @@ Import memory items another memory system already distilled into the caller's na
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `entries` | `list[_ImportEntry]` | required | The items to import, 1 to 500: each one's text, and optionally its tags, the time the source first knew it, its source pointer, a category and a sensitivity tier. |
+| `entries` | `list[_ImportEntry]` | required | The items to import, 1 to 200: each one's text, and optionally its tags, the time the source first knew it, its source pointer, a category and a sensitivity tier. |
 | `dry_run` | `bool` | `False` | Make every check and answer the outcome each entry would have, writing nothing: no memory row, embedding, category link, audit row or usage event. |
 
 | Output field | Type | Meaning |
@@ -1012,7 +1012,6 @@ Import memory items another memory system already distilled into the caller's na
 | `totals` | `_ImportTotals` | How many entries ended each way. |
 | `results` | `list[_ImportEntryResult]` | One result per entry, in request order. |
 | `dry_run` | `bool` | True when nothing was written: each outcome is what the import would do. |
-| `unchecked` | `int` | Written entries the conflict check did not reach: those past the first LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES (200) of a call, as memory.bulk_set counts them. |
 
 ## `memory.import_curated`
 

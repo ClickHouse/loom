@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections import Counter
 
 from server.core.datetimes import to_naive_utc
-from server.memory.api.models_bulk import MemoryBulkSetInput, MemoryBulkSetOutput, _BulkSetEntry
+from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry
 from server.memory.api.models_import import (
     MemoryImportInput,
     MemoryImportOutput,
@@ -77,7 +77,7 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
         )
     if not input.dry_run:
         await _link_categories(input, results, category_ids)
-    return _output(input, results, written)
+    return _output(input, results)
 
 
 def _bulk_input(
@@ -138,10 +138,8 @@ async def _link_categories(
     )
 
 
-def _output(
-    input: MemoryImportInput, results: list[_ImportEntryResult], written: MemoryBulkSetOutput
-) -> MemoryImportOutput:
-    """The response: the totals, each entry's result and the bulk write's unchecked count."""
+def _output(input: MemoryImportInput, results: list[_ImportEntryResult]) -> MemoryImportOutput:
+    """The response: the totals and each entry's result."""
     counts = Counter(r.outcome for r in results)
     return MemoryImportOutput(
         totals=_ImportTotals(
@@ -152,5 +150,4 @@ def _output(
         ),
         results=results,
         dry_run=input.dry_run,
-        unchecked=written.unchecked,
     )
