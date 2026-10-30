@@ -201,7 +201,7 @@ async def handle_memory_schema_list(
                 schema_id=str(row["schema_id"]),
                 name=str(row["name"]),
                 description=str(row.get("description") or ""),
-                status=str(row.get("status") or "active"),
+                status=row.get("status") or "active",
                 fields=[
                     SchemaFieldOutput(
                         name=str(f["field_name"]),
@@ -645,6 +645,9 @@ async def _records_by_ids(
         order = "ORDER BY updated_at DESC, version DESC LIMIT 1 BY record_id, version"
     else:
         source, order = "loom.memory_records FINAL", "ORDER BY updated_at DESC"
+    # History keeps the version memory.delete tombstoned, so it reads as deleted rather
+    # than still active; erasure deletes the mirror's rows outright.
+    live = "" if history else "AND tombstoned_at IS NULL"
     # `AS rid`/`AS mid`, never `AS record_id`/`AS memory_id`: a same-name
     # alias SHADOWS the column, so `record_id IN {ids:Array(UUID)}` would
     # compare the String alias against UUIDs and match nothing, so every hydration would
@@ -652,12 +655,12 @@ async def _records_by_ids(
     rec_rows = await get_client().query_all(
         f"""
         SELECT toString(record_id) AS rid, memory_key,
-               toString(memory_id) AS mid, record_json, valid_at, valid_to
+               toString(memory_id) AS mid, record_json, status, valid_at, valid_to
         FROM {source}
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
           AND record_id IN {{ids:Array(UUID)}}
-          AND tombstoned_at IS NULL
+          {live}
         {order}
         """,
         params={"org": org, "ns": namespace, "ids": record_ids},
@@ -691,6 +694,7 @@ async def _records_by_ids(
                 memory_id=str(row.get("mid") or ""),
                 record=record,
                 field_states=states.get(rid, {}),
+                status=row.get("status") or "active",
                 valid_at=row.get("valid_at"),
                 valid_to=row.get("valid_to"),
             )

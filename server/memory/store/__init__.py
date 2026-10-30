@@ -104,6 +104,7 @@ from server.memory.store.lifecycle import (
     supersede_duplicates,
     tombstone_by_id,
     tombstone_cascade_by_ids,
+    tombstone_record_of_deleted_row,
     write_versions_by_ids,
 )
 from server.memory.store.lookups import (
@@ -303,6 +304,7 @@ __all__ = [
     "tombstone_cascade_by_ids",
     "tombstone_embeddings_for_key",
     "tombstone_entity_vectors_for_keys",
+    "tombstone_record_of_deleted_row",
     "tombstone_vectors_of",
     "unsupersede_embeddings",
     "uuid_or_none",

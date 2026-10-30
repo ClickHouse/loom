@@ -12930,6 +12930,7 @@ class MemoryRecordRow(TypedDict, total=False):
     memory_id: NotRequired[str]
     record: NotRequired[dict[str, Any]]
     field_states: NotRequired[dict[str, str]]
+    status: NotRequired[Literal["active", "superseded", "rejected", "tombstoned"]]
     valid_at: NotRequired[Optional[str]]
     valid_to: NotRequired[Optional[str]]
 

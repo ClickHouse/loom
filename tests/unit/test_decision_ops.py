@@ -1,10 +1,16 @@
 """Decisions as first-class records: key derivation, field
-shaping, the causal walk, and the four handlers over stubbed planes."""
+shaping, the causal walk, the four handlers over stubbed planes, and memory.delete
+retiring a decision's record on clickhouse-local."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -13,6 +19,7 @@ import pytest
 
 from server.memory.app import decisions as svc
 from server.memory.domain.edge_relations import canonical_link_relation
+from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, ddl, run
 
 
 def test_decision_key_is_the_record_plane_identity_key() -> None:
@@ -343,3 +350,194 @@ def test_ops_registered_and_search_accepts_decision_type() -> None:
         MemorySearchInput(org="o", namespace="n", query="q", memory_type="decision").memory_type
         == "decision"
     )
+
+
+# ------------------------------------------- memory.delete retires the record
+
+
+class _LocalCH:
+    """clickhouse-local over a database kept on disk, so each statement sees the earlier
+    writes. A table the test does not create reads as empty and takes no writes."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        schema = (ROOT / "schemas" / "schema.sql").read_text()
+        head = "CREATE MATERIALIZED VIEW IF NOT EXISTS loom.memory_record_versions_mv"
+        view = head + schema.split(head, 1)[1].split(";", 1)[0]
+        tables = ["memory", "memory_records", "memory_record_versions", "memory_record_fields"]
+        run([*(ddl(t) for t in tables), view, ddl("operator_edges")], "SELECT 1", path=path)
+
+    def _run(self, setup: list[str], sql: str, params: dict[str, Any] | None) -> list[Any]:
+        try:
+            return run(setup, sql, params, path=self.path)
+        except AssertionError as e:
+            if "UNKNOWN_TABLE" not in str(e):
+                raise
+            return []
+
+    async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
+        self._run([sql], "SELECT 1", params)
+
+    async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        for r in rows:
+            cols = ", ".join(r)
+            data = json.dumps(r, default=str)
+            await self.execute(
+                f"INSERT INTO {table} ({cols}) SELECT {cols} FROM format(JSONEachRow, $${data}$$)"
+            )
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+        return [
+            {k: datetime.fromisoformat(v) if k.endswith("_at") and v else v for k, v in r.items()}
+            for r in self._run([], sql, params)
+        ]
+
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        rows = await self.query_all(sql, params)
+        return rows[0] if rows else None
+
+
+_KEY = svc.decision_key("deploy", "Roll back or hotfix the image?")
+_RECORD_ID = "00000000-0000-0000-0000-0000000000d1"
+
+
+@pytest.fixture
+def local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _LocalCH:
+    if CLICKHOUSE is None:
+        pytest.skip("clickhouse binary not installed")
+    import server.memory.app.decision as hdec
+    import server.memory.app.handlers as hm
+    import server.memory.app.records as hrec
+    from server.core import ch as ch_mod
+    from server.memory.store import key_write_lock
+
+    ch = _LocalCH(tmp_path)
+
+    @asynccontextmanager
+    async def _no_lease(*_key: str) -> AsyncIterator[None]:
+        yield
+
+    monkeypatch.setattr(key_write_lock.key_write_locks, "hold", _no_lease)
+    for mod in (hm, hrec, hdec):
+        monkeypatch.setattr(mod, "get_client", lambda: ch)
+    monkeypatch.setattr("server.memory.store.reads._default_client", lambda: ch)
+    for name in ("execute", "query_all", "query_one", "insert"):
+        monkeypatch.setattr(ch_mod.get_client(), name, getattr(ch, name))
+    return ch
+
+
+async def _write_decision_rows(ch: _LocalCH, *agents: str, memory_type: str = "decision") -> None:
+    """One active record under _KEY, written by the first agent, and one live memory row
+    under _KEY per agent."""
+    from server.memory.store.rows import build_first_version_row
+
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    version = time.time_ns() - 10_000_000_000
+    await ch.insert(
+        "loom.memory_records",
+        [
+            {
+                "record_id": _RECORD_ID,
+                "org": "o",
+                "namespace": "n",
+                "schema_id": _RECORD_ID,
+                "schema_name": "decision",
+                "memory_key": _KEY,
+                "identity_agent": agents[0],
+                "record_json": json.dumps({"outcome": "rollback"}),
+                "status": "active",
+                "version": version,
+                "created_at": now,
+                "updated_at": now,
+            }
+        ],
+    )
+    for agent in agents:
+        row = build_first_version_row(
+            {
+                "org": "o",
+                "namespace": "n",
+                "agent": agent,
+                "user_id": "-",
+                "session_id": "-",
+                "memory_key": _KEY,
+                "memory_type": memory_type,
+                "value": json.dumps({"outcome": "rollback"}),
+                "value_json": "{}",
+                "content_sha256": "",
+                "actor": f"process:{agent}",
+                "source_class": "asserted",
+                "confidence": 1.0,
+                "version": version,
+            },
+            now=now,
+        )
+        await ch.insert("loom.memory", [row])
+
+
+async def _delete(agent: str) -> None:
+    from server.memory.api.models_crud import MemoryDeleteInput
+    from server.memory.app.handlers import handle_memory_delete
+
+    out = await handle_memory_delete(
+        MemoryDeleteInput(org="o", namespace="n", agent=agent, memory_key=_KEY)
+    )
+    assert out.tombstoned is True
+
+
+async def _history() -> list[str]:
+    from server.memory.api.models_records import MemoryRecordHistoryInput
+    from server.memory.app.records import handle_memory_record_history
+
+    out = await handle_memory_record_history(
+        MemoryRecordHistoryInput(org="o", namespace="n", record_id=_RECORD_ID)
+    )
+    return [r.status for r in out.rows]
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_decision_row_tombstones_its_record(
+    local: _LocalCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import server.memory.app.search as msearch
+    from server.memory.api.models_decision import DecisionChainInput, DecisionPrecedentsInput
+    from server.memory.app import decision as h
+
+    await _write_decision_rows(local, "claude")
+    chain_in = DecisionChainInput(org="o", namespace="n", memory_key=_KEY)
+    assert (await h.handle_decision_chain(chain_in)).seed_decision is not None
+
+    await _delete("claude")
+
+    assert (await h.handle_decision_chain(chain_in)).seed_decision is None
+
+    # A search hit on the key (a stale vector, or another reader) finds no record to serve.
+    async def _hit(_inp: Any) -> Any:
+        return SimpleNamespace(
+            results=[SimpleNamespace(memory_key=_KEY, similarity=0.9)], embedding_model="m"
+        )
+
+    monkeypatch.setattr(msearch, "handle_memory_search", _hit)
+    precedents = await h.handle_decision_precedents(
+        DecisionPrecedentsInput(org="o", namespace="n", query="image rollback")
+    )
+    assert precedents.precedents == []
+    assert await _history() == ["tombstoned", "active"]
+
+
+@pytest.mark.asyncio
+async def test_the_record_stays_while_another_identity_holds_the_decision(
+    local: _LocalCH,
+) -> None:
+    await _write_decision_rows(local, "claude", "maintainer")
+    await _delete("maintainer")
+    assert await _history() == ["active"]
+    await _delete("claude")
+    assert await _history() == ["tombstoned", "active"]
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_row_of_another_type_leaves_the_record(local: _LocalCH) -> None:
+    await _write_decision_rows(local, "claude", memory_type="semantic")
+    await _delete("claude")
+    assert await _history() == ["active"]
