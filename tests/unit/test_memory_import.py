@@ -21,9 +21,16 @@ import pytest
 from server.cli.import_recall import _recall_memory_key
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value
-from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry
+from server.memory.api.models_bulk import (
+    REFUSED,
+    MemoryBulkSetInput,
+    MemoryBulkSetOutput,
+    _BulkSetEntry,
+    _BulkSetResult,
+)
 from server.memory.api.models_import import MAX_IMPORT_ENTRIES, MemoryImportInput
 from server.memory.app import bulk_set as _bulk_set_mod
+from server.memory.app import memory_import as _import_mod
 from server.memory.app.memory_import import handle_memory_import
 from server.memory.domain.conflicts import ConflictResult
 from server.memory.domain.memory_import import import_key
@@ -50,11 +57,36 @@ def _identity(row: dict[str, Any]) -> tuple[str, ...]:
     return tuple(str(row[k]) for k in (*_IDENT, "memory_key"))
 
 
+def _tombstone(row: dict[str, Any]) -> dict[str, Any]:
+    """The version a delete writes over `row`: the same row, newer, tombstoned."""
+    return {**row, "version": int(row["version"]) + 1, "tombstoned_at": naive_utc_now()}
+
+
+def _newest(rows: list[dict[str, Any]], key: Any) -> list[dict[str, Any]]:
+    """The newest version (highest `version`) of each group of `rows` that `key` names."""
+    out: dict[Any, dict[str, Any]] = {}
+    for row in rows:
+        group = key(row)
+        if group not in out or int(row["version"]) > int(out[group]["version"]):
+            out[group] = row
+    return list(out.values())
+
+
+# The statuses identity dedup counts as holding a fact.
+_HOLDING = ("active", "duplicate", "conflicted")
+
+
 class _StoreCH(StubCH):
-    """A recording client that answers the bulk write's two reads like the store would:
-    the live rows under the identity keys it asks for, and the rows of the identity
-    (any session, any key) holding the hashes it asks for, from the stubbed rows plus
-    every loom.memory row it was sent, so a second import meets the first one's rows.
+    """A recording client that answers the reads of an import as the store would, from
+    the stubbed rows plus every loom.memory row it was sent (so a second import meets the
+    first one's rows), versions merged as ReplacingMergeTree merges them:
+
+    - the live-row lookup: each asked identity key's newest version, unless a tombstone;
+    - identity dedup: per (content hash, key) of the identity's rows holding an asked hash,
+      the newest version, kept when it is live and holds its fact;
+    - the import's own read: each asked key's newest version in each session, a tombstone
+      or a superseded row included.
+
     The category read answers the namespace's `registry` (name → id)."""
 
     def __init__(
@@ -64,9 +96,13 @@ class _StoreCH(StubCH):
         self.rows = list(rows or [])
         self.registry = dict(registry or {})
 
-    def _stored(self) -> list[dict[str, Any]]:
+    def _stored(self, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         sent = [{**r, "value_text": r["value"]} for r in self.rows_for("loom.memory")]
-        return [*self.rows, *sent]
+        rows = [*self.rows, *sent]
+        if params is None:
+            return rows
+        ident = (params["org"], params["ns"], params["agent"], params["uid"])
+        return [r for r in rows if (r["org"], r["namespace"], r["agent"], r["user_id"]) == ident]
 
     async def query_all(
         self, sql: str, params: dict[str, Any] | None = None
@@ -80,14 +116,28 @@ class _StoreCH(StubCH):
             ]
         if "IN {keys:Array(Tuple(" in sql:
             wanted = {tuple(k) for k in params["keys"]}
-            return [r for r in self._stored() if _identity(r) in wanted]
+            asked = [r for r in self._stored() if _identity(r) in wanted]
+            return [r for r in _newest(asked, _identity) if r["tombstoned_at"] is None]
         if "content_sha256 IN" in sql:
-            ident = (params["org"], params["ns"], params["agent"], params["uid"])
+            holding = [r for r in self._stored(params) if r["content_sha256"] in params["shas"]]
+            heads = _newest(holding, lambda r: (r["content_sha256"], r["memory_key"]))
             return [
-                r
-                for r in self._stored()
-                if r["content_sha256"] in params["shas"]
-                and (r["org"], r["namespace"], r["agent"], r["user_id"]) == ident
+                {k: r[k] for k in ("content_sha256", "memory_key", "memory_id")}
+                for r in heads
+                if r["tombstoned_at"] is None and r["status"] in _HOLDING
+            ]
+        if "GROUP BY memory_key, session_id" in sql:
+            asked = [r for r in self._stored(params) if r["memory_key"] in params["keys"]]
+            return [
+                {
+                    "memory_key": r["memory_key"],
+                    "session_id": r["session_id"],
+                    "head_version": r["version"],
+                    "deleted": r["tombstoned_at"] is not None,
+                    "head_status": r["status"],
+                    "head_sha256": r["content_sha256"],
+                }
+                for r in _newest(asked, lambda r: (r["memory_key"], r["session_id"]))
             ]
         return []
 
@@ -283,6 +333,98 @@ async def test_a_text_repeated_in_one_request_is_written_once(harness) -> None:
     # The repeat's key holds the item, so its category is linked.
     links = ch.rows_for("loom.memory_categories")
     assert [(r["memory_key"], r["category_id"]) for r in links] == [(out.results[0].key, "cat-1")]
+
+
+@pytest.mark.asyncio
+async def test_a_repeat_of_a_refused_entry_is_refused_as_it_was(harness) -> None:
+    secret = "The launch code is zq-1."
+    ch = _StoreCH()
+    harness(ch, blacklist="launch code")
+    out = await handle_memory_import(_input({"value": secret}, {"value": secret}))
+    assert _outcomes(out) == [("refused", "blacklist"), ("refused", "blacklist")]
+    assert out.totals.refused == 2 and ch.rows_for("loom.memory") == []
+
+
+# ---- deleted and superseded items ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_leaves_an_item_its_owner_deleted_deleted(harness) -> None:
+    """No live row holds a deleted key, so a bulk write alone would bring it back; the
+    import reads the key's newest version, a tombstone, and skips it."""
+    ch = _StoreCH(registry={"pets": "cat-1"})
+    rec = harness(ch)
+    item = {"value": "Dog is Biscuit.", "category": "pets"}
+    await handle_memory_import(_input(item))
+    (row,) = ch.rows_for("loom.memory")
+    ch.rows.append(_tombstone(row))
+    again = await handle_memory_import(_input(item, item))
+    assert _outcomes(again) == [("skipped", "deleted"), ("skipped", "deleted")]
+    assert len(ch.rows_for("loom.memory")) == 1 and rec.events == []
+    assert len(ch.rows_for("loom.memory_categories")) == 1  # the first import's link only
+    bulk = MemoryBulkSetInput(
+        **_IDENT, entries=[_BulkSetEntry(memory_key=row["memory_key"], value="Dog is Biscuit.")]
+    )
+    assert (await _bulk_set_mod.handle_memory_bulk_set(bulk, dry_run=True)).written[0].version
+
+
+@pytest.mark.asyncio
+async def test_an_item_superseded_in_another_session_is_not_recreated(harness) -> None:
+    """Identity dedup counts no superseded row, so another session would write the fact
+    again as a new active row; the import skips the key its newest version retired."""
+    value = "Deploys happen on Tuesday."
+    retired = _row(
+        memory_key=import_key(value),
+        session_id="earlier",
+        content_sha256=sha256_value(value),
+        status="superseded",
+        version=5,
+    )
+    ch = _StoreCH([retired])
+    harness(ch)
+    out = await handle_memory_import(_input({"value": value}))
+    assert _outcomes(out) == [("skipped", "superseded")]
+    assert ch.rows_for("loom.memory") == []
+
+
+@pytest.mark.asyncio
+async def test_a_key_restored_after_its_delete_is_held_again(harness) -> None:
+    ch = _StoreCH()
+    harness(ch)
+    item = {"value": "Dog is Biscuit."}
+    await handle_memory_import(_input(item))
+    (row,) = ch.rows_for("loom.memory")
+    tombstone = _tombstone(row)
+    ch.rows += [tombstone, {**row, "version": int(tombstone["version"]) + 1}]
+    again = await handle_memory_import(_input(item))
+    assert _outcomes(again) == [("skipped", "unchanged")]
+
+
+# ---- outcome mapping -------------------------------------------------------
+
+
+def test_every_verdict_a_bulk_write_refuses_names_its_check() -> None:
+    assert set(_import_mod._CHECK_OF) == REFUSED
+
+
+@pytest.mark.asyncio
+async def test_a_result_no_outcome_matches_is_raised_not_reported_as_held(
+    harness, monkeypatch
+) -> None:
+    """A version-0 result with no verdict, under a key that holds nothing and no other
+    key's copy, is no outcome the import knows: it raises rather than answer `unchanged`
+    (and link a category to a key that holds nothing)."""
+    harness(_StoreCH(registry={"pets": "cat-1"}))
+    value = "Dog is Biscuit."
+
+    async def _bulk(_input: Any, **_: Any) -> MemoryBulkSetOutput:
+        return MemoryBulkSetOutput(
+            written=[_BulkSetResult(memory_key=import_key(value), version=0)]
+        )
+
+    monkeypatch.setattr(_import_mod, "handle_memory_bulk_set", _bulk)
+    with pytest.raises(RuntimeError, match="matches no outcome"):
+        await handle_memory_import(_input({"value": value, "category": "pets"}))
 
 
 # ---- the inherited checks, per entry ---------------------------------------

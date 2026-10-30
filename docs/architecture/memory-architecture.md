@@ -402,7 +402,10 @@ blacklisted entry is skipped, not raised; pinned and locked keys come back in
 the write.
 
 `memory.import` (`handle_memory_import` in `memory/app/memory_import.py`) writes through
-`handle_memory_bulk_set`, so an imported item meets every check above. Each item's key is
+`handle_memory_bulk_set`, so an imported item meets every check above. The live-row lookup
+and identity dedup see only live rows, so first it reads each key's newest version in
+every session of the identity (`key_heads_across_sessions`) and leaves a key whose newest
+version is a tombstone or superseded as it is. Each item's key is
 `import:` and 24 hex characters of the SHA-256 of its text (`import_key` in
 `memory/domain/memory_import.py`), and each entry declares `source_class=imported`. It
 passes its own `conflict_check_cap`, so the conflict check reaches every entry whatever

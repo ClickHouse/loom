@@ -85,8 +85,10 @@ class _ImportEntryResult(BaseModel):
     # holds another pinned value) | locked (the key is read_only) | conflict (too close to
     # a pinned memory). reinforced: merge (the same fact after canonicalisation) |
     # identity_duplicate (the same text under another key). skipped: unchanged (a
-    # re-run) | repeated (an earlier entry carries the same text). written: duplicate or
-    # conflicted, the status the row was stored with.
+    # re-run) | deleted | superseded (the key's newest version is a tombstone or a retired
+    # row) | repeated (an earlier entry with the same text was written; a repeat of any
+    # other entry answers as that entry did). written: duplicate or conflicted, the status
+    # the row was stored with.
     reason: str = ""
     # `category_unregistered` when the entry names a category the namespace has not
     # registered: nothing was linked. '' otherwise.

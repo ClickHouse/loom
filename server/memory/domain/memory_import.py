@@ -1,5 +1,6 @@
 """What `memory.import` derives from an imported item, with no I/O: the key the item
-is stored under and the outcome its bulk-write result means.
+is stored under, what the stored versions of that key say before the write, and how
+an entry repeating an earlier one of the request answers.
 
 An imported item was distilled by another memory system and is stored as it came.
 Its key is a digest of its text, so the same item lands on the same key however
@@ -8,9 +9,11 @@ often it is imported, and a re-run of an import writes nothing new.
 
 from __future__ import annotations
 
-from typing import Final, Literal
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from typing import Any, Final, Literal
 
-from server.core.hashing import sha256_text
+from server.core.hashing import hash_text, sha256_text
 
 # Every imported item's key starts with this; the rest is a digest of its text.
 IMPORT_KEY_PREFIX: Final = "import:"
@@ -20,25 +23,18 @@ IMPORT_KEY_HEX: Final = 24
 
 Outcome = Literal["written", "reinforced", "skipped", "refused"]
 
-# The reason of a skipped entry whose key already holds its text: a re-run.
+# The reasons of a skipped entry: its key holds the text already (a re-run), an earlier
+# entry of the request with the same text was written, or the key's newest version is a
+# tombstone (its owner deleted it) or superseded (a newer fact retired it).
 UNCHANGED: Final = "unchanged"
-# The outcome of an entry whose text an earlier entry of the same request carries: it
-# shares that entry's key, and only the earlier entry is written.
-REPEATED: Final[tuple[Outcome, str]] = ("skipped", "repeated")
+REPEATED: Final = "repeated"
+DELETED: Final = "deleted"
+SUPERSEDED: Final = "superseded"
 # The note of an entry naming a category the namespace has not registered.
 CATEGORY_UNREGISTERED: Final = "category_unregistered"
 
-# A bulk-write verdict that refuses an entry, by the check that refused it: the
-# blacklist, a pinned or a read_only-locked row under the key, or the conflict check
-# finding the text too close to a pinned memory.
-_REFUSED_BY: Final[dict[str, str]] = {
-    "blacklisted": "blacklist",
-    "pinned": "pinned",
-    "locked": "locked",
-    "rejected": "conflict",
-}
-# The status a written entry's verdict stores its row with when it is not `active`.
-_STORED_AS: Final[dict[str, str]] = {"duplicate": "duplicate", "conflict": "conflicted"}
+# The statuses of a live row that holds its fact; a superseded row is retired.
+_HOLDING: Final = frozenset({"active", "duplicate", "conflicted"})
 
 
 def import_key(value: str) -> str:
@@ -48,29 +44,48 @@ def import_key(value: str) -> str:
     return IMPORT_KEY_PREFIX + sha256_text(value)[:IMPORT_KEY_HEX]
 
 
-def entry_outcome(
-    *, key: str, version: int, verdict: str, held_by: str | None
-) -> tuple[Outcome, str]:
-    """The outcome and reason of one entry from its bulk-write result: `version` (0
-    when nothing was inserted), `verdict` (its `conflict_verdict`) and `held_by` (the
-    key of the live row identity dedup found holding the same text, if any).
+@dataclass(frozen=True)
+class KeyState:
+    """What the stored versions of one key say before an import writes it. `retired` is
+    `deleted` or `superseded` when the key's newest version, across every session of the
+    identity, is a tombstone or a superseded row ('' otherwise); `held` are the content
+    hashes the key holds in a live row of any session."""
 
-    A written entry's reason is the status its row was stored with when that is not
-    `active`. A merge, or the same text under another key, reinforced the memory that
-    holds the fact. An entry whose own key already holds its text, in this session or
-    another of the identity, is skipped."""
-    if version:
-        return "written", _STORED_AS.get(verdict, "")
-    if verdict in _REFUSED_BY:
-        return "refused", _REFUSED_BY[verdict]
-    if verdict == "merge":
-        return "reinforced", "merge"
-    if held_by is not None and held_by != key:
-        return "reinforced", "identity_duplicate"
-    return "skipped", UNCHANGED
+    retired: str = ""
+    held: frozenset[str] = frozenset()
+
+
+def key_states(heads: Iterable[Mapping[str, Any]]) -> dict[str, KeyState]:
+    """Each key's state, from the newest version of the key in each session (rows with
+    `memory_key`, `head_version`, `deleted`, `head_status` and `head_sha256`)."""
+    by_key: dict[str, list[Mapping[str, Any]]] = {}
+    for row in heads:
+        by_key.setdefault(str(row["memory_key"]), []).append(row)
+    out: dict[str, KeyState] = {}
+    for key, rows in by_key.items():
+        newest = max(rows, key=lambda r: int(r["head_version"]))
+        retired = ""
+        if newest["deleted"]:
+            retired = DELETED
+        elif newest["head_status"] == "superseded":
+            retired = SUPERSEDED
+        held = frozenset(
+            hash_text(r["head_sha256"])
+            for r in rows
+            if not r["deleted"] and r["head_status"] in _HOLDING
+        )
+        out[key] = KeyState(retired=retired, held=held)
+    return out
+
+
+def repeat_outcome(first: tuple[Outcome, str]) -> tuple[Outcome, str]:
+    """How an entry repeating an earlier entry's text answers: skipped as `repeated`
+    when the earlier one was written, else as the earlier one did (a refusal, a
+    reinforcement, an item already held, deleted or superseded)."""
+    return ("skipped", REPEATED) if first[0] == "written" else first
 
 
 def holds_item(outcome: Outcome, reason: str) -> bool:
-    """Whether an entry's key holds its item once the write is done: written now, or
-    there already."""
-    return outcome == "written" or reason == UNCHANGED
+    """Whether an entry's key holds its item once the write is done: written now, there
+    already, or written by an earlier entry of the request."""
+    return outcome == "written" or (outcome == "skipped" and reason in (UNCHANGED, REPEATED))
