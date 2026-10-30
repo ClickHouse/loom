@@ -236,12 +236,19 @@ conflict verdict. Every entry gets the conflict check, whatever
   holds; a fact found under another key (a merge, or the same text there) is reinforced as
   on any write.
 - **What was deleted, retired or rejected stays so:** before the write, the import reads
-  each key's newest version in every session of the identity, tombstones and rows of every
-  status included. A key its owner deleted comes back `skipped` (`deleted`), one a newer
+  each key's newest version in every session of the identity that the token may read (only
+  its own session for an `own_session` token), tombstones and rows of every status
+  included. A key its owner deleted comes back `skipped` (`deleted`), one a newer
   fact retired `skipped` (`superseded`) and one marked wrong (`memory.reject`) `skipped`
   (`rejected`); none is written again. A key holding a proposal comes back `skipped`
   (`proposed`): only `memory.proposal_decide` moves a fact out of its trial. A status the
   import does not recognise leaves the key as it is too, as `skipped` (`unknown`).
+- **A tombstone has no way back through the import:** `memory.delete`, `memory.clear` and
+  an expiry with `on_expire=tombstone` all write one, so clearing an agent and importing
+  from the source again answers `skipped` (`deleted`) for every such item. Bring the keys
+  back with `memory.restore` within 14 days of the delete (a re-import then answers
+  `unchanged`), or remove the scope's rows with `erasure.request` and `purge=true`: a key
+  with no rows left is imported as new.
 - **Provenance:** every row is `source_class=imported`, `valid_at` is the source's time
   and `created_at` the import's. An entry with no `source_trace` is traced by its key.
 - **Categories:** a `category` the namespace registered (`namespace.register_category`) is

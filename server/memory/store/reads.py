@@ -339,10 +339,11 @@ async def key_heads_across_sessions(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The newest version of each of `memory_keys` in every session of the identity
-    `(org, namespace, agent, user_id)` inside `scope`, a tombstone or a superseded row
-    included: `memory_key`, `session_id`, `head_version`, `deleted`, `head_status`,
-    `head_sha256`. The aliases shadow no column: `version` is what every argMax reads.
-    With sequential consistency: a write decides on the answer."""
+    `(org, namespace, agent, user_id)` that `scope` may read (an `own_session` scope reads
+    only its own), tombstones and rows of every status included: `memory_key`,
+    `session_id`, `head_version`, `deleted`, `head_status`, `head_sha256`. The aliases
+    shadow no column: `version` is what every argMax reads. With sequential consistency:
+    a write decides on the answer."""
     if not memory_keys:
         return []
     ch = ch or _default_client()

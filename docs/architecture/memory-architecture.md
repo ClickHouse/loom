@@ -404,8 +404,9 @@ the write.
 `memory.import` (`handle_memory_import` in `memory/app/memory_import.py`) writes through
 `handle_memory_bulk_set`, so an imported item meets every check above. The live-row lookup
 skips only tombstones and identity dedup counts only active, duplicate and conflicted rows,
-so first it reads each key's newest version in every session of the identity
-(`key_heads_across_sessions`) and leaves a key whose newest version is a tombstone, or
+so first it reads each key's newest version in every session of the identity inside the
+request's read scope (`key_heads_across_sessions`; an `own_session` token reads only its
+own session) and leaves a key whose newest version is a tombstone, or
 superseded, rejected or proposed, as it is. An entry is `unchanged` when the skip gate says
 so (`unchanged_into`) or identity dedup finds the key itself in another session; any other
 result after the write is logged and answered `unknown`, never raised. Each item's key is
