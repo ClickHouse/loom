@@ -79,9 +79,6 @@ class _BulkWriteState:
     """Request-scoped state that flows between the phases of
     `handle_memory_bulk_set`; created at the top of the call, never shared."""
 
-    # How many entries the conflict check reaches: None = bulk_conflict_check_max_entries.
-    # memory.import names its own cap, so every entry it writes is checked.
-    conflict_check_cap: int | None = None
     # Whether a restatement of a row under the entry's own key (this session's, or the same
     # key's in another session) records an `evidence` event. memory.import turns it off, so a
     # re-run reinforces nothing it already holds; a merge or the same bytes under another

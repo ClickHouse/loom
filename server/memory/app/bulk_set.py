@@ -83,6 +83,13 @@ detect_updates_override: ContextVar[bool | None] = ContextVar(
     "detect_updates_override", default=None
 )
 last_value_updates_linked: ContextVar[int] = ContextVar("last_value_updates_linked", default=0)
+# Per-request override of settings.bulk_conflict_check_max_entries: how many entries the
+# conflict check reaches, set by handle_memory_bulk_set from its `conflict_check_cap`
+# (memory.import's) while the write's verdicts run. A context variable keeps the
+# check's call signature as it is.
+conflict_check_cap_override: ContextVar[int | None] = ContextVar(
+    "conflict_check_cap_override", default=None
+)
 
 
 def value_updates_enabled(request_value: bool | None = None) -> bool:
@@ -255,12 +262,7 @@ async def _bulk_verdicts(
     # so a merge or a pinned rejection never lands a row; duplicate / conflicted are stamped
     # on the rows.
     verdicts = await _bulk_conflict_verdicts(
-        input,
-        state.memory_rows,
-        state.entry_metas,
-        state.pending,
-        value_vectors,
-        cap=state.conflict_check_cap,
+        input, state.memory_rows, state.entry_metas, state.pending, value_vectors
     )
     clock.mark("verdicts")
     plan = _apply_verdicts(state, emb_idx_of, verdicts)
@@ -986,7 +988,6 @@ async def handle_memory_bulk_set(
     _bulk_work: dict[str, Any] = {}
     _bulk_clock = StageClock(_bulk_work)
     state = _BulkWriteState(
-        conflict_check_cap=conflict_check_cap,
         reinforce_own_key=reinforce_own_key,
         unchanged_keys=[] if unchanged_into is None else unchanged_into,
     )
@@ -1008,7 +1009,11 @@ async def handle_memory_bulk_set(
         input, state, embedder, entity_resolution, _bulk_clock, now_utc
     )
 
-    plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)
+    cap_token = conflict_check_cap_override.set(conflict_check_cap)
+    try:
+        plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)
+    finally:
+        conflict_check_cap_override.reset(cap_token)
     if dry_run:
         _bulk_clock.finish()
         return _bulk_output(state, plan, _bulk_work)
@@ -1103,16 +1108,14 @@ async def _bulk_conflict_verdicts(
     entry_metas: list[tuple[Any, ...]],
     pending: list[tuple[Any, ...]],
     value_vectors: list[list[float]],
-    *,
-    cap: int | None = None,
 ) -> dict[int, Any]:
     """check_on_commit for every searchable entry, concurrency-bounded. Keys
     are indexes into memory_rows; values are ConflictResults. A bulk past the
-    cap (`cap`, else bulk_conflict_check_max_entries) checks the first N and writes
-    the rest unchecked (the caller counts them); a check that errors counts as clear —
-    the write must not fail because the check could not run — except one the
-    model-call switch holds (`customer.HOLDS`), which the write answers as its own
-    embeds would."""
+    cap (`conflict_check_cap_override`, else bulk_conflict_check_max_entries) checks
+    the first N and writes the rest unchecked (the caller counts them); a check that
+    errors counts as clear — the write must not fail because the check could not run —
+    except one the model-call switch holds (`customer.HOLDS`), which the write answers
+    as its own embeds would."""
     import asyncio
 
     from server.memory.app.conflicts import check_on_commit
@@ -1120,7 +1123,8 @@ async def _bulk_conflict_verdicts(
 
     if not pending or not value_vectors:
         return {}
-    cap = max(int(_settings.bulk_conflict_check_max_entries if cap is None else cap), 0)
+    override = conflict_check_cap_override.get()
+    cap = max(int(_settings.bulk_conflict_check_max_entries if override is None else override), 0)
     sem = asyncio.Semaphore(int(_settings.bulk_conflict_check_concurrency))
     out: dict[int, Any] = {}
 
