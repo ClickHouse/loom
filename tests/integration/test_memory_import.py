@@ -138,19 +138,25 @@ async def test_each_refusal_and_reinforcement_is_named_on_its_entry(
 
 
 @pytest.mark.asyncio
-async def test_a_close_item_against_a_pinned_memory_is_not_imported_silently(
+async def test_a_pinned_memorys_own_text_reinforces_it_and_competes_with_nothing(
     control_plane_url: str,
 ) -> None:
+    """The pinned memory's exact text, imported by the same identity: identity dedup
+    matches it by content hash before any embedding is compared, so in every
+    environment the entry reinforces the pinned row, nothing lands under the import key,
+    and the pin and the value stand. A merely close text is judged by the conflict
+    check's similarity, which an embedder decides; the unit tests script that verdict."""
     from loom import Agent
 
     text = "Production deploys happen on Tuesday and Thursday, never on Friday."
-    close = "Production deploys happen on Tuesday and Thursday, never on Friday afternoons."
     async with Agent(org=ORG, namespace=_ns(), agent=AGENT, base_url=control_plane_url) as a:
         await a.call("memory.pin", memory_key="deploy_policy", value=text)
-        out = await a.client.memory.import_(_entries(close))
-    # The pinned short-circuit refuses it, or, if the embedder rates the pair above the
-    # duplicate threshold, it lands flagged as a duplicate: never an unchecked insert.
-    assert _outcomes(out) in ([("refused", "conflict")], [("written", "duplicate")]), out
+        out = await a.client.memory.import_(_entries(text))
+        pinned = await a.call("memory.get", memory_key="deploy_policy")
+        imported = await a.call("memory.get", memory_key=_key(text))
+    assert _outcomes(out) == [("reinforced", "identity_duplicate")], out
+    assert imported["found"] is False
+    assert (pinned["value"], pinned["pinned"]) == (text, True)
 
 
 @pytest.mark.asyncio
