@@ -173,7 +173,10 @@ async def _write_decision(
         )
     )
     # A delete of the row that landed before the record finds nothing to retire: do it here.
-    await tombstone_decision_record(org, namespace, key, version=next_version())
+    try:
+        await tombstone_decision_record(org, namespace, key, version=next_version())
+    except Exception as e:  # noqa: BLE001 — the decision is written
+        log.warning("decision: closing record check failed for %s: %s", key, e)
     return str(rec_out.record_id)
 
 

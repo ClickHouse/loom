@@ -164,7 +164,7 @@ def env(monkeypatch):
         ]
         return SimpleNamespace(results=hits, embedding_model="fake")
 
-    async def fake_tombstone_check(*_a, **_k):
+    async def fake_tombstone(*_a, **_k):
         return None
 
     async def fake_outcome_run(inp):
@@ -184,7 +184,7 @@ def env(monkeypatch):
     monkeypatch.setattr(mops, "handle_memory_link", fake_link)
     monkeypatch.setattr(mops, "handle_memory_outcome_run", fake_outcome_run)
     monkeypatch.setattr(msearch, "handle_memory_search", fake_search)
-    monkeypatch.setattr(h, "tombstone_decision_record", fake_tombstone_check)
+    monkeypatch.setattr(h, "tombstone_decision_record", fake_tombstone)
     with patch.object(h, "get_client", return_value=ch):
         yield ch, calls, h
 
@@ -774,3 +774,55 @@ async def test_a_delete_between_the_row_and_the_record_leaves_no_active_record(
         {"rid": out.record_id},
     )
     assert rows == [{"status": "tombstoned"}]
+
+
+def test_a_failing_closing_check_still_records_the_decision(env, monkeypatch) -> None:
+    _, calls, h = env
+
+    async def _fails(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("timeout")
+
+    monkeypatch.setattr(h, "tombstone_decision_record", _fails)
+    out = asyncio.run(h.handle_decision_record(_record_input()))
+    assert out.record_id == "rec-1" and len(calls["record"]) == 1 and len(calls["set"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_history_hides_erased_mirror_rows_and_serves_the_tombstone(local: KeptCH) -> None:
+    # Mirror rows erasure marked (tombstoned_at set, status unchanged) stay out of history;
+    # the decision delete's tombstoned version is served.
+    await _write_decision_rows(local, "claude")
+    await _delete("claude")
+    (active,) = await local.query_all(
+        "SELECT * FROM loom.memory_record_versions WHERE record_id = {rid:UUID} "
+        "AND status = 'active'",
+        {"rid": _RECORD_ID},
+    )
+    erased = []
+    for status, bump in (("active", 10), ("superseded", 20)):
+        row = {k: v for k, v in active.items() if v is not None}
+        row.update(status=status, version=int(active["version"]) + bump)
+        row["tombstoned_at"] = row["updated_at"]
+        erased.append(row)
+    await local.insert("loom.memory_record_versions", erased)
+    assert await _history() == ["tombstoned", "active"]
+
+
+@pytest.mark.asyncio
+async def test_the_record_writers_exact_identity_ranks_first(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A newer live row differs from the record's writer only by session.
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    await h.ensure_schema("o", "n")
+    version = await _write_decision_rows(local, "claude")
+    other_session = _memory_row("claude", "decision", version + 1)
+    other_session["session_id"] = "s2"
+    await local.insert("loom.memory", [other_session])
+    seen = _set_into(local, monkeypatch)
+    await h.handle_decision_outcome(
+        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+    )
+    assert [(i.agent, i.session_id) for i in seen] == [("claude", "-")]
