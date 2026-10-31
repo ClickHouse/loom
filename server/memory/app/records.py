@@ -333,7 +333,7 @@ async def _fold_onto_active_record(
     record_id: str,
     version: int,
     now: datetime,
-    carry_prior: bool = True,
+    carry_prior: bool,
 ) -> _RecordFold:
     """Field-level fold onto the active record for this key: an empty incoming field keeps
     the survivor's value, spelling variants are agreement, lists union, and a real
