@@ -392,7 +392,8 @@ def local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> KeptCH:
         tmp_path,
         *(ddl(t) for t in ("memory", "memory_records", "memory_record_versions")),
         view("memory_record_versions_mv"),
-        *(ddl(t) for t in ("memory_record_fields", "memory_schemas", "memory_schema_fields")),
+        *(ddl(t) for t in ("memory_record_fields", "memory_record_conflicts")),
+        *(ddl(t) for t in ("memory_schemas", "memory_schema_fields")),
         ddl("operator_edges"),
     )
 
@@ -944,6 +945,14 @@ async def test_a_new_writers_decision_keeps_nothing_of_the_earlier_writers(
         assert record[field] in (None, ""), field
     assert record["run_id"] in (None, "") and record["outcome"] == "hotfix"
 
+    # The changed scalar is still recorded as a conflict between the two records.
+    conflicts = await local.query_all(
+        "SELECT prior_value, incoming_value FROM loom.memory_record_conflicts FINAL "
+        "WHERE memory_key = {key:String} AND field_name = 'outcome'",
+        {"key": _KEY},
+    )
+    assert conflicts == [{"prior_value": '"rollback"', "incoming_value": '"hotfix"'}]
+
     await _delete("claude")
     seed = await _seed_decision()
     assert seed is not None and seed.outcome == "hotfix"
@@ -965,9 +974,10 @@ async def test_an_outcome_keeps_nothing_of_another_active_record(
     await _write_decision_rows(local, "claude")
     other = {"reasoning": "the other writer's reason", "alternatives": "wait", "run_id": "r9"}
 
-    async def _other_record(*_a: Any, **_k: Any) -> dict[str, Any]:
-        rid = "00000000-0000-0000-0000-0000000000e1"
-        return {"rid": rid, "mid": "", "record_json": json.dumps(other)}
+    async def _other_record(*_a: Any, **_k: Any) -> Any:
+        from server.memory.store.records import ActiveRecord
+
+        return ActiveRecord("00000000-0000-0000-0000-0000000000e1", "", json.dumps(other))
 
     monkeypatch.setattr(hrec, "active_record", _other_record)
     _set_into(local, monkeypatch)
@@ -983,3 +993,28 @@ async def test_an_outcome_keeps_nothing_of_another_active_record(
     assert record["realized_outcome"] == "ok"
     for field, value in other.items():
         assert record[field] != value, field
+
+
+@pytest.mark.asyncio
+async def test_a_whole_record_write_reports_nothing_kept(local: KeptCH) -> None:
+    from server.memory.api.models_records import MemoryRecordWriteInput
+    from server.memory.app import decision as h
+    from server.memory.app.records import handle_memory_record_write
+
+    await h.ensure_schema("o", "n")
+
+    def _write(**fields: Any) -> MemoryRecordWriteInput:
+        values = {"category": "deploy", "scenario": "Roll back?", "outcome": "rollback", **fields}
+        return MemoryRecordWriteInput(
+            org="o",
+            namespace="n",
+            schema_name="decision",
+            memory_key=_KEY,
+            agent="claude",
+            fields=svc.record_fields(values),  # type: ignore[arg-type]
+        )
+
+    await handle_memory_record_write(_write(reasoning="fast"))
+    out = await handle_memory_record_write(_write(), carry_prior=False)
+    assert out.superseded_record_id
+    assert out.fold["filled_from_prior"] == [] and out.fold["unioned"] == []

@@ -339,7 +339,7 @@ async def _fold_onto_active_record(
     the survivor's value, spelling variants are agreement, lists union, and a real
     disagreement is recorded with both values before the incoming one wins. With
     `carry_prior` false the incoming fields are the whole record: nothing is kept from the
-    survivor, and disagreements are still recorded."""
+    survivor, and only a changed scalar value is recorded as a conflict."""
     fold_out: dict[str, Any] = {}
     superseded_id = ""
     conflict_rows: list[dict[str, Any]] = []
@@ -352,7 +352,7 @@ async def _fold_onto_active_record(
             from server.memory.domain.record_fold import fold
 
             try:
-                prior_json = json.loads(str(prior_row.get("record_json") or "{}"))
+                prior_json = json.loads(prior_row.record_json or "{}")
             except json.JSONDecodeError:
                 prior_json = {}
             result = fold(prior_json, record_json)
@@ -363,8 +363,8 @@ async def _fold_onto_active_record(
             else:
                 fold_out["filled_from_prior"] = []
                 fold_out["unioned"] = []
-            superseded_id = str(prior_row["rid"])
-            prior_mid = str(prior_row.get("mid") or "") or None
+            superseded_id = prior_row.rid
+            prior_mid = prior_row.mid or None
             conflict_rows = [
                 {
                     "org": input.org,
@@ -488,7 +488,8 @@ async def handle_memory_record_write(
 ) -> MemoryRecordWriteOutput:
     """Write one typed record. `carry_prior` false writes the incoming fields as the whole
     record, keeping nothing of the record it supersedes (every decision write restates its
-    record whole)."""
+    record whole): a changed scalar value is still recorded in loom.memory_record_conflicts,
+    while replaced lists and fields the new write leaves empty are not."""
     schema = await _schema_by_name(input.org, input.namespace, input.schema_name)
     if not schema or str(schema.get("status")) != "active":
         raise HTTPException(

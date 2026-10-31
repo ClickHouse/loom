@@ -4,7 +4,7 @@ decision tombstone copies, and the record a decision revision builds on with its
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
@@ -73,6 +73,14 @@ SELECT toString(record_id) AS rid, toString(memory_id) AS mid, record_json
 {_FROM_ACTIVE_RECORD}
 ORDER BY version DESC
 LIMIT 1"""
+
+
+class ActiveRecord(NamedTuple):
+    """The key's newest active record, as the record write's fold reads it."""
+
+    rid: str
+    mid: str
+    record_json: str
 
 
 class WriterRecord(NamedTuple):
@@ -149,14 +157,17 @@ async def active_record(
     memory_key: str,
     *,
     ch: _CHClient | None = None,
-) -> dict[str, Any] | None:
-    """The key's newest active record as {rid, mid, record_json}, or None."""
+) -> ActiveRecord | None:
+    """The key's newest active record, or None."""
     ch = ch or _default_client()
     rows = await ch.query_all(
         _ACTIVE_RECORD_ROW,
         {"org": org, "ns": namespace, "schema": schema_name, "key": memory_key},
     )
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    row = rows[0]
+    return ActiveRecord(str(row["rid"]), str(row.get("mid") or ""), str(row["record_json"]))
 
 
 async def live_writer_record(
