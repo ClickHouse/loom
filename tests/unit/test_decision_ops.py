@@ -441,7 +441,12 @@ def _set_into(ch: KeptCH, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     async def _set(inp: Any) -> Any:
         seen.append(inp)
         row = _memory_row(inp.agent, inp.memory_type, time.time_ns())
-        row.update(user_id=inp.user_id, session_id=inp.session_id, value=json.dumps(inp.value))
+        row.update(
+            memory_key=inp.memory_key,
+            user_id=inp.user_id,
+            session_id=inp.session_id,
+            value=json.dumps(inp.value),
+        )
         await ch.insert("loom.memory", [row])
         return SimpleNamespace(version=row["version"])
 
@@ -504,6 +509,12 @@ async def _history() -> list[str]:
     return [r.status for r in out.rows]
 
 
+async def _search_hits_the_key(_inp: Any) -> Any:
+    return SimpleNamespace(
+        results=[SimpleNamespace(memory_key=_KEY, similarity=0.9)], embedding_model="m"
+    )
+
+
 async def _seed_decision() -> Any:
     from server.memory.api.models_decision import DecisionChainInput
     from server.memory.app import decision as h
@@ -523,12 +534,7 @@ async def test_deleting_a_decision_row_tombstones_its_record(
     from server.memory.app import decision as h
 
     # The search leg is stubbed to hit the key, so precedents answers from the record alone.
-    async def _hit(_inp: Any) -> Any:
-        return SimpleNamespace(
-            results=[SimpleNamespace(memory_key=_KEY, similarity=0.9)], embedding_model="m"
-        )
-
-    monkeypatch.setattr(msearch, "handle_memory_search", _hit)
+    monkeypatch.setattr(msearch, "handle_memory_search", _search_hits_the_key)
     precedents_in = DecisionPrecedentsInput(org="o", namespace="n", query="image rollback")
 
     version = await _write_decision_rows(local, "claude")
@@ -601,6 +607,31 @@ async def test_a_failed_record_tombstone_leaves_the_delete_standing(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["memory.apply", "memory.move"])
+async def test_the_ops_that_delete_through_memory_delete_retire_the_record(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch, op: str
+) -> None:
+    from server.memory.api.models_apply import ApplyTarget, MemoryApplyInput
+    from server.memory.api.models_move import MemoryMoveInput
+    from server.memory.app.apply_ops import handle_memory_apply
+    from server.memory.app.move import handle_memory_move
+
+    await _write_decision_rows(local, "claude")
+    _set_into(local, monkeypatch)
+    ident = {"org": "o", "namespace": "n", "agent": "claude"}
+    if op == "memory.apply":
+        target = ApplyTarget(keys=[_KEY])
+        await handle_memory_apply(
+            MemoryApplyInput(**ident, target=target, action="delete", reason="r", dry_run=False)
+        )
+    else:
+        await handle_memory_move(
+            MemoryMoveInput(**ident, from_key=_KEY, to_key="decision:moved", keep_redirect=False)
+        )
+    assert await _history() == ["tombstoned", "active"]
+
+
+@pytest.mark.asyncio
 async def test_a_decision_row_written_above_the_tombstone_keeps_the_record(
     local: KeptCH,
 ) -> None:
@@ -666,12 +697,7 @@ async def test_the_writers_delete_retires_the_record_while_another_row_holds_the
     from server.memory.api.models_decision import DecisionOutcomeInput, DecisionPrecedentsInput
     from server.memory.app import decision as h
 
-    async def _hit(_inp: Any) -> Any:
-        return SimpleNamespace(
-            results=[SimpleNamespace(memory_key=_KEY, similarity=0.9)], embedding_model="m"
-        )
-
-    monkeypatch.setattr(msearch, "handle_memory_search", _hit)
+    monkeypatch.setattr(msearch, "handle_memory_search", _search_hits_the_key)
     await _write_decision_rows(local, "maintainer", "claude")
     await _delete("maintainer")
     assert await _seed_decision() is None

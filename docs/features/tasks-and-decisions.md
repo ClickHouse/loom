@@ -268,8 +268,9 @@ superseded in the record plane and does not keep the record.
 - **Retires the record**: `memory.delete` or `memory.delete_version` of the writer's decision row, including
   `memory.move` with `keep_redirect=false` and `memory.apply` with `action="delete"`, which delete through
   `memory.delete`. `decision.chain`, `decision.precedents` and `decision.outcome` stop serving it, and
-  `memory.record.history` shows the last version with `status="tombstoned"`. `memory.restore` revives the row but not the record; call `decision.record` again.
-  Two retirements that race can each write a tombstoned version, so history may list the tombstone twice.
+  `memory.record.history` shows the last version with `status="tombstoned"`. `memory.restore` revives the row but
+  not the record; call `decision.record` again. Two retirements that race can each write a tombstoned version, so
+  history may list the tombstone twice.
 - **Leaves the record active**: a delete of another identity's row; `memory.clear` and the other bulk tombstone
   paths; `memory.move` with `keep_redirect=true`, whose redirect row still counts as the writer's live row under the
   old key; a `memory.set` under the writer's identity that rewrites the key with another `memory_type`; the expiry

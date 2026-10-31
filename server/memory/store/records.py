@@ -131,7 +131,7 @@ async def tombstone_decision_record(
     ch: _CHClient | None = None,
 ) -> None:
     """Tombstone the key's active decision record unless its writer still has a live
-    decision row there."""
+    decision row there. It writes no other row, so it reads the clock itself."""
     ch = ch or _default_client()
     now = naive_utc_now_seconds()
     await ch.execute(
