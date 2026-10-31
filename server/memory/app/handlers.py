@@ -1145,8 +1145,8 @@ async def _retire_derived(
             )
         except Exception as e:  # noqa: BLE001 — the tombstone stands
             log.warning("%s: procedure_runs cascade failed for %s: %s", op, existing.memory_key, e)
-    # A decision's record is retired once no live decision row holds its key, or
-    # decision.chain and decision.precedents keep serving it.
+    # A decision's record is retired once its writer's row is gone, or decision.chain and
+    # decision.precedents keep serving the text the writer deleted.
     if existing.memory_type == "decision":
         try:
             await memory_repo.tombstone_decision_record(

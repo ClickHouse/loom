@@ -117,7 +117,7 @@ class _CH:
         if "FROM loom.agent_runs" in sql:
             return {"memories_used": list(self.run_used)}
         if "FROM loom.memory FINAL" in sql and "memory_type = 'decision'" in sql:
-            return {"agent": "claude", "user_id": "-", "session_id": "s1"}
+            return {"identity_agent": "claude", "user_id": "-", "session_id": "s1"}
         return None
 
 
@@ -460,11 +460,11 @@ async def _write_decision_rows(
     return version
 
 
-async def _delete(agent: str, *, version: int | None = None) -> None:
+async def _delete(agent: str, *, version: int | None = None, user_id: str = "-") -> None:
     from server.memory.api.models_crud import MemoryDeleteInput, MemoryDeleteVersionInput
     from server.memory.app import handlers as hm
 
-    key = {"org": "o", "namespace": "n", "agent": agent, "memory_key": _KEY}
+    key = {"org": "o", "namespace": "n", "agent": agent, "user_id": user_id, "memory_key": _KEY}
     if version is None:
         out: Any = await hm.handle_memory_delete(MemoryDeleteInput(**key))
     else:
@@ -542,9 +542,10 @@ async def test_deleting_a_decision_row_tombstones_its_record(
 
 
 @pytest.mark.asyncio
-async def test_the_record_stays_while_another_identity_holds_the_decision(
+async def test_a_delete_by_another_identity_leaves_the_writers_record(
     local: KeptCH,
 ) -> None:
+    # claude wrote the record; the maintainer's row under the key is not its writer's.
     await _write_decision_rows(local, "claude", "maintainer")
     await _delete("maintainer")
     assert await _seed_decision() is not None
@@ -634,35 +635,50 @@ async def test_a_supersede_drawn_below_the_active_version_still_wins(local: Kept
 
 
 @pytest.mark.asyncio
-async def test_an_outcome_after_the_record_writer_deleted_its_row_revises_a_live_row(
+async def test_the_writers_delete_retires_the_record_while_another_row_holds_the_key(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The record is the maintainer's; the maintainer deleted its row, claude's still holds
-    # the key. The outcome goes on claude's row and leaves the maintainer's deleted.
-    from server.identity.domain.read_scope import WHOLE_NAMESPACE
-    from server.memory import store as memory_repo
-    from server.memory.api.models_decision import DecisionOutcomeInput
+    # The record is the maintainer's text; claude's row under the key was superseded in
+    # the record plane. The maintainer's delete retires the record, and no outcome copies
+    # it into claude's row.
+    import server.memory.app.search as msearch
+    from server.core.errors import NotFoundError
+    from server.memory.api.models_decision import DecisionOutcomeInput, DecisionPrecedentsInput
     from server.memory.app import decision as h
 
-    await h.ensure_schema("o", "n")
+    async def _hit(_inp: Any) -> Any:
+        return SimpleNamespace(
+            results=[SimpleNamespace(memory_key=_KEY, similarity=0.9)], embedding_model="m"
+        )
+
+    monkeypatch.setattr(msearch, "handle_memory_search", _hit)
     await _write_decision_rows(local, "maintainer", "claude")
     await _delete("maintainer")
-    seen = _set_into(local, monkeypatch)
-    await h.handle_decision_outcome(
-        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+    assert await _seed_decision() is None
+    precedents = await h.handle_decision_precedents(
+        DecisionPrecedentsInput(org="o", namespace="n", query="image rollback")
     )
-    assert [i.agent for i in seen] == ["claude"]
+    assert precedents.precedents == []
+    seen = _set_into(local, monkeypatch)
+    with pytest.raises(NotFoundError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    assert seen == []
+    assert await _history() == ["tombstoned", "active"]
 
-    def _identity(agent: str) -> Any:
-        return memory_repo.Identity(org="o", namespace="n", agent=agent)
 
-    get = memory_repo.get_by_key
-    assert await get(_identity("maintainer"), _KEY, strong=True, scope=WHOLE_NAMESPACE) is None
-    claude = await get(_identity("claude"), _KEY, strong=True, scope=WHOLE_NAMESPACE)
-    assert claude is not None and claude.value["realized_outcome"] == "ok"
-    # The revision is the decision of record: active, and served by decision.chain.
-    seed = await _seed_decision()
-    assert seed is not None and seed.realized_outcome == "ok"
+@pytest.mark.asyncio
+async def test_the_writers_identity_includes_its_user(local: KeptCH) -> None:
+    # Same agent, another user: that row is not the writer's, so its delete keeps the record.
+    version = await _write_decision_rows(local, "claude")
+    other_user = _memory_row("claude", "decision", version)
+    other_user["user_id"] = "u2"
+    await local.insert("loom.memory", [other_user])
+    await _delete("claude", user_id="u2")
+    assert await _history() == ["active"]
+    await _delete("claude")
+    assert await _history() == ["tombstoned", "active"]
 
 
 @pytest.mark.asyncio
@@ -732,26 +748,6 @@ async def test_an_outcome_revises_the_record_writers_row_while_it_is_live(
 
 
 @pytest.mark.asyncio
-async def test_an_outcome_after_the_writer_deleted_goes_on_the_newest_live_row(
-    local: KeptCH, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The record's writer deleted its row, so no row matches the record's identity: the
-    # newest live row takes the outcome.
-    from server.memory.api.models_decision import DecisionOutcomeInput
-    from server.memory.app import decision as h
-
-    await h.ensure_schema("o", "n")
-    version = await _write_decision_rows(local, "maintainer", "claude")
-    await local.insert("loom.memory", [_memory_row("other", "decision", version + 1)])
-    await _delete("maintainer")
-    seen = _set_into(local, monkeypatch)
-    await h.handle_decision_outcome(
-        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
-    )
-    assert [i.agent for i in seen] == ["other"]
-
-
-@pytest.mark.asyncio
 async def test_a_delete_between_the_row_and_the_record_leaves_no_active_record(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -793,7 +789,9 @@ def test_a_failing_closing_check_still_records_the_decision(env, monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_history_hides_erased_mirror_rows_and_serves_the_tombstone(local: KeptCH) -> None:
+async def test_history_hides_active_and_superseded_rows_with_tombstoned_at_set(
+    local: KeptCH,
+) -> None:
     # A mirror row with tombstoned_at set and another status stays out of history; the
     # decision delete's tombstoned version is served.
     await _write_decision_rows(local, "claude")
@@ -814,10 +812,10 @@ async def test_history_hides_erased_mirror_rows_and_serves_the_tombstone(local: 
 
 
 @pytest.mark.asyncio
-async def test_the_record_writers_exact_identity_ranks_first(
+async def test_an_outcome_goes_on_the_writers_exact_identity(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A newer live row differs from the record's writer only by session.
+    # A newer live row differs from the record's writer only by session: not the writer's.
     from server.memory.api.models_decision import DecisionOutcomeInput
     from server.memory.app import decision as h
 

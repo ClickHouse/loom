@@ -39,7 +39,7 @@ from server.memory.api.models_records import (
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app import decisions as svc
 from server.memory.domain.decision_schema import SCHEMA_FIELDS, SCHEMA_NAME
-from server.memory.store import live_decision_identity, next_version, tombstone_decision_record
+from server.memory.store import live_record_writer, next_version, tombstone_decision_record
 
 log = logging.getLogger(__name__)
 
@@ -135,9 +135,9 @@ async def _write_decision(
     tags: list[str],
     valid_at: datetime | None,
 ) -> str:
-    """Memory row + record under one key. Returns the record_id. The row goes first:
-    memory.delete of another identity's row keeps the record while a live row holds the
-    key, so it must see this row before the record exists."""
+    """Memory row + record under one key. Returns the record_id. The row goes first: a
+    delete keeps the record only while its writer's row is live, so that row must exist
+    before the record does."""
     from server.memory.app.records import handle_memory_record_write
     from server.memory.app.write import handle_memory_set
 
@@ -172,7 +172,7 @@ async def _write_decision(
             valid_at=valid_at,
         )
     )
-    # A delete of the row that landed before the record finds nothing to retire: do it here.
+    # A delete of the writer's row that landed before the record found nothing to retire.
     try:
         await tombstone_decision_record(
             org, namespace, key, version=next_version(), ch=get_client()
@@ -352,12 +352,12 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     payload["success"] = input.success
     made_at = payload.get("made_at") or _now().isoformat()
     payload["made_at"] = made_at
-    # Revise under the identity of a row that still holds the decision: the record's writer
-    # may have deleted its own row, and writing under it would bring that row back.
-    identity = await live_decision_identity(input.org, input.namespace, input.memory_key, ch=ch)
+    # Revise only under the record's writer: another identity's row was superseded in the
+    # record plane, and writing under it would copy the writer's decision into that row.
+    identity = await live_record_writer(input.org, input.namespace, input.memory_key, ch=ch)
     if identity is None:
         raise NotFoundError(
-            f"no live decision {input.memory_key!r} in {input.org}/{input.namespace}",
+            f"decision {input.memory_key!r} has no live row of its writer",
             memory_key=input.memory_key,
         )
     agent, user_id, session_id = identity

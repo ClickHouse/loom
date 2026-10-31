@@ -1,5 +1,5 @@
 """Writes that close a key's active typed record (supersede, decision tombstone), and the
-identity a decision revision writes under."""
+identity a decision revision writes under: the record's writer, while its row is live."""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.decision_schema import SCHEMA_NAME
 from server.memory.store.sql import _SEQUENTIAL
 
-# The key's active record (params org, ns, schema, key), and the key's live decision rows
-# under any identity.
+# The key's active record. Params: org, ns, schema, key.
 FROM_ACTIVE_RECORD = """
 FROM loom.memory_records FINAL
 WHERE org = {org:String}
@@ -21,6 +20,7 @@ WHERE org = {org:String}
   AND status = 'active'
   AND tombstoned_at IS NULL
 """
+# The key's live decision rows, under any identity. Params: org, ns, key.
 _FROM_LIVE_DECISION_ROWS = """
 FROM loom.memory FINAL
 WHERE org = {org:String}
@@ -47,16 +47,20 @@ SELECT
     {{tombstoned_at:Nullable(DateTime)}} AS new_tombstoned_at
 {FROM_ACTIVE_RECORD}"""
 
+# Retires the record unless its writer still has a live decision row under the key.
 _TOMBSTONE_DECISION_RECORD = f"""{_CLOSE_ACTIVE_RECORD}
-  AND (SELECT count() {_FROM_LIVE_DECISION_ROWS}) = 0
+  AND (identity_agent, user_id, session_id) NOT IN (
+      SELECT agent, user_id, session_id {_FROM_LIVE_DECISION_ROWS}
+  )
 {_SEQUENTIAL}"""
 
-_LIVE_DECISION_IDENTITY = f"""
-SELECT agent, user_id, session_id
-{_FROM_LIVE_DECISION_ROWS}
-ORDER BY (agent, user_id, session_id) IN (
-    SELECT identity_agent, user_id, session_id {FROM_ACTIVE_RECORD}
-) DESC, version DESC
+# The active record's writer, when that writer still has a live decision row under the key.
+_LIVE_RECORD_WRITER = f"""
+SELECT identity_agent, user_id, session_id
+{FROM_ACTIVE_RECORD}
+  AND (identity_agent, user_id, session_id) IN (
+      SELECT agent, user_id, session_id {_FROM_LIVE_DECISION_ROWS}
+  )
 LIMIT 1
 {_SEQUENTIAL}"""
 
@@ -98,16 +102,11 @@ async def tombstone_decision_record(
     version: int,
     ch: _CHClient | None = None,
 ) -> None:
-    """Tombstone the decision record under `memory_key` when no live decision row holds
-    the key. `version` is the lowest version the tombstone is written at.
-    Two retirements that race can each write a tombstoned version: history may show the
-    tombstone twice, and FINAL reads it tombstoned either way.
-
-    The record plane keys by (schema_name, memory_key) with no identity, while loom.memory
-    keys by identity, so the record stays while any live decision row holds the key:
-    another identity's, or a write that landed above the tombstone. The reads are
-    sequential, so they see the delete's own tombstone and every row committed before
-    it, on any replica."""
+    """Writes a tombstoned version of the key's active decision record at `version` or
+    above (two racing calls may each write one; FINAL reads the record tombstoned either
+    way). It retires the record unless the record's writer, by (agent, user_id,
+    session_id), still has a live decision row under the key, read with sequential
+    consistency."""
     ch = ch or _default_client()
     now = naive_utc_now_seconds()
     await ch.execute(
@@ -126,19 +125,18 @@ async def tombstone_decision_record(
     )
 
 
-async def live_decision_identity(
+async def live_record_writer(
     org: str,
     namespace: str,
     memory_key: str,
     *,
     ch: _CHClient | None = None,
 ) -> tuple[str, str, str] | None:
-    """The (agent, user_id, session_id) of a live decision row under `memory_key`: the
-    active record's writer when its row is live, else the newest live row. None when no
-    live decision row holds the key."""
+    """The active decision record's writer as (agent, user_id, session_id), or None when
+    there is no active record or its writer has no live decision row under the key."""
     ch = ch or _default_client()
     row = await ch.query_one(
-        _LIVE_DECISION_IDENTITY,
+        _LIVE_RECORD_WRITER,
         params={
             "org": org,
             "ns": namespace,
@@ -146,4 +144,6 @@ async def live_decision_identity(
             "key": memory_key,
         },
     )
-    return None if row is None else (row["agent"], row["user_id"], row["session_id"])
+    if row is None:
+        return None
+    return row["identity_agent"], row["user_id"], row["session_id"]

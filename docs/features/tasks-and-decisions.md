@@ -259,19 +259,19 @@ was `caused_by` or `influenced_by`. It writes:
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
 (`superseded_prior=true`); history keeps it.
 
-The record is keyed by category and scenario, not by agent, user or session, so it stays active while any live
-decision row holds the key (a row that expired but was not deleted still counts).
+The record holds the text of its last writer, the agent, user and session that recorded it, so it stays active only
+while that writer's decision row is live (a row that expired but was not deleted still counts). Another identity's
+row under the same key was superseded in the record plane and does not keep the record.
 
-- **Retires the record**: `memory.delete` or `memory.delete_version` of the last live decision row, including
+- **Retires the record**: `memory.delete` or `memory.delete_version` of the writer's decision row, including
   `memory.move` with `keep_redirect=false`, which deletes through `memory.delete`. `decision.chain`,
   `decision.precedents` and `decision.outcome` stop serving it, and `memory.record.history` shows the last version
   with `status="tombstoned"`. `memory.restore` revives the row but not the record; call `decision.record` again.
   Two retirements that race can each write a tombstoned version, so history may list the tombstone twice.
-- **Leaves the record active**: `memory.clear` and the other bulk tombstone paths; `memory.move` with
-  `keep_redirect=true`, whose redirect row still counts as a live decision row under the old key; a `memory.set` under
-  the decision's identity that rewrites the key with another `memory_type`.
-- **`decision.outcome` writes under** the record writer's row while that row is live, else the newest live decision
-  row under the key, and answers not-found when none is live.
+- **Leaves the record active**: a delete of another identity's row; `memory.clear` and the other bulk tombstone
+  paths; `memory.move` with `keep_redirect=true`, whose redirect row still counts as the writer's live row under the
+  old key; a `memory.set` under the writer's identity that rewrites the key with another `memory_type`.
+- **`decision.outcome` writes under** the record's writer, and answers not-found when the writer's row is not live.
 
 | Operation             | Role   | Does                                                                                               |
 | --------------------- | ------ | -------------------------------------------------------------------------------------------------- |

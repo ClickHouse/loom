@@ -599,9 +599,8 @@ async def _records_by_ids(
     if history:
         source = "loom.memory_record_versions"
         order = "ORDER BY updated_at DESC, version DESC LIMIT 1 BY record_id, version"
-        # Serves the version a decision's memory.delete tombstoned. Hiding any other row with
-        # tombstoned_at set is defence in depth: no writer produces one in the mirror, and
-        # erasure deletes the mirror's rows outright.
+        # Serves the tombstoned version a decision delete wrote; hides any other row with
+        # tombstoned_at set.
         visible = "AND (status = 'tombstoned' OR tombstoned_at IS NULL)"
     else:
         source, order = "loom.memory_records FINAL", "ORDER BY updated_at DESC"

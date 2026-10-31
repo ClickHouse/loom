@@ -6,10 +6,10 @@ from typing import Any
 
 SCHEMA_NAME = "decision"
 
-# The built-in schema. category + scenario identify a decision: re-deciding the
-# same scenario supersedes the earlier record (history keeps it), which is what
-# "what is our current decision on X" needs; precedent search still sees every
-# decision row because memory.search reads the memory plane, not the record.
+# category + scenario identify a decision: re-deciding the same scenario supersedes the
+# earlier record (history keeps it), which is what "what is our current decision on X"
+# needs; precedent search still sees every decision row because memory.search reads the
+# memory plane, not the record.
 SCHEMA_FIELDS: list[dict[str, Any]] = [
     {
         "name": "category",
