@@ -446,11 +446,12 @@ async def _set_through_phases(
 async def test_a_conditional_set_whose_check_passed_lands_above_the_row_it_checked(
     ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
     # The row it checks was written after the set began: its version is drawn after the
     # check, so it lands above that row instead of beneath it.
     from server.memory.app import write
     from server.memory.app.write import _content_sha256_of_stored
+
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
 
     head = time.time_ns()
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
@@ -467,8 +468,9 @@ async def test_a_conditional_set_whose_check_passed_lands_above_the_row_it_check
 async def test_a_delete_after_a_conditional_sets_check_answers_409(
     ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
     from fastapi import HTTPException
+
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
 
     from server.memory.app.write import _content_sha256_of_stored
 
@@ -541,10 +543,11 @@ def test_a_bulk_write_does_not_carry_a_sweeps_marker() -> None:
 async def test_a_set_and_a_touch_do_not_carry_a_sweeps_marker(
     ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
     # A row an older build restored from a sweep still holds the marker; the next touch or
     # set of the key writes a version without it.
     from server.memory.api.models_crud import MemoryTouchInput
+
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
 
     await ch.insert(
         "loom.memory",

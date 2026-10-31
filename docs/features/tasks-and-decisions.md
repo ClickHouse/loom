@@ -265,7 +265,8 @@ writer's decision row retires it; an expired row still counts as live. Another i
 superseded in the record plane and does not keep the record.
 
 - **Retires the record**: `memory.delete` or `memory.delete_version` of the writer's decision row, including
-  `memory.move` with `keep_redirect=false`, which deletes through `memory.delete`. `decision.chain`,
+  `memory.move` with `keep_redirect=false` and `memory.apply` with `action="delete"`, which delete through
+  `memory.delete`. `decision.chain`,
   `decision.precedents` and `decision.outcome` stop serving it, and `memory.record.history` shows the last version
   with `status="tombstoned"`. `memory.restore` revives the row but not the record; call `decision.record` again.
   Two retirements that race can each write a tombstoned version, so history may list the tombstone twice.
