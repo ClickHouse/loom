@@ -234,17 +234,17 @@ does not add them: state them again once it is established. A key that already h
 Records are rows with exact fields, for data that has identity (a ticket, a customer).
 They answer predicate questions without parsing text.
 
-| Operation                 | Role   | Does                                                               |
-| ------------------------- | ------ | ------------------------------------------------------------------ |
-| `memory_schema.register`  | admin  | Register a schema: up to 64 `fields`.                              |
-| `memory_schema.propose`   | writer | Suggest a schema (`status='proposed'`) for an admin to accept.     |
-| `memory_schema.approve`   | admin  | `decision` `approve` or `reject`.                                  |
-| `memory_schema.list`      | viewer | Schemas of the namespace.                                          |
-| `memory.record.write`     | writer | Write one record; constraint violations are rejected.              |
-| `memory.record.query`     | viewer | Filter by field values and typed predicates, optionally `as_of`.   |
-| `memory.record.history`   | viewer | Every version of one record with its `status`, newest first.       |
-| `memory.record.conflicts` | viewer | Field values that changed when a record superseded another.        |
-| `memory.aggregate`        | viewer | `count`, `sum`, `avg`, `min`, `max` over records, with `group_by`. |
+| Operation                 | Role   | Does                                                                                  |
+| ------------------------- | ------ | ------------------------------------------------------------------------------------- |
+| `memory_schema.register`  | admin  | Register a schema: up to 64 `fields`.                                                 |
+| `memory_schema.propose`   | writer | Suggest a schema (`status='proposed'`) for an admin to accept.                        |
+| `memory_schema.approve`   | admin  | `decision` `approve` or `reject`.                                                     |
+| `memory_schema.list`      | viewer | Schemas of the namespace.                                                             |
+| `memory.record.write`     | writer | Write one record; constraint violations are rejected.                                 |
+| `memory.record.query`     | viewer | Filter by field values and typed predicates, optionally `as_of`; rows carry `status`. |
+| `memory.record.history`   | viewer | Every version of one record with its `status`, newest first.                          |
+| `memory.record.conflicts` | viewer | Field values that changed when a record superseded another.                           |
+| `memory.aggregate`        | viewer | `count`, `sum`, `avg`, `min`, `max` over records, with `group_by`.                    |
 
 - A field has a `type` (`string`, `number`, `integer`, `boolean`) and may be `required`,
   an `identity` field, an enum (`enum_values`), or constrained (`pattern`, `min_length`,
