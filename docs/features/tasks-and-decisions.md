@@ -258,8 +258,8 @@ was `caused_by` or `influenced_by`. It writes:
 
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
 (`superseded_prior=true`); history keeps it. The new record holds only what the new decision states: fields it leaves
-out, and an earlier `realized_outcome` or `success`, are not carried over. Each `decision.outcome` likewise restates
-both: one without `success` clears an earlier verdict.
+out, and an earlier `realized_outcome` or `success`, are not carried over. Each `decision.outcome` restates
+`success` too: one without it clears an earlier verdict.
 
 The record holds the text of its last writer, the agent, user and session that recorded it, so a delete of that
 writer's decision row retires it; an expired row still counts as live. Another identity's row under the same key was

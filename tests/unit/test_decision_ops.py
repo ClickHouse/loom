@@ -846,7 +846,7 @@ async def test_an_outcome_revises_the_record_writers_row_while_it_is_live(
 
 
 @pytest.mark.asyncio
-async def test_a_delete_between_the_row_and_the_record_leaves_no_active_record(
+async def test_a_delete_between_the_row_and_the_record_leaves_the_new_record_tombstoned(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # decision.record writes its row, the same identity deletes it before the record
