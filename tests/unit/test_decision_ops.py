@@ -114,7 +114,7 @@ class _CH:
         self.queries.append(sql)
         if "FROM loom.agent_runs" in sql:
             return {"memories_used": list(self.run_used)}
-        if "record_writer" in sql:
+        if "identity_agent" in sql:
             return {"agent": "claude", "user_id": "-", "session_id": "s1"}
         return None
 
@@ -664,7 +664,8 @@ async def test_the_tombstone_copies_the_active_record(local: KeptCH) -> None:
         "SELECT * FROM loom.memory_record_versions WHERE record_id = {rid:UUID} ORDER BY version",
         {"rid": _RECORD_ID},
     )
-    for column in ("record_json", "identity_agent", "user_id", "created_at", "valid_at"):
+    changed = {"status", "tombstoned_at", "valid_to", "version", "updated_at"}
+    for column in active.keys() - changed:
         assert tombstoned[column] == active[column], column
     assert (active["status"], tombstoned["status"]) == ("active", "tombstoned")
     assert active["tombstoned_at"] is None and tombstoned["tombstoned_at"] is not None
@@ -719,3 +720,14 @@ async def test_an_outcome_revises_the_record_writers_row_while_it_is_live(
         DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
     )
     assert [i.agent for i in seen] == ["maintainer"]
+
+
+@pytest.mark.asyncio
+async def test_with_no_active_record_the_newest_live_row_revises(local: KeptCH) -> None:
+    from server.memory import store as memory_repo
+
+    version = await _write_decision_rows(local, "maintainer", "claude")
+    await local.execute("TRUNCATE TABLE loom.memory_records")
+    await local.insert("loom.memory", [_memory_row("claude", "decision", version + 1)])
+    identity = await memory_repo.live_decision_identity("o", "n", _KEY)
+    assert identity == {"agent": "claude", "user_id": "-", "session_id": "-"}

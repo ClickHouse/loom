@@ -9,6 +9,7 @@ from typing import Any
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.decision_schema import SCHEMA_NAME
+from server.memory.store.sql import _SEQUENTIAL
 
 # Computed columns take new names: `AS status` would shadow the column in the WHERE.
 _CLOSE_ACTIVE_RECORD = """
@@ -124,27 +125,27 @@ async def live_decision_identity(
     live decision row holds the key."""
     ch = ch or _default_client()
     return await ch.query_one(
-        """
-        WITH (
-            SELECT tuple(identity_agent, user_id, session_id)
+        f"""
+        SELECT agent, user_id, session_id
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND memory_key = {{key:String}}
+          AND memory_type = 'decision'
+          AND tombstoned_at IS NULL
+        ORDER BY (agent, user_id, session_id) IN (
+            SELECT identity_agent, user_id, session_id
             FROM loom.memory_records FINAL
-            WHERE org = {org:String}
-              AND namespace = {ns:String}
-              AND schema_name = {schema:String}
-              AND memory_key = {key:String}
+            WHERE org = {{org:String}}
+              AND namespace = {{ns:String}}
+              AND schema_name = {{schema:String}}
+              AND memory_key = {{key:String}}
               AND status = 'active'
               AND tombstoned_at IS NULL
             LIMIT 1
-        ) AS record_writer
-        SELECT agent, user_id, session_id
-        FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND memory_key = {key:String}
-          AND memory_type = 'decision'
-          AND tombstoned_at IS NULL
-        ORDER BY tuple(agent, user_id, session_id) = record_writer DESC, version DESC
+        ) DESC, version DESC
         LIMIT 1
+        {_SEQUENTIAL}
         """,
         params={
             "org": org,
