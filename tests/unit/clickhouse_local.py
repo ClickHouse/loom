@@ -111,7 +111,8 @@ class KeptCH:
             if "UNKNOWN_TABLE" not in str(e):
                 raise
             return []
-        # A DateTime as the driver answers it: a datetime, not JSON text.
+        # A DateTime as the driver answers it: a datetime, not JSON text. Matched by value,
+        # not column type, so a String holding DateTime-shaped text reads back as one too.
         return [
             {
                 k: datetime.fromisoformat(v) if isinstance(v, str) and _DATETIME.match(v) else v

@@ -842,3 +842,26 @@ async def test_record_query_rows_carry_their_status(local: KeptCH) -> None:
         MemoryRecordQueryInput(org="o", namespace="n", schema_name="decision")
     )
     assert [(r.record_id, r.status) for r in out.rows] == [(_RECORD_ID, "active")]
+
+
+def test_decision_ops_refuse_a_token_bounded_below_the_namespace() -> None:
+    # decision.outcome reads the writer's identity across every user of the key, which a
+    # user- or session-scoped token must not see; the transport gate refuses such tokens.
+    from server.identity.domain.read_scope import honours_read_scope
+
+    for name in ("decision.record", "decision.precedents", "decision.chain", "decision.outcome"):
+        assert not honours_read_scope(name), name
+
+
+def test_record_status_values_match_the_table_enum() -> None:
+    import re
+    from typing import get_args
+
+    from server.memory.api.models_records import MemoryRecordRow
+    from tests.unit.clickhouse_local import ddl
+
+    enum = re.search(r"`status` Enum8\(([^)]*)\)", ddl("memory_records"))
+    assert enum is not None
+    in_table = re.findall(r"'(\w+)' = \d+", enum.group(1))
+    in_model = get_args(MemoryRecordRow.model_fields["status"].annotation)
+    assert tuple(in_table) == in_model == ("active", "superseded", "rejected", "tombstoned")

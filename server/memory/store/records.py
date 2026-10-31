@@ -31,7 +31,7 @@ WHERE org = {org:String}
 """
 
 # Computed columns take new names: `AS status` would shadow the column in the WHERE.
-_CLOSEACTIVE_RECORD = f"""
+_CLOSE_ACTIVE_RECORD = f"""
 INSERT INTO loom.memory_records
     (record_id, org, namespace, schema_id, schema_name, memory_key,
      memory_id, identity_agent, user_id, session_id, record_json,
@@ -47,9 +47,9 @@ SELECT
     {{tombstoned_at:Nullable(DateTime)}} AS new_tombstoned_at
 {ACTIVE_RECORD}"""
 
-_NO_LIVE_DECISION = f"""
+_TOMBSTONE_DECISION_RECORD = f"""{_CLOSE_ACTIVE_RECORD}
   AND (SELECT count() {_LIVE_DECISION_ROWS}) = 0
-"""
+{_SEQUENTIAL}"""
 
 _LIVE_DECISION_IDENTITY = f"""
 SELECT agent, user_id, session_id
@@ -75,7 +75,7 @@ async def supersede_active_record(
     """Close the key's active record ahead of a new one written at `version`."""
     ch = ch or _default_client()
     await ch.execute(
-        _CLOSEACTIVE_RECORD,
+        _CLOSE_ACTIVE_RECORD,
         params={
             "org": org,
             "ns": namespace,
@@ -99,7 +99,7 @@ async def tombstone_decision_record(
     ch: _CHClient | None = None,
 ) -> None:
     """Tombstone the decision record under `memory_key` when no live decision row holds
-    the key. `version` is the version the record's tombstone is written at, at least.
+    the key. `version` is the lowest version the tombstone is written at.
 
     The record plane keys by (schema_name, memory_key) with no identity, while loom.memory
     keys by identity, so the record stays while any live decision row holds the key:
@@ -109,7 +109,7 @@ async def tombstone_decision_record(
     ch = ch or _default_client()
     now = naive_utc_now_seconds()
     await ch.execute(
-        _CLOSEACTIVE_RECORD + _NO_LIVE_DECISION + _SEQUENTIAL,
+        _TOMBSTONE_DECISION_RECORD,
         params={
             "org": org,
             "ns": namespace,

@@ -601,10 +601,10 @@ async def _records_by_ids(
         order = "ORDER BY updated_at DESC, version DESC LIMIT 1 BY record_id, version"
         # Serves the version a decision's memory.delete tombstoned; erasure deletes mirror
         # rows outright.
-        live = "AND (status = 'tombstoned' OR tombstoned_at IS NULL)"
+        visible = "AND (status = 'tombstoned' OR tombstoned_at IS NULL)"
     else:
         source, order = "loom.memory_records FINAL", "ORDER BY updated_at DESC"
-        live = "AND tombstoned_at IS NULL"
+        visible = "AND tombstoned_at IS NULL"
     # `AS rid`/`AS mid`, never `AS record_id`/`AS memory_id`: a same-name
     # alias SHADOWS the column, so `record_id IN {ids:Array(UUID)}` would
     # compare the String alias against UUIDs and match nothing, so every hydration would
@@ -617,7 +617,7 @@ async def _records_by_ids(
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
           AND record_id IN {{ids:Array(UUID)}}
-          {live}
+          {visible}
         {order}
         """,
         params={"org": org, "ns": namespace, "ids": record_ids},
