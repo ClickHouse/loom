@@ -38,6 +38,7 @@ from server.memory.api.models_records import (
 )
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app import decisions as svc
+from server.memory.store import live_decision_identity
 
 log = logging.getLogger(__name__)
 
@@ -343,24 +344,16 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     payload["success"] = input.success
     made_at = payload.get("made_at") or _now().isoformat()
     payload["made_at"] = made_at
-    identity_row = (
-        await ch.query_one(
-            """
-        SELECT identity_agent, user_id, session_id FROM loom.memory_records FINAL
-        WHERE org = {org:String} AND namespace = {ns:String} AND schema_name = {schema:String}
-          AND memory_key = {key:String} AND status = 'active' AND tombstoned_at IS NULL
-        LIMIT 1
-        """,
-            params={
-                "org": input.org,
-                "ns": input.namespace,
-                "schema": svc.SCHEMA_NAME,
-                "key": input.memory_key,
-            },
-        )
-        or {}
+    # Revise under the identity of a row that still holds the decision: the record's writer
+    # may have deleted its own row, and writing under it would bring that row back.
+    identity_row = await live_decision_identity(
+        input.org, input.namespace, svc.SCHEMA_NAME, input.memory_key, ch=ch
     )
-    agent = str(identity_row.get("identity_agent") or payload.get("decision_maker") or "-")
+    if identity_row is None:
+        raise NotFoundError(
+            f"no live decision {input.memory_key!r} in {input.org}/{input.namespace}",
+            memory_key=input.memory_key,
+        )
     tags = [
         "decision",
         f"decision:category:{str(payload.get('category') or '').lower()}",
@@ -371,9 +364,9 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     await _write_decision(
         org=input.org,
         namespace=input.namespace,
-        agent=agent,
-        user_id=str(identity_row.get("user_id") or "-"),
-        session_id=str(identity_row.get("session_id") or "-"),
+        agent=str(identity_row["agent"]),
+        user_id=str(identity_row["user_id"]),
+        session_id=str(identity_row["session_id"]),
         run_id=str(payload.get("run_id") or "-"),
         key=input.memory_key,
         payload=payload,

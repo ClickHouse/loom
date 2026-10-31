@@ -19,7 +19,7 @@ import pytest
 
 from server.memory.app import decisions as svc
 from server.memory.domain.edge_relations import canonical_link_relation
-from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, KeptCH, ddl
+from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl, view
 
 
 def test_decision_key_is_the_record_plane_identity_key() -> None:
@@ -114,8 +114,8 @@ class _CH:
         self.queries.append(sql)
         if "FROM loom.agent_runs" in sql:
             return {"memories_used": list(self.run_used)}
-        if "identity_agent" in sql:
-            return {"identity_agent": "claude", "user_id": "-", "session_id": "s1"}
+        if "record_writer" in sql:
+            return {"agent": "claude", "user_id": "-", "session_id": "s1"}
         return None
 
 
@@ -358,12 +358,6 @@ _KEY = svc.decision_key("deploy", "Roll back or hotfix the image?")
 _RECORD_ID = "00000000-0000-0000-0000-0000000000d1"
 
 
-def _record_versions_view() -> str:
-    schema = (ROOT / "schemas" / "schema.sql").read_text()
-    head = "CREATE MATERIALIZED VIEW IF NOT EXISTS loom.memory_record_versions_mv"
-    return head + schema.split(head, 1)[1].split(";", 1)[0]
-
-
 @pytest.fixture
 def local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> KeptCH:
     if CLICKHOUSE is None:
@@ -374,7 +368,7 @@ def local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> KeptCH:
     ch = KeptCH(
         tmp_path,
         *(ddl(t) for t in ("memory", "memory_records", "memory_record_versions")),
-        _record_versions_view(),
+        view("memory_record_versions_mv"),
         *(ddl(t) for t in ("memory_record_fields", "memory_schemas", "memory_schema_fields")),
         ddl("operator_edges"),
     )
@@ -411,6 +405,22 @@ def _memory_row(agent: str, memory_type: str, version: int) -> dict[str, Any]:
         },
         now=datetime.now(UTC).replace(tzinfo=None, microsecond=0),
     )
+
+
+def _set_into(ch: KeptCH, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """memory.set reduced to its insert: the row lands under the input's identity with its
+    value, above any version written so far. Returns the inputs it received."""
+    seen: list[Any] = []
+
+    async def _set(inp: Any) -> Any:
+        seen.append(inp)
+        row = _memory_row(inp.agent, inp.memory_type, time.time_ns())
+        row.update(user_id=inp.user_id, session_id=inp.session_id, value=json.dumps(inp.value))
+        await ch.insert("loom.memory", [row])
+        return SimpleNamespace(version=row["version"])
+
+    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _set)
+    return seen
 
 
 async def _write_decision_rows(ch: KeptCH, *agents: str, memory_type: str = "decision") -> int:
@@ -508,6 +518,20 @@ async def test_deleting_a_decision_row_tombstones_its_record(
         )
     assert await _history() == ["tombstoned", "active"]
 
+    # Deciding the scenario again records it afresh: nothing active was superseded.
+    _set_into(local, monkeypatch)
+    again = await h.handle_decision_record(
+        _record_input(
+            category="deploy",
+            scenario="Roll back or hotfix the image?",
+            outcome="hotfix",
+            caused_by=[],
+            influenced_by=[],
+        )
+    )
+    assert again.memory_key == _KEY and again.superseded_prior is False
+    assert (await _seed_decision()).outcome == "hotfix"
+
 
 @pytest.mark.asyncio
 async def test_the_record_stays_while_another_identity_holds_the_decision(
@@ -559,7 +583,9 @@ async def test_a_decision_row_written_above_the_tombstone_keeps_the_record(
     tombstone = _memory_row("claude", "decision", version + 1)
     tombstone["tombstoned_at"] = tombstone["updated_at"]
     await local.insert("loom.memory", [tombstone, _memory_row("claude", "decision", version + 2)])
-    await memory_repo.tombstone_decision_record("o", "n", _KEY, version=version + 1)
+    await memory_repo.tombstone_decision_record(
+        "o", "n", svc.SCHEMA_NAME, _KEY, version=version + 1
+    )
     assert await _history() == ["active"]
 
 
@@ -592,7 +618,7 @@ async def test_a_supersede_drawn_below_the_active_version_still_wins(local: Kept
     version = await _write_decision_rows(local, "claude")
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     await memory_repo.supersede_active_record(
-        local, "o", "n", "decision", _KEY, close_at=now, version=version - 1_000, now=now
+        "o", "n", "decision", _KEY, close_at=now, version=version - 1_000, now=now
     )
     rows = await local.query_all(
         "SELECT status FROM loom.memory_records FINAL WHERE record_id = {rid:UUID}",
@@ -601,7 +627,30 @@ async def test_a_supersede_drawn_below_the_active_version_still_wins(local: Kept
     assert rows == [{"status": "superseded"}]
 
 
-def test_the_store_tombstones_the_schema_decision_record_writes() -> None:
-    from server.memory.store import records
+@pytest.mark.asyncio
+async def test_an_outcome_after_the_record_writer_deleted_its_row_revises_a_live_row(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The record is the maintainer's; the maintainer deleted its row, claude's still holds
+    # the key. The outcome goes on claude's row and leaves the maintainer's deleted.
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
 
-    assert records.DECISION == svc.SCHEMA_NAME
+    await h.ensure_schema("o", "n")
+    await _write_decision_rows(local, "maintainer", "claude")
+    await _delete("maintainer")
+    seen = _set_into(local, monkeypatch)
+    await h.handle_decision_outcome(
+        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+    )
+    assert [i.agent for i in seen] == ["claude"]
+
+    def _identity(agent: str) -> Any:
+        return memory_repo.Identity(org="o", namespace="n", agent=agent)
+
+    get = memory_repo.get_by_key
+    assert await get(_identity("maintainer"), _KEY, strong=True, scope=WHOLE_NAMESPACE) is None
+    claude = await get(_identity("claude"), _KEY, strong=True, scope=WHOLE_NAMESPACE)
+    assert claude is not None and claude.value["realized_outcome"] == "ok"

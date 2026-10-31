@@ -27,6 +27,13 @@ def ddl(table: str) -> str:
     return f"CREATE TABLE loom.{table}\n" + body.split(";", 1)[0]
 
 
+def view(name: str) -> str:
+    """The `CREATE MATERIALIZED VIEW` for `loom.<name>` as schema.sql has it."""
+    schema = (ROOT / "schemas" / "schema.sql").read_text()
+    head = f"CREATE MATERIALIZED VIEW IF NOT EXISTS loom.{name} "
+    return head + schema.split(head, 1)[1].split(";", 1)[0]
+
+
 def run(
     setup: list[str],
     sql: str,
@@ -68,8 +75,8 @@ _DATETIME = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$")
 
 class KeptCH:
     """A ClickHouse client over clickhouse-local whose database is kept under `path`, so
-    each statement sees what the earlier ones wrote. A table the test did not create reads
-    as empty and takes no writes, as a table the test does not read."""
+    each statement sees what the earlier ones wrote. A table the fixture did not create
+    reads as empty and drops inserts."""
 
     def __init__(self, path: Path, *setup: str) -> None:
         self.path = path
@@ -79,35 +86,38 @@ class KeptCH:
         """Run DDL (with any session `SET` it needs) in one session."""
         run(list(statements), "SELECT 1", path=self.path)
 
-    def _run(self, setup: list[str], sql: str, params: dict[str, Any] | None) -> list[Any]:
-        try:
-            return run(setup, sql, params, path=self.path)
-        except AssertionError as e:
-            if "UNKNOWN_TABLE" not in str(e):
-                raise
-            return []
-
     async def execute(
         self, sql: str, params: dict[str, Any] | None = None, *, settings: Any = None
     ) -> None:
-        self._run([sql], "SELECT 1", params)
+        run([sql], "SELECT 1", params, path=self.path)
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         for r in rows:
             cols = ", ".join(r)
             data = json.dumps(r, default=str)
-            await self.execute(
-                f"INSERT INTO {table} ({cols}) SELECT {cols} FROM format(JSONEachRow, $${data}$$)"
-            )
+            try:
+                await self.execute(
+                    f"INSERT INTO {table} ({cols}) "
+                    f"SELECT {cols} FROM format(JSONEachRow, $${data}$$)"
+                )
+            except AssertionError as e:
+                if "UNKNOWN_TABLE" not in str(e):
+                    raise
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+        try:
+            rows = run([], sql, params, path=self.path)
+        except AssertionError as e:
+            if "UNKNOWN_TABLE" not in str(e):
+                raise
+            return []
         # A DateTime as the driver answers it: a datetime, not JSON text.
         return [
             {
                 k: datetime.fromisoformat(v) if isinstance(v, str) and _DATETIME.match(v) else v
                 for k, v in row.items()
             }
-            for row in self._run([], sql, params)
+            for row in rows
         ]
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:

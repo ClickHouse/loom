@@ -140,6 +140,7 @@ from server.memory.store.reads import (
     versions_above,
 )
 from server.memory.store.records import (
+    live_decision_identity,
     supersede_active_record,
     tombstone_decision_record,
 )
@@ -268,6 +269,7 @@ __all__ = [
     "live_ids_in_scope",
     "live_keys",
     "live_shared_embedding_rows_for_key",
+    "live_decision_identity",
     "live_source_count",
     "live_tally",
     "MEMORY_PERSISTED_COLS",

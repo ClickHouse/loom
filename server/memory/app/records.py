@@ -531,7 +531,6 @@ async def handle_memory_record_write(
     # as-of reads still see it. No-op for anonymous ("") records.
     if memory_key:
         await supersede_active_record(
-            ch,
             input.org,
             input.namespace,
             input.schema_name,
@@ -539,6 +538,7 @@ async def handle_memory_record_write(
             close_at=input.valid_at or now,
             version=version,
             now=now,
+            ch=ch,
         )
 
     await get_client().insert(
@@ -653,7 +653,7 @@ async def _records_by_ids(
                 memory_id=str(row.get("mid") or ""),
                 record=record,
                 field_states=states.get(rid, {}),
-                status=row.get("status") or "active",
+                status=row["status"],
                 valid_at=row.get("valid_at"),
                 valid_to=row.get("valid_to"),
             )

@@ -88,6 +88,7 @@ class _MergingCH:
                 "memory_key": r["memory_key"],
                 "mid": "",
                 "record_json": r["record_json"],
+                "status": r["status"],
                 "valid_at": r["valid_at"],
                 "valid_to": r["valid_to"],
             }
@@ -116,6 +117,7 @@ def test_history_keeps_the_active_version_after_a_merge(monkeypatch) -> None:
     # Newest first: the superseded row with its closed interval, then the
     # version that was active, still open.
     assert [r.valid_to for r in rows] == [T1, None]
+    assert [r.status for r in rows] == ["superseded", "active"]
     assert all(r.record_id == RID and r.memory_key == "k" for r in rows)
     record_reads = [s for s in ch.sql if "record_json" in s]
     assert record_reads and all("FROM loom.memory_record_versions" in s for s in record_reads)

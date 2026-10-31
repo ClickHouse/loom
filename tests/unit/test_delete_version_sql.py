@@ -28,7 +28,7 @@ from server.memory.api.models_crud import (
 from server.memory.app import set_commit
 from server.memory.store import key_write_lock
 from server.memory.store.rows import build_first_version_row
-from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, KeptCH, ddl
+from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl, view
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 
@@ -39,13 +39,6 @@ _FIXED_HEAD = 1_900_000_000_000_000_000
 _ID = {"org": "o", "namespace": "n", "agent": "okf-sync", "user_id": "-", "session_id": "-"}
 _MID = "00000000-0000-0000-0000-00000000000a"
 _KEY = "deploy_window"
-
-
-def _versions_view() -> str:
-    """The materialized view that copies every loom.memory insert into memory_versions."""
-    schema = (ROOT / "schemas" / "schema.sql").read_text()
-    head = "CREATE MATERIALIZED VIEW IF NOT EXISTS loom.memory_versions_mv"
-    return head + schema.split(head, 1)[1].split(";", 1)[0]
 
 
 def _row(value: str, version: int) -> dict[str, Any]:
@@ -85,7 +78,7 @@ def ch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> KeptCH:
         tmp_path,
         ddl("memory"),
         ddl("memory_versions"),
-        _versions_view(),
+        view("memory_versions_mv"),
         ddl("delete_version_checks"),
     )
 

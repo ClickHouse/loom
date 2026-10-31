@@ -1,16 +1,14 @@
 """Version rows that close the active typed record under a key in loom.memory_records:
 supersession by a newer record, and the tombstone of a decision whose memory row was
-deleted."""
+deleted, and the identity a decision's revision writes under."""
 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
-
-# The built-in schema and memory type decision.record writes (server.memory.app.decisions).
-DECISION = "decision"
 
 # Copies the key's active record with a new status, a closed validity interval and a
 # version above its own. The computed columns take new names: `AS status` would shadow
@@ -47,14 +45,13 @@ _NO_LIVE_DECISION = """
       WHERE org = {org:String}
         AND namespace = {ns:String}
         AND memory_key = {key:String}
-        AND memory_type = {memory_type:String}
+        AND memory_type = 'decision'
         AND tombstoned_at IS NULL
   ) = 0
 """
 
 
 async def supersede_active_record(
-    ch: _CHClient,
     org: str,
     namespace: str,
     schema_name: str,
@@ -63,8 +60,10 @@ async def supersede_active_record(
     close_at: datetime,
     version: int,
     now: datetime,
+    ch: _CHClient | None = None,
 ) -> None:
     """Close the key's active record ahead of a new one written at `version`."""
+    ch = ch or _default_client()
     await ch.execute(
         _CLOSE_ACTIVE_RECORD,
         params={
@@ -84,6 +83,7 @@ async def supersede_active_record(
 async def tombstone_decision_record(
     org: str,
     namespace: str,
+    schema_name: str,
     memory_key: str,
     *,
     version: int,
@@ -104,8 +104,7 @@ async def tombstone_decision_record(
         params={
             "org": org,
             "ns": namespace,
-            "schema": DECISION,
-            "memory_type": DECISION,
+            "schema": schema_name,
             "key": memory_key,
             "status": "tombstoned",
             "close": now,
@@ -114,4 +113,43 @@ async def tombstone_decision_record(
             "tombstoned_at": now,
         },
         settings={"select_sequential_consistency": 1},
+    )
+
+
+async def live_decision_identity(
+    org: str,
+    namespace: str,
+    schema_name: str,
+    memory_key: str,
+    *,
+    ch: _CHClient | None = None,
+) -> dict[str, Any] | None:
+    """The (agent, user_id, session_id) of a live decision row under `memory_key`: the
+    active record's writer when its row is live, else the newest live row. None when no
+    live decision row holds the key."""
+    ch = ch or _default_client()
+    return await ch.query_one(
+        """
+        WITH (
+            SELECT tuple(identity_agent, user_id, session_id)
+            FROM loom.memory_records FINAL
+            WHERE org = {org:String}
+              AND namespace = {ns:String}
+              AND schema_name = {schema:String}
+              AND memory_key = {key:String}
+              AND status = 'active'
+              AND tombstoned_at IS NULL
+            LIMIT 1
+        ) AS record_writer
+        SELECT agent, user_id, session_id
+        FROM loom.memory FINAL
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND memory_key = {key:String}
+          AND memory_type = 'decision'
+          AND tombstoned_at IS NULL
+        ORDER BY tuple(agent, user_id, session_id) = record_writer DESC, version DESC
+        LIMIT 1
+        """,
+        params={"org": org, "ns": namespace, "schema": schema_name, "key": memory_key},
     )

@@ -45,6 +45,7 @@ from server.memory.api.models_crud import (
     MemoryUnpinOutput,
 )
 from server.memory.app import webhooks
+from server.memory.app.decisions import SCHEMA_NAME as DECISION_SCHEMA
 from server.memory.app.get_output import duplicate_of_shown, row_output
 from server.memory.app.provenance import writer_actor
 from server.memory.app.write import handle_memory_set
@@ -1150,7 +1151,12 @@ async def _retire_derived(
     if existing.memory_type == "decision":
         try:
             await memory_repo.tombstone_decision_record(
-                existing.org, existing.namespace, existing.memory_key, version=version, ch=ch
+                existing.org,
+                existing.namespace,
+                DECISION_SCHEMA,
+                existing.memory_key,
+                version=version,
+                ch=ch,
             )
         except Exception as e:  # noqa: BLE001 — the tombstone stands
             log.warning("%s: decision record not retired for %s: %s", op, existing.memory_key, e)
