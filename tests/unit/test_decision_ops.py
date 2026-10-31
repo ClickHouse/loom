@@ -114,7 +114,7 @@ class _CH:
         self.queries.append(sql)
         if "FROM loom.agent_runs" in sql:
             return {"memories_used": list(self.run_used)}
-        if "identity_agent" in sql:
+        if "FROM loom.memory FINAL" in sql and "memory_type = 'decision'" in sql:
             return {"agent": "claude", "user_id": "-", "session_id": "s1"}
         return None
 
@@ -723,7 +723,11 @@ async def test_an_outcome_revises_the_record_writers_row_while_it_is_live(
 
 
 @pytest.mark.asyncio
-async def test_with_no_active_record_the_newest_live_row_revises(local: KeptCH) -> None:
+async def test_the_identity_helper_ranks_by_version_when_no_record_matches(
+    local: KeptCH,
+) -> None:
+    # The helper's ordering only (decision.outcome answers not-found before it reads with
+    # no active record): the IN subquery matching nothing ranks every row alike.
     from server.memory import store as memory_repo
 
     version = await _write_decision_rows(local, "maintainer", "claude")
