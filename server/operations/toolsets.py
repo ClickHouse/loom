@@ -478,13 +478,16 @@ def op_toolsets(name: str) -> list[str]:
     """Every toolset whose listing carries the op named ``name`` (the
     catalogue's ``toolsets`` facet): ``all`` when `listed_under_all`,
     ``core`` (with the code tools flag for a code op), ``coding``,
-    ``atomic``, ``tasks``, ``tracker``. Empty for a hidden or unknown op.
-    Sorted for a stable wire shape."""
+    ``atomic``, ``tasks``, ``tracker``, ``assistant``. A hidden op is on the
+    assistant roster or nowhere; an unknown op is nowhere. Sorted for a stable
+    wire shape."""
     from server.operations.registry import OPERATIONS_BY_NAME
 
     op = OPERATIONS_BY_NAME.get(name)
-    if op is None or name in _MCP_HIDDEN_OPS:
+    if op is None:
         return []
+    if name in _MCP_HIDDEN_OPS:
+        return [ASSISTANT_TOOLSET] if name in MCP_ASSISTANT_OPS else []
     if name in SYNTHETIC_TOOL_OPS:
         return sorted({"all", *CURATED_TOOLSETS})
     out: set[str] = set()
@@ -500,4 +503,6 @@ def op_toolsets(name: str) -> list[str]:
         out.add("tasks")
     if name in _MCP_TRACKER_OPS:
         out.add("tracker")
+    if name in MCP_ASSISTANT_OPS:
+        out.add(ASSISTANT_TOOLSET)
     return sorted(out)

@@ -2041,10 +2041,11 @@ class McpSettings(BaseModel):
     # Any other value fails at load: a mistyped mode must not boot as some mode.
     mcp_auth_mode: Literal["required", "discovery_only", "open"] = "required"
 
-    # Which tools `tools/list` shows when a connection names no `?toolset=`. Rosters are
-    # the frozensets in server/operations/toolsets.py plus loom_search and loom_activate;
-    # on every toolset but "assistant" this is visibility only and every op stays callable
-    # by name over MCP and /v1/*.
+    # Which tools `tools/list` shows when a connection names no `?toolset=` (a request that
+    # names one gets that one instead). Rosters are the frozensets in
+    # server/operations/toolsets.py plus loom_search and loom_activate; on every toolset
+    # but "assistant" this is visibility only and every op stays callable by name over MCP
+    # and /v1/*.
     #   "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when
     #                 mcp_code_tools is on).
     #   "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it
@@ -2053,7 +2054,9 @@ class McpSettings(BaseModel):
     #   "atomic"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS),
     #                 policy-shaped descriptions.
     #   "readonly"  — the "all" listing without the tools whose readOnlyHint is false.
-    #   "assistant" — MCP_ASSISTANT_OPS only, and only those are callable over MCP.
+    #   "assistant" — MCP_ASSISTANT_OPS only, and only those are callable on a connection
+    #                 that resolves to it. Not a server-wide read-only switch: a request
+    #                 naming another toolset gets it, and the token is the boundary.
     #   "all"       — every op except _MCP_HIDDEN_OPS and the experimental ones
     #                 no curated tier lists (they stay callable by name).
     # An unknown value is "core".

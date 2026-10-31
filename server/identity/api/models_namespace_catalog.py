@@ -344,8 +344,8 @@ class NamespaceAuditSummary(BaseModel):
     sets: int = 0
     # gets / max(searches, 1): the object-store gauge.
     get_search_ratio: float = 0.0
-    # Calls in the window from the dashboard and the assistant toolset (consumers
-    # `loom-ui`, `loom-assistant`): left out of every ledger count above.
+    # The gets, searches and sets in the window from the dashboard and the assistant
+    # toolset (consumers `loom-ui`, `loom-assistant`), left out of the counts above.
     inspector_calls: int = 0
 
 

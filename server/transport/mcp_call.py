@@ -23,7 +23,7 @@ from server.core import llm_free
 from server.core.errors import LoomServerError
 from server.core.naming import named
 from server.identity.app.caller_home import home_namespace
-from server.observability.consumer import ASSISTANT_CONSUMER
+from server.observability.consumer import ASSISTANT_CONSUMER, INSPECTOR_CONSUMERS
 from server.operations.base import Operation
 from server.operations.toolsets import _MCP_HIDDEN_OPS, ASSISTANT_FORCED_ARGS, MCP_ASSISTANT_OPS
 from server.transport import gates
@@ -335,6 +335,10 @@ def _stamp_session_run(
 
         if not defaults or not _mcp_runs.takes_run(op):
             return None, False
+        # An inspector's reads are not the work of a run: the assistant toolset stamps
+        # its consumer before this phase, so its session opens none.
+        if arguments.get("consumer") in INSPECTOR_CONSUMERS:
+            return None, False
         # The run row lives in the caller's org and default namespace, whatever
         # namespace a call names, so every web process files it under one key.
         caller = _mcp_runs.Caller.of_call(current_auth(), arguments)
@@ -375,7 +379,10 @@ def _assistant_refusal(req_id: Any, name: str, auth: Any) -> dict[str, Any] | No
     op = TOOLS_BY_NAME.get(name)
     if op is not None and op.name in MCP_ASSISTANT_OPS and op.read_only:
         return None
-    emit_token_refusal(op.name if op is not None else name, auth, error_code=UNKNOWN_OP)
+    if op is not None:
+        # A registry op the toolset leaves out is ledgered by its name; an unknown name,
+        # chosen by the client, is not written to the ledger at all.
+        emit_token_refusal(op.name, auth, error_code=UNKNOWN_OP)
     msg = f"Tool {name!r} is not available on the assistant toolset."
     body = {"error": msg, "code": UNKNOWN_OP, "tool": name}
     return _ok(
@@ -402,7 +409,7 @@ async def _resolve_connection_tool(
     if refused is not None:
         return refused
     # The roster carries the plane searches the other listings hide in favour of
-    # `loom_search`: it needs their exact-plane results and their `auto_touch` switch.
+    # `loom_search`: an investigation reads one plane at a time.
     tool = await _resolve_tool(req_id, name, auth, client_name, toolset, allow_hidden=True)
     if not isinstance(tool, dict):
         arguments.update(ASSISTANT_FORCED_ARGS.get(tool.name, {}))

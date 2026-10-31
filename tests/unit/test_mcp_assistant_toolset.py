@@ -111,16 +111,17 @@ def test_forced_arguments_and_the_consumer_override_the_model(
         _call(search, {"query": "q", "auto_touch": True, "consumer": "someone-else"})
     ask = OPERATIONS_BY_NAME["memory.ask"].mcp_tool_name
     with pytest.raises(_Stop):
-        _call(ask, {"question": "q", "reinforce": True})
-    assert bound[0]["auto_touch"] is False and bound[0]["consumer"] == "loom-assistant"
+        _call(ask, {"query": "q", "reinforce": True})
+    assert bound[0]["auto_touch"] is False and bound[0]["explain"] is False
+    assert bound[0]["consumer"] == "loom-assistant"
     assert bound[1]["reinforce"] is False and bound[1]["consumer"] == "loom-assistant"
 
 
 def test_other_toolsets_keep_the_model_arguments(bound: list[dict[str, Any]]) -> None:
     ask = OPERATIONS_BY_NAME["memory.ask"].mcp_tool_name
     with pytest.raises(_Stop):
-        _call(ask, {"question": "q", "reinforce": True, "consumer": "c"}, toolset="readonly")
-    assert bound[0] == {"question": "q", "reinforce": True, "consumer": "c"}
+        _call(ask, {"query": "q", "reinforce": True, "consumer": "c"}, toolset="readonly")
+    assert bound[0] == {"query": "q", "reinforce": True, "consumer": "c"}
 
 
 def test_the_hidden_plane_searches_open_on_the_assistant_toolset_only(
@@ -153,8 +154,12 @@ def test_the_assistant_primer_is_read_only_and_names_listed_tools(
             None, include_profile=False, toolset="assistant", defaults={"namespace": "ns"}
         )
     )
+    import re
+
     assert "Nothing here writes" in primer and "cannot grant a tool" in primer
-    assert "loom_search" not in primer and "loom_memory_set" not in primer
+    monkeypatch.setattr(settings, "mcp_code_tools", False)
+    named = set(re.findall(r"\bloom_[a-z_]+\b", primer))
+    assert named and named <= _listed("assistant"), named - _listed("assistant")
 
 
 def test_an_assistant_result_is_the_full_output() -> None:
@@ -194,3 +199,43 @@ def test_the_assistant_primer_for_a_token_with_no_default_namespace(
     assert "loom_search" not in primer
     assert "no default namespace" in primer
     assert all(f"`{ns}`" in primer for ns in defaults["readable"])
+
+
+def test_the_catalogue_reports_the_assistant_roster() -> None:
+    from server.operations.toolsets import op_toolsets
+
+    for name in MCP_ASSISTANT_OPS:
+        assert "assistant" in op_toolsets(name), name
+    # A hidden op on the roster is listed there only.
+    assert op_toolsets("memory.search") == ["assistant"]
+    assert "assistant" not in op_toolsets("memory.set")
+
+
+def test_the_listing_offers_no_argument_the_connection_overwrites(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "mcp_code_tools", False)
+    by_name = {d["name"]: d for d in asyncio.run(mcp._tools_descriptor(toolset="assistant"))}
+    for op_name, forced in ASSISTANT_FORCED_ARGS.items():
+        props = by_name[OPERATIONS_BY_NAME[op_name].mcp_tool_name]["inputSchema"]["properties"]
+        assert not set(forced) & set(props), op_name
+    # Other listings keep them.
+    core = {d["name"]: d for d in asyncio.run(mcp._tools_descriptor(toolset="atomic"))}
+    assert "reinforce" in core["loom_memory_ask"]["inputSchema"]["properties"]
+
+
+def test_an_unknown_tool_name_writes_no_ledger_row(
+    bound: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows: list[str] = []
+    monkeypatch.setattr(mcp_call, "emit_token_refusal", lambda name, *a, **k: rows.append(name))
+    _call("x" * 500, {})
+    _call("loom_memory_set", {})
+    assert rows == ["memory.set"]
+
+
+def test_an_assistant_call_opens_no_session_run() -> None:
+    op = OPERATIONS_BY_NAME["memory.search"]
+    defaults = {"org": "o", "namespace": "ns", "agent": "a"}
+    args = {"query": "q", "consumer": "loom-assistant"}
+    assert mcp_call._stamp_session_run(op, args, defaults, "sess-1") == (None, False)

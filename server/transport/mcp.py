@@ -85,7 +85,7 @@ from server.transport.mcp_primer import (
     _read_resource,
     _resources_descriptor,
 )
-from server.transport.mcp_tools import _tools_descriptor
+from server.transport.mcp_tools import _tools_descriptor, assistant_connection
 
 log = logging.getLogger(__name__)
 
@@ -174,8 +174,9 @@ async def _handle_request(
             # inlines the caller's profile sections — so it leaves a ledger
             # row like `loom_activate` does, and the Profile page's "read by"
             # chip stops saying "never read" to a client that reads it on
-            # every connect. Anonymous probes carry no profile and no row.
-            if auth is not None:
+            # every connect. Anonymous probes carry no profile and no row, and neither
+            # does the assistant toolset's primer, which inlines no profile.
+            if auth is not None and not assistant_connection(toolset):
                 await _emit_initialize_event(auth, client_name)
         return _ok(req_id, result)
 

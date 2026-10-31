@@ -491,7 +491,9 @@ class _Audit:
             SELECT countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}) AS gets,
                    countIf(operation IN {_LEDGER_SEARCHES} AND {_AGENT_CALL}) AS searches,
                    countIf(operation IN {_LEDGER_SETS} AND {_AGENT_CALL}) AS sets,
-                   countIf(NOT ({_AGENT_CALL})) AS inspector_calls
+                   countIf(NOT ({_AGENT_CALL}) AND (operation IN {_LEDGER_GETS}
+                           OR operation IN {_LEDGER_SEARCHES}
+                           OR operation IN {_LEDGER_SETS})) AS inspector_calls
             {_LEDGER_ALL}
             """
         )

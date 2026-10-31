@@ -29,6 +29,7 @@ from server.operations.toolsets import (
     _MCP_CODE_CORE_OPS,
     _MCP_CORE_OPS,
     _MCP_HIDDEN_OPS,
+    MCP_ASSISTANT_OPS,
     SYNTHETIC_TOOL_OPS,
     listed_under_all,
     op_toolsets,
@@ -204,12 +205,21 @@ def test_catalogue_facets_are_additive_and_json_shaped():
         assert set(f) == {"maturity", "reach", "toolsets"}
         assert f["maturity"] in MATURITIES and f["reach"] == sorted(op.reach)
         # The toolsets facet is the listing membership, sorted;
-        # a hidden op is on none; `all` only when the all listing carries it
+        # a hidden op is on none but the assistant roster; `all` only when the all
+        # listing carries it
         assert f["toolsets"] == sorted(f["toolsets"])
         # `tasks` is the task inbox plane's own roster
-        assert set(f["toolsets"]) <= {"all", "atomic", "coding", "core", "tracker", "tasks"}
+        assert set(f["toolsets"]) <= {
+            "all",
+            "assistant",
+            "atomic",
+            "coding",
+            "core",
+            "tracker",
+            "tasks",
+        }
         if op.name in _MCP_HIDDEN_OPS:
-            assert f["toolsets"] == []
+            assert f["toolsets"] == (["assistant"] if op.name in MCP_ASSISTANT_OPS else [])
         assert ("all" in f["toolsets"]) == listed_under_all(op)
         assert ("core" in f["toolsets"]) == ("mcp_core" in op.reach)
         assert ("atomic" in f["toolsets"]) == ("mcp_atomic" in op.reach)

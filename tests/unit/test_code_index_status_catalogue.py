@@ -27,7 +27,10 @@ def test_catalogue_lists_every_served_code_op_with_its_request_fields() -> None:
     assert reach["code.reindex"] == ["http_only"] and maturity["code.reindex"] == "experimental"
     # additive: the toolsets whose listing carries each op
     assert set(toolsets) == registry
-    assert toolsets["code.search"] == ["all", "coding", "core"] and toolsets["code.reindex"] == []
+    assert (
+        toolsets["code.search"] == ["all", "assistant", "coding", "core"]
+        and toolsets["code.reindex"] == []
+    )
 
 
 def test_output_model_defaults_keep_old_clients_whole() -> None:

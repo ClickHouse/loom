@@ -19,6 +19,7 @@ from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import (
     _MCP_HIDDEN_OPS,
+    ASSISTANT_FORCED_ARGS,
     MCP_ASSISTANT_OPS,
     SYNTHETIC_TOOL_OPS,
     canonical_toolset,
@@ -293,6 +294,18 @@ def resolve_toolset(requested: str | None, configured: str | None) -> str:
     return requested_l if requested_l and is_toolset(requested_l) else configured_l
 
 
+def _without_forced(schema: dict[str, Any], forced: dict[str, object]) -> dict[str, Any]:
+    """`schema` without the properties the assistant toolset sets itself: a model is
+    not offered an argument whatever value it sends is overwritten."""
+    if not forced or not isinstance(schema.get("properties"), dict):
+        return schema
+    # A forced argument has a default, so it is never in `required`.
+    return {
+        **schema,
+        "properties": {k: v for k, v in schema["properties"].items() if k not in forced},
+    }
+
+
 def assistant_connection(requested: str | None) -> bool:
     """Whether a connection's ``?toolset=`` (resolved against the deployment's) is the
     assistant toolset, where only its reads are callable."""
@@ -402,6 +415,8 @@ async def _tools_descriptor(
             # The curated text is the guidance; the model docstring beside it
             # is developer prose.
             input_schema = strip_model_docstring(input_schema)
+        if is_assistant(toolset):
+            input_schema = _without_forced(input_schema, ASSISTANT_FORCED_ARGS.get(op.name, {}))
         descriptor: dict[str, Any] = {
             "name": op.mcp_tool_name,
             "description": desc,

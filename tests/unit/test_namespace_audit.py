@@ -630,7 +630,7 @@ def test_registered_read_only_for_viewers_and_kept_off_the_curated_toolsets() ->
     assert "namespace.audit" not in toolsets._MCP_CODING_OPS
     assert "namespace.audit" not in toolsets._MCP_ATOMIC_OPS
     assert "namespace.audit" not in toolsets._MCP_HIDDEN_OPS
-    assert toolsets.op_toolsets("namespace.audit") == ["all"]
+    assert toolsets.op_toolsets("namespace.audit") == ["all", "assistant"]
     assert "object store" in mcp_descriptions.TOOL_DESCRIPTIONS["namespace.audit"]
 
 

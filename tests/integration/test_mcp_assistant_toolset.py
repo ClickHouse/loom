@@ -3,8 +3,8 @@
 With a writer's token: the listing carries no write tool, `loom_memory_set` is refused
 and writes nothing, `loom_memory_search` answers the full hit (session included) and
 records no recall usage even when the call asks for it, while the same search over HTTP
-does; and namespace.audit counts the assistant's calls as inspector calls, not as the
-namespace's own reads.
+does; namespace.audit counts the assistant's calls as inspector calls, not as the
+namespace's own reads; and the assistant's MCP session opens no run.
 """
 
 from __future__ import annotations
@@ -128,3 +128,10 @@ async def test_the_assistant_reads_without_writing_or_recording_usage(
         summary = await eventually(_inspected, description="the ledger has the assistant calls")
         # The HTTP search is the namespace's one counted search; the assistant's are not.
         assert summary["searches"] == 1
+
+    # Every assistant call carried an MCP session id, and none opened a session run.
+    runs = ch_client.query(
+        "SELECT count() FROM loom.agent_runs WHERE org = {org:String}",
+        parameters={"org": ORG},
+    ).result_rows
+    assert runs[0][0] == 0
