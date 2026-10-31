@@ -374,7 +374,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     # The row write is conditional on the writer row read with the record, so a delete of
     # it since then refuses the outcome instead of writing the deleted row back. A row that
     # changed (another outcome, a re-record) is read again, with its record, once.
-    for attempt in (1, 2):
+    for _ in range(2):
         # Only the record's live writer revises it; record and writer come from one read.
         writer = await live_writer_record(input.org, input.namespace, input.memory_key, ch=ch)
         if writer is None:
@@ -406,24 +406,23 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
                 valid_at=None,
                 if_match_sha256=sha256_value_json(json.dumps(row.value, default=str)),
             )
-            break
         except HTTPException as e:
             # memory.set's hash mismatch is the HTTPException coded PRECONDITION_FAILED (the
             # record half never raises that code); the lease's busy answer is a
             # PreconditionFailedError and is not caught here.
-            mismatch = isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED"
-            if not mismatch:
+            if not (isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED"):
                 raise
-            if attempt == 2:
-                current = await get_by_key(
-                    identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
-                )
-                if current is None:
-                    raise not_found() from e
-                raise PreconditionFailedError(
-                    "the decision changed while its outcome was being written; "
-                    "call decision.outcome again"
-                ) from e
+            continue
+        break
+    else:
+        current = await get_by_key(
+            identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
+        )
+        if current is None:
+            raise not_found()
+        raise PreconditionFailedError(
+            "the decision changed while its outcome was being written; call decision.outcome again"
+        )
 
     # Close the loop: the memories the deciding run relied on earn (or lose)
     # credit from the realized outcome — the feedback every decision log lacks.

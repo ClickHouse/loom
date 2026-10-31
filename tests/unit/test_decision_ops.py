@@ -1254,3 +1254,15 @@ async def test_a_whole_record_write_reports_nothing_kept(local: KeptCH) -> None:
     out = await handle_memory_record_write(_write(), carry_prior=False)
     assert out.superseded_record_id
     assert out.fold["filled_from_prior"] == []
+    # Read back: the new record holds no `reasoning`, in its JSON or as a carried field row.
+    (stored,) = await local.query_all(
+        "SELECT record_json FROM loom.memory_records FINAL WHERE record_id = {rid:UUID}",
+        {"rid": out.record_id},
+    )
+    assert json.loads(stored["record_json"]).get("reasoning") is None
+    fields = await local.query_all(
+        "SELECT field_name, value_state FROM loom.memory_record_fields FINAL "
+        "WHERE record_id = {rid:UUID}",
+        {"rid": out.record_id},
+    )
+    assert {r["field_name"]: r["value_state"] for r in fields}["reasoning"] == "absent"
