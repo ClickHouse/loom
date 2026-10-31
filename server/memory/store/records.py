@@ -58,8 +58,7 @@ _TOMBSTONE_DECISION_RECORD = f"""{_CLOSE_ACTIVE_RECORD}
   )
 {_SEQUENTIAL}"""
 
-# The active record and its writer, when that writer still has a live decision row under
-# the key.
+# The newest active record whose writer still has a live decision row under the key.
 _LIVE_WRITER_RECORD = f"""
 SELECT identity_agent, user_id, session_id, record_json, created_at
 {_FROM_ACTIVE_OF_KEY}
@@ -89,7 +88,7 @@ class ActiveRecord(NamedTuple):
     """The key's newest active record, as the record write's fold reads it."""
 
     record_id: str
-    memory_id: str
+    memory_id: str | None
     record_json: str
 
 
@@ -176,7 +175,7 @@ async def active_record(
     )
     if row is None:
         return None
-    return ActiveRecord(row["rid"], row["mid"] or "", row["record_json"])
+    return ActiveRecord(row["rid"], row["mid"], row["record_json"])
 
 
 async def active_decision_records(

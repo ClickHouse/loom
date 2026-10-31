@@ -1066,7 +1066,7 @@ async def test_an_outcome_keeps_nothing_of_another_active_record(
     async def _other_record(*_a: Any, **_k: Any) -> Any:
         from server.memory.store.records import ActiveRecord
 
-        return ActiveRecord("00000000-0000-0000-0000-0000000000e1", "", json.dumps(other))
+        return ActiveRecord("00000000-0000-0000-0000-0000000000e1", None, json.dumps(other))
 
     monkeypatch.setattr(hrec, "active_record", _other_record)
     _set_into(local, monkeypatch)
