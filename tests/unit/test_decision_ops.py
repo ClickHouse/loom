@@ -379,6 +379,8 @@ def test_ops_registered_and_search_accepts_decision_type() -> None:
 
 _KEY = svc.decision_key("deploy", "Roll back or hotfix the image?")
 _RECORD_ID = "00000000-0000-0000-0000-0000000000d1"
+# The seeded record's schema id; nothing looks a schema up by it (the record plane uses its name).
+_SCHEMA_ID = "00000000-0000-0000-0000-0000000000a1"
 
 
 @pytest.fixture
@@ -477,7 +479,7 @@ async def _write_decision_rows(
                 "record_id": _RECORD_ID,
                 "org": "o",
                 "namespace": "n",
-                "schema_id": _RECORD_ID,
+                "schema_id": _SCHEMA_ID,
                 "schema_name": "decision",
                 "memory_key": _KEY,
                 "identity_agent": agents[0],
