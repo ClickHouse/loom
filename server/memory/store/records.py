@@ -33,7 +33,8 @@ WHERE org = {org:String}
 """
 
 # Computed columns take new names: `AS status` would shadow the column in the WHERE.
-_CLOSE_ACTIVE_RECORD = f"""
+_CLOSE_ACTIVE_RECORD = (
+    """
 INSERT INTO loom.memory_records
     (record_id, org, namespace, schema_id, schema_name, memory_key,
      memory_id, identity_agent, user_id, session_id, record_json,
@@ -42,12 +43,13 @@ INSERT INTO loom.memory_records
 SELECT
     record_id, org, namespace, schema_id, schema_name, memory_key,
     memory_id, identity_agent, user_id, session_id, record_json,
-    {{status:String}} AS new_status, valid_at,
-    if(valid_to IS NULL, {{close:DateTime}}, valid_to) AS new_valid_to,
-    greatest(version + 1, {{ver:UInt64}}) AS new_version, created_at,
-    greatest(updated_at, {{now:DateTime}}) AS new_updated_at,
-    {{tombstoned_at:Nullable(DateTime)}} AS new_tombstoned_at
-{_FROM_ACTIVE_RECORD}"""
+    {status:String} AS new_status, valid_at,
+    if(valid_to IS NULL, {close:DateTime}, valid_to) AS new_valid_to,
+    greatest(version + 1, {ver:UInt64}) AS new_version, created_at,
+    greatest(updated_at, {now:DateTime}) AS new_updated_at,
+    {tombstoned_at:Nullable(DateTime)} AS new_tombstoned_at"""
+    + _FROM_ACTIVE_RECORD
+)
 
 # Retires the record unless its writer still has a live decision row under the key.
 _TOMBSTONE_DECISION_RECORD = f"""{_CLOSE_ACTIVE_RECORD}

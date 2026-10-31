@@ -20,9 +20,9 @@ imports only the ones above it:
 - `embeddings`  — the memory_embeddings mirror: live rows, re-emits, status
                   reconciliation
 - `lifecycle`   — status and tombstone writes that cascade onto the mirror
-- `records`     — the key's active typed record: the fold's read, the supersede and
-                  decision tombstone copies, and the record a decision revision builds
-                  on with its writer
+- `records`     — active typed records: the fold's read, the supersede and decision
+                  tombstone copies, the record a decision revision builds on with its
+                  writer, and the active decision records of several keys
 - `dedup`       — duplicate and supersession reads
 - `lookups`     — memory.ask's identifier, facet, prefix and term finders
 - `entities`    — the entity extractor's reads and writes
