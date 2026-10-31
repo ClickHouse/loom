@@ -38,7 +38,7 @@ Close the loop on a decision once reality has answered: record what actually hap
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `memory_key` | `str` | required | The active decision to update; an unknown key answers 404. |
+| `memory_key` | `str` | required | The active decision to update; answers 404 when there is none, or when the record's writer has no live decision row under the key. |
 | `realized_outcome` | `str` | required | What actually happened, stored on the decision record. |
 | `success` | `bool \| None` | `None` | None = outcome known but not judged; True/False also credits (or marks) the memories the deciding run relied on, via the run ledger. |
 | `agent` | `str` | `'*'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |

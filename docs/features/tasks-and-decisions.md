@@ -260,9 +260,9 @@ was `caused_by` or `influenced_by`. It writes:
 (`superseded_prior=true`); history keeps it. The new record holds only what the new decision states: fields it leaves
 out, and an earlier `realized_outcome` or `success`, are not carried over.
 
-The record holds the text of its last writer, the agent, user and session that recorded it, so it stays active only
-while that writer's decision row is live (an expired row counts until the expiry sweep tombstones it). Another
-identity's row under the same key was superseded in the record plane and does not keep the record.
+The record holds the text of its last writer, the agent, user and session that recorded it, so a delete of that
+writer's decision row retires it; an expired row still counts as live. Another identity's row under the same key was
+superseded in the record plane and does not keep the record.
 
 - **Retires the record**: `memory.delete` or `memory.delete_version` of the writer's decision row, including
   `memory.move` with `keep_redirect=false`, which deletes through `memory.delete`. `decision.chain`,

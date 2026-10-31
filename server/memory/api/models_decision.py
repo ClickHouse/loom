@@ -145,7 +145,8 @@ class DecisionChainOutput(BaseModel):
 class DecisionOutcomeInput(BaseModel):
     org: str
     namespace: str
-    # The active decision to update; an unknown key answers 404.
+    # The active decision to update; answers 404 when there is none, or when the record's
+    # writer has no live decision row under the key.
     memory_key: str = Field(min_length=1)
     # What actually happened, stored on the decision record.
     realized_outcome: str = Field(min_length=1, max_length=2000)

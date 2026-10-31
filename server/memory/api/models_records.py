@@ -232,7 +232,7 @@ class MemoryRecordRow(BaseModel):
     memory_id: str = ""
     record: dict[str, Any] = Field(default_factory=dict)
     field_states: dict[str, str] = Field(default_factory=dict)
-    # The version's state, as stored.
+    # `tombstoned` appears only in history: the version a decision delete wrote.
     status: Literal["active", "superseded", "rejected", "tombstoned"] = "active"
     valid_at: datetime | None = None
     valid_to: datetime | None = None
