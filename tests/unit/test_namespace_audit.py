@@ -708,7 +708,13 @@ def test_cli_table_renders_from_a_sample_output() -> None:
         "namespace.audit clickhouse/ops-alerts — window 3d, UNHEALTHY (2 critical, 0 warning, 0 info)"
     )
     assert "gets 6606 / searches 52 / sets 1687 (ratio 127.04)" in lines[1]
-    assert lines[1].endswith("; 0 dashboard and assistant calls not counted")
+    assert "not counted" not in lines[1]
+    shown = na.render_table(
+        _sample_output().model_copy(
+            update={"summary": _sample_output().summary.model_copy(update={"inspector_calls": 9})}
+        )
+    )
+    assert shown.splitlines()[1].endswith("; 9 dashboard and assistant calls not counted")
     assert "live 786 rows / 21,500,000 B; versions 1687 rows / 51,400,000 B" in lines[1]
     header = next(line for line in lines if line.strip().startswith("code"))
     assert header.split() == ["code", "severity", "kind", "count", "share", "first", "sample"]

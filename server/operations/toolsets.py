@@ -381,7 +381,8 @@ MCP_ASSISTANT_OPS: frozenset[str] = frozenset(
 # output, as HTTP returns it; a search leaves out its per-hit score breakdown.
 ASSISTANT_FORCED_ARGS: dict[str, dict[str, object]] = {
     "memory.search": {"auto_touch": False, "explain": False},
-    "memory.ask": {"reinforce": False},
+    # `precedents: false` also keeps an answer from being stored for reuse.
+    "memory.ask": {"reinforce": False, "precedents": False},
 }
 
 
@@ -396,8 +397,8 @@ CURATED_TOOLSETS: frozenset[str] = frozenset({"core", "coding", "atomic", "tasks
 
 # One MCP entry may list the union of curated rosters — `?toolset=coding+tracker`
 # is the coding listing plus the tracker plane, paid for on purpose by the
-# session that mounts it. Only curated rosters join (`all`
-# and `readonly` are whole surfaces); an unknown part makes the whole value
+# session that mounts it. Only curated rosters join (`all`,
+# `readonly` and `assistant` are whole surfaces); an unknown part makes the whole value
 # unknown, so a typo never widens a listing silently.
 def toolset_parts(toolset: str | None) -> tuple[str, ...]:
     """The lower-cased, de-duplicated parts of a toolset value, in the order

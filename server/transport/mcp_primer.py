@@ -44,14 +44,24 @@ log = logging.getLogger("server.transport.mcp")
 # ============================================================
 
 
-def _prompts_descriptor() -> list[dict[str, Any]]:
+# What the `loom` prompt and the `loom://primer` resource say they hold on the assistant
+# toolset, whose primer is the read-only investigation rules and inlines no profile.
+_ASSISTANT_PRIMER_DESCRIPTION = (
+    "The Loom assistant's rules for this conversation: read-only investigation on the "
+    "signed-in person's behalf, with citations."
+)
+
+
+def _prompts_descriptor(toolset: str | None = None) -> list[dict[str, Any]]:
     """One prompt: `loom`. Picker-driven conversation-setup — load the
     user's persona + recall-routing instructions in one click."""
     return [
         {
             "name": _LOOM_PROMPT_NAME,
             "description": (
-                "Activate Loom for this conversation. Loads your "
+                _ASSISTANT_PRIMER_DESCRIPTION
+                if assistant_connection(toolset)
+                else "Activate Loom for this conversation. Loads your "
                 "persona block + sets memory/recall to route through "
                 "Loom. Pick this once at the start of a new chat — "
                 "same effect as typing 'use loom' but discoverable "
@@ -67,7 +77,7 @@ def _prompts_descriptor() -> list[dict[str, Any]]:
 # ============================================================
 
 
-def _resources_descriptor() -> list[dict[str, Any]]:
+def _resources_descriptor(toolset: str | None = None) -> list[dict[str, Any]]:
     """One resource: `loom://primer`. Protocol-native delivery of the
     caller's always-loaded context — auto-surfaceable, zero tokens until
     read, re-pullable after compaction. Same content as the prompt/tool."""
@@ -77,7 +87,9 @@ def _resources_descriptor() -> list[dict[str, Any]]:
             "name": "Loom primer",
             "title": "Loom primer",
             "description": (
-                "Your always-loaded context — persona / preferences / goals "
+                _ASSISTANT_PRIMER_DESCRIPTION
+                if assistant_connection(toolset)
+                else "Your always-loaded context — persona / preferences / goals "
                 "— plus how to route memory and recall through Loom. Read at "
                 "the start of a conversation."
             ),
@@ -165,7 +177,11 @@ async def _get_prompt(
     if name != _LOOM_PROMPT_NAME:
         return _err(req_id, INVALID_PARAMS, f"Unknown prompt: {name!r}")
 
-    primer = await _render_primer_and_emit(auth, client_name, "prompts.loom", toolset)
+    if assistant_connection(toolset):
+        # The assistant's primer inlines no profile: rendering it is no profile read.
+        primer = await _loom_primer_text(auth, toolset=toolset)
+    else:
+        primer = await _render_primer_and_emit(auth, client_name, "prompts.loom", toolset)
 
     return _ok(
         req_id,

@@ -239,3 +239,63 @@ def test_an_assistant_call_opens_no_session_run() -> None:
     defaults = {"org": "o", "namespace": "ns", "agent": "a"}
     args = {"query": "q", "consumer": "loom-assistant"}
     assert mcp_call._stamp_session_run(op, args, defaults, "sess-1") == (None, False)
+
+
+def test_an_assistant_call_through_the_call_path_opens_no_session_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The consumer is stamped before the run phase, so the run phase sees it."""
+    seen: list[tuple[Any, bool]] = []
+    real = mcp_call._stamp_session_run
+
+    async def _defaults(*a: Any, **k: Any) -> dict[str, str]:
+        return {"org": "o", "namespace": "ns", "agent": "a"}
+
+    def _stamp(op: Any, arguments: dict[str, Any], defaults: Any, sid: str) -> Any:
+        seen.append(real(op, arguments, defaults, sid))
+        raise _Stop
+
+    monkeypatch.setattr("server.transport.mcp_call._caller_defaults", _defaults)
+    monkeypatch.setattr(mcp_call, "_stamp_session_run", _stamp)
+    search = OPERATIONS_BY_NAME["memory.search"].mcp_tool_name
+    with pytest.raises(_Stop):
+        asyncio.run(
+            mcp_call._call_tool(
+                1, {"name": search, "arguments": {"query": "q"}}, None, None, "sess-1", "assistant"
+            )
+        )
+    assert seen == [(None, False)]
+
+
+@pytest.mark.parametrize("method", ["initialize", "prompts/get"])
+def test_initialize_and_the_prompt_write_no_profile_read_row(
+    monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    emitted: list[Any] = []
+    monkeypatch.setattr(mcp_primer, "_emit_mcp_event", lambda **k: emitted.append(k))
+
+    async def _emit_init(*a: Any, **k: Any) -> None:
+        emitted.append("initialize")
+
+    monkeypatch.setattr(mcp, "_emit_initialize_event", _emit_init)
+
+    async def _defaults(*a: Any, **k: Any) -> dict[str, str]:
+        return {"org": "o", "namespace": "ns", "agent": "a"}
+
+    monkeypatch.setattr(mcp_primer, "_caller_defaults", _defaults)
+    params = {"name": "loom"} if method == "prompts/get" else {}
+    req = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    out = asyncio.run(mcp._handle_request(req, auth=object(), toolset="assistant"))
+    assert out is not None and "result" in out
+    assert emitted == []
+    # Elsewhere the prompt is a profile read and leaves its row.
+    asyncio.run(mcp._handle_request(req, auth=object(), toolset="core"))
+    assert emitted
+
+
+def test_the_prompt_and_resource_describe_the_assistant_primer() -> None:
+    assert (
+        "read-only investigation" in mcp_primer._prompts_descriptor("assistant")[0]["description"]
+    )
+    assert "persona" in mcp_primer._prompts_descriptor("core")[0]["description"]
+    assert "read-only" in mcp_primer._resources_descriptor("assistant")[0]["description"]

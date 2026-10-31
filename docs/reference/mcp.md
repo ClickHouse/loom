@@ -161,7 +161,7 @@ Every registry operation not in `_MCP_HIDDEN_OPS` is a tool:
   tools never runs a state change unprompted. They are hints; the role check at
   call time is the boundary.
 
-Three synthetic tools are listed on every toolset:
+Three synthetic tools are listed on every toolset but `assistant`:
 
 | Tool            | Does                                                                                                                                                           |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -180,7 +180,8 @@ listed or callable. See
 [unified search](../features/unified-search.md#searchquery-over-http-and-the-sdks).
 
 **Hidden ops** (`_MCP_HIDDEN_OPS` in `server/operations/toolsets.py`) are
-neither listed nor callable over MCP: the per-store searches `loom_search`
+neither listed nor callable over MCP, except `memory.search` and `knowledge.search` on
+the `assistant` toolset: the per-store searches `loom_search`
 replaces (`memory.search`, `knowledge.search`, `conversation.search`), review
 queues, snapshot and restore, policy administration, audit and cost
 dashboards, code-index ingest. A call to one answers `isError` with code
@@ -190,9 +191,10 @@ reach for it in chat? A namespace-wide view can be hidden while a variant bounde
 to the caller stays on MCP: `namespace.list` is hidden and `namespace.list_mine`
 listed; `memory.extraction_status` (every batch queued in the namespace) is hidden
 and `memory.extraction_status_mine` (the batches the caller queued, by `queue_id`,
-at most 20 a call) is callable by name or through `loom_op` on every toolset,
-`readonly` included. Its write twin, `memory.extraction_retry_mine`, replays the
-caller's failed batches once more; `loom_op` routes it on every toolset but `readonly`.
+at most 20 a call) is callable by name or through `loom_op` on every toolset but
+`assistant`, `readonly` included. Its write twin, `memory.extraction_retry_mine`, replays
+the caller's failed batches once more; `loom_op` routes it on every toolset but
+`readonly` and `assistant`.
 
 ### Toolsets
 
@@ -257,8 +259,13 @@ memory, documents and code. On it:
   its claim, and its calls are counted.
 - **Reads do not record usage.** `memory.search` runs with `auto_touch: false` and
   `explain: false`, and `memory.ask` with `reinforce: false`, whatever the call sends, so
-  an investigation does not raise the recall counts that rank results. What remains is
-  the request ledger row and the caches an answer may fill.
+  an investigation does not raise the recall counts that rank results; `memory.ask` also
+  runs with `precedents: false`, so no answer is stored for reuse. What remains is the
+  request ledger row, the exposure row every read of a memory leaves
+  (`loom.memory_exposures`, the record of who was served which row), and the caches an
+  answer may fill (the model response cache). An assistant call opens no MCP session
+  run, and its `initialize` and `loom` prompt write no profile-read row: its primer
+  inlines no profile.
 - **Results are the full output**, as HTTP returns them, since a citation needs the
   identities, versions and attestations the trimmed shape drops. `memory.search` and
   `knowledge.search`, which the other listings leave to `loom_search`, are listed here

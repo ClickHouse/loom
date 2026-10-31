@@ -220,7 +220,9 @@ async def _handle_request(
         )
 
     if method == "prompts/list":
-        return _ok(req_id, {"prompts": _prompts_descriptor(), **cache_hints(LIST_TTL_MS, "public")})
+        return _ok(
+            req_id, {"prompts": _prompts_descriptor(toolset), **cache_hints(LIST_TTL_MS, "public")}
+        )
 
     if method == "prompts/get":
         return await _get_prompt(req_id, params, auth, client_name, toolset)
@@ -228,7 +230,7 @@ async def _handle_request(
     if method == "resources/list":
         return _ok(
             req_id,
-            {"resources": _resources_descriptor(), **cache_hints(LIST_TTL_MS, "public")},
+            {"resources": _resources_descriptor(toolset), **cache_hints(LIST_TTL_MS, "public")},
         )
 
     if method == "resources/read":
