@@ -131,7 +131,6 @@ def env(monkeypatch):
         "search": [],
         "outcome_run": [],
         "schema": [],
-        "order": [],
     }
 
     async def fake_schema_by_name(org, ns, name):
@@ -143,7 +142,6 @@ def env(monkeypatch):
 
     async def fake_record_write(inp):
         calls["record"].append(inp)
-        calls["order"].append("record")
         ch.records[inp.memory_key] = {
             k: (v.value if hasattr(v, "value") else v.get("value")) for k, v in inp.fields.items()
         }
@@ -151,7 +149,6 @@ def env(monkeypatch):
 
     async def fake_set(inp):
         calls["set"].append(inp)
-        calls["order"].append("set")
         return SimpleNamespace(version=1)
 
     async def fake_link(inp):
@@ -355,13 +352,6 @@ def test_ops_registered_and_search_accepts_decision_type() -> None:
     )
 
 
-def test_the_memory_row_is_written_before_the_record(env) -> None:
-    # A delete of another identity's row keeps the record only while it can see this row.
-    _, calls, h = env
-    asyncio.run(h.handle_decision_record(_record_input()))
-    assert calls["order"] == ["set", "record"]
-
-
 # ------------------------------------------- memory.delete retires the record
 
 _KEY = svc.decision_key("deploy", "Roll back or hotfix the image?")
@@ -385,7 +375,7 @@ def local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> KeptCH:
         tmp_path,
         *(ddl(t) for t in ("memory", "memory_records", "memory_record_versions")),
         _record_versions_view(),
-        ddl("memory_record_fields"),
+        *(ddl(t) for t in ("memory_record_fields", "memory_schemas", "memory_schema_fields")),
         ddl("operator_edges"),
     )
 
@@ -399,11 +389,33 @@ def local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> KeptCH:
     return ch
 
 
+def _memory_row(agent: str, memory_type: str, version: int) -> dict[str, Any]:
+    from server.memory.store.rows import build_first_version_row
+
+    return build_first_version_row(
+        {
+            "org": "o",
+            "namespace": "n",
+            "agent": agent,
+            "user_id": "-",
+            "session_id": "-",
+            "memory_key": _KEY,
+            "memory_type": memory_type,
+            "value": json.dumps({"outcome": "rollback"}),
+            "value_json": "{}",
+            "content_sha256": "",
+            "actor": f"process:{agent}",
+            "source_class": "asserted",
+            "confidence": 1.0,
+            "version": version,
+        },
+        now=datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+    )
+
+
 async def _write_decision_rows(ch: KeptCH, *agents: str, memory_type: str = "decision") -> int:
     """One active record under _KEY, written by the first agent, and one live memory row
     under _KEY per agent. Returns the rows' version."""
-    from server.memory.store.rows import build_first_version_row
-
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     version = time.time_ns() - 10_000_000_000
     await ch.insert(
@@ -426,26 +438,7 @@ async def _write_decision_rows(ch: KeptCH, *agents: str, memory_type: str = "dec
         ],
     )
     for agent in agents:
-        row = build_first_version_row(
-            {
-                "org": "o",
-                "namespace": "n",
-                "agent": agent,
-                "user_id": "-",
-                "session_id": "-",
-                "memory_key": _KEY,
-                "memory_type": memory_type,
-                "value": json.dumps({"outcome": "rollback"}),
-                "value_json": "{}",
-                "content_sha256": "",
-                "actor": f"process:{agent}",
-                "source_class": "asserted",
-                "confidence": 1.0,
-                "version": version,
-            },
-            now=now,
-        )
-        await ch.insert("loom.memory", [row])
+        await ch.insert("loom.memory", [_memory_row(agent, memory_type, version)])
     return version
 
 
@@ -542,19 +535,70 @@ async def test_a_failed_record_tombstone_leaves_the_delete_standing(
 ) -> None:
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory import store as memory_repo
-    from server.observability import degradations
 
     async def _fails(*_a: Any, **_k: Any) -> None:
         raise RuntimeError("timeout")
 
     monkeypatch.setattr(memory_repo, "tombstone_decision_record", _fails)
-    degradations.begin()
     await _write_decision_rows(local, "claude")
     await _delete("claude")
     identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
     assert await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE) is None
     assert await _history() == ["active"]
-    assert any("decision_record_kept" in d for d in degradations.current())
+
+
+@pytest.mark.asyncio
+async def test_a_decision_row_written_above_the_tombstone_keeps_the_record(
+    local: KeptCH,
+) -> None:
+    # The same identity wrote the key again after the delete's tombstone, before the
+    # delete reached its record: the key holds a live decision, so the record stays.
+    from server.memory import store as memory_repo
+
+    version = await _write_decision_rows(local, "claude")
+    tombstone = _memory_row("claude", "decision", version + 1)
+    tombstone["tombstoned_at"] = tombstone["updated_at"]
+    await local.insert("loom.memory", [tombstone, _memory_row("claude", "decision", version + 2)])
+    await memory_repo.tombstone_decision_record("o", "n", _KEY, version=version + 1)
+    assert await _history() == ["active"]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_memory_row_leaves_no_active_record(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The memory row is written first: when memory.set refuses (a pinned peer), the
+    # record write is never reached, so no record says what the memory plane refused.
+    from fastapi import HTTPException
+
+    from server.memory.app import decision as h
+
+    async def _pinned_conflict(_inp: Any) -> Any:
+        raise HTTPException(status_code=409, detail={"code": "PINNED_CONFLICT"})
+
+    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _pinned_conflict)
+    with pytest.raises(HTTPException):
+        await h.handle_decision_record(_record_input(caused_by=[], influenced_by=[]))
+    key = svc.decision_key("Deploy", "Roll back or hotfix the 26.5 image?")
+    assert await h._decision_records(local, "o", "n", [key]) == {}
+    assert await local.query_all("SELECT 1 FROM loom.memory_records") == []
+
+
+@pytest.mark.asyncio
+async def test_a_supersede_drawn_below_the_active_version_still_wins(local: KeptCH) -> None:
+    # A slow clock on the superseding replica: its version is under the active row's.
+    from server.memory import store as memory_repo
+
+    version = await _write_decision_rows(local, "claude")
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    await memory_repo.supersede_active_record(
+        local, "o", "n", "decision", _KEY, close_at=now, version=version - 1_000, now=now
+    )
+    rows = await local.query_all(
+        "SELECT status FROM loom.memory_records FINAL WHERE record_id = {rid:UUID}",
+        {"rid": _RECORD_ID},
+    )
+    assert rows == [{"status": "superseded"}]
 
 
 def test_the_store_tombstones_the_schema_decision_record_writes() -> None:

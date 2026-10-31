@@ -1138,7 +1138,7 @@ async def _retire_derived(
     # A procedure's run ledger must not outlive the procedure.
     # Best-effort: the tombstone above is the erasure of record; a ledger
     # failure is logged, not raised, and namespace erasure sweeps it anyway.
-    if getattr(existing, "memory_type", "") == "procedural":
+    if existing.memory_type == "procedural":
         try:
             await memory_repo.delete_procedure_runs_by_key(
                 existing.org, existing.namespace, existing.memory_key
@@ -1149,10 +1149,11 @@ async def _retire_derived(
     # serving it. Best-effort like the ledger above: the row tombstone stands.
     if existing.memory_type == "decision":
         try:
-            await memory_repo.tombstone_decision_record(existing, version=version, ch=ch)
+            await memory_repo.tombstone_decision_record(
+                existing.org, existing.namespace, existing.memory_key, version=version, ch=ch
+            )
         except Exception as e:  # noqa: BLE001 — the tombstone stands
             log.warning("%s: decision record not retired for %s: %s", op, existing.memory_key, e)
-            degradations.note(op, "decision_record_kept", e)
     # A summary built from this row now says something its evidence no
     # longer supports. If none of its sources survive it goes too; otherwise
     # it is downgraded to `conflicted` (review queue) with a
