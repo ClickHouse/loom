@@ -930,9 +930,10 @@ async def test_record_query_rows_carry_their_status(local: KeptCH) -> None:
     assert [(r.record_id, r.status) for r in out.rows] == [(_RECORD_ID, "active")]
 
 
-def test_decision_ops_refuse_a_token_bounded_below_the_namespace() -> None:
+def test_decision_ops_do_not_honour_a_read_scope() -> None:
     # decision.outcome reads the writer's identity across every user of the key, which a
-    # user- or session-scoped token must not see; the transport gate refuses such tokens.
+    # user- or session-scoped token must not see; the transport gate refuses a token bound
+    # below the namespace for every op that does not honour a read scope.
     from server.identity.domain.read_scope import honours_read_scope
 
     for name in ("decision.record", "decision.precedents", "decision.chain", "decision.outcome"):

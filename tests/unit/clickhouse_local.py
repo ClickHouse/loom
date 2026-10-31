@@ -104,7 +104,7 @@ class KeptCH:
                     f"SELECT {cols} FROM format(JSONEachRow, $${data}$$)"
                 )
             except AssertionError as e:
-                if f"Table {table} does not exist" not in str(e):
+                if "UNKNOWN_TABLE" not in str(e) or table not in str(e):
                     raise
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
