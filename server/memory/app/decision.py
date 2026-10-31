@@ -38,7 +38,7 @@ from server.memory.api.models_records import (
 )
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app import decisions as svc
-from server.memory.domain.decision_schema import SCHEMA_NAME
+from server.memory.domain.decision_schema import SCHEMA_FIELDS, SCHEMA_NAME
 from server.memory.store import live_decision_identity, next_version, tombstone_decision_record
 
 log = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ async def ensure_schema(org: str, namespace: str) -> None:
             namespace=namespace,
             name=SCHEMA_NAME,
             description="Built-in: a decision as a first-class record.",
-            fields=[SchemaFieldInput(**f) for f in svc.SCHEMA_FIELDS],
+            fields=[SchemaFieldInput(**f) for f in SCHEMA_FIELDS],
             created_by="loom:decision",
             status="active",
         )

@@ -18,6 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from server.memory.app import decisions as svc
+from server.memory.domain.decision_schema import SCHEMA_FIELDS
 from server.memory.domain.edge_relations import canonical_link_relation
 from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl, view
 
@@ -43,7 +44,7 @@ def test_record_fields_mark_absent_optionals_and_join_alternatives() -> None:
     assert f["alternatives"] == {"value": "hotfix\nwait", "state": "value"}
     assert f["realized_outcome"] == {"state": "absent"} and f["success"] == {"state": "absent"}
     assert f["confidence"]["value"] == 0.8
-    assert set(f) == {s["name"] for s in svc.SCHEMA_FIELDS}
+    assert set(f) == {s["name"] for s in SCHEMA_FIELDS}
 
 
 def test_clean_alternatives_dedupes_and_caps() -> None:
@@ -216,7 +217,7 @@ def test_record_writes_schema_once_record_memory_and_edges(env) -> None:
     key = svc.decision_key("Deploy", "Roll back or hotfix the 26.5 image?")
     assert out.memory_key == key and out.record_id == "rec-1" and out.superseded_prior is False
     assert len(calls["schema"]) == 1 and calls["schema"][0].name == "decision"
-    assert [f.name for f in calls["schema"][0].fields] == [s["name"] for s in svc.SCHEMA_FIELDS]
+    assert [f.name for f in calls["schema"][0].fields] == [s["name"] for s in SCHEMA_FIELDS]
     rec = calls["record"][0]
     assert rec.schema_name == "decision" and rec.memory_key == key
     assert rec.fields["alternatives"].value == "hotfix forward\nwait"
@@ -829,3 +830,15 @@ async def test_the_record_writers_exact_identity_ranks_first(
         DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
     )
     assert [(i.agent, i.session_id) for i in seen] == [("claude", "-")]
+
+
+@pytest.mark.asyncio
+async def test_record_query_rows_carry_their_status(local: KeptCH) -> None:
+    from server.memory.api.models_records import MemoryRecordQueryInput
+    from server.memory.app.records import handle_memory_record_query
+
+    await _write_decision_rows(local, "claude")
+    out = await handle_memory_record_query(
+        MemoryRecordQueryInput(org="o", namespace="n", schema_name="decision")
+    )
+    assert [(r.record_id, r.status) for r in out.rows] == [(_RECORD_ID, "active")]

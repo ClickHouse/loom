@@ -18,70 +18,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from server.memory.domain.decision_schema import SCHEMA_NAME
+from server.memory.domain.decision_schema import SCHEMA_FIELDS, SCHEMA_NAME
 
 CHAIN_RELATIONS: tuple[str, ...] = ("caused", "influenced", "derived_from")
 MAX_ALTERNATIVES = 10
 MAX_CHAIN_NODES = 200
-
-# The built-in schema. category + scenario identify a decision: re-deciding the
-# same scenario supersedes the earlier record (history keeps it), which is what
-# "what is our current decision on X" needs; precedent search still sees every
-# decision row because memory.search reads the memory plane, not the record.
-SCHEMA_FIELDS: list[dict[str, Any]] = [
-    {
-        "name": "category",
-        "type": "string",
-        "required": True,
-        "identity": True,
-        "description": "Decision class, e.g. vendor_selection, deploy, triage.",
-    },
-    {
-        "name": "scenario",
-        "type": "string",
-        "required": True,
-        "identity": True,
-        "description": "What was being decided, as the deciding agent framed it.",
-    },
-    {
-        "name": "reasoning",
-        "type": "string",
-        "required": True,
-        "description": "Why this outcome — the rationale as stated at decision time.",
-    },
-    {
-        "name": "outcome",
-        "type": "string",
-        "required": True,
-        "description": "The verdict: what was chosen or done.",
-    },
-    {
-        "name": "alternatives",
-        "type": "string",
-        "description": "Options considered and not chosen, newline-separated.",
-    },
-    {
-        "name": "confidence",
-        "type": "number",
-        "description": "Decider's confidence in the outcome, 0..1.",
-    },
-    {"name": "decision_maker", "type": "string", "description": "Agent or person who decided."},
-    {
-        "name": "run_id",
-        "type": "string",
-        "description": "The run (run.begin) in which the decision was made.",
-    },
-    {
-        "name": "realized_outcome",
-        "type": "string",
-        "description": "What actually happened, written later by decision.outcome.",
-    },
-    {
-        "name": "success",
-        "type": "boolean",
-        "description": "Whether the realized outcome matched the intent.",
-    },
-]
 
 
 def decision_key(category: str, scenario: str) -> str:

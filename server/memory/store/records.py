@@ -10,8 +10,9 @@ from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.decision_schema import SCHEMA_NAME
 from server.memory.store.sql import _SEQUENTIAL
 
-# The key's active record, and the key's live decision rows under any identity.
-_ACTIVE_RECORD = """
+# The key's active record (params org, ns, schema, key), and the key's live decision rows
+# under any identity.
+ACTIVE_RECORD = """
 FROM loom.memory_records FINAL
 WHERE org = {org:String}
   AND namespace = {ns:String}
@@ -30,7 +31,7 @@ WHERE org = {org:String}
 """
 
 # Computed columns take new names: `AS status` would shadow the column in the WHERE.
-_CLOSE_ACTIVE_RECORD = f"""
+_CLOSEACTIVE_RECORD = f"""
 INSERT INTO loom.memory_records
     (record_id, org, namespace, schema_id, schema_name, memory_key,
      memory_id, identity_agent, user_id, session_id, record_json,
@@ -44,7 +45,7 @@ SELECT
     greatest(version + 1, {{ver:UInt64}}) AS new_version, created_at,
     greatest(updated_at, {{now:DateTime}}) AS new_updated_at,
     {{tombstoned_at:Nullable(DateTime)}} AS new_tombstoned_at
-{_ACTIVE_RECORD}"""
+{ACTIVE_RECORD}"""
 
 _NO_LIVE_DECISION = f"""
   AND (SELECT count() {_LIVE_DECISION_ROWS}) = 0
@@ -54,7 +55,7 @@ _LIVE_DECISION_IDENTITY = f"""
 SELECT agent, user_id, session_id
 {_LIVE_DECISION_ROWS}
 ORDER BY (agent, user_id, session_id) IN (
-    SELECT identity_agent, user_id, session_id {_ACTIVE_RECORD}
+    SELECT identity_agent, user_id, session_id {ACTIVE_RECORD}
 ) DESC, version DESC
 LIMIT 1
 {_SEQUENTIAL}"""
@@ -74,7 +75,7 @@ async def supersede_active_record(
     """Close the key's active record ahead of a new one written at `version`."""
     ch = ch or _default_client()
     await ch.execute(
-        _CLOSE_ACTIVE_RECORD,
+        _CLOSEACTIVE_RECORD,
         params={
             "org": org,
             "ns": namespace,
@@ -97,8 +98,8 @@ async def tombstone_decision_record(
     version: int,
     ch: _CHClient | None = None,
 ) -> None:
-    """Tombstone the decision record under `memory_key` once a tombstone at `version`
-    has removed a decision row there.
+    """Tombstone the decision record under `memory_key` when no live decision row holds
+    the key. `version` is the version the record's tombstone is written at, at least.
 
     The record plane keys by (schema_name, memory_key) with no identity, while loom.memory
     keys by identity, so the record stays while any live decision row holds the key:
@@ -108,7 +109,7 @@ async def tombstone_decision_record(
     ch = ch or _default_client()
     now = naive_utc_now_seconds()
     await ch.execute(
-        _CLOSE_ACTIVE_RECORD + _NO_LIVE_DECISION + _SEQUENTIAL,
+        _CLOSEACTIVE_RECORD + _NO_LIVE_DECISION + _SEQUENTIAL,
         params={
             "org": org,
             "ns": namespace,

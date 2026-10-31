@@ -76,7 +76,7 @@ _DATETIME = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$")
 class KeptCH:
     """A ClickHouse client over clickhouse-local whose database is kept under `path`, so
     each statement sees what the earlier ones wrote. A table the fixture did not create
-    reads as empty and drops inserts."""
+    reads as empty and drops inserts; `execute` on one raises."""
 
     def __init__(self, path: Path, *setup: str) -> None:
         self.path = path
