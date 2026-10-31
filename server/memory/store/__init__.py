@@ -141,8 +141,9 @@ from server.memory.store.reads import (
     versions_above,
 )
 from server.memory.store.records import (
-    FROM_ACTIVE_RECORD,
-    live_record_writer,
+    WriterRecord,
+    active_record,
+    live_writer_record,
     supersede_active_record,
     tombstone_decision_record,
 )
@@ -193,8 +194,9 @@ from server.memory.store.sweeps import (
 from server.memory.store.usage import record_usage_event
 
 __all__ = [
-    "FROM_ACTIVE_RECORD",
+    "WriterRecord",
     "_hydrate",
+    "active_record",
     "_MEMORY_FINAL_PROJECTION",
     "next_version",
     "version_time",
@@ -271,7 +273,7 @@ __all__ = [
     "live_rows_for_keys",
     "live_ids_in_scope",
     "live_keys",
-    "live_record_writer",
+    "live_writer_record",
     "live_shared_embedding_rows_for_key",
     "live_source_count",
     "live_tally",

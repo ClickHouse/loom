@@ -36,7 +36,7 @@ from server.memory.api.models_records import (
 )
 from server.memory.domain import record_constraints
 from server.memory.domain.record_values import FIELD_RE, _check_record_fields, coerce_record_value
-from server.memory.store import FROM_ACTIVE_RECORD, next_version, supersede_active_record
+from server.memory.store import active_record, next_version, supersede_active_record
 from server.memory.store.record_query import _build_record_query, active_record_tally
 
 _FIELD_TYPES = {"string", "number", "integer", "boolean"}
@@ -342,24 +342,12 @@ async def _fold_onto_active_record(
     conflict_rows: list[dict[str, Any]] = []
     filled_fields: list[str] = []
     if memory_key:
-        prior_rows = await ch.query_all(
-            f"""
-            SELECT toString(record_id) AS rid, toString(memory_id) AS mid, record_json
-            {FROM_ACTIVE_RECORD}
-            ORDER BY version DESC
-            LIMIT 1
-            """,
-            {
-                "org": input.org,
-                "ns": input.namespace,
-                "schema": input.schema_name,
-                "key": memory_key,
-            },
+        prior_row = await active_record(
+            input.org, input.namespace, input.schema_name, memory_key, ch=ch
         )
-        if prior_rows:
+        if prior_row is not None:
             from server.memory.domain.record_fold import fold
 
-            prior_row = prior_rows[0]
             try:
                 prior_json = json.loads(str(prior_row.get("record_json") or "{}"))
             except json.JSONDecodeError:

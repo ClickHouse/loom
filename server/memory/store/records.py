@@ -1,9 +1,10 @@
-"""Writes that close a key's active typed record (supersede, decision tombstone), and the
-identity a decision revision writes under: the record's writer, while its row is live."""
+"""Reads and writes of a key's active typed record: the fold's read, the supersede and
+decision tombstone copies, and the record a decision revision builds on with its writer."""
 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any, NamedTuple
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
@@ -11,7 +12,7 @@ from server.memory.domain.decision_schema import SCHEMA_NAME
 from server.memory.store.sql import _SEQUENTIAL
 
 # The key's active record. Params: org, ns, schema, key.
-FROM_ACTIVE_RECORD = """
+_FROM_ACTIVE_RECORD = """
 FROM loom.memory_records FINAL
 WHERE org = {org:String}
   AND namespace = {ns:String}
@@ -45,7 +46,7 @@ SELECT
     greatest(version + 1, {{ver:UInt64}}) AS new_version, created_at,
     greatest(updated_at, {{now:DateTime}}) AS new_updated_at,
     {{tombstoned_at:Nullable(DateTime)}} AS new_tombstoned_at
-{FROM_ACTIVE_RECORD}"""
+{_FROM_ACTIVE_RECORD}"""
 
 # Retires the record unless its writer still has a live decision row under the key.
 _TOMBSTONE_DECISION_RECORD = f"""{_CLOSE_ACTIVE_RECORD}
@@ -54,15 +55,34 @@ _TOMBSTONE_DECISION_RECORD = f"""{_CLOSE_ACTIVE_RECORD}
   )
 {_SEQUENTIAL}"""
 
-# The active record's writer, when that writer still has a live decision row under the key.
-_LIVE_RECORD_WRITER = f"""
-SELECT identity_agent, user_id, session_id
-{FROM_ACTIVE_RECORD}
+# The active record and its writer, when that writer still has a live decision row under
+# the key.
+_LIVE_WRITER_RECORD = f"""
+SELECT identity_agent, user_id, session_id, record_json, created_at
+{_FROM_ACTIVE_RECORD}
   AND (identity_agent, user_id, session_id) IN (
       SELECT agent, user_id, session_id {_FROM_LIVE_DECISION_ROWS}
   )
+ORDER BY version DESC
 LIMIT 1
 {_SEQUENTIAL}"""
+
+# The key's newest active record.
+_ACTIVE_RECORD_ROW = f"""
+SELECT toString(record_id) AS rid, toString(memory_id) AS mid, record_json
+{_FROM_ACTIVE_RECORD}
+ORDER BY version DESC
+LIMIT 1"""
+
+
+class WriterRecord(NamedTuple):
+    """An active decision record with the identity that wrote it."""
+
+    agent: str
+    user_id: str
+    session_id: str
+    record_json: str
+    created_at: datetime
 
 
 async def supersede_active_record(
@@ -125,25 +145,43 @@ async def tombstone_decision_record(
     )
 
 
-async def live_record_writer(
+async def active_record(
+    org: str,
+    namespace: str,
+    schema_name: str,
+    memory_key: str,
+    *,
+    ch: _CHClient | None = None,
+) -> dict[str, Any] | None:
+    """The key's newest active record as {rid, mid, record_json}, or None."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        _ACTIVE_RECORD_ROW,
+        {"org": org, "ns": namespace, "schema": schema_name, "key": memory_key},
+    )
+    return rows[0] if rows else None
+
+
+async def live_writer_record(
     org: str,
     namespace: str,
     memory_key: str,
     *,
     ch: _CHClient | None = None,
-) -> tuple[str, str, str] | None:
-    """The active decision record's writer as (agent, user_id, session_id), or None when
-    there is no active record or its writer has no live decision row under the key."""
+) -> WriterRecord | None:
+    """The active decision record under `memory_key` and its writer, read together, or
+    None when there is no active record or its writer has no live decision row there."""
     ch = ch or _default_client()
     row = await ch.query_one(
-        _LIVE_RECORD_WRITER,
-        params={
-            "org": org,
-            "ns": namespace,
-            "schema": SCHEMA_NAME,
-            "key": memory_key,
-        },
+        _LIVE_WRITER_RECORD,
+        params={"org": org, "ns": namespace, "schema": SCHEMA_NAME, "key": memory_key},
     )
     if row is None:
         return None
-    return row["identity_agent"], row["user_id"], row["session_id"]
+    return WriterRecord(
+        row["identity_agent"],
+        row["user_id"],
+        row["session_id"],
+        row["record_json"],
+        row["created_at"],
+    )

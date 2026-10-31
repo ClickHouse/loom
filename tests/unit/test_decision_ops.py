@@ -117,7 +117,16 @@ class _CH:
         if "FROM loom.agent_runs" in sql:
             return {"memories_used": list(self.run_used)}
         if "FROM loom.memory FINAL" in sql and "memory_type = 'decision'" in sql:
-            return {"identity_agent": "claude", "user_id": "-", "session_id": "s1"}
+            rec = self.records.get((params or {}).get("key"))
+            if rec is None:
+                return None
+            return {
+                "identity_agent": "claude",
+                "user_id": "-",
+                "session_id": "s1",
+                "record_json": json.dumps(rec),
+                "created_at": None,
+            }
         return None
 
 
@@ -326,6 +335,25 @@ def test_outcome_revises_the_record_and_credits_the_run(env) -> None:
         "runbook:rollback",
     ]
     assert run_call.run_id == "r1"
+
+
+def test_outcome_reads_the_record_and_its_writer_in_one_sequential_read(env) -> None:
+    from server.memory.api.models_decision import DecisionOutcomeInput
+
+    ch, _, h = env
+    d = asyncio.run(h.handle_decision_record(_record_input()))
+    ch.queries.clear()
+    asyncio.run(
+        h.handle_decision_outcome(
+            DecisionOutcomeInput(
+                org="o", namespace="n", memory_key=d.memory_key, realized_outcome="done"
+            )
+        )
+    )
+    record_reads = [q for q in ch.queries if "loom.memory_records" in q]
+    assert len(record_reads) == 1
+    assert "select_sequential_consistency = 1" in record_reads[0]
+    assert "identity_agent" in record_reads[0] and "record_json" in record_reads[0]
 
 
 def test_outcome_on_unknown_decision_is_not_found(env) -> None:
@@ -745,6 +773,14 @@ async def test_an_outcome_revises_the_record_writers_row_while_it_is_live(
         DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
     )
     assert [i.agent for i in seen] == ["maintainer"]
+    # The revision is the key's active record, and the record it replaced is superseded.
+    rows = await local.query_all(
+        "SELECT record_json FROM loom.memory_records FINAL "
+        "WHERE memory_key = {key:String} AND status = 'active'",
+        {"key": _KEY},
+    )
+    assert [json.loads(r["record_json"])["realized_outcome"] for r in rows] == ["ok"]
+    assert await _history() == ["superseded", "active"]
 
 
 @pytest.mark.asyncio
