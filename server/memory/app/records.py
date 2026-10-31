@@ -602,11 +602,11 @@ async def _records_by_ids(
     if history:
         source = "loom.memory_record_versions"
         order = "ORDER BY updated_at DESC, version DESC LIMIT 1 BY record_id, version"
+        # Keeps the version a decision's memory.delete tombstoned, never an erased one.
+        live = "AND (status = 'tombstoned' OR tombstoned_at IS NULL)"
     else:
         source, order = "loom.memory_records FINAL", "ORDER BY updated_at DESC"
-    # History keeps the version memory.delete tombstoned, so it reads as deleted rather
-    # than still active; erasure deletes the mirror's rows outright.
-    live = "" if history else "AND tombstoned_at IS NULL"
+        live = "AND tombstoned_at IS NULL"
     # `AS rid`/`AS mid`, never `AS record_id`/`AS memory_id`: a same-name
     # alias SHADOWS the column, so `record_id IN {ids:Array(UUID)}` would
     # compare the String alias against UUIDs and match nothing, so every hydration would

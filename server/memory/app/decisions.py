@@ -18,7 +18,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-SCHEMA_NAME = "decision"
+from server.memory.domain.decision_schema import SCHEMA_NAME
+
 CHAIN_RELATIONS: tuple[str, ...] = ("caused", "influenced", "derived_from")
 MAX_ALTERNATIVES = 10
 MAX_CHAIN_NODES = 200

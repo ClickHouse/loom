@@ -9,7 +9,7 @@ import json
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -423,7 +423,9 @@ def _set_into(ch: KeptCH, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     return seen
 
 
-async def _write_decision_rows(ch: KeptCH, *agents: str, memory_type: str = "decision") -> int:
+async def _write_decision_rows(
+    ch: KeptCH, *agents: str, memory_type: str = "decision", updated_at: datetime | None = None
+) -> int:
     """One active record under _KEY, written by the first agent, and one live memory row
     under _KEY per agent. Returns the rows' version."""
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
@@ -443,7 +445,7 @@ async def _write_decision_rows(ch: KeptCH, *agents: str, memory_type: str = "dec
                 "status": "active",
                 "version": version,
                 "created_at": now,
-                "updated_at": now,
+                "updated_at": updated_at or now,
             }
         ],
     )
@@ -583,9 +585,7 @@ async def test_a_decision_row_written_above_the_tombstone_keeps_the_record(
     tombstone = _memory_row("claude", "decision", version + 1)
     tombstone["tombstoned_at"] = tombstone["updated_at"]
     await local.insert("loom.memory", [tombstone, _memory_row("claude", "decision", version + 2)])
-    await memory_repo.tombstone_decision_record(
-        "o", "n", svc.SCHEMA_NAME, _KEY, version=version + 1
-    )
+    await memory_repo.tombstone_decision_record("o", "n", _KEY, version=version + 1)
     assert await _history() == ["active"]
 
 
@@ -654,3 +654,68 @@ async def test_an_outcome_after_the_record_writer_deleted_its_row_revises_a_live
     assert await get(_identity("maintainer"), _KEY, strong=True, scope=WHOLE_NAMESPACE) is None
     claude = await get(_identity("claude"), _KEY, strong=True, scope=WHOLE_NAMESPACE)
     assert claude is not None and claude.value["realized_outcome"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_the_tombstone_copies_the_active_record(local: KeptCH) -> None:
+    version = await _write_decision_rows(local, "claude")
+    await _delete("claude")
+    active, tombstoned = await local.query_all(
+        "SELECT * FROM loom.memory_record_versions WHERE record_id = {rid:UUID} ORDER BY version",
+        {"rid": _RECORD_ID},
+    )
+    for column in ("record_json", "identity_agent", "user_id", "created_at", "valid_at"):
+        assert tombstoned[column] == active[column], column
+    assert (active["status"], tombstoned["status"]) == ("active", "tombstoned")
+    assert active["tombstoned_at"] is None and tombstoned["tombstoned_at"] is not None
+    assert active["valid_to"] is None and tombstoned["valid_to"] is not None
+    assert int(tombstoned["version"]) > int(active["version"]) == version
+
+
+@pytest.mark.asyncio
+async def test_a_tombstone_from_a_slow_clock_still_reads_newest(local: KeptCH) -> None:
+    # The active version was written an hour ahead of the deleting replica's clock.
+    ahead = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(hours=1)
+    await _write_decision_rows(local, "claude", updated_at=ahead)
+    await _delete("claude")
+    assert await _history() == ["tombstoned", "active"]
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_with_no_live_decision_row_is_not_found(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The record is still active (its tombstone never ran) but no row holds the key.
+    from server.core.errors import NotFoundError
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    version = await _write_decision_rows(local, "claude")
+    tombstone = _memory_row("claude", "decision", version + 1)
+    tombstone["tombstoned_at"] = tombstone["updated_at"]
+    await local.insert("loom.memory", [tombstone])
+    seen = _set_into(local, monkeypatch)
+    with pytest.raises(NotFoundError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="x")
+        )
+    assert seen == []
+    assert await _history() == ["active"]
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_revises_the_record_writers_row_while_it_is_live(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # claude wrote the key after the maintainer, but the record is the maintainer's.
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    await h.ensure_schema("o", "n")
+    await _write_decision_rows(local, "maintainer")
+    await local.insert("loom.memory", [_memory_row("claude", "decision", time.time_ns())])
+    seen = _set_into(local, monkeypatch)
+    await h.handle_decision_outcome(
+        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+    )
+    assert [i.agent for i in seen] == ["maintainer"]

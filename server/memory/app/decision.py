@@ -38,6 +38,7 @@ from server.memory.api.models_records import (
 )
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app import decisions as svc
+from server.memory.domain.decision_schema import SCHEMA_NAME
 from server.memory.store import live_decision_identity
 
 log = logging.getLogger(__name__)
@@ -51,14 +52,14 @@ async def ensure_schema(org: str, namespace: str) -> None:
     records one. Idempotent: an active schema of that name is left alone."""
     from server.memory.app.records import _schema_by_name, handle_memory_schema_register
 
-    existing = await _schema_by_name(org, namespace, svc.SCHEMA_NAME)
+    existing = await _schema_by_name(org, namespace, SCHEMA_NAME)
     if existing and str(existing.get("status")) == "active":
         return
     await handle_memory_schema_register(
         MemorySchemaRegisterInput(
             org=org,
             namespace=namespace,
-            name=svc.SCHEMA_NAME,
+            name=SCHEMA_NAME,
             description="Built-in: a decision as a first-class record.",
             fields=[SchemaFieldInput(**f) for f in svc.SCHEMA_FIELDS],
             created_by="loom:decision",
@@ -84,7 +85,7 @@ async def _decision_records(
           AND schema_name = {schema:String} AND memory_key IN {keys:Array(String)}
           AND status = 'active' AND tombstoned_at IS NULL
         """,
-        params={"org": org, "ns": namespace, "schema": svc.SCHEMA_NAME, "keys": list(keys)},
+        params={"org": org, "ns": namespace, "schema": SCHEMA_NAME, "keys": list(keys)},
     )
     out: dict[str, dict[str, Any]] = {}
     for r in rows:
@@ -162,7 +163,7 @@ async def _write_decision(
         MemoryRecordWriteInput(
             org=org,
             namespace=namespace,
-            schema_name=svc.SCHEMA_NAME,
+            schema_name=SCHEMA_NAME,
             memory_key=key,
             agent=agent,
             user_id=user_id or "-",
@@ -346,10 +347,8 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     payload["made_at"] = made_at
     # Revise under the identity of a row that still holds the decision: the record's writer
     # may have deleted its own row, and writing under it would bring that row back.
-    identity_row = await live_decision_identity(
-        input.org, input.namespace, svc.SCHEMA_NAME, input.memory_key, ch=ch
-    )
-    if identity_row is None:
+    identity = await live_decision_identity(input.org, input.namespace, input.memory_key, ch=ch)
+    if identity is None:
         raise NotFoundError(
             f"no live decision {input.memory_key!r} in {input.org}/{input.namespace}",
             memory_key=input.memory_key,
@@ -364,9 +363,9 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     await _write_decision(
         org=input.org,
         namespace=input.namespace,
-        agent=str(identity_row["agent"]),
-        user_id=str(identity_row["user_id"]),
-        session_id=str(identity_row["session_id"]),
+        agent=identity["agent"],
+        user_id=identity["user_id"],
+        session_id=identity["session_id"],
         run_id=str(payload.get("run_id") or "-"),
         key=input.memory_key,
         payload=payload,

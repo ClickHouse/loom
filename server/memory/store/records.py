@@ -1,6 +1,5 @@
-"""Version rows that close the active typed record under a key in loom.memory_records:
-supersession by a newer record, and the tombstone of a decision whose memory row was
-deleted, and the identity a decision's revision writes under."""
+"""Writes that close a key's active typed record (supersede, decision tombstone), and the
+identity a decision revision writes under."""
 
 from __future__ import annotations
 
@@ -9,11 +8,9 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
+from server.memory.domain.decision_schema import SCHEMA_NAME
 
-# Copies the key's active record with a new status, a closed validity interval and a
-# version above its own. The computed columns take new names: `AS status` would shadow
-# the column and turn `status = 'active'` below into a constant (see
-# server/code/store/index/edges.py live_edges_for_path). INSERT..SELECT maps by position.
+# Computed columns take new names: `AS status` would shadow the column in the WHERE.
 _CLOSE_ACTIVE_RECORD = """
 INSERT INTO loom.memory_records
     (record_id, org, namespace, schema_id, schema_name, memory_key,
@@ -26,7 +23,7 @@ SELECT
     {status:String} AS new_status, valid_at,
     if(valid_to IS NULL, {close:DateTime}, valid_to) AS new_valid_to,
     greatest(version + 1, {ver:UInt64}) AS new_version, created_at,
-    {now:DateTime} AS new_updated_at,
+    greatest(updated_at, {now:DateTime}) AS new_updated_at,
     {tombstoned_at:Nullable(DateTime)} AS new_tombstoned_at
 FROM loom.memory_records FINAL
 WHERE org = {org:String}
@@ -45,7 +42,7 @@ _NO_LIVE_DECISION = """
       WHERE org = {org:String}
         AND namespace = {ns:String}
         AND memory_key = {key:String}
-        AND memory_type = 'decision'
+        AND memory_type = {memory_type:String}
         AND tombstoned_at IS NULL
   ) = 0
 """
@@ -83,7 +80,6 @@ async def supersede_active_record(
 async def tombstone_decision_record(
     org: str,
     namespace: str,
-    schema_name: str,
     memory_key: str,
     *,
     version: int,
@@ -104,7 +100,8 @@ async def tombstone_decision_record(
         params={
             "org": org,
             "ns": namespace,
-            "schema": schema_name,
+            "schema": SCHEMA_NAME,
+            "memory_type": SCHEMA_NAME,
             "key": memory_key,
             "status": "tombstoned",
             "close": now,
@@ -119,7 +116,6 @@ async def tombstone_decision_record(
 async def live_decision_identity(
     org: str,
     namespace: str,
-    schema_name: str,
     memory_key: str,
     *,
     ch: _CHClient | None = None,
@@ -146,10 +142,16 @@ async def live_decision_identity(
         WHERE org = {org:String}
           AND namespace = {ns:String}
           AND memory_key = {key:String}
-          AND memory_type = 'decision'
+          AND memory_type = {memory_type:String}
           AND tombstoned_at IS NULL
         ORDER BY tuple(agent, user_id, session_id) = record_writer DESC, version DESC
         LIMIT 1
         """,
-        params={"org": org, "ns": namespace, "schema": schema_name, "key": memory_key},
+        params={
+            "org": org,
+            "ns": namespace,
+            "schema": SCHEMA_NAME,
+            "memory_type": SCHEMA_NAME,
+            "key": memory_key,
+        },
     )
