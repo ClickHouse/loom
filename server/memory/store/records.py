@@ -42,7 +42,7 @@ _NO_LIVE_DECISION = """
       WHERE org = {org:String}
         AND namespace = {ns:String}
         AND memory_key = {key:String}
-        AND memory_type = {memory_type:String}
+        AND memory_type = 'decision'
         AND tombstoned_at IS NULL
   ) = 0
 """
@@ -101,7 +101,6 @@ async def tombstone_decision_record(
             "org": org,
             "ns": namespace,
             "schema": SCHEMA_NAME,
-            "memory_type": SCHEMA_NAME,
             "key": memory_key,
             "status": "tombstoned",
             "close": now,
@@ -142,7 +141,7 @@ async def live_decision_identity(
         WHERE org = {org:String}
           AND namespace = {ns:String}
           AND memory_key = {key:String}
-          AND memory_type = {memory_type:String}
+          AND memory_type = 'decision'
           AND tombstoned_at IS NULL
         ORDER BY tuple(agent, user_id, session_id) = record_writer DESC, version DESC
         LIMIT 1
@@ -151,7 +150,6 @@ async def live_decision_identity(
             "org": org,
             "ns": namespace,
             "schema": SCHEMA_NAME,
-            "memory_type": SCHEMA_NAME,
             "key": memory_key,
         },
     )
