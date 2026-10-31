@@ -630,6 +630,7 @@ async def test_a_memory_apply_delete_retires_the_record(local: KeptCH) -> None:
 async def test_a_move_without_a_redirect_retires_the_record(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from server.memory.api.models_decision import DecisionChainInput
     from server.memory.api.models_move import MemoryMoveInput
     from server.memory.app import decision as h
     from server.memory.app.move import handle_memory_move
@@ -647,8 +648,20 @@ async def test_a_move_without_a_redirect_retires_the_record(
         )
     )
     assert await _history() == ["tombstoned", "active"]
-    # The moved row carries no record: decision.record writes one under the new key.
-    assert await h._decision_records(local, "o", "n", ["decision:moved"]) == {}
+    # The new key has no record; recording the decision again lands on its derived key.
+    chain = await h.handle_decision_chain(
+        DecisionChainInput(org="o", namespace="n", memory_key="decision:moved")
+    )
+    assert chain.seed_decision is None
+    again = await h.handle_decision_record(
+        _record_input(
+            category="deploy",
+            scenario="Roll back or hotfix the image?",
+            caused_by=[],
+            influenced_by=[],
+        )
+    )
+    assert again.memory_key == _KEY
 
 
 @pytest.mark.asyncio

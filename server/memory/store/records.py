@@ -1,5 +1,6 @@
-"""Reads and writes of a key's active typed record: the fold's read, the supersede and
-decision tombstone copies, and the record a decision revision builds on with its writer."""
+"""Reads and writes of active typed records: the fold's read, the supersede and decision
+tombstone copies, the record a decision revision builds on with its writer, and the
+active decision records of several keys."""
 
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.decision_schema import SCHEMA_NAME
 from server.memory.store.sql import _SEQUENTIAL
 
-# Active records, by key: shared by every read and copy below.
+# Active records of a schema; the reads below add the key condition.
 _FROM_ACTIVE_RECORDS = """
 FROM loom.memory_records FINAL
 WHERE org = {org:String}
@@ -20,8 +21,7 @@ WHERE org = {org:String}
   AND status = 'active'
   AND tombstoned_at IS NULL
 """
-_FROM_ACTIVE_RECORD = f"""{_FROM_ACTIVE_RECORDS}  AND memory_key = {{key:String}}
-"""
+_FROM_ACTIVE_RECORD = _FROM_ACTIVE_RECORDS + "  AND memory_key = {key:String}\n"
 # The key's live decision rows, under any identity: the tombstone check and the writer read.
 _FROM_LIVE_DECISION_ROWS = """
 FROM loom.memory FINAL
@@ -75,12 +75,12 @@ SELECT toString(record_id) AS rid, toString(memory_id) AS mid, record_json
 ORDER BY version DESC
 LIMIT 1"""
 
-
 # The active decision records of several keys.
-_ACTIVE_DECISION_RECORDS = f"""
-SELECT memory_key, record_json, created_at
-{_FROM_ACTIVE_RECORDS}  AND memory_key IN {{keys:Array(String)}}
-"""
+_ACTIVE_DECISION_RECORDS = (
+    "SELECT memory_key, record_json, created_at"
+    + _FROM_ACTIVE_RECORDS
+    + "  AND memory_key IN {keys:Array(String)}\n"
+)
 
 
 class ActiveRecord(NamedTuple):
@@ -186,8 +186,8 @@ async def active_decision_records(
 ) -> list[dict[str, Any]]:
     """The active decision records under `keys`: memory_key, record_json, created_at."""
     ch = ch or _default_client()
-    params = {"org": org, "ns": namespace, "schema": SCHEMA_NAME, "keys": list(keys)}
-    return list(await ch.query_all(_ACTIVE_DECISION_RECORDS, params=params))
+    params = {"org": org, "ns": namespace, "schema": SCHEMA_NAME, "keys": keys}
+    return await ch.query_all(_ACTIVE_DECISION_RECORDS, params=params)
 
 
 async def live_writer_record(
