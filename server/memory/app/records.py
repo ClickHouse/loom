@@ -333,10 +333,13 @@ async def _fold_onto_active_record(
     record_id: str,
     version: int,
     now: datetime,
+    carry_prior: bool = True,
 ) -> _RecordFold:
     """Field-level fold onto the active record for this key: an empty incoming field keeps
     the survivor's value, spelling variants are agreement, lists union, and a real
-    disagreement is recorded with both values before the incoming one wins."""
+    disagreement is recorded with both values before the incoming one wins. With
+    `carry_prior` false the incoming fields are the whole record: nothing is kept from the
+    survivor, and disagreements are still recorded."""
     fold_out: dict[str, Any] = {}
     superseded_id = ""
     conflict_rows: list[dict[str, Any]] = []
@@ -353,10 +356,13 @@ async def _fold_onto_active_record(
             except json.JSONDecodeError:
                 prior_json = {}
             result = fold(prior_json, record_json)
-            record_json = result.merged
+            if carry_prior:
+                record_json = result.merged
+                filled_fields = list(result.filled_from_prior)
+            else:
+                result.filled_from_prior = []
             fold_out = result.as_dict()
             superseded_id = str(prior_row["rid"])
-            filled_fields = list(result.filled_from_prior)
             prior_mid = str(prior_row.get("mid") or "") or None
             conflict_rows = [
                 {
@@ -477,8 +483,11 @@ async def _carry_folded_fields(
 
 
 async def handle_memory_record_write(
-    input: MemoryRecordWriteInput,
+    input: MemoryRecordWriteInput, *, carry_prior: bool = True
 ) -> MemoryRecordWriteOutput:
+    """Write one typed record. `carry_prior` false writes the incoming fields as the whole
+    record, keeping nothing of the record it supersedes (decision.record restates a
+    decision whole)."""
     schema = await _schema_by_name(input.org, input.namespace, input.schema_name)
     if not schema or str(schema.get("status")) != "active":
         raise HTTPException(
@@ -506,7 +515,14 @@ async def handle_memory_record_write(
         for name, field in input.fields.items()
     }
     fold = await _fold_onto_active_record(
-        ch, input, memory_key, record_json, record_id=record_id, version=version, now=now
+        ch,
+        input,
+        memory_key,
+        record_json,
+        record_id=record_id,
+        version=version,
+        now=now,
+        carry_prior=carry_prior,
     )
     record_json = fold.record_json
     # Supersede prior active state for this logical key before inserting: every

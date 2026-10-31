@@ -134,10 +134,12 @@ async def _write_decision(
     payload: dict[str, Any],
     tags: list[str],
     valid_at: datetime | None,
+    restate: bool,
 ) -> str:
     """Memory row + record under one key. Returns the record_id. The row goes first: a
     delete keeps the record only while its writer's row is live, so that row must exist
-    before the record does."""
+    before the record does. `restate` writes the record whole, keeping nothing of the
+    one it supersedes."""
     from server.memory.app.records import handle_memory_record_write
     from server.memory.app.write import handle_memory_set
 
@@ -170,7 +172,8 @@ async def _write_decision(
             session_id=session_id or "-",
             fields=svc.record_fields(payload),  # type: ignore[arg-type]
             valid_at=valid_at,
-        )
+        ),
+        carry_prior=not restate,
     )
     # Retire the record if the writer's row was deleted before the record landed.
     try:
@@ -217,6 +220,9 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         payload=payload,
         tags=tags,
         valid_at=input.valid_at,
+        # A new decision is stated whole: nothing of the record it supersedes carries
+        # over, so no earlier writer's outcome or fields survive under this writer.
+        restate=True,
     )
 
     edges = 0
@@ -340,9 +346,7 @@ async def handle_decision_chain(input: DecisionChainInput) -> DecisionChainOutpu
 
 async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcomeOutput:
     ch = get_client()
-    # One read gives the record and its writer, so the revision copies the record it
-    # writes under. Only the writer revises: another identity's row was superseded in the
-    # record plane, and writing under it would copy the writer's decision into that row.
+    # Only the record's live writer revises it; record and writer come from one read.
     writer = await live_writer_record(input.org, input.namespace, input.memory_key, ch=ch)
     if writer is None:
         raise NotFoundError(
@@ -371,6 +375,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         payload=payload,
         tags=tags,
         valid_at=None,
+        restate=False,
     )
 
     # Close the loop: the memories the deciding run relied on earn (or lose)

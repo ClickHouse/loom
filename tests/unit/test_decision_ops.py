@@ -151,7 +151,7 @@ def env(monkeypatch):
         calls["schema"].append(inp)
         return SimpleNamespace(schema_id="sid")
 
-    async def fake_record_write(inp):
+    async def fake_record_write(inp, **_kw):
         calls["record"].append(inp)
         ch.records[inp.memory_key] = {
             k: (v.value if hasattr(v, "value") else v.get("value")) for k, v in inp.fields.items()
@@ -337,23 +337,12 @@ def test_outcome_revises_the_record_and_credits_the_run(env) -> None:
     assert run_call.run_id == "r1"
 
 
-def test_outcome_reads_the_record_and_its_writer_in_one_sequential_read(env) -> None:
-    from server.memory.api.models_decision import DecisionOutcomeInput
+def test_the_writer_read_is_sequential() -> None:
+    from server.memory.store import records
 
-    ch, _, h = env
-    d = asyncio.run(h.handle_decision_record(_record_input()))
-    ch.queries.clear()
-    asyncio.run(
-        h.handle_decision_outcome(
-            DecisionOutcomeInput(
-                org="o", namespace="n", memory_key=d.memory_key, realized_outcome="done"
-            )
-        )
+    assert records._LIVE_WRITER_RECORD.rstrip().endswith(
+        "SETTINGS select_sequential_consistency = 1"
     )
-    record_reads = [q for q in ch.queries if "loom.memory_records" in q]
-    assert len(record_reads) == 1
-    assert "select_sequential_consistency = 1" in record_reads[0]
-    assert "identity_agent" in record_reads[0] and "record_json" in record_reads[0]
 
 
 def test_outcome_on_unknown_decision_is_not_found(env) -> None:
@@ -913,3 +902,49 @@ async def test_a_second_closing_write_keeps_the_record_tombstoned(local: KeptCH)
     )
     assert rows == [{"status": "tombstoned"}]
     assert await _history() == ["tombstoned", "active"]  # the second call wrote nothing
+
+
+@pytest.mark.asyncio
+async def test_a_new_writers_decision_keeps_nothing_of_the_earlier_writers(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # claude records and learns the outcome; the maintainer then decides the same scenario
+    # with no alternatives, confidence or outcome. None of claude's fields may live on in
+    # the maintainer's record, where claude's delete or erasure would not reach them.
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    _set_into(local, monkeypatch)
+    scenario = {"category": "deploy", "scenario": "Roll back or hotfix the image?"}
+    await h.handle_decision_record(_record_input(**scenario, caused_by=[], influenced_by=[]))
+    await h.handle_decision_outcome(
+        DecisionOutcomeInput(
+            org="o", namespace="n", memory_key=_KEY, realized_outcome="took 90s", success=True
+        )
+    )
+    await h.handle_decision_record(
+        _record_input(
+            **scenario,
+            agent="maintainer",
+            run_id="-",
+            outcome="hotfix",
+            alternatives=[],
+            confidence=0.0,
+            caused_by=[],
+            influenced_by=[],
+        )
+    )
+    rows = await local.query_all(
+        "SELECT record_json FROM loom.memory_records FINAL "
+        "WHERE memory_key = {key:String} AND status = 'active'",
+        {"key": _KEY},
+    )
+    (record,) = [json.loads(r["record_json"]) for r in rows]
+    for field in ("realized_outcome", "success", "alternatives", "confidence"):
+        assert record[field] in (None, ""), field
+    assert record["run_id"] in (None, "") and record["outcome"] == "hotfix"
+
+    await _delete("claude")
+    seed = await _seed_decision()
+    assert seed is not None and seed.outcome == "hotfix"
+    assert seed.realized_outcome == "" and seed.success is None and seed.alternatives == []

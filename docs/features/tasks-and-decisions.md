@@ -257,7 +257,8 @@ was `caused_by` or `influenced_by`. It writes:
 - an edge from each `caused_by` / `influenced_by` key to the decision.
 
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
-(`superseded_prior=true`); history keeps it.
+(`superseded_prior=true`); history keeps it. The new record holds only what the new decision states: fields it leaves
+out, and an earlier `realized_outcome` or `success`, are not carried over.
 
 The record holds the text of its last writer, the agent, user and session that recorded it, so it stays active only
 while that writer's decision row is live (an expired row counts until the expiry sweep tombstones it). Another

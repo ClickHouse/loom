@@ -122,11 +122,8 @@ async def tombstone_decision_record(
     version: int,
     ch: _CHClient | None = None,
 ) -> None:
-    """Writes a tombstoned version of the key's active decision record at `version` or
-    above (two racing calls may each write one; FINAL reads the record tombstoned either
-    way). It retires the record unless the record's writer, by (agent, user_id,
-    session_id), still has a live decision row under the key, read with sequential
-    consistency."""
+    """Tombstone the key's active decision record unless its writer still has a live
+    decision row there."""
     ch = ch or _default_client()
     now = naive_utc_now_seconds()
     await ch.execute(
