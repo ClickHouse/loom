@@ -172,9 +172,7 @@ async def _write_decision(
     )
     # Retire the record if the writer's row was deleted before the record landed.
     try:
-        await tombstone_decision_record(
-            org, namespace, key, version=next_version(), ch=get_client()
-        )
+        await tombstone_decision_record(org, namespace, key, version=next_version())
     except Exception as e:  # noqa: BLE001 — the decision is written
         log.warning("decision: closing record check failed for %s: %s", key, e)
     return str(rec_out.record_id)
@@ -342,7 +340,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     writer = await live_writer_record(input.org, input.namespace, input.memory_key, ch=ch)
     if writer is None:
         raise NotFoundError(
-            f"no active decision {input.memory_key!r} with a live row of its writer",
+            f"no active decision {input.memory_key!r} in {input.org}/{input.namespace}",
             memory_key=input.memory_key,
         )
     payload = svc.parse_record_json(writer.record_json)

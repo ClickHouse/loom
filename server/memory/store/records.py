@@ -184,7 +184,8 @@ async def active_decision_records(
     *,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """The active decision records under `keys`: memory_key, record_json, created_at."""
+    """The active decision records under `keys`: memory_key, record_json, created_at, as
+    rows, which the decision handlers reshape by key."""
     ch = ch or _default_client()
     params = {"org": org, "ns": namespace, "schema": SCHEMA_NAME, "keys": keys}
     return await ch.query_all(_ACTIVE_DECISION_RECORDS, params=params)
