@@ -363,10 +363,14 @@ def _assistant_primer(defaults: dict[str, Any] | None) -> str:
 
 
 def _assistant_defaults(defaults: dict[str, Any] | None) -> str:
-    """The default namespace, or for a token with none the namespaces it can name; never
-    the `loom_search` addressing the other listings describe, which this one lacks."""
-    if not defaults or defaults["namespace"]:
-        return _defaults_clause(defaults)
+    """The namespace a call names when it names none, in the assistant primer's voice."""
+    if not defaults:
+        return "Name the namespace on each call."
+    if defaults["namespace"]:
+        return (
+            f"A call that names no namespace reads `{defaults['namespace']}`, the person's "
+            "default; name another to read it."
+        )
     readable = defaults.get("readable") or []
     if not readable:
         return "This token has no default namespace and can read no namespace."

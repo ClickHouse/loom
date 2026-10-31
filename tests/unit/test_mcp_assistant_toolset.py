@@ -163,11 +163,17 @@ def test_the_assistant_primer_is_read_only_and_names_listed_tools(
 
 
 def test_an_assistant_result_is_the_full_output() -> None:
+    from server.transport.assistant_call import set_assistant_call
     from server.transport.lean_results import lean_result
 
     payload = {"results": [{"memory_key": "k", "session_id": "s1", "verified": True}]}
-    assert lean_result(payload, {"consumer": "loom-assistant"}) is payload
-    trimmed = lean_result(payload, {"consumer": "other"})
+    set_assistant_call(True)
+    try:
+        assert lean_result(payload, {}) is payload
+    finally:
+        set_assistant_call(False)
+    # The connection decides, never the self-reported consumer.
+    trimmed = lean_result(payload, {"consumer": "loom-assistant"})
     assert "session_id" not in trimmed["results"][0]
 
 
@@ -235,10 +241,18 @@ def test_an_unknown_tool_name_writes_no_ledger_row(
 
 
 def test_an_assistant_call_opens_no_session_run() -> None:
+    from server.transport.assistant_call import set_assistant_call
+
     op = OPERATIONS_BY_NAME["memory.search"]
     defaults = {"org": "o", "namespace": "ns", "agent": "a"}
-    args = {"query": "q", "consumer": "loom-assistant"}
-    assert mcp_call._stamp_session_run(op, args, defaults, "sess-1") == (None, False)
+    set_assistant_call(True)
+    try:
+        assert mcp_call._stamp_session_run(op, {"query": "q"}, defaults, "sess-1") == (None, False)
+    finally:
+        set_assistant_call(False)
+    # A self-reported inspector consumer on another connection keeps its run.
+    caller, _ = mcp_call._stamp_session_run(op, {"consumer": "loom-ui"}, defaults, "sess-1")
+    assert caller is not None
 
 
 def test_an_assistant_call_through_the_call_path_opens_no_session_run(
@@ -299,3 +313,18 @@ def test_the_prompt_and_resource_describe_the_assistant_primer() -> None:
     )
     assert "persona" in mcp_primer._prompts_descriptor("core")[0]["description"]
     assert "read-only" in mcp_primer._resources_descriptor("assistant")[0]["description"]
+
+
+@pytest.mark.asyncio
+async def test_namespace_summary_leaves_the_inspectors_out_of_its_activity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.identity.api.models_namespace_catalog import NamespaceSummaryInput
+    from server.identity.app.namespace_summary import handle_namespace_summary
+    from tests.unit.ch_fake import RecordingCH
+
+    ch = RecordingCH(strict=False).install(monkeypatch, "server.identity.app.namespace_summary")
+    await handle_namespace_summary(NamespaceSummaryInput(org="o", namespace="ns"))
+    activity = ch.statements("FROM loom.agent_events")[0]
+    assert "consumer NOT IN {inspectors:Array(String)}" in activity.sql
+    assert activity.params["inspectors"] == ["loom-ui", "loom-assistant"]

@@ -23,7 +23,7 @@ from server.core import llm_free
 from server.core.errors import LoomServerError
 from server.core.naming import named
 from server.identity.app.caller_home import home_namespace
-from server.observability.consumer import ASSISTANT_CONSUMER, INSPECTOR_CONSUMERS
+from server.observability.consumer import ASSISTANT_CONSUMER
 from server.operations.base import Operation
 from server.operations.toolsets import _MCP_HIDDEN_OPS, ASSISTANT_FORCED_ARGS, MCP_ASSISTANT_OPS
 from server.transport import gates
@@ -31,6 +31,7 @@ from server.transport import mcp_runs as _mcp_runs
 from server.transport._common import begin_call, bind_request, validation_note
 from server.transport._common import validation_errors as _validation_errors
 from server.transport.arg_feedback import feedback, refused_result, tool_error
+from server.transport.assistant_call import assistant_call, set_assistant_call
 from server.transport.lean_results import lean_result
 from server.transport.mcp_config import (
     _LOOM_ACTIVATE_TOOL_NAME,
@@ -335,9 +336,9 @@ def _stamp_session_run(
 
         if not defaults or not _mcp_runs.takes_run(op):
             return None, False
-        # An inspector's reads are not the work of a run: the assistant toolset stamps
-        # its consumer before this phase, so its session opens none.
-        if arguments.get("consumer") in INSPECTOR_CONSUMERS:
+        # An investigation's reads are not the work of a run: an assistant call's session
+        # opens none.
+        if assistant_call():
             return None, False
         # The run row lives in the caller's org and default namespace, whatever
         # namespace a call names, so every web process files it under one key.
@@ -403,7 +404,9 @@ async def _resolve_connection_tool(
     not carry, then its forced arguments and consumer stamped over the model's own (in
     place), so the model cannot argue either away. A token whose `consumer` claim names
     another consumer keeps its claim (`resolve_consumer_and_source`)."""
-    if not assistant_connection(toolset):
+    on_assistant = assistant_connection(toolset)
+    set_assistant_call(on_assistant)
+    if not on_assistant:
         return await _resolve_tool(req_id, name, auth, client_name, toolset)
     refused = _assistant_refusal(req_id, name, auth)
     if refused is not None:

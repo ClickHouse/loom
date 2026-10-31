@@ -18,6 +18,7 @@ from server.identity.api.models_namespace_catalog import (
     _NamespaceTypeCount,
 )
 from server.memory.domain.graph_quality import is_lexical_junk_entity
+from server.observability.consumer import INSPECTOR_CONSUMERS
 
 
 async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSummaryOutput:
@@ -76,8 +77,14 @@ async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSum
             WHERE org = {org:String}
               AND namespace = {ns:String}
               AND ts >= now() - INTERVAL {win:UInt32} SECOND
+              -- the dashboard's and the assistant's calls inspect the namespace, not use it
+              AND consumer NOT IN {inspectors:Array(String)}
             """,
-            params={**params, "win": int(input.activity_seconds)},
+            params={
+                **params,
+                "win": int(input.activity_seconds),
+                "inspectors": list(INSPECTOR_CONSUMERS),
+            },
         )
 
     type_rows, entity_rows, activity_row = await asyncio.gather(_types(), _entities(), _activity())

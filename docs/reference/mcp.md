@@ -244,7 +244,10 @@ diagnostic shape costs several thousand tokens for a short answer.
 
 `?toolset=assistant` is the connection a chat client uses to investigate Loom on behalf
 of the signed-in person: what a namespace holds, how it is used, and cited answers over
-memory, documents and code. On it:
+memory, documents and code. The value must be exactly `assistant`: a misspelling or a
+union such as `assistant+core` does not resolve and the connection gets the deployment's
+default listing, with no error. The URL the operator configures and a `viewer` token
+carry the guarantee, not the client. On it:
 
 - **Only its reads are callable.** A `tools/call` for any other tool, `loom_op` and
   `loom_search` included, answers `isError` with code `UNKNOWN_OP` before the handler
@@ -260,10 +263,14 @@ memory, documents and code. On it:
 - **Reads do not record usage.** `memory.search` runs with `auto_touch: false` and
   `explain: false`, and `memory.ask` with `reinforce: false`, whatever the call sends, so
   an investigation does not raise the recall counts that rank results; `memory.ask` also
-  runs with `precedents: false`, so no answer is stored for reuse. What remains is the
-  request ledger row, the exposure row every read of a memory leaves
-  (`loom.memory_exposures`, the record of who was served which row), and the caches an
-  answer may fill (the model response cache). An assistant call opens no MCP session
+  runs with `precedents: false`, so no answer is stored for reuse. What remains is
+  telemetry and caches: the request ledger row; the exposure row every read of a memory
+  leaves (`loom.memory_exposures`, the record of who was served which row); the code
+  search trace a `code.search` or `code.symbol` writes (`loom.code_search_trace`, under
+  `LOOM_CODE_TRACE_LOG_ENABLED`); the search trace and query-node rows a `memory.search`
+  writes when `LOOM_SEARCH_TRACE_LOG_ENABLED` or `LOOM_MEMORY_QUERY_NODES_ENABLED` is on;
+  a `memory.ask` consistency row under deferred consistency; and the model response
+  cache. An assistant call opens no MCP session
   run, and its `initialize` and `loom` prompt write no profile-read row: its primer
   inlines no profile.
 - **Results are the full output**, as HTTP returns them, since a citation needs the

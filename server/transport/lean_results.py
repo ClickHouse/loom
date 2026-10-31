@@ -19,7 +19,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from server.observability.consumer import ASSISTANT_CONSUMER
+from server.transport.assistant_call import assistant_call
 
 # Ranking and accounting detail the model never acts on. `explanation` is
 # the per-hit provenance note the text block already folds into `why`.
@@ -130,9 +130,7 @@ def _explained(arguments: dict[str, Any] | None) -> bool:
     """Whether the call keeps the full output: it asked to explain, or it came through the
     assistant toolset, whose answers cite the identities, versions and attestations the
     trimmed shape drops."""
-    if not arguments:
-        return False
-    return bool(arguments.get("explain")) or arguments.get("consumer") == ASSISTANT_CONSUMER
+    return assistant_call() or bool(arguments and arguments.get("explain"))
 
 
 # What an MCP client reads of a context.pack. The op's

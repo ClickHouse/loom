@@ -25,6 +25,7 @@ from tests.integration._eventually import eventually  # noqa: E402
 from tests.integration._resources import unique_org  # noqa: E402
 
 ORG = unique_org("assistant")
+CONTROL_ORG = unique_org("assistant-control")
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -129,9 +130,33 @@ async def test_the_assistant_reads_without_writing_or_recording_usage(
         # The HTTP search is the namespace's one counted search; the assistant's are not.
         assert summary["searches"] == 1
 
-    # Every assistant call carried an MCP session id, and none opened a session run.
-    runs = ch_client.query(
-        "SELECT count() FROM loom.agent_runs WHERE org = {org:String}",
-        parameters={"org": ORG},
-    ).result_rows
-    assert runs[0][0] == 0
+    # Every assistant call carried an MCP session id, and none opened a session run. A
+    # control call on the core toolset, in an org of its own, opens one; once its run
+    # shows, the assistant's would have too.
+    def _runs(org: str) -> int:
+        rows = ch_client.query(
+            "SELECT count() FROM loom.agent_runs WHERE org = {org:String}",
+            parameters={"org": org},
+        ).result_rows
+        return int(rows[0][0])
+
+    control_ns = f"as-{uuid.uuid4().hex[:6]}"
+    control = mint_test_token(org=CONTROL_ORG, namespaces=[control_ns], roles=["writer"])
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as c:
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "loom_memory_set",
+                "arguments": {"namespace": control_ns, "memory_key": "k", "value": "v"},
+            },
+        }
+        r = await c.post("/mcp?toolset=core", json=body, headers=_headers(control))
+        assert r.status_code == 200 and not r.json()["result"].get("isError"), r.text[:400]
+
+    async def _control_run() -> int:
+        return _runs(CONTROL_ORG)
+
+    await eventually(_control_run, description="the core session opens a run")
+    assert _runs(ORG) == 0
