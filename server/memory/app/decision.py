@@ -174,7 +174,9 @@ async def _write_decision(
     )
     # A delete of the row that landed before the record finds nothing to retire: do it here.
     try:
-        await tombstone_decision_record(org, namespace, key, version=next_version())
+        await tombstone_decision_record(
+            org, namespace, key, version=next_version(), ch=get_client()
+        )
     except Exception as e:  # noqa: BLE001 — the decision is written
         log.warning("decision: closing record check failed for %s: %s", key, e)
     return str(rec_out.record_id)
@@ -358,6 +360,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             f"no live decision {input.memory_key!r} in {input.org}/{input.namespace}",
             memory_key=input.memory_key,
         )
+    agent, user_id, session_id = identity
     tags = [
         "decision",
         f"decision:category:{str(payload.get('category') or '').lower()}",
@@ -368,9 +371,9 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     await _write_decision(
         org=input.org,
         namespace=input.namespace,
-        agent=identity["agent"],
-        user_id=identity["user_id"],
-        session_id=identity["session_id"],
+        agent=agent,
+        user_id=user_id,
+        session_id=session_id,
         run_id=str(payload.get("run_id") or "-"),
         key=input.memory_key,
         payload=payload,

@@ -259,16 +259,18 @@ was `caused_by` or `influenced_by`. It writes:
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
 (`superseded_prior=true`); history keeps it.
 
-`memory.delete` or `memory.delete_version` of the decision row also tombstones its record, so `decision.chain`,
-`decision.precedents` and `decision.outcome` stop serving it, and `memory.record.history` shows the last version
-with `status="tombstoned"`. The record is keyed by category and scenario, not by agent, user or session, so while
-any live decision row holds the key, the record stays active. A row that expired but was not deleted still counts.
-`memory.restore` revives the row but not the record; call `decision.record` again to bring it back. `memory.move`
-with `keep_redirect=false` deletes through `memory.delete` and retires it the same way. These leave the record
-active: `memory.clear` and the other bulk tombstone paths; `memory.move` with `keep_redirect=true`, whose redirect
-row still counts as a live decision row under the old key; and a `memory.set` under the decision's identity that
-rewrites the key with another `memory_type`. `decision.outcome` revises the row of the record's writer while that
-row is live, else the newest live decision row under the key, and answers not-found when none is live.
+The record is keyed by category and scenario, not by agent, user or session, so it stays active while any live
+decision row holds the key (a row that expired but was not deleted still counts).
+
+- **Retires the record**: `memory.delete` or `memory.delete_version` of the last live decision row, including
+  `memory.move` with `keep_redirect=false`, which deletes through `memory.delete`. `decision.chain`,
+  `decision.precedents` and `decision.outcome` stop serving it, and `memory.record.history` shows the last version
+  with `status="tombstoned"`. `memory.restore` revives the row but not the record; call `decision.record` again.
+- **Leaves the record active**: `memory.clear` and the other bulk tombstone paths; `memory.move` with
+  `keep_redirect=true`, whose redirect row still counts as a live decision row under the old key; a `memory.set` under
+  the decision's identity that rewrites the key with another `memory_type`.
+- **`decision.outcome` writes under** the record writer's row while that row is live, else the newest live decision
+  row under the key, and answers not-found when none is live.
 
 | Operation             | Role   | Does                                                                                               |
 | --------------------- | ------ | -------------------------------------------------------------------------------------------------- |

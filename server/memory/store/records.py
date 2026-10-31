@@ -4,7 +4,6 @@ identity a decision revision writes under."""
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
@@ -31,8 +30,7 @@ WHERE org = {org:String}
 """
 
 # Computed columns take new names: `AS status` would shadow the column in the WHERE.
-_CLOSE_ACTIVE_RECORD = (
-    """
+_CLOSE_ACTIVE_RECORD = f"""
 INSERT INTO loom.memory_records
     (record_id, org, namespace, schema_id, schema_name, memory_key,
      memory_id, identity_agent, user_id, session_id, record_json,
@@ -41,16 +39,25 @@ INSERT INTO loom.memory_records
 SELECT
     record_id, org, namespace, schema_id, schema_name, memory_key,
     memory_id, identity_agent, user_id, session_id, record_json,
-    {status:String} AS new_status, valid_at,
-    if(valid_to IS NULL, {close:DateTime}, valid_to) AS new_valid_to,
-    greatest(version + 1, {ver:UInt64}) AS new_version, created_at,
-    greatest(updated_at, {now:DateTime}) AS new_updated_at,
-    {tombstoned_at:Nullable(DateTime)} AS new_tombstoned_at
-"""
-    + _ACTIVE_RECORD
-)
+    {{status:String}} AS new_status, valid_at,
+    if(valid_to IS NULL, {{close:DateTime}}, valid_to) AS new_valid_to,
+    greatest(version + 1, {{ver:UInt64}}) AS new_version, created_at,
+    greatest(updated_at, {{now:DateTime}}) AS new_updated_at,
+    {{tombstoned_at:Nullable(DateTime)}} AS new_tombstoned_at
+{_ACTIVE_RECORD}"""
 
-_NO_LIVE_DECISION = "AND (SELECT count() " + _LIVE_DECISION_ROWS + ") = 0\n"
+_NO_LIVE_DECISION = f"""
+  AND (SELECT count() {_LIVE_DECISION_ROWS}) = 0
+"""
+
+_LIVE_DECISION_IDENTITY = f"""
+SELECT agent, user_id, session_id
+{_LIVE_DECISION_ROWS}
+ORDER BY (agent, user_id, session_id) IN (
+    SELECT identity_agent, user_id, session_id {_ACTIVE_RECORD}
+) DESC, version DESC
+LIMIT 1
+{_SEQUENTIAL}"""
 
 
 async def supersede_active_record(
@@ -122,18 +129,13 @@ async def live_decision_identity(
     memory_key: str,
     *,
     ch: _CHClient | None = None,
-) -> dict[str, Any] | None:
+) -> tuple[str, str, str] | None:
     """The (agent, user_id, session_id) of a live decision row under `memory_key`: the
     active record's writer when its row is live, else the newest live row. None when no
     live decision row holds the key."""
     ch = ch or _default_client()
-    return await ch.query_one(
-        "SELECT agent, user_id, session_id"
-        + _LIVE_DECISION_ROWS
-        + "ORDER BY (agent, user_id, session_id) IN (SELECT identity_agent, user_id, session_id"
-        + _ACTIVE_RECORD
-        + ") DESC, version DESC LIMIT 1\n"
-        + _SEQUENTIAL,
+    row = await ch.query_one(
+        _LIVE_DECISION_IDENTITY,
         params={
             "org": org,
             "ns": namespace,
@@ -141,3 +143,4 @@ async def live_decision_identity(
             "key": memory_key,
         },
     )
+    return None if row is None else (row["agent"], row["user_id"], row["session_id"])

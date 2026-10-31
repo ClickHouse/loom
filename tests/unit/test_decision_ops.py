@@ -658,6 +658,9 @@ async def test_an_outcome_after_the_record_writer_deleted_its_row_revises_a_live
     assert await get(_identity("maintainer"), _KEY, strong=True, scope=WHOLE_NAMESPACE) is None
     claude = await get(_identity("claude"), _KEY, strong=True, scope=WHOLE_NAMESPACE)
     assert claude is not None and claude.value["realized_outcome"] == "ok"
+    # The revision is the decision of record: active, and served by decision.chain.
+    seed = await _seed_decision()
+    assert seed is not None and seed.realized_outcome == "ok"
 
 
 @pytest.mark.asyncio
