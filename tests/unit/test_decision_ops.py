@@ -454,6 +454,15 @@ def _set_into(ch: KeptCH, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     return seen
 
 
+# The record `_write_decision_rows` seeds: the decision `_record_input` describes under _KEY.
+_SEEDED = {
+    "category": "deploy",
+    "scenario": "Roll back or hotfix the image?",
+    "reasoning": "it takes two minutes",
+    "outcome": "rollback",
+}
+
+
 async def _write_decision_rows(
     ch: KeptCH, *agents: str, memory_type: str = "decision", updated_at: datetime | None = None
 ) -> int:
@@ -472,7 +481,7 @@ async def _write_decision_rows(
                 "schema_name": "decision",
                 "memory_key": _KEY,
                 "identity_agent": agents[0],
-                "record_json": json.dumps({"scenario": "Roll back?", "outcome": "rollback"}),
+                "record_json": json.dumps(_SEEDED),
                 "status": "active",
                 "version": version,
                 "created_at": now,
@@ -1003,9 +1012,14 @@ async def test_a_new_writers_decision_keeps_nothing_of_the_earlier_writers(
         {"key": _KEY},
     )
     (record,) = [json.loads(r["record_json"]) for r in rows]
-    for field in ("realized_outcome", "success", "alternatives", "confidence"):
-        assert record[field] in (None, ""), field
-    assert record["run_id"] in (None, "") and record["outcome"] == "hotfix"
+    assert record == {
+        "category": "deploy",
+        "scenario": "Roll back or hotfix the image?",
+        "reasoning": "Rollback is 2 minutes; the fix is untested.",
+        "outcome": "hotfix",
+        "decision_maker": "maintainer",
+        **dict.fromkeys(("alternatives", "confidence", "realized_outcome", "success", "run_id")),
+    }
     states = await local.query_all(
         "SELECT field_name, value_state FROM loom.memory_record_fields FINAL "
         "WHERE record_id = {rid:UUID}",
@@ -1080,9 +1094,8 @@ async def test_an_outcome_keeps_nothing_of_another_active_record(
         {"key": _KEY},
     )
     (record,) = [json.loads(r["record_json"]) for r in rows]
-    assert record["realized_outcome"] == "ok"
-    for field, value in other.items():
-        assert record[field] != value, field
+    absent = ("alternatives", "confidence", "decision_maker", "run_id", "success")
+    assert record == {**_SEEDED, "realized_outcome": "ok", **dict.fromkeys(absent)}
 
 
 @pytest.mark.asyncio

@@ -198,8 +198,8 @@ async def live_writer_record(
     *,
     ch: _CHClient | None = None,
 ) -> WriterRecord | None:
-    """The active decision record under `memory_key` and its writer, read together, or
-    None when there is no active record or its writer has no live decision row there."""
+    """The newest active decision record under `memory_key` whose writer still has a live
+    decision row there, read with that writer, or None."""
     ch = ch or _default_client()
     row = await ch.query_one(
         _LIVE_WRITER_RECORD,
