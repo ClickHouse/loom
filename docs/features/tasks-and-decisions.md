@@ -258,7 +258,8 @@ was `caused_by` or `influenced_by`. It writes:
 
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
 (`superseded_prior=true`); history keeps it. The new record holds only what the new decision states: fields it leaves
-out, and an earlier `realized_outcome` or `success`, are not carried over.
+out, and an earlier `realized_outcome` or `success`, are not carried over. Each `decision.outcome` likewise restates
+both: one without `success` clears an earlier verdict.
 
 The record holds the text of its last writer, the agent, user and session that recorded it, so a delete of that
 writer's decision row retires it; an expired row still counts as live. Another identity's row under the same key was
@@ -266,9 +267,8 @@ superseded in the record plane and does not keep the record.
 
 - **Retires the record**: `memory.delete` or `memory.delete_version` of the writer's decision row, including
   `memory.move` with `keep_redirect=false` and `memory.apply` with `action="delete"`, which delete through
-  `memory.delete`. `decision.chain`,
-  `decision.precedents` and `decision.outcome` stop serving it, and `memory.record.history` shows the last version
-  with `status="tombstoned"`. `memory.restore` revives the row but not the record; call `decision.record` again.
+  `memory.delete`. `decision.chain`, `decision.precedents` and `decision.outcome` stop serving it, and
+  `memory.record.history` shows the last version with `status="tombstoned"`. `memory.restore` revives the row but not the record; call `decision.record` again.
   Two retirements that race can each write a tombstoned version, so history may list the tombstone twice.
 - **Leaves the record active**: a delete of another identity's row; `memory.clear` and the other bulk tombstone
   paths; `memory.move` with `keep_redirect=true`, whose redirect row still counts as the writer's live row under the

@@ -68,8 +68,8 @@ class _CH:
     async def insert(self, table, rows, settings=None):
         self.inserts.append((table, rows))
 
-    async def query_all(self, sql, params=None):
-        return []  # no active record for the key: nothing to fold onto
+    async def query_one(self, sql, params=None):
+        return None  # no active record for the key: nothing to fold onto
 
 
 def _write(fields: dict[str, dict[str, Any]], memory_key: str = "") -> tuple[Any, _CH]:

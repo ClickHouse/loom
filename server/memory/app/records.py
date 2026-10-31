@@ -357,6 +357,7 @@ async def _fold_onto_active_record(
                 prior_json = {}
             result = fold(prior_json, record_json)
             if not carry_prior:
+                # Only the conflict report is kept; the incoming fields are the record.
                 result = replace(result, merged=record_json, filled_from_prior=[], unioned=[])
             record_json = result.merged
             filled_fields = list(result.filled_from_prior)

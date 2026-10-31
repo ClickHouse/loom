@@ -970,6 +970,26 @@ async def test_a_new_writers_decision_keeps_nothing_of_the_earlier_writers(
 
 
 @pytest.mark.asyncio
+async def test_an_outcome_without_success_clears_the_earlier_verdict(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    _set_into(local, monkeypatch)
+    scenario = {"category": "deploy", "scenario": "Roll back or hotfix the image?"}
+    await h.handle_decision_record(_record_input(**scenario, caused_by=[], influenced_by=[]))
+    for success in (True, None):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(
+                org="o", namespace="n", memory_key=_KEY, realized_outcome="ok", success=success
+            )
+        )
+    seed = await _seed_decision()
+    assert seed is not None and seed.realized_outcome == "ok" and seed.success is None
+
+
+@pytest.mark.asyncio
 async def test_an_outcome_keeps_nothing_of_another_active_record(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:

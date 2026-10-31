@@ -470,9 +470,9 @@ async def test_a_delete_after_a_conditional_sets_check_answers_409(
 ) -> None:
     from fastapi import HTTPException
 
-    ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
-
     from server.memory.app.write import _content_sha256_of_stored
+
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
 
     await ch.insert("loom.memory", [_row("Tuesdays", time.time_ns() - 1_000_000)])
     sha = _content_sha256_of_stored(json.dumps("Tuesdays"))
