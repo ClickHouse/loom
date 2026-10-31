@@ -364,10 +364,13 @@ def _outcome_payload(
 
 async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcomeOutput:
     ch = get_client()
-    not_found = NotFoundError(
-        f"no active decision {input.memory_key!r} in {input.org}/{input.namespace}",
-        memory_key=input.memory_key,
-    )
+
+    def not_found() -> NotFoundError:
+        return NotFoundError(
+            f"no active decision {input.memory_key!r} in {input.org}/{input.namespace}",
+            memory_key=input.memory_key,
+        )
+
     # The row write is conditional on the writer row read with the record, so a delete of
     # it since then refuses the outcome instead of writing the deleted row back. A row that
     # changed (another outcome, a re-record) is read again, with its record, once.
@@ -375,7 +378,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         # Only the record's live writer revises it; record and writer come from one read.
         writer = await live_writer_record(input.org, input.namespace, input.memory_key, ch=ch)
         if writer is None:
-            raise not_found
+            raise not_found()
         payload, tags = _outcome_payload(input, writer)
         identity = Identity(
             org=input.org,
@@ -388,7 +391,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
         )
         if row is None:
-            raise not_found
+            raise not_found()
         try:
             await _write_decision(
                 org=input.org,
@@ -405,10 +408,17 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             )
             break
         except HTTPException as e:
+            # Only the hash mismatch arrives as an HTTPException; the key lease's busy answer
+            # is a PreconditionFailedError and goes to the caller as it is.
             mismatch = isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED"
             if not mismatch:
                 raise
             if attempt == 2:
+                if (
+                    await get_by_key(identity, input.memory_key, strong=True, scope=request_scope())
+                    is None
+                ):
+                    raise not_found() from e
                 raise PreconditionFailedError(
                     "the decision changed while its outcome was being written; "
                     "call decision.outcome again"

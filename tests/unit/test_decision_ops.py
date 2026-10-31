@@ -1125,6 +1125,33 @@ async def test_an_outcome_after_a_re_record_builds_on_the_new_record(
 
 
 @pytest.mark.asyncio
+async def test_a_delete_that_refuses_the_retry_answers_not_found(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.errors import NotFoundError
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    await h.ensure_schema("o", "n")
+    version = await _write_decision_rows(local, "claude")
+
+    async def _rewrite_then_delete(call: int) -> None:
+        if call == 1:
+            row = _memory_row("claude", "decision", version + 1)
+            row["value"] = json.dumps("another outcome's statement")
+            await local.insert("loom.memory", [row])
+        else:
+            await _delete("claude")
+
+    seen = _set_into(local, monkeypatch, before=_rewrite_then_delete)
+    with pytest.raises(NotFoundError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    assert len(seen) == 2
+
+
+@pytest.mark.asyncio
 async def test_an_outcome_whose_row_changes_twice_answers_a_conflict(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
