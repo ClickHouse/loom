@@ -48,12 +48,7 @@ def run(
 
 
 def _output(
-    setup: list[str],
-    sql: str,
-    params: dict[str, Any] | None = None,
-    *,
-    path: Path | None = None,
-    fmt: str,
+    setup: list[str], sql: str, params: dict[str, Any] | None, *, path: Path | None, fmt: str
 ) -> list[Any]:
     """The parsed lines `sql` prints in `fmt` after the `setup` statements (see `run`)."""
     script = ";\n".join(["CREATE DATABASE IF NOT EXISTS loom", *setup, sql])
