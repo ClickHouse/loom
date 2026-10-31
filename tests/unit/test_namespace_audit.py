@@ -1195,3 +1195,23 @@ def test_a_token_narrowed_below_the_namespace_cannot_call_either_report() -> Non
     below it is refused before either runs."""
     assert not honours_read_scope("namespace.audit")
     assert not honours_read_scope("namespace.validate")
+
+
+@pytest.mark.asyncio
+async def test_inspector_calls_are_left_out_of_every_ledger_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out, ch = await _run(
+        monkeypatch,
+        {
+            M_LIVE: _live(1, 1),
+            M_LEDGER: {"gets": 3, "searches": 1, "sets": 0, "inspector_calls": 9},
+        },
+    )
+    assert out.summary.inspector_calls == 9 and out.summary.gets == 3
+    ledger_sqls = [s for s in ch.sqls if "FROM loom.agent_events" in s]
+    assert ledger_sqls
+    for sql in ledger_sqls:
+        assert "consumer NOT IN {inspectors:Array(String)}" in sql
+    assert ch.params[0]["inspectors"] == ["loom-ui", "loom-assistant"]
+

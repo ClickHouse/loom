@@ -14537,6 +14537,7 @@ class NamespaceAuditSummary(TypedDict, total=False):
     searches: NotRequired[int]
     sets: NotRequired[int]
     get_search_ratio: NotRequired[float]
+    inspector_calls: NotRequired[int]
 
 
 class NamespaceAuditFinding(TypedDict, total=False):

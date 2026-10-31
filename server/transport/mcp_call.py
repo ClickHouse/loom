@@ -23,8 +23,9 @@ from server.core import llm_free
 from server.core.errors import LoomServerError
 from server.core.naming import named
 from server.identity.app.caller_home import home_namespace
+from server.observability.consumer import ASSISTANT_CONSUMER
 from server.operations.base import Operation
-from server.operations.toolsets import _MCP_HIDDEN_OPS
+from server.operations.toolsets import _MCP_HIDDEN_OPS, ASSISTANT_FORCED_ARGS, MCP_ASSISTANT_OPS
 from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
 from server.transport._common import begin_call, bind_request, validation_note
@@ -49,7 +50,7 @@ from server.transport.mcp_outcome import (
     _success_response,
 )
 from server.transport.mcp_primer import _render_primer_and_emit
-from server.transport.mcp_tools import TOOLS_BY_NAME, _emit_mcp_event
+from server.transport.mcp_tools import TOOLS_BY_NAME, _emit_mcp_event, assistant_connection
 
 if TYPE_CHECKING:
     from server.core.idempotency import Scope
@@ -208,7 +209,7 @@ async def _call_tool(
 
     begin_call()
 
-    tool = await _resolve_tool(req_id, name, auth, client_name, toolset)
+    tool = await _resolve_connection_tool(req_id, name, arguments, auth, client_name, toolset)
     if isinstance(tool, dict):
         return tool  # loom_activate's answer, or the not-available refusal
     op = tool
@@ -368,6 +369,44 @@ async def _bind_session_run(
         log.debug("mcp session run failed for %s (non-fatal): %s", op.name, _run_err)
 
 
+def _assistant_refusal(req_id: Any, name: str, auth: Any) -> dict[str, Any] | None:
+    """The refusal for a tool the assistant toolset does not carry, None for one it does.
+    The token may allow more; this connection serves only the toolset's reads."""
+    op = TOOLS_BY_NAME.get(name)
+    if op is not None and op.name in MCP_ASSISTANT_OPS and op.read_only:
+        return None
+    emit_token_refusal(op.name if op is not None else name, auth, error_code=UNKNOWN_OP)
+    msg = f"Tool {name!r} is not available on the assistant toolset."
+    body = {"error": msg, "code": UNKNOWN_OP, "tool": name}
+    return _ok(
+        req_id,
+        {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body},
+    )
+
+
+async def _resolve_connection_tool(
+    req_id: Any,
+    name: str,
+    arguments: dict[str, Any],
+    auth: Any,
+    client_name: str | None,
+    toolset: str | None,
+) -> Operation | dict[str, Any]:
+    """`_resolve_tool`, and on the assistant toolset first its refusal of any tool it does
+    not carry, then its forced arguments and consumer stamped over the model's own (in
+    place), so neither can be argued away."""
+    if not assistant_connection(toolset):
+        return await _resolve_tool(req_id, name, auth, client_name, toolset)
+    refused = _assistant_refusal(req_id, name, auth)
+    if refused is not None:
+        return refused
+    tool = await _resolve_tool(req_id, name, auth, client_name, toolset)
+    if not isinstance(tool, dict):
+        arguments.update(ASSISTANT_FORCED_ARGS.get(tool.name, {}))
+        arguments["consumer"] = ASSISTANT_CONSUMER
+    return tool
+
+
 async def _resolve_tool(
     req_id: Any, name: str, auth: Any, client_name: str | None, toolset: str | None = None
 ) -> Operation | dict[str, Any]:
@@ -388,7 +427,10 @@ async def _resolve_tool(
         )
 
     op = TOOLS_BY_NAME.get(name)
-    if op is None or op.name in _MCP_HIDDEN_OPS:
+    # The assistant toolset carries the plane searches the other listings hide in favour
+    # of `loom_search`: it needs their exact-plane results and their `auto_touch` switch.
+    on_roster = op is not None and op.name in MCP_ASSISTANT_OPS and assistant_connection(toolset)
+    if op is None or (op.name in _MCP_HIDDEN_OPS and not on_roster):
         # Return a result-with-isError, not a JSON-RPC error frame: some
         # clients drop conversation state on JSON-RPC errors (surfaces as
         # "Tool result could not be submitted"). Both are spec-legal.

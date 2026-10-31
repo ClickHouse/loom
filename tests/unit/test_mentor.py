@@ -1527,11 +1527,11 @@ def test_brief_for_an_anonymous_caller_is_about_the_top_writer(
         and out.agent_defaulted is False
         and out.agents == ["claude-code", "obs-verify"]
     )
-    # Anonymous writers and the dashboard are excluded from the writers read itself.
+    # Anonymous writers, the dashboard and the assistant are excluded from the writers read.
     writers_sql = [q for q in ch.sqls if "GROUP BY agent ORDER BY n DESC" in q][0]
     assert (
         "agent NOT IN {anon:Array(String)}" in writers_sql
-        and "consumer != 'loom-ui'" in writers_sql
+        and "consumer NOT IN ('loom-ui', 'loom-assistant')" in writers_sql
     )
 
 

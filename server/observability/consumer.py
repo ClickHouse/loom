@@ -40,6 +40,13 @@ CLASS_SERVICE_ACCOUNT = "service-account"
 CLASS_USER = "user"
 CLASS_ANONYMOUS = "anonymous"
 
+# The consumers that inspect a namespace on a person's behalf rather than use it: the
+# dashboard and the assistant toolset (`?toolset=assistant`). Usage reports leave their
+# calls out of the counts they grade, so looking at a namespace does not change its grade.
+UI_CONSUMER = "loom-ui"
+ASSISTANT_CONSUMER = "loom-assistant"
+INSPECTOR_CONSUMERS: tuple[str, ...] = (UI_CONSUMER, ASSISTANT_CONSUMER)
+
 # Where the consumer value came from.
 SOURCE_CLAIMED = "claimed"
 SOURCE_SELF_REPORTED = "self-reported"
@@ -126,13 +133,16 @@ def current_consumer_source() -> str:
 
 
 __all__ = [
+    "ASSISTANT_CONSUMER",
     "CLASS_ANONYMOUS",
     "CLASS_SERVICE_ACCOUNT",
     "CLASS_USER",
     "CONSUMER_MAX_CHARS",
+    "INSPECTOR_CONSUMERS",
     "SOURCE_CLAIMED",
     "SOURCE_CLASS",
     "SOURCE_SELF_REPORTED",
+    "UI_CONSUMER",
     "bind_current_consumer",
     "claim_consumer",
     "claimed_consumer",

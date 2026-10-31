@@ -16,6 +16,7 @@ from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
 from server.memory.domain.namespace_shapes import STRUCTURED_TYPES
 from server.memory.domain.temporal_sql import served_status_sql
 from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL as _TRANSCRIPT_ROW
+from server.observability.consumer import INSPECTOR_CONSUMERS
 
 _TRACKER_TAG_RE = "(^|[^a-z])(test|tests|flaky|ci|regression|crash|failure|failing)([^a-z]|$)"
 _KEY_ID_RE = r"\d{2,}$"
@@ -28,11 +29,16 @@ _COORD_SEGMENTS = ("lease", "lock", "freeze", "claim")
 
 _SCOPE = "org = {org:String} AND namespace = {ns:String}"
 _WIN = "ts >= now() - INTERVAL {win:UInt32} SECOND"
+# The dashboard's and the assistant's calls inspect a namespace on a person's behalf;
+# they are not the agent's own use of Loom.
+_AGENT_CALL = "consumer NOT IN (" + ", ".join(f"'{c}'" for c in INSPECTOR_CONSUMERS) + ")"
 _LEDGER_AGENT = (
     f"FROM loom.agent_events WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN} "
-    "AND kind != 'worker'"
+    f"AND kind != 'worker' AND {_AGENT_CALL}"
 )
-_LEDGER_NS = f"FROM loom.agent_events WHERE {_SCOPE} AND {_WIN} AND kind != 'worker'"
+_LEDGER_NS = (
+    f"FROM loom.agent_events WHERE {_SCOPE} AND {_WIN} AND kind != 'worker' AND {_AGENT_CALL}"
+)
 # A session the client named. '-' and '*' are what the transports write
 # when a call names none; a week of such calls is not one session.
 _REAL_SESSION = "session_id NOT IN ('', '-', '*')"
@@ -389,7 +395,7 @@ async def top_writers(
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND ts >= now() - INTERVAL {{win:UInt32}} SECOND AND kind != 'worker'
           AND operation IN {_in(write_ops)} AND agent NOT IN {{anon:Array(String)}}
-          AND consumer != 'loom-ui'
+          AND {_AGENT_CALL}
         GROUP BY agent ORDER BY n DESC LIMIT {{lim:UInt32}}
         """,
         params={
@@ -452,12 +458,12 @@ async def last_calls(
     ch = ch or _default_client()
     return list(
         await ch.query_all(
-            """
+            f"""
             SELECT session_id, operation, max(ts) AS last_ts
             FROM loom.agent_events
-            WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String}
-              AND ts >= now() - INTERVAL {win:UInt32} SECOND
-              AND session_id IN {sessions:Array(String)}
+            WHERE org = {{org:String}} AND namespace = {{ns:String}} AND agent = {{agent:String}}
+              AND ts >= now() - INTERVAL {{win:UInt32}} SECOND
+              AND session_id IN {{sessions:Array(String)}} AND {_AGENT_CALL}
             GROUP BY session_id, operation
             """,
             params={

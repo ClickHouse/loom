@@ -120,7 +120,16 @@ def test_coding_roster_is_the_six_memory_verbs_plus_the_code_tools():
     assert curated_roster("readonly", code_tools=True) is None
     # `tasks` is the fourth curated roster (the task inbox plane)
     # `qa` is the fifth curated roster (tracker record, bisect, pr_check, impact)
-    assert MCP_TOOLSETS == ("core", "coding", "atomic", "tasks", "tracker", "readonly", "all")
+    assert MCP_TOOLSETS == (
+        "core",
+        "coding",
+        "atomic",
+        "tasks",
+        "tracker",
+        "readonly",
+        "assistant",
+        "all",
+    )
     assert CURATED_TOOLSETS == {"core", "coding", "atomic", "tasks", "tracker"}
 
 

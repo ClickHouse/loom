@@ -51,6 +51,7 @@ from server.memory.domain.namespace_shapes import (
     EPISODIC_BLOB_CHARS,
     STRUCTURED_TYPES,
 )
+from server.observability.consumer import INSPECTOR_CONSUMERS
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -101,7 +102,13 @@ _NOT_STRUCTURED = "memory_type NOT IN {structured:Array(String)}"
 _SCOPE = "org = {org:String} AND namespace = {ns:String}"
 _LIVE = f"FROM loom.memory FINAL WHERE {_SCOPE} AND tombstoned_at IS NULL"
 _SEARCHABLE = "memory_type NOT IN {ns_types:Array(String)}"
-_LEDGER = f"FROM loom.agent_events WHERE {_SCOPE} AND ts >= now() - INTERVAL {{win:UInt32}} SECOND"
+_LEDGER_ALL = (
+    f"FROM loom.agent_events WHERE {_SCOPE} AND ts >= now() - INTERVAL {{win:UInt32}} SECOND"
+)
+# The dashboard's and the assistant's calls inspect the namespace on a person's behalf;
+# counting them would grade the namespace by who looked at it.
+_AGENT_CALL = "consumer NOT IN {inspectors:Array(String)}"
+_LEDGER = f"{_LEDGER_ALL} AND {_AGENT_CALL}"
 # A hot key: a named key read HOT_KEY_READS times or more in the window. One fragment for
 # the exact-key samples and the hot-key list the coordination check joins.
 _HOT_KEY = "memory_key != '' AND reads >= {hot:UInt32}"
@@ -364,6 +371,7 @@ class _Audit:
             "lim_past": int(inp.sample_limit) + 1,
             "win": int(inp.window_seconds),
             "hot": int(HOT_KEY_READS),
+            "inspectors": list(INSPECTOR_CONSUMERS),
             "ns_types": sorted(NON_SEARCHABLE_TYPES),
             "structured": sorted(STRUCTURED_TYPES),
             "clip": int(EXCERPT_LIMIT),
@@ -480,16 +488,18 @@ class _Audit:
     async def summary_ledger(self) -> None:
         r = await self.one(
             f"""
-            SELECT countIf(operation IN {_LEDGER_GETS}) AS gets,
-                   countIf(operation IN {_LEDGER_SEARCHES}) AS searches,
-                   countIf(operation IN {_LEDGER_SETS}) AS sets
-            {_LEDGER}
+            SELECT countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}) AS gets,
+                   countIf(operation IN {_LEDGER_SEARCHES} AND {_AGENT_CALL}) AS searches,
+                   countIf(operation IN {_LEDGER_SETS} AND {_AGENT_CALL}) AS sets,
+                   countIf(NOT ({_AGENT_CALL})) AS inspector_calls
+            {_LEDGER_ALL}
             """
         )
         s = self.summary
         s.gets = int(r.get("gets") or 0)
         s.searches = int(r.get("searches") or 0)
         s.sets = int(r.get("sets") or 0)
+        s.inspector_calls = int(r.get("inspector_calls") or 0)
         s.get_search_ratio = round(s.gets / max(s.searches, 1), 2)
 
     # -- checks -------------------------------------------------------------

@@ -313,7 +313,16 @@ _MCP_ATOMIC_OPS: frozenset[str] = frozenset(
 # Every toolset name `settings.mcp_toolset` and the per-request `?toolset=`
 # override accept. An unknown value is the configured default (the same rule
 # `?schema_profile=` follows — a bad value never widens or narrows silently).
-MCP_TOOLSETS: tuple[str, ...] = ("core", "coding", "atomic", "tasks", "tracker", "readonly", "all")
+MCP_TOOLSETS: tuple[str, ...] = (
+    "core",
+    "coding",
+    "atomic",
+    "tasks",
+    "tracker",
+    "readonly",
+    "assistant",
+    "all",
+)
 # `readonly` is a projection, not a curated roster: it lists the
 # `all` surface minus every write / higher-than-viewer tool, computed in
 # `_tools_descriptor` from each op's role. It is deliberately NOT in
@@ -325,6 +334,61 @@ MCP_TOOLSETS: tuple[str, ...] = ("core", "coding", "atomic", "tasks", "tracker",
 # and schema clients already hold). The curated rosters above name only
 # registry-listed ops; `op_toolsets` counts these on every listing.
 SYNTHETIC_TOOL_OPS: frozenset[str] = frozenset({"search.query"})
+
+# `assistant` is the connection a chat client investigates Loom through on a person's
+# behalf: a small fixed set of reads, and nothing else is callable on it (`loom_op` and
+# `loom_search` included), whatever the token would allow. It is not a curated roster:
+# it never joins a `+` union, since a union would add another roster's writes. It carries
+# `memory.search` and `knowledge.search`, which the other listings hide in favour of
+# `loom_search`: an investigation needs one plane's results at a time. On it every
+# call is ledgered as consumer `loom-assistant`, so usage reports leave the assistant's own
+# reads out, and the reads that record usage as a side effect are told not to
+# (`ASSISTANT_FORCED_ARGS`).
+ASSISTANT_TOOLSET = "assistant"
+MCP_ASSISTANT_OPS: frozenset[str] = frozenset(
+    {
+        # Inspect: what the namespace holds and how it is used.
+        "namespace.get",
+        "namespace.summary",
+        "namespace.taxonomy",
+        "namespace.audit",
+        "namespace.validate",
+        "namespace.guide_get",
+        "namespace.guide_history",
+        "namespace.list_categories",
+        "mentor.brief",
+        "grants.list",
+        # Cited questions over memory, documents and code.
+        "memory.search",
+        "memory.ask",
+        "memory.get",
+        "memory.list",
+        "memory.history",
+        "memory.provenance",
+        "memory.aggregate",
+        "facts.traverse",
+        "facts.path",
+        "knowledge.search",
+        "knowledge.get",
+        "knowledge.list",
+        "code.search",
+        "code.symbol",
+    }
+)
+# Per op, the arguments an assistant call always carries, whatever the model sent: a
+# search records no recall usage and an ask feeds no reinforcement, so inspecting a
+# namespace does not change what it ranks. An assistant call's result is the op's full
+# output, as HTTP returns it; a search leaves out its per-hit score breakdown.
+ASSISTANT_FORCED_ARGS: dict[str, dict[str, object]] = {
+    "memory.search": {"auto_touch": False, "explain": False},
+    "memory.ask": {"reinforce": False},
+}
+
+
+def is_assistant(toolset: str | None) -> bool:
+    """Whether a connection's ``?toolset=`` is the assistant toolset."""
+    return toolset_parts(toolset) == (ASSISTANT_TOOLSET,)
+
 
 # The tiers whose roster is a fixed frozenset (everything else is `all`).
 CURATED_TOOLSETS: frozenset[str] = frozenset({"core", "coding", "atomic", "tasks", "tracker"})

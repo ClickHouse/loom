@@ -19,9 +19,11 @@ from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import (
     _MCP_HIDDEN_OPS,
+    MCP_ASSISTANT_OPS,
     SYNTHETIC_TOOL_OPS,
     canonical_toolset,
     curated_roster,
+    is_assistant,
     is_curated,
     is_toolset,
     toolset_parts,
@@ -288,6 +290,14 @@ def resolve_toolset(requested: str | None, configured: str | None) -> str:
     return requested_l if requested_l and is_toolset(requested_l) else configured_l
 
 
+def assistant_connection(requested: str | None) -> bool:
+    """Whether a connection's ``?toolset=`` (resolved against the deployment's) is the
+    assistant toolset, where only its reads are callable."""
+    from server.settings import settings
+
+    return is_assistant(resolve_toolset(requested, settings.mcp_toolset))
+
+
 def _curated_description(toolset: str, op_name: str) -> str | None:
     """The curated prose for ``op_name`` on ``toolset``: the atomic tier has
     its own policy-shaped texts; the coding tier overrides the few
@@ -321,6 +331,9 @@ def listed_ops(toolset: str | None) -> list[Operation]:
     # publicly cacheable; the token is still the call-time
     # security boundary.
     readonly = toolset == "readonly"
+    if is_assistant(toolset):
+        # A fixed set of reads, listed whatever their maturity or the code tools flag.
+        return [op for op in ALL_OPERATIONS if op.name in MCP_ASSISTANT_OPS and op.read_only]
     code_tools = bool(settings.mcp_code_tools)
     core_ops = curated_roster(toolset, code_tools=code_tools) or frozenset()
     # The code tools are the coding tier's point: listed there regardless of
@@ -394,7 +407,8 @@ async def _tools_descriptor(
         if op.name in always_load:
             descriptor["_meta"] = {"anthropic/alwaysLoad": True}
         descriptors.append(descriptor)
-    descriptors.extend(_synthetic_tool_descriptors(toolset))
+    if not is_assistant(toolset):
+        descriptors.extend(_synthetic_tool_descriptors(toolset))
     from server.transport.mcp_schemas import (
         DEFAULT_SCHEMA_PROFILE,
         SCHEMA_PROFILES,

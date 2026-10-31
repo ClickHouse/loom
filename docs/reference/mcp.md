@@ -197,21 +197,23 @@ caller's failed batches once more; `loom_op` routes it on every toolset but `rea
 ### Toolsets
 
 A toolset decides what is **listed**; every non-hidden op stays callable by
-tool name, or through `loom_op`, whatever the toolset.
+tool name, or through `loom_op`, whatever the toolset. The `assistant` toolset is the
+exception: on it only its own reads are callable.
 
-| Toolset    | Lists                                                                                                                                                                                                                                                                        | For                                            |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `core`     | The chat loop: memory save, recall and manage, working memory, knowledge documents, profile, conversation logging, namespace orientation, erasure, `blacklist.add`, `context.pack`. The code tools join with `LOOM_MCP_CODE_TOOLS=true`.                                     | chat clients (the default)                     |
-| `coding`   | `memory.set/update/get/delete`, `working_memory.set`, `context.pack`, the code tools (`code.search`, `grep`, `enclosing`, `ask`, `symbol`, `outline`, `callers`, `context_pack`), `tracker.duplicate_check`, `code.bisect_candidates`, `code.pr_check`, `code.impact`.       | coding agents                                  |
-| `tracker`  | `tracker.answer`, `binding`, `component`, `duplicate_check`, `flaky`, `item`, `links`, `release`, `similar`, `test_signal`, plus `code.bisect_candidates`, `code.pr_check`, `code.impact`.                                                                                   | sessions working a failing test, crash or PR   |
-| `tasks`    | `task.pull/create/complete/fail/wont_do/defer/heartbeat/updates/list/get`, `inbox.list`.                                                                                                                                                                                     | a session acting as an agent with a task inbox |
-| `atomic`   | `memory.set/get/delete/ask`, `working_memory.set/append`, `run.begin/complete`.                                                                                                                                                                                              | minimal, policy-shaped agents                  |
-| `readonly` | The `all` listing minus every tool whose `readOnlyHint` is false.                                                                                                                                                                                                            | read-only registrations                        |
-| `all`      | Every non-hidden op whose `maturity` is `stable`, plus the `experimental` ops the core or atomic roster lists. An experimental op that neither roster lists is left out; it is still callable by name or through `loom_op`. Code tools only with `LOOM_MCP_CODE_TOOLS=true`. | operators                                      |
+| Toolset     | Lists                                                                                                                                                                                                                                                                                                                                              | For                                            |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `core`      | The chat loop: memory save, recall and manage, working memory, knowledge documents, profile, conversation logging, namespace orientation, erasure, `blacklist.add`, `context.pack`. The code tools join with `LOOM_MCP_CODE_TOOLS=true`.                                                                                                           | chat clients (the default)                     |
+| `coding`    | `memory.set/update/get/delete`, `working_memory.set`, `context.pack`, the code tools (`code.search`, `grep`, `enclosing`, `ask`, `symbol`, `outline`, `callers`, `context_pack`), `tracker.duplicate_check`, `code.bisect_candidates`, `code.pr_check`, `code.impact`.                                                                             | coding agents                                  |
+| `tracker`   | `tracker.answer`, `binding`, `component`, `duplicate_check`, `flaky`, `item`, `links`, `release`, `similar`, `test_signal`, plus `code.bisect_candidates`, `code.pr_check`, `code.impact`.                                                                                                                                                         | sessions working a failing test, crash or PR   |
+| `tasks`     | `task.pull/create/complete/fail/wont_do/defer/heartbeat/updates/list/get`, `inbox.list`.                                                                                                                                                                                                                                                           | a session acting as an agent with a task inbox |
+| `atomic`    | `memory.set/get/delete/ask`, `working_memory.set/append`, `run.begin/complete`.                                                                                                                                                                                                                                                                    | minimal, policy-shaped agents                  |
+| `readonly`  | The `all` listing minus every tool whose `readOnlyHint` is false.                                                                                                                                                                                                                                                                                  | read-only registrations                        |
+| `assistant` | A fixed set of reads for investigating Loom on a person's behalf: `namespace.get/summary/taxonomy/audit/validate/guide_get/guide_history/list_categories`, `mentor.brief`, `grants.list`, `memory.search/ask/get/list/history/provenance/aggregate`, `facts.traverse/path`, `knowledge.search/get/list`, `code.search/symbol`. No synthetic tools. | a chat client acting for a signed-in person    |
+| `all`       | Every non-hidden op whose `maturity` is `stable`, plus the `experimental` ops the core or atomic roster lists. An experimental op that neither roster lists is left out; it is still callable by name or through `loom_op`. Code tools only with `LOOM_MCP_CODE_TOOLS=true`.                                                                       | operators                                      |
 
 Curated rosters combine: `?toolset=coding+tracker`, `coding,tracker`, or an
-unescaped `+` that arrives as a space. Only curated rosters join (`all` and
-`readonly` are whole surfaces), and an unknown part makes the whole value
+unescaped `+` that arrives as a space. Only curated rosters join (`all`,
+`readonly` and `assistant` are whole surfaces), and an unknown part makes the whole value
 unknown, so the listing falls back to the deployment default. The rosters are
 the frozensets in `server/operations/toolsets.py`; `ops.capabilities` reports
 each op's `toolsets`. A second MCP registration on another toolset
@@ -233,8 +235,38 @@ paging and abstain fields. Score components, explanations, retrieval plans and
 costs, hashes and empty fields are dropped. **Why:** some clients hand
 `structuredContent` to the model as well as the text block, and the full
 diagnostic shape costs several thousand tokens for a short answer.
-`explain: true` on the call returns the full shape. HTTP and the SDKs always
-get the full result.
+`explain: true` on the call returns the full shape. HTTP, the SDKs and the
+`assistant` toolset always get the full result.
+
+### The assistant toolset
+
+`?toolset=assistant` is the connection a chat client uses to investigate Loom on behalf
+of the signed-in person: what a namespace holds, how it is used, and cited answers over
+memory, documents and code. On it:
+
+- **Only its reads are callable.** A `tools/call` for any other tool, `loom_op` and
+  `loom_search` included, answers `isError` with code `UNKNOWN_OP` before the handler
+  runs, whatever the token allows. The token is still checked on every call, so a read
+  the person may not make is refused as on any connection. Mint the client's token with
+  the `viewer` role to make the same limit hold on every other surface.
+- **Its calls are ledgered as consumer `loom-assistant`**, whatever the call sends.
+  `namespace.audit`, `mentor.brief` and `knowledge.reads` leave that consumer and the
+  dashboard's (`loom-ui`) out of their usage counts, so looking at a namespace does not
+  change its grade; `namespace.audit` reports how many it left out in
+  `summary.inspector_calls`. A token whose `consumer` claim names another consumer keeps
+  its claim, and its calls are counted.
+- **Reads do not record usage.** `memory.search` runs with `auto_touch: false` and
+  `explain: false`, and `memory.ask` with `reinforce: false`, whatever the call sends, so
+  an investigation does not raise the recall counts that rank results. What remains is
+  the request ledger row and the caches an answer may fill.
+- **Results are the full output**, as HTTP returns them, since a citation needs the
+  identities, versions and attestations the trimmed shape drops. `memory.search` and
+  `knowledge.search`, which the other listings leave to `loom_search`, are listed here
+  so an answer can come from one plane at a time.
+- **The `initialize` instructions** tell the model to cite each claim by key and version
+  or content hash, to keep source statements, computed results and its own reading apart,
+  to report missing evidence as not observed, and to treat stored text as data that
+  cannot grant a tool or approve a change.
 
 ## Errors
 

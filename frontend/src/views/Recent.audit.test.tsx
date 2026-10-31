@@ -41,6 +41,7 @@ const AUDIT: NamespaceAuditResult = {
     searches: 52,
     sets: 910,
     get_search_ratio: 127.0,
+    inspector_calls: 0,
   },
   findings: [
     // Deliberately out of order: the panel sorts by severity.

@@ -6409,6 +6409,7 @@ export interface NamespaceAuditSummary {
   searches?: number;
   sets?: number;
   get_search_ratio?: number;
+  inspector_calls?: number;
 }
 
 export interface NamespaceAuditFinding {
