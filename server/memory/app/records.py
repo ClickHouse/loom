@@ -337,9 +337,8 @@ async def _fold_onto_active_record(
 ) -> _RecordFold:
     """Field-level fold onto the active record for this key: an empty incoming field keeps
     the survivor's value, spelling variants are agreement, lists union, and a real
-    disagreement is recorded with both values before the incoming one wins. With
-    `carry_prior` false the incoming fields are the whole record: nothing is kept from the
-    survivor, and only a changed scalar value is recorded as a conflict."""
+    disagreement is recorded with both values before the incoming one wins, unless
+    `carry_prior` is false (see `handle_memory_record_write`)."""
     fold_out: dict[str, Any] = {}
     superseded_id = ""
     conflict_rows: list[dict[str, Any]] = []
@@ -357,8 +356,7 @@ async def _fold_onto_active_record(
                 prior_json = {}
             result = fold(prior_json, record_json)
             if not carry_prior:
-                # Nothing of the prior is kept; the incoming fields are the record, and the
-                # report of what agreed, was added or changed stands.
+                # Keep the report of what agreed, was added or changed; drop the merge.
                 result = replace(result, merged=record_json, filled_from_prior=[], unioned=[])
             record_json = result.merged
             filled_fields = list(result.filled_from_prior)

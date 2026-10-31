@@ -133,8 +133,7 @@ async def _write_decision(
 ) -> str:
     """Memory row + record under one key. Returns the record_id. The row goes first: a
     delete keeps the record only while its writer's row is live, so that row must exist
-    before the record does. The record is written whole from `payload`, keeping nothing
-    of the one it supersedes, so no other writer's fields reach it."""
+    before the record does."""
     from server.memory.app.records import handle_memory_record_write
     from server.memory.app.write import handle_memory_set
 

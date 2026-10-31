@@ -1,6 +1,5 @@
-"""Reads and writes of active typed records: the fold's read, the supersede and decision
-tombstone copies, the record a decision revision builds on with its writer, and the
-active decision records of several keys."""
+"""Active typed records of loom.memory_records: reads, and the supersede and decision
+tombstone copies."""
 
 from __future__ import annotations
 
