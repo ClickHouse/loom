@@ -485,8 +485,7 @@ async def handle_memory_record_write(
     input: MemoryRecordWriteInput, *, carry_prior: bool = True
 ) -> MemoryRecordWriteOutput:
     """Write one typed record. With `carry_prior` false the incoming fields are the whole
-    record: nothing is kept from the one it supersedes, and only changed values are recorded
-    as conflicts."""
+    record: nothing is kept from the one it supersedes."""
     schema = await _schema_by_name(input.org, input.namespace, input.schema_name)
     if not schema or str(schema.get("status")) != "active":
         raise HTTPException(

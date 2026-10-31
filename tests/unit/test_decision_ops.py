@@ -1212,7 +1212,7 @@ async def test_an_outcome_keeps_nothing_of_another_active_record(
     other = {"reasoning": "the other writer's reason", "alternatives": "wait", "run_id": "r9"}
 
     async def _other_record(*_a: Any, **_k: Any) -> Any:
-        from server.memory.store.records import ActiveRecord
+        from server.memory.store import ActiveRecord
 
         return ActiveRecord("00000000-0000-0000-0000-0000000000e1", None, json.dumps(other))
 

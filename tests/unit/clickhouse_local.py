@@ -7,6 +7,7 @@ the host's zone."""
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from datetime import UTC, datetime
@@ -76,6 +77,9 @@ def _output(
     return [json.loads(line) for line in out.stdout.splitlines() if line.strip()]
 
 
+_CREATED = re.compile(r"\bCREATE TABLE (?:IF NOT EXISTS )?([\w.]+)")
+
+
 class KeptCH:
     """A ClickHouse client over clickhouse-local whose database is kept under `path`, so
     each statement sees what the earlier ones wrote. An insert into a table the fixture
@@ -83,11 +87,13 @@ class KeptCH:
 
     def __init__(self, path: Path, *setup: str) -> None:
         self.path = path
+        self.tables: set[str] = set()
         self.create(*setup)
 
     def create(self, *statements: str) -> None:
         """Run DDL (with any session `SET` it needs) in one session."""
         run(list(statements), "SELECT 1", path=self.path)
+        self.tables |= {m.group(1) for s in statements for m in _CREATED.finditer(s)}
 
     async def execute(
         self, sql: str, params: dict[str, Any] | None = None, *, settings: Any = None
@@ -95,17 +101,14 @@ class KeptCH:
         run([sql], "SELECT 1", params, path=self.path)
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        if table not in self.tables:
+            return
         for r in rows:
             cols = ", ".join(r)
             data = json.dumps(r, default=str)
-            try:
-                await self.execute(
-                    f"INSERT INTO {table} ({cols}) "
-                    f"SELECT {cols} FROM format(JSONEachRow, $${data}$$)"
-                )
-            except AssertionError as e:
-                if not ("UNKNOWN_TABLE" in str(e) and f"Table {table} does not exist" in str(e)):
-                    raise
+            await self.execute(
+                f"INSERT INTO {table} ({cols}) SELECT {cols} FROM format(JSONEachRow, $${data}$$)"
+            )
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
         lines = _output([], sql, params, path=self.path, fmt="JSONCompactEachRowWithNamesAndTypes")

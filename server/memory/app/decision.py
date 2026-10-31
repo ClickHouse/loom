@@ -46,13 +46,13 @@ from server.memory.app import decisions as svc
 from server.memory.domain.decision_schema import SCHEMA_FIELDS, SCHEMA_NAME
 from server.memory.store import (
     Identity,
+    WriterRecord,
     active_decision_records,
     get_by_key,
     live_writer_record,
     next_version,
     tombstone_decision_record,
 )
-from server.memory.store.records import WriterRecord
 
 log = logging.getLogger(__name__)
 
@@ -408,16 +408,17 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             )
             break
         except HTTPException as e:
-            # Only the hash mismatch arrives as an HTTPException; the key lease's busy answer
-            # is a PreconditionFailedError and goes to the caller as it is.
+            # memory.set's hash mismatch is the HTTPException coded PRECONDITION_FAILED (the
+            # record half never raises that code); the lease's busy answer is a
+            # PreconditionFailedError and is not caught here.
             mismatch = isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED"
             if not mismatch:
                 raise
             if attempt == 2:
-                if (
-                    await get_by_key(identity, input.memory_key, strong=True, scope=request_scope())
-                    is None
-                ):
+                current = await get_by_key(
+                    identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
+                )
+                if current is None:
                     raise not_found() from e
                 raise PreconditionFailedError(
                     "the decision changed while its outcome was being written; "

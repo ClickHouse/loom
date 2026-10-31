@@ -140,6 +140,8 @@ from server.memory.store.reads import (
     versions_above,
 )
 from server.memory.store.records import (
+    ActiveRecord,
+    WriterRecord,
     active_decision_records,
     active_record,
     live_writer_record,
@@ -199,6 +201,8 @@ __all__ = [
     "version_time",
     "reemit_version",
     "_SEQUENTIAL",
+    "ActiveRecord",
+    "WriterRecord",
     "active_decision_records",
     "active_record",
     "apply_entities_batch",
