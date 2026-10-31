@@ -925,7 +925,7 @@ async def test_a_new_writers_decision_keeps_nothing_of_the_earlier_writers(
             org="o", namespace="n", memory_key=_KEY, realized_outcome="took 90s", success=True
         )
     )
-    await h.handle_decision_record(
+    restated = await h.handle_decision_record(
         _record_input(
             **scenario,
             agent="maintainer",
@@ -946,6 +946,14 @@ async def test_a_new_writers_decision_keeps_nothing_of_the_earlier_writers(
     for field in ("realized_outcome", "success", "alternatives", "confidence"):
         assert record[field] in (None, ""), field
     assert record["run_id"] in (None, "") and record["outcome"] == "hotfix"
+    states = await local.query_all(
+        "SELECT field_name, value_state FROM loom.memory_record_fields FINAL "
+        "WHERE record_id = {rid:UUID}",
+        {"rid": restated.record_id},
+    )
+    by_field = {r["field_name"]: r["value_state"] for r in states}
+    for field in ("realized_outcome", "success", "alternatives", "confidence", "run_id"):
+        assert by_field[field] == "absent", field
 
     # The changed scalar is still recorded as a conflict between the two records.
     conflicts = await local.query_all(

@@ -78,8 +78,8 @@ LIMIT 1"""
 class ActiveRecord(NamedTuple):
     """The key's newest active record, as the record write's fold reads it."""
 
-    rid: str
-    mid: str
+    record_id: str
+    memory_id: str
     record_json: str
 
 
@@ -162,7 +162,7 @@ async def active_record(
     ch = ch or _default_client()
     row = await ch.query_one(
         _ACTIVE_RECORD_ROW,
-        {"org": org, "ns": namespace, "schema": schema_name, "key": memory_key},
+        params={"org": org, "ns": namespace, "schema": schema_name, "key": memory_key},
     )
     if row is None:
         return None

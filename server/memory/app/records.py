@@ -361,8 +361,8 @@ async def _fold_onto_active_record(
             record_json = result.merged
             filled_fields = list(result.filled_from_prior)
             fold_out = result.as_dict()
-            superseded_id = prior_row.rid
-            prior_mid = prior_row.mid or None
+            superseded_id = prior_row.record_id
+            prior_mid = prior_row.memory_id or None
             conflict_rows = [
                 {
                     "org": input.org,
