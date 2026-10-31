@@ -39,12 +39,23 @@ def run(
     params: dict[str, Any] | None = None,
     *,
     path: Path | None = None,
-    fmt: str = "JSONEachRow",
-) -> list[Any]:
+) -> list[dict[str, Any]]:
     """The rows `sql` returns after the `setup` statements, in a fresh `loom` database, or
     in the one kept under `path` so a later call sees what this one wrote. Its
     `{name:Type}` parameters are bound by type, as the server binds them, so a parameter
     whose type does not fit its column fails or matches what it would in production."""
+    return _output(setup, sql, params, path=path, fmt="JSONEachRow")
+
+
+def _output(
+    setup: list[str],
+    sql: str,
+    params: dict[str, Any] | None = None,
+    *,
+    path: Path | None = None,
+    fmt: str,
+) -> list[Any]:
+    """The parsed lines `sql` prints in `fmt` after the `setup` statements (see `run`)."""
     script = ";\n".join(["CREATE DATABASE IF NOT EXISTS loom", *setup, sql])
     # The server's own binder, which also keeps a DateTime64 value's fraction; the
     # session is in UTC, as the server's is, since a zone-less one is read in it.
@@ -102,8 +113,8 @@ class KeptCH:
                     raise
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
-        lines = run([], sql, params, path=self.path, fmt="JSONCompactEachRowWithNamesAndTypes")
-        names, types, *rows = lines or [[], []]
+        lines = _output([], sql, params, path=self.path, fmt="JSONCompactEachRowWithNamesAndTypes")
+        names, types, *rows = lines
         # A DateTime column as the driver answers it: a datetime, not JSON text.
         dated = [t.removeprefix("Nullable(").startswith("DateTime") for t in types]
         return [
