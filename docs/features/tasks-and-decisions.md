@@ -277,7 +277,7 @@ superseded in the record plane and does not keep the record.
   paths; `memory.move` with `keep_redirect=true`, whose redirect row still counts as the writer's live row under the
   old key; a `memory.set` under the writer's identity that rewrites the key with another `memory_type`; the expiry
   sweep's tombstone of an expired writer row.
-- **`decision.outcome` writes under** the record's writer, and answers not-found when the writer's row is not live.
+- **`decision.outcome`**: writes under the record's writer, and answers not-found when the writer's row is not live.
 
 | Operation             | Role   | Does                                                                                               |
 | --------------------- | ------ | -------------------------------------------------------------------------------------------------- |
