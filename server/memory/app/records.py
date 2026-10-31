@@ -362,6 +362,7 @@ async def _fold_onto_active_record(
                 filled_fields = list(result.filled_from_prior)
             else:
                 fold_out["filled_from_prior"] = []
+                fold_out["unioned"] = []
             superseded_id = str(prior_row["rid"])
             prior_mid = str(prior_row.get("mid") or "") or None
             conflict_rows = [
@@ -486,8 +487,8 @@ async def handle_memory_record_write(
     input: MemoryRecordWriteInput, *, carry_prior: bool = True
 ) -> MemoryRecordWriteOutput:
     """Write one typed record. `carry_prior` false writes the incoming fields as the whole
-    record, keeping nothing of the record it supersedes (decision.record restates a
-    decision whole)."""
+    record, keeping nothing of the record it supersedes (every decision write restates its
+    record whole)."""
     schema = await _schema_by_name(input.org, input.namespace, input.schema_name)
     if not schema or str(schema.get("status")) != "active":
         raise HTTPException(
