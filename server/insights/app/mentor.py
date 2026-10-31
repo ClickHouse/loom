@@ -52,6 +52,7 @@ from server.insights.app.mentor_rules import (
 from server.insights.store.mentor import ProfileReads
 from server.memory.domain.excerpt import EXCERPT_LIMIT
 from server.memory.domain.namespace_shapes import EPISODIC_BLOB_CHARS
+from server.observability.consumer import INSPECTOR_CONSUMERS
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -83,8 +84,10 @@ _inflight: dict[tuple[str, str, str], asyncio.Task[Any]] = {}
 # Keyed like `_cache` and evicted with it, so it is bounded the same way.
 _profile_shown: dict[tuple[str, str, str], set[str]] = {}
 
-# Callers the mentor never speaks to: the dashboard's own traffic.
-_SILENT_AGENTS = frozenset({"loom-ui"})
+# Callers the mentor never speaks to: the dashboard and the assistant toolset, which
+# inspect a namespace for a person rather than use it (and whose connection carries none
+# of the tools a hint points at).
+_SILENT_AGENTS = frozenset(INSPECTOR_CONSUMERS)
 # A profile hint rides only the calls its advice is about:
 # the graph hint on a knowledge.get or a code.* result is advice about
 # something else. Codes absent here ride every `_CARRIES_PROFILE_HINTS` op.

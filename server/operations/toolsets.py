@@ -340,10 +340,10 @@ SYNTHETIC_TOOL_OPS: frozenset[str] = frozenset({"search.query"})
 # `loom_search` included), whatever the token would allow. It is not a curated roster:
 # it never joins a `+` union, since a union would add another roster's writes. It carries
 # `memory.search` and `knowledge.search`, which the other listings hide in favour of
-# `loom_search`: an investigation needs one plane's results at a time. On it every
-# call is ledgered as consumer `loom-assistant`, so usage reports leave the assistant's own
-# reads out, and the reads that record usage as a side effect are told not to
-# (`ASSISTANT_FORCED_ARGS`).
+# `loom_search`: an investigation needs one plane's results at a time. On it every call
+# names consumer `loom-assistant` (a token whose `consumer` claim names another keeps its
+# claim), so usage reports leave the assistant's own reads out, and the reads that record
+# usage as a side effect are told not to (`ASSISTANT_FORCED_ARGS`).
 ASSISTANT_TOOLSET = "assistant"
 MCP_ASSISTANT_OPS: frozenset[str] = frozenset(
     {

@@ -164,3 +164,33 @@ def test_an_assistant_result_is_the_full_output() -> None:
     assert lean_result(payload, {"consumer": "loom-assistant"}) is payload
     trimmed = lean_result(payload, {"consumer": "other"})
     assert "session_id" not in trimmed["results"][0]
+
+
+def test_no_listed_description_names_a_tool_the_listing_lacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import re
+
+    monkeypatch.setattr(settings, "mcp_code_tools", False)
+    descriptors = asyncio.run(mcp._tools_descriptor(toolset="assistant"))
+    listed = {d["name"] for d in descriptors}
+    for d in descriptors:
+        named = set(re.findall(r"\bloom_[a-z_]+\b", d["description"]))
+        assert named <= listed, (d["name"], named - listed)
+
+
+@pytest.mark.parametrize(
+    "defaults",
+    [{"namespace": "", "readable": ["a", "b"]}, {"namespace": "", "readable": []}],
+)
+def test_the_assistant_primer_for_a_token_with_no_default_namespace(
+    defaults: dict[str, Any],
+) -> None:
+    primer = asyncio.run(
+        mcp_primer._loom_primer_text(
+            None, include_profile=False, toolset="assistant", defaults=defaults
+        )
+    )
+    assert "loom_search" not in primer
+    assert "no default namespace" in primer
+    assert all(f"`{ns}`" in primer for ns in defaults["readable"])

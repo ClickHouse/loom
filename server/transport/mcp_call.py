@@ -394,13 +394,16 @@ async def _resolve_connection_tool(
 ) -> Operation | dict[str, Any]:
     """`_resolve_tool`, and on the assistant toolset first its refusal of any tool it does
     not carry, then its forced arguments and consumer stamped over the model's own (in
-    place), so neither can be argued away."""
+    place), so the model cannot argue either away. A token whose `consumer` claim names
+    another consumer keeps its claim (`resolve_consumer_and_source`)."""
     if not assistant_connection(toolset):
         return await _resolve_tool(req_id, name, auth, client_name, toolset)
     refused = _assistant_refusal(req_id, name, auth)
     if refused is not None:
         return refused
-    tool = await _resolve_tool(req_id, name, auth, client_name, toolset)
+    # The roster carries the plane searches the other listings hide in favour of
+    # `loom_search`: it needs their exact-plane results and their `auto_touch` switch.
+    tool = await _resolve_tool(req_id, name, auth, client_name, toolset, allow_hidden=True)
     if not isinstance(tool, dict):
         arguments.update(ASSISTANT_FORCED_ARGS.get(tool.name, {}))
         arguments["consumer"] = ASSISTANT_CONSUMER
@@ -408,7 +411,13 @@ async def _resolve_connection_tool(
 
 
 async def _resolve_tool(
-    req_id: Any, name: str, auth: Any, client_name: str | None, toolset: str | None = None
+    req_id: Any,
+    name: str,
+    auth: Any,
+    client_name: str | None,
+    toolset: str | None = None,
+    *,
+    allow_hidden: bool = False,
 ) -> Operation | dict[str, Any]:
     """Phase 1 of `_call_tool`: the tool name → its registry op, or the
     whole JSON-RPC response when the call ends here (`loom_activate` ran,
@@ -427,10 +436,7 @@ async def _resolve_tool(
         )
 
     op = TOOLS_BY_NAME.get(name)
-    # The assistant toolset carries the plane searches the other listings hide in favour
-    # of `loom_search`: it needs their exact-plane results and their `auto_touch` switch.
-    on_roster = op is not None and op.name in MCP_ASSISTANT_OPS and assistant_connection(toolset)
-    if op is None or (op.name in _MCP_HIDDEN_OPS and not on_roster):
+    if op is None or (op.name in _MCP_HIDDEN_OPS and not allow_hidden):
         # Return a result-with-isError, not a JSON-RPC error frame: some
         # clients drop conversation state on JSON-RPC errors (surfaces as
         # "Tool result could not be submitted"). Both are spec-legal.

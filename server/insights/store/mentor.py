@@ -31,7 +31,7 @@ _SCOPE = "org = {org:String} AND namespace = {ns:String}"
 _WIN = "ts >= now() - INTERVAL {win:UInt32} SECOND"
 # The dashboard's and the assistant's calls inspect a namespace on a person's behalf;
 # they are not the agent's own use of Loom.
-_AGENT_CALL = "consumer NOT IN (" + ", ".join(f"'{c}'" for c in INSPECTOR_CONSUMERS) + ")"
+_AGENT_CALL = "consumer NOT IN {inspectors:Array(String)}"
 _LEDGER_AGENT = (
     f"FROM loom.agent_events WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN} "
     f"AND kind != 'worker' AND {_AGENT_CALL}"
@@ -87,6 +87,7 @@ class ProfileReads:
             "org": org,
             "ns": namespace,
             "agent": agent,
+            "inspectors": list(INSPECTOR_CONSUMERS),
             "win": int(window_seconds),
             "ttl": int(limits["ttl"]),
             "tracker_re": _TRACKER_TAG_RE,
@@ -134,7 +135,7 @@ class ProfileReads:
             FROM loom.agent_events
             WHERE {_SCOPE} AND agent = {{agent:String}}
               AND ts >= now() - INTERVAL {{ttl:UInt32}} SECOND
-              AND args['out_hint_code'] != ''
+              AND args['out_hint_code'] != '' AND {_AGENT_CALL}
             """
         )
         return sorted(str(c) for c in (r.get("codes") or []) if c)
@@ -404,6 +405,7 @@ async def top_writers(
             "win": int(window_seconds),
             "anon": sorted(anonymous),
             "lim": int(limit),
+            "inspectors": list(INSPECTOR_CONSUMERS),
         },
     )
     return [str(r["agent"]) for r in rows]
@@ -423,15 +425,16 @@ async def hints_shown(
     ch = ch or _default_client()
     return list(
         await ch.query_all(
-            """
+            f"""
             SELECT session_id, args['out_hint_code'] AS code, min(ts) AS first_ts
             FROM loom.agent_events
-            WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String}
-              AND ts >= now() - INTERVAL {win:UInt32} SECOND
+            WHERE org = {{org:String}} AND namespace = {{ns:String}} AND agent = {{agent:String}}
+              AND ts >= now() - INTERVAL {{win:UInt32}} SECOND
               AND args['out_hint_code'] != '' AND session_id NOT IN ('', '-', '*')
+              AND {_AGENT_CALL}
             GROUP BY session_id, code
             ORDER BY first_ts DESC
-            LIMIT {cap:UInt32}
+            LIMIT {{cap:UInt32}}
             """,
             params={
                 "org": org,
@@ -439,6 +442,7 @@ async def hints_shown(
                 "agent": agent,
                 "win": int(window_seconds),
                 "cap": int(cap),
+                "inspectors": list(INSPECTOR_CONSUMERS),
             },
         )
     )
@@ -472,6 +476,7 @@ async def last_calls(
                 "agent": agent,
                 "win": int(window_seconds),
                 "sessions": sessions,
+                "inspectors": list(INSPECTOR_CONSUMERS),
             },
         )
     )

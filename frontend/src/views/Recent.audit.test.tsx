@@ -41,7 +41,7 @@ const AUDIT: NamespaceAuditResult = {
     searches: 52,
     sets: 910,
     get_search_ratio: 127.0,
-    inspector_calls: 0,
+    inspector_calls: 12,
   },
   findings: [
     // Deliberately out of order: the panel sorts by severity.
@@ -205,6 +205,7 @@ describe("Memories: usage audit panel", () => {
     expect(summary).toHaveTextContent("live 786 rows");
     expect(summary).toHaveTextContent("gets 6,606 / searches 52 / sets 910");
     expect(summary).toHaveTextContent("ratio 127");
+    expect(summary).toHaveTextContent("12 dashboard and assistant calls not counted");
 
     // Sorted by severity, humanised codes, share as a percentage.
     const rows = screen.getAllByTestId("audit-finding");

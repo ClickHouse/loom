@@ -36,6 +36,9 @@ from server.transport.mcp_config import (
     _READ_SHAPED_VERBS,
 )
 from server.transport.mcp_descriptions import (
+    ASSISTANT_TOOL_DESCRIPTIONS as _ASSISTANT_TOOL_DESCRIPTIONS,
+)
+from server.transport.mcp_descriptions import (
     ATOMIC_TOOL_DESCRIPTIONS as _ATOMIC_TOOL_DESCRIPTIONS,
 )
 from server.transport.mcp_descriptions import (
@@ -301,8 +304,10 @@ def assistant_connection(requested: str | None) -> bool:
 def _curated_description(toolset: str, op_name: str) -> str | None:
     """The curated prose for ``op_name`` on ``toolset``: the atomic tier has
     its own policy-shaped texts; the coding tier overrides the few
-    descriptions that name a `core`-only op; the rest share
-    TOOL_DESCRIPTIONS."""
+    descriptions that name a `core`-only op; the assistant toolset replaces those that
+    point at tools it does not carry; the rest share TOOL_DESCRIPTIONS."""
+    if is_assistant(toolset):
+        return _ASSISTANT_TOOL_DESCRIPTIONS.get(op_name) or _TOOL_DESCRIPTIONS.get(op_name)
     tiered = None
     for part in toolset_parts(toolset):  # a union takes its first part's tier
         if part == "atomic":

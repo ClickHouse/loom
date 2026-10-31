@@ -790,7 +790,8 @@ def render_table(out: NamespaceAuditOutput) -> str:
         f"({out.criticals} critical, {out.warnings} warning, {out.infos} info)",
         f"  live {s.live_rows} rows / {s.live_bytes:,} B; versions {s.version_rows} rows / "
         f"{s.version_bytes:,} B; excerpts {s.excerpt_bytes:,} B; unembedded {s.unembedded_rows}; "
-        f"gets {s.gets} / searches {s.searches} / sets {s.sets} (ratio {s.get_search_ratio})",
+        f"gets {s.gets} / searches {s.searches} / sets {s.sets} (ratio {s.get_search_ratio}); "
+        f"{s.inspector_calls} dashboard and assistant calls not counted",
         "",
         f"  {'code':<24} {'severity':<9} {'kind':<9} {'count':>8} {'share':>6}  first sample",
     ]
