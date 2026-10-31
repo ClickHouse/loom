@@ -142,6 +142,7 @@ from server.memory.store.reads import (
     versions_above,
 )
 from server.memory.store.records import (
+    active_decision_records,
     active_record,
     live_writer_record,
     supersede_active_record,
@@ -308,6 +309,7 @@ __all__ = [
     "status_divergence_sql",
     "statuses_by_ids",
     "stored_value_text",
+    "active_decision_records",
     "supersede_active_record",
     "supersede_duplicates",
     "superseded_successors",

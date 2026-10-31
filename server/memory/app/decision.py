@@ -39,7 +39,12 @@ from server.memory.api.models_records import (
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app import decisions as svc
 from server.memory.domain.decision_schema import SCHEMA_FIELDS, SCHEMA_NAME
-from server.memory.store import live_writer_record, next_version, tombstone_decision_record
+from server.memory.store import (
+    active_decision_records,
+    live_writer_record,
+    next_version,
+    tombstone_decision_record,
+)
 
 log = logging.getLogger(__name__)
 
@@ -77,16 +82,7 @@ async def _decision_records(
     """Active decision records by key: {memory_key: record_json + made_at}."""
     if not keys:
         return {}
-    rows = await ch.query_all(
-        """
-        SELECT memory_key, record_json, created_at
-        FROM loom.memory_records FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND schema_name = {schema:String} AND memory_key IN {keys:Array(String)}
-          AND status = 'active' AND tombstoned_at IS NULL
-        """,
-        params={"org": org, "ns": namespace, "schema": SCHEMA_NAME, "keys": list(keys)},
-    )
+    rows = await active_decision_records(org, namespace, keys, ch=ch)
     out: dict[str, dict[str, Any]] = {}
     for r in rows:
         rec = svc.parse_record_json(r.get("record_json"))

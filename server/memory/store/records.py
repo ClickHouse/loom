@@ -4,22 +4,23 @@ decision tombstone copies, and the record a decision revision builds on with its
 from __future__ import annotations
 
 from datetime import datetime
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.decision_schema import SCHEMA_NAME
 from server.memory.store.sql import _SEQUENTIAL
 
-# The key's active record: shared by every read and copy below.
-_FROM_ACTIVE_RECORD = """
+# Active records, by key: shared by every read and copy below.
+_FROM_ACTIVE_RECORDS = """
 FROM loom.memory_records FINAL
 WHERE org = {org:String}
   AND namespace = {ns:String}
   AND schema_name = {schema:String}
-  AND memory_key = {key:String}
   AND status = 'active'
   AND tombstoned_at IS NULL
+"""
+_FROM_ACTIVE_RECORD = f"""{_FROM_ACTIVE_RECORDS}  AND memory_key = {{key:String}}
 """
 # The key's live decision rows, under any identity: the tombstone check and the writer read.
 _FROM_LIVE_DECISION_ROWS = """
@@ -73,6 +74,13 @@ SELECT toString(record_id) AS rid, toString(memory_id) AS mid, record_json
 {_FROM_ACTIVE_RECORD}
 ORDER BY version DESC
 LIMIT 1"""
+
+
+# The active decision records of several keys.
+_ACTIVE_DECISION_RECORDS = f"""
+SELECT memory_key, record_json, created_at
+{_FROM_ACTIVE_RECORDS}  AND memory_key IN {{keys:Array(String)}}
+"""
 
 
 class ActiveRecord(NamedTuple):
@@ -167,6 +175,19 @@ async def active_record(
     if row is None:
         return None
     return ActiveRecord(row["rid"], row["mid"] or "", row["record_json"])
+
+
+async def active_decision_records(
+    org: str,
+    namespace: str,
+    keys: list[str],
+    *,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """The active decision records under `keys`: memory_key, record_json, created_at."""
+    ch = ch or _default_client()
+    params = {"org": org, "ns": namespace, "schema": SCHEMA_NAME, "keys": list(keys)}
+    return list(await ch.query_all(_ACTIVE_DECISION_RECORDS, params=params))
 
 
 async def live_writer_record(

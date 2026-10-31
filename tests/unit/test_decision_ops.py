@@ -1,6 +1,6 @@
-"""Decisions as first-class records: key derivation, field
-shaping, the causal walk, the four handlers over stubbed planes, and memory.delete
-retiring a decision's record on clickhouse-local."""
+"""Decisions as first-class records: key derivation, field shaping, the causal walk,
+the four handlers over stubbed planes, and memory.delete retiring a decision's record
+on clickhouse-local."""
 
 from __future__ import annotations
 
@@ -631,6 +631,7 @@ async def test_a_move_without_a_redirect_retires_the_record(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.memory.api.models_move import MemoryMoveInput
+    from server.memory.app import decision as h
     from server.memory.app.move import handle_memory_move
 
     await _write_decision_rows(local, "claude")
@@ -646,6 +647,8 @@ async def test_a_move_without_a_redirect_retires_the_record(
         )
     )
     assert await _history() == ["tombstoned", "active"]
+    # The moved row carries no record: decision.record writes one under the new key.
+    assert await h._decision_records(local, "o", "n", ["decision:moved"]) == {}
 
 
 @pytest.mark.asyncio
