@@ -18,7 +18,7 @@ from fastapi import HTTPException
 
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now as _now
-from server.core.errors import NotFoundError
+from server.core.errors import NotFoundError, PreconditionFailedError
 from server.core.hashing import sha256_value_json
 from server.core.naming import SENTINEL, named
 from server.identity.app.request_scope import request_scope
@@ -52,6 +52,7 @@ from server.memory.store import (
     next_version,
     tombstone_decision_record,
 )
+from server.memory.store.records import WriterRecord
 
 log = logging.getLogger(__name__)
 
@@ -343,16 +344,10 @@ async def handle_decision_chain(input: DecisionChainInput) -> DecisionChainOutpu
     )
 
 
-async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcomeOutput:
-    ch = get_client()
-    # Only the record's live writer revises it; record and writer come from one read.
-    writer = await live_writer_record(input.org, input.namespace, input.memory_key, ch=ch)
-    not_found = NotFoundError(
-        f"no active decision {input.memory_key!r} in {input.org}/{input.namespace}",
-        memory_key=input.memory_key,
-    )
-    if writer is None:
-        raise not_found
+def _outcome_payload(
+    input: DecisionOutcomeInput, writer: WriterRecord
+) -> tuple[dict[str, Any], list[str]]:
+    """The writer's record with the outcome applied, and the row's tags."""
     payload = svc.parse_record_json(writer.record_json)
     payload["realized_outcome"] = input.realized_outcome.strip()
     payload["success"] = input.success
@@ -364,17 +359,31 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     ]
     if input.success is not None:
         tags.append("decision:success" if input.success else "decision:failure")
-    identity = Identity(
-        org=input.org,
-        namespace=input.namespace,
-        agent=writer.agent,
-        user_id=writer.user_id,
-        session_id=writer.session_id,
+    return payload, tags
+
+
+async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcomeOutput:
+    ch = get_client()
+    not_found = NotFoundError(
+        f"no active decision {input.memory_key!r} in {input.org}/{input.namespace}",
+        memory_key=input.memory_key,
     )
-    # The row write is conditional on the writer row just read, so a delete of it since
-    # then refuses the outcome instead of writing the deleted row back. Another write that
-    # only changed the row (a second outcome) is read again and retried once.
+    # The row write is conditional on the writer row read with the record, so a delete of
+    # it since then refuses the outcome instead of writing the deleted row back. A row that
+    # changed (another outcome, a re-record) is read again, with its record, once.
     for attempt in (1, 2):
+        # Only the record's live writer revises it; record and writer come from one read.
+        writer = await live_writer_record(input.org, input.namespace, input.memory_key, ch=ch)
+        if writer is None:
+            raise not_found
+        payload, tags = _outcome_payload(input, writer)
+        identity = Identity(
+            org=input.org,
+            namespace=input.namespace,
+            agent=writer.agent,
+            user_id=writer.user_id,
+            session_id=writer.session_id,
+        )
         row = await get_by_key(
             identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
         )
@@ -396,9 +405,14 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             )
             break
         except HTTPException as e:
-            changed = isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED"
-            if not changed or attempt == 2:
+            mismatch = isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED"
+            if not mismatch:
                 raise
+            if attempt == 2:
+                raise PreconditionFailedError(
+                    "the decision changed while its outcome was being written; "
+                    "call decision.outcome again"
+                ) from e
 
     # Close the loop: the memories the deciding run relied on earn (or lose)
     # credit from the realized outcome — the feedback every decision log lacks.

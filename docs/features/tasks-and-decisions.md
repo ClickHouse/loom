@@ -279,8 +279,9 @@ superseded in the record plane and does not keep the record.
   row under the old key; a `memory.set` under the writer's identity that rewrites the key with another `memory_type`;
   the expiry sweep's tombstone of an expired writer row.
 - **`decision.outcome`**: writes under the record's writer, and answers not-found when the writer's row is not live.
-  Its row write is conditional on the row it read, so it can also answer 409 `PRECONDITION_FAILED` (re-read and retry)
-  or 503 while the key's write lease is busy or unreachable.
+  Its row write is conditional on the row it read: it answers 409 `PRECONDITION_FAILED` when the decision changes twice
+  during the call or another conditional write holds the key, and 503 when the key's lease store is unreachable; call
+  it again.
 
 | Operation             | Role   | Does                                                                                               |
 | --------------------- | ------ | -------------------------------------------------------------------------------------------------- |

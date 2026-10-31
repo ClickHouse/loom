@@ -1089,31 +1089,64 @@ async def test_a_delete_after_the_outcome_read_refuses_the_outcome(
 
 
 @pytest.mark.asyncio
-async def test_an_outcome_whose_row_changed_since_its_read_is_retried(
+async def test_an_outcome_after_a_re_record_builds_on_the_new_record(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A second outcome rewrote the writer's row between this outcome's read and its write:
-    # the decision is still active, so the outcome reads the row again and writes.
+    # The writer records the decision again between the outcome's read and its write: the
+    # outcome reads the new record and its row again and writes over those, keeping the
+    # re-record's reasoning.
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    await h.ensure_schema("o", "n")
+    await _write_decision_rows(local, "claude")
+
+    async def _re_record_first(call: int) -> None:
+        if call == 1:
+            await h.handle_decision_record(
+                _record_input(
+                    category="deploy",
+                    scenario="Roll back or hotfix the image?",
+                    reasoning="the new image is already canaried",
+                    caused_by=[],
+                    influenced_by=[],
+                )
+            )
+
+    seen = _set_into(local, monkeypatch, before=_re_record_first)
+    out = await h.handle_decision_outcome(
+        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+    )
+    # Call 1 is the refused write, call 2 the re-record, call 3 the retried write.
+    assert out.updated and len(seen) == 3
+    seed = await _seed_decision()
+    assert seed is not None and seed.realized_outcome == "ok"
+    assert seed.reasoning == "the new image is already canaried"
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_whose_row_changes_twice_answers_a_conflict(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.errors import PreconditionFailedError
     from server.memory.api.models_decision import DecisionOutcomeInput
     from server.memory.app import decision as h
 
     await h.ensure_schema("o", "n")
     version = await _write_decision_rows(local, "claude")
 
-    async def _rewrite_first(call: int) -> None:
-        if call == 1:
-            row = _memory_row("claude", "decision", version + 1)
-            row["value"] = json.dumps("another outcome's statement")
-            await local.insert("loom.memory", [row])
+    async def _rewrite(call: int) -> None:
+        row = _memory_row("claude", "decision", version + call)
+        row["value"] = json.dumps(f"another outcome's statement {call}")
+        await local.insert("loom.memory", [row])
 
-    seen = _set_into(local, monkeypatch, before=_rewrite_first)
-    out = await h.handle_decision_outcome(
-        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
-    )
-    assert out.updated and len(seen) == 2
-    assert seen[0].if_match_sha256 != seen[1].if_match_sha256
-    seed = await _seed_decision()
-    assert seed is not None and seed.realized_outcome == "ok"
+    seen = _set_into(local, monkeypatch, before=_rewrite)
+    with pytest.raises(PreconditionFailedError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    assert len(seen) == 2
+    assert await _history() == ["active"]
 
 
 @pytest.mark.asyncio
