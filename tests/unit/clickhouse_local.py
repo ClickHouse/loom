@@ -75,8 +75,8 @@ _DATETIME = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$")
 
 class KeptCH:
     """A ClickHouse client over clickhouse-local whose database is kept under `path`, so
-    each statement sees what the earlier ones wrote. A table the fixture did not create
-    reads as empty and drops inserts; `execute` on one raises."""
+    each statement sees what the earlier ones wrote. An insert into a table the fixture
+    did not create is dropped; any other statement on one raises."""
 
     def __init__(self, path: Path, *setup: str) -> None:
         self.path = path
@@ -105,12 +105,7 @@ class KeptCH:
                     raise
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
-        try:
-            rows = run([], sql, params, path=self.path)
-        except AssertionError as e:
-            if "UNKNOWN_TABLE" not in str(e):
-                raise
-            return []
+        rows = run([], sql, params, path=self.path)
         # A DateTime as the driver answers it: a datetime, not JSON text. Matched by value,
         # not column type, so a String holding DateTime-shaped text reads back as one too.
         return [

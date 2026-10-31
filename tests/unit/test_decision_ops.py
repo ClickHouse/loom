@@ -390,7 +390,9 @@ def local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> KeptCH:
 
     ch = KeptCH(
         tmp_path,
-        *(ddl(t) for t in ("memory", "memory_records", "memory_record_versions")),
+        *(ddl(t) for t in ("memory", "memory_versions", "delete_version_checks")),
+        view("memory_versions_mv"),
+        *(ddl(t) for t in ("memory_records", "memory_record_versions")),
         view("memory_record_versions_mv"),
         *(ddl(t) for t in ("memory_record_fields", "memory_record_conflicts")),
         *(ddl(t) for t in ("memory_schemas", "memory_schema_fields")),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Literal
 
@@ -356,13 +356,11 @@ async def _fold_onto_active_record(
             except json.JSONDecodeError:
                 prior_json = {}
             result = fold(prior_json, record_json)
+            if not carry_prior:
+                result = replace(result, merged=record_json, filled_from_prior=[], unioned=[])
+            record_json = result.merged
+            filled_fields = list(result.filled_from_prior)
             fold_out = result.as_dict()
-            if carry_prior:
-                record_json = result.merged
-                filled_fields = list(result.filled_from_prior)
-            else:
-                fold_out["filled_from_prior"] = []
-                fold_out["unioned"] = []
             superseded_id = prior_row.rid
             prior_mid = prior_row.mid or None
             conflict_rows = [

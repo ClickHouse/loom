@@ -160,14 +160,13 @@ async def active_record(
 ) -> ActiveRecord | None:
     """The key's newest active record, or None."""
     ch = ch or _default_client()
-    rows = await ch.query_all(
+    row = await ch.query_one(
         _ACTIVE_RECORD_ROW,
         {"org": org, "ns": namespace, "schema": schema_name, "key": memory_key},
     )
-    if not rows:
+    if row is None:
         return None
-    row = rows[0]
-    return ActiveRecord(str(row["rid"]), str(row.get("mid") or ""), str(row["record_json"]))
+    return ActiveRecord(row["rid"], row["mid"] or "", row["record_json"])
 
 
 async def live_writer_record(
