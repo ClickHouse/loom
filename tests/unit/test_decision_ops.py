@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -793,8 +794,8 @@ def test_a_failing_closing_check_still_records_the_decision(env, monkeypatch) ->
 
 @pytest.mark.asyncio
 async def test_history_hides_erased_mirror_rows_and_serves_the_tombstone(local: KeptCH) -> None:
-    # Mirror rows erasure marked (tombstoned_at set, status unchanged) stay out of history;
-    # the decision delete's tombstoned version is served.
+    # A mirror row with tombstoned_at set and another status stays out of history; the
+    # decision delete's tombstoned version is served.
     await _write_decision_rows(local, "claude")
     await _delete("claude")
     (active,) = await local.query_all(
@@ -854,14 +855,26 @@ def test_decision_ops_refuse_a_token_bounded_below_the_namespace() -> None:
 
 
 def test_record_status_values_match_the_table_enum() -> None:
-    import re
     from typing import get_args
 
     from server.memory.api.models_records import MemoryRecordRow
-    from tests.unit.clickhouse_local import ddl
 
     enum = re.search(r"`status` Enum8\(([^)]*)\)", ddl("memory_records"))
     assert enum is not None
     in_table = re.findall(r"'(\w+)' = \d+", enum.group(1))
     in_model = get_args(MemoryRecordRow.model_fields["status"].annotation)
     assert tuple(in_table) == in_model == ("active", "superseded", "rejected", "tombstoned")
+
+
+@pytest.mark.asyncio
+async def test_a_second_closing_write_keeps_the_record_tombstoned(local: KeptCH) -> None:
+    from server.memory import store as memory_repo
+
+    version = await _write_decision_rows(local, "claude")
+    await _delete("claude")
+    await memory_repo.tombstone_decision_record("o", "n", _KEY, version=version + 1)
+    rows = await local.query_all(
+        "SELECT status FROM loom.memory_records FINAL WHERE record_id = {rid:UUID}",
+        {"rid": _RECORD_ID},
+    )
+    assert rows == [{"status": "tombstoned"}]

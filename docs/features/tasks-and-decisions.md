@@ -266,6 +266,7 @@ decision row holds the key (a row that expired but was not deleted still counts)
   `memory.move` with `keep_redirect=false`, which deletes through `memory.delete`. `decision.chain`,
   `decision.precedents` and `decision.outcome` stop serving it, and `memory.record.history` shows the last version
   with `status="tombstoned"`. `memory.restore` revives the row but not the record; call `decision.record` again.
+  Two retirements that race can each write a tombstoned version, so history may list the tombstone twice.
 - **Leaves the record active**: `memory.clear` and the other bulk tombstone paths; `memory.move` with
   `keep_redirect=true`, whose redirect row still counts as a live decision row under the old key; a `memory.set` under
   the decision's identity that rewrites the key with another `memory_type`.

@@ -141,7 +141,7 @@ from server.memory.store.reads import (
     versions_above,
 )
 from server.memory.store.records import (
-    ACTIVE_RECORD,
+    FROM_ACTIVE_RECORD,
     live_decision_identity,
     supersede_active_record,
     tombstone_decision_record,
@@ -193,7 +193,7 @@ from server.memory.store.sweeps import (
 from server.memory.store.usage import record_usage_event
 
 __all__ = [
-    "ACTIVE_RECORD",
+    "FROM_ACTIVE_RECORD",
     "_hydrate",
     "_MEMORY_FINAL_PROJECTION",
     "next_version",

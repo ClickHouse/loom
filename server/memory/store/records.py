@@ -12,7 +12,7 @@ from server.memory.store.sql import _SEQUENTIAL
 
 # The key's active record (params org, ns, schema, key), and the key's live decision rows
 # under any identity.
-ACTIVE_RECORD = """
+FROM_ACTIVE_RECORD = """
 FROM loom.memory_records FINAL
 WHERE org = {org:String}
   AND namespace = {ns:String}
@@ -21,7 +21,7 @@ WHERE org = {org:String}
   AND status = 'active'
   AND tombstoned_at IS NULL
 """
-_LIVE_DECISION_ROWS = """
+_FROM_LIVE_DECISION_ROWS = """
 FROM loom.memory FINAL
 WHERE org = {org:String}
   AND namespace = {ns:String}
@@ -45,17 +45,17 @@ SELECT
     greatest(version + 1, {{ver:UInt64}}) AS new_version, created_at,
     greatest(updated_at, {{now:DateTime}}) AS new_updated_at,
     {{tombstoned_at:Nullable(DateTime)}} AS new_tombstoned_at
-{ACTIVE_RECORD}"""
+{FROM_ACTIVE_RECORD}"""
 
 _TOMBSTONE_DECISION_RECORD = f"""{_CLOSE_ACTIVE_RECORD}
-  AND (SELECT count() {_LIVE_DECISION_ROWS}) = 0
+  AND (SELECT count() {_FROM_LIVE_DECISION_ROWS}) = 0
 {_SEQUENTIAL}"""
 
 _LIVE_DECISION_IDENTITY = f"""
 SELECT agent, user_id, session_id
-{_LIVE_DECISION_ROWS}
+{_FROM_LIVE_DECISION_ROWS}
 ORDER BY (agent, user_id, session_id) IN (
-    SELECT identity_agent, user_id, session_id {ACTIVE_RECORD}
+    SELECT identity_agent, user_id, session_id {FROM_ACTIVE_RECORD}
 ) DESC, version DESC
 LIMIT 1
 {_SEQUENTIAL}"""
@@ -100,6 +100,8 @@ async def tombstone_decision_record(
 ) -> None:
     """Tombstone the decision record under `memory_key` when no live decision row holds
     the key. `version` is the lowest version the tombstone is written at.
+    Two retirements that race can each write a tombstoned version: history may show the
+    tombstone twice, and FINAL reads it tombstoned either way.
 
     The record plane keys by (schema_name, memory_key) with no identity, while loom.memory
     keys by identity, so the record stays while any live decision row holds the key:

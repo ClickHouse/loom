@@ -36,7 +36,7 @@ from server.memory.api.models_records import (
 )
 from server.memory.domain import record_constraints
 from server.memory.domain.record_values import FIELD_RE, _check_record_fields, coerce_record_value
-from server.memory.store import ACTIVE_RECORD, next_version, supersede_active_record
+from server.memory.store import FROM_ACTIVE_RECORD, next_version, supersede_active_record
 from server.memory.store.record_query import _build_record_query, active_record_tally
 
 _FIELD_TYPES = {"string", "number", "integer", "boolean"}
@@ -345,7 +345,7 @@ async def _fold_onto_active_record(
         prior_rows = await ch.query_all(
             f"""
             SELECT toString(record_id) AS rid, toString(memory_id) AS mid, record_json
-            {ACTIVE_RECORD}
+            {FROM_ACTIVE_RECORD}
             ORDER BY version DESC
             LIMIT 1
             """,
@@ -599,8 +599,9 @@ async def _records_by_ids(
     if history:
         source = "loom.memory_record_versions"
         order = "ORDER BY updated_at DESC, version DESC LIMIT 1 BY record_id, version"
-        # Serves the version a decision's memory.delete tombstoned; erasure deletes mirror
-        # rows outright.
+        # Serves the version a decision's memory.delete tombstoned. Hiding any other row with
+        # tombstoned_at set is defence in depth: no writer produces one in the mirror, and
+        # erasure deletes the mirror's rows outright.
         visible = "AND (status = 'tombstoned' OR tombstoned_at IS NULL)"
     else:
         source, order = "loom.memory_records FINAL", "ORDER BY updated_at DESC"
