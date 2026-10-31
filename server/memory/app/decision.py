@@ -134,12 +134,11 @@ async def _write_decision(
     payload: dict[str, Any],
     tags: list[str],
     valid_at: datetime | None,
-    restate: bool,
 ) -> str:
     """Memory row + record under one key. Returns the record_id. The row goes first: a
     delete keeps the record only while its writer's row is live, so that row must exist
-    before the record does. `restate` writes the record whole, keeping nothing of the
-    one it supersedes."""
+    before the record does. The record is written whole from `payload`, keeping nothing
+    of the one it supersedes, so no other writer's fields reach it."""
     from server.memory.app.records import handle_memory_record_write
     from server.memory.app.write import handle_memory_set
 
@@ -173,7 +172,7 @@ async def _write_decision(
             fields=svc.record_fields(payload),  # type: ignore[arg-type]
             valid_at=valid_at,
         ),
-        carry_prior=not restate,
+        carry_prior=False,
     )
     # Retire the record if the writer's row was deleted before the record landed.
     try:
@@ -220,9 +219,6 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         payload=payload,
         tags=tags,
         valid_at=input.valid_at,
-        # A new decision is stated whole: nothing of the record it supersedes carries
-        # over, so no earlier writer's outcome or fields survive under this writer.
-        restate=True,
     )
 
     edges = 0
@@ -375,7 +371,6 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         payload=payload,
         tags=tags,
         valid_at=None,
-        restate=False,
     )
 
     # Close the loop: the memories the deciding run relied on earn (or lose)

@@ -11,7 +11,7 @@ from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.decision_schema import SCHEMA_NAME
 from server.memory.store.sql import _SEQUENTIAL
 
-# The key's active record. Params: org, ns, schema, key.
+# The key's active record: shared by every read and copy below.
 _FROM_ACTIVE_RECORD = """
 FROM loom.memory_records FINAL
 WHERE org = {org:String}
@@ -21,7 +21,7 @@ WHERE org = {org:String}
   AND status = 'active'
   AND tombstoned_at IS NULL
 """
-# The key's live decision rows, under any identity. Params: org, ns, key.
+# The key's live decision rows, under any identity: the tombstone check and the writer read.
 _FROM_LIVE_DECISION_ROWS = """
 FROM loom.memory FINAL
 WHERE org = {org:String}

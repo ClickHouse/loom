@@ -356,12 +356,12 @@ async def _fold_onto_active_record(
             except json.JSONDecodeError:
                 prior_json = {}
             result = fold(prior_json, record_json)
+            fold_out = result.as_dict()
             if carry_prior:
                 record_json = result.merged
                 filled_fields = list(result.filled_from_prior)
             else:
-                result.filled_from_prior = []
-            fold_out = result.as_dict()
+                fold_out["filled_from_prior"] = []
             superseded_id = str(prior_row["rid"])
             prior_mid = str(prior_row.get("mid") or "") or None
             conflict_rows = [

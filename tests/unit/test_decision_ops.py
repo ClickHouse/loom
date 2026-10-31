@@ -337,12 +337,12 @@ def test_outcome_revises_the_record_and_credits_the_run(env) -> None:
     assert run_call.run_id == "r1"
 
 
-def test_the_writer_read_is_sequential() -> None:
+def test_the_writer_read_and_the_tombstone_are_sequential() -> None:
     from server.memory.store import records
 
-    assert records._LIVE_WRITER_RECORD.rstrip().endswith(
-        "SETTINGS select_sequential_consistency = 1"
-    )
+    sequential = "SETTINGS select_sequential_consistency = 1"
+    assert records._LIVE_WRITER_RECORD.rstrip().endswith(sequential)
+    assert records._TOMBSTONE_DECISION_RECORD.rstrip().endswith(sequential)
 
 
 def test_outcome_on_unknown_decision_is_not_found(env) -> None:
@@ -948,3 +948,38 @@ async def test_a_new_writers_decision_keeps_nothing_of_the_earlier_writers(
     seed = await _seed_decision()
     assert seed is not None and seed.outcome == "hotfix"
     assert seed.realized_outcome == "" and seed.success is None and seed.alternatives == []
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_keeps_nothing_of_another_active_record(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The record write's own read of the active record answers with another writer's
+    # record (a lagging replica, or a concurrent decision.record). The revision is built
+    # from the writer's record alone, so none of the other record's fields reach it.
+    import server.memory.app.records as hrec
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    await h.ensure_schema("o", "n")
+    await _write_decision_rows(local, "claude")
+    other = {"reasoning": "the other writer's reason", "alternatives": "wait", "run_id": "r9"}
+
+    async def _other_record(*_a: Any, **_k: Any) -> dict[str, Any]:
+        rid = "00000000-0000-0000-0000-0000000000e1"
+        return {"rid": rid, "mid": "", "record_json": json.dumps(other)}
+
+    monkeypatch.setattr(hrec, "active_record", _other_record)
+    _set_into(local, monkeypatch)
+    await h.handle_decision_outcome(
+        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+    )
+    rows = await local.query_all(
+        "SELECT record_json FROM loom.memory_records FINAL "
+        "WHERE memory_key = {key:String} AND status = 'active'",
+        {"key": _KEY},
+    )
+    (record,) = [json.loads(r["record_json"]) for r in rows]
+    assert record["realized_outcome"] == "ok"
+    for field, value in other.items():
+        assert record[field] != value, field
