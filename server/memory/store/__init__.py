@@ -20,8 +20,9 @@ imports only the ones above it:
 - `embeddings`  — the memory_embeddings mirror: live rows, re-emits, status
                   reconciliation
 - `lifecycle`   — status and tombstone writes that cascade onto the mirror
-- `records`     — writes that close a key's active typed record, and the identity a
-                  decision revision writes under
+- `records`     — the key's active typed record: the fold's read, the supersede and
+                  decision tombstone copies, and the record a decision revision builds
+                  on with its writer
 - `dedup`       — duplicate and supersession reads
 - `lookups`     — memory.ask's identifier, facet, prefix and term finders
 - `entities`    — the entity extractor's reads and writes
@@ -141,7 +142,6 @@ from server.memory.store.reads import (
     versions_above,
 )
 from server.memory.store.records import (
-    WriterRecord,
     active_record,
     live_writer_record,
     supersede_active_record,
@@ -194,14 +194,13 @@ from server.memory.store.sweeps import (
 from server.memory.store.usage import record_usage_event
 
 __all__ = [
-    "WriterRecord",
     "_hydrate",
-    "active_record",
     "_MEMORY_FINAL_PROJECTION",
     "next_version",
     "version_time",
     "reemit_version",
     "_SEQUENTIAL",
+    "active_record",
     "apply_entities_batch",
     "build_embedding_row",
     "build_first_version_row",

@@ -125,7 +125,7 @@ class _CH:
                 "user_id": "-",
                 "session_id": "s1",
                 "record_json": json.dumps(rec),
-                "created_at": None,
+                "created_at": datetime(2026, 1, 1),
             }
         return None
 
@@ -912,3 +912,4 @@ async def test_a_second_closing_write_keeps_the_record_tombstoned(local: KeptCH)
         {"rid": _RECORD_ID},
     )
     assert rows == [{"status": "tombstoned"}]
+    assert await _history() == ["tombstoned", "active"]  # the second call wrote nothing

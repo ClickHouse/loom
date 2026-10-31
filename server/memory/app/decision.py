@@ -352,8 +352,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     payload = svc.parse_record_json(writer.record_json)
     payload["realized_outcome"] = input.realized_outcome.strip()
     payload["success"] = input.success
-    made = writer.created_at
-    payload["made_at"] = made.isoformat() if isinstance(made, datetime) else _now().isoformat()
+    payload["made_at"] = writer.created_at.isoformat()
     tags = [
         "decision",
         f"decision:category:{str(payload.get('category') or '').lower()}",

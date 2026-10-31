@@ -260,8 +260,8 @@ was `caused_by` or `influenced_by`. It writes:
 (`superseded_prior=true`); history keeps it.
 
 The record holds the text of its last writer, the agent, user and session that recorded it, so it stays active only
-while that writer's decision row is live (a row that expired but was not deleted still counts). Another identity's
-row under the same key was superseded in the record plane and does not keep the record.
+while that writer's decision row is live (an expired row counts until the expiry sweep tombstones it). Another
+identity's row under the same key was superseded in the record plane and does not keep the record.
 
 - **Retires the record**: `memory.delete` or `memory.delete_version` of the writer's decision row, including
   `memory.move` with `keep_redirect=false`, which deletes through `memory.delete`. `decision.chain`,
@@ -270,7 +270,8 @@ row under the same key was superseded in the record plane and does not keep the 
   Two retirements that race can each write a tombstoned version, so history may list the tombstone twice.
 - **Leaves the record active**: a delete of another identity's row; `memory.clear` and the other bulk tombstone
   paths; `memory.move` with `keep_redirect=true`, whose redirect row still counts as the writer's live row under the
-  old key; a `memory.set` under the writer's identity that rewrites the key with another `memory_type`.
+  old key; a `memory.set` under the writer's identity that rewrites the key with another `memory_type`; the expiry
+  sweep's tombstone of an expired writer row.
 - **`decision.outcome` writes under** the record's writer, and answers not-found when the writer's row is not live.
 
 | Operation             | Role   | Does                                                                                               |

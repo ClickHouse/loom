@@ -232,8 +232,7 @@ class MemoryRecordRow(BaseModel):
     memory_id: str = ""
     record: dict[str, Any] = Field(default_factory=dict)
     field_states: dict[str, str] = Field(default_factory=dict)
-    # Version state: active, superseded, rejected or tombstoned; memory.record.query returns
-    # only active rows. Default active.
+    # memory.record.query returns only active rows; history returns every status.
     status: Literal["active", "superseded", "rejected", "tombstoned"] = "active"
     valid_at: datetime | None = None
     valid_to: datetime | None = None
