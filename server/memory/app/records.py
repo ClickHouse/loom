@@ -336,9 +336,9 @@ async def _fold_onto_active_record(
     carry_prior: bool,
 ) -> _RecordFold:
     """Field-level fold onto the active record for this key: an empty incoming field keeps
-    the survivor's value and lists union (neither when `carry_prior` is false), spelling
-    variants are agreement, and a real disagreement is recorded with both values before
-    the incoming one wins."""
+    the survivor's value (not when `carry_prior` is false), spelling variants are
+    agreement, and a real disagreement is recorded with both values before the incoming
+    one wins."""
     fold_out: dict[str, Any] = {}
     superseded_id = ""
     conflict_rows: list[dict[str, Any]] = []
@@ -357,7 +357,7 @@ async def _fold_onto_active_record(
             result = fold(prior_json, record_json)
             if not carry_prior:
                 # Keep the report of what agreed, was added or changed; drop the merge.
-                result = replace(result, merged=record_json, filled_from_prior=[], unioned=[])
+                result = replace(result, merged=record_json, filled_from_prior=[])
             record_json = result.merged
             filled_fields = list(result.filled_from_prior)
             fold_out = result.as_dict()
@@ -486,8 +486,8 @@ async def handle_memory_record_write(
 ) -> MemoryRecordWriteOutput:
     """Write one typed record. `carry_prior` false writes the incoming fields as the whole
     record, keeping nothing of the record it supersedes (every decision write restates its
-    record whole): a changed scalar value is still recorded in loom.memory_record_conflicts,
-    while replaced lists and fields the new write leaves empty are not."""
+    record whole): a changed value is still recorded in loom.memory_record_conflicts;
+    fields the new write leaves empty are not."""
     schema = await _schema_by_name(input.org, input.namespace, input.schema_name)
     if not schema or str(schema.get("status")) != "active":
         raise HTTPException(

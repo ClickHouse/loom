@@ -270,11 +270,13 @@ superseded in the record plane and does not keep the record.
   `memory.delete`. `decision.chain`, `decision.precedents` and `decision.outcome` stop serving it, and
   `memory.record.history` shows the last version with `status="tombstoned"`. Two retirements that race can each
   write a tombstoned version, so history may list the tombstone twice.
-- **After a retirement**: `memory.restore` revives the row but not the record; call `decision.record` again. A row
+- **After a retirement**: `memory.restore`, or `namespace.rollback` past the delete, revives the row but not the
+  record; call `decision.record` again. A row
   moved with `keep_redirect=false` is no longer a decision: its new key has no record, and `decision.record` with the
   same category and scenario records it again under its derived key.
-- **Leaves the record active**: a delete of another identity's row; `memory.clear` and the other bulk tombstone
-  paths; `memory.move` with `keep_redirect=true`, whose redirect row still counts as the writer's live row under the
+- **Leaves the record active**: a delete of another identity's row; the paths that tombstone a row without
+  `memory.delete` (`memory.clear`, `conflicts.resolve`, `memory.dedup_resolve`, the `blacklist.add` sweep,
+  `namespace.rollback`); `memory.move` with `keep_redirect=true`, whose redirect row still counts as the writer's live row under the
   old key; a `memory.set` under the writer's identity that rewrites the key with another `memory_type`; the expiry
   sweep's tombstone of an expired writer row.
 - **`decision.outcome`**: writes under the record's writer, and answers not-found when the writer's row is not live.

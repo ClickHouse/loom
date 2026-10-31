@@ -1,6 +1,6 @@
-"""Decisions as first-class records: key derivation, field shaping, the causal walk,
-the four handlers over stubbed planes, and memory.delete retiring a decision's record
-on clickhouse-local."""
+"""Decisions as first-class records: key derivation, field shaping, the causal walk and
+the four handlers over stubbed planes; on clickhouse-local, a delete retiring the record,
+the outcome's writer read and whole-record writes."""
 
 from __future__ import annotations
 
@@ -375,7 +375,7 @@ def test_ops_registered_and_search_accepts_decision_type() -> None:
     )
 
 
-# ------------------------------------------- memory.delete retires the record
+# --------------------- on clickhouse-local: retirement, writer, whole records
 
 _KEY = svc.decision_key("deploy", "Roll back or hotfix the image?")
 _RECORD_ID = "00000000-0000-0000-0000-0000000000d1"
@@ -1122,4 +1122,4 @@ async def test_a_whole_record_write_reports_nothing_kept(local: KeptCH) -> None:
     await handle_memory_record_write(_write(reasoning="fast"))
     out = await handle_memory_record_write(_write(), carry_prior=False)
     assert out.superseded_record_id
-    assert out.fold["filled_from_prior"] == [] and out.fold["unioned"] == []
+    assert out.fold["filled_from_prior"] == []

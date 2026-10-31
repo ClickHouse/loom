@@ -150,7 +150,7 @@ class DecisionOutcomeInput(BaseModel):
     memory_key: str = Field(min_length=1)
     # What actually happened, stored on the decision record.
     realized_outcome: str = Field(min_length=1, max_length=2000)
-    # None = outcome known but not judged, True/False also credits (or marks) the deciding
+    # None = outcome known but not judged; True/False also credits (or marks) the deciding
     # run's memories; each call replaces the earlier verdict.
     success: bool | None = None
     agent: str = Field(default="*")
