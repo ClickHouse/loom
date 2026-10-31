@@ -13,7 +13,7 @@ from server.memory.domain.decision_schema import SCHEMA_NAME
 from server.memory.store.sql import _SEQUENTIAL
 
 # Active records of a schema; the reads below add the key condition.
-_FROM_ACTIVE_RECORDS = """
+_ACTIVE_OF_SCHEMA = """
 FROM loom.memory_records FINAL
 WHERE org = {org:String}
   AND namespace = {ns:String}
@@ -21,7 +21,7 @@ WHERE org = {org:String}
   AND status = 'active'
   AND tombstoned_at IS NULL
 """
-_FROM_ACTIVE_RECORD = _FROM_ACTIVE_RECORDS + "  AND memory_key = {key:String}\n"
+_ACTIVE_OF_KEY = _ACTIVE_OF_SCHEMA + "  AND memory_key = {key:String}\n"
 # The key's live decision rows, under any identity: the tombstone check and the writer read.
 _FROM_LIVE_DECISION_ROWS = """
 FROM loom.memory FINAL
@@ -48,7 +48,7 @@ SELECT
     greatest(version + 1, {ver:UInt64}) AS new_version, created_at,
     greatest(updated_at, {now:DateTime}) AS new_updated_at,
     {tombstoned_at:Nullable(DateTime)} AS new_tombstoned_at"""
-    + _FROM_ACTIVE_RECORD
+    + _ACTIVE_OF_KEY
 )
 
 # Retires the record unless its writer still has a live decision row under the key.
@@ -62,7 +62,7 @@ _TOMBSTONE_DECISION_RECORD = f"""{_CLOSE_ACTIVE_RECORD}
 # the key.
 _LIVE_WRITER_RECORD = f"""
 SELECT identity_agent, user_id, session_id, record_json, created_at
-{_FROM_ACTIVE_RECORD}
+{_ACTIVE_OF_KEY}
   AND (identity_agent, user_id, session_id) IN (
       SELECT agent, user_id, session_id {_FROM_LIVE_DECISION_ROWS}
   )
@@ -73,14 +73,14 @@ LIMIT 1
 # The key's newest active record.
 _ACTIVE_RECORD_ROW = f"""
 SELECT toString(record_id) AS rid, toString(memory_id) AS mid, record_json
-{_FROM_ACTIVE_RECORD}
+{_ACTIVE_OF_KEY}
 ORDER BY version DESC
 LIMIT 1"""
 
 # The active decision records of several keys.
 _ACTIVE_DECISION_RECORDS = (
     "SELECT memory_key, record_json, created_at"
-    + _FROM_ACTIVE_RECORDS
+    + _ACTIVE_OF_SCHEMA
     + "  AND memory_key IN {keys:Array(String)}\n"
 )
 

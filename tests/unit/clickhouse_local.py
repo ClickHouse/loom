@@ -7,7 +7,6 @@ the host's zone."""
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import subprocess
 from datetime import UTC, datetime
@@ -40,7 +39,8 @@ def run(
     params: dict[str, Any] | None = None,
     *,
     path: Path | None = None,
-) -> list[dict[str, Any]]:
+    fmt: str = "JSONEachRow",
+) -> list[Any]:
     """The rows `sql` returns after the `setup` statements, in a fresh `loom` database, or
     in the one kept under `path` so a later call sees what this one wrote. Its
     `{name:Type}` parameters are bound by type, as the server binds them, so a parameter
@@ -61,16 +61,13 @@ def run(
             *kept,
             *binds,
         ],
-        input=script + " FORMAT JSONEachRow",
+        input=f"{script} FORMAT {fmt}",
         capture_output=True,
         text=True,
     )
     if out.returncode != 0:
         raise AssertionError(out.stderr.strip()[-2000:])
     return [json.loads(line) for line in out.stdout.splitlines() if line.strip()]
-
-
-_DATETIME = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$")
 
 
 class KeptCH:
@@ -105,13 +102,14 @@ class KeptCH:
                     raise
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
-        rows = run([], sql, params, path=self.path)
-        # A DateTime as the driver answers it: a datetime, not JSON text. Matched by value,
-        # not column type, so a String holding DateTime-shaped text reads back as one too.
+        lines = run([], sql, params, path=self.path, fmt="JSONCompactEachRowWithNamesAndTypes")
+        names, types, *rows = lines or [[], []]
+        # A DateTime column as the driver answers it: a datetime, not JSON text.
+        dated = [t.removeprefix("Nullable(").startswith("DateTime") for t in types]
         return [
             {
-                k: datetime.fromisoformat(v) if isinstance(v, str) and _DATETIME.match(v) else v
-                for k, v in row.items()
+                k: datetime.fromisoformat(v) if d and isinstance(v, str) else v
+                for k, d, v in zip(names, dated, row, strict=True)
             }
             for row in rows
         ]
