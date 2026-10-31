@@ -456,7 +456,7 @@ def _set_into(ch: KeptCH, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     return seen
 
 
-# The record `_write_decision_rows` seeds: the decision `_record_input` describes under _KEY.
+# The record `_write_decision_rows` seeds under _KEY: the four required fields.
 _SEEDED = {
     "category": "deploy",
     "scenario": "Roll back or hotfix the image?",
