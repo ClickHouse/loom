@@ -484,10 +484,9 @@ async def _carry_folded_fields(
 async def handle_memory_record_write(
     input: MemoryRecordWriteInput, *, carry_prior: bool = True
 ) -> MemoryRecordWriteOutput:
-    """Write one typed record. `carry_prior` false writes the incoming fields as the whole
-    record, keeping nothing of the record it supersedes (every decision write restates its
-    record whole): a changed value is still recorded in loom.memory_record_conflicts;
-    fields the new write leaves empty are not."""
+    """Write one typed record. With `carry_prior` false the incoming fields are the whole
+    record: nothing is kept from the one it supersedes, and only changed values are recorded
+    as conflicts."""
     schema = await _schema_by_name(input.org, input.namespace, input.schema_name)
     if not schema or str(schema.get("status")) != "active":
         raise HTTPException(

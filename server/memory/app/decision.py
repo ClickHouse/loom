@@ -9,14 +9,20 @@ outcome = a record revision that also credits the deciding run's memories.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import Any
 
+from fastapi import HTTPException
+
+import server.memory.store as memory_repo
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import NotFoundError
+from server.core.hashing import sha256_value_json
 from server.core.naming import SENTINEL, named
+from server.identity.app.request_scope import request_scope
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.api.models_decision import (
     ChainNodeRow,
@@ -130,10 +136,12 @@ async def _write_decision(
     payload: dict[str, Any],
     tags: list[str],
     valid_at: datetime | None,
+    if_match_sha256: str = "",
 ) -> str:
     """Memory row + record under one key. Returns the record_id. The row goes first: a
     delete keeps the record only while its writer's row is live, so that row must exist
-    before the record does."""
+    before the record does. `if_match_sha256` makes the row write conditional on the live
+    row's hash (memory.set answers 409 PRECONDITION_FAILED otherwise)."""
     from server.memory.app.records import handle_memory_record_write
     from server.memory.app.write import handle_memory_set
 
@@ -153,6 +161,7 @@ async def _write_decision(
             confidence=float(conf) if isinstance(conf, (int, float)) and conf > 0 else 1.0,
             source_trace=f"run:{run_id}" if named(run_id) else "decision",
             valid_at=valid_at,
+            if_match_sha256=if_match_sha256,
         )
     )
     rec_out = await handle_memory_record_write(
@@ -337,11 +346,24 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     ch = get_client()
     # Only the record's live writer revises it; record and writer come from one read.
     writer = await live_writer_record(input.org, input.namespace, input.memory_key, ch=ch)
+    not_found = NotFoundError(
+        f"no active decision {input.memory_key!r} in {input.org}/{input.namespace}",
+        memory_key=input.memory_key,
+    )
     if writer is None:
-        raise NotFoundError(
-            f"no active decision {input.memory_key!r} in {input.org}/{input.namespace}",
-            memory_key=input.memory_key,
-        )
+        raise not_found
+    identity = memory_repo.Identity(
+        org=input.org,
+        namespace=input.namespace,
+        agent=writer.agent,
+        user_id=writer.user_id,
+        session_id=writer.session_id,
+    )
+    row = await memory_repo.get_by_key(
+        identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
+    )
+    if row is None:
+        raise not_found
     payload = svc.parse_record_json(writer.record_json)
     payload["realized_outcome"] = input.realized_outcome.strip()
     payload["success"] = input.success
@@ -353,18 +375,26 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     ]
     if input.success is not None:
         tags.append("decision:success" if input.success else "decision:failure")
-    await _write_decision(
-        org=input.org,
-        namespace=input.namespace,
-        agent=writer.agent,
-        user_id=writer.user_id,
-        session_id=writer.session_id,
-        run_id=str(payload.get("run_id") or "-"),
-        key=input.memory_key,
-        payload=payload,
-        tags=tags,
-        valid_at=None,
-    )
+    try:
+        # Conditional on the row just read: a delete of it since then refuses the write
+        # instead of the outcome bringing the deleted row back.
+        await _write_decision(
+            org=input.org,
+            namespace=input.namespace,
+            agent=writer.agent,
+            user_id=writer.user_id,
+            session_id=writer.session_id,
+            run_id=str(payload.get("run_id") or "-"),
+            key=input.memory_key,
+            payload=payload,
+            tags=tags,
+            valid_at=None,
+            if_match_sha256=sha256_value_json(json.dumps(row.value, default=str)),
+        )
+    except HTTPException as e:
+        if isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED":
+            raise not_found from e
+        raise
 
     # Close the loop: the memories the deciding run relied on earn (or lose)
     # credit from the realized outcome — the feedback every decision log lacks.
