@@ -528,7 +528,7 @@ async def handle_memory_record_write(
     # write mints a fresh record_id, so without this two writes for the same
     # memory_key both stay 'active'. Close the prior validity interval
     # (valid_to := new fact's valid_at, or now() when world-time is unknown) so
-    # as-of reads still see it. No-op for anonymous ("") records.
+    # as-of reads still see it.
     if memory_key:
         await supersede_active_record(
             input.org,

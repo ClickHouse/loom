@@ -11,8 +11,28 @@ from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.decision_schema import SCHEMA_NAME
 from server.memory.store.sql import _SEQUENTIAL
 
+# The key's active record, and the key's live decision rows under any identity.
+_ACTIVE_RECORD = """
+FROM loom.memory_records FINAL
+WHERE org = {org:String}
+  AND namespace = {ns:String}
+  AND schema_name = {schema:String}
+  AND memory_key = {key:String}
+  AND status = 'active'
+  AND tombstoned_at IS NULL
+"""
+_LIVE_DECISION_ROWS = """
+FROM loom.memory FINAL
+WHERE org = {org:String}
+  AND namespace = {ns:String}
+  AND memory_key = {key:String}
+  AND memory_type = 'decision'
+  AND tombstoned_at IS NULL
+"""
+
 # Computed columns take new names: `AS status` would shadow the column in the WHERE.
-_CLOSE_ACTIVE_RECORD = """
+_CLOSE_ACTIVE_RECORD = (
+    """
 INSERT INTO loom.memory_records
     (record_id, org, namespace, schema_id, schema_name, memory_key,
      memory_id, identity_agent, user_id, session_id, record_json,
@@ -26,27 +46,11 @@ SELECT
     greatest(version + 1, {ver:UInt64}) AS new_version, created_at,
     greatest(updated_at, {now:DateTime}) AS new_updated_at,
     {tombstoned_at:Nullable(DateTime)} AS new_tombstoned_at
-FROM loom.memory_records FINAL
-WHERE org = {org:String}
-  AND namespace = {ns:String}
-  AND schema_name = {schema:String}
-  AND memory_key = {key:String}
-  AND status = 'active'
-  AND tombstoned_at IS NULL
 """
+    + _ACTIVE_RECORD
+)
 
-# No live decision row holds the key, under any identity.
-_NO_LIVE_DECISION = """
-  AND (
-      SELECT count()
-      FROM loom.memory FINAL
-      WHERE org = {org:String}
-        AND namespace = {ns:String}
-        AND memory_key = {key:String}
-        AND memory_type = 'decision'
-        AND tombstoned_at IS NULL
-  ) = 0
-"""
+_NO_LIVE_DECISION = "AND (SELECT count() " + _LIVE_DECISION_ROWS + ") = 0\n"
 
 
 async def supersede_active_record(
@@ -97,7 +101,7 @@ async def tombstone_decision_record(
     ch = ch or _default_client()
     now = naive_utc_now_seconds()
     await ch.execute(
-        _CLOSE_ACTIVE_RECORD + _NO_LIVE_DECISION,
+        _CLOSE_ACTIVE_RECORD + _NO_LIVE_DECISION + _SEQUENTIAL,
         params={
             "org": org,
             "ns": namespace,
@@ -109,7 +113,6 @@ async def tombstone_decision_record(
             "now": now,
             "tombstoned_at": now,
         },
-        settings={"select_sequential_consistency": 1},
     )
 
 
@@ -125,28 +128,12 @@ async def live_decision_identity(
     live decision row holds the key."""
     ch = ch or _default_client()
     return await ch.query_one(
-        f"""
-        SELECT agent, user_id, session_id
-        FROM loom.memory FINAL
-        WHERE org = {{org:String}}
-          AND namespace = {{ns:String}}
-          AND memory_key = {{key:String}}
-          AND memory_type = 'decision'
-          AND tombstoned_at IS NULL
-        ORDER BY (agent, user_id, session_id) IN (
-            SELECT identity_agent, user_id, session_id
-            FROM loom.memory_records FINAL
-            WHERE org = {{org:String}}
-              AND namespace = {{ns:String}}
-              AND schema_name = {{schema:String}}
-              AND memory_key = {{key:String}}
-              AND status = 'active'
-              AND tombstoned_at IS NULL
-            LIMIT 1
-        ) DESC, version DESC
-        LIMIT 1
-        {_SEQUENTIAL}
-        """,
+        "SELECT agent, user_id, session_id"
+        + _LIVE_DECISION_ROWS
+        + "ORDER BY (agent, user_id, session_id) IN (SELECT identity_agent, user_id, session_id"
+        + _ACTIVE_RECORD
+        + ") DESC, version DESC LIMIT 1\n"
+        + _SEQUENTIAL,
         params={
             "org": org,
             "ns": namespace,

@@ -263,7 +263,8 @@ was `caused_by` or `influenced_by`. It writes:
 `decision.precedents` and `decision.outcome` stop serving it, and `memory.record.history` shows the last version
 with `status="tombstoned"`. The record is keyed by category and scenario, not by agent, user or session, so while
 any live decision row holds the key, the record stays active. A row that expired but was not deleted still counts.
-`memory.restore` revives the row but not the record; call `decision.record` again to bring it back.
+`memory.restore` revives the row but not the record; call `decision.record` again to bring it back. `memory.clear`,
+the other bulk tombstone paths and `memory.move` with `keep_redirect=false` leave the record active.
 `decision.outcome` revises the row of the record's writer while that row is live, else the newest live decision row
 under the key, and answers not-found when none is live.
 

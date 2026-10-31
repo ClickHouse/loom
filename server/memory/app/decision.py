@@ -39,7 +39,7 @@ from server.memory.api.models_records import (
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app import decisions as svc
 from server.memory.domain.decision_schema import SCHEMA_NAME
-from server.memory.store import live_decision_identity
+from server.memory.store import live_decision_identity, next_version, tombstone_decision_record
 
 log = logging.getLogger(__name__)
 
@@ -172,6 +172,8 @@ async def _write_decision(
             valid_at=valid_at,
         )
     )
+    # A delete of the row that landed before the record finds nothing to retire: do it here.
+    await tombstone_decision_record(org, namespace, key, version=next_version())
     return str(rec_out.record_id)
 
 

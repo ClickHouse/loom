@@ -164,6 +164,9 @@ def env(monkeypatch):
         ]
         return SimpleNamespace(results=hits, embedding_model="fake")
 
+    async def fake_tombstone_check(*_a, **_k):
+        return None
+
     async def fake_outcome_run(inp):
         calls["outcome_run"].append(inp)
         return SimpleNamespace(applied=len(inp.memory_keys))
@@ -181,6 +184,7 @@ def env(monkeypatch):
     monkeypatch.setattr(mops, "handle_memory_link", fake_link)
     monkeypatch.setattr(mops, "handle_memory_outcome_run", fake_outcome_run)
     monkeypatch.setattr(msearch, "handle_memory_search", fake_search)
+    monkeypatch.setattr(h, "tombstone_decision_record", fake_tombstone_check)
     with patch.object(h, "get_client", return_value=ch):
         yield ch, calls, h
 
@@ -723,15 +727,50 @@ async def test_an_outcome_revises_the_record_writers_row_while_it_is_live(
 
 
 @pytest.mark.asyncio
-async def test_the_identity_helper_ranks_by_version_when_no_record_matches(
-    local: KeptCH,
+async def test_an_outcome_after_the_writer_deleted_goes_on_the_newest_live_row(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The helper's ordering only (decision.outcome answers not-found before it reads with
-    # no active record): the IN subquery matching nothing ranks every row alike.
-    from server.memory import store as memory_repo
+    # The record's writer deleted its row, so no row matches the record's identity: the
+    # newest live row takes the outcome.
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
 
+    await h.ensure_schema("o", "n")
     version = await _write_decision_rows(local, "maintainer", "claude")
-    await local.execute("TRUNCATE TABLE loom.memory_records")
-    await local.insert("loom.memory", [_memory_row("claude", "decision", version + 1)])
-    identity = await memory_repo.live_decision_identity("o", "n", _KEY)
-    assert identity == {"agent": "claude", "user_id": "-", "session_id": "-"}
+    await local.insert("loom.memory", [_memory_row("other", "decision", version + 1)])
+    await _delete("maintainer")
+    seen = _set_into(local, monkeypatch)
+    await h.handle_decision_outcome(
+        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+    )
+    assert [i.agent for i in seen] == ["other"]
+
+
+@pytest.mark.asyncio
+async def test_a_delete_between_the_row_and_the_record_leaves_no_active_record(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # decision.record writes its row, the same identity deletes it before the record
+    # lands, so that delete finds no record to retire; the write retires it itself.
+    from server.memory.app import decision as h
+
+    async def _set_then_delete(inp: Any) -> Any:
+        await local.insert("loom.memory", [_memory_row(inp.agent, inp.memory_type, time.time_ns())])
+        await _delete(inp.agent)
+        return SimpleNamespace(version=0)
+
+    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _set_then_delete)
+    out = await h.handle_decision_record(
+        _record_input(
+            category="deploy",
+            scenario="Roll back or hotfix the image?",
+            caused_by=[],
+            influenced_by=[],
+        )
+    )
+    assert await _seed_decision() is None
+    rows = await local.query_all(
+        "SELECT status FROM loom.memory_records FINAL WHERE record_id = {rid:UUID}",
+        {"rid": out.record_id},
+    )
+    assert rows == [{"status": "tombstoned"}]
