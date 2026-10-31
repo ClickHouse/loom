@@ -16,7 +16,6 @@ from typing import Any
 
 from fastapi import HTTPException
 
-import server.memory.store as memory_repo
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import NotFoundError
@@ -46,7 +45,9 @@ from server.memory.api.models_search import MemorySearchInput
 from server.memory.app import decisions as svc
 from server.memory.domain.decision_schema import SCHEMA_FIELDS, SCHEMA_NAME
 from server.memory.store import (
+    Identity,
     active_decision_records,
+    get_by_key,
     live_writer_record,
     next_version,
     tombstone_decision_record,
@@ -352,18 +353,6 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     )
     if writer is None:
         raise not_found
-    identity = memory_repo.Identity(
-        org=input.org,
-        namespace=input.namespace,
-        agent=writer.agent,
-        user_id=writer.user_id,
-        session_id=writer.session_id,
-    )
-    row = await memory_repo.get_by_key(
-        identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
-    )
-    if row is None:
-        raise not_found
     payload = svc.parse_record_json(writer.record_json)
     payload["realized_outcome"] = input.realized_outcome.strip()
     payload["success"] = input.success
@@ -375,26 +364,41 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     ]
     if input.success is not None:
         tags.append("decision:success" if input.success else "decision:failure")
-    try:
-        # Conditional on the row just read: a delete of it since then refuses the write
-        # instead of the outcome bringing the deleted row back.
-        await _write_decision(
-            org=input.org,
-            namespace=input.namespace,
-            agent=writer.agent,
-            user_id=writer.user_id,
-            session_id=writer.session_id,
-            run_id=str(payload.get("run_id") or "-"),
-            key=input.memory_key,
-            payload=payload,
-            tags=tags,
-            valid_at=None,
-            if_match_sha256=sha256_value_json(json.dumps(row.value, default=str)),
+    identity = Identity(
+        org=input.org,
+        namespace=input.namespace,
+        agent=writer.agent,
+        user_id=writer.user_id,
+        session_id=writer.session_id,
+    )
+    # The row write is conditional on the writer row just read, so a delete of it since
+    # then refuses the outcome instead of writing the deleted row back. Another write that
+    # only changed the row (a second outcome) is read again and retried once.
+    for attempt in (1, 2):
+        row = await get_by_key(
+            identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
         )
-    except HTTPException as e:
-        if isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED":
-            raise not_found from e
-        raise
+        if row is None:
+            raise not_found
+        try:
+            await _write_decision(
+                org=input.org,
+                namespace=input.namespace,
+                agent=writer.agent,
+                user_id=writer.user_id,
+                session_id=writer.session_id,
+                run_id=str(payload.get("run_id") or "-"),
+                key=input.memory_key,
+                payload=payload,
+                tags=tags,
+                valid_at=None,
+                if_match_sha256=sha256_value_json(json.dumps(row.value, default=str)),
+            )
+            break
+        except HTTPException as e:
+            changed = isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED"
+            if not changed or attempt == 2:
+                raise
 
     # Close the loop: the memories the deciding run relied on earn (or lose)
     # credit from the realized outcome — the feedback every decision log lacks.

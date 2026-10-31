@@ -202,7 +202,7 @@ def env(monkeypatch):
         return SimpleNamespace(value=sets[-1].value) if sets else None
 
     monkeypatch.setattr(h, "tombstone_decision_record", fake_tombstone)
-    monkeypatch.setattr(h.memory_repo, "get_by_key", fake_get_by_key)
+    monkeypatch.setattr(h, "get_by_key", fake_get_by_key)
     with patch.object(h, "get_client", return_value=ch):
         yield ch, calls, h
 
@@ -308,23 +308,6 @@ def test_chain_walks_authored_edges_and_attaches_decisions(env) -> None:
         ("incident:2026-09-11", "downstream", "caused"),
     }
     assert all(n.decision is None for n in out.nodes)  # none of those are decisions
-
-
-def test_an_outcome_writes_only_over_the_row_it_read(env) -> None:
-    from server.core.hashing import sha256_value_json
-    from server.memory.api.models_decision import DecisionOutcomeInput
-
-    _, calls, h = env
-    d = asyncio.run(h.handle_decision_record(_record_input()))
-    read = calls["set"][-1].value
-    asyncio.run(
-        h.handle_decision_outcome(
-            DecisionOutcomeInput(
-                org="o", namespace="n", memory_key=d.memory_key, realized_outcome="ok"
-            )
-        )
-    )
-    assert calls["set"][-1].if_match_sha256 == sha256_value_json(json.dumps(read))
 
 
 def test_outcome_revises_the_record_and_credits_the_run(env) -> None:
@@ -459,13 +442,19 @@ def _memory_row(agent: str, memory_type: str, version: int) -> dict[str, Any]:
     )
 
 
-def _set_into(ch: KeptCH, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
-    """memory.set reduced to its insert: the row lands under the input's identity with its
-    value, above any version written so far. Returns the inputs it received."""
+def _set_into(ch: KeptCH, monkeypatch: pytest.MonkeyPatch, before: Any = None) -> list[Any]:
+    """memory.set reduced to its `if_match_sha256` precondition (the real one) and its
+    insert: the row lands under the input's identity with its value, above any version
+    written so far. `before`, if given, runs first on each call. Returns the inputs."""
+    from server.memory.app.write import _set_check_if_match
+
     seen: list[Any] = []
 
     async def _set(inp: Any) -> Any:
         seen.append(inp)
+        if before is not None:
+            await before(len(seen))
+        await _set_check_if_match(SimpleNamespace(input=inp, existing=None))
         row = _memory_row(inp.agent, inp.memory_type, time.time_ns())
         row.update(
             memory_key=inp.memory_key,
@@ -1073,36 +1062,58 @@ async def test_a_new_writers_decision_keeps_nothing_of_the_earlier_writers(
 async def test_a_delete_after_the_outcome_read_refuses_the_outcome(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The writer deletes its row after decision.outcome read it. memory.set's precondition
-    # sees no row with the hash the outcome read, so the outcome answers not-found instead
-    # of bringing the deleted row and its record back.
-    from fastapi import HTTPException
-
+    # The writer deletes its row after decision.outcome read it. The precondition finds no
+    # row with the hash the outcome read, the second read finds no row at all, and the
+    # outcome answers not-found instead of writing the deleted row and its record back.
     from server.core.errors import NotFoundError
-    from server.core.hashing import sha256_value_json
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory import store as memory_repo
     from server.memory.api.models_decision import DecisionOutcomeInput
     from server.memory.app import decision as h
 
     await _write_decision_rows(local, "claude")
-    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
 
-    async def _set_after_a_delete(inp: Any) -> Any:
-        await _delete("claude")
-        live = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
-        sha = sha256_value_json(json.dumps(live.value)) if live is not None else ""
-        if inp.if_match_sha256 and sha != inp.if_match_sha256:
-            raise HTTPException(status_code=409, detail={"code": "PRECONDITION_FAILED"})
-        raise AssertionError("the outcome must write conditionally")
+    async def _delete_first(call: int) -> None:
+        if call == 1:
+            await _delete("claude")
 
-    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _set_after_a_delete)
+    seen = _set_into(local, monkeypatch, before=_delete_first)
     with pytest.raises(NotFoundError):
         await h.handle_decision_outcome(
             DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="x")
         )
+    assert len(seen) == 1 and seen[0].if_match_sha256
     assert await _history() == ["tombstoned", "active"]
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
     assert await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE) is None
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_whose_row_changed_since_its_read_is_retried(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A second outcome rewrote the writer's row between this outcome's read and its write:
+    # the decision is still active, so the outcome reads the row again and writes.
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    await h.ensure_schema("o", "n")
+    version = await _write_decision_rows(local, "claude")
+
+    async def _rewrite_first(call: int) -> None:
+        if call == 1:
+            row = _memory_row("claude", "decision", version + 1)
+            row["value"] = json.dumps("another outcome's statement")
+            await local.insert("loom.memory", [row])
+
+    seen = _set_into(local, monkeypatch, before=_rewrite_first)
+    out = await h.handle_decision_outcome(
+        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+    )
+    assert out.updated and len(seen) == 2
+    assert seen[0].if_match_sha256 != seen[1].if_match_sha256
+    seed = await _seed_decision()
+    assert seed is not None and seed.realized_outcome == "ok"
 
 
 @pytest.mark.asyncio
