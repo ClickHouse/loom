@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -106,7 +107,10 @@ def _requeue(
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-def test_retry_changes_only_the_principals_failed_rows_in_scope(tmp_path: Path) -> None:
+def test_retry_changes_only_the_principals_failed_rows_in_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(q, "_now", lambda: datetime(2026, 10, 25, 12, 0, 0, 250_999, tzinfo=UTC))
     ch = _MutationCH(
         tmp_path / "ch",
         _queued("q1", by="process:sa:a", status="failed"),
@@ -126,6 +130,7 @@ def test_retry_changes_only_the_principals_failed_rows_in_scope(tmp_path: Path) 
             assert after[qid] == old
     row = after["q1"]
     assert (row["status"], row["attempts"]) == ("pending", 2)
+    assert row["updated_at"] == "2026-10-25 12:00:00.250"
     changed = {"status", "attempts", "lease_until", "updated_at"}
     assert {k: v for k, v in row.items() if k not in changed} == {
         k: v for k, v in before["q1"].items() if k not in changed

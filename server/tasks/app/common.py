@@ -29,6 +29,7 @@ from typing import Any, cast, overload
 
 from fastapi import HTTPException
 
+from server.core.datetimes import UNIX_EPOCH
 from server.core.datetimes import utc_now as _now
 from server.tasks.api.models_task import (
     InboxPayload,
@@ -498,7 +499,7 @@ async def _release_lease(task: TaskRow, *, status: str) -> None:
         str(task["task_id"]),
         fence=int(task.get("fence") or 0),
         owner="",
-        lease_until=_naive(datetime(1970, 1, 1, tzinfo=UTC)) or datetime(1970, 1, 1),
+        lease_until=_naive(UNIX_EPOCH),
         status=status,
     )
 

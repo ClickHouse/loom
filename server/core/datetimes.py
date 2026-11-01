@@ -1,5 +1,6 @@
 """Datetime helpers shared across the write and read paths: the clock, the
-naive-UTC convention ClickHouse DateTime columns use, and the ISO-8601 parser.
+naive-UTC convention ClickHouse DateTime columns use, the epoch, and the ISO-8601
+parser.
 
 The parser's canonical behaviour:
 
@@ -54,6 +55,10 @@ def parse_iso_dt(raw: object) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+# The tz-aware epoch: the "never" value of lease and watermark columns.
+UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 # ClickHouse DateTime columns hold naive UTC; these are the clock and the

@@ -30,10 +30,11 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any, NamedTuple
 
 from server.core.ch_names import split_table
+from server.core.datetimes import UNIX_EPOCH
 from server.core.datetimes import utc_now as _now
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
@@ -94,7 +95,6 @@ COLUMNS = (
 )
 
 _SYNC = {"async_insert": 0, "wait_for_async_insert": 1}
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 # The token-stamped principal (`kind:subject`) rides the replay payload and the
@@ -161,7 +161,7 @@ async def enqueue(
         "content_chars": chars,
         "status": STATUS_PENDING,
         "attempts": 0,
-        "lease_until": _EPOCH,
+        "lease_until": UNIX_EPOCH,
         "last_error": "",
         "written": 0,
         "enqueued_at": now,
@@ -182,7 +182,7 @@ def _mirror(row: dict[str, Any], **changes: Any) -> dict[str, Any]:
     out["version"] = next_version()
     # Defaults for columns a partial projection may have left None.
     if out.get("lease_until") is None:
-        out["lease_until"] = _EPOCH
+        out["lease_until"] = UNIX_EPOCH
     for c in ("attempts", "written", "message_count", "content_chars"):
         if out.get(c) is None:
             out[c] = 0
@@ -271,7 +271,7 @@ async def mark_done(row: dict[str, Any], *, written: int, ch: Any | None = None)
     ch = ch or get_client()
     await ch.insert(
         TABLE,
-        [_mirror(row, status=STATUS_DONE, written=int(written), lease_until=_EPOCH)],
+        [_mirror(row, status=STATUS_DONE, written=int(written), lease_until=UNIX_EPOCH)],
         settings=_SYNC,
     )
 
@@ -299,7 +299,9 @@ async def mark_error(
                 status=STATUS_FAILED if failed else STATUS_PENDING,
                 attempts=attempts,
                 last_error=str(error)[:2000],
-                lease_until=_EPOCH if failed else _now() + timedelta(seconds=backoff_s(attempts)),
+                lease_until=UNIX_EPOCH
+                if failed
+                else _now() + timedelta(seconds=backoff_s(attempts)),
             )
         ],
         settings=_SYNC,
@@ -415,7 +417,10 @@ async def drop_waiting(
     why = f"dropped: model calls switched off, waited over {older_than_days} days"
     await ch.insert(
         TABLE,
-        [_mirror(dict(r), status=STATUS_FAILED, last_error=why, lease_until=_EPOCH) for r in rows],
+        [
+            _mirror(dict(r), status=STATUS_FAILED, last_error=why, lease_until=UNIX_EPOCH)
+            for r in rows
+        ],
         settings=_SYNC,
     )
     return len(rows)
@@ -474,7 +479,7 @@ async def drop_expiring(
                 dict(r),
                 status=STATUS_FAILED,
                 last_error=f"{why} ({r.get('last_error') or 'never run'})"[:2000],
-                lease_until=_EPOCH,
+                lease_until=UNIX_EPOCH,
             )
             for r in rows
         ],
@@ -740,7 +745,7 @@ async def _submit_retry(
         "attempts": max(0, int(max_attempts) - 1),
         "tag": _RETRY_TAG,
         # Bound, not now64(): a replicated table refuses a non-deterministic mutation.
-        "updated_ms": int(_now().timestamp() * 1000),
+        "updated_ms": (_now() - UNIX_EPOCH) // timedelta(milliseconds=1),
     }
     in_scope = scope_and(scope, params)
     # Updating stored rows cannot restore a payload deleted while the request was in flight.

@@ -28,6 +28,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from server.core.datetimes import UNIX_EPOCH
+
 log = logging.getLogger(__name__)
 
 TABLE = "loom.worker_status"
@@ -609,8 +611,8 @@ def merge_status(
             continue
         reporters.setdefault(name, set()).add(str(r.get("instance_label") or ""))
         cur = best.get(name)
-        if cur is None or (_parse(r.get("pass_finished")) or _EPOCH) > (
-            _parse(cur.get("pass_finished")) or _EPOCH
+        if cur is None or (_parse(r.get("pass_finished")) or UNIX_EPOCH) > (
+            _parse(cur.get("pass_finished")) or UNIX_EPOCH
         ):
             best[name] = r
     out: dict[str, dict[str, Any]] = {}
@@ -670,8 +672,6 @@ def _merge_one(
 
 
 # --------------------------------------------------------------------------- helpers
-
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def _client() -> Any:
