@@ -260,10 +260,10 @@ _LINEAGE_PEOPLE = _PEOPLE_PAGE.replace(
 async def member_count(
     org: str, lineage: list[str], *, ch: _CHClient | None = None
 ) -> tuple[int, int]:
-    """(people holding an active grant on any namespace of `lineage` — a namespace and,
-    for a collection, its ancestors — folded as `people_page` folds them; active grants
-    to everyone, a group or an agent, whose members are not listed). A pending request
-    alone grants nothing and is not counted."""
+    """Returns `(people, shared)`. `people` is the people holding an active grant on any
+    namespace of `lineage` (a namespace and, for a collection, its ancestors), folded as
+    `people_page` folds them; `shared` is the active grants to everyone, a group or an
+    agent, whose members are not listed. A pending request alone is not counted."""
     ch = ch or _default_client()
     row = await ch.query_one(
         f"SELECT countIf(status = 'active' AND NOT ({_NOT_A_PERSON})) AS people, "
