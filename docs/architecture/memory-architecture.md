@@ -775,7 +775,7 @@ A close is an `ALTER UPDATE`, so the retirement's closes may still be pending wh
 Undo weighs its facts: it reads with `apply_mutations_on_fly`, which applies them (their
 expressions are deterministic), rather than waiting on `system.mutations`. ClickHouse
 refuses that read for the whole table while any pending mutation on it has a subquery
-(Loom's own mutations bind their values instead). The Undo then writes nothing to the
+(erasure, `memory.clear` and the edge drop and its undo bind their values instead). The Undo then writes nothing to the
 graph: the memory row is restored at once, the refusal is recorded as a
 `triples_reconcile` failure dated at the restore, and `projection_repair` replays it once
 that mutation has landed and the read works again (until then each pass fails it again and

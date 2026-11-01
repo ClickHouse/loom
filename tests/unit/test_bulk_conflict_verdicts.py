@@ -384,7 +384,7 @@ def test_a_second_restatement_after_a_landing_one_is_unchanged() -> None:
     plan = _apply_verdicts(state, [], {0: NS(verdict="merge", existing_memory_id="T", peers=[])})
     assert [r.version for r in state.results] == [0, 1, 1, 0]
     assert [x["memory_key"] for x in plan.memory_rows] == ["a", "t"]
-    assert state.skipped_unchanged == 1
+    assert state.skipped_unchanged == 1 and state.restated_ids == ["A1"]
 
 
 def test_a_restated_landing_keeps_the_merge_peers_on_the_merging_entry() -> None:

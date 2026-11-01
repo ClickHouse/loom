@@ -65,9 +65,9 @@ class _TraceCH:
             entry = (m.group(2), m.group(1))
         elif m := _LIGHT.search(sql):
             entry = ("LIGHTWEIGHT", m.group(1))
-        else:  # an INSERT ... SELECT rewrite: its rows stop matching the step's count
+        else:
             entry = ("OTHER", sql.split()[0])
-            if sql.startswith("INSERT INTO "):
+            if sql.startswith("INSERT INTO "):  # a rewrite: its rows stop matching the count
                 self.rewritten.add((_STEP.get(), sql.split()[2]))
         self.trace.setdefault(_STEP.get(), []).append(entry)
         self.executed.append(sql)

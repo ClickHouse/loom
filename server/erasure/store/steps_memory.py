@@ -871,8 +871,8 @@ _BLOBS_IN = "(namespace, toString(sha256)) IN {blobs:Array(Tuple(String, String)
 
 
 async def _users_own_blobs(
-    org: str, user_id: str, ch: _CHClient, among: list[tuple[str, ...]] | None = None
-) -> list[tuple[str, ...]]:
+    org: str, user_id: str, ch: _CHClient, among: list[tuple[str, str]] | None = None
+) -> list[tuple[str, str]]:
     """The (namespace, sha256) of the originals `_USERS_OWN_BLOBS` names, of `among`
     when given."""
     where = _USERS_OWN_BLOBS

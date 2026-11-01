@@ -251,7 +251,9 @@ def test_gate_identifier_reason_reads_how_many_pooled_rows_carry_it() -> None:
     assert _gate(query=q, stems=stems, pool=one_key) == "identifier"
 
 
-async def _ctx_for(monkeypatch, *, mode: str, pool_keys: list[str], top_k: int = 5):
+async def _ctx_for(
+    monkeypatch, *, mode: str, pool_keys: list[str], top_k: int = 5, query_shape: str = ""
+):
     import server.core.ch as ch_mod
 
     calls: list[str] = []
@@ -289,7 +291,7 @@ async def _ctx_for(monkeypatch, *, mode: str, pool_keys: list[str], top_k: int =
         query_vec=[0.1, 0.2],
         embedder=SimpleNamespace(model_name="m"),
         endpoint=None,
-        query_shape="",
+        query_shape=query_shape,
     )
     await _run_key_match_pool(ctx)
     return ctx, calls
@@ -502,3 +504,15 @@ async def test_a_key_match_row_carries_its_version(monkeypatch) -> None:
     )
     await _run_key_match_pool(ctx)
     assert [h.version for h in ctx.all_hits] == [9]
+
+
+async def test_the_gate_counts_rows_per_key_as_the_final_block_keeps_them(monkeypatch) -> None:
+    # Six rows of one key: three served under the per-key cap, all six for an
+    # aggregational query, which keeps every row of the key.
+    one_key = ["same_key"] * 6
+    ctx, _ = await _ctx_for(monkeypatch, mode="gated", pool_keys=one_key)
+    assert ctx.actual_work["key_match_gate"] == "thin_pool"
+    ctx, calls = await _ctx_for(
+        monkeypatch, mode="gated", pool_keys=one_key, query_shape="aggregational"
+    )
+    assert calls == [] and ctx.actual_work["key_match_gate"] == "skip"

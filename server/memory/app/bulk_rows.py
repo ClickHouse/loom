@@ -278,9 +278,6 @@ def _bulk_skip_gate(
     """Phase 4a, per entry: True when the entry writes nothing — an unchanged
     restatement, an identity duplicate, a value-locked or a pinned target. Each still gets a
     version-0 result row so the response shape is unchanged."""
-    # Re-ingest skip-gate: a byte-identical live value skips the
-    # rewrite+re-embed+re-project. Caller still gets a result row
-    # (version 0) so the response shape is unchanged.
     # Repeating an earlier entry exactly is unchanged only if that entry lands:
     # `settle_steps` gives it the earlier entry's outcome after the verdicts. An entry
     # that repeats the value with other labels builds its own row.
@@ -542,7 +539,8 @@ def _settle_step(state: _BulkWriteState, step: _Step, held: _Held, rewritten: se
 
 
 def _settle_repeat(step: _Step, src: _Step, held: _Held, rewritten: set[str]) -> Outcome:
-    """An exact repeat takes the outcome of the entry it repeats. A merge whose target a
+    """An exact repeat takes the outcome of the entry it repeats: a repeat of a row its key
+    now holds, or of one that landed, is unchanged. A merge whose target a
     landed row rewrote in between lands instead, as the repeat would serially: a copy of
     the earlier row, with its vector, lands as this entry's write and result, and the
     earlier entry keeps its merge."""

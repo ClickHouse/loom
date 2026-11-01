@@ -113,7 +113,7 @@ def test_served_flags_names_both_widenings() -> None:
 
 
 def _hit(key: str, *, rank: float, status: str = "active", source: str = "fact") -> Any:
-    return _MemorySearchHit(
+    hit = _MemorySearchHit(
         memory_key=key,
         memory_type="semantic",
         content_excerpt=f"about {key}",
@@ -123,12 +123,17 @@ def _hit(key: str, *, rank: float, status: str = "active", source: str = "fact")
         source=source,
         status=status,
     )
+    hit._row_identity = _WRITER  # as the leg that pooled it read its row
+    return hit
 
 
 def _ctx(hits: list[Any], **input_kw: Any) -> SimpleNamespace:
     base: dict[str, Any] = {"org": "o", "namespace": "ns", "agent": "a", "query": "q", "top_k": 3}
     base.update(input_kw)
     return SimpleNamespace(input=MemorySearchInput(**base), all_hits=list(hits), actual_work={})
+
+
+_WRITER = ("a", "u", "-")
 
 
 @pytest.fixture
@@ -145,7 +150,8 @@ def successors(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         env.scope = scope
         if env.fail:
             raise RuntimeError("boom")
-        return [SupersededSuccessor.from_row(x) for x in list(env.rows)]
+        writer = dict(zip(("agent", "user_id", "session_id"), _WRITER, strict=True))
+        return [SupersededSuccessor.from_row(writer | x) for x in list(env.rows)]
 
     monkeypatch.setattr(memory_repo, "superseded_successors", superseded_successors)
     return env
@@ -183,7 +189,7 @@ async def test_annotation_names_the_successor_and_counts_only_when_asked(
     await ss.annotate_pool_superseded(ctx)
     assert successors.calls == 1 and successors.last == (
         "o",
-        [("ns", "", "", "", "deploy_window"), ("ns", "", "", "", "db_engine")],
+        [("ns", *_WRITER, "deploy_window"), ("ns", *_WRITER, "db_engine")],
     )
     a, b, c, d = ctx.all_hits
     assert (a.superseded_by, a.superseded_at) == ("deploy_window", "2026-09-10 12:00:00")
@@ -276,6 +282,16 @@ async def test_annotation_is_a_no_op_without_the_flag_or_without_a_superseded_hi
     ctx = _ctx([_hit("k", rank=0.9)], include_superseded=True)
     await ss.annotate_pool_superseded(ctx)
     assert successors.calls == 0 and ctx.actual_work == {}
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_hit_that_names_no_row_is_not_read(successors: SimpleNamespace) -> None:
+    # no stored row has an empty writer, so the read could never name its successor
+    unnamed = _hit("deploy_window", rank=0.9, status="superseded")
+    unnamed._row_identity = None
+    ctx = _ctx([unnamed], include_superseded=True)
+    await ss.annotate_pool_superseded(ctx)
+    assert successors.calls == 0 and unnamed.superseded_by is None
 
 
 @pytest.mark.asyncio

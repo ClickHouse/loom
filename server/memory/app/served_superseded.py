@@ -25,7 +25,7 @@ import logging
 from typing import Any, TypedDict
 
 from server.identity.app.request_scope import request_scope
-from server.memory.domain.search_types import hit_row_key
+from server.memory.domain.search_types import hit_row_key, names_row
 
 log = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ async def annotate_pool_superseded(ctx: Any) -> None:
     input = ctx.input
     if hide_superseded(input):
         return
-    old = [h for h in ctx.all_hits if _is_superseded_fact(h)]
+    old = [h for h in ctx.all_hits if _is_superseded_fact(h) and names_row(h)]
     if not old:
         return
     ctx.actual_work["superseded_served"] = len(old)
