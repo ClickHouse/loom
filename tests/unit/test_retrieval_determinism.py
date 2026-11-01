@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from server.memory.api.models_search import _MemorySearchHit
 from server.memory.domain.search_types import hit_sort_key
 from tests.unit.test_memory_search_service import StubCH, _q
 
@@ -155,7 +156,23 @@ def test_two_rows_of_one_key_with_equal_scores_sort_by_their_writer() -> None:
 
     first, second = row("u1"), row("u2")
     assert sorted([second, first], key=hit_sort_key) == [first, second]
-    assert sorted([first, second], key=hit_sort_key) == [first, second]
+
+
+def test_two_sessions_of_one_wire_hit_key_sort_by_their_session() -> None:
+    # extraction writes one key per session; a wire hit carries its row in `_row_identity`
+    def hit(session: str) -> _MemorySearchHit:
+        h = _MemorySearchHit(
+            memory_key="k",
+            memory_type="semantic",
+            content_excerpt="x",
+            distance=0.5,
+            similarity=0.5,
+        )
+        h._row_identity = ("a", "u", session)
+        return h
+
+    s1, s2 = hit("s1"), hit("s2")
+    assert sorted([s2, s1], key=hit_sort_key) == [s1, s2]
 
 
 def test_one_row_identity_in_two_namespaces_sorts_by_its_namespace() -> None:

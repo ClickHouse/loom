@@ -47,6 +47,7 @@ class _CHClient(Protocol):
 
 
 class _Reads(Protocol):
+    # read-only, so a search-side client with no `command` or `insert` fits too
     async def query_all(
         self,
         sql: str,
