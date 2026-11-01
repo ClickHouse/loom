@@ -9,7 +9,8 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Final, Literal
 
 Outcome = Literal["written", "held", "skipped", "refused"]
-# Why an entry was not plainly written; each value is documented on `_MemoryImportResult`.
+# Why an entry was not plainly written; the values are listed in
+# docs/features/memory/writing.md#importing-from-another-memory-system.
 Reason = Literal[
     "",
     "blacklist",
@@ -31,7 +32,7 @@ Reason = Literal[
     "refines",
 ]
 
-# Why an entry's category is not linked to its key; '' when it is.
+# Why an entry's category is not linked to its key ('' when it is): the same docs section.
 Note = Literal[
     "", "category_unregistered", "category_refused", "category_not_linked", "category_rescinded"
 ]

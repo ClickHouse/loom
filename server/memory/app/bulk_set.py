@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.vectors import codes_state
@@ -360,14 +360,12 @@ async def _bulk_intra_batch_pairs(
                 rows = state.memory_rows
                 kept = {id(r) for r in kept_versions(rows).values()}
                 _ib = [
-                    (i, j)
+                    (j, i) if _dated_after(rows[i], rows[j]) else (i, j)
                     for i, j in intra_batch_supersessions(
                         [str(r.get("value") or "") for r in rows],
                         [str(r.get("memory_type") or "") for r in rows],
                     )
-                    if id(rows[i]) in kept
-                    and id(rows[j]) in kept
-                    and not _dated_after(rows[i], rows[j])
+                    if id(rows[i]) in kept and id(rows[j]) in kept
                 ]
                 _intra_pairs = stamp_intra_batch_supersessions(
                     state.memory_rows, state.embedding_rows, _ib, naive_utc_now()
@@ -384,10 +382,10 @@ async def _bulk_intra_batch_pairs(
 
 
 def _dated_after(row: dict[str, Any], other: dict[str, Any]) -> bool:
-    """Whether both rows carry a `valid_at` and `row`'s is later. The earlier row in the
-    batch is then the newer fact, so it is not retired by the later one; against the
-    store, `later_valid_peers` leaves such a pair alone the same way."""
-    mine, theirs = row.get("valid_at"), other.get("valid_at")
+    """Whether both rows carry a `valid_at` and `row`'s is later: `row` is then the newer
+    fact whatever its place in the batch, so it survives the pair, as a store pair is
+    ordered by `valid_at` too."""
+    mine, theirs = to_naive_utc(row.get("valid_at")), to_naive_utc(other.get("valid_at"))
     return mine is not None and theirs is not None and mine > theirs
 
 

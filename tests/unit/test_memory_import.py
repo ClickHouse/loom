@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
@@ -786,7 +786,51 @@ async def test_a_pair_in_one_import_retires_the_older_dated_fact(
     await handle_memory_import(_input(*entries))
     status = {json.loads(r["value"]): r["status"] for r in ch.rows_for("loom.memory")}
     assert status[newer["value"]] == "active"
-    assert status[older["value"]] == ("active" if newest_first else "superseded")
+    assert status[older["value"]] == "superseded"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("first_at", "second_at", "retired"),
+    [
+        (datetime(2024, 6, 1, tzinfo=UTC), datetime(2021, 1, 1), 1),  # newer first
+        (datetime(2021, 1, 1), datetime(2024, 6, 1, tzinfo=UTC), 0),
+        (None, datetime(2021, 1, 1), 0),  # undated: the later row in the batch is newer
+    ],
+)
+async def test_a_bulk_write_retires_the_older_dated_row_of_an_in_batch_pair(
+    monkeypatch, first_at: datetime | None, second_at: datetime | None, retired: int
+) -> None:
+    """Every bulk caller (memory.set_from_messages too): the later `valid_at` survives an
+    in-batch pair, naive and aware times compared as UTC; undated, the batch order decides."""
+    from server.memory.app.bulk_rows import _BulkWriteState
+
+    async def _policy(*_: Any, **__: Any) -> str:
+        return "newest_wins"
+
+    monkeypatch.setattr("server.memory.app.conflicts.namespace_conflict_policy", _policy)
+    values = [
+        "The capital of Soviet Union is Moscow",
+        "The capital of Soviet Union is Russellville",
+    ]
+    state = _BulkWriteState()
+    state.memory_rows = [
+        {
+            "memory_id": f"m{i}",
+            "memory_key": f"k{i}",
+            "value": value,
+            "memory_type": "semantic",
+            "version": 1,
+            "valid_at": at,
+        }
+        for i, (value, at) in enumerate(zip(values, [first_at, second_at], strict=True))
+    ]
+    bulk = MemoryBulkSetInput(**_IDENT, entries=[{"memory_key": "k0", "value": values[0]}])
+    pairs = await _bulk_set_mod._bulk_intra_batch_pairs(StubCH(), bulk, state)
+    survivor = 1 - retired
+    assert pairs == [(f"m{retired}", f"m{survivor}")]
+    assert [r["status"] for r in state.memory_rows][retired] == "superseded"
+    assert state.memory_rows[survivor]["status"] == "active"
 
 
 @pytest.mark.asyncio
