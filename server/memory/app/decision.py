@@ -250,8 +250,7 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         return DecisionRecordOutput(
             memory_key=written.merged_into_key,
             record_id="",
-            next=_merged_hint(written.merged_into_key, "decision.record")
-            + (" Use that key." if written.merged_into_key else ""),
+            next=_merged_hint(written.merged_into_key, "decision.record"),
         )
 
     edges = 0

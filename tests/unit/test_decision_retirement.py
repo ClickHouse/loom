@@ -900,9 +900,21 @@ async def test_a_busy_key_lease_refuses_the_outcome_as_it_is(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("merged_into", ["decision:peer", ""])
+@pytest.mark.parametrize(
+    ("merged_into", "hint"),
+    [
+        (
+            "decision:peer",
+            "memory.set merged this into decision:peer, a decision with the same text; nothing was written.",
+        ),
+        (
+            "",
+            "memory.set merged this into a decision that can no longer be read; nothing was written. Call decision.record again.",
+        ),
+    ],
+)
 async def test_a_decision_merged_into_another_key_writes_nothing(
-    local: KeptCH, monkeypatch: pytest.MonkeyPatch, merged_into: str
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch, merged_into: str, hint: str
 ) -> None:
     # memory.set found the same text under another decision key and stored no row: no record
     # and no edges are written, and the answer names that key ("" when its row was not read).
@@ -920,19 +932,26 @@ async def test_a_decision_merged_into_another_key_writes_nothing(
     out = await h.handle_decision_record(record_input())
     assert (out.memory_key, out.record_id) == (merged_into, "")
     assert (out.superseded_prior, out.edges_written) == (False, 0)
-    hint = (
-        "decision:peer, a decision with the same text; nothing was written. Use that key."
-        if merged_into
-        else "Call decision.record again"
-    )
-    assert hint in out.next
+    assert out.next == hint
     assert await local.query_all("SELECT 1 FROM loom.memory_records") == []
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("merged_into", ["decision:peer", ""])
+@pytest.mark.parametrize(
+    ("merged_into", "hint"),
+    [
+        (
+            "decision:peer",
+            "memory.set merged this into decision:peer, a decision with the same text; nothing was written.",
+        ),
+        (
+            "",
+            "memory.set merged this into a decision that can no longer be read; nothing was written. Call decision.outcome again.",
+        ),
+    ],
+)
 async def test_an_outcome_merged_into_another_key_writes_and_credits_nothing(
-    local: KeptCH, monkeypatch: pytest.MonkeyPatch, merged_into: str
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch, merged_into: str, hint: str
 ) -> None:
     import server.memory.app.ops as mops
     from server.memory.api.models_decision import DecisionOutcomeInput
@@ -961,12 +980,7 @@ async def test_an_outcome_merged_into_another_key_writes_and_credits_nothing(
         )
     )
     assert (out.updated, out.memories_credited, credited) == (False, 0, [])
-    hint = (
-        "decision:peer, a decision with the same text; nothing was written."
-        if merged_into
-        else "Call decision.outcome again"
-    )
-    assert hint in out.next
+    assert out.next == hint
     assert await _history() == ["active"]
 
 
