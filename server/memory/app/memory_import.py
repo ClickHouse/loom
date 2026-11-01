@@ -94,7 +94,15 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
     )
     content_shas = {key: sha256_value(input.entries[i].value) for key, i in first.items()}
     sensitivities = {key: input.entries[i].sensitivity for key, i in first.items()}
-    answers = await _write(input, keys, first, skip_reasons(heads, content_shas, sensitivities))
+    skip = skip_reasons(heads, content_shas, sensitivities)
+    unknown = [key for key, reason in skip.items() if reason == "unknown"]
+    if unknown:
+        log.warning(
+            "memory.import: %d key(s) have an unknown head status, skipped: %s",
+            len(unknown),
+            unknown[:5],
+        )
+    answers = await _write(input, keys, first, skip)
     results: list[_MemoryImportResult] = []
     for i, key in enumerate(keys):
         outcome, reason, held_by = answers[key]
@@ -123,13 +131,6 @@ async def _write(
             answers[key] = _Answer("skipped", reason)
         else:
             pending.append(i)
-    unknown = [key for key, reason in skip.items() if reason == "unknown"]
-    if unknown:
-        log.warning(
-            "memory.import: %d key(s) have an unknown head status, skipped: %s",
-            len(unknown),
-            unknown[:5],
-        )
     if not pending:
         return answers
     # The source exports in any order, and under newest_wins the later of two statements

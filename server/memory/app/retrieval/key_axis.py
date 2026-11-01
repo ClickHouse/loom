@@ -76,8 +76,8 @@ async def key_axis_auto(
                 GROUP BY memory_key
             )
             """,
-            # An import key is written once and has no key vector: it says nothing
-            # about how a namespace reuses its own keys.
+            # An import key is a digest with no key vector: it says nothing about how
+            # the namespace reuses its own keys.
             {"org": str(org), "ns": str(namespace), "import_key": IMPORT_KEY_MATCH},
         )
         if rows:
