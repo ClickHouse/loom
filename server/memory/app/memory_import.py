@@ -70,8 +70,8 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
     # axis, so it would reach every row under the key (memory.assign_category refuses it too).
     linkable = not scope.narrowed
     named = [entry.category for entry in input.entries if entry.category] if linkable else []
-    # Every read runs before the write; only the new links' insert runs after it, and a
-    # retry after that insert fails writes nothing again.
+    # Every read runs before the write; only the new links' insert runs after it. If that
+    # insert fails, a retry finds the rows unchanged and adds the links.
     category_ids = await categories.registered_ids(input.org, input.namespace, named)
     categorized = [
         k for k, e in zip(keys, input.entries, strict=True) if e.category in category_ids

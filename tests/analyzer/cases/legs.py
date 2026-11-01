@@ -447,6 +447,10 @@ async def _keys_and_fence(ch: RecordingCH, c: dict[str, Any]) -> None:
     pinned = ReadFilters(scope="own_user", user_id="u1", session_id=None)
     for scope in (WHOLE_NAMESPACE, pinned):
         await M.key_heads_across_sessions(ORG, NS, AGENT, "-", ["k1", "k2"], scope=scope, ch=ch)
+    # and its read of the category links already stored for its keys
+    from server.memory.store import categories
+
+    await categories.link_states(ORG, NS, ["k1", "k2"], ch=ch)
 
 
 async def _memory_workers(ch: RecordingCH, c: dict[str, Any]) -> None:

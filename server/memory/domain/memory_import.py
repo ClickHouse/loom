@@ -49,7 +49,8 @@ _LEFT_AS_IS: Final[dict[str, Reason]] = {
 def skip_reasons(heads: Iterable[Mapping[str, Any]], shas: Mapping[str, str]) -> dict[str, Reason]:
     """Key → why the import leaves it as it is, from its newest version across sessions
     (rows with `memory_key`, `deleted`, `head_status` and `head_sha256`) and the content
-    hash of the text the key derives from (`shas`); '' writes it."""
+    hash of the text the key derives from (`shas`). A key with no stored version is
+    absent and is written."""
     out: dict[str, Reason] = {}
     for row in heads:
         key = str(row["memory_key"])

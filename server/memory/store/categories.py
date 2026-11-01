@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
+from server.memory.store.sql import _SEQUENTIAL
 
 
 async def registered_ids(
@@ -43,12 +44,12 @@ async def link_states(
     ch = ch or _default_client()
     rows = await query_all_sliced(
         ch,
-        """
+        f"""
         SELECT memory_key, category_id, tombstoned_at IS NULL AS live
         FROM loom.memory_categories FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND memory_key IN {keys:Array(String)}
-        SETTINGS select_sequential_consistency = 1
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND memory_key IN {{keys:Array(String)}}
+        {_SEQUENTIAL}
         """,
         {"org": org, "ns": namespace, "keys": sorted(set(memory_keys))},
         "keys",

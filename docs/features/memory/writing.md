@@ -246,7 +246,7 @@ conflict verdict. Every entry gets the conflict check, whatever
   stays comparable with the imported one; a key of any other shape keeps its suffix.
   Only the first 1,200 characters of an item are embedded and indexed, so split a longer
   item into several.
-- **What was deleted, retired or rejected stays so:** before the write, the import reads
+- **A key that was deleted, retired or rejected stays so:** before the write, the import reads
   each key's newest version in every session of the identity that the token may read (only
   its own session for an `own_session` token), tombstones and rows of every status
   included. A key its owner deleted comes back `skipped` (`deleted`), one a newer
@@ -257,6 +257,8 @@ conflict verdict. Every entry gets the conflict check, whatever
   back `skipped` (`revised`), before the bulk write's own pin and lock guards. A status the
   import does not recognise leaves the key as it is too, as `skipped` (`unknown`). The read
   and the write are not atomic: a delete that lands between them is written over.
+  Text deleted, retired or rejected under another key is imported again under its
+  `import:` key: the bulk write's dedup sees live rows only.
 - **A tombstone has no way back through the import:** `memory.delete`, `memory.clear` and
   an expiry with `on_expire=tombstone` all write one, so clearing an agent and importing
   from the source again answers `skipped` (`deleted`) for every such item. Bring the keys

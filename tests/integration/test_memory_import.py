@@ -360,3 +360,5 @@ def test_more_than_200_entries_are_refused(control_plane_url: str, mint_test_tok
     with httpx.Client(base_url=control_plane_url, timeout=60.0) as c:
         r = c.post("/v1/memory.import", json=body, headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 422, r.text[:400]
+    errors = r.json()["detail"]["errors"]
+    assert [(e["loc"], e["type"]) for e in errors] == [(["entries"], "too_long")]

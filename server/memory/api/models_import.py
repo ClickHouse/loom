@@ -90,7 +90,7 @@ class _ImportEntryResult(BaseModel):
     # The key the item is stored under, or would be.
     key: str
     # written | held (another memory holds the fact; nothing is written) | skipped
-    # (the key holds the item already) | refused (a check refused it).
+    # (the key is left as it is; `reason` says why) | refused (a check refused it).
     outcome: Outcome
     # Why, when the outcome is not a plain write. refused: the check that refused it
     # (conflict: too close to a pinned memory). held: merge, or identity_duplicate
@@ -111,7 +111,7 @@ class _ImportTotals(BaseModel):
     written: int = 0
     # Entries another memory already held.
     held: int = 0
-    # Entries whose key already held them, or repeated an earlier entry.
+    # Entries whose key was left as it is, or that repeated an earlier entry.
     skipped: int = 0
     # Entries a check refused.
     refused: int = 0
