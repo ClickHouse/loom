@@ -137,7 +137,7 @@ async def test_recency_backfill_adds_newest_rows_in_scope_only_when_tagged(monke
     sql, params = ch.query_all_calls[0]
     assert "ORDER BY coalesce(e.valid_at, e.temporal_anchor, e.created_at) DESC" in sql
     assert "hasAny(e.tags, {tags:Array(String)})" in sql and params["tags"] == ["workflow:w"]
-    assert params["existing_keys"] == ["a"] and params["newest_limit"] == 5
+    assert params["pooled_keys"] == ["a"] and params["newest_limit"] == 5
     assert [h.memory_key for h in out] == ["a", "w/r9/162194"]
     assert out[1].rank_score == 0.5  # the pool's floor, so recency alone decides
     assert out[1].score_components["recency_backfill"] == 1.0

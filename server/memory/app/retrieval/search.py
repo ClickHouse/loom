@@ -354,11 +354,10 @@ async def _merge_leg_hits(
         ]
 
     if q.include_top_n_unmatched > 0 and _plane_enabled(q, "unmatched"):
-        existing_keys = {h.memory_key for h in hits}
         unmatched_hits = await _fetch_unmatched_candidates(
             ch,
             q,
-            existing_keys,
+            hits,
             limit=int(q.include_top_n_unmatched),
         )
         if unmatched_hits:

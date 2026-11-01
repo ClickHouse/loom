@@ -95,7 +95,7 @@ async def _truth(org: str, rows: list[RowKey], scope: ReadFilters) -> _Truth:
     import server.memory.store as memory_repo
 
     found = await memory_repo.status_by_rows(org, rows, scope=scope)
-    return {(r.namespace, r.agent, r.user_id, r.session_id, r.memory_key): r for r in found}
+    return {r.row_key: r for r in found}
 
 
 async def _canonicals(
@@ -169,7 +169,7 @@ def _rewrite_pool(
         row = canon.get((ns, cid))
         if row is None:
             continue
-        canonical = (ns, row.agent, row.user_id, row.session_id, row.memory_key)
+        canonical = row.row_key
         if canonical in present:
             continue
         present.add(canonical)

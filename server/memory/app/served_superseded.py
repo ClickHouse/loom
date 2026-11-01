@@ -104,7 +104,7 @@ async def annotate_pool_superseded(ctx: Any) -> None:
     except Exception as e:  # noqa: BLE001 — naming the successor never fails a search
         log.warning("memory.search: superseded successor read failed: %s", e)
         return
-    by_row = {(r.namespace, r.agent, r.user_id, r.session_id, r.memory_key): r for r in rows}
+    by_row = {r.row_key: r for r in rows}
     for h in old:
         r = by_row.get(hit_row_key(h, ns_default))
         if r is None:

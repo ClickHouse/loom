@@ -53,12 +53,16 @@ def _entry(state, key: str, memory_id: str, sha: str, **labels: Any) -> None:
 def _settle(state, verdicts: dict) -> set[int]:
     """Replay the batch and fold its `verdicts`; the indexes of the built rows the
     replay kept out."""
-    from server.memory.app.bulk_rows import LOCKED, PINNED, UNCHANGED
+    from server.memory.app.bulk_rows import Outcome
     from server.memory.app.bulk_set import _apply_verdicts
 
     _apply_verdicts(state, [], verdicts)
     built = [s for s in state.steps if s.repeats is None]
-    return {i for i, s in enumerate(built) if s.outcome in (UNCHANGED, PINNED, LOCKED)}
+    return {
+        i
+        for i, s in enumerate(built)
+        if s.outcome in (Outcome.UNCHANGED, Outcome.PINNED, Outcome.LOCKED)
+    }
 
 
 def test_no_verdicts_is_a_pass_through() -> None:

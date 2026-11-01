@@ -9,6 +9,7 @@ import logging
 import uuid as _uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
@@ -70,12 +71,16 @@ def _with_attribute_tags(tags: Any, value: str, namespace: str) -> list[str]:
         return base
 
 
-# What a step comes to once the batch is replayed (`settle_steps`), besides PINNED and
-# LOCKED (refused) and the verdicts that keep a row out (`NOT_LANDING`).
-LAND = "land"
-RELABEL = "relabel"  # lands: the same bytes with a new label, still a restatement
-UNCHANGED = "unchanged"
-COPY = "copy"  # a repeat answering the merge or rejection of the entry it repeats
+class Outcome(StrEnum):
+    """What a step comes to once the batch is replayed (`settle_steps`)."""
+
+    LAND = "land"
+    RELABEL = "relabel"  # lands: the same bytes with a new label, still a restatement
+    UNCHANGED = "unchanged"
+    PINNED = PINNED  # refused: the key holds a pinned value
+    LOCKED = LOCKED  # refused: it would change a locked row's expiry
+    KEPT_OUT = "kept_out"  # its verdict (`NOT_LANDING`: merge, rejected) keeps it out
+    COPY = "copy"  # a repeat answering the merge or rejection of the entry it repeats
 
 
 @dataclass(slots=True, eq=False)
@@ -94,7 +99,7 @@ class _Step:
     embedding: dict[str, Any] | None = None
     verdict: Any = None
     stale: bool = False  # its verdict judged bytes an earlier landed row replaced
-    outcome: str = ""
+    outcome: Outcome | None = None
 
 
 @dataclass(slots=True)
@@ -505,13 +510,13 @@ def settle_steps(state: _BulkWriteState) -> None:
         step.outcome = _settle_step(
             state, step, held.get(key) or _stored_held(state, key), rewritten
         )
-        if step.outcome in (LAND, RELABEL):
+        if step.outcome in (Outcome.LAND, Outcome.RELABEL):
             landed = step.repeats or step
             held[key] = _held_by(landed)
             rewritten.add(str(landed.row["memory_id"]))
 
 
-def _settle_step(state: _BulkWriteState, step: _Step, held: _Held, rewritten: set[str]) -> str:
+def _settle_step(state: _BulkWriteState, step: _Step, held: _Held, rewritten: set[str]) -> Outcome:
     """What a step comes to over what its key holds now, in the skip gate's order:
     unchanged, then pinned or locked, then the verdict. The row takes the labels and pin
     it lands with."""
@@ -524,29 +529,31 @@ def _settle_step(state: _BulkWriteState, step: _Step, held: _Held, rewritten: se
         row["pinned"] = 1  # the same bytes keep the pin, as on memory.set
     level = str(row.get("sensitivity") or "")
     if same_bytes and level == held.level and bool(row["pinned"]) == held.pinned:
-        return UNCHANGED
+        return Outcome.UNCHANGED
     if held.pinned and not same_bytes and not row["pinned"]:
-        return PINNED
+        return Outcome.PINNED
     sha, expires_at = str(row["content_sha256"]), row.get("expires_at")
     if _changes_locked_expiry(state, step.entry, sha, expires_at):
-        return LOCKED
+        return Outcome.LOCKED
     target = verdict_target(step.verdict)
     step.stale = bool(target) and target in rewritten
     verdict = str(getattr(step.verdict, "verdict", "") or "")
     if verdict in NOT_LANDING and not step.stale:
-        return verdict
-    return RELABEL if same_bytes else LAND
+        return Outcome.KEPT_OUT
+    return Outcome.RELABEL if same_bytes else Outcome.LAND
 
 
-def _settle_repeat(step: _Step, src: _Step, held: _Held, rewritten: set[str]) -> str:
+def _settle_repeat(step: _Step, src: _Step, held: _Held, rewritten: set[str]) -> Outcome:
     """An exact repeat takes the outcome of the entry it repeats. A merge whose target a
     landed row rewrote in between lands instead, as the repeat would serially: a copy of
     the earlier row, with its vector, lands as this entry's write and result, and the
     earlier entry keeps its merge."""
     if held.step is src:
-        return UNCHANGED
-    if src.outcome not in NOT_LANDING:
-        return src.outcome if src.outcome in (PINNED, LOCKED) else UNCHANGED
+        return Outcome.UNCHANGED
+    if src.outcome is Outcome.PINNED or src.outcome is Outcome.LOCKED:
+        return src.outcome  # refused again, as the same memory.set would be
+    if src.outcome is not Outcome.KEPT_OUT:
+        return Outcome.UNCHANGED
     target = verdict_target(src.verdict)
     if target and target in rewritten:
         step.row = dict(src.row)
@@ -554,9 +561,11 @@ def _settle_repeat(step: _Step, src: _Step, held: _Held, rewritten: set[str]) ->
         # It met the new value, so it names no peer; the verdicts never see this result.
         res = step.result
         res.version, res.memory_id = src.result.version, src.result.memory_id
-        res.conflict_verdict, res.peers, res.next = "clear", [], set_next("clear", [])
-        return LAND
-    return COPY
+        res.conflict_verdict = "clear"
+        res.peers = []
+        res.next = set_next("clear", [])
+        return Outcome.LAND
+    return Outcome.COPY
 
 
 def _relabel(state: _BulkWriteState, step: _Step, held: _Held) -> None:
@@ -587,25 +596,30 @@ def write_step_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
     (`apply_bulk_verdicts`), and a repeat that lands an earlier row by `_settle_repeat`."""
     for step in state.steps:
         res, row = step.result, step.row
-        if step.repeats is None and step.outcome in (UNCHANGED, PINNED, LOCKED):
+        if step.repeats is None and step.outcome in (
+            Outcome.UNCHANGED,
+            Outcome.PINNED,
+            Outcome.LOCKED,
+        ):
             # It was built and counted as a write of a key the batch had already seen.
             res.version, res.memory_id = 0, ""
             if state.existing_lookup_ok:
                 state.n_updated -= 1
             else:
                 state.n_unknown -= 1
-        if step.outcome in (UNCHANGED, RELABEL):
+        if step.outcome in (Outcome.UNCHANGED, Outcome.RELABEL):
             # The same bytes again: a restatement, whether or not it changes a label.
             _note_restatement(state, str(row["memory_id"]))
-        if step.outcome == UNCHANGED:
+        if step.outcome == Outcome.UNCHANGED:
             state.skipped_unchanged += 1
-        elif step.outcome == PINNED:
-            res.conflict_verdict, res.pinned_blocker_id = PINNED, str(row["memory_id"])
+        elif step.outcome == Outcome.PINNED:
+            res.conflict_verdict = PINNED
+            res.pinned_blocker_id = str(row["memory_id"])
             state.skipped_pinned.append(res.memory_key)
-        elif step.outcome == LOCKED:
+        elif step.outcome == Outcome.LOCKED:
             res.conflict_verdict = LOCKED
             state.skipped_locked.append(res.memory_key)
-        elif step.outcome == COPY:
+        elif step.outcome == Outcome.COPY:
             _copy_verdict(state, plan, step)
 
 
@@ -615,7 +629,9 @@ def _copy_verdict(state: _BulkWriteState, plan: BulkVerdictPlan, step: _Step) ->
     reinforces the merge target."""
     assert step.repeats is not None
     src, res = step.repeats.result, step.result
-    res.conflict_verdict, res.peers, res.next = src.conflict_verdict, list(src.peers), src.next
+    res.conflict_verdict = src.conflict_verdict
+    res.peers = list(src.peers)
+    res.next = src.next
     res.pinned_blocker_id = src.pinned_blocker_id
     if src.conflict_verdict == "merge":
         plan.merged.append(res.memory_key)

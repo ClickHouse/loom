@@ -127,8 +127,7 @@ def _entity_filter(input: MemorySearchInput, llm_query_entities: list[str]) -> l
     """The entity filter before canonicalisation: the caller's own wins over the
     entities the intent parser found. A name too long to be one is left out, so a failed
     canonical lookup never binds it."""
-
-    return names_only(list(input.entity_filter or [])) or names_only(list(llm_query_entities))
+    return names_only(input.entity_filter or []) or names_only(llm_query_entities)
 
 
 async def _prelaunch_canonical_lookup(

@@ -252,7 +252,8 @@ class SearchHit:
     # session_id). Provenance for the caller: a bench scores source recall
     # against gold evidence sessions, an agent groups hits by the
     # conversation they came from. "" for rows without one and for the
-    # summary / chunk / derived / code planes. Surfaced on the wire model.
+    # summary / derived / code planes; a chunk or record hit carries its row's.
+    # Surfaced on the wire model.
     session_id: str = ""
     # Who said it: the `speaker:<name>` tag the extractor writes on a fact
     # whose cited turns all come from one named speaker; "" when the fact is

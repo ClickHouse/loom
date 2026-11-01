@@ -11,7 +11,7 @@ from dataclasses import replace
 from typing import Any
 
 from server.memory.domain.search_parsing import _iso_date
-from server.memory.domain.search_sql import _build_where
+from server.memory.domain.search_sql import _build_where, exclude_pooled
 from server.memory.domain.search_types import (
     SearchHit,
     SearchQuery,
@@ -45,10 +45,7 @@ async def _recency_backfill(
     if not hard_tag_filter(q.tags, q.tags_soft):
         return hits
     where, params = _build_where(q)
-    existing = sorted({h.memory_key for h in hits})
-    if existing:
-        where.append("e.memory_key NOT IN {existing_keys:Array(String)}")
-        params["existing_keys"] = existing
+    exclude_pooled(where, params, hits)
     params["newest_limit"] = int(q.top_k)
     sql = f"""
         SELECT

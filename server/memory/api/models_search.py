@@ -623,11 +623,11 @@ class _MemorySearchHit(BaseModel):
     verified: bool = False
     # Compact agent-facing provenance so a hit can be cited without search_trace.
     explanation: str = ""
-    # Provenance: the `session_id` the memory was written
-    # under; "" when the row has none or the hit is a summary / chunk /
-    # derived / code row. Lets a caller group hits by conversation and a
-    # bench score source recall against gold evidence sessions without a
-    # memory.get per hit.
+    # Provenance: the `session_id` the memory was written under; "" when the
+    # row has none or the hit is a summary / derived / code row (a chunk or
+    # record hit carries its row's). Lets a caller group hits by conversation
+    # and a bench score source recall against gold evidence sessions without
+    # a memory.get per hit.
     session_id: str = ""
     # Who said it, from the `speaker:<name>` tag; "" when the
     # fact is unattributed or cited to more than one speaker.

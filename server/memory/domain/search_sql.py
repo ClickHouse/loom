@@ -6,10 +6,11 @@ into WHERE clauses + bound params.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from server.core.tag_sql import tag_predicate
-from server.memory.domain.search_types import SearchQuery
+from server.memory.domain.search_types import SearchHit, SearchQuery, hit_row_key
 from server.memory.domain.temporal_sql import as_of_predicate, status_predicate, tombstone_predicate
 
 
@@ -45,6 +46,23 @@ def agent_or_shared_predicate(alias: str = "e") -> str:
     agent_col = f"{alias}.agent" if alias else "agent"
     scope_col = f"{alias}.scope" if alias else "scope"
     return f"({agent_col} = {{agent:String}} OR {scope_col} = 'shared')"
+
+
+def exclude_pooled(where: list[str], params: dict[str, Any], hits: Sequence[SearchHit]) -> None:
+    """Leave the rows `hits` already pooled out of a leg over `loom.memory_embeddings AS e`.
+    A key holds a row per writer and session, so a hit names its row; a hit whose leg read
+    no identity leaves out its whole key."""
+    rows = sorted({hit_row_key(h)[1:] for h in hits if h.identity})
+    keys = sorted({h.memory_key for h in hits if not h.identity})
+    if rows:
+        where.append(
+            "(e.agent, e.user_id, e.session_id, e.memory_key)"
+            " NOT IN {pooled_rows:Array(Tuple(String, String, String, String))}"
+        )
+        params["pooled_rows"] = rows
+    if keys:
+        where.append("e.memory_key NOT IN {pooled_keys:Array(String)}")
+        params["pooled_keys"] = keys
 
 
 def _build_where(q: SearchQuery) -> tuple[list[str], dict[str, Any]]:

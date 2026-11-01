@@ -125,6 +125,10 @@ class DuplicateStatus:
             canonical_id=_s(r, "canonical_id"),
         )
 
+    @property
+    def row_key(self) -> RowKey:
+        return (self.namespace, self.agent, self.user_id, self.session_id, self.memory_key)
+
 
 @dataclass(frozen=True, slots=True)
 class CanonicalRow:
@@ -164,6 +168,10 @@ class CanonicalRow:
             sensitivity=_s(r, "sensitivity"),
         )
 
+    @property
+    def row_key(self) -> RowKey:
+        return (self.namespace, self.agent, self.user_id, self.session_id, self.memory_key)
+
 
 @dataclass(frozen=True, slots=True)
 class SupersededSuccessor:
@@ -191,6 +199,10 @@ class SupersededSuccessor:
             successor_key=_s(r, "successor_key"),
             superseded_at=_s(r, "superseded_at"),
         )
+
+    @property
+    def row_key(self) -> RowKey:
+        return (self.namespace, self.agent, self.user_id, self.session_id, self.memory_key)
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,11 +6,12 @@ recall pool, the records leg over loom.memory_records, and the
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from server.memory.app.retrieval.retry import _call_retrying_empty_block
 from server.memory.domain.search_parsing import _iso_date, _record_excerpt, _record_query_tokens
-from server.memory.domain.search_sql import _build_where
+from server.memory.domain.search_sql import _build_where, exclude_pooled
 from server.memory.domain.search_text import _GENERIC_ENTITY_FILTER
 from server.memory.domain.search_types import SearchHit, SearchQuery, _CHClient, row_identity
 
@@ -399,7 +400,7 @@ def _record_hits(rows: list[dict[str, Any]]) -> list[SearchHit]:
 async def _fetch_unmatched_candidates(
     ch: _CHClient,
     q: SearchQuery,
-    existing_keys: set[str],
+    pooled: Sequence[SearchHit],
     *,
     limit: int,
 ) -> list[SearchHit]:
@@ -416,9 +417,7 @@ async def _fetch_unmatched_candidates(
 
     where, params = _build_where(q)
     params["unmatched_limit"] = int(limit)
-    if existing_keys:
-        where.append("e.memory_key NOT IN {existing_keys:Array(String)}")
-        params["existing_keys"] = list(existing_keys)
+    exclude_pooled(where, params, pooled)
 
     where_sql = " WHERE " + " AND ".join(where)
     sql = f"""
