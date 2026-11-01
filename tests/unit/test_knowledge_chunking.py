@@ -373,3 +373,8 @@ def test_a_title_drops_only_inline_tags_code_backticks_and_matched_emphasis(
 
 def test_a_backtick_run_with_a_backtick_after_it_opens_no_fence() -> None:
     assert [s.path for s in detect_sections("```js``` is inline\n# B\n") if s.path] == [("B",)]
+
+
+def test_an_underline_shorter_than_three_is_text() -> None:
+    for text in ("Title\n--\n\nbody\n", "Title\n=\n\nbody\n"):
+        assert not any(s.path for s in detect_sections(text)), text

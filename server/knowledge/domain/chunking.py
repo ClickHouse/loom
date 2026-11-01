@@ -218,7 +218,7 @@ def _heading_at(lines: list[str], i: int) -> tuple[int, str, int]:
     nxt = lines[i + 1] if i + 1 < len(lines) else ""
     if (
         _SETEXT_UNDERLINE.match(nxt)
-        and len(nxt.strip()) >= 3
+        and len(nxt.strip()) >= 3  # unlike CommonMark: `Title` over `--` is text
         and line.strip()
         and not _LIST_ITEM.match(line)
         and not _THEMATIC_BREAK.match(line)

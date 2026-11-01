@@ -18,9 +18,10 @@ belongs here ([writing memories](./memory/writing.md)).
    inside each section (`LOOM_KNOWLEDGE_CHUNK_SIZE` characters, stepping by
    `LOOM_KNOWLEDGE_CHUNK_STRIDE`, so consecutive windows overlap). A document with no
    headings is windowed over its whole text. Headings follow CommonMark's block
-   rules: `#` lines and a line over a `===` or `---` underline, plus one-line `<h1>`
-   to `<h6>`; a list item, a thematic break and any line inside a fenced code block
-   or an HTML block are never headings.
+   rules: `#` lines and a line over an underline of three or more `=` or `-` (a
+   shorter one is text here), plus one-line `<h1>` to `<h6>`; a list item, a
+   thematic break and any line inside a fenced code block or an HTML block are
+   never headings.
 3. **Embeds each chunk with its context.** The vector is computed over the title, the
    `description` and the chunk's heading breadcrumb ("Deploy > Rollback > Cloud")
    prepended to the chunk text. The stored chunk stays unchanged, so snippets read
