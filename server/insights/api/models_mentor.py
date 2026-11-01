@@ -74,8 +74,10 @@ EvidenceSource = Literal["server", "client", "none"]
 
 
 class MentorEvidence(BaseModel):
-    """One rung of what the agent's use of Loom shows, weakest claim first: a call made
-    is not a call that answered, and an answer returned is not an answer used."""
+    """One rung of what the agent's use of Loom shows, weakest claim first.
+
+    A call made is not a call that answered, and an answer returned is not an answer
+    used."""
 
     rung: EvidenceRung
     # How many in the window; None when Loom does not observe it or the read failed.
@@ -112,7 +114,8 @@ class MentorBriefOutput(BaseModel):
     evidence: list[MentorEvidence] = Field(default_factory=list)
     # Oldest ledger row of this agent in the window, of any kind; None when it holds none.
     ledger_from: datetime | None = None
-    # Days the call ledger keeps this namespace's rows (0: until deleted). When the window
+    # Days the call ledger keeps this namespace's rows (0: until deleted; None when the
+    # read failed). When the window
     # is longer, its oldest part is gone and the rungs read from the ledger (`attempt`,
     # `success`, `committed_write`, `returned_hit`) cover less than the window.
     ledger_retention_days: int | None = None
@@ -122,7 +125,7 @@ class MentorBriefOutput(BaseModel):
     agents: list[str] = Field(default_factory=list)
     # True when the caller named no real agent and the brief picked the top writer in `agents`.
     agent_defaulted: bool = False
-    # Facts the profile could not read, as "step: reason".
+    # Facts the brief could not read, as "step: reason".
     skipped: list[str] = Field(default_factory=list)
     # No warning or critical hint.
     healthy: bool = True

@@ -894,14 +894,13 @@ async def _grants_repo(ch: RecordingCH, c: dict[str, Any]) -> None:
 async def _mentor_evidence(ch: RecordingCH, c: dict[str, Any]) -> None:
     """The evidence ladder `mentor.brief` reads at each brief."""
     from server.insights.app import mentor_rules
-    from server.insights.app.mentor_brief import _FOUND_READS
     from server.insights.store import mentor as mentor_store
 
     who = (ORG, NS, "agent-a", 604800)
     await mentor_store.call_evidence(
         *who,
         searches=mentor_rules.SEARCHES,
-        found_reads=_FOUND_READS,
+        found_reads=mentor_rules.FOUND_READS,
         ch=ch,
     )
     await mentor_store.indexed_writes(*who, ch=ch)

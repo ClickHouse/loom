@@ -64,6 +64,9 @@ READ_MISS_SHARE = 0.20
 
 GETS = ("memory.get", "memory.bulk_get")
 SEARCHES = ("memory.search", "memory.ask")
+# The reads that answer `found` for what they were asked: a `found` from a delete or an
+# unsave is not a read that answered.
+FOUND_READS = (*GETS, "memory.get_by_id")
 SETS = (
     "memory.set",
     "memory.bulk_set",

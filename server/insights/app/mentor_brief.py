@@ -198,11 +198,6 @@ def _rung(rung: EvidenceRung, count: int | None, source: EvidenceSource) -> Ment
     return MentorEvidence(rung=rung, count=count, source=source, meaning=_RUNG_MEANING[rung])
 
 
-# The reads that answer `found` for what they were asked: a `found` from a delete or an
-# unsave is not a read that answered.
-_FOUND_READS = (*mentor_rules.GETS, "memory.get_by_id")
-
-
 async def _evidence(
     profile: mentor_rules.MentorProfile,
 ) -> tuple[list[MentorEvidence], datetime | None, int | None, list[str]]:
@@ -226,7 +221,7 @@ async def _evidence(
         read(
             "evidence",
             mentor_store.call_evidence(
-                *who, searches=mentor_rules.SEARCHES, found_reads=_FOUND_READS, ch=ch
+                *who, searches=mentor_rules.SEARCHES, found_reads=mentor_rules.FOUND_READS, ch=ch
             ),
         ),
         read("indexed_writes", mentor_store.indexed_writes(*who, ch=ch)),

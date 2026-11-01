@@ -487,7 +487,7 @@ async def call_evidence(
 ) -> dict[str, Any]:
     """What the agent's calls in the window show, from the call ledger: attempts,
     successes, `memory.set` calls that stored a row (`noop` false: a merge or a dry run
-    answers true, and an MCP idempotent replay records no result), reads that answered,
+    answers true, and an idempotent replay records no result), reads that answered,
     and the oldest row the ledger still holds for the agent."""
     ch = ch or _default_client()
     row = await ch.query_one(

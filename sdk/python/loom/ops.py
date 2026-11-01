@@ -14451,7 +14451,7 @@ class MentorAdoption(TypedDict, total=False):
 
 
 class MentorEvidence(TypedDict, total=False):
-    "One rung of what the agent's use of Loom shows, weakest claim first: a call made"
+    "One rung of what the agent's use of Loom shows, weakest claim first."
 
     rung: Required[
         Literal[

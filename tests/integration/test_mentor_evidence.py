@@ -38,6 +38,14 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client
         _call(c, "memory.set", {**fact, "value": "Reports go out on Mondays", "dry_run": True})
         _call(c, "memory.get", {**ident, "memory_key": "pref/report"})
         _call(c, "memory.get", {**ident, "memory_key": "pref/absent"})
+        # A bulk read with one key found answered; a read by id that found its row did too.
+        bulk = {**ident, "memory_keys": ["pref/report", "pref/absent"]}
+        _call(c, "memory.bulk_get", bulk)
+        stored = _call(c, "memory.get", {**ident, "memory_key": "pref/report"})
+        # The read by id names no namespace or agent of its own; the ledger takes them
+        # from the body.
+        by_id = {**ident, "memory_id": stored["memory_id"]}
+        assert _call(c, "memory.get_by_id", by_id)["found"] is True
         abstained = _call(c, "memory.search", {**ident, "query": "zebra migration in Kenya"})
         assert abstained["abstain"] is True, abstained
         # `loom_search` (search.query) answers with hits per plane: one here.
@@ -67,18 +75,19 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client
             body = {"org": org, "namespace": ns, "agent": AGENT}
             out = _call(c, "mentor.brief", body)
             ladder = {e["rung"]: e for e in out["evidence"]}
-            return (out, ladder) if ladder["attempt"]["count"] == 12 else None
+            return (out, ladder) if ladder["attempt"]["count"] == 15 else None
 
-        out, ladder = wait_until(brief, max_wait=30.0, description="twelve calls in the ledger")
+        out, ladder = wait_until(brief, max_wait=30.0, description="fifteen calls in the ledger")
     counts = {rung: e["count"] for rung, e in ladder.items()}
-    assert counts["success"] == 12
+    assert counts["success"] == 15
     # Two writes stored a row; the restatement and the dry run did not.
     assert counts["committed_write"] == 2
     # The deleted row is no longer one a search can serve.
     assert counts["indexed_write"] == 1
-    # The get that found its key and the search with a hit answered, and the ask when it
-    # did not abstain; the miss and the abstaining search did not.
-    assert counts["returned_hit"] == 2 + (0 if asked["abstain"] else 1)
+    # The two gets that found their key, the bulk read with one hit, the read by id and the
+    # search with a hit answered, and the ask when it did not abstain; the miss and the
+    # abstaining search did not.
+    assert counts["returned_hit"] == 5 + (0 if asked["abstain"] else 1)
     # One key reported relied on, as the client's own word.
     assert (counts["client_acknowledged"], ladder["client_acknowledged"]["source"]) == (
         1,

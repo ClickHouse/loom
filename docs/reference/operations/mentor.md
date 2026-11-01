@@ -35,10 +35,10 @@ One agent's usage profile and the store's hints.
 | `adoption` | `list[MentorAdoption]` | Per hint code, sessions it was shown in and followed in, most shown first; empty when no hint reached the agent or the read failed. |
 | `evidence` | `list[MentorEvidence]` | The agent's use of Loom in the window, one rung each from a call made to a task outcome (never observed); a rung whose read failed has no count and is in `skipped`. |
 | `ledger_from` | `datetime \| None` | Oldest ledger row of this agent in the window, of any kind; None when it holds none. |
-| `ledger_retention_days` | `int \| None` | Days the call ledger keeps this namespace's rows (0: until deleted). |
+| `ledger_retention_days` | `int \| None` | Days the call ledger keeps this namespace's rows (0: until deleted; None when the read failed). |
 | `agents` | `list[str]` | The namespace's writers in the window, most active first; the brief defaults to the first when the caller has no agent name of its own (the dashboard) — `agent_defaulted` says so. |
 | `agent_defaulted` | `bool` | True when the caller named no real agent and the brief picked the top writer in `agents`. |
-| `skipped` | `list[str]` | Facts the profile could not read, as "step: reason". |
+| `skipped` | `list[str]` | Facts the brief could not read, as "step: reason". |
 | `healthy` | `bool` | No warning or critical hint. |
 
 ## `mentor.guide`
