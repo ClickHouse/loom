@@ -130,6 +130,19 @@ def test_a_personal_collection_is_not_a_complete_member_count(
     assert not ch.statements("loom.namespace_grants")
 
 
+def test_an_org_readable_code_namespace_is_not_a_complete_member_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def readable(org: str, ns: str) -> bool:
+        return True
+
+    monkeypatch.setattr(namespace_inventory, "is_org_readable_code_namespace", readable)
+    _ch().install(monkeypatch, *_GET_CLIENT)
+    (members,) = [p for p in _run().populations if p.population == "members"]
+    assert (members.total, members.complete) == (2, False)
+    assert members.reason == "readable by everyone in the org: those members are not counted"
+
+
 def test_a_plain_namespace_never_reads_the_collection_tree(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -186,6 +199,7 @@ def test_an_own_session_scope_names_its_session(monkeypatch: pytest.MonkeyPatch)
     bounded = [c for c in ch.calls if "documents" not in c.sql and "grants" not in c.sql]
     assert bounded
     assert all(st.params["scope_sid"] == "s1" for st in bounded)
+    assert not ch.statements("loom.memory_records") and not ch.statements("loom.memory_webhooks")
     assert (out.scope.user_id, out.scope.session_id) == ("u1", "s1")
 
 

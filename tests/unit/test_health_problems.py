@@ -514,6 +514,19 @@ def test_health_likely_cause_depends_on_the_embedder_only(
     assert body["adaptive_thresholds"]["likely_cause"] == "probe error — check boot logs"
 
 
+def test_a_keyed_embedder_without_its_key_is_a_degraded_fake(
+    health_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The process serves the fake n-gram embedder then, and health says so."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "embedding_model", "text-embedding-3-small")
+    monkeypatch.setattr("server.embedding.embedder.provider_key", lambda p: "")
+    monkeypatch.setattr("server.embedding.embedder.gateway.keyless", lambda: False)
+    body = health_client.get("/v1/health").json()
+    assert body["fake_embedding"] is True and body["providers_degraded"] is True
+
+
 # --- loom doctor -----------------------------------------------------------
 
 

@@ -114,7 +114,7 @@ def test_a_grant_in_another_org_does_not_admit_a_same_named_subject(monkeypatch)
 
     monkeypatch.setattr(authz, "_lookup_grant", _acme_grant)
     monkeypatch.setattr(authz, "may_be_restricted", _plain)
-    monkeypatch.setattr(authz, "_is_org_readable_code_namespace", _plain)
+    monkeypatch.setattr(authz, "is_org_readable_code_namespace", _plain)
     for role in (Role.VIEWER, Role.WRITER):
         with pytest.raises(PermissionError):
             asyncio.run(

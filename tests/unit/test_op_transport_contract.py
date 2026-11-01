@@ -201,7 +201,7 @@ def _patched_app(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Env]:
         return None
 
     monkeypatch.setattr(authz, "may_be_restricted", _no)
-    monkeypatch.setattr(authz, "_is_org_readable_code_namespace", _no)
+    monkeypatch.setattr(authz, "is_org_readable_code_namespace", _no)
     monkeypatch.setattr(authz, "_lookup_grant", _none)
     monkeypatch.setattr(member_writes, "code_member_may_write", _no)
     monkeypatch.setattr("server.transport.gates._admitted", _none)

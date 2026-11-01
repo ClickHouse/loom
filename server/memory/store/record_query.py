@@ -12,8 +12,11 @@ from fastapi import HTTPException
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.record_values import FIELD_RE
 
-# A record a read serves: its active version, not tombstoned.
-_LIVE_RECORD = "{r}status = 'active' AND {r}tombstoned_at IS NULL"
+
+def _live_record(alias: str = "") -> str:
+    """A record a read serves: its active version, not tombstoned."""
+    return f"{alias}status = 'active' AND {alias}tombstoned_at IS NULL"
+
 
 _OP_SQL = {"eq": "=", "ne": "!=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
 
@@ -32,7 +35,7 @@ def _build_record_query(input: Any) -> tuple[str, dict[str, Any]]:
         "r.org = {org:String}",
         "r.namespace = {ns:String}",
         "r.schema_name = {schema:String}",
-        _LIVE_RECORD.format(r="r."),
+        _live_record("r."),
     ]
     params: dict[str, Any] = {
         "org": input.org,
@@ -170,7 +173,7 @@ async def active_record_tally(
     row = await ch.query_one(
         "SELECT count() AS n, if(n = 0, NULL, max(updated_at)) AS latest "
         "FROM loom.memory_records FINAL WHERE org = {org:String} AND namespace = {ns:String} "
-        f"AND {_LIVE_RECORD.format(r='')}",
+        f"AND {_live_record()}",
         params,
     )
     return (int(row["n"]), row["latest"]) if row else (0, None)

@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import cast, get_args
 
 from server.auth import sharing
-from server.auth.authz import check_authorized
+from server.auth.authz import check_authorized, is_org_readable_code_namespace
 from server.auth.context import current_auth
 from server.auth.fail_closed import note_answered_unverified
 from server.core.datetimes import naive_utc_now_seconds
@@ -152,6 +152,8 @@ async def _members(org: str, ns: str) -> InventoryPopulation:
     except Exception as e:  # noqa: BLE001 — one population's failure leaves the others standing
         return _not_counted("members", _failed("members", e))
     wider = []
+    if await is_org_readable_code_namespace(org, ns):
+        wider.append("readable by everyone in the org")
     if shared:
         wider.append("shared with everyone or a group")
     if inherited:

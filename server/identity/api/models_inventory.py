@@ -24,8 +24,10 @@ class NamespaceInventoryInput(BaseModel):
 
     org: str
     namespace: str
-    # `own_user` / `own_session` bound every count to `user_id` (and `session_id`); a
-    # token's own bound narrows further, never wider.
+    # `own_user` / `own_session` bound the memory and run counts and the observed
+    # populations to `user_id` (and `session_id`); documents and members stay
+    # namespace-wide, records and integrations are not counted. A token's own bound
+    # narrows further, never wider.
     read_scope: ReadScope = "namespace"
     # The user `own_user` / `own_session` count; ignored under `namespace`.
     user_id: str | None = None
@@ -48,7 +50,8 @@ class InventoryScope(BaseModel):
 
 class InventorySection(BaseModel):
     plane: InventoryPlane
-    # Live items of the plane inside the scope; None when the section did not run.
+    # Live items of the plane (memories and runs inside the read scope); None when the
+    # section was not counted.
     count: int | None
     # Newest write the section saw; None when it holds nothing or did not run.
     latest_at: datetime | None

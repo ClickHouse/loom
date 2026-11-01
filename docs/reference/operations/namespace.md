@@ -204,7 +204,7 @@ What one namespace holds and who appears in it, with what was not counted.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `read_scope` | `Literal['namespace', 'own_user', 'own_session']` | `'namespace'` | `own_user` / `own_session` bound every count to `user_id` (and `session_id`); a token's own bound narrows further, never wider. |
+| `read_scope` | `Literal['namespace', 'own_user', 'own_session']` | `'namespace'` | `own_user` / `own_session` bound the memory and run counts and the observed populations to `user_id` (and `session_id`); documents and members stay namespace-wide, records and integrations are not counted. |
 | `user_id` | `str \| None` | `None` | The user `own_user` / `own_session` count; ignored under `namespace`. |
 | `session_id` | `str \| None` | `None` | The session `own_session` counts; ignored under the other scopes. |
 | `population_limit` | `int` | `20` | At most this many entries in each observed population (most rows first). |
