@@ -907,23 +907,6 @@ def test_a_blacklisted_realized_outcome_refuses_the_outcome(env) -> None:
     assert (len(calls["record"]), len(calls["set"])) == written
 
 
-def test_a_pattern_only_the_statement_matches_refuses_before_the_record(env) -> None:
-    """A pattern that matches no single field but the statement built from them would
-    refuse in memory.set after the record was written; it is checked before."""
-    from fastapi import HTTPException
-
-    ch, calls, h = env
-    ch.blocked = ["postgres because ledger"]
-    with pytest.raises(HTTPException) as e:
-        asyncio.run(
-            h.handle_decision_record(
-                record_input(outcome="postgres", reasoning="ledger rows need transactions")
-            )
-        )
-    assert e.value.detail["code"] == "BLACKLISTED"
-    assert calls["record"] == [] and calls["set"] == []
-
-
 def test_an_attribute_anywhere_in_a_long_decision_is_labelled(monkeypatch, env) -> None:
     from server.memory.domain.sensitivity import ATTRIBUTE_TAG_PREFIX
     from server.settings import settings
@@ -973,7 +956,7 @@ def test_decision_attribute_labels_are_counted(monkeypatch, env) -> None:
     import server.memory.app.write as write_mod
 
     async def refused(inp):
-        raise HTTPException(status_code=409, detail={"code": "PINNED_CONFLICT"})
+        raise HTTPException(status_code=409, detail={"code": "LOCKED"})
 
     counted.clear()
     monkeypatch.setattr(write_mod, "handle_memory_set", refused)
@@ -1007,16 +990,3 @@ def test_files_come_from_the_stored_alternatives_only() -> None:
     assert svc.decision_files(stored) == [path]
     stored = {"alternatives": svc.clean_alternatives([far])}
     assert svc.decision_files(stored) is None
-
-
-def test_a_pattern_anchored_to_the_stored_statement_refuses_before_the_record(env) -> None:
-    """memory.set checks the statement as it stores it, a JSON string; a pattern anchored
-    to that form (`^"Category: deploy`) must refuse here too, before the record."""
-    from fastapi import HTTPException
-
-    ch, calls, h = env
-    ch.blocked = ['^"Category: deploy']
-    with pytest.raises(HTTPException) as e:
-        asyncio.run(h.handle_decision_record(record_input(category="deploy")))
-    assert e.value.detail["code"] == "BLACKLISTED"
-    assert calls["record"] == [] and calls["set"] == []

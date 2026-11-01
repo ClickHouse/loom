@@ -763,6 +763,36 @@ async def test_an_outcome_after_a_re_record_answers_a_conflict(
 
 
 @pytest.mark.asyncio
+async def test_an_outcome_after_a_same_text_re_record_answers_a_conflict(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A re-record under another run writes the same statement, so the row's hash does not
+    # move; the outcome still writes nothing over the re-record's record.
+    from server.core.errors import PreconditionFailedError
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    scenario = {"category": "deploy", "scenario": "Roll back or hotfix the image?"}
+    re_recorded = []
+
+    async def _re_record_inside_the_outcome(_call: int) -> None:
+        if seen[-1].tags.count("decision:outcome-known") and not re_recorded:
+            re_recorded.append(True)
+            await h.handle_decision_record(
+                record_input(**scenario, run_id="r2", caused_by=[], influenced_by=[])
+            )
+
+    seen = _set_into(local, monkeypatch, before=_re_record_inside_the_outcome)
+    await h.handle_decision_record(record_input(**scenario, caused_by=[], influenced_by=[]))
+    with pytest.raises(PreconditionFailedError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    seed = await _seed_decision()
+    assert seed is not None and seed.run_id == "r2" and seed.realized_outcome == ""
+
+
+@pytest.mark.asyncio
 async def test_an_outcome_whose_row_changed_answers_a_conflict(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:

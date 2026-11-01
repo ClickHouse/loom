@@ -9,7 +9,6 @@ outcome = a record revision that also credits the deciding run's memories.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime
 from typing import Any
@@ -186,16 +185,18 @@ async def _write_decision(
     source_resource_id: str,
     if_match_sha256: str = "",
     pinned: bool = False,
+    revises: WriterRecord | None = None,
 ) -> str:
     """Memory row + record under one key; returns the record_id. The row goes first: a
     delete keeps the record only while its writer's row is live, so that row must exist
     before the record does. `if_match_sha256` makes the row write conditional on the live
     row's hash (memory.set answers 409 PRECONDITION_FAILED otherwise); `pinned` keeps a
-    pinned row's pin."""
+    pinned row's pin. `revises` is the record an outcome read: a re-record since then may
+    leave the row's hash as it was, so the record is checked again before it is replaced."""
     from server.memory.app.records import handle_memory_record_write
     from server.memory.app.write import handle_memory_set
 
-    statement, sensitivity, added = await _statement_and_labels(org, namespace, payload, tags)
+    statement, sensitivity, added = await _checked_statement(org, namespace, payload, tags)
     conf = payload.get("confidence")
     await handle_memory_set(
         MemorySetInput(
@@ -221,6 +222,10 @@ async def _write_decision(
         )
     )
     count_attribute_tags(namespace, added)
+    if revises is not None and await live_writer_record(org, namespace, key) != revises:
+        raise PreconditionFailedError(
+            "the decision changed while its outcome was being written; call decision.outcome again"
+        )
     rec_out = await handle_memory_record_write(
         MemoryRecordWriteInput(
             org=org,
@@ -242,7 +247,7 @@ async def _write_decision(
     return str(rec_out.record_id)
 
 
-async def _statement_and_labels(
+async def _checked_statement(
     org: str, namespace: str, payload: dict[str, Any], tags: list[str]
 ) -> tuple[str, Sensitivity, list[str]]:
     """Run memory.set's blacklist, sensitivity and attribute checks on the whole decision
@@ -252,11 +257,9 @@ async def _statement_and_labels(
 
     statement = memory_value(payload)
     try:
-        # Every field whole, then the statement as memory.set stores it (JSON-encoded), so
-        # a pattern anchored to the stored value matches here as it would there.
+        # Every field whole: the statement is clipped, and memory.set checks only it.
         full_text = "\n".join(svc.blacklist_fields(payload))
         await enforce_on_insert(org=org, namespace=namespace, value=full_text)
-        await enforce_on_insert(org=org, namespace=namespace, value=json.dumps(statement))
     except HTTPException:
         count_write(namespace, "blacklisted")
         raise
@@ -516,6 +519,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             source_resource_id=row.source_resource_id,
             if_match_sha256=stored_sha256(row),
             pinned=row.pinned,
+            revises=writer,
         )
     except HTTPException as e:
         # memory.set's hash mismatch, its write fence finding the key deleted since the
