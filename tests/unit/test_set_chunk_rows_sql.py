@@ -63,7 +63,7 @@ class _LocalCH:
         return run(self.setup, sql, params)
 
 
-def _chunk(user: str) -> SearchHit:
+def _chunk(user: str, cut_at: str = "") -> SearchHit:
     return SearchHit(
         memory_key="chunk:memory.set:lesson_a:0",
         memory_type="episodic",
@@ -72,6 +72,7 @@ def _chunk(user: str) -> SearchHit:
         source="chunk",
         parent_memory_key="lesson_a",
         identity=("bot", user, "memory.set:lesson_a"),
+        created_at=cut_at,
     )
 
 
@@ -137,3 +138,12 @@ async def test_a_row_outside_the_hard_tags_is_not_served() -> None:
 @pytest.mark.asyncio
 async def test_under_shared_scope_no_row_is_read() -> None:
     assert await _set_chunk_rows(_LocalCH(), _q(scope="shared"), [_chunk("u")]) is None
+
+
+@pytest.mark.asyncio
+async def test_a_value_written_after_the_chunks_were_cut_did_not_cut_them() -> None:
+    # s1's long value was chunked at 10:00; s2's short value at 10:05 cut no chunks
+    at_10_00, at_10_05 = 1_767_261_600 * 10**9, 1_767_261_900 * 10**9
+    ch = _LocalCH(_row("u", "s1", at_10_00), _row("u", "s2", at_10_05))
+    rows = await _set_chunk_rows(ch, _q(), [_chunk("u", cut_at="2026-01-01 10:00:00")])
+    assert rows == _row_of("s1", at_10_00)

@@ -243,11 +243,7 @@ async def test_a_5kb_episodic_value_writes_no_chunks() -> None:
         embedder=emb,
     )
     assert n == 0 and ch.inserts == [] and emb.batches == []
-    # nothing to embed; the key's earlier chunks are read to retire them (none here)
-    assert [
-        sql for sql in ch.query_all_sqls if "FROM loom.memory_chunks FINAL" in sql
-    ] == ch.query_all_sqls
-    assert len(ch.query_all_sqls) == 1
+    assert ch.query_all_sqls == [], "a non-searchable type does not even read prior chunks"
 
 
 @pytest.mark.asyncio
@@ -258,30 +254,7 @@ async def test_a_900_char_value_writes_no_chunks() -> None:
     n = await sc.write_set_chunks(
         _input(short), memory_type="semantic", limit=_LIMIT, ch=ch, embedder=emb
     )
-    assert n == 0 and ch.inserts == [] and emb.batches == []
-    assert len(ch.query_all_sqls) == 1  # the key's earlier chunks, to retire them
-
-
-@pytest.mark.asyncio
-async def test_a_reset_too_short_to_chunk_retires_the_long_values_chunks() -> None:
-    # the chunks of the earlier long value no longer hold the key's value
-    first = _CH()
-    await sc.write_set_chunks(
-        _input(_NOTE_5KB), memory_type="semantic", limit=_LIMIT, ch=first, embedder=_BatchEmbedder()
-    )
-    prior = first.rows_for("loom.memory_chunks")
-    live = [_live_row(r["chunk_index"], r["content"]) for r in prior]
-    ch = _CH(routes=[("FROM loom.memory_chunks FINAL", live)])
-    n = await sc.write_set_chunks(
-        _input("A short value now."),
-        memory_type="semantic",
-        limit=_LIMIT,
-        ch=ch,
-        embedder=_BatchEmbedder(),
-    )
-    tombstones = ch.rows_for("loom.memory_chunks")
-    assert n == 0 and len(tombstones) == len(prior)
-    assert all(r["tombstoned_at"] is not None for r in tombstones)
+    assert n == 0 and ch.inserts == [] and emb.batches == [] and ch.query_all_sqls == []
 
 
 @pytest.mark.asyncio
@@ -857,3 +830,37 @@ async def test_a_failed_head_read_retires_the_chunks_it_just_wrote(
         await sc.write_set_chunks(inp, ch=_CH(), embedder=_Embedder())
     retire = calls[-1]
     assert retire["only"] and retire["strong"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("duplicate_of", "writes"), [("", 1), ("canonical-id", 0)])
+async def test_a_duplicate_writes_no_chunks(
+    monkeypatch: pytest.MonkeyPatch, duplicate_of: str, writes: int
+) -> None:
+    # its canonical answers for it, and the key's chunks stay the served value's
+    from types import SimpleNamespace
+
+    from server.memory.app import set_commit
+
+    async def nothing(*_: Any, **__: Any) -> None:
+        return None
+
+    written: list[Any] = []
+
+    async def write(input: Any, **_: Any) -> int:
+        written.append(input)
+        return 3
+
+    monkeypatch.setattr(set_commit, "_set_post_insert", nothing)
+    monkeypatch.setattr(set_commit, "project_stated_relations", nothing)
+    monkeypatch.setattr(set_commit, "follow_beside_response", lambda **_: None)
+    monkeypatch.setattr(set_commit, "peer_id_in_read_scope", lambda *_: "")
+    monkeypatch.setattr(sc, "write_set_chunks_fail_open", write)
+    w = set_commit._SetWrite(
+        input=_input(_NOTE_5KB), version=1, retyped_from="", existing=None, expires_at=None
+    )
+    w.memory_row = {"status": "duplicate" if duplicate_of else "active"}
+    out = await set_commit._set_after_write(
+        w, _CH(), None, SimpleNamespace(verdict="clear"), duplicate_of, []
+    )
+    assert (len(written), out.chunks_written) == (writes, 3 * writes)

@@ -893,10 +893,15 @@ async def _set_after_write(
     )
 
     # A long value is also written as verbatim chunks under the key, after the row is in and
-    # never as a condition of it.
+    # never as a condition of it. A duplicate writes none: its canonical answers for it, and
+    # the chunks the key holds stay the served value's.
     from server.memory.app import set_chunks as _set_chunks
 
-    chunks_written = await _set_chunks.write_set_chunks_fail_open(input, ch=ch, embedder=embedder)
+    chunks_written = (
+        0
+        if duplicate_of_id
+        else await _set_chunks.write_set_chunks_fail_open(input, ch=ch, embedder=embedder)
+    )
     # The insert happened either way; the verdict says what kind of row it is.
     count_write(
         input.namespace,

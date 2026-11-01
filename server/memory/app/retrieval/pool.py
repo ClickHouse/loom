@@ -8,8 +8,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
+from server.core.ch_params import chunks
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_sql import _build_where, exclude_pooled
 from server.memory.domain.search_types import (
@@ -148,14 +150,10 @@ class SetChunkRow(NamedTuple):
 def fold_set_chunks(
     hits: list[SearchHit], rows: Mapping[tuple[str, str, str], SetChunkRow] | None
 ) -> list[SearchHit]:
-    """Fold the verbatim chunks of long memory.set values onto their parent fact, so a
-    fact-only namespace never sees a chunk id. `rows` names the row each chunk was cut
-    from (`_set_chunk_rows`; a chunk's own session is `memory.set:<key>`): the chunk folds
-    onto that row when it is pooled, becomes that row's hit when it is not, and is dropped
-    when the row is not served. With `rows` None (shared scope, or the read failed) a
-    chunk folds onto a pooled fact of its key, or becomes a hit of the key that names no
-    row. A fold gives the row the chunk's score and passage when the chunk out-scored it
-    (`_folded_fields`); conversation chunks pass through untouched."""
+    """Fold the verbatim chunks of long memory.set values onto the rows `rows` names
+    (`_set_chunk_rows`): onto the row when it is pooled, as its hit when it is not; a chunk
+    whose row is not served is dropped. With `rows` None a chunk folds onto a pooled fact
+    of its key, its writer's first, as before. Conversation chunks pass through."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
     out = [h for h in hits if not _is_set_chunk(h)]
@@ -213,19 +211,17 @@ def fold_set_chunks(
 async def _set_chunk_rows(
     ch: _CHClient, q: SearchQuery, hits: list[SearchHit]
 ) -> dict[tuple[str, str, str], SetChunkRow] | None:
-    """(agent, user_id, memory_key) -> the row each set chunk of the pool was cut from,
-    when the fact leg would serve it: a key's chunks hold their writer's latest value
-    write (a value too short to chunk retires them), so the writer's live row whose
-    current value was written last (`_value_written`). Two reads keyed by the chunks'
-    (agent, user_id, key), only when a private-scope pool holds a set chunk; None under
-    shared scope, where the writer's private row is never served, and when a read fails."""
-    wanted = sorted(
-        {
-            (h.identity[0], h.identity[1], str(h.parent_memory_key))
-            for h in hits
-            if _is_set_chunk(h) and h.identity
-        }
-    )
+    """(agent, user_id, memory_key) -> the served row each pooled set chunk was cut from:
+    the writer's live row whose current value was written last before the chunks were cut
+    (`_value_written`). None under shared scope, where the writer's private row is never
+    served, and when a read fails."""
+    # when each writer's chunks of a key were cut: they are written right after its value
+    cut: dict[tuple[str, str, str], int] = {}
+    for h in hits:
+        if _is_set_chunk(h) and h.identity:
+            key = (h.identity[0], h.identity[1], str(h.parent_memory_key))
+            cut[key] = max(cut.get(key, 0), _epoch_ns(h.created_at))
+    wanted = sorted(cut)
     if not wanted:
         return {}
     if q.scope != "private":
@@ -251,13 +247,16 @@ async def _set_chunk_rows(
             """,
             params=params,
         )
-        written = await _value_written(ch, q, wanted, live)
+        written = await _value_written(ch, q, live)
     except Exception as e:  # noqa: BLE001 — naming a chunk's row never fails a search
         log.warning("set chunk rows read failed (fail-open): %s", e)
         return None
     latest: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for r in live:
+    for r in sorted(live, key=_row_of):
         key = (str(r["agent"]), str(r["user_id"]), str(r["memory_key"]))
+        # a value written after the chunks were cut (to the second) did not cut them
+        if cut[key] and written[_row_of(r)] > cut[key] + 1_000_000_000:
+            continue
         if key not in latest or written[_row_of(r)] > written[_row_of(latest[key])]:
             latest[key] = r
     return {
@@ -267,15 +266,20 @@ async def _set_chunk_rows(
     }
 
 
+def _epoch_ns(stamp: str) -> int:
+    # a chunk's `created_at` (DateTime, UTC) in epoch ns; 0 when the leg read none
+    try:
+        return int(datetime.fromisoformat(stamp).replace(tzinfo=UTC).timestamp()) * 1_000_000_000
+    except ValueError:
+        return 0
+
+
 def _row_of(r: Mapping[str, Any]) -> tuple[str, str, str, str]:
     return str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"])
 
 
 async def _value_written(
-    ch: _CHClient,
-    q: SearchQuery,
-    keys: list[tuple[str, str, str]],
-    live: list[dict[str, Any]],
+    ch: _CHClient, q: SearchQuery, live: list[dict[str, Any]]
 ) -> dict[tuple[str, str, str, str], int]:
     """When each live row's current value was written: the first version of the run of its
     history that holds its current hash, so a status change or a metadata copy does not
@@ -285,22 +289,22 @@ async def _value_written(
     out = {_row_of(r): int(r["version"]) for r in live}
     if not live:
         return out
-    history = await ch.query_all(
-        """
+    # the live rows' own history, by the table's sort-key prefix, a form field at a time
+    sql = """
         SELECT agent, user_id, session_id, memory_key,
                arraySort(x -> x.1, groupArray((version, toString(content_sha256)))) AS run
         FROM loom.memory_versions
         WHERE org = {org:String}
           AND namespace = {ns:String}
-          AND (agent, user_id, memory_key) IN {keys:Array(Tuple(String, String, String))}
+          AND (agent, user_id, session_id, memory_key)
+              IN {rows:Array(Tuple(String, String, String, String))}
         GROUP BY agent, user_id, session_id, memory_key
-        """,
-        params={"org": q.org, "ns": q.namespace, "keys": keys},
-    )
+    """
+    history: list[dict[str, Any]] = []
+    for part in chunks(sorted(current)):
+        history += await ch.query_all(sql, {"org": q.org, "ns": q.namespace, "rows": part})
     for h in history:
         row = _row_of(h)
-        if row not in current:
-            continue  # a deleted row's history
         start = None
         for version, sha in h["run"]:
             if sha != current[row]:

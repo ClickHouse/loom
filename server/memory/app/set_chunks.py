@@ -413,20 +413,12 @@ async def write_set_chunks(
             item=f"{SESSION_PREFIX}{input.memory_key} chars={truncated_chars}",
             n=1,
         )
+    if not chunks:
+        return 0
     if ch is None:
         from server.core.ch import get_client
 
         ch = get_client()
-    if not chunks:
-        # too short to chunk: the earlier long value's chunks no longer hold the key's value
-        await tombstone_set_chunks(
-            org=input.org,
-            namespace=input.namespace,
-            memory_key=input.memory_key,
-            user_id=str(getattr(input, "user_id", "") or "-"),
-            ch=ch,
-        )
-        return 0
     if embedder is None:
         from server.embedding import get_embedder
 
