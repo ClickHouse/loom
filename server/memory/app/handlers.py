@@ -1149,8 +1149,8 @@ async def _retire_derived(
     # decision.precedents keep serving the text the writer deleted.
     if existing.memory_type == "decision":
         try:
-            await memory_repo.tombstone_decision_record(
-                existing.org, existing.namespace, existing.memory_key, version=version, ch=ch
+            await memory_repo.tombstone_decision_records(
+                existing.org, existing.namespace, [existing.memory_key], version=version, ch=ch
             )
         except Exception as e:  # noqa: BLE001 — the tombstone stands
             log.warning("%s: decision record not retired for %s: %s", op, existing.memory_key, e)

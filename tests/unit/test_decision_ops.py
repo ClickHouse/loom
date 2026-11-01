@@ -198,7 +198,7 @@ def env(monkeypatch):
         sets = [c for c in calls["set"] if c.memory_key == memory_key]
         return SimpleNamespace(value=sets[-1].value, pinned=False) if sets else None
 
-    monkeypatch.setattr(h, "tombstone_decision_record", fake_tombstone)
+    monkeypatch.setattr(h, "tombstone_decision_records", fake_tombstone)
     monkeypatch.setattr(h, "get_by_key", fake_get_by_key)
     with patch.object(h, "get_client", return_value=ch):
         yield ch, calls, h
@@ -327,7 +327,7 @@ def test_the_writer_read_and_the_tombstone_are_sequential() -> None:
 
     sequential = "SETTINGS select_sequential_consistency = 1"
     assert records._LIVE_WRITER_RECORD.rstrip().endswith(sequential)
-    assert records._TOMBSTONE_DECISION_RECORD.rstrip().endswith(sequential)
+    assert records._TOMBSTONE_DECISION_RECORDS.rstrip().endswith(sequential)
 
 
 def test_outcome_on_unknown_decision_is_not_found(env) -> None:
@@ -366,7 +366,7 @@ def test_a_failing_closing_check_still_records_the_decision(env, monkeypatch) ->
     async def _fails(*_a: Any, **_k: Any) -> None:
         raise RuntimeError("timeout")
 
-    monkeypatch.setattr(h, "tombstone_decision_record", _fails)
+    monkeypatch.setattr(h, "tombstone_decision_records", _fails)
     out = asyncio.run(h.handle_decision_record(record_input()))
     assert out.record_id == "rec-1" and len(calls["record"]) == 1 and len(calls["set"]) == 1
 
@@ -391,3 +391,37 @@ def test_record_status_values_match_the_table_enum() -> None:
     in_table = re.findall(r"'(\w+)' = \d+", enum.group(1))
     in_model = get_args(MemoryRecordRow.model_fields["status"].annotation)
     assert tuple(in_table) == in_model == ("active", "superseded", "rejected", "tombstoned")
+
+
+def test_only_memory_sets_own_key_pin_refusal_names_the_key(monkeypatch) -> None:
+    # _own_pin_refusal tells the writer's pinned row from a close pinned peer by
+    # `memory_key`, which only memory.set's same-key guard puts in its refusal.
+    from fastapi import HTTPException
+
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import set_commit
+    from server.memory.app.decision import _own_pin_refusal
+    from server.memory.domain.conflicts import ConflictResult
+
+    async def _rejected(**_kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="rejected", peers=[], pinned_blocker_id="m-1")
+
+    async def _cfg() -> Any:
+        return SimpleNamespace(check_kwargs=dict)
+
+    monkeypatch.setattr("server.memory.app.conflicts.check_on_commit", _rejected)
+    inp = MemorySetInput(
+        org="o",
+        namespace="n",
+        agent="a",
+        memory_key="decision:k",
+        value="v",
+        memory_type="decision",
+    )
+    w = SimpleNamespace(
+        input=inp, retyped_from="", memory_id="", new_sha="", serialized_value="v", embedding=[1.0]
+    )
+    with pytest.raises(HTTPException) as peer:
+        asyncio.run(set_commit._set_conflict_verdict(w, _cfg()))
+    assert peer.value.detail["code"] == "PINNED_CONFLICT"
+    assert _own_pin_refusal(peer.value, "decision:k") is None

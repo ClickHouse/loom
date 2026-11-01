@@ -147,7 +147,7 @@ from server.memory.store.records import (
     active_record,
     live_writer_record,
     supersede_active_record,
-    tombstone_decision_record,
+    tombstone_decision_records,
 )
 from server.memory.store.redaction import (
     delete_ask_precedents_by_key,
@@ -319,7 +319,7 @@ __all__ = [
     "superseded_successors",
     "tombstone_by_id",
     "tombstone_cascade_by_ids",
-    "tombstone_decision_record",
+    "tombstone_decision_records",
     "tombstone_embeddings_for_key",
     "tombstone_entity_vectors_for_keys",
     "tombstone_vectors_of",

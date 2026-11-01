@@ -18,19 +18,19 @@ _ACTIVE = """org = {org:String}
   AND status = 'active'
   AND tombstoned_at IS NULL"""
 
-# The identities with a live decision row under the key.
+# Each key's identities with a live decision row under it.
 _LIVE_WRITERS = """
-    SELECT agent, user_id, session_id
+    SELECT memory_key, agent, user_id, session_id
     FROM loom.memory FINAL
     WHERE org = {org:String}
       AND namespace = {ns:String}
-      AND memory_key = {key:String}
+      AND memory_key IN {keys:Array(String)}
       AND memory_type = 'decision'
       AND tombstoned_at IS NULL
   """
 
 # Computed columns take new names: `AS status` would shadow the column in the WHERE.
-_CLOSE_ACTIVE_RECORD = f"""
+_COPY_ACTIVE_RECORDS = f"""
 INSERT INTO loom.memory_records
     (record_id, org, namespace, schema_id, schema_name, memory_key,
      memory_id, identity_agent, user_id, session_id, record_json,
@@ -45,12 +45,15 @@ SELECT
     greatest(updated_at, {{now:DateTime}}) AS new_updated_at,
     {{tombstoned_at:Nullable(DateTime)}} AS new_tombstoned_at
 FROM loom.memory_records FINAL
-WHERE {_ACTIVE}
+WHERE {_ACTIVE}"""
+
+_CLOSE_ACTIVE_RECORD = f"""{_COPY_ACTIVE_RECORDS}
   AND memory_key = {{key:String}}"""
 
-# Retires the record unless its writer still has a live decision row under the key.
-_TOMBSTONE_DECISION_RECORD = f"""{_CLOSE_ACTIVE_RECORD}
-  AND (identity_agent, user_id, session_id) NOT IN ({_LIVE_WRITERS})
+# Retires each key's record unless its writer still has a live decision row under the key.
+_TOMBSTONE_DECISION_RECORDS = f"""{_COPY_ACTIVE_RECORDS}
+  AND memory_key IN {{keys:Array(String)}}
+  AND (memory_key, identity_agent, user_id, session_id) NOT IN ({_LIVE_WRITERS})
 {_SEQUENTIAL}"""
 
 # The newest active record whose writer still has a live decision row under the key.
@@ -59,7 +62,7 @@ SELECT identity_agent, user_id, session_id, record_json, created_at
 FROM loom.memory_records FINAL
 WHERE {_ACTIVE}
   AND memory_key = {{key:String}}
-  AND (identity_agent, user_id, session_id) IN ({_LIVE_WRITERS})
+  AND (memory_key, identity_agent, user_id, session_id) IN ({_LIVE_WRITERS})
 ORDER BY version DESC
 LIMIT 1
 {_SEQUENTIAL}"""
@@ -136,26 +139,26 @@ async def supersede_active_record(
     )
 
 
-async def tombstone_decision_record(
+async def tombstone_decision_records(
     org: str,
     namespace: str,
-    memory_key: str,
+    keys: list[str],
     *,
     version: int,
     ch: _CHClient | None = None,
 ) -> None:
-    """Tombstone the key's active decision record unless its writer still has a live
-    decision row there. Stamps `tombstoned_at` and the closed `valid_to` with the current
-    time."""
+    """Tombstone each key's active decision record unless its writer still has a live
+    decision row there, in one statement. Stamps `tombstoned_at` and the closed `valid_to`
+    with the current time."""
     ch = ch or _default_client()
     now = naive_utc_now_seconds()
     await ch.execute(
-        _TOMBSTONE_DECISION_RECORD,
+        _TOMBSTONE_DECISION_RECORDS,
         params={
             "org": org,
             "ns": namespace,
             "schema": SCHEMA_NAME,
-            "key": memory_key,
+            "keys": keys,
             "status": "tombstoned",
             "close": now,
             "ver": version,
@@ -210,7 +213,13 @@ async def live_writer_record(
     ch = ch or _default_client()
     row = await ch.query_one(
         _LIVE_WRITER_RECORD,
-        params={"org": org, "ns": namespace, "schema": SCHEMA_NAME, "key": memory_key},
+        params={
+            "org": org,
+            "ns": namespace,
+            "schema": SCHEMA_NAME,
+            "key": memory_key,
+            "keys": [memory_key],
+        },
     )
     if row is None:
         return None

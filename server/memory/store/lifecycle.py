@@ -23,7 +23,7 @@ from server.memory.store.embeddings import (
 )
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.reads import get_by_id
-from server.memory.store.records import tombstone_decision_record
+from server.memory.store.records import tombstone_decision_records
 from server.memory.store.redaction import delete_by_key
 from server.memory.store.rows import (
     MemoryRow,
@@ -524,15 +524,17 @@ async def tombstone_cascade_by_ids(
         _tombstone,
         ch=ch,
     )
-    # A decision's record goes with its writer's row, as on memory.delete.
-    decision_keys = {(r.namespace, r.memory_key) for r in rows if r.memory_type == "decision"}
-    for namespace, memory_key in decision_keys:
+    # A decision's record goes with its writer's row, as on memory.delete: one statement
+    # per namespace.
+    decision_keys: dict[str, set[str]] = {}
+    for r in rows:
+        if r.memory_type == "decision":
+            decision_keys.setdefault(r.namespace, set()).add(r.memory_key)
+    for namespace, keys in decision_keys.items():
         try:
-            await tombstone_decision_record(org, namespace, memory_key, version=version, ch=ch)
+            await tombstone_decision_records(org, namespace, sorted(keys), version=version, ch=ch)
         except Exception as e:  # noqa: BLE001 — the row tombstones stand
-            _log.warning(
-                "decision record not retired for %s/%s %s: %s", org, namespace, memory_key, e
-            )
+            _log.warning("decision records not retired in %s/%s: %s", org, namespace, e)
     return tombstoned
 
 

@@ -260,7 +260,7 @@ async def test_a_failed_record_tombstone_leaves_the_delete_standing(
     async def _fails(*_a: Any, **_k: Any) -> None:
         raise RuntimeError("timeout")
 
-    monkeypatch.setattr(memory_repo, "tombstone_decision_record", _fails)
+    monkeypatch.setattr(memory_repo, "tombstone_decision_records", _fails)
     await _write_decision_rows(local, "claude")
     await _delete("claude")
     identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
@@ -365,7 +365,7 @@ async def test_a_decision_row_written_above_the_tombstone_keeps_the_record(
     tombstone = _memory_row("claude", "decision", version + 1)
     tombstone["tombstoned_at"] = tombstone["updated_at"]
     await local.insert("loom.memory", [tombstone, _memory_row("claude", "decision", version + 2)])
-    await memory_repo.tombstone_decision_record("o", "n", _KEY, version=version + 1)
+    await memory_repo.tombstone_decision_records("o", "n", [_KEY], version=version + 1)
     assert await _history() == ["active"]
 
 
@@ -624,7 +624,7 @@ async def test_a_second_closing_write_keeps_the_record_tombstoned(local: KeptCH)
 
     version = await _write_decision_rows(local, "claude")
     await _delete("claude")
-    await memory_repo.tombstone_decision_record("o", "n", _KEY, version=version + 1)
+    await memory_repo.tombstone_decision_records("o", "n", [_KEY], version=version + 1)
     rows = await local.query_all(
         "SELECT status FROM loom.memory_records FINAL WHERE record_id = {rid:UUID}",
         {"rid": _RECORD_ID},
@@ -1165,3 +1165,38 @@ async def test_an_outcome_meeting_a_pin_after_its_read_asks_for_another_call(
             DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
         )
     assert await _history() == ["active"]
+
+
+@pytest.mark.asyncio
+async def test_one_tombstone_statement_retires_each_key_by_its_own_writer(local: KeptCH) -> None:
+    # Two decision keys in one call: the key whose writer's row is gone is retired, the key
+    # whose writer is still live keeps its record.
+    from server.memory import store as memory_repo
+
+    version = await _write_decision_rows(local, "claude")
+    other_key = svc.decision_key("deploy", "Pause the canary?")
+    record = (await local.query_all("SELECT * FROM loom.memory_records FINAL"))[0]
+    await local.insert(
+        "loom.memory_records",
+        [
+            {
+                **{k: v for k, v in record.items() if v is not None},
+                "record_id": "00000000-0000-0000-0000-0000000000d2",
+                "memory_key": other_key,
+            }
+        ],
+    )
+    live_row = _memory_row("claude", "decision", version)
+    live_row["memory_key"] = other_key
+    tombstone = _memory_row("claude", "decision", version + 1)
+    tombstone["tombstoned_at"] = tombstone["updated_at"]
+    await local.insert("loom.memory", [live_row, tombstone])
+
+    await memory_repo.tombstone_decision_records("o", "n", [_KEY, other_key], version=version + 1)
+    rows = await local.query_all(
+        "SELECT memory_key, status FROM loom.memory_records FINAL ORDER BY memory_key"
+    )
+    assert {r["memory_key"]: r["status"] for r in rows} == {
+        _KEY: "tombstoned",
+        other_key: "active",
+    }
