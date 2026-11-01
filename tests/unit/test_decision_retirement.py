@@ -113,10 +113,14 @@ _SEEDED = {
 
 
 async def _write_decision_rows(
-    ch: KeptCH, *agents: str, memory_type: str = "decision", updated_at: datetime | None = None
+    ch: KeptCH,
+    *agents: str,
+    memory_type: str = "decision",
+    updated_at: datetime | None = None,
+    run_id: str = "",
 ) -> int:
-    """One active record under _KEY, written by the first agent, and one live memory row
-    under _KEY per agent. Returns the rows' version."""
+    """One active record under _KEY, written by the first agent (under `run_id`, if given),
+    and one live memory row under _KEY per agent. Returns the rows' version."""
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     version = time.time_ns() - 10_000_000_000
     await ch.insert(
@@ -130,7 +134,7 @@ async def _write_decision_rows(
                 "schema_name": "decision",
                 "memory_key": _KEY,
                 "identity_agent": agents[0],
-                "record_json": json.dumps(_SEEDED),
+                "record_json": json.dumps({**_SEEDED, "run_id": run_id} if run_id else _SEEDED),
                 "status": "active",
                 "version": version,
                 "created_at": now,
@@ -916,27 +920,43 @@ async def test_a_decision_merged_into_another_key_writes_nothing(
     out = await h.handle_decision_record(_record_input())
     assert (out.memory_key, out.record_id) == (merged_into, "")
     assert (out.superseded_prior, out.edges_written) == (False, 0)
-    assert "nothing was written" in out.next and "decision.record again" in out.next
+    assert "nothing was written" in out.next
+    assert ("Use that key" if merged_into else "Call decision.record again") in out.next
     assert await local.query_all("SELECT 1 FROM loom.memory_records") == []
 
 
 @pytest.mark.asyncio
-async def test_an_outcome_merged_into_another_key_answers_not_updated(
-    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("merged_into", ["decision:peer", ""])
+async def test_an_outcome_merged_into_another_key_writes_and_credits_nothing(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch, merged_into: str
 ) -> None:
+    import server.memory.app.ops as mops
     from server.memory.api.models_decision import DecisionOutcomeInput
     from server.memory.app import decision as h
 
-    await _write_decision_rows(local, "claude")
+    await _write_decision_rows(local, "claude", run_id="r1")
+    local.create(ddl("agent_runs"))
+    await local.insert(
+        "loom.agent_runs",
+        [{"org": "o", "namespace": "n", "run_id": "r1", "memories_used": ["runbook:rollback"]}],
+    )
+    credited: list[Any] = []
 
     async def _merge(_inp: Any) -> Any:
-        return SimpleNamespace(version=0, conflict_verdict="merge", merged_into_key="decision:peer")
+        return SimpleNamespace(version=0, conflict_verdict="merge", merged_into_key=merged_into)
+
+    async def _credit(inp: Any) -> Any:
+        credited.append(inp)
+        return SimpleNamespace(applied=len(inp.memory_keys))
 
     monkeypatch.setattr("server.memory.app.write.handle_memory_set", _merge)
+    monkeypatch.setattr(mops, "handle_memory_outcome_run", _credit)
     out = await h.handle_decision_outcome(
-        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        DecisionOutcomeInput(
+            org="o", namespace="n", memory_key=_KEY, realized_outcome="ok", success=True
+        )
     )
-    assert out.updated is False
+    assert (out.updated, out.memories_credited, credited) == (False, 0, [])
     assert await _history() == ["active"]
 
 

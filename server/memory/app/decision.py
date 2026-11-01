@@ -124,8 +124,8 @@ def _row(key: str, rec: dict[str, Any], similarity: float = 0.0) -> Any:
 
 
 class _Written(NamedTuple):
-    """The record written, or None when memory.set merged the row into another decision of
-    the same text (`merged_into_key`, "" when that row could not be read)."""
+    """What `_write_decision` wrote: the record id, or None and the key memory.set merged the
+    row into ("" if that row could not be read)."""
 
     record_id: str | None
     merged_into_key: str = ""
@@ -234,19 +234,17 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         valid_at=input.valid_at,
     )
     if written.record_id is None:
-        merged_into = written.merged_into_key
-        if merged_into:
+        if written.merged_into_key:
             hint = (
-                f"memory.set merged this into the decision {merged_into}, which has the same text"
+                f"memory.set merged this into the decision {written.merged_into_key}, which "
+                "has the same text; nothing was written. Use that key."
             )
         else:
-            hint = "memory.set merged this into a decision that can no longer be read"
-        return DecisionRecordOutput(
-            memory_key=merged_into,
-            record_id="",
-            next=f"{hint}; nothing was written. Call decision.record again if it is gone.",
-        )
-    record_id = written.record_id
+            hint = (
+                "memory.set merged this into a decision that can no longer be read; nothing "
+                "was written. Call decision.record again."
+            )
+        return DecisionRecordOutput(memory_key=written.merged_into_key, record_id="", next=hint)
 
     edges = 0
     evidence = [f"decision.record: {payload['scenario'][:200]}"]
@@ -274,7 +272,7 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
 
     return DecisionRecordOutput(
         memory_key=key,
-        record_id=record_id,
+        record_id=written.record_id,
         superseded_prior=key in prior,
         edges_written=edges,
         next=(
@@ -444,6 +442,9 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         raise PreconditionFailedError(
             "the decision changed while its outcome was being written; call decision.outcome again"
         ) from None
+    if written.record_id is None:
+        # Nothing was stored, so the run's memories earn no credit from it.
+        return DecisionOutcomeOutput(memory_key=input.memory_key, updated=False)
 
     # Close the loop: the memories the deciding run relied on earn (or lose)
     # credit from the realized outcome — the feedback every decision log lacks.
@@ -479,6 +480,6 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             log.warning("decision.outcome: run credit skipped for %s: %s", run_id, e)
     return DecisionOutcomeOutput(
         memory_key=input.memory_key,
-        updated=written.record_id is not None,
+        updated=True,
         memories_credited=credited,
     )

@@ -98,7 +98,7 @@ Record a DECISION as a first-class object — call it whenever you choose betwee
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `memory_key` | `str` | The decision's key (the other decision's key when memory.set merged this one into it, "" if that one can no longer be read), derived from category + scenario; pass it to `decision.outcome` and `decision.chain`. |
+| `memory_key` | `str` | The decision's key, derived from category + scenario, to pass to `decision.outcome` and `decision.chain`; after a merge, the key memory.set merged it into ("" if that row can no longer be read). |
 | `record_id` | `str` | The id of the `decision` record version written; "" after a merge. |
 | `superseded_prior` | `bool` | True when an active decision for the same category + scenario existed and is now superseded by this one. |
 | `edges_written` | `int` | How many `caused` / `influenced` edges were written; a failed link is skipped. |
