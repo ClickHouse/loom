@@ -387,7 +387,7 @@ def _record_hits(rows: list[dict[str, Any]]) -> list[SearchHit]:
                 source="record",
                 source_resource_id=record_id,
                 session_id=str(row.get("session_id") or ""),
-                identity=row_identity(row),
+                # a record is no row of loom.memory: its writer's identity names none
                 score_components={
                     "record_lexical": float(row.get("lexical_score") or 0.0),
                     "rank_score": rank_score,

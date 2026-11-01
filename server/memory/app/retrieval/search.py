@@ -34,7 +34,6 @@ from server.memory.app.retrieval.side_legs import (
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_sql import _build_where, _plane_enabled
 from server.memory.domain.search_types import (
-    RowKey,
     SearchHit,
     SearchQuery,
     SearchTraceHit,
@@ -333,22 +332,23 @@ async def _merge_leg_hits(
             ):
                 deduped[dk] = hit
         # A record row is a projection of its parent fact: drop it when a
-        # stronger fact row exists for the same row.
-        best_fact: dict[RowKey, SearchHit] = {}
+        # stronger fact row exists for the same key. A record names no memory row,
+        # so any writer's fact of the key counts.
+        best_fact: dict[str, SearchHit] = {}
         for h in deduped.values():
             if h.source == "fact":
-                cur = best_fact.get(hit_row_key(h))
+                cur = best_fact.get(h.memory_key)
                 if cur is None or (h.rank_score, -h.distance) > (
                     cur.rank_score,
                     -cur.distance,
                 ):
-                    best_fact[hit_row_key(h)] = h
+                    best_fact[h.memory_key] = h
         hits = [
             h
             for h in deduped.values()
             if not (
                 h.source == "record"
-                and (fact := best_fact.get(hit_row_key(h))) is not None
+                and (fact := best_fact.get(h.memory_key)) is not None
                 and (fact.rank_score, -fact.distance) > (h.rank_score, -h.distance)
             )
         ]

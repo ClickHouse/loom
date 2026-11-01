@@ -1238,3 +1238,58 @@ async def test_graph_mode_sorts_the_fused_pool_by_rank(monkeypatch) -> None:
     )
     hits = await vector_search(q, ch=ch)
     assert [h.memory_key for h in hits] == ["high", "mid"]
+
+
+@pytest.mark.asyncio
+async def test_a_record_gives_way_to_a_stronger_fact_of_its_key_whoever_wrote_it() -> None:
+    # memory.record_write defaults the record's identity to ("", "-", "-"), never the fact's
+    ch = StubCH()
+    fact = {
+        **_hit(),
+        "memory_key": "profile_theme",
+        "distance": 0.05,
+        "agent": "bot",
+        "user_id": "u",
+        "session_id": "s1",
+    }
+    ch.query_all_returns.extend(
+        [
+            [fact],
+            [
+                {
+                    "record_id": "11111111-2222-3333-4444-555555555555",
+                    "parent_memory_key": "profile_theme",
+                    "schema_name": "preference",
+                    "record_json": '{"theme": "dark"}',
+                    "field_text": "theme: dark",
+                    "lexical_score": 1.0,
+                    "rank_score": 0.3,
+                    "agent": "",
+                    "user_id": "-",
+                    "session_id": "-",
+                }
+            ],
+        ]
+    )
+    out = await vector_search(
+        _q(query_text="what theme do I use", execution_planes=["fact", "record"]), ch=ch
+    )
+    assert [(h.memory_key, h.source) for h in out] == [("profile_theme", "fact")]
+
+
+def test_a_record_hit_names_no_memory_row() -> None:
+    from server.memory.app.retrieval.side_legs import _record_hits
+
+    (hit,) = _record_hits(
+        [
+            {
+                "record_id": "r1",
+                "parent_memory_key": "k",
+                "agent": "",
+                "user_id": "-",
+                "session_id": "s1",
+            }
+        ]
+    )
+    # read and keyed like any hit that names no row; its session stays as provenance
+    assert (hit.identity, hit.session_id) == (None, "s1")
