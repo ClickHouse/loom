@@ -779,10 +779,11 @@ refuses that read for the whole table while any pending mutation on it has a sub
 instead). The Undo then writes nothing to the graph: the memory row is restored at once,
 the refusal is recorded as a `triples_reconcile` failure dated at the restore, and
 `projection_repair` replays it once that mutation has landed and the read works again
-(until then each pass fails it again and it stays active). A follow's repair of its successors and the repair of the values an Undo
-states again read the same way: the follow's own closes are queued just before, and a
-value they close read as still open would be taken for a newer one ("I live in London",
-undated, over Berlin from May 1), closing the successor as it starts.
+(until then each pass fails it again and it stays active). A follow's repair of its
+successors and the repair of the values an Undo states again read the same way: the
+follow's own closes are queued just before, and a value they close read as still open
+would be taken for a newer one ("I live in London", undated, over Berlin from May 1),
+closing the successor as it starts.
 
 Its facts then go through the interval repair by the usual rule, as values seen at their
 markers: the retirement it undoes arrived earlier, so its value closes and its row stays

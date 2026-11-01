@@ -1321,3 +1321,7 @@ async def test_a_chunk_is_dropped_only_for_a_fact_of_its_own_writer() -> None:
     own = replace(chunk, memory_key="chunk:s8:0", identity=("a", "u1", "s8"))
     out = await _merge_leg_hits(StubCH(), _q(), [fact], [chunk, own], [], [])
     assert [h.memory_key for h in out] == ["k", "chunk:s9:0"]
+    # Under shared scope the fact is the promoted row: the opening alone drops a chunk.
+    shared = replace(fact, identity=("_shared", "-", "-"))
+    out = await _merge_leg_hits(StubCH(), _q(scope="shared"), [shared], [chunk, own], [], [])
+    assert [h.memory_key for h in out] == ["k"]
