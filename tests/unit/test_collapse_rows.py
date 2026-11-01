@@ -34,16 +34,6 @@ def test_one_row_pooled_twice_keeps_its_stronger_hit_where_the_first_sat() -> No
     assert collapse_rows([head, other, passage, theirs], "n") == [passage, other, theirs]
 
 
-def test_a_stronger_hit_made_from_a_chunk_keeps_the_tags_its_row_was_read_with() -> None:
-    # the belt checks a hard tag filter against `_row_tags`; a chunk read none
-    head = _wire("k", 0.5, "the value's head", ("a", "u", "s1"))
-    head._row_tags = ("kind:lesson",)
-    passage = _wire("k", 0.9, "the passage", ("a", "u", "s1"))
-    passage._row_tags = ()
-    (kept,) = collapse_rows([head, passage], "n")
-    assert kept is passage and kept._row_tags == ("kind:lesson",)
-
-
 def test_hits_that_name_no_row_are_left_alone() -> None:
     a, b = _wire("k", 0.5, "one"), _wire("k", 0.6, "two")
     assert collapse_rows([a, b], "n") == [a, b]

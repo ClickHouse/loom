@@ -294,7 +294,9 @@ def _stamp_leg_tags[HitT](leg_hit: Any, wire_hit: HitT) -> HitT:
     neighbour) read the row's `tags`; keep them on the wire hit privately. Chunk / summary /
     record hits read none and stay unstamped (the belt does not judge them). The row's
     stored identity rides along the same way."""
-    if _tagged_row_hit(wire_hit):
+    # a hit made from a set chunk read no tags either: the belt reads its row's
+    made_from_chunk = "folded_from_chunk" in (getattr(leg_hit, "score_components", None) or {})
+    if _tagged_row_hit(wire_hit) and not made_from_chunk:
         _stamp_row_tags(wire_hit, getattr(leg_hit, "tags", None))
     if (identity := getattr(leg_hit, "identity", None)) is not None:
         wire_hit._row_identity = identity  # type: ignore[attr-defined]

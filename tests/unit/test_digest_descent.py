@@ -167,8 +167,8 @@ async def test_a_descended_row_carries_its_version(monkeypatch) -> None:
     assert [h.version for h in ctx.all_hits[1:]] == [9]
 
 
-async def test_a_promoted_row_a_set_chunk_already_pooled_is_not_added_again(monkeypatch) -> None:
-    # under shared scope a set chunk's hit names the key's promoted row
+async def test_descent_skips_a_promoted_row_already_pooled(monkeypatch) -> None:
+    # under shared scope a set chunk's hit names the key's promoted row (test_fold_set_chunks)
     import server.core.ch as ch_mod
     from server.memory.api.models_search import _MemorySearchHit
     from server.memory.app.search.digest_descent import _run_digest_descent
