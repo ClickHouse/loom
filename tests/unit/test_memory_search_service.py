@@ -1325,7 +1325,6 @@ async def test_under_private_scope_a_chunk_is_dropped_only_for_a_fact_of_its_own
 
 @pytest.mark.asyncio
 async def test_under_shared_scope_a_chunk_that_opens_like_a_fact_drops() -> None:
-    # the shared fact is the promoted row, whose writer no chunk carries
     from dataclasses import replace
 
     from server.memory.app.retrieval.search import _merge_leg_hits
@@ -1336,7 +1335,7 @@ async def test_under_shared_scope_a_chunk_that_opens_like_a_fact_drops() -> None
         memory_type="semantic",
         content_excerpt="the same long value a user stored and promoted to shared " * 3,
         distance=0.2,
-        identity=("_shared", "-", "-"),
+        identity=("_shared", "-", "-"),  # the promoted row, whose writer no chunk carries
     )
     chunk = replace(shared, memory_key="chunk:s9:0", source="chunk", identity=("a", "u2", "s9"))
     out = await _merge_leg_hits(StubCH(), _q(scope="shared"), [shared], [chunk], [], [])

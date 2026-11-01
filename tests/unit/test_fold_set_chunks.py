@@ -18,6 +18,7 @@ import pytest
 from server.memory.app.retrieval import SearchHit, fusion
 from server.memory.app.retrieval import pool as S
 from server.memory.app.retrieval.pool import ChunkId, SetChunkRow, fold_set_chunks
+from server.memory.domain.search_types import hit_row_key, row_key_of
 
 
 def _hit(
@@ -284,12 +285,19 @@ async def test_a_failed_row_read_names_no_row_and_its_chunks_drop() -> None:
     assert fold_set_chunks([pooled, chunk], rows) == [pooled]
 
 
-def test_under_shared_scope_a_converted_chunk_names_no_row() -> None:
-    # the chunk names its private writer; the hit made from it must not
+def test_under_shared_scope_a_converted_chunk_names_the_promoted_row() -> None:
+    # the chunk names its private writer; the hit made from it is the key's shared row
     chunk = replace(
         _set_chunk("lesson_z", 0, 0.7, "a passage"),
         identity=("a", "u", "memory.set:lesson_z"),
         session_id="memory.set:lesson_z",
     )
     (hit,) = fold_set_chunks([chunk], None)
-    assert (hit.memory_key, hit.identity, hit.session_id) == ("lesson_z", None, "")
+    assert (hit.memory_key, hit.identity, hit.session_id) == (
+        "lesson_z",
+        ("_shared", "-", "-"),
+        "-",
+    )
+    # so a later leg that reads that row (key-match, digest descent) finds it pooled
+    promoted = {"agent": "_shared", "user_id": "-", "session_id": "-", "memory_key": "lesson_z"}
+    assert hit_row_key(hit, "ns") == row_key_of("ns", promoted)

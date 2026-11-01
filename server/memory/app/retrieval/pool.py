@@ -25,9 +25,12 @@ from server.memory.domain.search_types import (
     row_key_of,
 )
 from server.memory.store.rows import parse_memory_value
+from server.memory.store.shared import SHARED_AGENT
 from server.settings import settings
 
 log = logging.getLogger("server.memory.app.retrieval")
+
+_SHARED_ROW: RowIdentity = (SHARED_AGENT, "-", "-")  # a promoted row's identity
 
 
 async def _recency_backfill(
@@ -159,7 +162,7 @@ def fold_set_chunks(
     """Fold the verbatim chunks of long memory.set values onto the rows `rows` names
     (`_set_chunk_rows`): onto the row when it is pooled, as its hit when it is not, and a
     chunk `rows` names no row for is dropped. With `rows` None (shared scope) a chunk folds
-    onto a pooled fact of its key, or becomes a hit of the key."""
+    onto a pooled fact of its key, or becomes the hit of the key's promoted row."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
     out = [h for h in hits if not _is_set_chunk(h)]
@@ -176,17 +179,17 @@ def fold_set_chunks(
         if not _is_set_chunk(h):
             continue
         parent_key = str(h.parent_memory_key)
-        identity: RowIdentity | None
+        target: tuple[str, ...]
         if rows is None:
-            identity, version, session = None, h.version, ""
+            # the chunk's writer is private; what search serves of the key is its promoted row
+            target, identity, version = (parent_key,), _SHARED_ROW, h.version
         else:
             cid = _chunk_id(h)
             found = rows.get(cid) if cid is not None else None
             if found is None:
                 continue  # no served row's value is known to cut it
-            identity, version = found.identity, found.version
-            _, _, session = identity
-        target = (parent_key,) if identity is None else (*identity, parent_key)
+            target, identity, version = (*found.identity, parent_key), found.identity, found.version
+        _, _, session = identity
         if target in at:
             parent = out[at[target]]
             out[at[target]] = replace(parent, **_folded_fields(parent, h))

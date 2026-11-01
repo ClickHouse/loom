@@ -310,8 +310,8 @@ async def _merge_leg_hits(
     into the fact hits, dedup across planes, and append the unmatched
     candidates when asked."""
     if chunk_hits:
-        # Drop a chunk whose first 60 chars match a fact of its writer (under shared
-        # scope, any fact) — the fact carries the structured signal.
+        # Drop a chunk whose first 60 chars match a fact of its writer (`_writer_prefix`):
+        # the fact carries the structured signal.
         fact_prefixes = {_writer_prefix(h, q.scope) for h in hits if h.source == "fact"}
         chunk_hits = [c for c in chunk_hits if _writer_prefix(c, q.scope) not in fact_prefixes]
         hits.extend(chunk_hits)

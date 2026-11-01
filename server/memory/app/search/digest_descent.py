@@ -105,8 +105,10 @@ async def _run_digest_descent(ctx: SearchContext) -> None:
         for ns, sid, rows in results:
             for row in rows:
                 mk = str(row.get("memory_key") or "")
+                if not mk:
+                    continue
                 row_key = row_key_of(ns, row)
-                if not mk or row_key in present:
+                if row_key in present:
                     continue
                 sim = float(row.get("similarity") or 0.0)
                 raw = _anchor_rank_score(sim, pool_floor) if rrf else sim
