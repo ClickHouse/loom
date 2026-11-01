@@ -506,7 +506,10 @@ def test_health_likely_cause_depends_on_the_embedder_only(
     assert body["adaptive_thresholds"]["likely_cause"] == "fake embedder"
 
     monkeypatch.setattr(settings, "embedding_model", "text-embedding-3-small")
+    # The embedder's key is set (without it the fake would be served).
+    monkeypatch.setattr("server.embedding.embedder.provider_key", lambda p: "key")
     body = health_client.get("/v1/health").json()
+    assert body["fake_embedding"] is False
     assert body["fake_llm"] is True
     assert body["adaptive_thresholds"]["likely_cause"] == "probe error — check boot logs"
 

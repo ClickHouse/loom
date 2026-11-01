@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 from server.core.cursors import decode_cursor as _decode_list_cursor
@@ -23,6 +24,13 @@ from server.knowledge.domain.chunking import Chunk
 from server.operations.read_projection import resolve as _resolve_projection
 
 _LIST_ALWAYS = frozenset({"source_uri"})
+
+
+async def current_document_count(org: str, namespace: str) -> tuple[int, datetime | None]:
+    """How many current documents the namespace holds, and the newest ingest."""
+    from server.knowledge.store import documents as documents_repo
+
+    return await documents_repo.count_current(org, namespace)
 
 
 # ============================================================

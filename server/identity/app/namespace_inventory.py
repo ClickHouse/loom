@@ -10,10 +10,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable
 from datetime import datetime
-from typing import cast
+from typing import cast, get_args
 
+from server.auth import sharing
 from server.auth.authz import check_authorized
 from server.auth.context import current_auth
+from server.auth.fail_closed import note_answered_unverified
 from server.core.datetimes import naive_utc_now_seconds
 from server.embedding.embedder import embedder_is_fake
 from server.identity.api.models_inventory import (
@@ -32,11 +34,12 @@ from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
 from server.identity.store import grants as grants_repo
 from server.identity.store import inventory as inventory_repo
+from server.knowledge.app.document_reads import current_document_count
 from server.llm.client import llm_is_fake
+from server.memory.app.webhooks import namespace_webhook_count
 from server.operations.base import Role
 
 _NARROWED = "not counted under a read scope bound to one user or session"
-_OBSERVED: tuple[ObservedPopulation, ...] = ("agents", "authors", "subjects")
 
 
 async def handle_namespace_inventory(input: NamespaceInventoryInput) -> NamespaceInventoryOutput:
@@ -56,7 +59,10 @@ async def handle_namespace_inventory(input: NamespaceInventoryInput) -> Namespac
     ]
     populations = [
         _members(org, ns, scope),
-        *(_observed(org, ns, p, scope, input.population_limit) for p in _OBSERVED),
+        *(
+            _observed(org, ns, p, scope, input.population_limit)
+            for p in get_args(ObservedPopulation)
+        ),
     ]
     section_rows, population_rows = await asyncio.gather(
         asyncio.gather(*sections), asyncio.gather(*populations)
@@ -93,7 +99,7 @@ async def _documents(org: str, ns: str, scope: ReadFilters) -> InventorySection:
     # Document rows are not bounded by the read scope, so they are counted namespace-wide only.
     if scope.narrowed:
         return _missing("documents", _NARROWED)
-    return await _section("documents", inventory_repo.document_count(org, ns))
+    return await _section("documents", current_document_count(org, ns))
 
 
 async def _integrations(org: str, ns: str, scope: ReadFilters) -> InventorySection:
@@ -102,11 +108,14 @@ async def _integrations(org: str, ns: str, scope: ReadFilters) -> InventorySecti
         return _missing("integrations", _NARROWED)
     try:
         await check_authorized(current_auth(), Role.ADMIN, org=org, namespace=ns)
-    except PermissionError:
+    except PermissionError as e:
+        if getattr(e, "unverified", False):  # the grant read failed: the server's failure
+            note_answered_unverified()
+            return _missing("integrations", "read failed: the admin check could not read grants")
         return _missing("integrations", "counted for namespace admins only")
     except Exception as e:  # noqa: BLE001 — a failed grant read leaves the other sections standing
         return _missing("integrations", _failed(e))
-    return await _section("integrations", inventory_repo.webhook_count(org, ns))
+    return await _section("integrations", namespace_webhook_count(org, ns))
 
 
 def _missing(plane: InventoryPlane, reason: str) -> InventorySection:
@@ -119,12 +128,23 @@ async def _members(org: str, ns: str, scope: ReadFilters) -> InventoryPopulation
             population="members", total=None, complete=False, reason=_NARROWED
         )
     try:
-        total = await grants_repo.member_count(org, ns)
+        people, shared = await grants_repo.member_count(org, ns)
+        inherited = len((await sharing.tree(org)).lineage(ns)) > 1
     except Exception as e:  # noqa: BLE001 — one population's failure leaves the others standing
         return InventoryPopulation(
             population="members", total=None, complete=False, reason=_failed(e)
         )
-    return InventoryPopulation(population="members", total=total, complete=True)
+    wider = [
+        "shared with everyone or a group" if shared else "",
+        "inherits the grants of a parent collection" if inherited else "",
+    ]
+    reason = "; ".join(w for w in wider if w)
+    return InventoryPopulation(
+        population="members",
+        total=people,
+        complete=not reason,
+        reason=f"{reason}: those members are not counted" if reason else "",
+    )
 
 
 async def _observed(

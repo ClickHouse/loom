@@ -1,5 +1,5 @@
-"""The statements behind `namespace.inventory`: one count and newest write per plane,
-and the identities observed on live memory rows. Every read of rows that carry a user
+"""The statements behind `namespace.inventory` over rows that carry a user: one count
+and newest write per plane, and the identities observed on live memory rows. Each
 takes the request's read scope."""
 
 from __future__ import annotations
@@ -41,32 +41,6 @@ async def plane_count(
         f"WHERE org = {{org:String}} AND namespace = {{ns:String}} AND {live}"
         + scope_and(scope, params),
         params,
-    )
-    return _count(row)
-
-
-async def document_count(
-    org: str, namespace: str, *, ch: _CHClient | None = None
-) -> tuple[int, datetime | None]:
-    """Current documents of the namespace (superseded versions left out)."""
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        "SELECT count() AS n, max(ingested_at) AS latest FROM loom.documents FINAL "
-        "WHERE org = {org:String} AND namespace = {ns:String} AND superseded_at IS NULL",
-        {"org": org, "ns": namespace},
-    )
-    return _count(row)
-
-
-async def webhook_count(
-    org: str, namespace: str, *, ch: _CHClient | None = None
-) -> tuple[int, datetime | None]:
-    """Registered webhooks of the namespace (removed ones left out)."""
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        "SELECT count() AS n, max(created_at) AS latest FROM loom.memory_webhooks FINAL "
-        "WHERE org = {org:String} AND namespace = {ns:String} AND is_deleted = 0",
-        {"org": org, "ns": namespace},
     )
     return _count(row)
 

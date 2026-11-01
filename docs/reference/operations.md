@@ -522,7 +522,7 @@ Fields for every `namespace` op: [operations/namespace.md](operations/namespace.
 | [`namespace.guide_get`](operations/namespace.md#namespaceguide_get) | The namespace's guide: Markdown its writers keep on what it holds, its key layout and what its tags mean. | viewer | read | no |  |
 | [`namespace.guide_history`](operations/namespace.md#namespaceguide_history) | The guide's revisions, newest first, with summary, note, writer and length. | viewer | read | no |  |
 | [`namespace.guide_set`](operations/namespace.md#namespaceguide_set) | Save a new revision of the namespace's guide after you change one of its conventions: the whole text, a `note`, and `expected_revision` = the revision you read. | writer | idempotent | no | yes |
-| [`namespace.inventory`](operations/namespace.md#namespaceinventory) | What one namespace holds: live counts and newest write per plane (memories, records, documents, runs, integrations), the registered member count, and the agents, authors and subjects observed on… | viewer | read | yes |  |
+| [`namespace.inventory`](operations/namespace.md#namespaceinventory) | What one namespace holds: live counts and newest write per plane (memories, records, documents, runs, integrations), the registered member count, and the agents, authors and subjects observed on… | viewer | read | no |  |
 | [`namespace.join`](operations/namespace.md#namespacejoin) | Self-add as a viewer on a public namespace. | viewer | idempotent | no | yes |
 | [`namespace.leave`](operations/namespace.md#namespaceleave) | Drop the caller's grant on a namespace. | viewer | idempotent | no | yes |
 | [`namespace.list`](operations/namespace.md#namespacelist) | Enumerate every namespace the caller can see (own + granted + public). | org_admin | idempotent | no |  |

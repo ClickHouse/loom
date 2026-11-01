@@ -3450,7 +3450,7 @@ OPS: dict[str, OpSpec] = {
         "NamespaceInventoryOutput",
         True,
         "viewer",
-        "stable",
+        "experimental",
         800,
         False,
         True,
@@ -14643,7 +14643,7 @@ class InventoryScope(TypedDict, total=False):
 
     org: Required[str]
     namespace: Required[str]
-    read_scope: Required[str]
+    read_scope: Required[Literal["namespace", "own_user", "own_session"]]
     user_id: Required[Optional[str]]
     session_id: Required[Optional[str]]
 
@@ -14657,9 +14657,9 @@ class InventorySection(TypedDict, total=False):
 
 
 class InventoryPopulation(TypedDict, total=False):
-    "One population. `members` are registered grants; `agents`, `authors` and"
+    "One population. `members` are the people holding an active grant; `agents`, `authors` and"
 
-    population: Required[Literal["members", "agents", "authors", "subjects"]]
+    population: Required[Union[Literal["members"], Literal["agents", "authors", "subjects"]]]
     total: Required[Optional[int]]
     top: NotRequired[list["InventoryIdentity"]]
     complete: Required[bool]

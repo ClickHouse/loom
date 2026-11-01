@@ -198,23 +198,23 @@ Save a new revision of the namespace's guide after you change one of its convent
 
 What one namespace holds: live counts and newest write per plane (memories, records, documents, runs, integrations), the registered member count, and the agents, authors and subjects observed on…
 
-`POST /v1/namespace.inventory` · MCP `loom_namespace_inventory` · role `viewer` · read
+`POST /v1/namespace.inventory` · MCP `loom_namespace_inventory` · role `viewer` · read · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `read_scope` | `Literal['namespace', 'own_user', 'own_session']` | `'namespace'` | `own_user` / `own_session` bound every count to `user_id` (and `session_id`); a token's own bound narrows further, never wider. |
-| `user_id` | `str \| None` | `None` | The end user the row belongs to; `'-'` for none. |
-| `session_id` | `str \| None` | `None` | The session or conversation the row belongs to; `'-'` for none. |
+| `user_id` | `str \| None` | `None` | The user `own_user` / `own_session` count; ignored under `namespace`. |
+| `session_id` | `str \| None` | `None` | The session `own_session` counts; ignored under the other scopes. |
 | `population_limit` | `int` | `20` | At most this many entries in each observed population (most rows first). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `scope` | `InventoryScope` |  |
-| `sections` | `list[InventorySection]` |  |
-| `populations` | `list[InventoryPopulation]` |  |
-| `capabilities` | `list[InventoryCapability]` |  |
+| `scope` | `InventoryScope` | The boundary every count was read under. |
+| `sections` | `list[InventorySection]` | One per plane, in a fixed order: memories, records, documents, runs, integrations. |
+| `populations` | `list[InventoryPopulation]` | Members, then the agents, authors and subjects observed on live memory rows. |
+| `capabilities` | `list[InventoryCapability]` | Whether a real model and a real embedder are configured on this deployment. |
 | `computed_at` | `datetime` | When the reads started. |
 
 ## `namespace.join`

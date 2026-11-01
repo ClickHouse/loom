@@ -129,6 +129,21 @@ def serves_original(row: DocumentRow | None) -> bool:
     )
 
 
+async def count_current(
+    org: str, namespace: str, *, ch: _CHClient | None = None
+) -> tuple[int, datetime | None]:
+    """Current documents of the namespace (superseded versions left out), and the
+    newest ingest among them (None when there is none)."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT count() AS n, max(ingested_at) AS latest FROM loom.documents FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND superseded_at IS NULL",
+        params={"org": org, "ns": namespace},
+    )
+    n = int(row["n"]) if row else 0
+    return n, (row["latest"] if row and n else None)
+
+
 async def get_many_by_uris(
     org: str,
     namespace: str,

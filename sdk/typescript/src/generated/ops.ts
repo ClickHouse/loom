@@ -6532,7 +6532,7 @@ export interface NamespaceInventoryInput {
 export interface InventoryScope {
   org: string;
   namespace: string;
-  read_scope: string;
+  read_scope: "namespace" | "own_user" | "own_session";
   user_id: string | null;
   session_id: string | null;
 }
@@ -9877,7 +9877,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "namespace.guide_get", group: "namespace", method: "guideGet", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 40, audit: false, readOnly: true },
   { name: "namespace.guide_history", group: "namespace", method: "guideHistory", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: true },
   { name: "namespace.guide_set", group: "namespace", method: "guideSet", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 250, audit: true, readOnly: false },
-  { name: "namespace.inventory", group: "namespace", method: "inventory", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 800, audit: false, readOnly: true },
+  { name: "namespace.inventory", group: "namespace", method: "inventory", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "namespace.join", group: "namespace", method: "join", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "namespace.leave", group: "namespace", method: "leave", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "namespace.list", group: "namespace", method: "list", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: false },

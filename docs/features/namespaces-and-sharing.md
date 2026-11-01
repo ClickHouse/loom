@@ -106,7 +106,9 @@ halfway leaves the source intact and the target without the row. The learnings q
 | `agents.connected`    | The agents active in a window (default 24 hours): last and first seen, ops, namespaces touched and cost per agent. Answers "is my client actually talking to Loom?"                                                                                               |
 
 `namespace.inventory` keeps each population apart. `members` counts the people holding an
-active grant, not a pending request (page them with `grants.list`); `agents`, `authors` (the `actor` that wrote a row) and
+active grant, not a pending request, a group, an agent or a service account (page them
+with `grants.list`); a grant to `everyone` or a group, or a parent collection's grants,
+leave the count `complete: false`, since their members are not listed. `agents`, `authors` (the `actor` that wrote a row) and
 `subjects` (the `user_id` a row belongs to, never the unset `-`) are identities observed
 on live memory rows, not a directory. A section that failed, or that the caller may not
 read, says so with `complete: false` and a reason: the integrations count is for

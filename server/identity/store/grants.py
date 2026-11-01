@@ -239,12 +239,24 @@ async def people_page(
     return [GrantPerson.from_row(r) for r in rows]
 
 
-async def member_count(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
-    """How many people hold an active grant, folded as `people_page` folds them; a
-    pending request alone grants nothing and is not counted."""
+# A grant subject that is not one person: the org (`everyone`, `*`), a group, an agent or
+# a service account. `user:<id>` is an end user, so a person.
+_NOT_A_PERSON = (
+    "subject IN ('everyone', '*') OR startsWith(subject, 'group:') "
+    "OR startsWith(subject, 'agent:') OR startsWith(subject, 'sa:')"
+)
+_SHARED_WIDER = "subject IN ('everyone', '*') OR startsWith(subject, 'group:')"
+
+
+async def member_count(org: str, namespace: str, *, ch: _CHClient | None = None) -> tuple[int, int]:
+    """(people holding an active grant, folded as `people_page` folds them; active grants
+    to everyone or a group, whose members are not listed). A pending request alone
+    grants nothing and is not counted."""
     ch = ch or _default_client()
     row = await ch.query_one(
-        f"SELECT countIf(status = 'active') AS n FROM ({_PEOPLE_PAGE})",
+        f"SELECT countIf(status = 'active' AND NOT ({_NOT_A_PERSON})) AS people, "
+        f"countIf(status = 'active' AND ({_SHARED_WIDER})) AS shared "
+        f"FROM ({_PEOPLE_PAGE})",
         params={
             "org": org,
             "ns": namespace,
@@ -254,7 +266,7 @@ async def member_count(org: str, namespace: str, *, ch: _CHClient | None = None)
             "lim": 2**32 - 1,
         },
     )
-    return int(row["n"]) if row else 0
+    return (int(row["people"]), int(row["shared"])) if row else (0, 0)
 
 
 async def find_active_grant(

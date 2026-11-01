@@ -341,6 +341,7 @@ namespace_summary = Operation(
 
 namespace_inventory = Operation(
     name="namespace.inventory",
+    maturity="experimental",
     input_model=NamespaceInventoryInput,
     output_model=NamespaceInventoryOutput,
     handler=handle_namespace_inventory,

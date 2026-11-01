@@ -353,3 +353,9 @@ async def handle_webhook_deliveries(input: WebhookDeliveriesInput) -> WebhookDel
             for r in rows
         ]
     )
+
+
+async def namespace_webhook_count(org: str, namespace: str) -> tuple[int, datetime | None]:
+    """How many live webhooks the namespace has registered, and the newest registration."""
+    rows = await store.namespace_webhooks(org, namespace)
+    return len(rows), max((r["created_at"] for r in rows), default=None)

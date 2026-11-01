@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from server.auth import sharing
 from server.identity.api.models_inventory import NamespaceInventoryInput
 from server.identity.app import namespace_inventory
 from server.identity.domain.read_scope import ReadFilters, read_filters_bound
@@ -28,12 +29,24 @@ def _ch(*first: tuple[str, Any]) -> RecordingCH:
         .on("FROM loom.memory_records", [{"n": 0, "latest": datetime(1970, 1, 1)}])
         .on("FROM loom.agent_runs", [{"n": 2, "latest": AT}])
         .on("FROM loom.documents", [{"n": 3, "latest": AT}])
-        .on("FROM loom.memory_webhooks", [{"n": 1, "latest": AT}])
-        .on("loom.namespace_grants", [{"n": 2}])
+        .on("FROM loom.memory_webhooks", [{"created_at": AT, "webhook_id": "w1"}])
+        .on("loom.namespace_grants", [{"people": 2, "shared": 0}])
         .on("SELECT agent AS name", [{"name": "bot", "n": 7, "total": 1}])
         .on("SELECT actor AS name", [{"name": "u1@x", "n": 5, "total": 2}])
         .on("SELECT user_id AS name", [{"name": "u1", "n": 4, "total": 3}])
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_collections(monkeypatch: pytest.MonkeyPatch) -> None:
+    _tree(monkeypatch, {})
+
+
+def _tree(monkeypatch: pytest.MonkeyPatch, parent: dict[str, str]) -> None:
+    async def tree(org: str) -> sharing.Tree:
+        return sharing.Tree(parent=parent)
+
+    monkeypatch.setattr(namespace_inventory.sharing, "tree", tree)
 
 
 def _run(scope: ReadFilters | None = None, **kw: Any) -> Any:
@@ -84,18 +97,41 @@ def test_only_active_records_and_active_grants_are_counted(
     (records,) = ch.statements("FROM loom.memory_records")
     assert "status = 'active' AND tombstoned_at IS NULL" in records.sql
     (members,) = ch.statements("loom.namespace_grants")
-    assert members.sql.startswith("SELECT countIf(status = 'active') AS n FROM (")
+    assert members.sql.startswith("SELECT countIf(status = 'active' AND NOT (")
 
 
-def test_a_failed_admin_check_leaves_the_rest_standing(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def broken(*_: Any, **__: Any) -> None:
-        raise RuntimeError("grants unreadable")
+def test_an_unreadable_admin_check_is_the_servers_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def unverified(*_: Any, **__: Any) -> None:
+        e = PermissionError("refused")
+        e.unverified = True  # type: ignore[attr-defined]  # as marks_unverified sets it
+        raise e
 
+    noted: list[bool] = []
     _ch().install(monkeypatch)
-    monkeypatch.setattr(namespace_inventory, "check_authorized", broken)
+    monkeypatch.setattr(namespace_inventory, "check_authorized", unverified)
+    monkeypatch.setattr(namespace_inventory, "note_answered_unverified", lambda: noted.append(True))
     sections = {s.plane: s for s in _run().sections}
-    assert sections["integrations"].reason == "read failed: RuntimeError"
+    assert sections["integrations"].reason.startswith("read failed")
+    assert noted == [True]
     assert all(s.complete for p, s in sections.items() if p != "integrations")
+
+
+@pytest.mark.parametrize(
+    ("people", "shared", "parent", "reason"),
+    [
+        (3, 1, "", "shared with everyone or a group: those members are not counted"),
+        (3, 0, "root", "inherits the grants of a parent collection: those members are not counted"),
+    ],
+)
+def test_members_shared_wider_are_not_a_complete_count(
+    monkeypatch: pytest.MonkeyPatch, people: int, shared: int, parent: str, reason: str
+) -> None:
+    _tree(monkeypatch, {"n": parent, "root": ""} if parent else {})
+    _ch(("loom.namespace_grants", [{"people": people, "shared": shared}])).install(monkeypatch)
+    (members,) = [p for p in _run().populations if p.population == "members"]
+    assert (members.total, members.complete, members.reason) == (people, False, reason)
 
 
 def test_a_narrowed_scope_bounds_every_read_and_leaves_out_the_rest(

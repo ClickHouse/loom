@@ -279,7 +279,8 @@ than `namespace`:
   token lists them under keys prefixed `~<user>~` (or `~<user>~<session>~`).
 - `code.search` breaks ties with the scope's own user's recent files, whatever
   `user_id` the body names.
-- A leg whose rows carry no user (conversations, runs) answers nothing.
+- A `context.pack` leg the scope cannot bound (conversations, which carry no user, and
+  the runs manifest, which reads every session of a user) answers nothing.
 - `namespace.inventory` counts memories, records and runs inside the scope, and lists
   documents, integrations and the member count as not counted (`complete: false`).
 - A blacklist pattern refuses every user's writes but records no user (its
