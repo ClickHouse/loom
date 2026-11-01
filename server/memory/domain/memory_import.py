@@ -81,3 +81,25 @@ def holds_item(outcome: Outcome, reason: Reason) -> bool:
     """Whether an entry's key holds its item once the write is done: written now, there
     already, or written by an earlier entry of the request."""
     return outcome == "written" or (outcome == "skipped" and reason in ("unchanged", "repeated"))
+
+
+def category_note(
+    outcome: Outcome,
+    reason: Reason,
+    *,
+    linkable: bool,
+    registered: bool,
+    stored_live: bool | None,
+) -> Note | None:
+    """The note on an entry that names a category, or None to link it. `stored_live` is
+    the stored link of its key to the category: True live, False rescinded, None never
+    linked. A stored link is left as it is, so a re-run never brings back a rescinded one."""
+    if not linkable:
+        return "category_refused"
+    if not registered:
+        return "category_unregistered"
+    if stored_live is not None:
+        return "" if stored_live else "category_rescinded"
+    if not holds_item(outcome, reason):
+        return "category_not_linked"
+    return None

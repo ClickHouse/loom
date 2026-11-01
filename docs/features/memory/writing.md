@@ -281,9 +281,9 @@ extraction path (`LOOM_MEMORY_EXTRACT_VALUE_UPDATES`) never runs for an import.
   category), `category_refused` (a token bounded to one user or one session links none,
   since a link has neither axis; it is refused `memory.assign_category` too),
   `category_not_linked` (the key does not hold the fact and has no link) or
-  `category_rescinded`. Either way the fact is still imported. A link already stored for the
-  key answers no note, and an entry its own request superseded (`newest_wins`) is linked
-  like any written one.
+  `category_rescinded` (a link the owner rescinded, left so). The note never changes the
+  entry's outcome. A live link already stored for the key answers no note, and an entry its
+  own request superseded (`newest_wins`) is linked like any written one.
 - **`dry_run=true`** makes every check and writes no memory row, embedding, category link,
   audit row or usage event. It still pays for the embedding of each entry it sends to the
   bulk write, since the conflict check reads the vectors, and counts a blacklist pattern's

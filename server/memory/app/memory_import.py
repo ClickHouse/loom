@@ -35,7 +35,7 @@ from server.memory.domain.import_keys import import_key
 from server.memory.domain.memory_import import (
     Outcome,
     Reason,
-    holds_item,
+    category_note,
     repeat_outcome,
     skip_reasons,
 )
@@ -195,27 +195,24 @@ async def _categorize(
     *,
     linkable: bool,
 ) -> None:
-    """Note each entry's category, and link a registered one to the entry's key once the
-    key holds the item. A link already `stored` (live or not) is left as it is, so a re-run
-    never brings back one the owner rescinded. The new links get one audit row: keys and
-    category names, never the text."""
+    """Note each entry's category (`category_note`) and link the ones it says to link.
+    The new links get one audit row: keys and category names, never the text."""
     links: set[tuple[str, str]] = set()
     for result, entry in zip(results, input.entries, strict=True):
         if not entry.category:
             continue
-        if not linkable:
-            result.note = "category_refused"
-        elif entry.category not in category_ids:
-            result.note = "category_unregistered"
+        link = (result.key, category_ids.get(entry.category, ""))
+        note = category_note(
+            result.outcome,
+            result.reason,
+            linkable=linkable,
+            registered=entry.category in category_ids,
+            stored_live=stored.get(link),
+        )
+        if note is None:
+            links.add(link)
         else:
-            link = (result.key, category_ids[entry.category])
-            if link in stored:
-                if not stored[link]:
-                    result.note = "category_rescinded"
-            elif not holds_item(result.outcome, result.reason):
-                result.note = "category_not_linked"
-            else:
-                links.add(link)
+            result.note = note
     new = sorted(links)
     if not new or input.dry_run:
         return

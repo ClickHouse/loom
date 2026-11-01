@@ -1036,6 +1036,40 @@ async def test_a_rerun_adds_no_link_already_stored(harness) -> None:
     assert "memory.import" not in dict(rec.audits)
 
 
+@pytest.mark.parametrize(
+    ("outcome", "reason", "linkable", "registered", "stored_live", "note"),
+    [
+        ("written", "", False, True, None, "category_refused"),
+        ("written", "", True, False, None, "category_unregistered"),
+        ("skipped", "revised", True, True, True, ""),  # a live link stays and says nothing
+        ("written", "", True, True, False, "category_rescinded"),
+        ("refused", "blacklist", True, True, None, "category_not_linked"),
+        ("held", "merge", True, True, None, "category_not_linked"),
+        ("written", "", True, True, None, None),  # None: link it
+        ("skipped", "unchanged", True, True, None, None),
+        ("skipped", "repeated", True, True, None, None),
+    ],
+)
+def test_the_category_note_of_each_case(
+    outcome: str,
+    reason: str,
+    linkable: bool,
+    registered: bool,
+    stored_live: bool | None,
+    note: str | None,
+) -> None:
+    from server.memory.domain.memory_import import category_note
+
+    got = category_note(
+        outcome,
+        reason,
+        linkable=linkable,
+        registered=registered,
+        stored_live=stored_live,
+    )
+    assert got == note
+
+
 @pytest.mark.asyncio
 async def test_a_corrected_key_keeps_its_link_and_answers_no_note(harness) -> None:
     """The key was imported and linked, then its owner corrected it: the re-run answers

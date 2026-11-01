@@ -12,19 +12,18 @@ from server.memory.api.models_common import _Identity
 from server.memory.domain.delete_marks import caller_trace
 from server.memory.domain.memory_import import Note, Outcome, Reason
 
-# Wire bounds the request schema and the SDKs publish, so not settings.
 # The most entries one call takes; the bulk write conflict-checks every one of them,
 # whatever LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES caps a memory.bulk_set at.
-MAX_IMPORT_ENTRIES = 200
+MAX_IMPORT_ENTRIES = 200  # not a setting: a wire bound the request schema and SDKs publish
 # The longest item text, in characters, a bound on what one row stores. Only the first
 # 1,200 characters (`excerpt.EXCERPT_LIMIT`) are embedded and lexically indexed.
-MAX_IMPORT_VALUE_CHARS = 30_000
+MAX_IMPORT_VALUE_CHARS = 30_000  # not a setting: a wire bound
 # The most tags one item carries, and the longest tag.
-MAX_IMPORT_TAGS = 64
-MAX_IMPORT_TAG_CHARS = 256
+MAX_IMPORT_TAGS = 64  # not a setting: a wire bound
+MAX_IMPORT_TAG_CHARS = 256  # not a setting: a wire bound
 # The longest source pointer and category name an item names.
-MAX_IMPORT_TRACE_CHARS = 512
-MAX_IMPORT_CATEGORY_CHARS = 256
+MAX_IMPORT_TRACE_CHARS = 512  # not a setting: a wire bound
+MAX_IMPORT_CATEGORY_CHARS = 256  # not a setting: a wire bound
 
 
 class _MemoryImportEntry(BaseModel):
