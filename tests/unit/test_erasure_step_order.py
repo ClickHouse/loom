@@ -147,8 +147,8 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
         "graph_links.delete",
         (
             (D, "loom.entity_triple_memories"),
-            (D, "loom.entity_triple_rows"),
             (D, "loom.entity_edge_memories"),
+            (D, "loom.entity_triple_rows"),
             (D, "loom.entity_edge_rows"),
         ),
     ),
@@ -244,8 +244,8 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
         "graph_links.delete",
         (
             (D, "loom.entity_triple_memories"),
-            (D, "loom.entity_triple_rows"),
             (D, "loom.entity_edge_memories"),
+            (D, "loom.entity_triple_rows"),
             (D, "loom.entity_edge_rows"),
         ),
     ),

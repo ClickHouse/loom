@@ -77,9 +77,8 @@ class Outcome(StrEnum):
     LAND = "land"
     RELABEL = "relabel"  # lands: the same bytes with a new label, still a restatement
     UNCHANGED = "unchanged"
-    # refused; each value is its result's conflict_verdict
-    PINNED = "pinned"  # the key holds a pinned value
-    LOCKED = "locked"  # it would change a locked row's expiry
+    PINNED = "pinned"  # refused: the key holds a pinned value
+    LOCKED = "locked"  # refused: it would change a locked row's expiry
     KEPT_OUT = "kept_out"  # its verdict (`NOT_LANDING`: merge, rejected) keeps it out
     COPY = "copy"  # a repeat answering the merge or rejection of the entry it repeats
 

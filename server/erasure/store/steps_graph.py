@@ -49,15 +49,6 @@ _LINK_TABLES_TOMBSTONE = (
     "loom.memory_chunk_sources",
 )
 
-# Entity-graph link tables: no soft-delete column → ALTER DELETE. A user's key
-# links are found by the user's keys, row links (`ROW_LINK_TABLES`) by the writer
-# they carry, which outlives the row.
-_LINK_TABLES_DELETE = (
-    "loom.entity_triple_memories",
-    "loom.entity_triple_rows",
-    "loom.entity_edge_memories",
-    "loom.entity_edge_rows",
-)
 # The entity graph itself: edges and triples carry the namespace's subjects,
 # relations and objects verbatim and have no soft-delete column (invalidation
 # is valid_to/invalid_at). MergeTree → ALTER DELETE. No user_id column: the
@@ -120,6 +111,10 @@ async def delete_graph_links_by_namespace(
 # can still be restored).
 ROW_LINK_TABLES = ("loom.entity_triple_rows", "loom.entity_edge_rows")
 _KEY_LINK_TABLES = ("loom.entity_triple_memories", "loom.entity_edge_memories")
+# Entity-graph link tables: no soft-delete column → ALTER DELETE. A user's key
+# links are found by the user's keys, row links by the writer they carry, which
+# outlives the row.
+_LINK_TABLES_DELETE = _KEY_LINK_TABLES + ROW_LINK_TABLES
 
 
 class OrphanLinks(NamedTuple):
@@ -336,7 +331,6 @@ async def delete_graph_links_by_user(org: str, user_id: str, *, ch: _CHClient | 
     ch = ch or _default_client()
     keys = await user_key_pairs(org, user_id, ch=ch)
     total = 0
-    # A row link carries its writer; a key link only the key, found by the user's keys.
     for t in ROW_LINK_TABLES:
         total += await delete_scoped(t, org=org, scope_where=UID, params={"uid": user_id}, ch=ch)
     for t in _KEY_LINK_TABLES:

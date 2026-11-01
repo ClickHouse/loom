@@ -1242,7 +1242,7 @@ async def test_graph_mode_sorts_the_fused_pool_by_rank(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_a_record_gives_way_to_a_stronger_fact_of_its_key_whoever_wrote_it() -> None:
-    # memory.record_write defaults the record's identity to ("", "-", "-"), never the fact's
+    # a record's identity is what memory.record_write was given, never the fact row's
     ch = StubCH()
     fact = {
         **_hit(),
@@ -1264,8 +1264,6 @@ async def test_a_record_gives_way_to_a_stronger_fact_of_its_key_whoever_wrote_it
                     "field_text": "theme: dark",
                     "lexical_score": 1.0,
                     "rank_score": 0.3,
-                    "agent": "",
-                    "user_id": "-",
                     "session_id": "-",
                 }
             ],
@@ -1285,8 +1283,6 @@ def test_a_record_hit_names_no_memory_row() -> None:
             {
                 "record_id": "r1",
                 "parent_memory_key": "k",
-                "agent": "",
-                "user_id": "-",
                 "session_id": "s1",
             }
         ]

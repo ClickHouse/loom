@@ -252,8 +252,6 @@ async def _search_memory_records(
         SELECT
             record_id,
             parent_memory_key,
-            agent,
-            user_id,
             session_id,
             schema_name,
             record_json,
@@ -276,8 +274,6 @@ async def _search_memory_records(
             SELECT
                 record_id,
                 parent_memory_key,
-                agent,
-                user_id,
                 session_id,
                 schema_name,
                 record_json,
@@ -295,8 +291,6 @@ async def _search_memory_records(
                 SELECT
                     toString(r.record_id) AS record_id,
                     ifNull(r.memory_key, '') AS parent_memory_key,
-                    r.identity_agent AS agent,
-                    r.user_id AS user_id,
                     r.session_id AS session_id,
                     toString(r.schema_name) AS schema_name,
                     r.record_json AS record_json,
@@ -334,8 +328,6 @@ async def _search_memory_records(
                 GROUP BY
                     r.record_id,
                     r.memory_key,
-                    r.identity_agent,
-                    r.user_id,
                     r.session_id,
                     r.schema_name,
                     r.record_json,

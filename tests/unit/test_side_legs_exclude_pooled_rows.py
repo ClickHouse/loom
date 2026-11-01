@@ -9,13 +9,14 @@ from server.memory.domain.search_sql import exclude_pooled
 from server.memory.domain.search_types import SearchHit
 
 
-def _hit(key: str, identity: tuple[str, str, str] | None) -> SearchHit:
+def _hit(key: str, identity: tuple[str, str, str] | None, source: str = "fact") -> SearchHit:
     return SearchHit(
         memory_key=key,
         memory_type="semantic",
         content_excerpt=key,
         distance=0.5,
         identity=identity,
+        source=source,
     )
 
 
@@ -27,6 +28,13 @@ def test_a_pooled_row_leaves_out_only_itself() -> None:
     # a hit whose leg read no identity names no row: its whole key stays out
     assert params["pooled_keys"] == ["j"]
     assert len(where) == 2
+
+
+def test_a_pooled_record_leaves_its_key_open() -> None:
+    where: list[str] = []
+    params: dict = {}
+    exclude_pooled(where, params, [_hit("k", None, source="record")])
+    assert (where, params) == ([], {})
 
 
 def test_nothing_pooled_adds_no_predicate() -> None:
