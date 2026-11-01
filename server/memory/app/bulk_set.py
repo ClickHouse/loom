@@ -26,7 +26,7 @@ from server.memory.api.models_bulk import (
 from server.memory.app import after_write, webhooks
 from server.memory.app.bulk_rows import (
     _BULK_CARRIED_COLS,
-    Outcome,
+    StepOutcome,
     _bulk_build_rows,
     _bulk_embed_rows,
     _BulkWriteState,
@@ -285,7 +285,11 @@ def _apply_verdicts(
     # In row order: a repeat that lands an earlier row stands next to it.
     position = {step: i for i, step in enumerate(built)}
     judged = sorted(
-        (s for s in state.steps if s.outcome in (Outcome.LAND, Outcome.RELABEL, Outcome.KEPT_OUT)),
+        (
+            s
+            for s in state.steps
+            if s.outcome in (StepOutcome.LAND, StepOutcome.RELABEL, StepOutcome.KEPT_OUT)
+        ),
         key=lambda s: position[s.repeats or s],
     )
     plan = apply_bulk_verdicts(
@@ -296,7 +300,9 @@ def _apply_verdicts(
         # A repeat landing an earlier row has no verdict of its own: it answers clear.
         {i: s.verdict for i, s in enumerate(judged) if s.verdict is not None},
         stale_rows={id(s.row) for s in judged if s.stale},
-        landed_rows={id(s.row) for s in judged if s.outcome in (Outcome.LAND, Outcome.RELABEL)},
+        landed_rows={
+            id(s.row) for s in judged if s.outcome in (StepOutcome.LAND, StepOutcome.RELABEL)
+        },
     )
     write_step_results(state, plan)
     state.memory_rows = plan.memory_rows

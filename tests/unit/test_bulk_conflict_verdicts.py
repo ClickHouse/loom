@@ -54,7 +54,7 @@ def _entry(state, key: str, memory_id: str, sha: str, **labels: Any) -> None:
 def _settle(state, verdicts: dict) -> set[int]:
     """Replay the batch and fold its `verdicts`; the indexes of the built rows the
     replay kept out."""
-    from server.memory.app.bulk_rows import Outcome
+    from server.memory.app.bulk_rows import StepOutcome
     from server.memory.app.bulk_set import _apply_verdicts
 
     _apply_verdicts(state, [], verdicts)
@@ -62,7 +62,7 @@ def _settle(state, verdicts: dict) -> set[int]:
     return {
         i
         for i, s in enumerate(built)
-        if s.outcome in (Outcome.UNCHANGED, Outcome.PINNED, Outcome.LOCKED)
+        if s.outcome in (StepOutcome.UNCHANGED, StepOutcome.PINNED, StepOutcome.LOCKED)
     }
 
 

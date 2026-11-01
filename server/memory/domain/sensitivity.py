@@ -70,6 +70,7 @@ ASSIGNMENT_WORDS = (
 # the characters that end an assignment's value; `_keyed_credential` replaces them in what
 # it states
 _ASSIGNMENT_STOP_CHARS = "\"',;"
+_ASSIGNMENT_VALUE_CHAR = rf"[^\s{re.escape(_ASSIGNMENT_STOP_CHARS)}]"
 
 _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsk-(?:proj-|ant-|lf-)?[A-Za-z0-9_-]{20,}"),  # OpenAI / Anthropic / Langfuse
@@ -81,11 +82,9 @@ _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     _PRIVATE_KEY_BLOCK,
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),  # JWT
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),  # Google API key
-    # `password=…`, `api_key: …`, `secret := …`, `token = …` followed by a
-    # token-shaped value of 8+ non-space characters.
-    re.compile(
-        rf"(?i)\b(?:{ASSIGNMENT_WORDS})\b\s*[:=]\s*[\"']?[^\s{re.escape(_ASSIGNMENT_STOP_CHARS)}]{{8,}}"
-    ),
+    # `password=…`, `api_key: …`, `secret := …`, `token = …` followed by a token-shaped
+    # value of 8+ characters; a space, quote, comma or semicolon ends it.
+    re.compile(rf"(?i)\b(?:{ASSIGNMENT_WORDS})\b\s*[:=]\s*[\"']?{_ASSIGNMENT_VALUE_CHAR}{{8,}}"),
 )
 
 _MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (

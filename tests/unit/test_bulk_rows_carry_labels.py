@@ -150,7 +150,7 @@ async def test_a_repeat_that_names_no_level_is_not_a_label_change(monkeypatch) -
     # Entry 0 relabels the stored value 'high' but merges elsewhere, so the key keeps ''.
     # Entry 1 repeats the value naming no level: serially it is unchanged, whatever label
     # it took from entry 0's row when it was built.
-    from server.memory.app.bulk_rows import Outcome
+    from server.memory.app.bulk_rows import StepOutcome
 
     value = "Alice lives in Berlin"
     state, _plan = await _settled(
@@ -160,7 +160,7 @@ async def test_a_repeat_that_names_no_level_is_not_a_label_change(monkeypatch) -
         {"memory_key": "k", "value": value, "sensitivity": "high"},
         {"memory_key": "k", "value": value, "entities": ["Alice"]},
     )
-    assert [s.outcome for s in state.steps] == [Outcome.KEPT_OUT, Outcome.UNCHANGED]
+    assert [s.outcome for s in state.steps] == [StepOutcome.KEPT_OUT, StepOutcome.UNCHANGED]
 
 
 async def test_a_repeat_of_the_stored_bytes_keeps_a_live_expiry(monkeypatch) -> None:
@@ -232,7 +232,7 @@ async def test_a_repeat_keeps_the_expiry_of_the_batch_row_it_repeats(monkeypatch
 async def test_a_relabelling_repeat_still_reinforces_the_row(monkeypatch) -> None:
     # memory.set counts the same bytes as a restatement even when the write changes a
     # label: the row lands and is reinforced once.
-    from server.memory.app.bulk_rows import Outcome
+    from server.memory.app.bulk_rows import StepOutcome
 
     value = "Alice lives in Berlin"
     for entry in (
@@ -240,7 +240,7 @@ async def test_a_relabelling_repeat_still_reinforces_the_row(monkeypatch) -> Non
         {"memory_key": "k", "value": value, "pinned": True},
     ):
         state, _plan = await _settled(monkeypatch, _stored(value), {}, entry)
-        assert [s.outcome for s in state.steps] == [Outcome.RELABEL]
+        assert [s.outcome for s in state.steps] == [StepOutcome.RELABEL]
         assert state.restated_ids == [STORED_ID]
 
 
