@@ -21,6 +21,7 @@ from typing import Any
 from server.memory.domain.decision_schema import SCHEMA_FIELDS, SCHEMA_NAME
 from server.memory.domain.decision_statement import alternatives, collapse_ws
 from server.memory.domain.files import detect_value_files
+
 CHAIN_RELATIONS: tuple[str, ...] = ("caused", "influenced", "derived_from")
 MAX_ALTERNATIVES = 10
 ALTERNATIVE_CHARS = 300

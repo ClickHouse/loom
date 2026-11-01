@@ -675,7 +675,12 @@ def test_outcome_keeps_an_empty_files_list_from_the_live_row(env, monkeypatch) -
 
     async def row_without_files(identity, memory_key, **kw):
         return SimpleNamespace(
-            value="", pinned=False, files=[], source_class="asserted", source_resource_id="", tags=[]
+            value="",
+            pinned=False,
+            files=[],
+            source_class="asserted",
+            source_resource_id="",
+            tags=[],
         )
 
     monkeypatch.setattr(h, "get_by_key", row_without_files)
@@ -927,8 +932,7 @@ def test_a_blacklisted_realized_outcome_refuses_the_outcome(env) -> None:
     ch, calls, h = env
     d = asyncio.run(h.handle_decision_record(record_input()))
     ch.blocked = ["do-not-store-this-phrase"]
-    calls["record"].clear()
-    calls["set"].clear()
+    written = (len(calls["record"]), len(calls["set"]))
     with pytest.raises(HTTPException) as e:
         asyncio.run(
             h.handle_decision_outcome(
@@ -941,7 +945,7 @@ def test_a_blacklisted_realized_outcome_refuses_the_outcome(env) -> None:
             )
         )
     assert e.value.detail["code"] == "BLACKLISTED"
-    assert calls["record"] == [] and calls["set"] == []
+    assert (len(calls["record"]), len(calls["set"])) == written
 
 
 def test_a_pattern_only_the_statement_matches_refuses_before_the_record(env) -> None:

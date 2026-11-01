@@ -40,6 +40,7 @@ def local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> KeptCH:
         *(ddl(t) for t in ("memory_record_fields", "memory_record_conflicts")),
         *(ddl(t) for t in ("memory_schemas", "memory_schema_fields")),
         ddl("operator_edges"),
+        *(ddl(t) for t in ("blacklist", "blacklist_version")),
     )
 
     @asynccontextmanager
