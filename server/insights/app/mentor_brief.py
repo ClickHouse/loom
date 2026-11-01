@@ -9,6 +9,8 @@ from typing import Any
 
 from server.core.ch import get_client
 from server.insights.api.models_mentor import (
+    EvidenceRung,
+    EvidenceSource,
     MentorAdoption,
     MentorBriefInput,
     MentorBriefOutput,
@@ -163,24 +165,30 @@ async def _adoption(profile: mentor_rules.MentorProfile) -> list[MentorAdoption]
 
 
 # What each rung counts, and what it does not show.
-_RUNG_MEANING: dict[str, str] = {
-    "attempt": "calls the agent made, answered or not",
-    "success": "calls that returned without an error; a read that found nothing counts",
-    "committed_write": "memory writes that stored a row (not a no-op or a dry run)",
+_RUNG_MEANING: dict[EvidenceRung, str] = {
+    "attempt": (
+        "calls the agent made, answered or not (the dashboard's and the mentor's own "
+        "calls left out)"
+    ),
+    "success": "of those, calls that returned without an error; a read that found nothing counts",
+    "committed_write": (
+        "`memory.set` calls that stored a row (not a no-op or a dry run); other write ops "
+        "do not say on the ledger whether they stored one, so they are not counted"
+    ),
     "indexed_write": "the agent's rows written in the window that now have a search vector",
     "returned_hit": (
         "reads that answered: a search or ask that did not abstain, a get that found its "
         "key; whether the answer reached the model or changed its work is not recorded"
     ),
     "client_acknowledged": (
-        "memory keys the agent's runs reported relying on (`run.complete` "
+        "distinct memory keys the agent's runs reported relying on (`run.complete` "
         "`memories_used`): the client's own report, not verified"
     ),
     "task_outcome": "not observed: Loom records no task outcome",
 }
 
 
-def _rung(rung: Any, count: int | None, source: Any) -> MentorEvidence:
+def _rung(rung: EvidenceRung, count: int | None, source: EvidenceSource) -> MentorEvidence:
     return MentorEvidence(rung=rung, count=count, source=source, meaning=_RUNG_MEANING[rung])
 
 
@@ -198,7 +206,6 @@ async def _evidence(
     try:
         calls = await mentor_store.call_evidence(
             *who,
-            sets=mentor_rules.SETS,
             gets=mentor_rules.GETS,
             searches=mentor_rules.SEARCHES,
             ch=ch,

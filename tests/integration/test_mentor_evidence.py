@@ -1,6 +1,7 @@
 """mentor.brief's evidence ladder over real calls: each rung counts what the ledger and
 the stores show, a write that stored nothing is not committed, a read that found nothing
-is not a returned hit, and a task outcome is never observed.
+or abstained is not a returned hit, the dashboard's and the mentor's own calls are not
+the agent's, and a task outcome is never observed.
 
 Skips without LOOM_BASE_URL (tests/integration/conftest.py).
 """
@@ -29,27 +30,36 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str) -> None:
     fact = {**ident, "memory_key": "pref/report", "value": "Reports go out on Fridays"}
     with httpx.Client(base_url=control_plane_url, timeout=60.0) as c:
         _call(c, "memory.set", fact)
+        # Restating the fact under another key stores nothing (a merge, `noop`).
+        restated = _call(c, "memory.set", {**fact, "memory_key": "pref/again"})
+        assert restated["noop"] is True, restated
         # A dry run stores nothing.
         _call(c, "memory.set", {**fact, "value": "Reports go out on Mondays", "dry_run": True})
         _call(c, "memory.get", {**ident, "memory_key": "pref/report"})
         _call(c, "memory.get", {**ident, "memory_key": "pref/absent"})
+        abstained = _call(c, "memory.search", {**ident, "query": "zebra migration in Kenya"})
+        assert abstained["abstain"] is True, abstained
+        # The dashboard reading under the agent's name is not the agent's use.
+        _call(c, "memory.get", {**ident, "memory_key": "pref/report", "consumer": "loom-ui"})
         # The agent reports what it relied on when its run completes.
         run = _call(c, "run.begin", {**ident, "goal": "send the report"})
         done = {**ident, "run_id": run["run_id"], "status": "completed"}
         _call(c, "run.complete", {**done, "memories_used": ["pref/report"]})
 
         def brief() -> Any:
-            out = _call(c, "mentor.brief", {"org": org, "namespace": ns, "agent": AGENT})
+            # A brief is ledgered under the agent it names; the ladder leaves it out.
+            body = {"org": org, "namespace": ns, "agent": AGENT}
+            out = _call(c, "mentor.brief", body)
             ladder = {e["rung"]: e for e in out["evidence"]}
-            return (out, ladder) if ladder["attempt"]["count"] == 6 else None
+            return (out, ladder) if ladder["attempt"]["count"] == 8 else None
 
-        out, ladder = wait_until(brief, max_wait=30.0, description="six calls in the ledger")
+        out, ladder = wait_until(brief, max_wait=30.0, description="eight calls in the ledger")
     counts = {rung: e["count"] for rung, e in ladder.items()}
-    assert counts["success"] == 6
-    # The write stored a row; the dry run did not.
+    assert counts["success"] == 8
+    # The write stored a row; the restatement and the dry run did not.
     assert counts["committed_write"] == 1
     assert counts["indexed_write"] == 1
-    # The get that found its key answered; the miss did not.
+    # The get that found its key answered; the miss and the abstaining search did not.
     assert counts["returned_hit"] == 1
     # One key reported relied on, as the client's own word.
     assert (counts["client_acknowledged"], ladder["client_acknowledged"]["source"]) == (

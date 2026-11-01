@@ -952,7 +952,7 @@ def test_mentor_brief_returns_the_profile_planes_and_adoption(
 M_EVIDENCE = "AS returned_hits"
 M_INDEXED = "FROM loom.memory_embeddings FINAL"
 M_RETENTION = "SELECT retention_days FROM loom.namespaces"
-M_REPORTED = "SELECT count() AS n FROM (SELECT arrayJoin(memories_used)"
+M_REPORTED = "SELECT uniqExact(k) AS n FROM (SELECT arrayJoin(memories_used)"
 
 
 def _brief(monkeypatch: pytest.MonkeyPatch, ch: _CH, **facts: Any) -> Any:
@@ -1004,10 +1004,9 @@ def test_mentor_brief_climbs_the_evidence_ladder_from_attempt_to_outcome(
     assert ladder["client_acknowledged"] == (4, "client")
     assert ladder["task_outcome"] == (None, "none")
     assert out.ledger_from == datetime(2026, 1, 2)
-    # The dashboard's traffic and dry runs are not the agent's use; a no-op stored nothing.
+    # The dashboard's and the mentor's own calls are not the agent using Loom.
     (sql,) = [q for q in ch.sqls if M_EVIDENCE in q]
-    assert "consumer != 'loom-ui'" in sql and "args['out_noop'] != 'true'" in sql
-    assert "args['out_abstain'] != 'true'" in sql and "args['dry_run'] != 'true'" in sql
+    assert "consumer != 'loom-ui'" in sql and "NOT startsWith(operation, 'mentor.')" in sql
     assert "evidence" in handler.render_table(out)
 
 

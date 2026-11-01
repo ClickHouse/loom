@@ -474,27 +474,27 @@ async def call_evidence(
     agent: str,
     window_seconds: int,
     *,
-    sets: tuple[str, ...],
     gets: tuple[str, ...],
     searches: tuple[str, ...],
     ch: _CHClient | None = None,
 ) -> dict[str, Any]:
     """What the agent's calls in the window show, from the call ledger: attempts,
-    successes, writes that stored a row, reads that answered, and the oldest call the
-    ledger still holds. The dashboard's own traffic is left out."""
+    successes, `memory.set` calls that stored a row, reads that answered, and the oldest
+    call the ledger still holds. The dashboard's traffic and the mentor's own reads are
+    left out: neither is the agent using Loom."""
     ch = ch or _default_client()
     row = await ch.query_one(
         f"""
         SELECT count() AS attempts,
                countIf(success) AS successes,
-               countIf(success AND operation IN {_in(sets)} AND args['out_noop'] != 'true'
+               countIf(success AND operation = 'memory.set' AND args['out_noop'] != 'true'
                        AND args['dry_run'] != 'true') AS committed_writes,
                countIf(success AND (
                    (operation IN {_in(searches)} AND args['out_abstain'] != 'true')
                    OR (operation IN {_in(gets)} AND (args['out_found'] = 'true'
                        OR toUInt64OrZero(args['out_found_n']) > 0)))) AS returned_hits,
                if(attempts = 0, NULL, min(ts)) AS oldest_call
-        {_LEDGER_AGENT} AND consumer != 'loom-ui'
+        {_LEDGER_AGENT} AND consumer != 'loom-ui' AND NOT startsWith(operation, 'mentor.')
         """,
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
@@ -531,10 +531,10 @@ async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | 
 async def reported_keys(
     org: str, namespace: str, agent: str, window_seconds: int, *, ch: _CHClient | None = None
 ) -> int:
-    """How many memory keys the agent's runs in the window reported relying on."""
+    """How many distinct memory keys the agent's runs in the window reported relying on."""
     ch = ch or _default_client()
     row = await ch.query_one(
-        f"SELECT count() AS n FROM ({_CREDITED_KEYS})",
+        f"SELECT uniqExact(k) AS n FROM ({_CREDITED_KEYS})",
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
     return int(row["n"]) if row else 0

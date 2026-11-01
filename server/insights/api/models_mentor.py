@@ -70,6 +70,7 @@ EvidenceRung = Literal[
     "client_acknowledged",
     "task_outcome",
 ]
+EvidenceSource = Literal["server", "client", "none"]
 
 
 class MentorEvidence(BaseModel):
@@ -81,7 +82,7 @@ class MentorEvidence(BaseModel):
     count: int | None = None
     # Who recorded it: `server` (Loom saw it happen), `client` (the agent reported it,
     # unverified) or `none` (not observed).
-    source: Literal["server", "client", "none"]
+    source: EvidenceSource
     # What the count is, and what it does not show.
     meaning: str
 
@@ -112,7 +113,8 @@ class MentorBriefOutput(BaseModel):
     # Oldest call of this agent the ledger holds in the window; None when it holds none.
     ledger_from: datetime | None = None
     # Days the call ledger keeps this namespace's rows (0: until deleted). When the window
-    # is longer, its oldest part is gone and every count above covers less than the window.
+    # is longer, its oldest part is gone and the rungs read from the ledger (`attempt`,
+    # `success`, `committed_write`, `returned_hit`) cover less than the window.
     ledger_retention_days: int | None = None
     # The namespace's writers in the window, most active first; the brief
     # defaults to the first when the caller has no agent name of its own

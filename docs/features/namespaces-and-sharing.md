@@ -193,17 +193,20 @@ at session start, and a successful response carries at most one (`hint` on MCP, 
 [mentor ops](../reference/operations/mentor.md).
 
 A brief's `evidence` lists what the agent's use of Loom shows, one rung each, and who
-recorded it. The server records `attempt` (calls made), `success` (calls without an
-error, a read that found nothing included), `committed_write` (memory writes that stored
-a row, not a no-op or a dry run), `indexed_write` (the agent's rows written in the window
-that now have a search vector) and `returned_hit` (a search or ask that did not abstain,
-a get that found its key). `client_acknowledged` counts the memory keys the agent's runs
-reported relying on (`run.complete` `memories_used`): the client's own word, not
-verified. `task_outcome` is never observed. A returned hit does not show that the answer
-reached the model or changed its work. These rungs are read at each brief, not from the
-cached profile. `ledger_from` is the oldest call the ledger still holds in the window, and
-`ledger_retention_days` how long the call ledger keeps the namespace's rows (0: until
-deleted); a window longer than that covers less than it names.
+recorded it. The server records `attempt` (calls made, the dashboard's and the mentor's own
+left out), `success` (calls without an error, a read that found nothing included),
+`committed_write` (`memory.set` calls that stored a row, not a no-op or a dry run; other
+write ops do not say on the ledger whether they stored one), `indexed_write` (the agent's
+rows written in the window that now have a search vector) and `returned_hit` (a search or
+ask that did not abstain, a get that found its key). `client_acknowledged` counts the
+distinct memory keys the agent's runs reported relying on (`run.complete`
+`memories_used`): the client's own word, not verified. `task_outcome` is never observed. A
+returned hit does not show that the answer reached the model or changed its work. These
+rungs are read at each brief, not from the cached profile. `ledger_from` is the oldest call
+the ledger still holds in the window, and `ledger_retention_days` how long the call ledger
+keeps the namespace's rows (0: until deleted); a window longer than that leaves the rungs
+read from the ledger (`attempt`, `success`, `committed_write`, `returned_hit`) covering
+less than it names.
 
 [`mentor.guide`](../reference/operations/mentor.md#mentorguide) returns how to use Loom, written for a model: the
 `loom` skill in `skills/loom/`, as `part` `skill` (the loop and the rules), `reference` (every plane with its ops) or
