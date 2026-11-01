@@ -131,8 +131,8 @@ class _Written(NamedTuple):
     merged_into_key: str = ""
 
 
-def _merged_hint(merged_into_key: str, op: str, outcome: str) -> str:
-    """Why `op` wrote nothing after memory.set merged its row; `outcome` ends the sentence
+def _merged_hint(merged_into_key: str, op: str, ending: str) -> str:
+    """Why `op` wrote nothing after memory.set merged its row; `ending` closes the sentence
     when the decision merged into is known."""
     if not merged_into_key:
         return (
@@ -140,8 +140,8 @@ def _merged_hint(merged_into_key: str, op: str, outcome: str) -> str:
             f"written. Call {op} again."
         )
     return (
-        f"memory.set merged this into the decision {merged_into_key}, which has the same text; "
-        + outcome
+        f"memory.set merged this into the decision {merged_into_key}, which has the same "
+        f"text; {ending}"
     )
 
 
