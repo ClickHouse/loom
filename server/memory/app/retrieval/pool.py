@@ -182,7 +182,7 @@ def fold_set_chunks(
         parent_key = str(h.parent_memory_key)
         target: tuple[str, ...]
         if rows is None:
-            # the key's promoted row: its version and tags are unknown, so alone it fails a hard tag filter
+            # the key's promoted row: tags unknown, so alone it fails a hard tag filter
             target, identity, version, tags = (parent_key,), _SHARED_ROW, 0, []
         else:
             cid = _chunk_id(h)

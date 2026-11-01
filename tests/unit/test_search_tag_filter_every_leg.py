@@ -458,7 +458,7 @@ async def test_ask_injection_legs_are_held_to_the_hard_filter(
     assert src.index("_fill_pool(") < src.index("_early_answer(")
 
 
-def _made_from_set_chunk(row_tags: tuple[str, ...]) -> Any:
+def _made_from_set_chunk(row_tags: tuple[str, ...]) -> _MemorySearchHit:
     chunk = SearchHit(
         memory_key="chunk:memory.set:k:0",
         memory_type="episodic",
