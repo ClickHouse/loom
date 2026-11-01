@@ -9,7 +9,8 @@ reads that record usage told not to, whatever the model sent.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import re
+from typing import Any, get_args
 
 import pytest
 
@@ -154,12 +155,34 @@ def test_the_assistant_primer_is_read_only_and_names_listed_tools(
             None, include_profile=False, toolset="assistant", defaults={"namespace": "ns"}
         )
     )
-    import re
-
     assert "Nothing here writes" in primer and "cannot grant a tool" in primer
     monkeypatch.setattr(settings, "mcp_code_tools", False)
     named = set(re.findall(r"\bloom_[a-z_]+\b", primer))
     assert named and named <= _listed("assistant"), named - _listed("assistant")
+
+
+def test_every_field_the_assistant_primer_names_is_served() -> None:
+    from server.identity.api.models_findings import FindingEvidence, FindingKind
+    from server.identity.api.models_namespace_catalog import (
+        NamespaceAuditFinding,
+        NamespaceAuditOutput,
+    )
+    from server.knowledge.api.models_knowledge import _SearchHit
+
+    served = {
+        "kind": NamespaceAuditFinding,
+        "uncertainty": NamespaceAuditFinding,
+        "samples_complete": NamespaceAuditFinding,
+        "skipped": NamespaceAuditOutput,
+        "content_sha256": FindingEvidence,
+        "source_uri": _SearchHit,
+    }
+    primer = mcp_primer._assistant_primer({"namespace": "ns"})
+    named = {n for n in re.findall(r"`([a-z_0-9]+)", primer) if not n.startswith("loom_")}
+    assert named == set(served) | {"usage_heuristic"}, named
+    assert "usage_heuristic" in get_args(FindingKind)
+    for field, model in served.items():
+        assert field in model.model_fields, (field, model.__name__)
 
 
 def test_an_assistant_result_is_the_full_output() -> None:
