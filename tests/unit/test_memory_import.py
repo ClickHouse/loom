@@ -764,6 +764,32 @@ async def test_an_item_that_retires_a_live_memory_says_so(harness, monkeypatch) 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("newest_first", [True, False])
+async def test_a_pair_in_one_import_retires_the_older_dated_fact(
+    harness, monkeypatch, newest_first: bool
+) -> None:
+    """Under newest_wins, two entries stating one attribute differently: the one with the
+    earlier `valid_at` is retired, whatever order the source exported them in."""
+    newer = {"value": "The capital of Soviet Union is Moscow", "valid_at": "2024-06-01T00:00:00Z"}
+    older = {
+        "value": "The capital of Soviet Union is Russellville",
+        "valid_at": "2021-01-01T00:00:00Z",
+    }
+
+    async def _policy(*_: Any, **__: Any) -> str:
+        return "newest_wins"
+
+    monkeypatch.setattr("server.memory.app.conflicts.namespace_conflict_policy", _policy)
+    ch = _StoreCH()
+    harness(ch)
+    entries = [newer, older] if newest_first else [older, newer]
+    await handle_memory_import(_input(*entries))
+    status = {json.loads(r["value"]): r["status"] for r in ch.rows_for("loom.memory")}
+    assert status[newer["value"]] == "active"
+    assert status[older["value"]] == ("active" if newest_first else "superseded")
+
+
+@pytest.mark.asyncio
 async def test_the_sensitivity_rule_applies_to_an_imported_item(harness) -> None:
     ch = _StoreCH()
     rec = harness(ch)

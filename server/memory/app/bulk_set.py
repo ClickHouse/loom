@@ -365,7 +365,9 @@ async def _bulk_intra_batch_pairs(
                         [str(r.get("value") or "") for r in rows],
                         [str(r.get("memory_type") or "") for r in rows],
                     )
-                    if id(rows[i]) in kept and id(rows[j]) in kept
+                    if id(rows[i]) in kept
+                    and id(rows[j]) in kept
+                    and not _dated_after(rows[i], rows[j])
                 ]
                 _intra_pairs = stamp_intra_batch_supersessions(
                     state.memory_rows, state.embedding_rows, _ib, naive_utc_now()
@@ -379,6 +381,14 @@ async def _bulk_intra_batch_pairs(
         except Exception as e:  # noqa: BLE001 — the rows still land; the pair goes to review
             log.warning("bulk_set: intra-batch supersession skipped (non-fatal): %s", e)
     return _intra_pairs
+
+
+def _dated_after(row: dict[str, Any], other: dict[str, Any]) -> bool:
+    """Whether both rows carry a `valid_at` and `row`'s is later. The earlier row in the
+    batch is then the newer fact, so it is not retired by the later one; against the
+    store, `later_valid_peers` leaves such a pair alone the same way."""
+    mine, theirs = row.get("valid_at"), other.get("valid_at")
+    return mine is not None and theirs is not None and mine > theirs
 
 
 def _settle_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:

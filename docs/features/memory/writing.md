@@ -296,6 +296,10 @@ not plainly written, a `reason`:
 | `skipped` | `unchanged` (the key holds the fact already, in this session or another), `deleted`, `superseded`, `rejected` or `proposed` (the key's newest version), `revised` (the key holds other text), `repeated` (an earlier entry of the request with the same text was written) or `unknown` (logged: a status the import does not recognise). |
 | `refused` | `blacklist`, `pinned` or `locked` (only when the key is pinned or locked between the import's read and its write) or `pinned_peer` (too close to a pinned memory).                                                                                                                                                                       |
 
+Under `newest_wins`, two entries of one request that state the same attribute differently
+keep only the newer: the one with the later `valid_at`, or the later in the request when
+either has none. The other still answers `written`, and its row is stored `superseded`.
+
 An entry with the same text as an earlier one must be identical to it (otherwise the
 request is a 422 naming both indexes), and answers as that entry did, except after a
 write, when it is `skipped` (`repeated`).

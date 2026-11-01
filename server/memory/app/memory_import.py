@@ -83,8 +83,8 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
     heads = await memory_repo.key_heads_across_sessions(
         input.org, input.namespace, input.agent, input.user_id, list(first), scope=scope
     )
-    shas = {key: sha256_value(input.entries[i].value) for key, i in first.items()}
-    outcomes, keepers = await _write(input, keys, first, skip_reasons(heads, shas))
+    content_shas = {key: sha256_value(input.entries[i].value) for key, i in first.items()}
+    outcomes, keepers = await _write(input, keys, first, skip_reasons(heads, content_shas))
     results: list[_MemoryImportResult] = []
     for i, key in enumerate(keys):
         outcome, reason = outcomes[key] if first[key] == i else repeat_outcome(outcomes[key])
@@ -109,12 +109,17 @@ async def _write(
     pending: list[int] = []
     for key, i in first.items():
         reason = skip.get(key, "")
-        if reason == "unknown":
-            log.warning("memory.import: key %r has an unknown head status; skipped", key)
         if reason:
             outcomes[key] = ("skipped", reason)
         else:
             pending.append(i)
+    unknown = [key for key, reason in skip.items() if reason == "unknown"]
+    if unknown:
+        log.warning(
+            "memory.import: %d key(s) have an unknown head status, skipped: %s",
+            len(unknown),
+            unknown[:5],
+        )
     if not pending:
         return outcomes, {}
     written = await handle_memory_bulk_set(
@@ -199,10 +204,10 @@ async def _categorize(
             result.note = "category_not_linked"
         else:
             link = (result.key, category_ids[entry.category])
-            if stored.get(link) is False:
-                result.note = "category_rescinded"
-            elif link not in stored:
+            if link not in stored:
                 links.add(link)
+            elif not stored[link]:
+                result.note = "category_rescinded"
     new = sorted(links)
     if not new or input.dry_run:
         return

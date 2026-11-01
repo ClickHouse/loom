@@ -39,13 +39,10 @@ class _MemoryImportEntry(BaseModel):
     # When the source system first knew the item, stored as `valid_at`; the row's
     # `created_at` is the time of the import. None = unknown.
     valid_at: datetime | None = None
-    # Where the item came from in the source system (an id or a path); '' stores its key,
-    # `import:<digest>`. May not start with `memory.delete_version:`.
+    # The item's id or path in the source system; '' stores its key instead.
     source_trace: str = Field(default="", max_length=MAX_IMPORT_TRACE_CHARS)
-    # A category registered in the namespace (namespace.register_category) that the
-    # item's key is linked to, as memory.assign_category links one, once the key holds the
-    # item. When it is not linked, the result's `note` says why; the entry is still
-    # imported. '' = none.
+    # A category the namespace registered to link the item's key to; '' = none (the
+    # result's `note` says when it is not linked).
     category: str = Field(default="", max_length=MAX_IMPORT_CATEGORY_CHARS)
     # Sensitivity tier; '' = detect from the value, as memory.bulk_set does.
     sensitivity: Literal["", "low", "medium", "high"] = ""
@@ -92,20 +89,13 @@ class _MemoryImportResult(BaseModel):
     # written | held (another memory holds the fact; nothing is written) | skipped
     # (the key is left as it is; `reason` says why) | refused (a check refused it).
     outcome: Outcome
-    # Why, when the outcome is not a plain write. refused: the check that refused it
-    # (pinned_peer: too close to a pinned memory). held: merge, or identity_duplicate
-    # (the same text under another key). skipped: unchanged, the key's newest status
-    # (deleted, superseded, rejected, proposed), revised (the key holds other text), or
-    # repeated (an earlier entry with the same text was written), or unknown (a status the
-    # import does not recognise). written: duplicate or conflicted (the verdict's status),
-    # or refines (under newest_wins the item retired the live memories it updates).
+    # Why the entry was not plainly written; the values are listed in
+    # docs/features/memory/writing.md#importing-from-another-memory-system.
     reason: Reason = ""
     # The key holding the text, for an identity_duplicate entry; '' otherwise.
     held_by: str = ""
-    # Why the entry's category is not linked to its key: category_unregistered,
-    # category_refused (a token bounded to one user or one session; a link has neither axis),
-    # category_not_linked (the key does not hold the item) or category_rescinded (the owner
-    # removed that link, and the import leaves it removed). '' when it is linked.
+    # Why the entry's category is not linked to its key, listed in the same section;
+    # '' when it is linked.
     note: Note = ""
 
 

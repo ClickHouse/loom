@@ -48,11 +48,13 @@ _LEFT_AS_IS: Final[dict[str, Reason]] = {
 }
 
 
-def skip_reasons(heads: Iterable[Mapping[str, Any]], shas: Mapping[str, str]) -> dict[str, Reason]:
+def skip_reasons(
+    heads: Iterable[Mapping[str, Any]], content_shas: Mapping[str, str]
+) -> dict[str, Reason]:
     """Key → why the import leaves it as it is, from its newest version across sessions
-    (rows with `memory_key`, `deleted`, `head_status` and `head_sha256`) and the content
-    hash of the text the key derives from (`shas`). A key with no stored version is
-    absent and is written."""
+    (rows with `memory_key`, `deleted`, `head_status` and `head_sha256`) and the
+    `content_sha256` the bulk write would store for its item (`content_shas`, not the
+    key's digest). A key with no stored version is absent and is written."""
     out: dict[str, Reason] = {}
     for row in heads:
         key = str(row["memory_key"])
@@ -61,7 +63,7 @@ def skip_reasons(heads: Iterable[Mapping[str, Any]], shas: Mapping[str, str]) ->
         if row["deleted"]:
             reason = "deleted"
         elif status in _LIVE:
-            reason = "unchanged" if row["head_sha256"] == shas[key] else "revised"
+            reason = "unchanged" if row["head_sha256"] == content_shas[key] else "revised"
         else:
             reason = _LEFT_AS_IS.get(status, "unknown")
         out[key] = reason
