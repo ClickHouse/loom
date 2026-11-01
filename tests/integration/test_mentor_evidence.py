@@ -49,7 +49,7 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client
         _call(c, "memory.bulk_get", bulk)
         stored = _call(c, "memory.get", {**ident, "memory_key": "pref/report"})
         # A read by id names no agent, so the ledger records it under none: it is not this
-        # agent's call.
+        # agent's call, nor a returned hit.
         by_id = {"org": org, "memory_id": stored["memory_id"]}
         assert _call(c, "memory.get_by_id", by_id)["found"] is True
         abstained = _call(c, "memory.search", {**ident, "query": "zebra migration in Kenya"})
@@ -68,6 +68,16 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client
             assert mcp.status_code == 200 and mcp.json()["result"]["isError"] is False, mcp.text
             mcp_results.append(mcp.json()["result"]["structuredContent"])
         assert mcp_results[1]["memory"]["results"], mcp_results[1]
+        # With a token, an MCP update that names no agent resolves its key namespace-wide,
+        # so the ledger records it under no agent: not this agent's call.
+        from server.auth.jwt import mint_token
+
+        token = mint_token(subject=AGENT, org=org, namespaces=[ns], roles=["writer"])
+        rpc = {"jsonrpc": "2.0", "id": 9, "method": "tools/call"}
+        update = {"namespace": ns, "memory_key": "pref/report", "value": "Reports go out Fridays"}
+        rpc["params"] = {"name": "loom_memory_update", "arguments": update}
+        mcp = c.post("/mcp", json=rpc, headers={"Authorization": f"Bearer {token}"})
+        assert mcp.status_code == 200 and mcp.json()["result"]["isError"] is False, mcp.text
 
         # `loom_search` (search.query) answers with hits per plane: one here.
         searched = _call(c, "search.query", {**ident, "query": "when do reports go out"})

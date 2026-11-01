@@ -196,7 +196,8 @@ A brief's `evidence` lists what the agent's use of Loom shows, one rung each, an
 recorded it. The server records `attempt` (calls the ledger records under the agent; the
 dashboard's calls, the briefs about the agent and the verdict rows a deferred `memory.ask`
 leaves are left out, and a call that names no agent, such as a read by id, is recorded
-under none), `success` (calls without an error, a read that found nothing included),
+under none, as over MCP are a cross-agent read and a `memory.update` that name no other
+agent), `success` (calls without an error, a read that found nothing included),
 `committed_write` (`memory.set` calls that stored a row, not a no-op or a dry run; other
 write ops do not say on the ledger whether they stored one), `indexed_write` (memory keys
 the agent first created in the window, by any write op, that have a vector from the
@@ -208,9 +209,10 @@ runs reported relying on (`run.complete` `memories_used`, chunk ids left out): t
 client's own word, not verified. `task_outcome` is never observed. A returned hit does not
 show that the answer reached the model or changed its work. These rungs are read at each
 brief, not from the cached profile. `ledger_from` is the agent's oldest ledger row in the
-window, and `ledger_retention_days` how long the call ledger keeps the namespace's rows
-(0: until deleted); a window longer than that leaves the rungs read from the ledger
-(`attempt`, `success`, `committed_write`, `returned_hit`) covering less than it names.
+window, and `ledger_retention_days` how long the configured retention keeps the
+namespace's ledger rows (0: until deleted); a window longer than that leaves the rungs
+read from the ledger (`attempt`, `success`, `committed_write`, `returned_hit`) covering
+less than it names.
 
 [`mentor.guide`](../reference/operations/mentor.md#mentorguide) returns how to use Loom, written for a model: the
 `loom` skill in `skills/loom/`, as `part` `skill` (the loop and the rules), `reference` (every plane with its ops) or

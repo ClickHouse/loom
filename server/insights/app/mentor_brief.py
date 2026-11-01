@@ -171,8 +171,10 @@ async def _adoption(profile: mentor_rules.MentorProfile) -> list[MentorAdoption]
 _RUNG_MEANING: dict[EvidenceRung, str] = {
     "attempt": (
         "calls the ledger records under this agent, answered or not (the dashboard's calls "
-        "and the briefs about the agent left out); a call that names no agent, such as a "
-        "read by id, is recorded under none and not counted"
+        "and the briefs about the agent left out). Not counted: a call that names no agent "
+        "(a read by id), and over MCP a cross-agent read (`memory.search`, `memory.list`, "
+        "`memory.history`, `memory.related`, `memory.search_trace`) or a `memory.update` "
+        "that names no other agent, which the ledger records under `*` or none"
     ),
     "success": "of those, calls that returned without an error; a read that found nothing counts",
     "committed_write": (
