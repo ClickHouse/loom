@@ -446,9 +446,9 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "memory.pin": "a write",
     "memory.bulk_set": "a write",
     "memory.import": (
-        "a write: the items land as the pinned user, and a key's state is read inside the "
-        "scope; it links no category, as memory.assign_category (a link has no user axis) "
-        "is refused such a token"
+        "a write: the items land as the pinned user and a key's state is read inside the "
+        "scope; it links no category, since a link has no user axis and "
+        "memory.assign_category is refused to such a token"
     ),
     "memory.set_from_messages": (
         "a write: the facts it extracted from the caller's messages; a bot rule it "

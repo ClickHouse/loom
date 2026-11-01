@@ -46,7 +46,7 @@ def test_key_only_where_selects_every_live_row_but_an_import_key_without_a_vecto
         " AND namespace = {ns:String}"
     )
     assert params == {"org": "o", "ns": "n"}
-    sql_default, _ = where_sql(cols, "m", org=None, namespace=None)
+    sql_default, _ = where_sql(cols, "m", table="memory_embeddings", org=None, namespace=None)
     assert sql_default.startswith("embedding_model != 'm' AND embedding_dim > 0")
 
 

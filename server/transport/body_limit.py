@@ -16,8 +16,9 @@ header read:
   closed as a 400, since the body was never delivered whole).
 
 The cap is `LOOM_MAX_REQUEST_BYTES` (32 MiB by default — a 400-message
-`memory.set_from_messages` is a few hundred KB; bulk imports go through the
-operator CLI). Websocket and lifespan scopes pass through untouched.
+`memory.set_from_messages` is a few hundred KB, a full `memory.import`
+(200 × 30,000 characters) a few MB). Websocket and lifespan scopes pass
+through untouched.
 """
 
 from __future__ import annotations
