@@ -11,7 +11,6 @@ import re
 USER, GROUP, AGENT = "user:", "group:", "agent:"
 PRINCIPAL_PREFIXES = (USER, GROUP, AGENT)
 EVERYONE = "everyone"
-# The prefix of a service account's subject.
 SERVICE_ACCOUNT = "sa:"
 # Subjects with one spelling: service accounts and these principals.
 ONE_SPELLING = (SERVICE_ACCOUNT, *PRINCIPAL_PREFIXES)
