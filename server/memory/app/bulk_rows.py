@@ -482,15 +482,13 @@ def _keep_row(
     entry: Any,
     result: _BulkSetResult,
     *,
-    own_level: str = "",
-    base_tags: list[str] | None = None,
+    own_level: str,
+    base_tags: list[str],
 ) -> None:
     """Add a row built from `entry`, and its result, as its key's latest step. It is not
     the key's value yet: the replay may still drop it. (A batch never sets a lock: the
     row carries the stored one.)"""
-    step = _Step(
-        result=result, entry=entry, row=row, own_level=own_level, base_tags=base_tags or []
-    )
+    step = _Step(result=result, entry=entry, row=row, own_level=own_level, base_tags=base_tags)
     state.memory_rows.append(row)
     state.results.append(result)
     state.steps.append(step)

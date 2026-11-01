@@ -47,7 +47,8 @@ def _entry(state, key: str, memory_id: str, sha: str, **labels: Any) -> None:
     state.entry_metas.append(None)
     state.n_updated += 1
     row = {"memory_key": key, "memory_id": memory_id, "content_sha256": sha, "pinned": False}
-    _keep_row(state, {**row, **labels}, entry, result, own_level=labels.get("sensitivity", ""))
+    level = labels.get("sensitivity", "")
+    _keep_row(state, {**row, **labels}, entry, result, own_level=level, base_tags=[])
 
 
 def _settle(state, verdicts: dict) -> set[int]:
@@ -282,7 +283,7 @@ def _batch(stored_sha: str, *entries: tuple[str, bool]):
         state.entry_metas.append(None)  # type: ignore[arg-type]
         state.n_updated += 1
         row = {"memory_key": "k", "memory_id": "e1", "content_sha256": sha, "pinned": pinned}
-        _keep_row(state, row, NS(memory_key="k"), result)
+        _keep_row(state, row, NS(memory_key="k"), result, own_level="", base_tags=[])
     return state
 
 

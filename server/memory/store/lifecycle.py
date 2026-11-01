@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from typing import Any
@@ -451,7 +452,7 @@ async def _unlocked_parts(
         params=params,
     )
     hashes = sorted({int(r["h"]) for r in rows})
-    buckets = max(1, -(-len(hashes) // _LOCKED_PER_MUTATION))
+    buckets = max(1, math.ceil(len(hashes) / _LOCKED_PER_MUTATION))
     parts = []
     for b in range(buckets):
         where = f"{scope_sql} AND {_IDENTITY_HASH} NOT IN {{locked:Array(UInt64)}}"

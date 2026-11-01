@@ -307,6 +307,12 @@ def row_identity(row: Mapping[str, Any]) -> RowIdentity | None:
 RowKey = tuple[str, str, str, str, str]
 
 
+def row_key_of(namespace: str, row: Mapping[str, Any]) -> RowKey:
+    """The RowKey of a result row that read the identity columns."""
+    agent, user_id, session_id = (str(row[c]) for c in ("agent", "user_id", "session_id"))
+    return namespace, agent, user_id, session_id, str(row["memory_key"])
+
+
 def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
     """(namespace, agent, user_id, session_id, memory_key) of the stored row a hit is: one
     key holds a row for each writer and session, so a key alone does not name one row.

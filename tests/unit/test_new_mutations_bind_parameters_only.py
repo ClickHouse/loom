@@ -14,7 +14,8 @@ from typing import Any
 import pytest
 
 from server.core.leases import LOCK_TABLE
-from tests.unit.test_erasure_step_order import _ns_list, run  # noqa: F401 — the saga fixture
+from tests.unit.erasure_saga_stub import ns_list as _ns_list
+from tests.unit.erasure_saga_stub import saga_runner
 
 _ROW = "00000000-0000-0000-0000-0000000000a1"
 _MUTATION = re.compile(r"^\s*(?:ALTER TABLE\s+(\S+)\s+(?:UPDATE|DELETE)\b|DELETE FROM\s+(\S+))")
@@ -27,6 +28,11 @@ _KEEPER_MAP = {
         r"CREATE TABLE IF NOT EXISTS (\S+)\s*\([^;]*?ENGINE = KeeperMap", _SCHEMA.read_text()
     ),
 }
+
+
+@pytest.fixture
+def run(monkeypatch: pytest.MonkeyPatch) -> Any:
+    return saga_runner(monkeypatch)
 
 
 def _refused(statements: list[str]) -> list[str]:
@@ -44,14 +50,14 @@ def _refused(statements: list[str]) -> list[str]:
 
 @pytest.mark.parametrize("purge", [False, True])
 async def test_every_user_erasure_step_mutates_by_bound_parameters_only(
-    run: Any,  # noqa: F811
+    run: Any,
     purge: bool,
 ) -> None:
     """The user saga end to end: every read answers one row, so every step reaches every
     mutation it can issue, each slice of it included."""
     await run("user_id", "alice", purge=purge)
     mutations = [sql for sql in run.ch.executed if _MUTATION.match(sql)]
-    assert len(mutations) > 40
+    assert len(mutations) > 40  # the stub's rows took every step to its mutations
     assert _refused(mutations) == []
 
 
@@ -60,7 +66,7 @@ async def test_every_user_erasure_step_mutates_by_bound_parameters_only(
     [("namespace", "a"), ("namespace_list", _ns_list(purge=True, external=False))],
 )
 async def test_every_namespace_erasure_step_mutates_by_bound_parameters_only(
-    run: Any,  # noqa: F811
+    run: Any,
     scope_type: str,
     scope_value: str,
 ) -> None:

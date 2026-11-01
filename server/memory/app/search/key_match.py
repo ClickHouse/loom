@@ -18,7 +18,7 @@ from server.memory.app.search.sql import (
     key_match_sql,
 )
 from server.memory.app.search_tag_filter import stamp_row_tags as _stamp_row_tags
-from server.memory.domain.search_types import hit_row_key, row_identity
+from server.memory.domain.search_types import hit_row_key, row_identity, row_key_of
 
 log = logging.getLogger(__package__)
 
@@ -346,7 +346,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                     )
                 if component_only:
                     continue  # the statement only scores the pooled keys
-                row_key = (ns, str(row["agent"]), str(row["user_id"]), str(row["session_id"]), mk)
+                row_key = row_key_of(ns, row)
                 if row_key in pooled:
                     continue
                 sim = float(row.get("similarity") or 0.0)

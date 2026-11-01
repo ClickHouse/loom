@@ -811,7 +811,7 @@ async def test_a_verdict_lands_on_its_rows_result_after_a_skipped_entry(monkeypa
     state.results = [_BulkSetResult(memory_key="user_pinned", version=0)]
     row = {**_row("n1", _d(30)), "memory_key": "user_city", "content_sha256": "s1", "pinned": 0}
     city = _BulkSetResult(memory_key="user_city", version=1)
-    _keep_row(state, row, SimpleNamespace(memory_key="user_city"), city)
+    _keep_row(state, row, SimpleNamespace(memory_key="user_city"), city, own_level="", base_tags=[])
     await bulk_set._bulk_verdicts(None, state, [], [], StageClock({}))
     assert [r.conflict_verdict for r in state.results] == ["", "clear"]
     # The rows that land are known now: their keys by id, for the settling steps.

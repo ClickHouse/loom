@@ -119,6 +119,7 @@ async def delete_graph_links_by_namespace(
 # erasure finished: that data stays, even once memory.delete tombstones it (it
 # can still be restored).
 ROW_LINK_TABLES = ("loom.entity_triple_rows", "loom.entity_edge_rows")
+_KEY_LINK_TABLES = ("loom.entity_triple_memories", "loom.entity_edge_memories")
 
 
 class OrphanLinks(NamedTuple):
@@ -335,12 +336,10 @@ async def delete_graph_links_by_user(org: str, user_id: str, *, ch: _CHClient | 
     ch = ch or _default_client()
     keys = await user_key_pairs(org, user_id, ch=ch)
     total = 0
-    for t in _LINK_TABLES_DELETE:
-        if t in ROW_LINK_TABLES:
-            total += await delete_scoped(
-                t, org=org, scope_where=UID, params={"uid": user_id}, ch=ch
-            )
-            continue
+    # A row link carries its writer; a key link only the key, found by the user's keys.
+    for t in ROW_LINK_TABLES:
+        total += await delete_scoped(t, org=org, scope_where=UID, params={"uid": user_id}, ch=ch)
+    for t in _KEY_LINK_TABLES:
         for part in chunks(keys):
             total += await delete_scoped(
                 t, org=org, scope_where=PARENT_KEYS_IN, params={"keys": part}, ch=ch

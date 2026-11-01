@@ -541,7 +541,7 @@ async def _restatement_reinforces(monkeypatch, state: Any, verdict: Any) -> list
     row = {"memory_key": "k", "content_sha256": "s2", "pinned": False}
     row["memory_id"] = _row_id(state, "k")
     result = _BulkSetResult(memory_key="k", version=1, memory_id=row["memory_id"])
-    _keep_row(state, row, NS(memory_key="k"), result)
+    _keep_row(state, row, NS(memory_key="k"), result, own_level="", base_tags=[])
     assert _bulk_skip_gate(NS(memory_key="k"), "s2", state, {})
     plan = bulk_set._apply_verdicts(state, [], {0: verdict})
     await bulk_set._bulk_settle_verdicts(None, _Input(), state, plan)
