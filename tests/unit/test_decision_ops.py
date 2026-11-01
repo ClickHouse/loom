@@ -645,6 +645,19 @@ async def test_a_tombstone_by_id_retires_the_record(local: KeptCH) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_tombstone_by_id_of_another_identitys_row_leaves_the_record(local: KeptCH) -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+
+    await _write_decision_rows(local, "claude", "maintainer")
+    identity = memory_repo.Identity(org="o", namespace="n", agent="maintainer")
+    row = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
+    await memory_repo.tombstone_cascade_by_ids("o", [row.memory_id], when=datetime.now(UTC))
+    assert await _seed_decision() is not None
+    assert await _history() == ["active"]
+
+
+@pytest.mark.asyncio
 async def test_a_memory_apply_delete_retires_the_record(local: KeptCH) -> None:
     from server.memory.api.models_apply import ApplyTarget, MemoryApplyInput
     from server.memory.app.apply_ops import handle_memory_apply
@@ -1103,12 +1116,12 @@ async def test_a_delete_after_the_outcome_read_refuses_the_outcome(
 
 
 @pytest.mark.asyncio
-async def test_an_outcome_after_a_re_record_builds_on_the_new_record(
+async def test_an_outcome_after_a_re_record_answers_a_conflict(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The writer records the decision again between the outcome's read and its write: the
-    # outcome reads the new record and its row again and writes over those, keeping the
-    # re-record's reasoning.
+    # outcome writes nothing over the re-record and asks to be called again.
+    from server.core.errors import PreconditionFailedError
     from server.memory.api.models_decision import DecisionOutcomeInput
     from server.memory.app import decision as h
 
@@ -1128,45 +1141,19 @@ async def test_an_outcome_after_a_re_record_builds_on_the_new_record(
             )
 
     seen = _set_into(local, monkeypatch, before=_re_record_first)
-    out = await h.handle_decision_outcome(
-        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
-    )
-    # Call 1 is the refused write, call 2 the re-record, call 3 the retried write.
-    assert out.updated and len(seen) == 3
+    with pytest.raises(PreconditionFailedError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    # Call 1 is the refused write, call 2 the re-record.
+    assert len(seen) == 2
     seed = await _seed_decision()
-    assert seed is not None and seed.realized_outcome == "ok"
+    assert seed is not None and seed.realized_outcome == ""
     assert seed.reasoning == "the new image is already canaried"
 
 
 @pytest.mark.asyncio
-async def test_a_delete_that_refuses_the_retry_answers_not_found(
-    local: KeptCH, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from server.core.errors import NotFoundError
-    from server.memory.api.models_decision import DecisionOutcomeInput
-    from server.memory.app import decision as h
-
-    await h.ensure_schema("o", "n")
-    version = await _write_decision_rows(local, "claude")
-
-    async def _rewrite_then_delete(call: int) -> None:
-        if call == 1:
-            row = _memory_row("claude", "decision", version + 1)
-            row["value"] = json.dumps("another outcome's statement")
-            await local.insert("loom.memory", [row])
-        else:
-            await _delete("claude")
-
-    seen = _set_into(local, monkeypatch, before=_rewrite_then_delete)
-    with pytest.raises(NotFoundError):
-        await h.handle_decision_outcome(
-            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
-        )
-    assert len(seen) == 2
-
-
-@pytest.mark.asyncio
-async def test_an_outcome_whose_row_changes_twice_answers_a_conflict(
+async def test_an_outcome_whose_row_changed_answers_a_conflict(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.core.errors import PreconditionFailedError
@@ -1176,9 +1163,9 @@ async def test_an_outcome_whose_row_changes_twice_answers_a_conflict(
     await h.ensure_schema("o", "n")
     version = await _write_decision_rows(local, "claude")
 
-    async def _rewrite(call: int) -> None:
-        row = _memory_row("claude", "decision", version + call)
-        row["value"] = json.dumps(f"another outcome's statement {call}")
+    async def _rewrite(_call: int) -> None:
+        row = _memory_row("claude", "decision", version + 1)
+        row["value"] = json.dumps("another outcome's statement")
         await local.insert("loom.memory", [row])
 
     seen = _set_into(local, monkeypatch, before=_rewrite)
@@ -1186,12 +1173,12 @@ async def test_an_outcome_whose_row_changes_twice_answers_a_conflict(
         await h.handle_decision_outcome(
             DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
         )
-    assert len(seen) == 2
+    assert len(seen) == 1
     assert await _history() == ["active"]
 
 
 @pytest.mark.asyncio
-async def test_an_outcome_without_success_clears_the_earlier_verdict(
+async def test_an_outcome_without_success_keeps_the_verdict(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.memory.api.models_decision import DecisionOutcomeInput
@@ -1207,7 +1194,7 @@ async def test_an_outcome_without_success_clears_the_earlier_verdict(
             )
         )
     seed = await _seed_decision()
-    assert seed is not None and seed.realized_outcome == "ok" and seed.success is None
+    assert seed is not None and seed.realized_outcome == "ok" and seed.success is True
 
 
 @pytest.mark.asyncio
@@ -1246,7 +1233,8 @@ async def test_an_outcome_keeps_nothing_of_another_active_record(
 
 
 @pytest.mark.asyncio
-async def test_a_whole_record_write_reports_nothing_kept(local: KeptCH) -> None:
+async def test_a_decision_record_write_keeps_nothing_of_the_prior(local: KeptCH) -> None:
+    # memory.record.write on the decision schema states the record whole, as decision.record does.
     from server.memory.api.models_records import MemoryRecordWriteInput
     from server.memory.app import decision as h
     from server.memory.app.records import handle_memory_record_write
@@ -1265,7 +1253,7 @@ async def test_a_whole_record_write_reports_nothing_kept(local: KeptCH) -> None:
         )
 
     await handle_memory_record_write(_write(reasoning="fast"))
-    out = await handle_memory_record_write(_write(), carry_prior=False)
+    out = await handle_memory_record_write(_write())
     assert out.superseded_record_id
     assert out.fold["filled_from_prior"] == []
     # Read back: the new record holds no `reasoning`, in its JSON or as a carried field row.

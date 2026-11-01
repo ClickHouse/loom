@@ -525,15 +525,12 @@ async def tombstone_cascade_by_ids(
         ch=ch,
     )
     # A decision's record goes with its writer's row, as on memory.delete.
-    for existing in rows:
-        if existing.memory_type != "decision":
-            continue
+    decision_keys = {(r.namespace, r.memory_key) for r in rows if r.memory_type == "decision"}
+    for namespace, memory_key in sorted(decision_keys):
         try:
-            await tombstone_decision_record(
-                existing.org, existing.namespace, existing.memory_key, version=version, ch=ch
-            )
+            await tombstone_decision_record(org, namespace, memory_key, version=version, ch=ch)
         except Exception as e:  # noqa: BLE001 — the row tombstones stand
-            _log.warning("decision record not retired for %s: %s", existing.memory_key, e)
+            _log.warning("decision record not retired for %s: %s", memory_key, e)
     return tombstoned
 
 

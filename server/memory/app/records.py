@@ -35,6 +35,7 @@ from server.memory.api.models_records import (
     SchemaFieldOutput,
 )
 from server.memory.domain import record_constraints
+from server.memory.domain.decision_schema import SCHEMA_NAME
 from server.memory.domain.record_values import FIELD_RE, _check_record_fields, coerce_record_value
 from server.memory.store import active_record, next_version, supersede_active_record
 from server.memory.store.record_query import _build_record_query, active_record_tally
@@ -481,11 +482,9 @@ async def _carry_folded_fields(
     return rows
 
 
-async def handle_memory_record_write(
-    input: MemoryRecordWriteInput, *, carry_prior: bool = True
-) -> MemoryRecordWriteOutput:
-    """Write one typed record. With `carry_prior` false the incoming fields are the whole
-    record: nothing is kept from the one it supersedes."""
+async def handle_memory_record_write(input: MemoryRecordWriteInput) -> MemoryRecordWriteOutput:
+    """Write one typed record. A decision record is stated whole: nothing is kept from the
+    one it supersedes, which may be another writer's."""
     schema = await _schema_by_name(input.org, input.namespace, input.schema_name)
     if not schema or str(schema.get("status")) != "active":
         raise HTTPException(
@@ -520,7 +519,7 @@ async def handle_memory_record_write(
         record_id=record_id,
         version=version,
         now=now,
-        carry_prior=carry_prior,
+        carry_prior=input.schema_name != SCHEMA_NAME,
     )
     record_json = fold.record_json
     # Supersede prior active state for this logical key before inserting: every

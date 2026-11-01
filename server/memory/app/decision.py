@@ -176,8 +176,7 @@ async def _write_decision(
             session_id=session_id or "-",
             fields=svc.record_fields(payload),  # type: ignore[arg-type]
             valid_at=valid_at,
-        ),
-        carry_prior=False,
+        )
     )
     # Retire the record if the writer's row was deleted before the record landed.
     try:
@@ -349,15 +348,16 @@ def _outcome_payload(
     """The writer's record with the outcome applied, and the row's tags."""
     payload = svc.parse_record_json(writer.record_json)
     payload["realized_outcome"] = input.realized_outcome.strip()
-    payload["success"] = input.success
+    if input.success is not None:
+        payload["success"] = input.success
     payload["made_at"] = writer.created_at.isoformat()
     tags = [
         "decision",
         f"decision:category:{str(payload.get('category') or '').lower()}",
         "decision:outcome-known",
     ]
-    if input.success is not None:
-        tags.append("decision:success" if input.success else "decision:failure")
+    if payload.get("success") is not None:
+        tags.append("decision:success" if payload["success"] else "decision:failure")
     return payload, tags
 
 
@@ -371,56 +371,50 @@ def _no_active_decision(input: DecisionOutcomeInput) -> NotFoundError:
 async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcomeOutput:
     ch = get_client()
 
-    # The row write is conditional on the writer row read with the record, so a delete of
-    # it since then refuses the outcome instead of writing the deleted row back. A row that
-    # changed (another outcome, a re-record) is read again, with its record, once.
-    for attempt in (1, 2):
-        # Only the record's live writer revises it; record and writer come from one read.
-        writer = await live_writer_record(input.org, input.namespace, input.memory_key, ch=ch)
-        if writer is None:
-            raise _no_active_decision(input)
-        payload, tags = _outcome_payload(input, writer)
-        identity = Identity(
+    # Only the record's live writer revises it; record and writer come from one read.
+    writer = await live_writer_record(input.org, input.namespace, input.memory_key, ch=ch)
+    if writer is None:
+        raise _no_active_decision(input)
+    payload, tags = _outcome_payload(input, writer)
+    identity = Identity(
+        org=input.org,
+        namespace=input.namespace,
+        agent=writer.agent,
+        user_id=writer.user_id,
+        session_id=writer.session_id,
+    )
+    row = await get_by_key(
+        identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
+    )
+    if row is None:
+        raise _no_active_decision(input)
+    # Conditional on the row read with the record, so a delete since then is not written back.
+    try:
+        await _write_decision(
             org=input.org,
             namespace=input.namespace,
             agent=writer.agent,
             user_id=writer.user_id,
             session_id=writer.session_id,
+            run_id=str(payload.get("run_id") or "-"),
+            key=input.memory_key,
+            payload=payload,
+            tags=tags,
+            valid_at=None,
+            if_match_sha256=sha256_value_json(json.dumps(row.value, default=str)),
         )
-        row = await get_by_key(
+    except HTTPException as e:
+        # memory.set's hash mismatch; the lease's busy PreconditionFailedError passes through.
+        if not (isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED"):
+            raise
+        current = await get_by_key(
             identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
         )
-        if row is None:
-            raise _no_active_decision(input)
-        try:
-            await _write_decision(
-                org=input.org,
-                namespace=input.namespace,
-                agent=writer.agent,
-                user_id=writer.user_id,
-                session_id=writer.session_id,
-                run_id=str(payload.get("run_id") or "-"),
-                key=input.memory_key,
-                payload=payload,
-                tags=tags,
-                valid_at=None,
-                if_match_sha256=sha256_value_json(json.dumps(row.value, default=str)),
-            )
-            break
-        except HTTPException as e:
-            # memory.set's hash mismatch; the lease's busy PreconditionFailedError passes through.
-            if not (isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED"):
-                raise
-            if attempt == 2:
-                current = await get_by_key(
-                    identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
-                )
-                if current is None:
-                    raise _no_active_decision(input) from None
-                raise PreconditionFailedError(
-                    "the decision changed while its outcome was being written; "
-                    "call decision.outcome again"
-                ) from None
+        if current is None:
+            raise _no_active_decision(input) from None
+        raise PreconditionFailedError(
+            "the decision changed while its outcome was being written; call decision.outcome again"
+        ) from None
 
     # Close the loop: the memories the deciding run relied on earn (or lose)
     # credit from the realized outcome — the feedback every decision log lacks.

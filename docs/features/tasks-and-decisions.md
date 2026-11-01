@@ -258,8 +258,8 @@ was `caused_by` or `influenced_by`. It writes:
 
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
 (`superseded_prior=true`); history keeps it. The new record holds only what the new decision states: fields it leaves
-out, and an earlier `realized_outcome` or `success`, are not carried over. Each `decision.outcome` restates
-`success` too: one without it clears an earlier verdict.
+out, and an earlier `realized_outcome` or `success`, are not carried over, whether it is written by `decision.record`
+or `memory.record.write`. A `decision.outcome` without `success` keeps the record's verdict.
 
 The record holds the text of its last writer, the agent, user and session that recorded it, so a delete of that
 writer's decision row retires it; an expired row still counts as live. Another identity's row under the same key was
@@ -276,10 +276,12 @@ superseded in the record plane and does not keep the record.
   has no record, and `decision.record` with the same category and scenario records it again under its derived key.
 - **Leaves the record active**: a delete of another identity's row; `memory.clear` and `namespace.rollback`, which
   tombstone rows another way; `memory.move` with `keep_redirect=true`, whose redirect row still counts as the
-  writer's live row under the old key; a `memory.set` under the writer's identity that rewrites the key with another `memory_type`;
-  the expiry sweep's tombstone of an expired writer row.
+  writer's live row under the old key; a `memory.set` under the writer's identity that rewrites the key with another
+  `memory_type`; the expiry sweep's tombstone of an expired writer row.
+- **A record with no decision row**: `memory.record.write` on the `decision` schema writes the record alone.
+  `decision.chain` serves it, and `decision.outcome` answers not-found for it; record decisions with `decision.record`.
 - **`decision.outcome`**: writes under the record's writer, and answers not-found when the writer's row is not live.
-  Its row write is conditional on the row it read: it answers 409 `PRECONDITION_FAILED` when the decision changes twice
+  Its row write is conditional on the row it read: it answers 409 `PRECONDITION_FAILED` when the decision changes
   during the call or another conditional write holds the key, and 503 when the key's lease store is unreachable; call
   it again.
 

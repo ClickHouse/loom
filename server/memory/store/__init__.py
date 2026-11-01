@@ -12,6 +12,7 @@ imports only the ones above it:
                   column a ReplacingMergeTree write carries forward)
 - `sql`         — statement fragments shared by reads and writes, and the
                   read-your-writes switch
+- `records`     — active typed records: reads, supersede and decision tombstone copies
 - `inserts`     — the committed insert funnels for loom.memory and
                   loom.memory_embeddings
 - `reads`       — heads of loom.memory by key, id, key list and namespace
@@ -20,7 +21,6 @@ imports only the ones above it:
 - `embeddings`  — the memory_embeddings mirror: live rows, re-emits, status
                   reconciliation
 - `lifecycle`   — status and tombstone writes that cascade onto the mirror
-- `records`     — active typed records: reads, supersede and decision tombstone copies
 - `dedup`       — duplicate and supersession reads
 - `lookups`     — memory.ask's identifier, facet, prefix and term finders
 - `entities`    — the entity extractor's reads and writes
