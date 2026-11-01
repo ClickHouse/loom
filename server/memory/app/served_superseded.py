@@ -81,10 +81,10 @@ def superseded_label(m: Any) -> str:
 
 
 async def annotate_pool_superseded(ctx: Any) -> None:
-    """Name the successor on every superseded hit in the pool (one keyed
-    statement over `loom.memory`, only when the call asked for superseded
-    rows and one is in the pool) and count them in `retrieval_work` as
-    `superseded_served`. Fail-open: a failed read leaves the hits with their
+    """Name the successor on every superseded hit in the pool that names its row (one
+    keyed statement over `loom.memory`, only when the call asked for superseded rows and
+    one is in the pool) and count them in `retrieval_work` as `superseded_served`. A hit
+    that names no row could match none. Fail-open: a failed read leaves the hits with their
     `status` and nothing else."""
     input = ctx.input
     if hide_superseded(input):

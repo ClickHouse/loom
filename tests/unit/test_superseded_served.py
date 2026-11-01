@@ -112,6 +112,9 @@ def test_served_flags_names_both_widenings() -> None:
 # ---------------------------------------------------------------- the pool
 
 
+_WRITER = ("a", "u", "-")
+
+
 def _hit(key: str, *, rank: float, status: str = "active", source: str = "fact") -> Any:
     hit = _MemorySearchHit(
         memory_key=key,
@@ -131,9 +134,6 @@ def _ctx(hits: list[Any], **input_kw: Any) -> SimpleNamespace:
     base: dict[str, Any] = {"org": "o", "namespace": "ns", "agent": "a", "query": "q", "top_k": 3}
     base.update(input_kw)
     return SimpleNamespace(input=MemorySearchInput(**base), all_hits=list(hits), actual_work={})
-
-
-_WRITER = ("a", "u", "-")
 
 
 @pytest.fixture

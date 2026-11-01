@@ -506,13 +506,17 @@ async def test_a_key_match_row_carries_its_version(monkeypatch) -> None:
     assert [h.version for h in ctx.all_hits] == [9]
 
 
-async def test_the_gate_counts_rows_per_key_as_the_final_block_keeps_them(monkeypatch) -> None:
-    # Six rows of one key: three served under the per-key cap, all six for an
-    # aggregational query, which keeps every row of the key.
+@pytest.mark.parametrize("shape", ["aggregational", "temporal_diff"])
+async def test_the_gate_counts_rows_per_key_as_the_final_block_keeps_them(
+    monkeypatch, shape: str
+) -> None:
+    # Six rows of one key: three served under the per-key cap, all six for a query
+    # shape that keeps every row of the key.
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_search_per_key_cap", 3)
     one_key = ["same_key"] * 6
     ctx, _ = await _ctx_for(monkeypatch, mode="gated", pool_keys=one_key)
     assert ctx.actual_work["key_match_gate"] == "thin_pool"
-    ctx, calls = await _ctx_for(
-        monkeypatch, mode="gated", pool_keys=one_key, query_shape="aggregational"
-    )
+    ctx, calls = await _ctx_for(monkeypatch, mode="gated", pool_keys=one_key, query_shape=shape)
     assert calls == [] and ctx.actual_work["key_match_gate"] == "skip"

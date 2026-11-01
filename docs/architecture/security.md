@@ -778,9 +778,8 @@ states its string value as `password: <value>` when the value is one token of 8+
 characters holding a letter and a digit and is not a reference (`env:NAME`, `vault:PATH`,
 `secret:NAME`, `ref:NAME`, `$NAME`, `${NAME}`, a path). So `{"db": {"password":
 "hunter2xyz"}}` and `{"password": "admin:Passw0rd"}` are `high`, and `{"password":
-"required"}`, `{"password": "********"}`,
-`{"api_key": "YOUR_API_KEY"}` and `{"api_key": "env:OPENAI_API_KEY"}` are not. Any other
-key labels nothing. `reads_high` reads the same pairs in raw JSON text, such as a chunk of
+"required"}`, `{"password": "********"}`, `{"api_key": "YOUR_API_KEY"}` and `{"api_key":
+"env:OPENAI_API_KEY"}` are not. Any other key labels nothing. `reads_high` reads the same pairs in raw JSON text, such as a chunk of
 an object value, when the value is one quoted token or digits and dashes. The sweep's
 prefilter is a superset of this key rule, not a copy: it selects a key that ends in a
 label or a credential word, so it may select a few non-secret rows (`spin`, `unpin`,

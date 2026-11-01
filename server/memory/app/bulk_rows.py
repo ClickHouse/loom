@@ -540,13 +540,13 @@ def _settle_step(state: _BulkWriteState, step: _Step, held: _Held, rewritten: se
 
 def _settle_repeat(step: _Step, src: _Step, held: _Held, rewritten: set[str]) -> Outcome:
     """An exact repeat takes the outcome of the entry it repeats: a repeat of a row its key
-    now holds, or of one that landed, is unchanged. A merge whose target a
-    landed row rewrote in between lands instead, as the repeat would serially: a copy of
-    the earlier row, with its vector, lands as this entry's write and result, and the
-    earlier entry keeps its merge."""
+    now holds, or of one that landed, is unchanged. A merge whose target a landed row
+    rewrote in between lands instead, as the repeat would serially: a copy of the earlier
+    row, with its vector, lands as this entry's write and result, and the earlier entry
+    keeps its merge."""
     if held.step is src:
         return Outcome.UNCHANGED  # src's row landed, maybe by an earlier repeat of it
-    if src.outcome is Outcome.PINNED or src.outcome is Outcome.LOCKED:
+    if src.outcome in (Outcome.PINNED, Outcome.LOCKED):
         return src.outcome  # refused again, as the same memory.set would be
     if src.outcome is not Outcome.KEPT_OUT:
         return Outcome.UNCHANGED
