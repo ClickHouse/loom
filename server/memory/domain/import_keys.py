@@ -15,7 +15,9 @@ from server.core.hashing import sha256_text
 IMPORT_KEY_PREFIX: Final = "import:"
 # The hex characters of the text's SHA-256 a key keeps (96 bits).
 IMPORT_KEY_HEX: Final = 24
-_DIGEST_KEY: Final = re.compile(f"{re.escape(IMPORT_KEY_PREFIX)}[0-9a-f]{{{IMPORT_KEY_HEX}}}")
+# The key's shape, unanchored: Python and ClickHouse's RE2 both read it.
+IMPORT_KEY_PATTERN: Final = f"{re.escape(IMPORT_KEY_PREFIX)}[0-9a-f]{{{IMPORT_KEY_HEX}}}"
+_IMPORT_KEY: Final = re.compile(IMPORT_KEY_PATTERN)
 
 
 def import_key(value: str) -> str:
@@ -25,4 +27,4 @@ def import_key(value: str) -> str:
 
 def is_import_key(memory_key: str) -> bool:
     """Whether `memory_key` is exactly what `import_key` derives, nothing before or after."""
-    return _DIGEST_KEY.fullmatch(memory_key) is not None
+    return _IMPORT_KEY.fullmatch(memory_key) is not None

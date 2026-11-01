@@ -91,7 +91,7 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
     for i, key in enumerate(keys):
         outcome, reason, held_by = answers[key]
         if first[key] != i:
-            outcome, reason = repeat_outcome((outcome, reason))
+            outcome, reason = repeat_outcome(outcome, reason)
         results.append(
             _MemoryImportResult(index=i, key=key, outcome=outcome, reason=reason, held_by=held_by)
         )
@@ -107,12 +107,12 @@ async def _write(
 ) -> dict[str, _Answer]:
     """Key → the answer of the first entry of its text: skipped with its `skip` reason,
     or written through memory.bulk_set."""
-    outcomes: dict[str, _Answer] = {}
+    answers: dict[str, _Answer] = {}
     pending: list[int] = []
     for key, i in first.items():
         reason = skip.get(key, "")
         if reason:
-            outcomes[key] = ("skipped", reason, "")
+            answers[key] = ("skipped", reason, "")
         else:
             pending.append(i)
     unknown = [key for key, reason in skip.items() if reason == "unknown"]
@@ -123,7 +123,7 @@ async def _write(
             unknown[:5],
         )
     if not pending:
-        return outcomes
+        return answers
     # The source exports in any order, and under newest_wins the later of two statements
     # of one attribute in a batch retires the earlier: oldest first, an undated item
     # counting as said now.
@@ -139,8 +139,8 @@ async def _write(
     )
     for i, result in zip(pending, written.written, strict=True):
         key = keys[i]
-        outcomes[key] = _entry_outcome(key, result, written.identity_duplicates.get(key))
-    return outcomes
+        answers[key] = _entry_outcome(key, result, written.identity_duplicates.get(key))
+    return answers
 
 
 def _entry_outcome(key: str, result: _BulkSetResult, held_by: str | None) -> _Answer:

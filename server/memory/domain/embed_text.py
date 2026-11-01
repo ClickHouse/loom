@@ -35,7 +35,8 @@ def key_axis_text(memory_key: str) -> str:
     """The text the key-axis vector (`memory_key_embedding`) is built from: the humanized key
     ("user_dog_name" -> "user dog name"), so a query shaped like the key matches when the
     value cosine is weak. Every write path and `loom reembed` call this one function so a key
-    embeds one way. An import key (`is_import_key`) has no words, so it gets no key vector."""
+    embeds one way (`loom reembed --in-database` embeds the raw key, but no import key). An
+    import key (`is_import_key`) has no words, so it gets no key vector."""
     key = str(memory_key or "")
     if is_import_key(key):
         return ""

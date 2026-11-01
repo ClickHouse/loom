@@ -70,11 +70,11 @@ def skip_reasons(
     return out
 
 
-def repeat_outcome(first: tuple[Outcome, Reason]) -> tuple[Outcome, Reason]:
+def repeat_outcome(outcome: Outcome, reason: Reason) -> tuple[Outcome, Reason]:
     """How an entry repeating an earlier entry's text answers: skipped as `repeated`
     when the earlier one was written, else as the earlier one did (a refusal, another
     key holding it, a key left as it is)."""
-    return ("skipped", "repeated") if first[0] == "written" else first
+    return ("skipped", "repeated") if outcome == "written" else (outcome, reason)
 
 
 def holds_item(outcome: Outcome, reason: Reason) -> bool:

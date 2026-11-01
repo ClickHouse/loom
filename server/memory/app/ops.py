@@ -36,6 +36,7 @@ from server.memory.api.models_temporal import (
     MemoryOutcomeRunInput,
     MemoryOutcomeRunOutput,
 )
+from server.memory.store import categories
 
 log = logging.getLogger(__name__)
 
@@ -591,8 +592,6 @@ async def handle_memory_assign_category(
 ) -> MemoryAssignCategoryOutput:
     """Link the key to the named category, or rescind the link; a name the namespace
     has not registered is a 404. memory.import links through the same statements."""
-    from server.memory.store import categories
-
     ids = await categories.registered_ids(input.org, input.namespace, [input.category_name])
     cat_id = ids.get(input.category_name)
     if cat_id is None:

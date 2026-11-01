@@ -24,6 +24,7 @@ from typing import Any
 
 from server.llm import customer
 from server.memory.app.model_attribution import attribution_for, memory_writers
+from server.memory.domain.import_keys import IMPORT_KEY_PATTERN
 from server.memory.domain.sensitivity import without_high
 from server.settings import settings
 
@@ -139,6 +140,8 @@ def in_database_sql(
     m = model.replace("'", "\\'")
     cred = credentials.replace("'", "\\'")
 
+    import_key = f"match({cfg.get('key_text', '')}, '^{IMPORT_KEY_PATTERN}$')"
+
     def emb(text_col: str) -> str:
         return f"CAST(aiEmbed({text_col}, '{m}', map('credentials', '{cred}')) AS Array(BFloat16))"
 
@@ -155,10 +158,13 @@ def in_database_sql(
         if c == cfg["vec"]:
             select.append(emb(cfg["text"]))
         elif cfg.get("key_vec") and c == cfg["key_vec"]:
-            select.append(emb(cfg["key_text"]))
+            # An import key has no axis text: no key vector, as `key_axis_text` decides.
+            select.append(f"if({import_key}, CAST([] AS Array(BFloat16)), {emb(cfg['key_text'])})")
         elif c == "embedding_model":
             select.append(f"'{m}'")
-        elif c == "embedding_dim" or (cfg.get("key_dim") and c == cfg["key_dim"]):
+        elif cfg.get("key_dim") and c == cfg["key_dim"]:
+            select.append(f"if({import_key}, toUInt16(0), toUInt16({int(dim)}))")
+        elif c == "embedding_dim":
             select.append(f"toUInt16({int(dim)})")
         elif cfg["version"] == "version" and c == "version":
             select.append("version + 1")  # as rewrite_row: never above a later write
