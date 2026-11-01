@@ -239,11 +239,12 @@ async def people_page(
     return [GrantPerson.from_row(r) for r in rows]
 
 
-async def people_count(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
-    """How many people hold a live grant, folded as `people_page` folds them."""
+async def member_count(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
+    """How many people hold an active grant, folded as `people_page` folds them; a
+    pending request alone grants nothing and is not counted."""
     ch = ch or _default_client()
     row = await ch.query_one(
-        f"SELECT count() AS n FROM ({_PEOPLE_PAGE})",
+        f"SELECT countIf(status = 'active') AS n FROM ({_PEOPLE_PAGE})",
         params={
             "org": org,
             "ns": namespace,

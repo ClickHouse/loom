@@ -84,6 +84,11 @@ KEY_ENVS: dict[str, tuple[str, ...]] = {
 }
 
 
+def embedder_is_fake() -> bool:
+    """True when the configured embedding model is a fake (no semantic vectors)."""
+    return settings.embedding_model.startswith("fake")
+
+
 def get_embedder() -> Embedder:
     """The configured text embedder, cached per process.
 

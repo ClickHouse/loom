@@ -9,6 +9,7 @@ Skips without LOOM_BASE_URL (tests/integration/conftest.py).
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -16,19 +17,30 @@ import pytest
 
 from tests.integration._resources import unique_org
 
+WRITER = "sa:inventory-writer"
 
-def _mint(org: str, ns: str, **claims: Any) -> str:
+
+def _mint(
+    org: str, ns: str, *, subject: str = "", roles: tuple[str, ...] = ("admin",), **claims: Any
+) -> str:
     from server.auth.jwt import mint_token
 
     return mint_token(
-        subject=f"sa:inventory-{uuid.uuid4().hex[:6]}",
+        subject=subject or f"sa:inventory-{uuid.uuid4().hex[:6]}",
         org=org,
         namespaces=[ns],
-        roles=["admin"],
+        roles=list(roles),
         ttl_seconds=900,
         is_service_account=True,
         **claims,
     )
+
+
+_SCHEMA = {
+    "name": "report_prefs",
+    "fields": [{"name": "owner", "type": "string", "required": True}],
+    "created_by": "inventory-test",
+}
 
 
 def _call(c: httpx.Client, token: str, op: str, body: dict[str, Any]) -> Any:
@@ -38,9 +50,9 @@ def _call(c: httpx.Client, token: str, op: str, body: dict[str, Any]) -> Any:
 
 
 @pytest.fixture
-def seeded(control_plane_url: str) -> Any:
+def seeded(control_plane_url: str, ch_client: Any) -> Any:
     org, ns = unique_org("inventory"), "inventory"
-    wide = _mint(org, ns)
+    wide = _mint(org, ns, subject=WRITER)
     with httpx.Client(base_url=control_plane_url, timeout=60.0) as c:
         for user, n in (("u1", 2), ("u2", 1), ("-", 1)):
             for i in range(n):
@@ -60,6 +72,33 @@ def seeded(control_plane_url: str) -> Any:
         for member in ("reader@example.com", "Reader@Example.com", "editor@example.com"):
             body = {"org": org, "namespace": ns, "subject": member, "role": "viewer"}
             _call(c, wide, "grants.create", body)
+        # A pending join request alone grants nothing.
+        ch_client.insert(
+            "loom.namespace_grants",
+            [[org, ns, "asking@example.com", "viewer", datetime.now(UTC), "-", 1, "pending"]],
+            column_names=[
+                "org",
+                "namespace",
+                "subject",
+                "role",
+                "granted_at",
+                "granted_by",
+                "version",
+                "status",
+            ],
+        )
+        # One record written twice: its first version stays as a superseded row.
+        _call(c, wide, "memory_schema.register", {"org": org, "namespace": ns, **_SCHEMA})
+        for owner in ("u1", "u2"):
+            body = {
+                "org": org,
+                "namespace": ns,
+                "agent": "bot",
+                "schema_name": "report_prefs",
+                "memory_key": "weekly",
+                "fields": {"owner": {"value": owner}},
+            }
+            _call(c, wide, "memory.record.write", body)
         _call(
             c,
             wide,
@@ -80,15 +119,26 @@ def test_the_inventory_counts_planes_and_keeps_populations_apart(seeded: Any) ->
     sections = {s["plane"]: s for s in out["sections"]}
     assert sections["memories"]["count"] == 4 and sections["memories"]["latest_at"]
     assert sections["documents"]["count"] == 1
-    assert sections["records"]["count"] == 0 and sections["records"]["latest_at"] is None
+    assert sections["records"]["count"] == 1 and sections["records"]["latest_at"]
+    assert sections["integrations"]["count"] == 0
     assert all(s["complete"] for s in out["sections"]), out["sections"]
     pops = {p["population"]: p for p in out["populations"]}
     subjects = {i["name"]: i["rows"] for i in pops["subjects"]["top"]}
     assert subjects == {"u1": 2, "u2": 1} and pops["subjects"]["total"] == 2
     assert [i["name"] for i in pops["agents"]["top"]] == ["bot"]
-    assert pops["authors"]["total"] >= 1
+    # `actor` is stamped from the token: a service account writes as `process:<subject>`.
+    assert [(i["name"], i["rows"]) for i in pops["authors"]["top"]] == [(f"process:{WRITER}", 4)]
     # Two people (one under two spellings), neither of whom wrote a row.
     assert (pops["members"]["total"], pops["members"]["complete"]) == (2, True)
+
+
+def test_integrations_are_counted_for_admins_only(seeded: Any) -> None:
+    c, org, ns, _ = seeded
+    viewer = _mint(org, ns, roles=("viewer",))
+    out = _call(c, viewer, "namespace.inventory", {"org": org, "namespace": ns})
+    (integrations,) = [s for s in out["sections"] if s["plane"] == "integrations"]
+    assert integrations["count"] is None and not integrations["complete"]
+    assert all(s["complete"] for s in out["sections"] if s["plane"] != "integrations")
 
 
 def test_a_token_pinned_to_one_user_counts_only_that_user(seeded: Any) -> None:

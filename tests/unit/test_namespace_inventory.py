@@ -76,6 +76,28 @@ def test_the_unset_identity_is_never_a_subject(monkeypatch: pytest.MonkeyPatch) 
     assert "user_id NOT IN ('', '-')" in subjects.sql
 
 
+def test_only_active_records_and_active_grants_are_counted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _ch().install(monkeypatch)
+    _run()
+    (records,) = ch.statements("FROM loom.memory_records")
+    assert "status = 'active' AND tombstoned_at IS NULL" in records.sql
+    (members,) = ch.statements("loom.namespace_grants")
+    assert members.sql.startswith("SELECT countIf(status = 'active') AS n FROM (")
+
+
+def test_a_failed_admin_check_leaves_the_rest_standing(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def broken(*_: Any, **__: Any) -> None:
+        raise RuntimeError("grants unreadable")
+
+    _ch().install(monkeypatch)
+    monkeypatch.setattr(namespace_inventory, "check_authorized", broken)
+    sections = {s.plane: s for s in _run().sections}
+    assert sections["integrations"].reason == "read failed: RuntimeError"
+    assert all(s.complete for p, s in sections.items() if p != "integrations")
+
+
 def test_a_narrowed_scope_bounds_every_read_and_leaves_out_the_rest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

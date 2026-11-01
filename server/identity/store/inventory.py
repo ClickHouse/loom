@@ -11,10 +11,12 @@ from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and
 
 # Plane → (table, live predicate, newest-write column). Each table carries
-# `user_id` and `session_id`, so the read scope applies to all of them.
+# `user_id` and `session_id`, so the read scope applies to all of them. A rewritten
+# record keeps its earlier version as a `superseded` row; the record reads serve
+# `active` rows only.
 _SCOPED_PLANES: dict[str, tuple[str, str, str]] = {
     "memories": ("loom.memory", "tombstoned_at IS NULL", "updated_at"),
-    "records": ("loom.memory_records", "tombstoned_at IS NULL", "updated_at"),
+    "records": ("loom.memory_records", "status = 'active' AND tombstoned_at IS NULL", "updated_at"),
     "runs": ("loom.agent_runs", "1", "started_at"),
 }
 
