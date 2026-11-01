@@ -50,7 +50,7 @@ async def key_axis_auto(
 ) -> bool:
     """Decide the key axis for one namespace from its key reuse, cached for
     memory_search_key_axis_auto_ttl_seconds. One GROUP BY over the
-    namespace's keys but import keys; a failed probe reads as off (the cheaper side)."""
+    namespace's keys, import keys left out; a failed probe reads as off (the cheaper side)."""
     import time as _time
 
     from server.settings import settings as _default_settings

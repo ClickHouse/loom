@@ -1067,9 +1067,9 @@ def test_the_reembed_filter_leaves_out_switched_off_orgs() -> None:
     from server.memory.app import reembed
 
     sql, params = reembed.where_sql(
+        "memory_embeddings",
         ["org", "tombstoned_at"],
         "m",
-        table="memory_embeddings",
         org=None,
         namespace=None,
         exclude_orgs=frozenset({"acme"}),

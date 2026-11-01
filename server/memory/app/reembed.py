@@ -70,10 +70,10 @@ def _is_import_sql(column: str) -> str:
 
 
 def where_sql(
+    table: str,
     cols: list[str],
     model: str,
     *,
-    table: str,
     org: str | None,
     namespace: str | None,
     key_only: bool = False,
@@ -297,12 +297,12 @@ async def reembed_table(
     model, dim = embedder.model_name, embedder.dim
     cols = await _cols(ch, table)
     where_clause, params = where_sql(
+        table,
         cols,
         model,
         org=org,
         namespace=namespace,
         key_only=key_only,
-        table=table,
         exclude_orgs=exclude_orgs,
     )
     total = (
@@ -598,7 +598,7 @@ async def _waiting(
         return 0
     cols = await _cols(ch, table)
     where_clause, params = where_sql(
-        cols, model, org=org, namespace=namespace, key_only=key_only, table=table
+        table, cols, model, org=org, namespace=namespace, key_only=key_only
     )
     row = await ch.query_one(
         f"SELECT count() AS n FROM loom.{table} FINAL "
