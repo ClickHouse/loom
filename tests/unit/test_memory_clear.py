@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from fastapi import HTTPException
 
@@ -307,6 +309,67 @@ async def test_a_clear_keeps_vectors_only_for_the_locked_identity_in_clickhouse(
         emb_alter.params,
     )
     assert [(r["agent"], r["user_id"], r["session_id"], r["memory_key"]) for r in got] == live
+
+
+_BUCKETED_ROWS = [
+    *(("A", "u1", f"s{i}", "K", "read_only") for i in range(4)),
+    *(("A", "u1", f"s{i}", "K", "") for i in range(4, 7)),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not CLICKHOUSE, reason="clickhouse binary not installed")
+async def test_a_bucketed_clear_keeps_every_locked_identitys_vector_in_clickhouse(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Past one mutation's worth of locks each hash bucket is its own mutation: Python's
+    split of the locked hashes and the SQL's split of the rows must agree, or a bucket
+    tombstones a locked vector it did not name."""
+    import server.memory.store.lifecycle as lifecycle
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+    from tests.unit.ch_fake import RecordingCH
+
+    monkeypatch.setattr(lifecycle, "_LOCKED_PER_MUTATION", 1)
+    cols = "org, namespace, agent, user_id, session_id, memory_key, version"
+    setup = [
+        "SET enable_quantized_codec = 1",
+        ddl("memory"),
+        ddl("memory_embeddings"),
+        *(
+            f"INSERT INTO loom.memory ({cols}, memory_id, lock_mode)"
+            f" SELECT 'o', 'n', '{a}', '{u}', '{s}', '{k}', 1, generateUUIDv4(), '{mode}'"
+            for a, u, s, k, mode in _BUCKETED_ROWS
+        ),
+        *(
+            f"INSERT INTO loom.memory_embeddings ({cols}, embedding, memory_key_embedding)"
+            f" SELECT 'o', 'n', '{a}', '{u}', '{s}', '{k}', 1,"
+            " arrayWithConstant(3072, 0.), arrayWithConstant(3072, 0.)"
+            for a, u, s, k, _ in _BUCKETED_ROWS
+        ),
+    ]
+    run(setup, "SELECT 1", path=tmp_path)
+    ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 4}], times=1)
+    ch.on("SELECT count() AS n", [{"n": 1}])
+    ch.on(
+        "SELECT DISTINCT cityHash64(agent, user_id, session_id, memory_key) AS h",
+        lambda sql, params: run([], sql, params, path=tmp_path),
+    )
+    ch.install(monkeypatch)
+    await handle_memory_clear(
+        MemoryClearInput(org="o", namespace="n", user_id="u1", agent="A", confirm_subject="u1")
+    )
+    alters = ch.statements("ALTER TABLE loom.memory_embeddings", kind="execute")
+    assert sorted(a.params["bucket"] for a in alters) == [0, 1, 2, 3]
+    for a in alters:
+        run(["SET mutations_sync = 1"], a.sql, a.params, path=tmp_path)
+    got = run(
+        [],
+        "SELECT session_id FROM loom.memory_embeddings FINAL"
+        " WHERE tombstoned_at IS NULL ORDER BY session_id",
+        path=tmp_path,
+    )
+    assert [r["session_id"] for r in got] == ["s0", "s1", "s2", "s3"]
 
 
 @pytest.mark.asyncio

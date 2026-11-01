@@ -207,7 +207,7 @@ def cases() -> list[Case]:
             "server.memory.app.retrieval.pool",
             _set_chunk_rows,
             {},
-            # a live row of the key, so the history read runs too
+            # a served row of the key, so the value read runs too
             rows=rows_by_substring(
                 {
                     "max(e.version) AS version": [
@@ -217,8 +217,7 @@ def cases() -> list[Case]:
                             "session_id": "s1",
                             "memory_key": "k1",
                             "version": 1,
-                            "content_sha256": "0",
-                            "served": 1,
+                            "tags": [],
                         }
                     ]
                 }

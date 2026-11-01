@@ -67,6 +67,9 @@ ASSIGNMENT_WORDS = (
     r"auth[_-]?token|bearer|client[_-]?secret|private[_-]?key"
 )
 
+# where an assignment's value ends: `_keyed_credential` rewrites them in what it states
+_ASSIGNMENT_STOP_CHARS = "\"',;"
+
 _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsk-(?:proj-|ant-|lf-)?[A-Za-z0-9_-]{20,}"),  # OpenAI / Anthropic / Langfuse
     re.compile(r"\bpk-lf-[0-9a-fA-F-]{16,}"),
@@ -79,7 +82,9 @@ _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),  # Google API key
     # `password=…`, `api_key: …`, `secret := …`, `token = …` followed by a
     # token-shaped value of 8+ non-space characters.
-    re.compile(rf"(?i)\b(?:{ASSIGNMENT_WORDS})\b\s*[:=]\s*[\"']?[^\s\"',;]{{8,}}"),
+    re.compile(
+        rf"(?i)\b(?:{ASSIGNMENT_WORDS})\b\s*[:=]\s*[\"']?[^\s{re.escape(_ASSIGNMENT_STOP_CHARS)}]{{8,}}"
+    ),
 )
 
 _MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -433,7 +438,7 @@ _SECRET_REFERENCE = re.compile(
 )
 
 
-_ASSIGNMENT_STOPS = str.maketrans("\"',;", "____")
+_ASSIGNMENT_STOPS = str.maketrans(_ASSIGNMENT_STOP_CHARS, "_" * len(_ASSIGNMENT_STOP_CHARS))
 
 
 def _keyed_credential(key: str, value: str) -> str:

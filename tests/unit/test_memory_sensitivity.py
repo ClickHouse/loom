@@ -833,6 +833,10 @@ def test_a_question_for_a_bank_account_is_contact_intent() -> None:
 
 _PREFILTER_OBJECTS = [
     {"pin": "4471"},
+    {"password": "Abc;12345678"},
+    {"db_password": "p@ss,w0rd99"},
+    {"password": 'ab"cd12345'},
+    {"password": "config/db/pass1"},
     {"badge_pin": " 4471"},
     {"badgePin": 9087},
     {"pin_number": "908712"},
