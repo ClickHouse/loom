@@ -107,17 +107,17 @@ halfway leaves the source intact and the target without the row. The learnings q
 
 `namespace.inventory` keeps each population apart. `members` counts the people holding an
 active grant, not a pending request, a group, an agent or a service account (page them
-with `grants.list`); a grant to `everyone` or a group, or a parent collection's grants,
-leave the count `complete: false`, since their members are not listed. `agents`, `authors`
-(the `actor` that wrote a row) and `subjects` (the `user_id` a row belongs to, never the
-unset `-`) are identities observed on live memory rows, not a directory. A personal
-collection's owner holds no grant, so its count is `complete: false` too. A section that
-failed, or that the caller may not read, says so with `complete: false` and a reason: the
-integrations count is for namespace admins, and under a read scope bound to one user
-(`read_scope=own_user` or `own_session`, or a token pinned to a user) the memory and run
-counts are that user's, documents and members are counted namespace-wide as `knowledge.*`
-and `grants.list` read them, and records (one per key, whoever wrote it last) and
-integrations are not counted.
+with `grants.list`); a grant to `everyone` or a group, a parent collection's grants, or a
+code namespace readable by the whole org leave the count `complete: false`, since their
+members are not listed. `agents`, `authors` (the `actor` that wrote a row) and `subjects`
+(the `user_id` a row belongs to, never the unset `-`) are identities observed on live
+memory rows, not a directory. A personal collection's owner holds no grant, so its members
+are not counted (`total` is null). A section that failed, or that the caller may not read,
+says so with `complete: false` and a reason: the integrations count is for namespace
+admins, and under a read scope bound to one user (`read_scope=own_user` or `own_session`,
+or a token pinned to a user) the memory and run counts are that user's, documents and
+members are counted namespace-wide as `knowledge.*` and `grants.list` read them, and
+records (one per key, whoever wrote it last) and integrations are not counted.
 
 `loom audit-namespace` runs `namespace.audit` from the shell; the
 [optimize a namespace guide](../guides/optimize-namespace.md) turns its findings into a

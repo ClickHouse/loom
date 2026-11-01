@@ -261,6 +261,7 @@ async def member_count(org: str, namespace: str, *, ch: _CHClient | None = None)
         f"SELECT countIf(status = 'active' AND NOT ({_NOT_A_PERSON})) AS people, "
         f"countIf(status = 'active' AND ({_SHARED_WIDER})) AS shared "
         f"FROM ({_PEOPLE_PAGE})",
+        # The whole folded set: no keyset (`first`), no limit.
         params={
             "org": org,
             "ns": namespace,
