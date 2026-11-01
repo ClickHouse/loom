@@ -93,10 +93,9 @@ async def _decision_records(
     rows = await active_decision_records(org, namespace, keys, ch=ch)
     out: dict[str, dict[str, Any]] = {}
     for r in rows:
-        rec = svc.parse_record_json(r.get("record_json"))
-        made = r.get("created_at")
-        rec["made_at"] = made.isoformat() if isinstance(made, datetime) else str(made or "")
-        out[str(r["memory_key"])] = rec
+        rec = svc.parse_record_json(r.record_json)
+        rec["made_at"] = r.created_at.isoformat()
+        out[r.memory_key] = rec
     return out
 
 
@@ -362,13 +361,15 @@ def _outcome_payload(
     return payload, tags
 
 
-async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcomeOutput:
-    ch = get_client()
-
-    not_found = NotFoundError(
+def _no_active_decision(input: DecisionOutcomeInput) -> NotFoundError:
+    return NotFoundError(
         f"no active decision {input.memory_key!r} in {input.org}/{input.namespace}",
         memory_key=input.memory_key,
     )
+
+
+async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcomeOutput:
+    ch = get_client()
 
     # The row write is conditional on the writer row read with the record, so a delete of
     # it since then refuses the outcome instead of writing the deleted row back. A row that
@@ -377,7 +378,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         # Only the record's live writer revises it; record and writer come from one read.
         writer = await live_writer_record(input.org, input.namespace, input.memory_key, ch=ch)
         if writer is None:
-            raise not_found
+            raise _no_active_decision(input)
         payload, tags = _outcome_payload(input, writer)
         identity = Identity(
             org=input.org,
@@ -390,7 +391,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
         )
         if row is None:
-            raise not_found
+            raise _no_active_decision(input)
         try:
             await _write_decision(
                 org=input.org,
@@ -415,7 +416,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
                     identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
                 )
                 if current is None:
-                    raise not_found from None
+                    raise _no_active_decision(input) from None
                 raise PreconditionFailedError(
                     "the decision changed while its outcome was being written; "
                     "call decision.outcome again"

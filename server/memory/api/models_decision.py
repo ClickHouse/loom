@@ -151,7 +151,8 @@ class DecisionOutcomeInput(BaseModel):
     # What actually happened, stored on the decision record.
     realized_outcome: str = Field(min_length=1, max_length=2000)
     # None = outcome known but not judged; True/False also credits (or marks) the deciding
-    # run's memories; each call replaces the earlier verdict.
+    # run's memories; each call replaces the record's verdict, and an earlier call's run
+    # credit stays.
     success: bool | None = None
     agent: str = Field(default="*")
 

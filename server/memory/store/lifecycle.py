@@ -23,6 +23,7 @@ from server.memory.store.embeddings import (
 )
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.reads import get_by_id
+from server.memory.store.records import tombstone_decision_record
 from server.memory.store.redaction import delete_by_key
 from server.memory.store.rows import (
     MemoryRow,
@@ -523,6 +524,16 @@ async def tombstone_cascade_by_ids(
         _tombstone,
         ch=ch,
     )
+    # A decision's record goes with its writer's row, as on memory.delete.
+    for existing in rows:
+        if existing.memory_type != "decision":
+            continue
+        try:
+            await tombstone_decision_record(
+                existing.org, existing.namespace, existing.memory_key, version=version, ch=ch
+            )
+        except Exception as e:  # noqa: BLE001 — the row tombstones stand
+            _log.warning("decision record not retired for %s: %s", existing.memory_key, e)
     return tombstoned
 
 

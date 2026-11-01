@@ -98,7 +98,7 @@ class _CH:
         self.queries.append(sql)
         if "FROM loom.memory_records" in sql:
             return [
-                {"memory_key": k, "record_json": json.dumps(v), "created_at": None}
+                {"memory_key": k, "record_json": json.dumps(v), "created_at": datetime(2026, 1, 1)}
                 for k, v in self.records.items()
                 if k in (params or {}).get("keys", [])
             ]
@@ -628,6 +628,20 @@ async def test_a_failed_record_tombstone_leaves_the_delete_standing(
     identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
     assert await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE) is None
     assert await _history() == ["active"]
+
+
+@pytest.mark.asyncio
+async def test_a_tombstone_by_id_retires_the_record(local: KeptCH) -> None:
+    # The by-id funnel blacklist.add's sweep, conflicts.resolve and dedup_resolve go through.
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+
+    await _write_decision_rows(local, "claude")
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
+    row = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
+    await memory_repo.tombstone_cascade_by_ids("o", [row.memory_id], when=datetime.now(UTC))
+    assert await _seed_decision() is None
+    assert await _history() == ["tombstoned", "active"]
 
 
 @pytest.mark.asyncio

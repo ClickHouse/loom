@@ -40,7 +40,7 @@ Close the loop on a decision once reality has answered: record what actually hap
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `memory_key` | `str` | required | The active decision to update; answers 404 when there is none, or when the record's writer has no live decision row under the key. |
 | `realized_outcome` | `str` | required | What actually happened, stored on the decision record. |
-| `success` | `bool \| None` | `None` | None = outcome known but not judged; True/False also credits (or marks) the deciding run's memories; each call replaces the earlier verdict. |
+| `success` | `bool \| None` | `None` | None = outcome known but not judged; True/False also credits (or marks) the deciding run's memories; each call replaces the record's verdict, and an earlier call's run credit stays. |
 | `agent` | `str` | `'*'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 
 | Output field | Type | Meaning |

@@ -78,12 +78,15 @@ def _output(
 
 
 _CREATED = re.compile(r"\bCREATE TABLE (?:IF NOT EXISTS )?([\w.]+)")
+# Side tables a write path inserts into and no KeptCH test reads back.
+_UNREAD = {"loom.audit_log", "loom.memory_projection_failures"}
 
 
 class KeptCH:
     """A ClickHouse client over clickhouse-local whose database is kept under `path`, so
-    each statement sees what the earlier ones wrote. An insert into a table the fixture
-    did not create is dropped; any other statement on one raises."""
+    each statement sees what the earlier ones wrote. An insert into one of the `_UNREAD`
+    side tables is dropped unless the fixture created it; any other statement on a table
+    the fixture did not create raises."""
 
     def __init__(self, path: Path, *setup: str) -> None:
         self.path = path
@@ -101,7 +104,7 @@ class KeptCH:
         run([sql], "SELECT 1", params, path=self.path)
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
-        if table not in self.tables:
+        if table in _UNREAD and table not in self.tables:
             return
         for r in rows:
             cols = ", ".join(r)

@@ -141,6 +141,7 @@ from server.memory.store.reads import (
 )
 from server.memory.store.records import (
     ActiveRecord,
+    DecisionRecord,
     WriterRecord,
     active_decision_records,
     active_record,
@@ -202,6 +203,7 @@ __all__ = [
     "reemit_version",
     "_SEQUENTIAL",
     "ActiveRecord",
+    "DecisionRecord",
     "WriterRecord",
     "active_decision_records",
     "active_record",
