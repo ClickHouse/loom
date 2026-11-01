@@ -13,6 +13,7 @@ from server.identity.app.request_scope import request_scope
 from server.memory.app.search.request import _apply_explain_default
 from server.memory.app.search.tiers import _reader_user_id
 from server.memory.app.search_tag_filter import read_row_tags as _read_row_tags
+from server.memory.domain.search_types import names_row
 from server.memory.domain.sensitivity import reads_high
 from server.memory.store.shared import SHARED_AGENT
 
@@ -275,11 +276,12 @@ async def _expand_unit_bodies(
 
     def _writer(h: Any) -> tuple[str, str, str, str]:
         # A hit that names its row is read under that row's identity, so two writers of
-        # one key in one session each get their own body; otherwise under the caller's.
-        # A shared row names no row of loom.memory, so it is read as one that names none.
+        # one key in one session each get their own body. Any other hit, and a shared row
+        # (no row of loom.memory), is read under the caller's, where the read picks one row
+        # per key after leaving 'high' rows out, so the plain row the search matched answers.
         ns = str(getattr(h, "namespace", "") or input.namespace)
         who = getattr(h, "_row_identity", None)
-        if who and who[0] != SHARED_AGENT:
+        if who and names_row(h) and who[0] != SHARED_AGENT:
             return (ns, *who)
         return (ns, str(getattr(input, "agent", "*") or "*"), _reader_user_id(input), _sid(h))
 
@@ -303,8 +305,6 @@ async def _expand_unit_bodies(
 
     # one read per writer the hits span, overlapped
     reads = await asyncio.gather(*(_read(w, group) for w, group in by_writer.items()))
-    # A hit that names no row is read under the caller's identity, where the read picks one
-    # row per key after leaving 'high' rows out, so the plain row the search matched answers.
     stored: dict[tuple[str, ...], Any] = {
         (*writer, str(r.memory_key)): r
         for writer, rows in zip(by_writer, reads, strict=True)

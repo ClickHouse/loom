@@ -319,19 +319,24 @@ def row_key_of(namespace: str, row: Mapping[str, Any]) -> RowKey:
     return RowKey(namespace, agent, user_id, session_id, str(row["memory_key"]))
 
 
+def _identity(hit: Any) -> RowIdentity | None:
+    # `identity` on a SearchHit, the private `_row_identity` on a wire hit
+    return getattr(hit, "_row_identity", None) or getattr(hit, "identity", None)
+
+
 def names_row(hit: Any) -> bool:
-    """Whether a hit's leg read the identity of its row (`SearchHit.identity`, or a wire
-    hit's `_row_identity`)."""
-    return bool(getattr(hit, "_row_identity", None) or getattr(hit, "identity", None))
+    """Whether a hit names its stored row: its leg read the row's identity, session
+    included. A folded set chunk knows its writer but not its row's session."""
+    identity = _identity(hit)
+    return bool(identity and identity[2])
 
 
 def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
     """(namespace, agent, user_id, session_id, memory_key) of the stored row a hit is: one
     key holds a row for each writer and session, so a key alone does not name one row.
-    For a `SearchHit` or a wire hit alike: the identity is `identity` on the first and the
-    private `_row_identity` on the second. A hit whose leg read no identity has only its
+    For a `SearchHit` or a wire hit alike. A hit whose leg read no identity has only its
     session."""
-    identity = getattr(hit, "_row_identity", None) or getattr(hit, "identity", None)
+    identity = _identity(hit)
     agent, user_id, session_id = identity or ("", "", str(getattr(hit, "session_id", "") or ""))
     return RowKey(
         str(getattr(hit, "namespace", "") or namespace),

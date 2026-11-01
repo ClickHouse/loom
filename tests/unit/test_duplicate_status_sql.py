@@ -1,5 +1,6 @@
 """The served-duplicate status reads, run on clickhouse-local against the real
-`loom.memory`: by row for a hit that names one, by key for a hit that names none."""
+`loom.memory`: by row for a hit that names one, by writer and key for a hit that knows
+only its writer."""
 
 from __future__ import annotations
 
@@ -20,7 +21,8 @@ _ROWS = (
     "('o', 'n', 'a', '-', 's1', 'k1', generateUUIDv4(), 1, 'duplicate', 'c-old', 'v'), "
     "('o', 'n', 'a', '-', 's2', 'k1', generateUUIDv4(), 2, 'duplicate', 'c-new', 'v'), "
     "('o', 'n', 'a', '-', 's1', 'k2', generateUUIDv4(), 1, 'active', '', 'v'), "
-    "('o', 'n', 'a', '-', 's2', 'k2', generateUUIDv4(), 1, 'duplicate', 'c-2', 'v')"
+    "('o', 'n', 'a', '-', 's2', 'k2', generateUUIDv4(), 1, 'duplicate', 'c-2', 'v'), "
+    "('o', 'n', 'b', '-', 's1', 'k1', generateUUIDv4(), 1, 'active', '', 'v')"
 )
 
 
@@ -30,13 +32,21 @@ class _LocalCH:
 
 
 @pytest.mark.asyncio
-async def test_a_key_is_a_duplicate_only_when_none_of_its_rows_is_served() -> None:
-    found = await dedup.status_by_keys(
-        "o", [("n", "k1"), ("n", "k2"), ("n", "gone")], scope=WHOLE_NAMESPACE, ch=_LocalCH()
-    )
-    by_key = {s.memory_key: (s.status, s.canonical_id) for s in found}
-    # the newest duplicate names the canonical; an active row of the key serves it
-    assert by_key == {"k1": ("duplicate", "c-new"), "k2": ("active", "c-2")}
+async def test_a_writers_key_is_a_duplicate_only_when_none_of_its_rows_is_served() -> None:
+    keys = [
+        ("n", "a", "-", "k1"),
+        ("n", "a", "-", "k2"),
+        ("n", "b", "-", "k1"),
+        ("n", "a", "-", "x"),
+    ]
+    found = await dedup.status_by_writer_keys("o", keys, scope=WHOLE_NAMESPACE, ch=_LocalCH())
+    by_key = {(s.agent, s.memory_key): (s.status, s.canonical_id) for s in found}
+    # the newest duplicate names the canonical; another writer's active row does not serve it
+    assert by_key == {
+        ("a", "k1"): ("duplicate", "c-new"),
+        ("a", "k2"): ("active", ""),
+        ("b", "k1"): ("active", ""),
+    }
 
 
 @pytest.mark.asyncio

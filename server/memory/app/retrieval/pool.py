@@ -156,13 +156,14 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
         parent = by_row.get(parent_row)
         if parent is None:
             idx_s = str(h.memory_key).rpartition(":")[2]
+            # its writer, with no session: the chunk's session is not its row's
+            writer = (h.identity[0], h.identity[1], "") if h.identity else None
             converted = replace(
                 h,
                 memory_key=parent_key,
                 source="fact",
                 parent_memory_key="",
-                # the chunk's session names no row: read like a hit that names none
-                identity=None,
+                identity=writer,
                 session_id="",
                 score_components={
                     **dict(h.score_components or {}),

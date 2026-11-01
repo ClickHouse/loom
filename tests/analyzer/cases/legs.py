@@ -399,7 +399,7 @@ async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
     rows = [RowKey(NS, "a", "-", "-", "k1"), RowKey(NS, "a", "-", "-", "k2")]
     await M.status_by_rows(ORG, rows, scope=dup_scope, ch=ch)
-    await M.status_by_keys(ORG, [(NS, "k1")], scope=dup_scope, ch=ch)
+    await M.status_by_writer_keys(ORG, [(NS, "a", "-", "k1")], scope=dup_scope, ch=ch)
     await M.canonical_rows_by_ids(
         ORG, [NS], ["00000000-0000-0000-0000-000000000001"], scope=dup_scope, ch=ch
     )

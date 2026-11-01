@@ -132,14 +132,18 @@ def truth(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
             ]
         ]
 
-    async def status_by_keys(
-        org: str, keys: list[tuple[str, str]], *, scope: Any = None, ch: Any = None
+    async def status_by_writer_keys(
+        org: str, keys: list[tuple[str, ...]], *, scope: Any = None, ch: Any = None
     ) -> list[DuplicateStatus]:
         env.status_calls += 1
-        return [_status((ns, "", "", "", k), **env.status[k]) for ns, k in keys if k in env.status]
+        return [
+            _status((ns, agent, user_id, "", k), **env.status[k])
+            for ns, agent, user_id, k in keys
+            if k in env.status
+        ]
 
     monkeypatch.setattr(memory_repo, "status_by_rows", status_by_rows)
-    monkeypatch.setattr(memory_repo, "status_by_keys", status_by_keys)
+    monkeypatch.setattr(memory_repo, "status_by_writer_keys", status_by_writer_keys)
     monkeypatch.setattr(memory_repo, "canonical_rows_by_ids", canonical_rows_by_ids)
     return env
 
@@ -240,11 +244,13 @@ async def test_duplicate_with_no_live_canonical_is_hidden_without_substitute(
 
 
 @pytest.mark.asyncio
-async def test_a_hit_naming_no_row_takes_its_keys_status(truth: SimpleNamespace) -> None:
-    # a folded set chunk names its key but no row: the key's status decides it
+async def test_a_hit_naming_only_its_writer_takes_its_writers_key_status(
+    truth: SimpleNamespace,
+) -> None:
+    # a folded set chunk knows its writer but not its row: the writer's key status decides it
     truth.status = {"dup_a": _dup("c-1"), "b": _ACTIVE}
     named = _hit("b", rank=0.8, session="s1", who=("a", "u", "s1"))
-    ctx = _ctx([_hit("dup_a", rank=0.9, session="", who=None), named])
+    ctx = _ctx([_hit("dup_a", rank=0.9, session="", who=("a", "-", "")), named])
     await sd.hide_pool_duplicates(ctx)
     assert [h.memory_key for h in ctx.all_hits] == ["b"]
 
@@ -706,6 +712,9 @@ async def test_repo_duplicate_reads_carry_the_read_scope() -> None:
         "o", [RowKey("n", "a", "u", "s", "k")], scope=one_session, ch=_CH()
     )
     await memory_repo.canonical_rows_by_ids("o", ["n"], [cid], scope=one_session, ch=_CH())
+    await memory_repo.status_by_writer_keys(
+        "o", [("n", "a", "u", "k")], scope=one_session, ch=_CH()
+    )
     for sql, params in sqls:
         assert "user_id = {scope_uid:String}" in sql and "session_id = {scope_sid:String}" in sql
         assert params["scope_uid"] == "u" and params["scope_sid"] == "s"

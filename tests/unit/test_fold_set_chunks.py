@@ -17,6 +17,7 @@ import pytest
 from server.memory.app.retrieval import SearchHit, fusion
 from server.memory.app.retrieval import pool as S
 from server.memory.app.retrieval.pool import fold_set_chunks
+from server.memory.domain.search_types import names_row
 
 
 def _hit(
@@ -221,7 +222,7 @@ def test_a_chunk_folds_onto_its_own_writers_row_of_the_key() -> None:
     assert by_writer[("a", "u1", "s1")].rank_score == 0.5
 
 
-def test_a_chunk_without_its_row_in_the_pool_becomes_a_hit_that_names_no_row() -> None:
+def test_a_chunk_without_its_row_in_the_pool_becomes_a_hit_of_its_writer_and_no_row() -> None:
     chunk = replace(
         _set_chunk("lesson_a", 0, 0.9),
         identity=("a", "u2", "memory.set:lesson_a"),
@@ -229,4 +230,5 @@ def test_a_chunk_without_its_row_in_the_pool_becomes_a_hit_that_names_no_row() -
     )
     (hit,) = fold_set_chunks([chunk])
     assert (hit.memory_key, hit.source) == ("lesson_a", "fact")
-    assert (hit.identity, hit.session_id) == (None, "")
+    assert (hit.identity, hit.session_id) == (("a", "u2", ""), "")
+    assert not names_row(hit)

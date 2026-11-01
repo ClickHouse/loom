@@ -94,8 +94,8 @@ _Canon = dict[tuple[str, str], CanonicalRow]
 async def _truth(
     org: str, named: list[RowKey], unnamed: list[RowKey], scope: ReadFilters
 ) -> _Truth:
-    """Each pooled row's status: read by row for the hits that name one, by key for the
-    rest (a folded set chunk), as one row of the key would."""
+    """Each pooled row's status: read by row for the hits that name one, by writer and key
+    for the rest (a folded set chunk knows its writer but not its row's session)."""
     import server.memory.store as memory_repo
 
     truth: _Truth = {}
@@ -103,12 +103,13 @@ async def _truth(
         found = await memory_repo.status_by_rows(org, named, scope=scope)
         truth = {s.row_key: s for s in found}
     if unnamed:
-        keys = sorted({(r.namespace, r.memory_key) for r in unnamed})
-        found = await memory_repo.status_by_keys(org, keys, scope=scope)
-        by_key = {(s.namespace, s.memory_key): s for s in found}
+        keys = [(r.namespace, r.agent, r.user_id, r.memory_key) for r in unnamed]
+        found = await memory_repo.status_by_writer_keys(org, keys, scope=scope)
+        by_key = {(s.namespace, s.agent, s.user_id, s.memory_key): s for s in found}
         for r in unnamed:
-            if (r.namespace, r.memory_key) in by_key:
-                truth[r] = by_key[(r.namespace, r.memory_key)]
+            status = by_key.get((r.namespace, r.agent, r.user_id, r.memory_key))
+            if status is not None:
+                truth[r] = status
     return truth
 
 
