@@ -97,7 +97,8 @@ under-weights one of them unless alpha is tuned per corpus. RRF combines ranks, 
 scores, so it needs no tuning. Loom also lowers the lexical weight for code- or
 path-shaped queries, whose shared path tokens are near-noise
 (`server/memory/app/retrieval/fusion.py`, `_rrf_lexical_weight`). Ties in one order
-break by the other, then by key, so two identical searches return the same window.
+break by the other, then by key and the row's namespace, writer and session, so two
+identical searches return the same window.
 
 ## The rank expression
 

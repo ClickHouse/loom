@@ -362,10 +362,10 @@ class SearchTraceHit(SearchHit):
 RANK_SCORE_PRE_RERANK = "rank_score_pre_rerank"
 
 
-def hit_sort_key(h: Any) -> tuple[float, float, str, str, str, str]:
+def hit_sort_key(h: Any) -> tuple[float, float, str, str, str, str, str]:
     """The ONE ordering every ranked list of hits uses: best
-    rank_score first, then nearest distance, then memory_key, then the row's writer and
-    session. Two hits with equal scores (about half of top-2 pairs are within 0.01) would
+    rank_score first, then nearest distance, then memory_key, then the row's namespace,
+    writer and session. Two hits with equal scores (about half of top-2 pairs are within 0.01) would
     otherwise fall wherever the ClickHouse threads and Python's stable sort left them,
     so the same query on unchanged data would return the same top-5 set only
     about half the time; one key holds a row per writer and session, so the key alone
@@ -376,6 +376,7 @@ def hit_sort_key(h: Any) -> tuple[float, float, str, str, str, str]:
         -float(getattr(h, "rank_score", 0.0) or 0.0),
         float(getattr(h, "distance", 0.0) or 0.0),
         row.memory_key,
+        row.namespace,
         row.agent,
         row.user_id,
         row.session_id,

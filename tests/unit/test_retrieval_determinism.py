@@ -31,10 +31,11 @@ def test_sort_key_breaks_score_ties_by_distance_then_key() -> None:
 
 
 def test_sort_key_tolerates_missing_fields() -> None:
-    assert hit_sort_key(SimpleNamespace(memory_key="k")) == (-0.0, 0.0, "k", "", "", "")
+    assert hit_sort_key(SimpleNamespace(memory_key="k")) == (-0.0, 0.0, "k", "", "", "", "")
     assert hit_sort_key(SimpleNamespace(rank_score=None, distance=None, memory_key=None)) == (
         -0.0,
         0.0,
+        "",
         "",
         "",
         "",
@@ -155,3 +156,17 @@ def test_two_rows_of_one_key_with_equal_scores_sort_by_their_writer() -> None:
     first, second = row("u1"), row("u2")
     assert sorted([second, first], key=hit_sort_key) == [first, second]
     assert sorted([first, second], key=hit_sort_key) == [first, second]
+
+
+def test_one_row_identity_in_two_namespaces_sorts_by_its_namespace() -> None:
+    def row(namespace: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            memory_key="k",
+            rank_score=0.5,
+            distance=0.5,
+            namespace=namespace,
+            identity=("a", "u", "s1"),
+        )
+
+    n1, n2 = row("n1"), row("n2")
+    assert sorted([n2, n1], key=hit_sort_key) == [n1, n2]
