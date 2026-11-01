@@ -893,13 +893,14 @@ async def _set_after_write(
     )
 
     # A long value is also written as verbatim chunks under the key, after the row is in and
-    # never as a condition of it. A duplicate writes none, as its canonical answers for it:
-    # it retires only the chunks of the value this row held, as a long re-set would.
+    # never as a condition of it. A duplicate writes none, as its canonical answers for it; it
+    # retires the chunks its row's old value wrote, as a long re-set would. A row that was a
+    # duplicate wrote none: the chunks its value cuts are the canonical's.
     from server.memory.app import set_chunks as _set_chunks
 
     if duplicate_of_id:
         chunks_written = 0
-        if w.existing is not None:
+        if w.existing is not None and str(w.existing.status) != "duplicate":
             await _set_chunks.tombstone_row_chunks_fail_open(w.existing, ch=ch, only_its_own=True)
     else:
         chunks_written = await _set_chunks.write_set_chunks_fail_open(

@@ -832,14 +832,9 @@ async def test_a_failed_head_read_retires_the_chunks_it_just_wrote(
     assert retire["only"] and retire["strong"] is True
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("duplicate_of", ["", "canonical-id"])
-async def test_a_duplicate_leaves_the_keys_chunks_to_the_served_value(
-    monkeypatch: pytest.MonkeyPatch, duplicate_of: str
-) -> None:
-    # the key holds a long value's chunks; a duplicate restatement must not replace them
-    from types import SimpleNamespace
-
+@pytest.fixture
+def after_write(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """`set_commit` with the after-write projections stubbed, for the chunk step alone."""
     from server.memory.app import set_commit
 
     async def nothing(*_: Any, **__: Any) -> None:
@@ -849,6 +844,18 @@ async def test_a_duplicate_leaves_the_keys_chunks_to_the_served_value(
     monkeypatch.setattr(set_commit, "project_stated_relations", nothing)
     monkeypatch.setattr(set_commit, "follow_beside_response", lambda **_: None)
     monkeypatch.setattr(set_commit, "peer_id_in_read_scope", lambda *_: "")
+    return set_commit
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("duplicate_of", ["", "canonical-id"])
+async def test_a_duplicate_leaves_the_keys_chunks_to_the_served_value(
+    after_write: Any, duplicate_of: str
+) -> None:
+    # the key holds a long value's chunks; a duplicate restatement must not replace them
+    from types import SimpleNamespace
+
+    set_commit = after_write
     served = [_live_row(0, "the served long value's first passage")]
     ch = _CH(routes=[("FROM loom.memory_chunks FINAL", served)])
     w = set_commit._SetWrite(
@@ -868,20 +875,14 @@ async def test_a_duplicate_leaves_the_keys_chunks_to_the_served_value(
 
 
 @pytest.mark.asyncio
-async def test_a_duplicate_re_set_retires_the_chunks_of_the_value_it_replaced(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(("was", "retired"), [("active", True), ("duplicate", False)])
+async def test_a_duplicate_re_set_retires_the_chunks_of_the_value_it_wrote(
+    after_write: Any, was: str, retired: bool
 ) -> None:
+    # a row that was a duplicate wrote no chunks: the ones its value cuts are the canonical's
     from types import SimpleNamespace
 
-    from server.memory.app import set_commit
-
-    async def nothing(*_: Any, **__: Any) -> None:
-        return None
-
-    monkeypatch.setattr(set_commit, "_set_post_insert", nothing)
-    monkeypatch.setattr(set_commit, "project_stated_relations", nothing)
-    monkeypatch.setattr(set_commit, "follow_beside_response", lambda **_: None)
-    monkeypatch.setattr(set_commit, "peer_id_in_read_scope", lambda *_: "")
+    set_commit = after_write
     first = _CH()
     await sc.write_set_chunks(
         _input(_NOTE_5KB), memory_type="semantic", limit=None, ch=first, embedder=_BatchEmbedder()
@@ -895,6 +896,7 @@ async def test_a_duplicate_re_set_retires_the_chunks_of_the_value_it_replaced(
         user_id="-",
         value=_NOTE_5KB,
         memory_type="semantic",
+        status=was,
     )
     w = set_commit._SetWrite(
         input=_input("a restatement"),
@@ -907,5 +909,6 @@ async def test_a_duplicate_re_set_retires_the_chunks_of_the_value_it_replaced(
     await set_commit._set_after_write(
         w, ch, None, SimpleNamespace(verdict="clear"), "canonical-id", []
     )
-    retired = ch.rows_for("loom.memory_chunks")
-    assert len(retired) == len(own) and all(r["tombstoned_at"] is not None for r in retired)
+    tombstones = ch.rows_for("loom.memory_chunks")
+    assert len(tombstones) == (len(own) if retired else 0)
+    assert all(r["tombstoned_at"] is not None for r in tombstones)

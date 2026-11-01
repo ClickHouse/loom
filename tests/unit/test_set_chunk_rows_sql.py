@@ -130,3 +130,14 @@ async def test_a_row_outside_the_hard_tags_is_not_served() -> None:
 async def test_under_shared_scope_no_row_is_read() -> None:
     chunk = _chunk("u", LONG_V1)
     assert await _set_chunk_rows(_LocalCH(), _q(scope="shared"), [chunk]) is None
+
+
+@pytest.mark.asyncio
+async def test_only_the_writers_newest_rows_of_the_key_are_read() -> None:
+    # a window holds at most top_k rows of a key: the read keeps that many, newest first
+    old = [_row("u", f"s{i}", i, LONG_V2) for i in range(1, 6)]
+    ch = _LocalCH(*old, _row("u", "s9", 9, LONG_V1))
+    chunk = _chunk("u", LONG_V1)
+    assert await _set_chunk_rows(ch, _q(top_k=1), [chunk]) == _named(chunk, "s9", 9)
+    # the value an older row holds is past the bound: its chunk names no row
+    assert await _set_chunk_rows(ch, _q(top_k=1), [_chunk("u", LONG_V2)]) == {}
