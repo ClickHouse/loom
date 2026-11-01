@@ -323,7 +323,8 @@ def row_key_of(namespace: str, row: Mapping[str, Any]) -> RowKey:
 
 def _identity(hit: Any) -> RowIdentity | None:
     # `identity` on a SearchHit, the private `_row_identity` on a wire hit
-    return getattr(hit, "_row_identity", None) or getattr(hit, "identity", None)
+    who = getattr(hit, "_row_identity", None)
+    return who if who is not None else getattr(hit, "identity", None)
 
 
 def names_row(hit: Any) -> bool:
@@ -337,7 +338,9 @@ def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
     For a `SearchHit` or a wire hit alike. A hit whose leg read no identity has only its
     session."""
     identity = _identity(hit)
-    agent, user_id, session_id = identity or ("", "", str(getattr(hit, "session_id", "") or ""))
+    if identity is None:
+        identity = ("", "", str(getattr(hit, "session_id", "") or ""))
+    agent, user_id, session_id = identity
     return RowKey(
         str(getattr(hit, "namespace", "") or namespace),
         agent,

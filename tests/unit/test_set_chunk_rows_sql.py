@@ -156,11 +156,10 @@ async def test_only_the_writers_newest_rows_of_the_key_are_matched(
 async def test_a_hard_category_decides_whether_the_row_is_served(
     category: str, named: bool
 ) -> None:
-    # the category filter is a subquery inside the served test's argMax
+    # the hard category filter is a subquery inside the HAVING argMax
     ch = _LocalCH(
         _row("u", "s1", 1, LONG_V1),
         [
-            "SET enable_quantized_codec = 1",
             ddl("categories"),
             ddl("memory_categories"),
             "INSERT INTO loom.categories (org, namespace, category_id, name, embedding) VALUES "
