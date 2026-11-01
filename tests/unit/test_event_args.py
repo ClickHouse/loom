@@ -251,3 +251,13 @@ def test_a_sectioned_search_records_its_hits_across_sections() -> None:
     assert project_result(abstained)["out_section_hits"] == "0"
     # A result with no sections records nothing.
     assert "out_section_hits" not in project_result({"results": [1, 2]})
+
+
+def test_an_outcome_records_whether_its_label_landed() -> None:
+    from server.memory.api.models_temporal import MemoryOutcomeOutput
+    from server.observability.event_args import project_result
+
+    landed = MemoryOutcomeOutput(recorded=True, evidence_count_after=1)
+    missed = MemoryOutcomeOutput(recorded=False, evidence_count_after=0)
+    assert project_result(landed)["out_recorded"] == "true"
+    assert project_result(missed)["out_recorded"] == "false"
