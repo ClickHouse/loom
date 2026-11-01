@@ -92,6 +92,20 @@ def test_the_unset_identity_is_never_a_subject(monkeypatch: pytest.MonkeyPatch) 
     assert "user_id NOT IN ('', '-')" in subjects.sql
 
 
+def test_memories_are_counted_as_memory_list_serves_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _ch().install(monkeypatch, *_GET_CLIENT)
+    _run()
+    served = (
+        "tombstoned_at IS NULL AND status NOT IN ('duplicate', 'superseded', 'proposed') "
+        "AND (expires_at IS NULL OR expires_at > now())"
+    )
+    statements = [c for c in ch.calls if "FROM loom.memory FINAL" in c.sql]
+    assert len(statements) == 4  # the count and the three populations
+    assert all(served in c.sql for c in statements)
+
+
 def test_only_active_records_and_active_grants_are_counted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -184,13 +198,16 @@ def test_a_narrowed_scope_bounds_every_read_and_leaves_out_the_rest(
 ) -> None:
     ch = _ch().install(monkeypatch, *_GET_CLIENT)
     out = _run(ReadFilters(scope="own_user", user_id="u1", session_id=None))
-    assert ch.calls
-    for st in ch.calls:
+    bounded = [c for c in ch.calls if "loom.documents" not in c.sql]
+    assert bounded
+    for st in bounded:
         assert "{scope_uid:String}" in st.sql and st.params["scope_uid"] == "u1", st.sql
-    assert not ch.statements("loom.documents") and not ch.statements("loom.namespace_grants")
+    # Documents are the namespace's under any scope, as knowledge.* reads them.
+    assert [s.count for s in out.sections if s.plane == "documents"] == [3]
+    assert not ch.statements("loom.namespace_grants")
     assert not ch.statements("loom.memory_webhooks")
     missing = {s.plane for s in out.sections if not s.complete}
-    assert missing == {"documents", "integrations"}
+    assert missing == {"integrations"}
     pops = {p.population: p for p in out.populations}
     assert not pops["members"].complete and pops["members"].total is None
     assert (out.scope.read_scope, out.scope.user_id, out.scope.session_id) == (
@@ -203,7 +220,7 @@ def test_a_narrowed_scope_bounds_every_read_and_leaves_out_the_rest(
 def test_an_own_session_scope_names_its_session(monkeypatch: pytest.MonkeyPatch) -> None:
     ch = _ch().install(monkeypatch, *_GET_CLIENT)
     out = _run(ReadFilters(scope="own_session", user_id="u1", session_id="s1"))
-    assert all(st.params["scope_sid"] == "s1" for st in ch.calls)
+    assert all(st.params["scope_sid"] == "s1" for st in ch.calls if "loom.documents" not in st.sql)
     assert (out.scope.user_id, out.scope.session_id) == ("u1", "s1")
 
 

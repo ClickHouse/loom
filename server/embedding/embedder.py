@@ -86,8 +86,13 @@ KEY_ENVS: dict[str, tuple[str, ...]] = {
 
 def embedder_is_fake() -> bool:
     """True when the configured embedding model is served by the fake n-gram embedder
-    (no semantic vectors): a fake model or provider, or a keyed provider without its key."""
-    provider = provider_for(settings.embedding_model)
+    (no semantic vectors): a fake model or provider, or a keyed provider without its key.
+    False for a model name no provider serves: building its embedder fails, so no fake
+    serves it either."""
+    try:
+        provider = provider_for(settings.embedding_model)
+    except ValueError:
+        return False
     return provider == "fake" or _key_missing(provider)
 
 

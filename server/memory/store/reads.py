@@ -1245,15 +1245,24 @@ def _with_usage(row: MemoryRow, totals: dict[str, Any] | None) -> MemoryRow:
     return row.model_copy(update=updates) if updates else row
 
 
+# The rows `memory.list` serves by default: not tombstoned, a duplicate, superseded or
+# proposed, and not past `expires_at`.
+_SERVED_ROWS = (
+    "tombstoned_at IS NULL AND status NOT IN ('duplicate', 'superseded', 'proposed') "
+    "AND (expires_at IS NULL OR expires_at > now())"
+)
+
+
 async def live_tally(
     org: str, namespace: str, *, scope: ReadFilters, ch: _CHClient | None = None
 ) -> tuple[int, datetime | None]:
-    """Live rows of the namespace inside `scope`, and the newest write among them."""
+    """The rows of the namespace `memory.list` serves inside `scope`, and the newest
+    write among them."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"org": org, "ns": namespace}
     row = await ch.query_one(
         "SELECT count() AS n, if(n = 0, NULL, max(updated_at)) AS latest FROM loom.memory FINAL "
-        "WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL"
+        f"WHERE org = {{org:String}} AND namespace = {{ns:String}} AND {_SERVED_ROWS}"
         + scope_and(scope, params),
         params,
     )
@@ -1278,15 +1287,15 @@ async def identity_tally(
     limit: int,
     ch: _CHClient | None = None,
 ) -> tuple[int, list[tuple[str, int]]]:
-    """Distinct values of `column` (agent, actor or user_id) on live rows inside `scope`,
-    and the `limit` that carry the most rows."""
+    """Distinct values of `column` (agent, actor or user_id) on the rows `live_tally`
+    counts, and the `limit` that carry the most rows."""
     ch = ch or _default_client()
     # The total rides on the listed rows, so at least one is read.
     params: dict[str, Any] = {"org": org, "ns": namespace, "lim": max(1, limit)}
     rows = await ch.query_all(
         f"SELECT {column} AS name, count() AS n, count() OVER () AS total "
         "FROM loom.memory FINAL "
-        "WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL "
+        f"WHERE org = {{org:String}} AND namespace = {{ns:String}} AND {_SERVED_ROWS} "
         f"AND {_NAMED[column]}{scope_and(scope, params)} "
         f"GROUP BY {column} ORDER BY n DESC, name LIMIT {{lim:UInt32}}",
         params,

@@ -114,8 +114,9 @@ unset `-`) are identities observed on live memory rows, not a directory. A perso
 collection's owner holds no grant, so its count is `complete: false` too. A section that
 failed, or that the caller may not read, says so with `complete: false` and a reason: the
 integrations count is for namespace admins, and under a read scope bound to one user
-(`read_scope=own_user` or `own_session`, or a token pinned to a user) every count is that
-user's and documents, integrations and members are not counted.
+(`read_scope=own_user` or `own_session`, or a token pinned to a user) the memory, record
+and run counts are that user's, documents are counted namespace-wide as `knowledge.*`
+reads them, and integrations and members are not counted.
 
 `loom audit-namespace` runs `namespace.audit` from the shell; the
 [optimize a namespace guide](../guides/optimize-namespace.md) turns its findings into a

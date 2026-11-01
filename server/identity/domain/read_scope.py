@@ -296,8 +296,9 @@ SCOPED_OPS = frozenset(
         "memory.stack",
         "memory.statuses",
         "memory.timeline",
-        # Planes without a user (documents, webhooks) and the member directory are
-        # left out under a narrowed scope.
+        # Memory, record and run counts carry the scope; documents are counted as
+        # `knowledge.*` reads them. Webhooks and members are not read under a narrowed
+        # scope: their lists are not a narrowed token's (`webhook.list`, `grants.list`).
         "namespace.inventory",
         "procedure.list",
         "procedure.match",

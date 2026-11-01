@@ -30,3 +30,11 @@ def test_the_answer_matches_the_embedder_served(
     assert embedder.embedder_is_fake() is fake
     served = embedder._served(model)
     assert (type(served).__name__ == "FakeNGramEmbedder") is fake
+
+
+def test_a_model_no_provider_serves_is_not_reported_fake(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "embedding_model", "bge-small")
+    monkeypatch.setattr(settings, "embedding_provider", "")
+    with pytest.raises(ValueError):
+        embedder._served("bge-small")
+    assert embedder.embedder_is_fake() is False

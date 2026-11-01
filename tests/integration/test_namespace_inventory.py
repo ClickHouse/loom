@@ -1,7 +1,7 @@
 """namespace.inventory over real rows: counts per plane, members apart from the identities
 observed on rows (members counted per person, as `grants.list` folds them), the unset
 user never a subject, and a token pinned to one user counting
-only that user's rows while documents and members are left out.
+only that user's rows, documents namespace-wide, and no integrations or members.
 
 Skips without LOOM_BASE_URL (tests/integration/conftest.py).
 """
@@ -182,8 +182,9 @@ def test_a_token_pinned_to_one_user_counts_only_that_user(seeded: Any) -> None:
     sections = {s["plane"]: s for s in out["sections"]}
     assert sections["memories"]["count"] == 2
     assert sections["records"]["count"] == 1 and sections["runs"]["count"] == 1
-    for plane in ("documents", "integrations"):
-        assert sections[plane]["count"] is None and not sections[plane]["complete"]
+    assert sections["documents"]["count"] == 1
+    integrations = sections["integrations"]
+    assert integrations["count"] is None and not integrations["complete"]
     pops = {p["population"]: p for p in out["populations"]}
     assert [i["name"] for i in pops["subjects"]["top"]] == ["u1"]
     assert pops["members"]["total"] is None and not pops["members"]["complete"]
