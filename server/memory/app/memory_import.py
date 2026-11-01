@@ -129,7 +129,7 @@ async def _write(
     # counting as said now.
     now = naive_utc_now()
     pending.sort(key=lambda i: to_naive_utc(input.entries[i].valid_at) or now)  # stable
-    written = await handle_memory_bulk_set(
+    bulk = await handle_memory_bulk_set(
         _bulk_input(input, [(input.entries[i], keys[i]) for i in pending]),
         dry_run=input.dry_run,
         # Every entry is checked, whatever bulk_conflict_check_max_entries caps a bulk at.
@@ -137,9 +137,9 @@ async def _write(
         # A re-run must not reinforce the same rows again, so no run reinforces any.
         reinforce=False,
     )
-    for i, result in zip(pending, written.written, strict=True):
+    for i, result in zip(pending, bulk.written, strict=True):
         key = keys[i]
-        answers[key] = _entry_outcome(key, result, written.identity_duplicates.get(key))
+        answers[key] = _entry_outcome(key, result, bulk.identity_duplicates.get(key))
     return answers
 
 
@@ -197,9 +197,9 @@ async def _categorize(
     *,
     linkable: bool,
 ) -> None:
-    """Note each entry's category (`category_note`) and link the key of each entry with no
-    note and no stored link.
-    The new links get one audit row: keys and category names, never the text."""
+    """Note each entry's category (`category_note`) and link each key with no note and no
+    stored link; the new links get one audit row of keys and category names, never the
+    text."""
     links: set[tuple[str, str]] = set()
     for result, entry in zip(results, input.entries, strict=True):
         if not entry.category:

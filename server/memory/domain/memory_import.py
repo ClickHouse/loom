@@ -1,5 +1,6 @@
 """What `memory.import` decides with no I/O: what the stored versions of a key say
-before the write, and how an entry repeating an earlier one of the request answers.
+before the write, how an entry repeating an earlier one of the request answers, and why
+an entry's category is not linked (`category_note`).
 The key itself is `import_keys.import_key`.
 """
 

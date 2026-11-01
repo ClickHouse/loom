@@ -78,6 +78,9 @@ def where_sql(
     value vectors stay, only the key axis is rebuilt. `exclude_orgs` (orgs
     whose model calls are switched off) leaves their rows for a later run."""
     where = [] if key_only else [f"embedding_model != '{model}'"]
+    if key_only and "memory_key" in cols:
+        # An import key has no key axis to rebuild: rewriting its row would change nothing.
+        where.append(f"NOT match(memory_key, '^{IMPORT_KEY_PATTERN}$')")
     where.append("embedding_dim > 0")
     params: dict[str, Any] = {}
     if "tombstoned_at" in cols:

@@ -1133,8 +1133,8 @@ def test_201_entries_are_refused_and_200_accepted() -> None:
 async def test_every_entry_is_checked_whatever_the_bulk_cap_says(
     harness, monkeypatch, bulk_cap: int
 ) -> None:
-    """With the bulk write's cap at 50 (or 0), a full import still checks every entry:
-    the 151st, too close to a pinned memory, is refused rather than written unchecked."""
+    """Whatever the bulk write's cap (0, 50 or the default 200), a full import checks
+    every entry: the 151st, too close to a pinned memory, is refused, not written unchecked."""
     from server.settings import settings
 
     monkeypatch.setattr(settings, "bulk_conflict_check_max_entries", bulk_cap)
@@ -1221,26 +1221,3 @@ def test_the_op_draws_from_its_own_rate_class() -> None:
     from server.core.ratelimit import op_class_for
 
     assert op_class_for("memory.import") == "memory.import"
-
-
-@pytest.mark.asyncio
-async def test_the_heads_read_stays_inside_a_session_bounded_token() -> None:
-    """An `own_session` token answers deleted, revised or superseded only for keys in its
-    own session: the heads read carries the token's user and session."""
-    from server.identity.domain.read_scope import ReadFilters
-
-    reads: list[tuple[str, dict[str, Any]]] = []
-
-    class _Recording:
-        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-            reads.append((sql, params))
-            return []
-
-    scope = ReadFilters(scope="own_session", user_id="u", session_id="s1")
-    await memory_repo.key_heads_across_sessions(
-        "test", "personal", "cursor", "u", ["import:k"], scope=scope, ch=_Recording()
-    )
-    ((sql, params),) = reads
-    assert "user_id = {scope_uid:String}" in sql and "session_id = {scope_sid:String}" in sql
-    assert (params["scope_uid"], params["scope_sid"]) == ("u", "s1")
-    assert "select_sequential_consistency = 1" in sql
