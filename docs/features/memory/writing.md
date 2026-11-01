@@ -244,13 +244,14 @@ extraction path (`LOOM_MEMORY_EXTRACT_VALUE_UPDATES`) never runs for an import.
   comes back `held`. The key is a digest of the text, so anyone who can see a key can
   confirm a guessed text against it: do not import a secret as an item.
 - **The text is embedded and indexed alone:** a key that is only the digest (`import:` and
-  24 lowercase hex characters, nothing else) puts no `(#key)` suffix on the excerpt a row
-  is embedded and lexically indexed by, and builds no key-axis vector, so an imported fact
+  24 lowercase hex characters, nothing else) puts no `(#key)` suffix on the excerpt a row is
+  embedded and lexically indexed by, and builds no key-axis vector, so an imported fact
   relates to other memories through its text, as a hand-written one does. A later
   `memory.set` or `memory.bulk_set` of the same key follows the same rule, so its vector
-  stays comparable with the imported one; a key of any other shape keeps its suffix.
-  Only the first 1,200 characters of an item are embedded and indexed, so split a longer
-  item into several.
+  stays comparable with the imported one; a key of any other shape keeps its suffix. Only
+  the first 1,200 characters of an item's JSON encoding are embedded and indexed (a non-
+  ASCII character takes six of them, one outside the Basic Multilingual Plane twelve), so
+  split a longer item into several.
 - **A key that was deleted, retired or rejected stays so:** before the write, the import
   reads each key's newest version in every session of the identity that the token may read
   (only its own session for an `own_session` token), tombstones and rows of every status
@@ -283,7 +284,9 @@ extraction path (`LOOM_MEMORY_EXTRACT_VALUE_UPDATES`) never runs for an import.
   `category_not_linked` (the key does not hold the fact and has no link) or
   `category_rescinded` (a link the owner rescinded, left so). The note never changes the
   entry's outcome. A live link already stored for the key answers no note, and an entry its
-  own request superseded (`newest_wins`) is linked like any written one.
+  own request superseded (`newest_wins`) is linked like any written one. A user-scope
+  `erasure.request` leaves an import's category links and its `memory.import` audit row,
+  keys included; a namespace-scope one removes the links.
 - **`dry_run=true`** makes every check and writes no memory row, embedding, category link,
   audit row or usage event. It still pays for the embedding of each entry it sends to the
   bulk write, since the conflict check reads the vectors, and counts a blacklist pattern's

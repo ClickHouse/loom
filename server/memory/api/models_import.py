@@ -16,7 +16,7 @@ from server.memory.domain.memory_import import Note, Outcome, Reason
 # whatever LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES caps a memory.bulk_set at.
 MAX_IMPORT_ENTRIES = 200  # not a setting: a wire bound the request schema and SDKs publish
 # The longest item text, in characters, a bound on what one row stores. Only the first
-# 1,200 characters (`excerpt.EXCERPT_LIMIT`) are embedded and lexically indexed.
+# 1,200 characters of its JSON encoding (`excerpt.EXCERPT_LIMIT`) are embedded and indexed.
 MAX_IMPORT_VALUE_CHARS = 30_000  # not a setting: a wire bound
 # The most tags one item carries, and the longest tag.
 MAX_IMPORT_TAGS = 64  # not a setting: a wire bound

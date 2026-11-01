@@ -140,7 +140,8 @@ def in_database_sql(
     m = model.replace("'", "\\'")
     cred = credentials.replace("'", "\\'")
 
-    import_key = f"match({cfg.get('key_text', '')}, '^{IMPORT_KEY_PATTERN}$')"
+    key_text = cfg.get("key_text")
+    is_import = f"match({key_text}, '^{IMPORT_KEY_PATTERN}$')" if key_text else ""
 
     def emb(text_col: str) -> str:
         return f"CAST(aiEmbed({text_col}, '{m}', map('credentials', '{cred}')) AS Array(BFloat16))"
@@ -159,11 +160,11 @@ def in_database_sql(
             select.append(emb(cfg["text"]))
         elif cfg.get("key_vec") and c == cfg["key_vec"]:
             # An import key has no axis text: no key vector, as `key_axis_text` decides.
-            select.append(f"if({import_key}, CAST([] AS Array(BFloat16)), {emb(cfg['key_text'])})")
+            select.append(f"if({is_import}, CAST([] AS Array(BFloat16)), {emb(cfg['key_text'])})")
         elif c == "embedding_model":
             select.append(f"'{m}'")
         elif cfg.get("key_dim") and c == cfg["key_dim"]:
-            select.append(f"if({import_key}, toUInt16(0), toUInt16({int(dim)}))")
+            select.append(f"if({is_import}, toUInt16(0), toUInt16({int(dim)}))")
         elif c == "embedding_dim":
             select.append(f"toUInt16({int(dim)})")
         elif cfg["version"] == "version" and c == "version":
