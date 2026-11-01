@@ -70,7 +70,7 @@ EvidenceRung = Literal[
     "client_acknowledged",
     "task_outcome",
 ]
-EvidenceSource = Literal["server", "client", "none"]
+EvidenceSource = Literal["server", "client"]
 
 
 class MentorEvidence(BaseModel):
@@ -80,10 +80,10 @@ class MentorEvidence(BaseModel):
     used."""
 
     rung: EvidenceRung
-    # How many in the window; None when Loom does not observe it or the read failed.
+    # How many in the window; None when the read failed.
     count: int | None = None
-    # Who recorded it: `server` (Loom saw it happen), `client` (the agent reported it,
-    # unverified) or `none` (not observed).
+    # Who recorded it: `server` (Loom saw it happen) or `client` (a caller reported it,
+    # unverified).
     source: EvidenceSource
     # What the count is, and what it does not show.
     meaning: str
@@ -109,15 +109,13 @@ class MentorBriefOutput(BaseModel):
     # Per hint code, sessions it was shown in and followed in, most shown first; empty when
     # no hint reached the agent or the read failed.
     adoption: list[MentorAdoption] = Field(default_factory=list)
-    # The agent's use of Loom in the window, one rung each from a call made to a task
-    # outcome (never observed); a rung whose read failed has no count and is in `skipped`.
+    # The agent's use of Loom in the window, one rung each from a call made to a graded
+    # task; empty for no agent in particular, and a rung whose read failed has no count.
     evidence: list[MentorEvidence] = Field(default_factory=list)
     # Oldest ledger row of this agent in the window, of any kind; None when it holds none.
     ledger_from: datetime | None = None
-    # Days the configured retention keeps this namespace's call ledger rows (0: until
-    # deleted; None when the read failed); the table's TTL takes it on at the next
-    # reconcile. When the window is longer, its oldest part is gone and the rungs read
-    # from the ledger (`attempt`, `success`, `committed_write`, `returned_hit`) cover less.
+    # Days the configured retention keeps this namespace's call ledger rows; 0 keeps them
+    # until deleted, None when the read failed.
     ledger_retention_days: int | None = None
     # The namespace's writers in the window, most active first; the brief
     # defaults to the first when the caller has no agent name of its own

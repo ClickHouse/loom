@@ -952,7 +952,15 @@ def test_mentor_brief_returns_the_profile_planes_and_adoption(
 M_EVIDENCE = "AS returned_hits"
 M_INDEXED = "FROM loom.memory_embeddings FINAL"
 M_RETENTION = "SELECT retention_days FROM loom.namespaces"
-M_REPORTED = "SELECT uniqExact(k) AS n FROM (SELECT arrayJoin(memories_used)"
+M_REPORTED = "SELECT uniqExact(k) AS n FROM ("
+M_GRADED = "SELECT countIf(grade != '') AS n FROM loom.agent_runs"
+# Every evidence read answering, for a test about one of them.
+_EVIDENCE_ROWS: dict[str, Any] = {
+    M_EVIDENCE: [{"attempts": 1, "successes": 1, "committed_writes": 0, "returned_hits": 0}],
+    M_INDEXED: [{"n": 0}],
+    M_REPORTED: [{"n": 0}],
+    M_GRADED: [{"n": 0}],
+}
 
 
 def _brief(monkeypatch: pytest.MonkeyPatch, ch: _CH, **facts: Any) -> Any:
@@ -983,6 +991,7 @@ def test_mentor_brief_climbs_the_evidence_ladder_from_attempt_to_outcome(
             M_EVIDENCE: [calls],
             M_INDEXED: [{"n": 11}],
             M_REPORTED: [{"n": 4}],
+            M_GRADED: [{"n": 2}],
             M_RETENTION: [{"retention_days": 0}],
         }
     )
@@ -1003,7 +1012,8 @@ def test_mentor_brief_climbs_the_evidence_ladder_from_attempt_to_outcome(
     assert ladder["indexed_write"] == (11, "server")
     # What the agent said it relied on is its own report; a task outcome is never observed.
     assert ladder["client_acknowledged"] == (4, "client")
-    assert ladder["task_outcome"] == (None, "none")
+    # Graded runs are the grader's report, not something Loom checked.
+    assert ladder["task_outcome"] == (2, "client")
     assert out.ledger_from == datetime(2026, 1, 2)
     rows = handler.render_table(out).splitlines()
     (attempt_row,) = [r for r in rows if r.startswith("attempt ")]
@@ -1014,10 +1024,11 @@ def test_the_namespace_retention_wins_over_the_ledger_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "retention_agent_events_days", 30)
-    ch = _CH({M_RETENTION: [{"retention_days": 7}]})
+    ch = _CH({**_EVIDENCE_ROWS, M_RETENTION: [{"retention_days": 7}]})
     assert _brief(monkeypatch, ch).ledger_retention_days == 7
-    ch = _CH({M_RETENTION: [{"retention_days": 0}]})
+    ch = _CH({**_EVIDENCE_ROWS, M_RETENTION: [{"retention_days": 0}]})
     out = _brief(monkeypatch, ch)
+    assert out.skipped == []
     assert out.ledger_retention_days == 30
     assert "the call ledger keeps 30d of rows" in handler.render_table(out)
 
@@ -1025,8 +1036,39 @@ def test_the_namespace_retention_wins_over_the_ledger_default(
 def test_a_failed_retention_read_leaves_the_retention_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    out = _brief(monkeypatch, _CH({M_RETENTION: RuntimeError("down")}))
+    out = _brief(monkeypatch, _CH({**_EVIDENCE_ROWS, M_RETENTION: RuntimeError("down")}))
     assert out.ledger_retention_days is None and "retention: RuntimeError" in out.skipped
+
+
+def test_an_embedder_that_fails_leaves_only_the_indexed_rung_uncounted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken() -> Any:
+        raise RuntimeError("no embedder")
+
+    monkeypatch.setattr(handler, "get_embedder", broken)
+    ch = _CH({**_EVIDENCE_ROWS, M_RETENTION: [{"retention_days": 0}]})
+    out = _brief(monkeypatch, ch)
+    ladder = {e.rung: e.count for e in out.evidence}
+    assert ladder["indexed_write"] is None and ladder["attempt"] == 1
+    assert out.skipped == ["indexed_writes: RuntimeError"]
+
+
+def test_a_brief_about_no_agent_in_particular_has_no_ladder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.insights.api.models_mentor import MentorBriefInput
+
+    async def _p(*a: Any, **k: Any) -> Any:
+        return _fake_profile(agent="-")
+
+    monkeypatch.setattr(m, "mentor_profile", _p)
+    ch = _CH(_EVIDENCE_ROWS)
+    monkeypatch.setattr(handler, "get_client", lambda: ch)
+    out = asyncio.run(
+        handler.handle_mentor_brief(MentorBriefInput(org="o", namespace="ns", agent="-"))
+    )
+    assert out.evidence == [] and not [q for q in ch.sqls if M_EVIDENCE in q]
 
 
 def test_a_failed_evidence_read_leaves_its_rungs_uncounted(

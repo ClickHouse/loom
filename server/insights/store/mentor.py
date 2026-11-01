@@ -505,7 +505,7 @@ async def call_evidence(
                        AND toUInt64OrZero(args['out_section_hits']) > 0)
                    OR (operation IN {_in(gets)} AND (args['out_found'] = 'true'
                        OR toUInt64OrZero(args['out_found_n']) > 0)))) AS returned_hits,
-               if(count() = 0, NULL, min(ts)) AS oldest_row
+               minOrNull(ts) AS oldest_row
         FROM loom.agent_events
         WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN}
         """,
@@ -560,11 +560,37 @@ async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | 
 async def reported_keys(
     org: str, namespace: str, agent: str, window_seconds: int, *, ch: _CHClient | None = None
 ) -> int:
-    """How many distinct memory keys the agent's runs in the window reported relying on
-    (`chunk:` ids, which name a passage rather than a memory, left out)."""
+    """How many distinct memory keys the agent reported relying on in the window: its runs'
+    `run.complete` `memories_used` (`chunk:` ids, which name a passage rather than a
+    memory, left out) and its `memory.outcome` calls that said `used` or `positive`."""
     ch = ch or _default_client()
     (row,) = await ch.query_all(
-        f"SELECT uniqExact(k) AS n FROM ({_CREDITED_KEYS}) WHERE NOT startsWith(k, 'chunk:')",
+        f"""
+        SELECT uniqExact(k) AS n FROM (
+            SELECT k FROM ({_CREDITED_KEYS}) WHERE NOT startsWith(k, 'chunk:')
+            UNION ALL
+            SELECT args['memory_key'] AS k {_LEDGER_AGENT} AND kind = 'request' AND success
+              AND operation = 'memory.outcome' AND args['outcome'] IN ('used', 'positive')
+              AND args['memory_key'] != ''
+        )
+        """,
+        params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
+    )
+    return int(row["n"])
+
+
+async def graded_runs(
+    org: str, namespace: str, agent: str, window_seconds: int, *, ch: _CHClient | None = None
+) -> int:
+    """How many of the agent's runs that started in the window carry a grade (`run.grade`
+    pass or fail)."""
+    ch = ch or _default_client()
+    (row,) = await ch.query_all(
+        f"""
+        SELECT countIf(grade != '') AS n FROM loom.agent_runs FINAL
+        WHERE {_SCOPE} AND agent = {{agent:String}}
+          AND started_at >= now() - INTERVAL {{win:UInt32}} SECOND
+        """,
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
     return int(row["n"])

@@ -103,31 +103,40 @@ def test_the_ladder_counts_what_the_calls_show(
         run = _call(c, "run.begin", {**ident, "goal": "send the report"})
         done = {**ident, "run_id": run["run_id"], "status": "completed"}
         _call(c, "run.complete", {**done, "memories_used": ["pref/report"]})
+        # A grader's verdict on the run is its outcome, as the grader reports it.
+        grade = {"org": org, "namespace": ns, "run_id": run["run_id"], "grade": "pass"}
+        _call(c, "run.grade", {**grade, "source": "ci"})
+        # An outcome label is a second way to report reliance (on another fact).
+        day = {**ident, "memory_key": "pref/day", "value": "Standups are at nine"}
+        _call(c, "memory.set", day)
+        used = {**ident, "memory_key": "pref/day", "outcome": "used"}
+        assert _call(c, "memory.outcome", used)["recorded"] is True
 
         def brief() -> Any:
             # A brief is ledgered under the agent it names; the ladder leaves it out.
             body = {"org": org, "namespace": ns, "agent": AGENT}
             out = _call(c, "mentor.brief", body)
             ladder = {e["rung"]: e for e in out["evidence"]}
-            return (out, ladder) if ladder["attempt"]["count"] == 17 else None
+            return (out, ladder) if ladder["attempt"]["count"] == 19 else None
 
-        out, ladder = wait_until(brief, max_wait=30.0, description="seventeen calls in the ledger")
+        out, ladder = wait_until(brief, max_wait=30.0, description="nineteen calls in the ledger")
     counts = {rung: e["count"] for rung, e in ladder.items()}
-    assert counts["success"] == 17
-    # Two writes stored a row; the replay, the restatement and the dry run did not.
-    assert counts["committed_write"] == 2
-    # The deleted row is no longer one a search can serve.
-    assert counts["indexed_write"] == 1
+    assert counts["success"] == 19
+    # Three writes stored a row; the replay, the restatement and the dry run did not.
+    assert counts["committed_write"] == 3
+    # The deleted row no longer counts.
+    assert counts["indexed_write"] == 2
     # The two gets and the MCP get that found their key, the bulk read with one hit and the
     # two search.query calls with a hit answered, and the ask when it did not abstain; the
     # miss and the abstaining search did not.
     assert counts["returned_hit"] == 6 + (0 if asked["abstain"] else 1)
-    # One key reported relied on, as the client's own word.
+    # Two keys reported relied on (one by the run, one by an outcome), as the client's word.
     assert (counts["client_acknowledged"], ladder["client_acknowledged"]["source"]) == (
-        1,
+        2,
         "client",
     )
-    assert (counts["task_outcome"], ladder["task_outcome"]["source"]) == (None, "none")
+    # One graded run, as its grader reported it.
+    assert (counts["task_outcome"], ladder["task_outcome"]["source"]) == (1, "client")
     # The retention is the server's (0 unless it sets one): known, whatever its value.
     assert out["ledger_from"] is not None and out["ledger_retention_days"] is not None
     assert not [s for s in out["skipped"] if s.split(":")[0] in ("evidence", "indexed_writes")]

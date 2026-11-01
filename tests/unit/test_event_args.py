@@ -245,7 +245,9 @@ def test_a_sectioned_search_records_its_hits_across_sections() -> None:
     abstained = SearchOutput(
         memory={"abstain": True, "results": [{"memory_key": "a"}]},
         profile={"results": [{"label": "role"}]},
+        tracker={"verdict": "duplicate", "results": [{"number": 7}]},
     )
+    # The duplicate-check verdict answers whether a defect is filed, not a recall.
     assert project_result(abstained)["out_section_hits"] == "0"
     # A result with no sections records nothing.
     assert "out_section_hits" not in project_result({"results": [1, 2]})

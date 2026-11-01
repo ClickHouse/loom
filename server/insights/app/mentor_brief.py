@@ -173,7 +173,8 @@ _RUNG_MEANING: dict[EvidenceRung, str] = {
         "calls the ledger records under this agent, answered or not (the dashboard's calls "
         "and the briefs about the agent left out). Not counted: any call whose body names "
         "no agent, which the ledger records under none (a read by id, an MCP "
-        "`memory.update`, the SDKs' `memory.update` and `memory.outcome` by default), or "
+        "`memory.update`, the Python SDK's `memory.update`, `memory.outcome` and "
+        "`memory.outcome_run` by default), or "
         "that reads across agents (`agent: *`, as the SDKs' `memory.search` and "
         "`memory.ask` and MCP's cross-agent reads send it)"
     ),
@@ -193,10 +194,14 @@ _RUNG_MEANING: dict[EvidenceRung, str] = {
         "the answer reached the model or changed its work is not recorded"
     ),
     "client_acknowledged": (
-        "distinct memory keys the agent's runs reported relying on (`run.complete` "
-        "`memories_used`, chunk ids left out): the client's own report, not verified"
+        "distinct memory keys the agent reported relying on: its runs' `run.complete` "
+        "`memories_used` (chunk ids left out) and its `memory.outcome` calls that said "
+        "`used` or `positive`; the client's own report, not verified"
     ),
-    "task_outcome": "not observed: Loom records no task outcome",
+    "task_outcome": (
+        "the agent's runs in the window that carry a grade (`run.grade` pass or fail), as "
+        "the grader reported it; Loom does not check a task's outcome itself"
+    ),
 }
 
 
@@ -209,7 +214,7 @@ async def _evidence(
 ) -> tuple[list[MentorEvidence], datetime | None, int | None, list[str]]:
     """The evidence ladder, the oldest ledger row in the window, how long the ledger keeps
     this namespace's rows, and the reads that failed ("step: reason"). Read at each brief,
-    not from the cached profile; the four reads run at once and stand alone: a failed one
+    not from the cached profile; the five reads run at once and stand alone: a failed one
     leaves its rungs without a count."""
     ch = get_client()
     who = (profile.org, profile.namespace, profile.agent, int(profile.window_seconds))
@@ -228,7 +233,7 @@ async def _evidence(
         model = get_embedder().model_name
         return await mentor_store.indexed_writes(*who, model=model, ch=ch)
 
-    calls_read, indexed_count, reported, own_retention = await asyncio.gather(
+    calls_read, indexed_count, reported, graded, own_retention = await asyncio.gather(
         read(
             "evidence",
             mentor_store.call_evidence(
@@ -237,6 +242,7 @@ async def _evidence(
         ),
         read("indexed_writes", indexed()),
         read("reported_keys", mentor_store.reported_keys(*who, ch=ch)),
+        read("graded_runs", mentor_store.graded_runs(*who, ch=ch)),
         read(
             "retention",
             mentor_store.namespace_retention_days(profile.org, profile.namespace, ch=ch),
@@ -260,7 +266,7 @@ async def _evidence(
         _rung("indexed_write", indexed_count, "server"),
         _rung("returned_hit", counted("returned_hits"), "server"),
         _rung("client_acknowledged", reported, "client"),
-        _rung("task_outcome", None, "none"),
+        _rung("task_outcome", graded, "client"),
     ]
     return rungs, calls.get("oldest_row"), retention, failed
 
@@ -285,7 +291,10 @@ async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
             skipped=["profile: unavailable"],
             healthy=True,
         )
-    evidence, ledger_from, retention, evidence_failed = await _evidence(profile)
+    # No agent in particular: the ledger's `-` and `*` rows are everyone's unattributed calls.
+    evidence, ledger_from, retention, evidence_failed = (
+        ([], None, None, []) if profile.agent in ANONYMOUS_AGENTS else await _evidence(profile)
+    )
     hints = [
         MentorHint(
             code=h.code,
@@ -356,12 +365,14 @@ def render_table(out: MentorBriefOutput) -> str:
             lines.append(f"  {a.code:<25} {a.shown_sessions:>4} → {a.followed_sessions}")
     if out.evidence:
         lines.append("")
-        lines.append("evidence             count  source  meaning")
+        lines.append("evidence             count  source")
         for e in out.evidence:
             n = "-" if e.count is None else str(e.count)
-            lines.append(f"{e.rung:<20} {n:>5}  {e.source:<6}  {e.meaning}")
+            lines.append(f"{e.rung:<20} {n:>5}  {e.source}")
         if out.ledger_retention_days:
             lines.append(f"the call ledger keeps {out.ledger_retention_days}d of rows")
+        lines.append("")
+        lines.extend(f"{e.rung}: {e.meaning}" for e in out.evidence)
     if out.skipped:
         lines.append("")
         lines.append("skipped: " + "; ".join(out.skipped))

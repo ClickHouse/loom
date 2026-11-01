@@ -14465,7 +14465,7 @@ class MentorEvidence(TypedDict, total=False):
         ]
     ]
     count: NotRequired[Optional[int]]
-    source: Required[Literal["server", "client", "none"]]
+    source: Required[Literal["server", "client"]]
     meaning: Required[str]
 
 

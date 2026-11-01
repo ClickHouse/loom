@@ -6352,7 +6352,7 @@ export interface MentorAdoption {
 export interface MentorEvidence {
   rung: "attempt" | "success" | "committed_write" | "indexed_write" | "returned_hit" | "client_acknowledged" | "task_outcome";
   count?: number | null;
-  source: "server" | "client" | "none";
+  source: "server" | "client";
   meaning: string;
 }
 
