@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
 from server.core.ch_params import chunks
@@ -22,6 +21,7 @@ from server.memory.domain.search_types import (
     hit_sort_key,
     row_identity,
 )
+from server.memory.store.rows import parse_memory_value
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -116,7 +116,7 @@ def _is_set_chunk(h: Any) -> bool:
     )
 
 
-def _folded_fields(row: Any, chunk: Any) -> dict[str, Any]:
+def _folded_fields(row: SearchHit, chunk: SearchHit) -> dict[str, Any]:
     """The fields a row takes when a chunk of its value folds onto it: one more folded
     chunk and, when the chunk out-scored it, the chunk's score, distance and passage."""
     components = dict(row.score_components or {})
@@ -148,12 +148,13 @@ class SetChunkRow(NamedTuple):
 
 
 def fold_set_chunks(
-    hits: list[SearchHit], rows: Mapping[tuple[str, str, str], SetChunkRow] | None
+    hits: list[SearchHit], rows: Mapping[ChunkId, SetChunkRow] | None
 ) -> list[SearchHit]:
     """Fold the verbatim chunks of long memory.set values onto the rows `rows` names
     (`_set_chunk_rows`): onto the row when it is pooled, as its hit when it is not; a chunk
-    whose row is not served is dropped. With `rows` None a chunk folds onto a pooled fact
-    of its key, its writer's first, as before. Conversation chunks pass through."""
+    no served row's value cuts is dropped. With `rows` None a chunk folds onto its writer's
+    pooled fact of the key, else any pooled fact of the key. Conversation chunks pass
+    through."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
     out = [h for h in hits if not _is_set_chunk(h)]
@@ -168,10 +169,10 @@ def fold_set_chunks(
             continue
         parent_key = str(h.parent_memory_key)
         found = None
-        if rows is not None and h.identity:
-            found = rows.get((h.identity[0], h.identity[1], parent_key))
+        if rows is not None and (cid := _chunk_id(h)):
+            found = rows.get(cid)
             if found is None:
-                continue  # its row is not served: neither is the chunk
+                continue  # no served row's value cuts it
         target: tuple[str, ...]
         if found:
             target = (*found.identity, parent_key)
@@ -208,35 +209,42 @@ def fold_set_chunks(
     return out
 
 
+ChunkId = tuple[str, str, str, int, str]  # agent, user_id, parent key, index, sha
+
+
+def _chunk_id(h: SearchHit) -> ChunkId | None:
+    if not h.identity:
+        return None
+    index = str(h.memory_key).rpartition(":")[2]
+    if not index.isdigit():
+        return None
+    return h.identity[0], h.identity[1], str(h.parent_memory_key), int(index), h.chunk_sha256
+
+
 async def _set_chunk_rows(
     ch: _CHClient, q: SearchQuery, hits: list[SearchHit]
-) -> dict[tuple[str, str, str], SetChunkRow] | None:
-    """(agent, user_id, memory_key) -> the served row each pooled set chunk was cut from:
-    the writer's live row whose current value was written last before the chunks were cut
-    (`_value_written`). None under shared scope, where the writer's private row is never
-    served, and when a read fails."""
-    # when each writer's chunks of a key were cut: they are written right after its value
-    cut: dict[tuple[str, str, str], int] = {}
-    for h in hits:
-        if _is_set_chunk(h) and h.identity:
-            key = (h.identity[0], h.identity[1], str(h.parent_memory_key))
-            cut[key] = max(cut.get(key, 0), _epoch_ns(h.created_at))
-    wanted = sorted(cut)
-    if not wanted:
+) -> dict[ChunkId, SetChunkRow] | None:
+    """The served row each pooled set chunk was cut from: the writer's live row of the key
+    whose current value cuts that chunk (`set_chunk_identities`), the newest when several
+    do. A chunk no row's value cuts any more (a later write replaced it) names none. None
+    under shared scope, where the writer's private row is never served, and when a read
+    fails."""
+    from server.memory.app.set_chunks import set_chunk_identities
+
+    pooled = {cid for h in hits if _is_set_chunk(h) and (cid := _chunk_id(h))}
+    if not pooled:
         return {}
     if q.scope != "private":
         return None
     # served whatever its vector: a row whose embedding is still pending has its chunks
     where, params = _build_where(q, ranked=False)
-    served = " AND ".join(where)
-    params["set_rows"] = wanted
+    params["set_rows"] = sorted({cid[:3] for cid in pooled})
     try:
         live = await ch.query_all(
             f"""
             SELECT e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id,
                    e.memory_key AS memory_key, max(e.version) AS version,
-                   argMax(e.content_sha256, e.version) AS content_sha256,
-                   argMax({served}, e.version) AS served
+                   argMax({" AND ".join(where)}, e.version) AS served
             FROM loom.memory_embeddings AS e FINAL
             WHERE e.org = {{org:String}}
               AND e.namespace = {{ns:String}}
@@ -247,73 +255,44 @@ async def _set_chunk_rows(
             """,
             params=params,
         )
-        written = await _value_written(ch, q, live)
+        values = await _row_values(ch, q, live)
     except Exception as e:  # noqa: BLE001 — naming a chunk's row never fails a search
         log.warning("set chunk rows read failed (fail-open): %s", e)
         return None
-    latest: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for r in sorted(live, key=_row_of):
-        key = (str(r["agent"]), str(r["user_id"]), str(r["memory_key"]))
-        # a value written after the chunks were cut (to the second) did not cut them
-        if cut[key] and written[_row_of(r)] > cut[key] + 1_000_000_000:
+    out: dict[ChunkId, SetChunkRow] = {}
+    for r in sorted(live, key=lambda r: int(r["version"])):  # the newest match wins
+        row = _row_of(r)
+        if row not in values or not r["served"]:
             continue
-        if key not in latest or written[_row_of(r)] > written[_row_of(latest[key])]:
-            latest[key] = r
-    return {
-        key: SetChunkRow((key[0], key[1], str(r["session_id"])), int(r["version"]))
-        for key, r in latest.items()
-        if r["served"]
-    }
-
-
-def _epoch_ns(stamp: str) -> int:
-    # a chunk's `created_at` (DateTime, UTC) in epoch ns; 0 when the leg read none
-    try:
-        return int(datetime.fromisoformat(stamp).replace(tzinfo=UTC).timestamp()) * 1_000_000_000
-    except ValueError:
-        return 0
+        cuts = set_chunk_identities(*values[row])
+        for cid in pooled:
+            if cid[:3] == (row[0], row[1], row[3]) and cid[3:] in cuts:
+                out[cid] = SetChunkRow(row[:3], int(r["version"]))
+    return out
 
 
 def _row_of(r: Mapping[str, Any]) -> tuple[str, str, str, str]:
     return str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"])
 
 
-async def _value_written(
+async def _row_values(
     ch: _CHClient, q: SearchQuery, live: list[dict[str, Any]]
-) -> dict[tuple[str, str, str, str], int]:
-    """When each live row's current value was written: the first version of the run of its
-    history that holds its current hash, so a status change or a metadata copy does not
-    move it and a value that came back counts from its return. A row with no history
-    counts from its vector's version."""
-    current = {_row_of(r): str(r["content_sha256"]) for r in live}
-    out = {_row_of(r): int(r["version"]) for r in live}
-    if not live:
-        return out
-    # the live rows' own history, by the table's sort-key prefix, a form field at a time
+) -> dict[tuple[str, str, str, str], tuple[Any, str]]:
+    """The current (value, memory_type) of each live row, read by `loom.memory`'s sort-key
+    prefix a form field at a time."""
     sql = """
-        SELECT agent, user_id, session_id, memory_key,
-               arraySort(x -> x.1, groupArray((version, toString(content_sha256)))) AS run
-        FROM loom.memory_versions
+        SELECT agent, user_id, session_id, memory_key, memory_type, value
+        FROM loom.memory FINAL
         WHERE org = {org:String}
           AND namespace = {ns:String}
           AND (agent, user_id, session_id, memory_key)
               IN {rows:Array(Tuple(String, String, String, String))}
-        GROUP BY agent, user_id, session_id, memory_key
+          AND tombstoned_at IS NULL
     """
-    history: list[dict[str, Any]] = []
-    for part in chunks(sorted(current)):
-        history += await ch.query_all(sql, {"org": q.org, "ns": q.namespace, "rows": part})
-    for h in history:
-        row = _row_of(h)
-        start = None
-        for version, sha in h["run"]:
-            if sha != current[row]:
-                start = None
-            elif start is None:
-                start = int(version)
-        if start is not None:
-            out[row] = start
-    return out
+    found: list[dict[str, Any]] = []
+    for part in chunks(sorted({_row_of(r) for r in live})):
+        found += await ch.query_all(sql, params={"org": q.org, "ns": q.namespace, "rows": part})
+    return {_row_of(r): (parse_memory_value(r["value"]), str(r["memory_type"])) for r in found}
 
 
 async def _finish_pool(ch: _CHClient, hits: list[SearchHit], q: SearchQuery) -> list[SearchHit]:

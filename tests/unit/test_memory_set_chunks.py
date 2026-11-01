@@ -833,11 +833,11 @@ async def test_a_failed_head_read_retires_the_chunks_it_just_wrote(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("duplicate_of", "writes"), [("", 1), ("canonical-id", 0)])
-async def test_a_duplicate_writes_no_chunks(
-    monkeypatch: pytest.MonkeyPatch, duplicate_of: str, writes: int
+@pytest.mark.parametrize("duplicate_of", ["", "canonical-id"])
+async def test_a_duplicate_leaves_the_keys_chunks_to_the_served_value(
+    monkeypatch: pytest.MonkeyPatch, duplicate_of: str
 ) -> None:
-    # its canonical answers for it, and the key's chunks stay the served value's
+    # the key holds a long value's chunks; a duplicate restatement must not replace them
     from types import SimpleNamespace
 
     from server.memory.app import set_commit
@@ -845,22 +845,23 @@ async def test_a_duplicate_writes_no_chunks(
     async def nothing(*_: Any, **__: Any) -> None:
         return None
 
-    written: list[Any] = []
-
-    async def write(input: Any, **_: Any) -> int:
-        written.append(input)
-        return 3
-
     monkeypatch.setattr(set_commit, "_set_post_insert", nothing)
     monkeypatch.setattr(set_commit, "project_stated_relations", nothing)
     monkeypatch.setattr(set_commit, "follow_beside_response", lambda **_: None)
     monkeypatch.setattr(set_commit, "peer_id_in_read_scope", lambda *_: "")
-    monkeypatch.setattr(sc, "write_set_chunks_fail_open", write)
+    served = [_live_row(0, "the served long value's first passage")]
+    ch = _CH(routes=[("FROM loom.memory_chunks FINAL", served)])
     w = set_commit._SetWrite(
         input=_input(_NOTE_5KB), version=1, retyped_from="", existing=None, expires_at=None
     )
     w.memory_row = {"status": "duplicate" if duplicate_of else "active"}
-    out = await set_commit._set_after_write(
-        w, _CH(), None, SimpleNamespace(verdict="clear"), duplicate_of, []
+    w.embedder = _BatchEmbedder()
+    await set_commit._set_after_write(
+        w, ch, None, SimpleNamespace(verdict="clear"), duplicate_of, []
     )
-    assert (len(written), out.chunks_written) == (writes, 3 * writes)
+    written = ch.rows_for("loom.memory_chunks")
+    if duplicate_of:
+        assert written == []
+    else:  # an active write replaces the key's chunks with its own
+        assert any(r["tombstoned_at"] is not None for r in written)
+        assert any(r["tombstoned_at"] is None for r in written)

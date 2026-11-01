@@ -579,7 +579,7 @@ def _chunk_primary_hit(
         parent_memory_key=str(r.get("parent_memory_key") or ""),
         session_id=str(r.get("session_id") or ""),
         identity=row_identity(r),
-        created_at=str(r.get("created_at") or ""),
+        chunk_sha256=_chunk_row_sha(r),
         score_components={
             "semantic": max(0.0, 1.0 - distance),
             "chunk_parent_boost": float(boost),
@@ -655,7 +655,7 @@ def _chunk_neighbor_hit(r: dict[str, Any], q: SearchQuery, q_tokens: set[str]) -
         parent_memory_key=str(r.get("parent_memory_key") or ""),
         session_id=str(r.get("session_id") or ""),
         identity=row_identity(r),
-        created_at=str(r.get("created_at") or ""),
+        chunk_sha256=_chunk_row_sha(r),
         score_components={
             "semantic": max(0.0, 1.0 - distance),
             "token_density": float(density_bonus),
@@ -918,7 +918,7 @@ def _chunk_neighbor_sql(
                 c.user_id AS user_id,
                 c.session_id AS session_id,
                 c.parent_memory_key AS parent_memory_key,
-                c.created_at AS created_at,
+                c.content_sha256 AS content_sha256,
                 {date_select}
             FROM loom.memory_chunks AS c FINAL
             {date_join}

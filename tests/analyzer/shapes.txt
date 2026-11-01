@@ -793,6 +793,7 @@
 701c7e908795	ALTER TABLE loom.memory_record_conflicts DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 704093d8a985	SELECT DISTINCT qualified_name, symbol_id FROM loom.code_symbols WHERE org = {org:String} AND namespace = {ns:String} AND tier = {tier:String} AND path = {path:String}
 705d0e32d78e	WITH recent AS ( SELECT DISTINCT org, namespace FROM loom.memory WHERE created_at > now() - toIntervalSecond({since_s:UInt32}) AND tombstoned_at IS NULL ) SELECT m.org, m.namespace, m.agent, m.user_id
+7060375c96df	SELECT agent, user_id, session_id, memory_key, memory_type, value FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND (agent, user_id, session_id, memory_key) IN {rows:Arra
 70e79f9a81f4	SELECT count() AS n FROM loom.code_symbols FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL
 711d1334a264	SELECT from_symbol_id, path, argMax(guards, version) AS guards, argMax(guard_kinds, version) AS guard_kinds, argMax(sites, version) AS sites, argMax(site_callees, version) AS site_callees, argMax(site
 71315c743233	SELECT m.org AS org, m.namespace AS namespace, m.memory_key AS memory_key FROM (SELECT org, namespace, agent, user_id, session_id, memory_key FROM loom.memory FINAL WHERE tombstoned_at IS NULL AND sen
@@ -1639,7 +1640,6 @@ d9b16651542c	ALTER TABLE loom.entity_edge_memories DELETE WHERE (org = {org:Stri
 da16c635942f	SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND user_id = {uid:String}
 da1a4070fe91	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
 daa35ab01384	SELECT count() AS n, countIf(embedding_dim > ?) AS embedded, countIf(NOT startsWith(embed_last_error, {unembedded:String})) AS embeddable FROM loom.code_chunks FINAL WHERE org = {org:String} AND names
-dabe125ce147	SELECT e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id, e.memory_key AS memory_key, max(e.version) AS version, argMax(e.content_sha256, e.version) AS content_sha256, argMax(e.org =
 dabe37717488	SELECT state_key, state_value, detail, updated_at FROM loom.code_index_state FINAL WHERE org = {org:String} AND namespace = {ns:String} ORDER BY state_key
 dae0d2378112	SELECT count() AS n FROM loom.memory_code_links FINAL WHERE org = {org:String} AND user_id = {uid:String} AND tombstoned_at IS NULL
 dae4a1968b69	ALTER TABLE loom.context_blobs UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_mutat
@@ -1704,7 +1704,6 @@ df9ad7107a4d	WITH m AS ( SELECT org, namespace, agent, user_id, session_id, memo
 dfab46389b75	SELECT count() AS n FROM loom.memory_record_versions WHERE org = {org:String} AND namespace = {ns:String} AND ?
 dfb389c3eaaa	SELECT count() AS n FROM loom.memory_records FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL
 e01b3f138368	ALTER TABLE loom.memory_ask_precedents DELETE WHERE (org = {org:String} AND hasAny(arrayConcat(window_keys, cited_keys), {keys:Array(String)})) AND ({erasure_mutation_tag:String} = {erasure_mutation_t
-e04df8754431	SELECT agent, user_id, session_id, memory_key, arraySort(x -> x.?, groupArray((version, toString(content_sha256)))) AS run FROM loom.memory_versions WHERE org = {org:String} AND namespace = {ns:String
 e052ed84fa8b	SELECT ts, org, namespace, agent, user_id, session_id, operation, request_id, trace_id, latency_ms, input_tokens, output_tokens, embedding_tokens, upstream_cost_usd, bytes_written, success, error_code
 e0a394a9b663	SELECT pattern_id, org, namespace, pattern, pattern_type, scope, reason, created_by, hit_count, last_hit_at, created_at FROM loom.blacklist FINAL WHERE tombstoned_at IS NULL AND ((org = {org:String} A
 e0aa76ac7494	SELECT path, scope, symbol_ids, start_line, end_line, content, shingles, uniqExact(path) OVER () AS admitted_files FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, array
@@ -1849,6 +1848,7 @@ f426fd45f2ab	SELECT subject FROM loom.audit_log WHERE org = ? AND namespace = ? 
 f428423c6236	SELECT path, scope, symbol_ids, start_line, end_line, content FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, tombstoned_at FROM loom.code_chunks WHERE org = {org:Strin
 f44dcb1cb8df	ALTER TABLE loom.documents UPDATE superseded_at = {now:DateTime} WHERE (org = {org:String} AND namespace IN {ns:Array(String)} AND superseded_at IS NULL) AND ({erasure_mutation_tag:String} = {erasure_
 f45136da88f9	SELECT c.session_id AS session_id, c.chunk_index AS chunk_index, c.parent_memory_key AS parent_memory_key, cosineDistance(c.embedding, {q:Array(Float32)}) AS distance FROM loom.memory_chunks AS c WHER
+f45f3cee4b0e	SELECT e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id, e.memory_key AS memory_key, max(e.version) AS version, argMax(e.org = {org:String} AND e.namespace = {ns:String} AND e.scope
 f4a4dc94c981	SELECT count() AS n FROM loom.memory_extraction_queue FINAL WHERE org = {org:String} AND namespace = {ns:String}
 f4a7b1b62a06	ALTER TABLE loom.conversation_threads DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync
 f4d7a157aa99	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
