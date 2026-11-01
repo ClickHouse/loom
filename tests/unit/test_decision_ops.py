@@ -18,6 +18,7 @@ from server.memory.app import decisions as svc
 from server.memory.domain.decision_schema import SCHEMA_FIELDS
 from server.memory.domain.edge_relations import canonical_link_relation
 from tests.unit.clickhouse_local import ddl
+from tests.unit.decision_inputs import record_input
 
 
 def test_decision_key_is_the_record_plane_identity_key() -> None:
@@ -203,30 +204,9 @@ def env(monkeypatch):
         yield ch, calls, h
 
 
-def _record_input(**over: Any):
-    from server.memory.api.models_decision import DecisionRecordInput
-
-    base: dict[str, Any] = dict(
-        org="o",
-        namespace="n",
-        agent="claude",
-        run_id="r1",
-        category="Deploy",
-        scenario="Roll back or hotfix the 26.5 image?",
-        reasoning="Rollback is 2 minutes; the fix is untested.",
-        outcome="rollback",
-        alternatives=["hotfix forward", "wait"],
-        confidence=0.8,
-        caused_by=["ci:flaky-runner"],
-        influenced_by=["policy:no-friday-deploys", ""],
-    )
-    base.update(over)
-    return DecisionRecordInput(**base)
-
-
 def test_record_writes_schema_once_record_memory_and_edges(env) -> None:
     ch, calls, h = env
-    out = asyncio.run(h.handle_decision_record(_record_input()))
+    out = asyncio.run(h.handle_decision_record(record_input()))
     key = svc.decision_key("Deploy", "Roll back or hotfix the 26.5 image?")
     assert out.memory_key == key and out.record_id == "rec-1" and out.superseded_prior is False
     assert len(calls["schema"]) == 1 and calls["schema"][0].name == "decision"
@@ -249,7 +229,7 @@ def test_record_writes_schema_once_record_memory_and_edges(env) -> None:
     assert all(ln.to_key == key and ln.run_id == "r1" for ln in calls["link"])
     assert "decision.outcome" in out.next
     # second write for the same scenario: schema not re-registered, prior reported
-    again = asyncio.run(h.handle_decision_record(_record_input(outcome="hotfix forward")))
+    again = asyncio.run(h.handle_decision_record(record_input(outcome="hotfix forward")))
     assert again.superseded_prior is True and len(calls["schema"]) == 1
 
 
@@ -257,10 +237,10 @@ def test_precedents_search_decisions_and_join_records(env) -> None:
     from server.memory.api.models_decision import DecisionPrecedentsInput
 
     ch, calls, h = env
-    asyncio.run(h.handle_decision_record(_record_input()))
+    asyncio.run(h.handle_decision_record(record_input()))
     asyncio.run(
         h.handle_decision_record(
-            _record_input(scenario="Pin or float the runner image?", outcome="pin")
+            record_input(scenario="Pin or float the runner image?", outcome="pin")
         )
     )
     out = asyncio.run(
@@ -287,7 +267,7 @@ def test_chain_walks_authored_edges_and_attaches_decisions(env) -> None:
     from server.memory.api.models_decision import DecisionChainInput
 
     ch, calls, h = env
-    d = asyncio.run(h.handle_decision_record(_record_input()))
+    d = asyncio.run(h.handle_decision_record(record_input()))
     ch.edges.append((d.memory_key, "incident:2026-09-11", "caused"))
     out = asyncio.run(
         h.handle_decision_chain(
@@ -310,7 +290,7 @@ def test_outcome_revises_the_record_and_credits_the_run(env) -> None:
     from server.memory.api.models_decision import DecisionOutcomeInput
 
     ch, calls, h = env
-    d = asyncio.run(h.handle_decision_record(_record_input()))
+    d = asyncio.run(h.handle_decision_record(record_input()))
     ch.run_used = ["ci:flaky-runner", "runbook:rollback"]
     out = asyncio.run(
         h.handle_decision_outcome(
@@ -387,7 +367,7 @@ def test_a_failing_closing_check_still_records_the_decision(env, monkeypatch) ->
         raise RuntimeError("timeout")
 
     monkeypatch.setattr(h, "tombstone_decision_record", _fails)
-    out = asyncio.run(h.handle_decision_record(_record_input()))
+    out = asyncio.run(h.handle_decision_record(record_input()))
     assert out.record_id == "rec-1" and len(calls["record"]) == 1 and len(calls["set"]) == 1
 
 

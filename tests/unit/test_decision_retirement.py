@@ -16,7 +16,7 @@ import pytest
 
 from server.memory.app import decisions as svc
 from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl, view
-from tests.unit.test_decision_ops import _record_input
+from tests.unit.decision_inputs import record_input
 
 _KEY = svc.decision_key("deploy", "Roll back or hotfix the image?")
 _RECORD_ID = "00000000-0000-0000-0000-0000000000d1"
@@ -217,7 +217,7 @@ async def test_deleting_a_decision_row_tombstones_its_record(
     # Deciding the scenario again records it afresh: nothing active was superseded.
     _set_into(local, monkeypatch)
     again = await h.handle_decision_record(
-        _record_input(
+        record_input(
             category="deploy",
             scenario="Roll back or hotfix the image?",
             outcome="hotfix",
@@ -343,7 +343,7 @@ async def test_a_move_without_a_redirect_retires_the_record(
     )
     assert chain.seed_decision is None
     again = await h.handle_decision_record(
-        _record_input(
+        record_input(
             category="deploy",
             scenario="Roll back or hotfix the image?",
             caused_by=[],
@@ -384,7 +384,7 @@ async def test_a_refused_memory_row_leaves_no_active_record(
 
     monkeypatch.setattr("server.memory.app.write.handle_memory_set", _pinned_conflict)
     with pytest.raises(HTTPException):
-        await h.handle_decision_record(_record_input(caused_by=[], influenced_by=[]))
+        await h.handle_decision_record(record_input(caused_by=[], influenced_by=[]))
     key = svc.decision_key("Deploy", "Roll back or hotfix the 26.5 image?")
     assert await h._decision_records(local, "o", "n", [key]) == {}
     assert await local.query_all("SELECT 1 FROM loom.memory_records") == []
@@ -538,7 +538,7 @@ async def test_a_delete_between_the_row_and_the_record_leaves_the_new_record_tom
 
     monkeypatch.setattr("server.memory.app.write.handle_memory_set", _set_then_delete)
     out = await h.handle_decision_record(
-        _record_input(
+        record_input(
             category="deploy",
             scenario="Roll back or hotfix the image?",
             caused_by=[],
@@ -635,14 +635,14 @@ async def test_a_new_writers_decision_keeps_nothing_of_the_earlier_writers(
 
     _set_into(local, monkeypatch)
     scenario = {"category": "deploy", "scenario": "Roll back or hotfix the image?"}
-    await h.handle_decision_record(_record_input(**scenario, caused_by=[], influenced_by=[]))
+    await h.handle_decision_record(record_input(**scenario, caused_by=[], influenced_by=[]))
     await h.handle_decision_outcome(
         DecisionOutcomeInput(
             org="o", namespace="n", memory_key=_KEY, realized_outcome="took 90s", success=True
         )
     )
     restated = await h.handle_decision_record(
-        _record_input(
+        record_input(
             **scenario,
             agent="maintainer",
             run_id="-",
@@ -736,7 +736,7 @@ async def test_an_outcome_after_a_re_record_answers_a_conflict(
     async def _re_record_first(call: int) -> None:
         if call == 1:
             await h.handle_decision_record(
-                _record_input(
+                record_input(
                     category="deploy",
                     scenario="Roll back or hotfix the image?",
                     reasoning="the new image is already canaried",
@@ -791,7 +791,7 @@ async def test_an_outcome_without_success_keeps_the_verdict(
 
     _set_into(local, monkeypatch)
     scenario = {"category": "deploy", "scenario": "Roll back or hotfix the image?"}
-    await h.handle_decision_record(_record_input(**scenario, caused_by=[], influenced_by=[]))
+    await h.handle_decision_record(record_input(**scenario, caused_by=[], influenced_by=[]))
     for success in (True, None):
         await h.handle_decision_outcome(
             DecisionOutcomeInput(
@@ -917,11 +917,11 @@ async def test_a_decision_merged_into_another_key_writes_nothing(
 
     monkeypatch.setattr("server.memory.app.write.handle_memory_set", _merge)
     monkeypatch.setattr(mops, "handle_memory_link", _no_link)
-    out = await h.handle_decision_record(_record_input())
+    out = await h.handle_decision_record(record_input())
     assert (out.memory_key, out.record_id) == (merged_into, "")
     assert (out.superseded_prior, out.edges_written) == (False, 0)
     hint = (
-        "decision:peer, which has the same text; nothing was written. Use that key."
+        "decision:peer, a decision with the same text; nothing was written. Use that key."
         if merged_into
         else "Call decision.record again"
     )
@@ -962,7 +962,7 @@ async def test_an_outcome_merged_into_another_key_writes_and_credits_nothing(
     )
     assert (out.updated, out.memories_credited, credited) == (False, 0, [])
     hint = (
-        "decision:peer, which has the same text; nothing was written under this key."
+        "decision:peer, a decision with the same text; nothing was written."
         if merged_into
         else "Call decision.outcome again"
     )

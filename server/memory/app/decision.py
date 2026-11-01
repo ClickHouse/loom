@@ -131,17 +131,16 @@ class _Written(NamedTuple):
     merged_into_key: str = ""
 
 
-def _merged_hint(merged_into_key: str, op: str, ending: str) -> str:
-    """Why `op` wrote nothing after memory.set merged its row; `ending` closes the sentence
-    when the decision merged into is known."""
+def _merged_hint(merged_into_key: str, op: str) -> str:
+    """Why `op` wrote nothing after memory.set merged its row."""
     if not merged_into_key:
         return (
             "memory.set merged this into a decision that can no longer be read; nothing was "
             f"written. Call {op} again."
         )
     return (
-        f"memory.set merged this into the decision {merged_into_key}, which has the same "
-        f"text; {ending}"
+        f"memory.set merged this into {merged_into_key}, a decision with the same text; "
+        "nothing was written."
     )
 
 
@@ -251,9 +250,8 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         return DecisionRecordOutput(
             memory_key=written.merged_into_key,
             record_id="",
-            next=_merged_hint(
-                written.merged_into_key, "decision.record", "nothing was written. Use that key."
-            ),
+            next=_merged_hint(written.merged_into_key, "decision.record")
+            + (" Use that key." if written.merged_into_key else ""),
         )
 
     edges = 0
@@ -457,9 +455,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         return DecisionOutcomeOutput(
             memory_key=input.memory_key,
             updated=False,
-            next=_merged_hint(
-                written.merged_into_key, "decision.outcome", "nothing was written under this key."
-            ),
+            next=_merged_hint(written.merged_into_key, "decision.outcome"),
         )
 
     # Close the loop: the memories the deciding run relied on earn (or lose)
