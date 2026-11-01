@@ -21,9 +21,9 @@ before ClickHouse applies it; watch `system.mutations`.
   rows afterwards; `--key-only` rebuilds only the key-axis vector of each live row, except
   an import key (`import:` and a digest), which has none: a row without one is skipped, and
   one an older build embedded is cleared. `--in-database <named collection>` runs the
-  embedding inside ClickHouse with `aiEmbed` (ClickHouse 26.7 or later) as one `INSERT …
-SELECT` per table instead of a Python loop. It is refused while a customer or identity
-  header is set or the inference gateway is required: ClickHouse's own calls name no
+  embedding inside ClickHouse with `aiEmbed` (ClickHouse 26.7 or later) as one
+  `INSERT … SELECT` per table instead of a Python loop. It is refused while a customer or
+  identity header is set or the inference gateway is required: ClickHouse's own calls name no
   customer or identity and skip the gateway's host check. The Python path reads
   `--batch-size` rows at a time in sort-key order and prints a `resume:` token after each
   page; `--resume <token>` continues an interrupted run there. The Python path never sends a
