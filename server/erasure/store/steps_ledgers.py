@@ -375,17 +375,17 @@ async def delete_learnings_queue_by_user(
                 params={"cids": unbacked},
                 ch=ch,
             )
-    read = [(str(r["candidate_id"]), int(r["version"])) for r in decided]
-    for read_part in chunks(read):
+    decided_versions = [(str(r["candidate_id"]), int(r["version"])) for r in decided]
+    for versions in chunks(decided_versions):
         n += await delete_scoped(
             "loom.learnings_queue",
             org=org,
             # Each candidate is bounded by its own version read, never another's.
             scope_where=(
                 "proposed_value != '' AND arrayExists(r -> r.1 = candidate_id "
-                "AND version <= r.2, {read:Array(Tuple(UUID, UInt64))})"
+                "AND version <= r.2, {decided:Array(Tuple(UUID, UInt64))})"
             ),
-            params={"read": read_part},
+            params={"decided": versions},
             ch=ch,
         )
     return n

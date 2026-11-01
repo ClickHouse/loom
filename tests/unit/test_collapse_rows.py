@@ -47,12 +47,12 @@ def test_the_kept_hit_has_the_tags_a_leg_read_of_its_row(passage_first: bool) ->
 
 
 def test_a_kept_hit_that_read_its_tags_keeps_them() -> None:
-    head = _wire("k", 0.9, "the value's head", ("a", "u", "s1"))
-    head._row_tags = ("mine",)
-    other = _wire("k", 0.5, "the passage", ("a", "u", "s1"))
-    other._row_tags = ("other",)
-    (kept,) = collapse_rows([other, head], "n")
-    assert kept is head and kept._row_tags == ("mine",)
+    stronger = _wire("k", 0.9, "the passage", ("a", "u", "s1"))
+    stronger._row_tags = ("kind:lesson",)
+    weaker = _wire("k", 0.5, "the value's head", ("a", "u", "s1"))
+    weaker._row_tags = ()
+    (kept,) = collapse_rows([weaker, stronger], "n")
+    assert kept is stronger and kept._row_tags == ("kind:lesson",)
 
 
 def test_hits_that_name_no_row_are_left_alone() -> None:
@@ -61,7 +61,9 @@ def test_hits_that_name_no_row_are_left_alone() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_pool_collapses_before_the_duplicates_are_read(monkeypatch) -> None:
+async def test_the_pool_collapses_before_the_duplicates_are_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from server.memory.app.search import assemble
 
     seen: list[list[Any]] = []

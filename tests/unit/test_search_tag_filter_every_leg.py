@@ -19,6 +19,7 @@ import pytest
 import server.memory.app.search_tag_filter as tag_belt
 from server.core.tag_sql import TagFilter, tag_predicate
 from server.memory.api.models_search import _MemorySearchHit
+from server.memory.app.retrieval.pool import ChunkId, SetChunkRow, fold_set_chunks
 from server.memory.app.search import assemble, payload
 from server.memory.app.search.assemble import _drop_excluded_and_duplicates
 from server.memory.app.search.payload import _fill_hit_tags
@@ -35,7 +36,7 @@ from server.memory.app.search.tiers import _prepend_anchor, _prepend_recent
 from server.memory.app.search.vector_legs import _stamp_leg_tags
 from server.memory.app.search_tag_filter import stamp_row_tags, tagged_row_hit
 from server.memory.domain.search_sql import _build_where, hard_tag_filter
-from server.memory.domain.search_types import SearchQuery
+from server.memory.domain.search_types import SearchHit, SearchQuery
 
 TAG = "hasAny(e.tags, {tags:Array(String)})"
 
@@ -457,18 +458,7 @@ async def test_ask_injection_legs_are_held_to_the_hard_filter(
     assert src.index("_fill_pool(") < src.index("_early_answer(")
 
 
-@pytest.mark.asyncio
-async def test_a_hit_made_from_a_set_chunk_is_judged_by_its_own_row(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # fold -> stamp -> belt: the row's tags ride from the set-chunk read, so no key read
-    from server.memory.app.retrieval.pool import ChunkId, SetChunkRow, fold_set_chunks
-    from server.memory.domain.search_types import SearchHit
-
-    async def _boom(*a: Any, **k: Any) -> dict[Any, Any]:
-        raise AssertionError("the row's tags were read with it")
-
-    monkeypatch.setattr(tag_belt, "read_row_tags", _boom)
+def _made_from_set_chunk(row_tags: tuple[str, ...]) -> Any:
     chunk = SearchHit(
         memory_key="chunk:memory.set:k:0",
         memory_type="episodic",
@@ -479,8 +469,18 @@ async def test_a_hit_made_from_a_set_chunk_is_judged_by_its_own_row(
         identity=("a", "u", "memory.set:k"),
         chunk_sha256="sha",
     )
-    rows = {ChunkId("a", "u", "k", 0, "sha"): SetChunkRow(("a", "u", "s1"), 3, ("kind:lesson",))}
+    rows = {ChunkId("a", "u", "k", 0, "sha"): SetChunkRow(("a", "u", "s1"), 3, row_tags)}
     (made,) = fold_set_chunks([chunk], rows)
-    wire = _stamp_leg_tags(made, _hit("k"))
-    kept = await tag_belt.enforce_hard_tag_filter([wire], _inp(tags=["kind:lesson"]), {}, ["ns"])
-    assert kept == [wire]
+    return _stamp_leg_tags(made, _hit("k"))
+
+
+@pytest.mark.asyncio
+async def test_a_hit_made_from_a_set_chunk_is_judged_by_its_own_row() -> None:
+    # fold -> stamp -> belt: the row's tags ride from the set-chunk read, so no key read
+    tagged, untagged = _made_from_set_chunk(("kind:lesson",)), _made_from_set_chunk(())
+    assert tagged._row_tags == ("kind:lesson",)
+    work: dict[str, Any] = {}
+    kept = await tag_belt.enforce_hard_tag_filter(
+        [tagged, untagged], _inp(tags=["kind:lesson"]), work, ["ns"]
+    )
+    assert kept == [tagged] and work == {"tag_filter_dropped": 1}

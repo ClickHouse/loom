@@ -90,17 +90,6 @@ async def tombstone_source_links_by_user(
     return total
 
 
-async def delete_graph_links_by_namespace(
-    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
-) -> int:
-    total = 0
-    for t in _LINK_TABLES_DELETE:
-        total += await delete_scoped(
-            t, org=org, scope_where="namespace = {ns:String}", params={"ns": namespace}, ch=ch
-        )
-    return total
-
-
 # The row-link tables a build older than their migrations did not know, so its
 # erasures left them (`graph_holders._ROW_LINKS_MIGRATION` and
 # `projections.EDGE_ROW_LINKS_MIGRATION`).
@@ -115,6 +104,17 @@ _KEY_LINK_TABLES = ("loom.entity_triple_memories", "loom.entity_edge_memories")
 # links are found by the user's keys, row links by the writer they carry, which
 # outlives the row.
 _LINK_TABLES_DELETE = _KEY_LINK_TABLES + ROW_LINK_TABLES
+
+
+async def delete_graph_links_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    total = 0
+    for t in _LINK_TABLES_DELETE:
+        total += await delete_scoped(
+            t, org=org, scope_where="namespace = {ns:String}", params={"ns": namespace}, ch=ch
+        )
+    return total
 
 
 class OrphanLinks(NamedTuple):

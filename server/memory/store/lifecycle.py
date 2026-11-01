@@ -453,11 +453,10 @@ async def _unlocked_parts(
     )
     hashes = sorted({int(r["h"]) for r in rows})
     buckets = max(1, math.ceil(len(hashes) / _LOCKED_PER_MUTATION))
+    unlocked = f"{scope_sql} AND {_IDENTITY_HASH} NOT IN {{locked:Array(UInt64)}}"
     parts = []
     for b in range(buckets):
-        where = f"{scope_sql} AND {_IDENTITY_HASH} NOT IN {{locked:Array(UInt64)}}"
-        if buckets > 1:
-            where += f" AND {_IDENTITY_HASH} % {buckets} = {b}"
+        where = unlocked if buckets == 1 else f"{unlocked} AND {_IDENTITY_HASH} % {buckets} = {b}"
         parts.append((where, {"locked": [h for h in hashes if h % buckets == b]}))
     return parts
 
