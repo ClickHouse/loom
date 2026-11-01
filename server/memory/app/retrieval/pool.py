@@ -104,6 +104,12 @@ async def _recency_backfill(
 _SET_CHUNK_PREFIX = "chunk:memory.set:"
 
 
+def _writer_key(h: SearchHit, memory_key: str) -> tuple[str, str, str, str]:
+    """(namespace, agent, user_id, memory_key): the session left out."""
+    namespace, agent, user_id, _session, _key = hit_row_key(h)
+    return namespace, agent, user_id, memory_key
+
+
 def _is_set_chunk(h: Any) -> bool:
     return (
         (getattr(h, "source", "") or "") == "chunk"
@@ -133,19 +139,20 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
     rank-neutral: a folded parent sits exactly where its chunk sat."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
-    # A chunk folds onto the row it was written under: same writer, session and key.
+    # A chunk folds onto its writer's row of the key. Its session is `memory.set:<key>`,
+    # not the row's, so it matches on namespace, agent, user_id and key alone.
     by_row: dict[tuple[str, ...], SearchHit] = {}
     out: list[SearchHit] = []
     for h in hits:
         if not _is_set_chunk(h):
             out.append(h)
             if (getattr(h, "source", "") or "fact") != "chunk":
-                by_row.setdefault(hit_row_key(h), h)
+                by_row.setdefault(_writer_key(h, h.memory_key), h)
     for h in hits:
         if not _is_set_chunk(h):
             continue
         parent_key = str(h.parent_memory_key)
-        parent_row = (*hit_row_key(h)[:4], parent_key)
+        parent_row = _writer_key(h, parent_key)
         parent = by_row.get(parent_row)
         if parent is None:
             idx_s = str(h.memory_key).rpartition(":")[2]
@@ -154,6 +161,9 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
                 memory_key=parent_key,
                 source="fact",
                 parent_memory_key="",
+                # the chunk's session names no row: read like a hit that names none
+                identity=None,
+                session_id="",
                 score_components={
                     **dict(h.score_components or {}),
                     "folded_chunks": 1.0,
