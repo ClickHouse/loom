@@ -142,10 +142,6 @@ class SetChunkRow(NamedTuple):
     identity: RowIdentity
     version: int
 
-    @property
-    def session_id(self) -> str:
-        return self.identity[2]
-
 
 class ChunkId(NamedTuple):
     """A pooled set chunk: its writer, its parent key, and its own index and hash."""
@@ -163,21 +159,16 @@ def fold_set_chunks(
     """Fold the verbatim chunks of long memory.set values onto the rows `rows` names
     (`_set_chunk_rows`): onto the row when it is pooled, as its hit when it is not, and a
     chunk `rows` names no row for is dropped. With `rows` None (shared scope) a chunk folds
-    onto a pooled fact of its key, or becomes a hit of the key. Conversation chunks pass
-    through. `score_components` records the fold for later
-    stages: `folded_chunks` (the chunk floor counts it), `folded_lift` (the asserted
-    tie-break skips the row) and `folded_from_chunk`; a converted hit has empty tags,
-    which the handler's tag read fills."""
+    onto a pooled fact of its key, or becomes a hit of the key."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
-    by_key = rows is None
     out = [h for h in hits if not _is_set_chunk(h)]
     # each pooled fact's position, by its row, or by its key under shared scope
     at: dict[tuple[str, ...], int] = {}
     for pos, h in enumerate(out):
         if (getattr(h, "source", "") or "fact") == "chunk":
             continue
-        if by_key:
+        if rows is None:
             at.setdefault(("key", h.memory_key), pos)
         elif h.identity:
             at.setdefault(("row", *h.identity, h.memory_key), pos)
@@ -205,7 +196,7 @@ def fold_set_chunks(
             source="fact",
             parent_memory_key="",
             identity=found.identity if found else None,
-            session_id=found.session_id if found else "",
+            session_id=found.identity[2] if found else "",
             version=found.version if found else h.version,
             score_components={
                 **dict(h.score_components or {}),

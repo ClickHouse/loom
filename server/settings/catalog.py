@@ -3181,8 +3181,8 @@ class MemorySearchSettings(BaseModel):
     # by one key re-extracted per session (38 of 60 questions on one eval).
     # Skipped for aggregational / temporal_diff shapes.
     memory_search_per_key_cap: Annotated[int, LIVE] = 3
-    # How many of a writer's newest served rows of one key (1 or more) a pooled memory.set
-    # chunk is matched against by value to find the row it was cut from; older rows are not.
+    # How many of a writer's newest served rows of one key a pooled memory.set chunk is
+    # matched against, by value, to find the row it was cut from.
     memory_search_set_chunk_rows: Annotated[int, LIVE] = Field(default=64, ge=1)
     # How memory.search dates a chunk: "session" by its conversation's digest, "parent" by
     # the session's first fact anchor.

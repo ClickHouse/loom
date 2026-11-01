@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -258,7 +259,7 @@ def test_a_chunk_no_row_is_named_for_is_dropped() -> None:
     assert fold_set_chunks([pooled, _writer_chunk("u", "a stale passage")], {}) == [pooled]
 
 
-def test_a_chunk_names_only_the_row_rows_gives_it() -> None:
+def test_a_chunk_folds_only_onto_the_row_it_is_named_for() -> None:
     # another session's row of the writer's key is pooled, but `rows` names s2
     older = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
     rows = {ChunkId("a", "u", "lesson_a", 0, _SHA): SetChunkRow(("a", "u", "s2"), 7)}
@@ -269,12 +270,17 @@ def test_a_chunk_names_only_the_row_rows_gives_it() -> None:
     ]
 
 
-@pytest.mark.parametrize("rows", [0, -1])
-def test_the_set_chunk_row_bound_is_at_least_one(rows: int) -> None:
-    # 0 rows would drop every long value's chunks; a negative one fails its bind
-    from pydantic import ValidationError
+@pytest.mark.asyncio
+async def test_a_failed_row_read_names_no_row_and_its_chunks_drop() -> None:
+    from server.memory.app.retrieval.pool import _set_chunk_rows
+    from tests.unit.test_memory_search_service import _q
 
-    from server.settings import Settings
+    class _Down:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            raise RuntimeError("ClickHouse is unreachable")
 
-    with pytest.raises(ValidationError, match="memory_search_set_chunk_rows"):
-        Settings(_env_file=None, memory_search_set_chunk_rows=rows)  # type: ignore[call-arg]
+    chunk = _writer_chunk("u", "a passage")
+    rows = await _set_chunk_rows(_Down(), _q(), [chunk])
+    assert rows == {}
+    pooled = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
+    assert fold_set_chunks([pooled, chunk], rows) == [pooled]

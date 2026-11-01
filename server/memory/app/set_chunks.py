@@ -17,7 +17,8 @@ leaves the earlier chunks; search serves a chunk only for a row whose current
 value cuts it. `memory.delete` tombstones the key's whole set.
 
 Imports only the chunker and leaf services; `server.memory.app.handlers` imports
-this module lazily, at the call site.
+this module lazily, at the call site, and search's set-chunk fold reads
+`set_chunk_identities` from it.
 """
 
 from __future__ import annotations

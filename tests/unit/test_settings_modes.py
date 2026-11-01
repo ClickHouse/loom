@@ -92,3 +92,10 @@ def test_a_retire_confidence_below_the_clear_confidence_fails_at_load() -> None:
 def test_a_flag_confidence_outside_clear_and_retire_fails_at_load(flag: float) -> None:
     with pytest.raises(ValidationError, match="FLAG_CONFIDENCE must lie between"):
         Settings(memory_conflict_resolver_flag_confidence=flag)
+
+
+@pytest.mark.parametrize("bound", [0, -1])
+def test_the_set_chunk_row_bound_is_at_least_one(bound: int) -> None:
+    # 0 rows would drop every long value's chunks; a negative one fails its bind
+    with pytest.raises(ValidationError, match="memory_search_set_chunk_rows"):
+        Settings(_env_file=None, memory_search_set_chunk_rows=bound)  # type: ignore[call-arg]
