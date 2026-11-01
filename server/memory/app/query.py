@@ -923,9 +923,9 @@ async def handle_memory_keys(input: MemoryKeysInput) -> MemoryKeysOutput:
 async def memory_tally(org: str, namespace: str) -> tuple[int, datetime | None]:
     """How many live memory rows the namespace holds inside the request's read scope,
     and the newest write."""
-    from server.memory.store import reads
+    import server.memory.store as memory_repo
 
-    return await reads.live_tally(org, namespace, scope=request_scope())
+    return await memory_repo.live_tally(org, namespace, scope=request_scope())
 
 
 async def identity_tally(
@@ -933,6 +933,8 @@ async def identity_tally(
 ) -> tuple[int, list[tuple[str, int]]]:
     """Distinct agents, actors or users on live rows inside the request's read scope,
     and the `limit` with the most rows."""
-    from server.memory.store import reads
+    import server.memory.store as memory_repo
 
-    return await reads.identity_tally(org, namespace, column, scope=request_scope(), limit=limit)
+    return await memory_repo.identity_tally(
+        org, namespace, column, scope=request_scope(), limit=limit
+    )

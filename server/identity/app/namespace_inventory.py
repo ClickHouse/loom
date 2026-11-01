@@ -78,9 +78,16 @@ async def handle_namespace_inventory(input: NamespaceInventoryInput) -> Namespac
         _members(org, ns),
         *(_observed(org, ns, p, input.population_limit) for p in get_args(ObservedPopulation)),
     ]
-    section_rows, population_rows = await asyncio.gather(
-        asyncio.gather(*sections), asyncio.gather(*populations)
-    )
+    # A task group: a store outage in one leg cancels the others' reads rather than
+    # leaving them running, and fails the call with that leg's error.
+    try:
+        async with asyncio.TaskGroup() as tg:
+            section_tasks = [tg.create_task(c) for c in sections]
+            population_tasks = [tg.create_task(c) for c in populations]
+    except ExceptionGroup as eg:
+        raise eg.exceptions[0] from None
+    section_rows = [t.result() for t in section_tasks]
+    population_rows = [t.result() for t in population_tasks]
     return NamespaceInventoryOutput(
         scope=InventoryScope(
             org=org,
@@ -89,8 +96,8 @@ async def handle_namespace_inventory(input: NamespaceInventoryInput) -> Namespac
             user_id=scope.user_id if scope.narrowed else None,
             session_id=scope.session_id if scope.scope == "own_session" else None,
         ),
-        sections=list(section_rows),
-        populations=list(population_rows),
+        sections=section_rows,
+        populations=population_rows,
         capabilities=[
             InventoryCapability(name="llm", enabled=not llm_is_fake()),
             InventoryCapability(name="embedder", enabled=not embedder_is_fake()),

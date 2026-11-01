@@ -69,14 +69,18 @@ class InventoryIdentity(BaseModel):
 class InventoryPopulation(BaseModel):
     """One population: the namespace's members, or identities observed on its rows.
 
-    `members` are the people holding an active grant; `agents`, `authors` and
-    `subjects` are identities observed on live memory rows, never a directory."""
+    `members` are the grant holders: the people holding an active grant (a token whose
+    own claims name the namespace reads it without one and is never counted); `agents`,
+    `authors` and `subjects` are identities observed on live memory rows, never a
+    directory."""
 
     population: Population
     # Distinct identities in the population; None when it did not run.
     total: int | None
     # The largest by row count (members: none listed here, page them with `grants.list`).
     top: list[InventoryIdentity] = Field(default_factory=list)
+    # False when the total is missing or, for members, when a grant opens the namespace
+    # to people it does not name: `reason` says which.
     complete: bool
     reason: str = ""
 

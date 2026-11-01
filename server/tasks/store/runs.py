@@ -18,7 +18,7 @@ from typing import Any
 
 from server.core.ch import sequential_reads
 from server.core.leases import key_exists
-from server.identity.domain.read_scope import ReadFilters, scope_and
+from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.observability import degradations, provider_health
 from server.tasks.store.rows import RunLedgerRow
 
@@ -274,30 +274,31 @@ async def count_runs(
 ) -> int:
     """How many of the namespace's runs match the extra `where` fragments: the
     rows `list_runs` pages through."""
-    clauses = ["org = {org:String}", "namespace = {ns:String}", *where]
-    row = await ch.query_one(
-        f"""
-        SELECT count() AS n
-        FROM loom.agent_runs FINAL
-        WHERE {" AND ".join(clauses)}
-        """,
-        params={**params, "org": org, "ns": ns},
-    )
-    return int(row["n"])
+    n, _ = await _run_tally(ch, org, ns, where=where, params=params)
+    return n
 
 
 async def run_tally(
     ch: Any, org: str, ns: str, *, scope: ReadFilters
 ) -> tuple[int, datetime | None]:
     """The namespace's runs inside `scope`, and the newest start among them."""
-    params: dict[str, Any] = {"org": org, "ns": ns}
+    params: dict[str, Any] = {}
+    return await _run_tally(ch, org, ns, where=scope_where(scope, params), params=params)
+
+
+async def _run_tally(
+    ch: Any, org: str, ns: str, *, where: list[str], params: dict[str, Any]
+) -> tuple[int, datetime | None]:
+    clauses = ["org = {org:String}", "namespace = {ns:String}", *where]
     row = await ch.query_one(
-        "SELECT count() AS n, if(n = 0, NULL, max(started_at)) AS latest "
-        "FROM loom.agent_runs FINAL WHERE org = {org:String} AND namespace = {ns:String}"
-        + scope_and(scope, params),
-        params=params,
+        f"""
+        SELECT count() AS n, if(n = 0, NULL, max(started_at)) AS latest
+        FROM loom.agent_runs FINAL
+        WHERE {" AND ".join(clauses)}
+        """,
+        params={**params, "org": org, "ns": ns},
     )
-    return (int(row["n"]), row["latest"]) if row else (0, None)
+    return (int(row["n"]), row.get("latest")) if row else (0, None)
 
 
 async def recent_run_heads(

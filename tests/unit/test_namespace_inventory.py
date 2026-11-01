@@ -249,3 +249,27 @@ def test_capabilities_say_what_serves_the_process(
     monkeypatch.setattr(namespace_inventory, "embedder_is_fake", lambda: embedder_fake)
     enabled = {c.name: c.enabled for c in _run().capabilities}
     assert enabled == {"llm": not llm_fake, "embedder": not embedder_fake}
+
+
+def test_an_outage_cancels_the_other_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core.errors import BackendUnavailableError
+
+    cancelled: list[str] = []
+
+    async def down(org: str, ns: str) -> Any:
+        await asyncio.sleep(0)
+        raise BackendUnavailableError("clickhouse down")
+
+    async def slow(org: str, ns: str, column: str, *, limit: int) -> Any:
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.append(column)
+            raise
+
+    _ch().install(monkeypatch, *_GET_CLIENT)
+    monkeypatch.setattr(namespace_inventory, "memory_tally", down)
+    monkeypatch.setattr(namespace_inventory, "identity_tally", slow)
+    with pytest.raises(BackendUnavailableError):
+        _run()
+    assert sorted(cancelled) == ["actor", "agent", "user_id"]
