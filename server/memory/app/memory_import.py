@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from typing import NamedTuple
 
 import server.memory.store as memory_repo
-from server.core.datetimes import naive_utc_now, to_naive_utc
+from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_bulk import (
@@ -51,14 +52,20 @@ _CHECK_OF: dict[str, Reason] = {
     LOCKED: "locked",
     REJECTED: "pinned_peer",
 }
-# An entry's outcome, its reason and the key that holds its text (identity_duplicate only).
-_Answer = tuple[Outcome, Reason, str]
 # The reason of a written entry whose verdict is not a plain write.
 _STORED_AS: dict[str, Reason] = {
     "duplicate": "duplicate",
     "conflict": "conflicted",
     "refines": "refines",
 }
+
+
+class _Answer(NamedTuple):
+    """An entry's outcome, its reason and, for an identity_duplicate, the key holding it."""
+
+    outcome: Outcome
+    reason: Reason
+    held_by: str = ""
 
 
 async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
@@ -113,7 +120,7 @@ async def _write(
     for key, i in first.items():
         reason = skip.get(key, "")
         if reason:
-            answers[key] = ("skipped", reason, "")
+            answers[key] = _Answer("skipped", reason)
         else:
             pending.append(i)
     unknown = [key for key, reason in skip.items() if reason == "unknown"]
@@ -129,7 +136,7 @@ async def _write(
     # of one attribute in a batch retires the earlier: oldest first, an undated item
     # counting as said now.
     now = naive_utc_now()
-    pending.sort(key=lambda i: to_naive_utc(input.entries[i].valid_at) or now)  # stable
+    pending.sort(key=lambda i: input.entries[i].valid_at or now)  # stable
     bulk = await handle_memory_bulk_set(
         _bulk_input(input, [(input.entries[i], keys[i]) for i in pending]),
         dry_run=input.dry_run,
@@ -150,14 +157,14 @@ def _entry_outcome(key: str, result: _BulkSetResult, held_by: str | None) -> _An
     dedup's answer for this key: the key holds the text already."""
     verdict = result.conflict_verdict
     if result.version:
-        return "written", _STORED_AS.get(verdict, ""), ""
+        return _Answer("written", _STORED_AS.get(verdict, ""))
     if verdict in REFUSED:
-        return "refused", _CHECK_OF[verdict], ""
+        return _Answer("refused", _CHECK_OF[verdict])
     if verdict == "merge":
-        return "held", "merge", ""
+        return _Answer("held", "merge")
     if held_by is not None and held_by != key:
-        return "held", "identity_duplicate", held_by
-    return "skipped", "unchanged", ""
+        return _Answer("held", "identity_duplicate", held_by)
+    return _Answer("skipped", "unchanged")
 
 
 def _bulk_input(
@@ -178,7 +185,7 @@ def _bulk_input(
                 memory_key=key,
                 value=entry.value,
                 tags=entry.tags,
-                valid_at=to_naive_utc(entry.valid_at),
+                valid_at=entry.valid_at,
                 # An item that names no source is traced by its key, `import:<digest>`.
                 source_trace=entry.source_trace or key,
                 # Copied from another system: a declared downgrade, never `asserted`.

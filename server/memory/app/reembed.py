@@ -24,7 +24,7 @@ from typing import Any
 
 from server.llm import customer
 from server.memory.app.model_attribution import attribution_for, memory_writers
-from server.memory.domain.import_keys import IMPORT_KEY_PATTERN
+from server.memory.domain.import_keys import IMPORT_KEY_MATCH
 from server.memory.domain.sensitivity import without_high
 from server.settings import settings
 
@@ -66,7 +66,7 @@ def _key_input(row: dict[str, Any]) -> str:
 
 def _is_import_sql(column: str) -> str:
     """SQL true when `column` holds an import key (`is_import_key`)."""
-    return f"match({column}, '^{IMPORT_KEY_PATTERN}$')"
+    return f"match({column}, '{IMPORT_KEY_MATCH}')"
 
 
 def where_sql(

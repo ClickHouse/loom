@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from server.core.datetimes import to_naive_utc
 from server.memory.api.models_common import _Identity
 from server.memory.domain.delete_marks import caller_trace
 from server.memory.domain.memory_import import Note, Outcome, Reason
@@ -47,6 +48,12 @@ class _MemoryImportEntry(BaseModel):
     @classmethod
     def _source_trace(cls, v: str) -> str:
         return caller_trace(v)
+
+    @field_validator("valid_at")
+    @classmethod
+    def _naive_utc(cls, v: datetime | None) -> datetime | None:
+        # As stored, so equal times compare equal however the client wrote the zone.
+        return to_naive_utc(v)
 
 
 class MemoryImportInput(_Identity):

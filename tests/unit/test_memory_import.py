@@ -1239,3 +1239,13 @@ def test_the_op_draws_from_its_own_rate_class() -> None:
     from server.core.ratelimit import op_class_for
 
     assert op_class_for("memory.import") == "memory.import"
+
+
+def test_repeats_with_one_time_in_two_zone_spellings_are_the_same_entry() -> None:
+    """A naive time is UTC: `...Z` and the same time without a zone are one entry."""
+    entries = [
+        {"value": "Dog is Biscuit.", "valid_at": "2024-01-01T00:00:00Z"},
+        {"value": "Dog is Biscuit.", "valid_at": "2024-01-01T00:00:00"},
+    ]
+    parsed = MemoryImportInput(**_IDENT, entries=entries)
+    assert parsed.entries[0].valid_at == parsed.entries[1].valid_at == datetime(2024, 1, 1)

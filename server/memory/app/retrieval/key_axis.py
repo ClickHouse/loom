@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from server.memory.domain.import_keys import IMPORT_KEY_PATTERN
+from server.memory.domain.import_keys import IMPORT_KEY_MATCH
 from server.memory.domain.search_types import SearchQuery
 
 log = logging.getLogger("server.memory.app.retrieval")
@@ -78,7 +78,7 @@ async def key_axis_auto(
             """,
             # An import key is written once and has no key vector: it says nothing
             # about how a namespace reuses its own keys.
-            {"org": str(org), "ns": str(namespace), "import_key": f"^{IMPORT_KEY_PATTERN}$"},
+            {"org": str(org), "ns": str(namespace), "import_key": IMPORT_KEY_MATCH},
         )
         if rows:
             share = float((rows[0] or {}).get("reused_share") or 0.0)
