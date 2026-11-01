@@ -12,7 +12,6 @@ from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.vector_legs import _search_query_for, _wire_hit
 from server.memory.domain import set_expansion as _set_expansion
-from server.memory.domain.search_types import already_pooled
 
 log = logging.getLogger(__package__)
 
@@ -51,7 +50,7 @@ async def _supplemental_leg(
     for ns_name, hits in zip(ctx.namespaces, sub_per_ns, strict=True):
         for h in hits:
             key = (ns_name, h.memory_key, h.content_excerpt)
-            if key in seen_keys or already_pooled(h, ctx.all_hits, ns_name):
+            if key in seen_keys:
                 continue
             seen_keys.add(key)
             out.append(

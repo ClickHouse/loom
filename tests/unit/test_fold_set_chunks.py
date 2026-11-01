@@ -230,3 +230,42 @@ def test_a_chunk_without_its_row_in_the_pool_becomes_a_hit_of_its_writer_and_no_
     (hit,) = fold_set_chunks([chunk])
     assert (hit.memory_key, hit.source) == ("lesson_a", "fact")
     assert (hit.identity, hit.writer, hit.session_id) == (None, ("a", "u2"), "")
+
+
+def _wire(key: str, score: float, excerpt: str, **row: object) -> object:
+    from server.memory.api.models_search import _MemorySearchHit
+
+    hit = _MemorySearchHit(
+        memory_key=key,
+        memory_type="semantic",
+        content_excerpt=excerpt,
+        distance=1 - score,
+        similarity=score,
+        rank_score=score,
+        namespace="n",
+    )
+    hit._row_identity = row.get("identity")
+    hit._row_writer = row.get("writer")
+    return hit
+
+
+def test_a_writer_only_chunk_folds_onto_the_row_a_later_leg_pooled() -> None:
+    from server.memory.app.retrieval.pool import fold_writer_hits
+
+    chunk = _wire("k", 0.9, "the passage", writer=("a", "u"))
+    other = _wire("j", 0.7, "another key", identity=("a", "u", "s1"))
+    row = _wire("k", 0.5, "the value's head", identity=("a", "u", "s1"))
+    theirs = _wire("k", 0.4, "u2's row", identity=("a", "u2", "s1"))
+    out = fold_writer_hits([chunk, other, row, theirs], "n")
+    # the row sits where its chunk sat, with the chunk's score and passage
+    assert out == [row, other, theirs]
+    assert (row.rank_score, row.content_excerpt) == (0.9, "the passage")
+    assert row.score_components["folded_lift"] == 1.0
+
+
+def test_a_writer_only_chunk_whose_row_is_not_pooled_stays() -> None:
+    from server.memory.app.retrieval.pool import fold_writer_hits
+
+    chunk = _wire("k", 0.9, "the passage", writer=("a", "u"))
+    theirs = _wire("k", 0.4, "u2's row", identity=("a", "u2", "s1"))
+    assert fold_writer_hits([chunk, theirs], "n") == [chunk, theirs]

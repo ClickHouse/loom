@@ -9,6 +9,7 @@ from collections import Counter
 from typing import Any
 
 from server.memory.api.models_search import _MemorySearchHit
+from server.memory.app.retrieval.pool import fold_writer_hits
 from server.memory.app.search.anchor_pool import _enforce_agent_scope
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.digest_descent import (
@@ -44,6 +45,8 @@ async def _drop_excluded_and_duplicates(ctx: SearchContext) -> None:
     WHERE and is the row the belt exists to judge; on the whole fused pool, so a dropped row
     leaves no hole in top_k and a parked page's tail is as clean as the first page."""
     _drop_excluded_keys(ctx)
+    # a set chunk that named only its writer folds onto the row a later leg pooled
+    ctx.all_hits = fold_writer_hits(ctx.all_hits, ctx.input.namespace)
     if getattr(ctx.input, "quality_filter", False):
         from server.memory.domain.fact_quality import drop_junk_and_restatements
 

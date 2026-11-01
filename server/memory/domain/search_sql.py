@@ -15,7 +15,6 @@ from server.memory.domain.search_types import (
     SearchQuery,
     hit_row_key,
     names_row,
-    writers_covered,
 )
 from server.memory.domain.temporal_sql import as_of_predicate, status_predicate, tombstone_predicate
 
@@ -55,27 +54,19 @@ def agent_or_shared_predicate(alias: str = "e") -> str:
 
 
 def exclude_pooled(where: list[str], params: dict[str, Any], hits: Sequence[SearchHit]) -> None:
-    """Leave the rows `hits` already pooled out of a leg over `loom.memory_embeddings AS e`:
-    each row a hit names, and each writer's rows of the key a folded set chunk covers. A
-    record or a summary names no memory row and leaves out none."""
+    """Leave the rows `hits` already pooled out of a leg over `loom.memory_embeddings AS e`.
+    A key holds a row per writer and session, so each hit names its row; a record or a
+    summary names none and leaves out none."""
     rows = sorted(
         (r.agent, r.user_id, r.session_id, r.memory_key)
         for r in {hit_row_key(h) for h in hits if names_row(h)}
     )
-    # the leg reads one namespace: a writer key's namespace is the leg's
-    writers = sorted({(a, u, k) for _ns, a, u, k in writers_covered(hits)})
     if rows:
         where.append(
             "(e.agent, e.user_id, e.session_id, e.memory_key)"
             " NOT IN {pooled_rows:Array(Tuple(String, String, String, String))}"
         )
         params["pooled_rows"] = rows
-    if writers:
-        where.append(
-            "(e.agent, e.user_id, e.memory_key)"
-            " NOT IN {pooled_writers:Array(Tuple(String, String, String))}"
-        )
-        params["pooled_writers"] = writers
 
 
 def _build_where(q: SearchQuery) -> tuple[list[str], dict[str, Any]]:

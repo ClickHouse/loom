@@ -181,8 +181,9 @@ def _rewrite_pool(
     work: dict[str, Any],
 ) -> list[Any]:
     dup_ids = {id(h) for h in dups}
-    present = {hit_row_key(h, ns_default) for h in hits if id(h) not in dup_ids}
-    covered = writers_covered([h for h in hits if id(h) not in dup_ids], ns_default)
+    kept = [h for h in hits if id(h) not in dup_ids]
+    present = {hit_row_key(h, ns_default) for h in kept}
+    covered = writers_covered(kept, ns_default)
     out: list[Any] = []
     resolved = 0
     for h in hits:

@@ -352,16 +352,6 @@ def writers_covered(hits: Iterable[Any], namespace: str = "") -> set[tuple[str, 
     }
 
 
-def already_pooled(hit: Any, pool: Iterable[Any], namespace: str = "") -> bool:
-    """Whether `pool` already holds the stored row `hit` is: that row, a folded set chunk of
-    its writer and key, or, for a folded set chunk, any row of its writer and key."""
-    key = hit_row_key(hit, namespace)
-    rows = {hit_row_key(h, namespace) for h in pool}
-    if hit_writer(hit):
-        return key.writer_key() in {r.writer_key() for r in rows}
-    return key in rows or key.writer_key() in writers_covered(pool, namespace)
-
-
 def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
     """(namespace, agent, user_id, session_id, memory_key) of the stored row a hit is: one
     key holds a row for each writer and session, so a key alone does not name one row.

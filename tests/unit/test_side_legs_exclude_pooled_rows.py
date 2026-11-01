@@ -35,16 +35,6 @@ def test_a_pooled_row_leaves_out_only_itself() -> None:
     assert len(where) == 1
 
 
-def test_a_writer_only_hit_leaves_out_its_writers_rows_of_the_key() -> None:
-    where: list[str] = []
-    params: dict = {}
-    exclude_pooled(where, params, [_hit("k", None, writer=("a", "u"))])  # a folded set chunk
-    assert params == {"pooled_writers": [("a", "u", "k")]}
-    assert where == [
-        "(e.agent, e.user_id, e.memory_key) NOT IN {pooled_writers:Array(Tuple(String, String, String))}"
-    ]
-
-
 def test_a_pooled_record_leaves_its_key_open() -> None:
     where: list[str] = []
     params: dict = {}
@@ -70,7 +60,6 @@ async def test_the_unmatched_leg_binds_the_pooled_rows_not_their_keys() -> None:
     sql, params = ch.query_all_calls[0]
     assert "(e.agent, e.user_id, e.session_id, e.memory_key) NOT IN" in sql
     assert params["pooled_rows"] == [("a", "u", "s1", "k")]
-    assert "pooled_writers" not in params
 
 
 def test_a_writer_only_hit_covers_its_writers_rows_and_keeps_its_own_row_key() -> None:
