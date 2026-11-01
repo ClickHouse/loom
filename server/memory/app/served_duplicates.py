@@ -129,7 +129,7 @@ async def hide_pool_duplicates(ctx: Any) -> None:
     ns_default = str(input.namespace)
     scope = request_scope()
     try:
-        # every fact leg reads its row's identity
+        # a hit that names no row (a set chunk whose row could not be read) is not judged
         rows = [hit_row_key(h, ns_default) for h in facts if names_row(h)]
         truth = await _truth(input.org, rows, scope)
     except Exception as e:  # noqa: BLE001 — hiding is a filter, never a failure

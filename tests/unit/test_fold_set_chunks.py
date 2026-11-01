@@ -236,13 +236,12 @@ def test_a_chunk_of_a_newer_value_leaves_an_older_session_row_alone() -> None:
     assert by_session["s2"].session_id == "s2"
 
 
-def test_a_chunk_with_no_known_row_names_none() -> None:
+def test_a_chunk_whose_row_could_not_be_read_names_none() -> None:
     (hit,) = fold_set_chunks([_writer_chunk("u2")])
     assert (hit.memory_key, hit.source) == ("lesson_a", "fact")
     assert (hit.identity, hit.session_id) == (None, "")
 
 
-def test_a_chunk_of_a_row_the_fact_leg_leaves_out_is_dropped() -> None:
+def test_a_chunk_whose_row_is_not_served_is_dropped() -> None:
     older = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
-    rows = {("a", "u", "lesson_a"): None}
-    assert fold_set_chunks([older, _writer_chunk("u", "the lapsed passage")], rows) == [older]
+    assert fold_set_chunks([older, _writer_chunk("u", "the lapsed passage")], {}) == [older]

@@ -171,7 +171,7 @@ async def test_lexical_union_pool_selects_the_rows_tags(monkeypatch: pytest.Monk
         query_text="grace hash join",
         tags=["subsystem:SQL"],
     )
-    hits = await ms._lexical_recall_fallback(ch, q, set(), limit=50, max_distance=0.9)
+    hits = await ms._lexical_recall_fallback(ch, q, limit=50, max_distance=0.9)
     assert "e.tags AS tags" in ch.sql and TAG in ch.sql
     assert hits[0].tags == ["subsystem:SQL"]
 

@@ -198,7 +198,7 @@ async def _gather_legs(
         # a second FINAL scan of the namespace's vectors.
         _spanned(
             "ch.query.memory_embeddings.lexical",
-            _lexical_recall_fallback(ch, q, set(), limit=50, max_distance=0.9),
+            _lexical_recall_fallback(ch, q, limit=50, max_distance=0.9),
         )
         if _plane_enabled(q, "lexical") and q.search_mode != "rrf"
         else None

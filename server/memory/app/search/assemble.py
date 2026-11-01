@@ -39,8 +39,9 @@ def _drop_excluded_keys(ctx: SearchContext) -> None:
 
 
 def collapse_rows(hits: list[_MemorySearchHit], namespace: str) -> list[_MemorySearchHit]:
-    """One hit per stored row: legs that pooled one row twice (a set chunk's passage and
-    the value's head) keep the higher-ranked hit, at the earlier position."""
+    """One hit per stored row, the higher-ranked at the earlier position: a sub-query or
+    set-expansion leg folds its own set chunk onto a row the main pool holds by its head,
+    and the two excerpts differ."""
     out: list[_MemorySearchHit] = []
     slot: dict[RowKey, int] = {}
     for h in hits:

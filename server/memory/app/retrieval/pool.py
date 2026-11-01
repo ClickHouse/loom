@@ -11,15 +11,13 @@ from dataclasses import replace
 from typing import Any
 
 from server.memory.domain.search_parsing import _iso_date
-from server.memory.domain.search_sql import _build_where, exclude_pooled
+from server.memory.domain.search_sql import VECTOR_PREDICATES, _build_where, exclude_pooled
 from server.memory.domain.search_types import (
     RowIdentity,
     SearchHit,
     SearchQuery,
     _CHClient,
-    hit_row_key,
     hit_sort_key,
-    names_row,
     row_identity,
 )
 
@@ -132,28 +130,28 @@ def _folded_fields(row: Any, chunk: Any) -> dict[str, Any]:
     }
 
 
-def _fold_key(h: SearchHit) -> tuple[str, ...]:
-    # a hit's row, or its namespace and key when its leg read no identity
-    key = hit_row_key(h)
-    return key if names_row(h) else (key.namespace, key.memory_key)
+def _fold_key(identity: RowIdentity | None, memory_key: str) -> tuple[str, ...]:
+    # a hit's row, or just its key when its leg read no identity (one namespace per pool)
+    return (*identity, memory_key) if identity else (memory_key,)
 
 
 def fold_set_chunks(
-    hits: list[SearchHit], rows: Mapping[tuple[str, str, str], RowIdentity | None] | None = None
+    hits: list[SearchHit], rows: Mapping[tuple[str, str, str], RowIdentity] | None = None
 ) -> list[SearchHit]:
     """Fold the verbatim chunks of long memory.set values onto
     their parent fact, so a fact-only namespace never sees a chunk id.
 
-    `rows` names the row a chunk was cut from, by (agent, user_id, parent key)
-    (`_set_chunk_rows`): a chunk's own session is `memory.set:<key>`. A chunk of a
-    row the fact leg leaves out is dropped. A chunk
+    `rows` names the served row each chunk was cut from, by (agent, user_id, parent
+    key) (`_set_chunk_rows`): a chunk's own session is `memory.set:<key>`. A chunk with
+    no served row there is dropped; with no `rows` (the read failed) a chunk names no
+    row. A chunk
     whose row is in the pool gives it the better of the two scores and, when
     the chunk out-scored it, its passage as the excerpt — the row's stored
     excerpt is only the value's head, and the passage that matched must
     survive the fold for memory.ask's window. A chunk whose row is not in the
     pool becomes that row's hit: `source="fact"`, the chunk's passage, scores
     and dates, tags empty (the handler's tag point-read fills fact hits by key
-    when the request asks); with no row known it names none. Several chunks of
+    when the request asks). Several chunks of
     one row collapse to one hit. Order is re-established by `hit_sort_key`.
     Conversation chunks (no memory.set session) pass through untouched.
     `score_components` records the fold: `folded_chunks` (count), for a
@@ -163,25 +161,23 @@ def fold_set_chunks(
     rank-neutral: a folded parent sits exactly where its chunk sat."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
-    rows = rows or {}
     by_row: dict[tuple[str, ...], SearchHit] = {}
     out: list[SearchHit] = []
     for h in hits:
         if not _is_set_chunk(h):
             out.append(h)
             if (getattr(h, "source", "") or "fact") != "chunk":
-                by_row.setdefault(_fold_key(h), h)
+                by_row.setdefault(_fold_key(h.identity, str(h.memory_key)), h)
     for h in hits:
         if not _is_set_chunk(h):
             continue
         parent_key = str(h.parent_memory_key)
         identity = None
-        if h.identity:
-            writer_key = (h.identity[0], h.identity[1], parent_key)
-            if writer_key in rows and rows[writer_key] is None:
-                continue  # cut from a row the fact leg leaves out
-            identity = rows.get(writer_key)
-        row_key = _fold_key(replace(h, memory_key=parent_key, identity=identity))
+        if rows is not None and h.identity:
+            identity = rows.get((h.identity[0], h.identity[1], parent_key))
+            if identity is None:
+                continue  # its row is not served: neither is the chunk
+        row_key = _fold_key(identity, parent_key)
         parent = by_row.get(row_key)
         if parent is None:
             idx_s = str(h.memory_key).rpartition(":")[2]
@@ -213,13 +209,13 @@ def fold_set_chunks(
 
 async def _set_chunk_rows(
     ch: _CHClient, q: SearchQuery, hits: list[SearchHit]
-) -> dict[tuple[str, str, str], RowIdentity | None]:
-    """(agent, user_id, memory_key) -> the row a set chunk of the pool was cut from: a
-    key's chunks are kept per writer and hold its newest value, so the writer's newest live
-    row of the key; None when that row is one the fact leg's filters leave out, whose
-    chunks are not served either. A later lock or status change of an older row gives that
-    row the higher version. One read, only when the pool holds a set chunk; fail-open (a
-    chunk then names no row)."""
+) -> dict[tuple[str, str, str], RowIdentity] | None:
+    """(agent, user_id, memory_key) -> the row each set chunk of the pool was cut from, when
+    the fact leg would serve it. A key's chunks are kept per user and carry the agent of
+    the write that cut them, so the row is that writer's newest row of the key; a later
+    lock or status change of an older row gives that row the higher version. A key whose
+    newest row is not served is left out. One read, only when the pool holds a set chunk;
+    None when it fails."""
     wanted = sorted(
         {
             (h.identity[0], h.identity[1], str(h.parent_memory_key))
@@ -229,28 +225,32 @@ async def _set_chunk_rows(
     )
     if not wanted:
         return {}
-    admitted, params = _build_where(q)
+    where, params = _build_where(q)
+    # served whatever its vector: a row whose embedding is still pending has its chunks
+    served = " AND ".join(w for w in where if w not in VECTOR_PREDICATES)
+    params = {k: v for k, v in params.items() if k not in ("q", "model", "top_k")}
     params["set_rows"] = wanted
     sql = f"""
         SELECT e.agent AS agent, e.user_id AS user_id, e.memory_key AS memory_key,
-               argMax(e.session_id, e.version) AS session_id,
-               argMax({" AND ".join(admitted)}, e.version) AS served
+               argMax(e.session_id, e.version) AS session_id
         FROM loom.memory_embeddings AS e FINAL
         WHERE e.org = {{org:String}}
           AND e.namespace = {{ns:String}}
           AND (e.agent, e.user_id, e.memory_key)
               IN {{set_rows:Array(Tuple(String, String, String))}}
-          AND e.tombstoned_at IS NULL
         GROUP BY e.agent, e.user_id, e.memory_key
+        HAVING argMax({served}, e.version)
     """
     try:
         found = await ch.query_all(sql, params=params)
     except Exception as e:  # noqa: BLE001 — naming a chunk's row never fails a search
         log.warning("set chunk rows read failed (fail-open): %s", e)
-        return {}
+        return None
     return {
         (str(r["agent"]), str(r["user_id"]), str(r["memory_key"])): (
-            (str(r["agent"]), str(r["user_id"]), str(r["session_id"])) if r["served"] else None
+            str(r["agent"]),
+            str(r["user_id"]),
+            str(r["session_id"]),
         )
         for r in found
     }

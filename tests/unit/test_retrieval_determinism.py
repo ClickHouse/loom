@@ -46,7 +46,7 @@ async def test_lexical_union_and_trace_legs_carry_a_key_tie_breaker() -> None:
 
     ch = StubCH()
     ch.query_all_returns.append([])
-    await _lexical_recall_fallback(ch, _q(query_text="deploy window"), set())
+    await _lexical_recall_fallback(ch, _q(query_text="deploy window"))
     sql, _ = ch.query_all_calls[0]
     assert "ORDER BY lex_score DESC, distance ASC, e.memory_key ASC" in sql
 

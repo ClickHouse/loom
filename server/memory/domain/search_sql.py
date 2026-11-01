@@ -50,8 +50,9 @@ def agent_or_shared_predicate(alias: str = "e") -> str:
 
 def exclude_pooled(where: list[str], params: dict[str, Any], hits: Sequence[SearchHit]) -> None:
     """Leave the rows `hits` already pooled out of a leg over `loom.memory_embeddings AS e`.
-    A key holds a row per writer and session, so each hit names its row; a record or a
-    summary names none and leaves out none."""
+    A key holds a row per writer and session, so a hit leaves out the row it names. A hit
+    that names none (a record, a summary, a set chunk whose row could not be read) leaves out
+    none."""
     rows = sorted(
         (r.agent, r.user_id, r.session_id, r.memory_key)
         for r in {hit_row_key(h) for h in hits if names_row(h)}
@@ -64,14 +65,18 @@ def exclude_pooled(where: list[str], params: dict[str, Any], hits: Sequence[Sear
         params["pooled_rows"] = rows
 
 
+# The predicates that keep a vector leg to rows whose vector it can rank; a read that
+# checks whether a row is served, not ranks it, leaves them out.
+VECTOR_PREDICATES = ("e.embedding_model = {model:String}", "e.embedding_dim > 0")
+
+
 def _build_where(q: SearchQuery) -> tuple[list[str], dict[str, Any]]:
     replaying = q.as_of is not None
     where = [
         "e.org = {org:String}",
         "e.namespace = {ns:String}",
         "e.scope = {scope:String}",
-        "e.embedding_model = {model:String}",
-        "e.embedding_dim > 0",
+        *VECTOR_PREDICATES,
         # Deleted rows are gone — except under knowledge_time replay, where a
         # row deleted AFTER the anchor was still known at the anchor.
         tombstone_predicate(q.as_of_basis, alias="e", replaying=replaying),

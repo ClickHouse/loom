@@ -21,7 +21,6 @@ log = logging.getLogger("server.memory.app.retrieval")
 async def _lexical_recall_fallback(
     ch: _CHClient,
     q: SearchQuery,
-    existing_keys: set[str],
     *,
     limit: int = 50,
     max_distance: float = 0.9,
@@ -120,8 +119,6 @@ async def _lexical_recall_fallback(
     n_tokens = max(1, len(tokens))
     for r in rows:
         mk = r["memory_key"]
-        if mk in existing_keys:
-            continue
         # Normalize lex to [0,1] by token count, same scale as cosine.
         lex_norm = float(r.get("lex_score", 0) or 0) / n_tokens
         distance = float(r["distance"])

@@ -152,6 +152,6 @@ async def test_lexical_pool_orders_by_the_token_count() -> None:
         bm25_idfs=[8.0, 0.5, 0.4],
         bm25_avgdl=500.0,
     )
-    await ms._lexical_recall_fallback(ch, q, set(), limit=50, max_distance=0.9)
+    await ms._lexical_recall_fallback(ch, q, limit=50, max_distance=0.9)
     assert "(tok, idf)" not in ch.sqls[-1]
     assert "positionCaseInsensitive(e.content_excerpt_lc, t) > 0" in ch.sqls[-1]

@@ -655,7 +655,6 @@
 5c5bd0cdac42	SELECT count() AS n, if(n = ?, NULL, max(ingested_at)) AS latest FROM loom.documents FINAL WHERE org = {org:String} AND namespace = {ns:String} AND superseded_at IS NULL
 5c7221c42763	SELECT to_key AS memory_key, relation, toString(created_at) AS created_at FROM loom.operator_edges FINAL WHERE org = {o:String} AND namespace = {n:String} AND from_key = {k:String} AND tombstoned_at I
 5cabda4ce6f7	SELECT count() AS n FROM loom.conversation_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String}
-5d23890ef1a1	SELECT e.agent AS agent, e.user_id AS user_id, e.memory_key AS memory_key, argMax(e.session_id, e.version) AS session_id, argMax(e.org = {org:String} AND e.namespace = {ns:String} AND e.scope = {scope
 5d2e62ce8f95	SELECT count() AS n FROM loom.memory_drops WHERE org = {org:String} AND namespace = {ns:String}
 5d5b141b0268	SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, memory_type, -- Prefer the native JSON column when populated; fall back to value. if(length(toString(value_json)) > ?, toStrin
 5d8fbc4e4072	SELECT count() AS n FROM loom.memory_record_versions WHERE org = {org:String} AND namespace IN {ns:Array(String)}
@@ -1857,6 +1856,7 @@ f516a9cc81d3	SELECT * FROM loom.entity_vectors FINAL WHERE org = {org:String} AN
 f51d6af32512	SELECT e.org AS org, e.namespace AS namespace, e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id, e.memory_key AS memory_key FROM (SELECT org, namespace, agent, user_id, session_id, m
 f52398a90128	SELECT toString(memory_id) AS memory_id, value, actor, version, toString(coalesce(valid_at, updated_at)) AS since FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND user_i
 f52e30d82733	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
+f53f81125380	SELECT e.agent AS agent, e.user_id AS user_id, e.memory_key AS memory_key, argMax(e.session_id, e.version) AS session_id FROM loom.memory_embeddings AS e FINAL WHERE e.org = {org:String} AND e.namespa
 f5622add735c	SELECT session_id, summary_text, length(key_facts) AS kf, length(derived_from) AS df, coalesce(valid_at, created_at) AS d FROM loom.session_summaries FINAL WHERE org = {o:String} AND namespace = {n:St
 f5976b529f94	SELECT path, scope, symbol_ids, start_line, end_line, content, shingles, uniqExact(path) OVER () AS admitted_files FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, array
 f5ddaf977ab5	SELECT state_key, state_value AS value FROM loom.code_index_state FINAL WHERE org = {org:String} AND namespace = {ns:String} AND state_key IN {keys:Array(String)}

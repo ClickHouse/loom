@@ -603,7 +603,7 @@ async def test_lexical_union_statement_passes_the_analyzer(ch_client) -> None:
 
     ch = StubCH()
     q = _q(entity_filter=[], query_text="grace hash join bucket spilling bug", top_k=5)
-    await _lexical_recall_fallback(ch, q, set(), limit=50, max_distance=0.9)
+    await _lexical_recall_fallback(ch, q, limit=50, max_distance=0.9)
     assert len(ch.query_all_calls) == 1, "one statement: the lexical union read"
     sql, params = ch.query_all_calls[0]
     assert "PREWHERE" not in sql and "hasAnyTokens(" in sql

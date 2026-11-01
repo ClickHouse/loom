@@ -801,7 +801,7 @@ async def test_lexical_fallback_applies_caller_filters() -> None:
     ch = StubCH()
     ch.query_all_returns = [[]]
     q = _q(tags=["polarity:negative"], query_text="flaky mergetree test")
-    await _lexical_recall_fallback(ch, q, set(), limit=20)
+    await _lexical_recall_fallback(ch, q, limit=20)
 
     assert ch.query_all_calls, "expected a lexical query"
     sql, params = ch.query_all_calls[0]
@@ -827,7 +827,7 @@ async def test_lexical_fallback_matches_the_three_text_columns() -> None:
 
     ch = _StubCH()
     q = _q(query_text="flaky mergetree test")
-    await ms._lexical_recall_fallback(ch, q, set(), limit=20)
+    await ms._lexical_recall_fallback(ch, q, limit=20)
     sql, params = ch.query_all_calls[0]
     assert "hasAnyTokens(e.content_excerpt_lc" in sql
     assert "hasAnyTokens(e.content_excerpt_stem" in sql
