@@ -269,6 +269,8 @@ async def _expand_unit_bodies(
         # The body lives under the session the row was WRITTEN in (the hit carries it). Search
         # fans out across sessions, so a point read under the caller's session misses every row
         # another session wrote — and silently: no body returned, no flag.
+        if getattr(h, "source", "") == "record":
+            return read_sid  # a record's session is its own, not its parent fact's
         return str(getattr(h, "session_id", "") or "") or read_sid
 
     def _writer(h: Any) -> tuple[str, str, str, str]:

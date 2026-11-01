@@ -127,7 +127,7 @@ class DuplicateStatus:
 
     @property
     def row_key(self) -> RowKey:
-        return (self.namespace, self.agent, self.user_id, self.session_id, self.memory_key)
+        return RowKey(self.namespace, self.agent, self.user_id, self.session_id, self.memory_key)
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +170,7 @@ class CanonicalRow:
 
     @property
     def row_key(self) -> RowKey:
-        return (self.namespace, self.agent, self.user_id, self.session_id, self.memory_key)
+        return RowKey(self.namespace, self.agent, self.user_id, self.session_id, self.memory_key)
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,7 +202,7 @@ class SupersededSuccessor:
 
     @property
     def row_key(self) -> RowKey:
-        return (self.namespace, self.agent, self.user_id, self.session_id, self.memory_key)
+        return RowKey(self.namespace, self.agent, self.user_id, self.session_id, self.memory_key)
 
 
 @dataclass(frozen=True, slots=True)
@@ -434,7 +434,7 @@ async def status_by_rows(
     Only rows inside `scope` are read, so another user's row never names a
     canonical for this read.
     """
-    wanted = sorted({r for r in rows if r[-1]})  # a RowKey ends with its memory_key
+    wanted = sorted({r for r in rows if r.memory_key})
     if not wanted:
         return []
     ch = ch or _default_client()
@@ -583,7 +583,7 @@ async def superseded_successors(
     still live, and the retirement instant (`invalid_at`, else the row's own `updated_at`).
     The pooled rows only, a slice of them per statement. Both the superseded row and its
     successor are read inside `scope`: a successor outside it is unnamed ('')."""
-    wanted = sorted({r for r in rows if r[-1]})  # a RowKey ends with its memory_key
+    wanted = sorted({r for r in rows if r.memory_key})
     if not wanted:
         return []
     ch = ch or _default_client()

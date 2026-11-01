@@ -23,7 +23,7 @@ from typing import Any
 
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
-from server.memory.domain.search_types import RowKey, hit_row_key
+from server.memory.domain.search_types import RowKey, hit_row_key, names_row
 from server.memory.store.dedup import CanonicalRow, DuplicateStatus
 
 log = logging.getLogger(__name__)
@@ -91,22 +91,24 @@ _Truth = dict[RowKey, DuplicateStatus]
 _Canon = dict[tuple[str, str], CanonicalRow]
 
 
-async def _truth(org: str, rows: list[RowKey], scope: ReadFilters) -> _Truth:
-    """Each pooled row's status. A hit that names no row (a stored row's user_id is never
-    empty) takes its key's status, as one row of the key would."""
+async def _truth(
+    org: str, named: list[RowKey], unnamed: list[RowKey], scope: ReadFilters
+) -> _Truth:
+    """Each pooled row's status: read by row for the hits that name one, by key for the
+    rest (a folded set chunk), as one row of the key would."""
     import server.memory.store as memory_repo
 
-    named = [r for r in rows if r[2]]
-    unnamed = [r for r in rows if not r[2]]
     truth: _Truth = {}
     if named:
         found = await memory_repo.status_by_rows(org, named, scope=scope)
         truth = {s.row_key: s for s in found}
     if unnamed:
-        keys = sorted({(r[0], r[4]) for r in unnamed})
+        keys = sorted({(r.namespace, r.memory_key) for r in unnamed})
         found = await memory_repo.status_by_keys(org, keys, scope=scope)
         by_key = {(s.namespace, s.memory_key): s for s in found}
-        truth.update({r: by_key[(r[0], r[4])] for r in unnamed if (r[0], r[4]) in by_key})
+        for r in unnamed:
+            if (r.namespace, r.memory_key) in by_key:
+                truth[r] = by_key[(r.namespace, r.memory_key)]
     return truth
 
 
@@ -141,7 +143,9 @@ async def hide_pool_duplicates(ctx: Any) -> None:
     ns_default = str(input.namespace)
     scope = request_scope()
     try:
-        truth = await _truth(input.org, [hit_row_key(h, ns_default) for h in facts], scope)
+        named = [hit_row_key(h, ns_default) for h in facts if names_row(h)]
+        unnamed = [hit_row_key(h, ns_default) for h in facts if not names_row(h)]
+        truth = await _truth(input.org, named, unnamed, scope)
     except Exception as e:  # noqa: BLE001 — hiding is a filter, never a failure
         log.warning("memory.search: duplicate status read failed: %s", e)
         return

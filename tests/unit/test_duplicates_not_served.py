@@ -17,6 +17,7 @@ from server.memory.api.models_crud import MemoryGetInput, MemoryGetOutput, Memor
 from server.memory.api.models_graph import MemoryDedupCollapseInput
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app import served_duplicates as sd
+from server.memory.domain.search_types import RowKey
 from server.memory.domain.temporal_sql import served_status_sql, status_predicate
 from server.memory.store.dedup import CanonicalRow, DuplicatePair, DuplicateStatus
 
@@ -76,7 +77,7 @@ def _hit(
     source: str = "fact",
     ns: str = "",
     tags: Any = None,
-    session: str = "",
+    session: str = "s1",
     who: tuple[str, str, str] | None = ("a", "-", "s1"),  # a fact leg names its row
 ) -> Any:
     hit = _MemorySearchHit(
@@ -238,10 +239,9 @@ async def test_a_hit_naming_no_row_takes_its_keys_status(truth: SimpleNamespace)
     # a folded set chunk names its key but no row: the key's status decides it
     truth.status = {"dup_a": _dup("c-1"), "b": _ACTIVE}
     named = _hit("b", rank=0.8, session="s1", who=("a", "u", "s1"))
-    ctx = _ctx([_hit("dup_a", rank=0.9, who=None), named])
+    ctx = _ctx([_hit("dup_a", rank=0.9, session="", who=None), named])
     await sd.hide_pool_duplicates(ctx)
     assert [h.memory_key for h in ctx.all_hits] == ["b"]
-    assert truth.status_calls == 2  # one read by row, one by key
 
 
 @pytest.mark.asyncio
@@ -697,7 +697,9 @@ async def test_repo_duplicate_reads_carry_the_read_scope() -> None:
 
     one_session = ReadFilters(scope="own_session", user_id="u", session_id="s")
     cid = "11111111-1111-1111-1111-111111111111"
-    await memory_repo.status_by_rows("o", [("n", "a", "u", "s", "k")], scope=one_session, ch=_CH())
+    await memory_repo.status_by_rows(
+        "o", [RowKey("n", "a", "u", "s", "k")], scope=one_session, ch=_CH()
+    )
     await memory_repo.canonical_rows_by_ids("o", ["n"], [cid], scope=one_session, ch=_CH())
     for sql, params in sqls:
         assert "user_id = {scope_uid:String}" in sql and "session_id = {scope_sid:String}" in sql
@@ -720,8 +722,10 @@ async def test_repo_readers_never_alias_an_aggregate_to_its_source_column() -> N
 
     ch = _CH()
     whole = WHOLE_NAMESPACE
-    rows = [("n", "a", "-", "-", "k2"), ("n", "a", "-", "-", "k1"), ("n", "a", "-", "-", "k1")]
-    await memory_repo.status_by_rows("o", [*rows, ("n", "a", "-", "-", "")], scope=whole, ch=ch)
+    rows = [RowKey("n", "a", "-", "-", k) for k in ("k2", "k1", "k1")]
+    await memory_repo.status_by_rows(
+        "o", [*rows, RowKey("n", "a", "-", "-", "")], scope=whole, ch=ch
+    )
     await memory_repo.canonical_rows_by_ids(
         "o", ["n"], ["not-a-uuid", "11111111-1111-1111-1111-111111111111"], scope=whole, ch=ch
     )

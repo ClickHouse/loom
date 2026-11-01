@@ -18,6 +18,7 @@ from server.memory.api.models_crud import MemoryListInput
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app import served_superseded as ss
 from server.memory.app.ask import prompts, rendering, supersession
+from server.memory.domain.search_types import RowKey
 from server.memory.domain.temporal_sql import served_status_sql, served_statuses, status_predicate
 from server.memory.store.dedup import SupersededSuccessor
 
@@ -256,7 +257,7 @@ async def test_successor_statement_scopes_both_reads() -> None:
 
     one_session = ReadFilters(scope="own_session", user_id="u", session_id="s")
     await memory_repo.superseded_successors(
-        "o", [("n", "a", "u", "s", "k")], scope=one_session, ch=_CH()
+        "o", [RowKey("n", "a", "u", "s", "k")], scope=one_session, ch=_CH()
     )
     [(sql, params)] = sqls
     # once in the superseded-row read, once in the successor join

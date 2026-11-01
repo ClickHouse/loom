@@ -151,3 +151,19 @@ async def test_a_shared_row_is_read_under_the_callers_identity(monkeypatch):
     h._row_identity = ("_shared", "-", "-")
     await _expand_unit_bodies([h], _input())
     assert reads == ["*"] and h.content_excerpt == "the body"
+
+
+@pytest.mark.asyncio
+async def test_a_record_body_is_read_under_the_callers_session(monkeypatch):
+    # a record keeps its own session as provenance; its parent fact may live in another
+    sessions = []
+
+    async def fake_get_many(identity, keys, **_):
+        sessions.append(identity.session_id)
+        return [SimpleNamespace(memory_key=k, value="the fact", sensitivity="") for k in keys]
+
+    monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
+    h = _hit("k", session_id="s2")
+    h.source = "record"
+    await _expand_unit_bodies([h], _input(session_id="s1"))
+    assert sessions == ["s1"] and h.content_excerpt == "the fact"

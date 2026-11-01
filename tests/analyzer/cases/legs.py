@@ -11,6 +11,7 @@ from typing import Any
 
 from server.core.tag_sql import TagFilter
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+from server.memory.domain.search_types import RowKey
 from tests.analyzer.cases._common import AGENT, MODEL, NS, ORG, VEC, chunk_cand, rows_by_substring
 from tests.analyzer.cases.search import _q
 from tests.analyzer.corpus import Case, RecordingCH
@@ -396,8 +397,9 @@ async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
         if c["user_id"]
         else WHOLE_NAMESPACE
     )
-    rows = [(NS, "a", "-", "-", "k1"), (NS, "a", "-", "-", "k2")]
+    rows = [RowKey(NS, "a", "-", "-", "k1"), RowKey(NS, "a", "-", "-", "k2")]
     await M.status_by_rows(ORG, rows, scope=dup_scope, ch=ch)
+    await M.status_by_keys(ORG, [(NS, "k1")], scope=dup_scope, ch=ch)
     await M.canonical_rows_by_ids(
         ORG, [NS], ["00000000-0000-0000-0000-000000000001"], scope=dup_scope, ch=ch
     )

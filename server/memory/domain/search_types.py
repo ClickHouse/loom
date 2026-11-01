@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 
 class _CHClient(Protocol):
@@ -303,14 +303,26 @@ def row_identity(row: Mapping[str, Any]) -> RowIdentity | None:
     return str(row["agent"]), str(row["user_id"]), str(row["session_id"])
 
 
-# (namespace, agent, user_id, session_id, memory_key): one stored row.
-RowKey = tuple[str, str, str, str, str]
+class RowKey(NamedTuple):
+    """One stored row: it binds as a tuple of the five columns."""
+
+    namespace: str
+    agent: str
+    user_id: str
+    session_id: str
+    memory_key: str
 
 
 def row_key_of(namespace: str, row: Mapping[str, Any]) -> RowKey:
     """The RowKey of a result row that read the identity columns."""
     agent, user_id, session_id = (str(row[c]) for c in ("agent", "user_id", "session_id"))
-    return namespace, agent, user_id, session_id, str(row["memory_key"])
+    return RowKey(namespace, agent, user_id, session_id, str(row["memory_key"]))
+
+
+def names_row(hit: Any) -> bool:
+    """Whether a hit's leg read the identity of its row (`SearchHit.identity`, or a wire
+    hit's `_row_identity`)."""
+    return bool(getattr(hit, "_row_identity", None) or getattr(hit, "identity", None))
 
 
 def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
@@ -321,7 +333,7 @@ def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
     session."""
     identity = getattr(hit, "_row_identity", None) or getattr(hit, "identity", None)
     agent, user_id, session_id = identity or ("", "", str(getattr(hit, "session_id", "") or ""))
-    return (
+    return RowKey(
         str(getattr(hit, "namespace", "") or namespace),
         agent,
         user_id,
