@@ -67,7 +67,8 @@ ASSIGNMENT_WORDS = (
     r"auth[_-]?token|bearer|client[_-]?secret|private[_-]?key"
 )
 
-# where an assignment's value ends: `_keyed_credential` rewrites them in what it states
+# the characters that end an assignment's value; `_keyed_credential` replaces them in what
+# it states
 _ASSIGNMENT_STOP_CHARS = "\"',;"
 
 _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (

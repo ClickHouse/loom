@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -320,7 +320,7 @@ _BUCKETED_ROWS = [
 @pytest.mark.asyncio
 @pytest.mark.skipif(not CLICKHOUSE, reason="clickhouse binary not installed")
 async def test_a_bucketed_clear_keeps_every_locked_identitys_vector_in_clickhouse(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Past one mutation's worth of locks each hash bucket is its own mutation: Python's
     split of the locked hashes and the SQL's split of the rows must agree, or a bucket

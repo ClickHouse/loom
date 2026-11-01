@@ -379,6 +379,7 @@ def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
         {"password": "ab\\cd1234"},
         {"password": "abc\bdef12"},
         {"client_secret": "/q8ZtR3mKp9x"},  # base64 may open with `/`; a path has two segments
+        {"client_secret": "//q8ZtR3mKp9x"},  # no segment between the slashes: not a path
         {"password": "Abc;12345678"},
         {"db_password": "p@ss,w0rd99"},
         {"password": 'ab"cd12345'},
