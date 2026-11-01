@@ -290,7 +290,8 @@ superseded in the record plane and does not keep the record.
   the writer's row is not live. Its row write is conditional on the row it read: it answers 409
   `PRECONDITION_FAILED` when the decision changes during the call or another conditional write holds the key, and 503
   when the key's lease store is unreachable; call it again. The condition is on the row's value, not its pin: a
-  `memory.unpin` that lands between the outcome's read and its write is undone, and the row stays pinned.
+  `memory.unpin` that lands between the outcome's read and its write is undone, as the outcome writes the row pinned
+  again.
 
 | Operation             | Role   | Does                                                                                               |
 | --------------------- | ------ | -------------------------------------------------------------------------------------------------- |
