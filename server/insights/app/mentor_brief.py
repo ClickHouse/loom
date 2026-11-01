@@ -171,10 +171,11 @@ async def _adoption(profile: mentor_rules.MentorProfile) -> list[MentorAdoption]
 _RUNG_MEANING: dict[EvidenceRung, str] = {
     "attempt": (
         "calls the ledger records under this agent, answered or not (the dashboard's calls "
-        "and the briefs about the agent left out). Not counted: a call that reads across "
-        "agents (`agent: *`, as the SDKs' `memory.search` and `memory.ask` and MCP's "
-        "cross-agent reads send it) or names no agent (a read by id, an MCP "
-        "`memory.update`), which the ledger records under `*` or none"
+        "and the briefs about the agent left out). Not counted: any call whose body names "
+        "no agent, which the ledger records under none (a read by id, an MCP "
+        "`memory.update`, the SDKs' `memory.update` and `memory.outcome` by default), or "
+        "that reads across agents (`agent: *`, as the SDKs' `memory.search` and "
+        "`memory.ask` and MCP's cross-agent reads send it)"
     ),
     "success": "of those, calls that returned without an error; a read that found nothing counts",
     "committed_write": (
@@ -187,10 +188,9 @@ _RUNG_MEANING: dict[EvidenceRung, str] = {
     ),
     "returned_hit": (
         "reads under this agent that answered: a `memory.search` or `memory.ask` that did "
-        "not abstain, a "
-        "`search.query` with a memory, document or conversation hit (not a profile match or "
-        "a duplicate-check verdict), a get that found its key; whether the answer reached the "
-        "model or changed its work is not recorded"
+        "not abstain, a `search.query` with a memory, document or conversation hit (not a "
+        "profile match or a duplicate-check verdict), a get that found its key; whether "
+        "the answer reached the model or changed its work is not recorded"
     ),
     "client_acknowledged": (
         "distinct memory keys the agent's runs reported relying on (`run.complete` "
@@ -223,17 +223,19 @@ async def _evidence(
             failed.append(f"{step}: {type(exc).__name__}")
             return None
 
-    calls_read, indexed, reported, own_retention = await asyncio.gather(
+    async def indexed() -> int:
+        # The embedder is resolved inside the read, so a failure is this rung's alone.
+        model = get_embedder().model_name
+        return await mentor_store.indexed_writes(*who, model=model, ch=ch)
+
+    calls_read, indexed_count, reported, own_retention = await asyncio.gather(
         read(
             "evidence",
             mentor_store.call_evidence(
                 *who, searches=mentor_rules.SEARCHES, gets=mentor_rules.GETS, ch=ch
             ),
         ),
-        read(
-            "indexed_writes",
-            mentor_store.indexed_writes(*who, model=get_embedder().model_name, ch=ch),
-        ),
+        read("indexed_writes", indexed()),
         read("reported_keys", mentor_store.reported_keys(*who, ch=ch)),
         read(
             "retention",
@@ -255,7 +257,7 @@ async def _evidence(
         _rung("attempt", counted("attempts"), "server"),
         _rung("success", counted("successes"), "server"),
         _rung("committed_write", counted("committed_writes"), "server"),
-        _rung("indexed_write", indexed, "server"),
+        _rung("indexed_write", indexed_count, "server"),
         _rung("returned_hit", counted("returned_hits"), "server"),
         _rung("client_acknowledged", reported, "client"),
         _rung("task_outcome", None, "none"),

@@ -554,7 +554,7 @@ async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | 
         f"SELECT retention_days FROM loom.namespaces FINAL WHERE {_SCOPE} LIMIT 1",
         params={"org": org, "ns": namespace},
     )
-    return int(row["retention_days"] or 0) if row else 0
+    return int(row["retention_days"]) if row else 0
 
 
 async def reported_keys(

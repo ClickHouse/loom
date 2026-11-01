@@ -195,10 +195,11 @@ at session start, and a successful response carries at most one (`hint` on MCP, 
 A brief's `evidence` lists what the agent's use of Loom shows, one rung each, and who
 recorded it. The server records `attempt` (calls the ledger records under the agent; the
 dashboard's calls, the briefs about the agent and the verdict rows a deferred `memory.ask`
-leaves are left out, and a call that reads across agents (`agent: *`, as the SDKs'
-`memory.search` and `memory.ask` and MCP's cross-agent reads send it) or names no agent (a
-read by id, an MCP `memory.update`) is recorded under `*` or none and not counted),
-`success` (calls without an error, a read that found nothing included), `committed_write`
+leaves are left out, and any call whose body names no agent (a read by id, an MCP
+`memory.update`, the SDKs' `memory.update` and `memory.outcome` by default) or reads
+across agents (`agent: *`, as the SDKs' `memory.search` and `memory.ask` and MCP's
+cross-agent reads send it) is recorded under none or `*` and not counted), `success`
+(calls without an error, a read that found nothing included), `committed_write`
 (`memory.set` calls that stored a row, not a no-op, a dry run or a replay; other write ops
 do not say on the ledger whether they stored one), `indexed_write` (memory keys the agent
 first created in the window, by any write op, that have a vector from the current
