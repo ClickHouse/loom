@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -846,14 +847,8 @@ def stubbed_set_commit(monkeypatch: pytest.MonkeyPatch) -> Any:
     return set_commit
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("duplicate_of", ["", "canonical-id"])
-async def test_a_duplicate_leaves_the_keys_chunks_to_the_served_value(
-    stubbed_set_commit: Any, duplicate_of: str
-) -> None:
-    # the key holds a long value's chunks; a duplicate restatement must not replace them
-    from types import SimpleNamespace
-
+async def _after_write(set_commit: Any, duplicate_of: str) -> list[dict[str, Any]]:
+    # one memory.set's after-write step over a key that holds a long value's chunks
     served = [_live_row(0, "the served long value's first passage")]
     ch = _CH(routes=[("FROM loom.memory_chunks FINAL", served)])
     w = set_commit._SetWrite(
@@ -864,9 +859,20 @@ async def test_a_duplicate_leaves_the_keys_chunks_to_the_served_value(
     await set_commit._set_after_write(
         w, ch, None, SimpleNamespace(verdict="clear"), duplicate_of, []
     )
-    written = ch.rows_for("loom.memory_chunks")
-    if duplicate_of:
-        assert written == []  # a duplicate writes no chunks: the served value's stay
-    else:  # an active write replaces the key's chunks with its own
-        assert any(r["tombstoned_at"] is not None for r in written)
-        assert any(r["tombstoned_at"] is None for r in written)
+    return ch.rows_for("loom.memory_chunks")
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_leaves_the_keys_chunks_to_the_served_value(
+    stubbed_set_commit: Any,
+) -> None:
+    assert await _after_write(stubbed_set_commit, "canonical-id") == []
+
+
+@pytest.mark.asyncio
+async def test_an_active_write_replaces_the_keys_chunks_with_its_own(
+    stubbed_set_commit: Any,
+) -> None:
+    written = await _after_write(stubbed_set_commit, "")
+    assert any(r["tombstoned_at"] is not None for r in written)
+    assert any(r["tombstoned_at"] is None for r in written)

@@ -46,6 +46,14 @@ class _CHClient(Protocol):
     ) -> None: ...
 
 
+class _Reads(Protocol):
+    async def query_all(
+        self,
+        sql: str,
+        params: dict[str, Any] | None = ...,
+    ) -> list[dict[str, Any]]: ...
+
+
 def _default_client() -> _CHClient:
     from server.core.ch import get_client
 
@@ -53,7 +61,7 @@ def _default_client() -> _CHClient:
 
 
 async def query_all_sliced(
-    ch: _CHClient, sql: str, params: dict[str, Any], key: str
+    ch: _Reads, sql: str, params: dict[str, Any], key: str
 ) -> list[dict[str, Any]]:
     """`query_all` with the list `params[key]` bound a slice at a time: every slice's
     rows, in order. An empty list sends no statement and reads no row."""

@@ -258,9 +258,15 @@ def test_a_chunk_no_row_is_named_for_is_dropped() -> None:
     assert fold_set_chunks([pooled, _writer_chunk("u", "a stale passage")], {}) == [pooled]
 
 
-def test_a_chunk_whose_row_is_not_served_is_dropped() -> None:
+def test_a_chunk_names_only_the_row_rows_gives_it() -> None:
+    # another session's row of the writer's key is pooled, but `rows` names s2
     older = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
-    assert fold_set_chunks([older, _writer_chunk("u", "the lapsed passage")], {}) == [older]
+    rows = {ChunkId("a", "u", "lesson_a", 0, _SHA): SetChunkRow(("a", "u", "s2"), 7)}
+    out = fold_set_chunks([older, _writer_chunk("u", "the s2 passage")], rows)
+    assert [(h.identity, h.content_excerpt) for h in out] == [
+        (("a", "u", "s2"), "the s2 passage"),
+        (("a", "u", "s1"), "lesson_a"),
+    ]
 
 
 @pytest.mark.parametrize("rows", [0, -1])

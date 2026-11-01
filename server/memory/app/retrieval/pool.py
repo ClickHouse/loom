@@ -164,17 +164,23 @@ def fold_set_chunks(
     (`_set_chunk_rows`): onto the row when it is pooled, as its hit when it is not, and a
     chunk `rows` names no row for is dropped. With `rows` None (shared scope) a chunk folds
     onto a pooled fact of its key, or becomes a hit of the key. Conversation chunks pass
-    through."""
+    through. `score_components` records the fold for later
+    stages: `folded_chunks` (the chunk floor counts it), `folded_lift` (the asserted
+    tie-break skips the row) and `folded_from_chunk`; a converted hit has empty tags,
+    which the handler's tag read fills."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
+    by_key = rows is None
     out = [h for h in hits if not _is_set_chunk(h)]
-    # each pooled fact's position, by its row and by its key
+    # each pooled fact's position, by its row, or by its key under shared scope
     at: dict[tuple[str, ...], int] = {}
     for pos, h in enumerate(out):
-        if (getattr(h, "source", "") or "fact") != "chunk":
-            if h.identity:
-                at.setdefault(("row", *h.identity, h.memory_key), pos)
+        if (getattr(h, "source", "") or "fact") == "chunk":
+            continue
+        if by_key:
             at.setdefault(("key", h.memory_key), pos)
+        elif h.identity:
+            at.setdefault(("row", *h.identity, h.memory_key), pos)
     for h in hits:
         if not _is_set_chunk(h):
             continue
@@ -210,8 +216,7 @@ def fold_set_chunks(
                 "folded_lift": 1.0,
             },
         )
-        at.setdefault(target, len(out))
-        at.setdefault(("key", parent_key), len(out))
+        at[target] = len(out)
         out.append(converted)
     out.sort(key=hit_sort_key)
     return out
@@ -238,11 +243,13 @@ async def _set_chunk_rows(
     that chunk (`set_chunk_identities`). A chunk none of them cuts, or every chunk when a
     read fails, names none. None under shared scope, where the writer's private row is
     never served: the chunks fold by key."""
-    pooled = {cid for h in hits if _is_set_chunk(h) and (cid := _chunk_id(h))}
-    if not pooled:
+    if not any(_is_set_chunk(h) for h in hits):
         return {}
     if q.scope != "private":
         return None
+    pooled = {cid for h in hits if _is_set_chunk(h) and (cid := _chunk_id(h))}
+    if not pooled:
+        return {}
     # served whatever its vector: a row whose embedding is still pending has its chunks
     where, params = _build_where(q, ranked=False)
     params["set_rows"] = sorted({(c.agent, c.user_id, c.memory_key) for c in pooled})
@@ -285,9 +292,7 @@ async def _set_chunk_rows(
 
 
 async def _row_values(
-    ch: Any,  # a CHClient: `query_all_sliced` takes the store's client protocol
-    q: SearchQuery,
-    rows: list[dict[str, Any]],
+    ch: _CHClient, q: SearchQuery, rows: list[dict[str, Any]]
 ) -> dict[RowKey, tuple[Any, str]]:
     """The current (value, memory_type) of each live row, read by `loom.memory`'s sort-key
     prefix a form field at a time."""
