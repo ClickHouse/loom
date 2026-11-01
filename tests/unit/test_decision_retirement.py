@@ -839,6 +839,8 @@ async def test_a_delete_before_the_outcome_writes_answers_not_found(
 ) -> None:
     # The writer deletes its row after the outcome read it and before the outcome writes.
     from server.core.errors import NotFoundError
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
     from server.memory.api.models_decision import DecisionOutcomeInput
     from server.memory.app import decision as h
 
@@ -864,6 +866,42 @@ async def test_a_delete_before_the_outcome_writes_answers_not_found(
             DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
         )
     assert await _seed_decision() is None
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
+    assert await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE) is None
+
+
+@pytest.mark.asyncio
+async def test_a_delete_inside_the_outcomes_row_write_answers_not_found(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The delete lands after the outcome's row write and before its record write: the
+    # record check finds no live writer, so the outcome writes no record back.
+    from server.core.errors import NotFoundError
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    async def _delete_after_the_outcome(_call: int) -> None:
+        if "decision:outcome-known" in seen[-1].tags:
+            await _delete("claude")
+
+    seen = _set_into(local, monkeypatch, before=_delete_after_the_outcome)
+    await h.handle_decision_record(
+        record_input(
+            category="deploy",
+            scenario="Roll back or hotfix the image?",
+            caused_by=[],
+            influenced_by=[],
+        )
+    )
+    with pytest.raises(NotFoundError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    assert await _seed_decision() is None
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
+    assert await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE) is None
 
 
 @pytest.mark.asyncio
