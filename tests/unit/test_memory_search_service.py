@@ -1303,7 +1303,7 @@ async def test_two_writers_rows_of_a_key_whose_excerpts_open_alike_both_stay() -
 
 
 @pytest.mark.asyncio
-async def test_a_chunk_is_dropped_only_for_a_fact_of_its_own_writer() -> None:
+async def test_under_private_scope_a_chunk_is_dropped_only_for_a_fact_of_its_own_writer() -> None:
     from dataclasses import replace
 
     from server.memory.app.retrieval.search import _merge_leg_hits
@@ -1321,7 +1321,23 @@ async def test_a_chunk_is_dropped_only_for_a_fact_of_its_own_writer() -> None:
     own = replace(chunk, memory_key="chunk:s8:0", identity=("a", "u1", "s8"))
     out = await _merge_leg_hits(StubCH(), _q(), [fact], [chunk, own], [], [])
     assert [h.memory_key for h in out] == ["k", "chunk:s9:0"]
-    # Under shared scope the fact is the promoted row: the opening alone drops a chunk.
-    shared = replace(fact, identity=("_shared", "-", "-"))
-    out = await _merge_leg_hits(StubCH(), _q(scope="shared"), [shared], [chunk, own], [], [])
+
+
+@pytest.mark.asyncio
+async def test_under_shared_scope_a_chunk_that_opens_like_a_fact_drops() -> None:
+    # the shared fact is the promoted row, whose writer no chunk carries
+    from dataclasses import replace
+
+    from server.memory.app.retrieval.search import _merge_leg_hits
+    from server.memory.domain.search_types import SearchHit
+
+    shared = SearchHit(
+        memory_key="k",
+        memory_type="semantic",
+        content_excerpt="the same long value a user stored and promoted to shared " * 3,
+        distance=0.2,
+        identity=("_shared", "-", "-"),
+    )
+    chunk = replace(shared, memory_key="chunk:s9:0", source="chunk", identity=("a", "u2", "s9"))
+    out = await _merge_leg_hits(StubCH(), _q(scope="shared"), [shared], [chunk], [], [])
     assert [h.memory_key for h in out] == ["k"]

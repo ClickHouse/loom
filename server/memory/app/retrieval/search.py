@@ -291,13 +291,11 @@ def _fact_rows_to_hits(
     return hits
 
 
-def _writer_prefix(h: SearchHit, scope: str) -> tuple[str, str, str]:
+def _writer_prefix(h: SearchHit, scope: str) -> tuple[tuple[str, ...], str]:
     # a chunk is redundant only beside a fact of its own writer; a shared fact is the
     # promoted row, whose writer no chunk carries, so there the opening alone decides
-    if scope != "private" or h.identity is None:
-        return "", "", h.content_excerpt[:60]
-    agent, user_id, _ = h.identity
-    return agent, user_id, h.content_excerpt[:60]
+    owner = h.identity[:2] if scope == "private" and h.identity is not None else ()
+    return owner, h.content_excerpt[:60]
 
 
 async def _merge_leg_hits(
@@ -312,8 +310,8 @@ async def _merge_leg_hits(
     into the fact hits, dedup across planes, and append the unmatched
     candidates when asked."""
     if chunk_hits:
-        # Drop a chunk whose first 60 chars match a fact of its writer — the fact
-        # carries the structured signal, the chunk would be redundant.
+        # Drop a chunk whose first 60 chars match a fact of its writer (under shared
+        # scope, any fact) — the fact carries the structured signal.
         fact_prefixes = {_writer_prefix(h, q.scope) for h in hits if h.source == "fact"}
         chunk_hits = [c for c in chunk_hits if _writer_prefix(c, q.scope) not in fact_prefixes]
         hits.extend(chunk_hits)
