@@ -150,13 +150,19 @@ async def _members(org: str, ns: str) -> InventoryPopulation:
     if counted is None:
         return _not_counted("members", failed)
     people, shared = counted
-    # Only a collection inherits: a parent's grants reach every child.
+    # Only a collection inherits: an ancestor's grants reach every child.
     inherited = False
     if sharing.is_collection(ns):
         tree, failed = await _attempt("members", sharing.tree(org))
         if tree is None:
             return _not_counted("members", failed)
-        inherited = len(tree.lineage(ns)) > 1
+        for ancestor in tree.lineage(ns)[1:]:
+            granted, failed = await _attempt("members", grants_repo.member_count(org, ancestor))
+            if granted is None:
+                return _not_counted("members", failed)
+            if any(granted):
+                inherited = True
+                break
     wider = []
     if await is_org_readable_code_namespace(org, ns):
         wider.append("readable by everyone in the org")

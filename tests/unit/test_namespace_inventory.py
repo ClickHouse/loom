@@ -120,6 +120,25 @@ def test_members_shared_wider_are_not_a_complete_count(
     assert (members.total, members.complete, members.reason) == (people, False, reason)
 
 
+def test_a_parent_with_no_grants_leaves_the_member_count_complete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _tree(monkeypatch, {"col-n": "col-root", "col-root": ""})
+
+    def grants(sql: str, params: dict[str, Any]) -> list[dict[str, int]]:
+        return [
+            {"people": 2, "shared": 0} if params["ns"] == "col-n" else {"people": 0, "shared": 0}
+        ]
+
+    ch = _ch(("loom.namespace_grants", grants)).install(monkeypatch, *_GET_CLIENT)
+    (members,) = [p for p in _run(namespace="col-n").populations if p.population == "members"]
+    assert (members.total, members.complete) == (2, True)
+    assert sorted(st.params["ns"] for st in ch.statements("loom.namespace_grants")) == [
+        "col-n",
+        "col-root",
+    ]
+
+
 def test_a_personal_collection_is_not_a_complete_member_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
