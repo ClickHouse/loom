@@ -379,12 +379,22 @@ async def test_a_refused_memory_row_leaves_no_active_record(
 
     from server.memory.app import decision as h
 
+    # memory.set's refusal for a close pinned peer under another key, as it raises it.
+    peer_refusal = {
+        "code": "PINNED_CONFLICT",
+        "message": "write conflicts with a pinned memory ('m-1'); update the pinned row "
+        "explicitly via memory.update_by_id or unpin it first",
+        "pinned_blocker_id": "m-1",
+        "peer_ids": ["m-1"],
+    }
+
     async def _pinned_conflict(_inp: Any) -> Any:
-        raise HTTPException(status_code=409, detail={"code": "PINNED_CONFLICT"})
+        raise HTTPException(status_code=409, detail=peer_refusal)
 
     monkeypatch.setattr("server.memory.app.write.handle_memory_set", _pinned_conflict)
-    with pytest.raises(HTTPException):
+    with pytest.raises(HTTPException) as refused:
         await h.handle_decision_record(record_input(caused_by=[], influenced_by=[]))
+    assert refused.value.detail == peer_refusal
     key = svc.decision_key("Deploy", "Roll back or hotfix the 26.5 image?")
     assert await h._decision_records(local, "o", "n", [key]) == {}
     assert await local.query_all("SELECT 1 FROM loom.memory_records") == []
@@ -1122,3 +1132,36 @@ async def test_another_identitys_decision_supersedes_a_pinned_one(
     identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
     row = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
     assert row is not None and row.pinned is True
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_meeting_a_pin_after_its_read_asks_for_another_call(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The writer pins its row between the outcome's read and its write: memory.set's real
+    # pin guard refuses the unpinned write, and the outcome answers as for a changed row.
+    from server.core.errors import PreconditionFailedError
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+    from server.memory.app.write import _guard_existing_row
+
+    await h.ensure_schema("o", "n")
+    version = await _write_decision_rows(local, "claude")
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
+
+    async def _pin_then_set(inp: Any) -> Any:
+        await _pin_claudes_row(local, version)
+        existing = await memory_repo.get_by_key(
+            identity, inp.memory_key, strong=True, scope=WHOLE_NAMESPACE
+        )
+        _guard_existing_row(existing, inp, "")
+        raise AssertionError("the pin guard let an unpinned write through")
+
+    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _pin_then_set)
+    with pytest.raises(PreconditionFailedError, match="call decision.outcome again"):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    assert await _history() == ["active"]
