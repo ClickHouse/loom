@@ -17,7 +17,7 @@ IMPORT_KEY_PREFIX: Final = "import:"
 IMPORT_KEY_HEX: Final = 24
 # The key's shape, unanchored: Python and ClickHouse's RE2 both read it.
 IMPORT_KEY_PATTERN: Final = f"{re.escape(IMPORT_KEY_PREFIX)}[0-9a-f]{{{IMPORT_KEY_HEX}}}"
-# The same, anchored for ClickHouse's `match`, which RE2 reads as the whole value.
+# The same, anchored: ClickHouse's `match` finds the pattern anywhere in the value.
 IMPORT_KEY_MATCH: Final = f"^{IMPORT_KEY_PATTERN}$"
 _IMPORT_KEY: Final = re.compile(IMPORT_KEY_PATTERN)
 
