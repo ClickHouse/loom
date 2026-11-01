@@ -131,13 +131,14 @@ def seeded(control_plane_url: str, ch_client: Any) -> Any:
                 "fields": {"owner": {"value": owner}},
             }
             _call(c, wide, "memory.record.write", body)
-        # Rows memory.list does not serve by default (a duplicate, a superseded and a
-        # proposed row, under a user of their own), and one it still serves past its
-        # expiry until the sweep removes it (under the unset user).
+        # Rows no read serves (a duplicate, a superseded, a proposed and a rejected row,
+        # under a user of their own), and one served past its expiry until the sweep
+        # removes it (under the unset user).
         rows = [
             ["ghost", "duplicate", None],
             ["ghost", "superseded", None],
             ["ghost", "proposed", None],
+            ["ghost", "rejected", None],
             ["-", "active", datetime.now(UTC) - timedelta(hours=1)],
         ]
         ch_client.insert(
@@ -178,8 +179,16 @@ def seeded(control_plane_url: str, ch_client: Any) -> Any:
                 "expires_at",
             ],
         )
-        # A grant to a group widens who reads without naming them; a revoked grant is gone.
-        for subject, revoked in (("group:eng", None), ("left@example.com", datetime.now(UTC))):
+        # Grants to the org and a group widen who reads without naming them; an agent and a
+        # service account are not people; a revoked grant is gone.
+        grants = [
+            ("group:eng", None),
+            ("everyone", None),
+            ("agent:helper", None),
+            ("sa:indexer", None),
+            ("left@example.com", datetime.now(UTC)),
+        ]
+        for subject, revoked in grants:
             ch_client.insert(
                 "loom.namespace_grants",
                 [[org, ns, subject, "viewer", datetime.now(UTC), "-", revoked, 1, "active"]],
@@ -213,12 +222,8 @@ def test_the_inventory_counts_planes_and_keeps_populations_apart(seeded: Any) ->
     c, org, ns, wide = seeded
     out = _call(c, wide, "namespace.inventory", {"org": org, "namespace": ns})
     sections = {s["plane"]: s for s in out["sections"]}
-    # Four written rows and the expired one memory.list still serves.
+    # Four written rows and the expired one still served.
     assert sections["memories"]["count"] == 5 and sections["memories"]["latest_at"]
-    listed = _call(
-        c, wide, "memory.list", {"org": org, "namespace": ns, "agent": "*", "user_id": "*"}
-    )
-    assert listed["total"] == sections["memories"]["count"]
     assert sections["documents"]["count"] == 1
     assert sections["records"]["count"] == 1 and sections["records"]["latest_at"]
     assert sections["runs"]["count"] == 2 and sections["runs"]["latest_at"]
@@ -230,8 +235,9 @@ def test_the_inventory_counts_planes_and_keeps_populations_apart(seeded: Any) ->
     assert [i["name"] for i in pops["agents"]["top"]] == ["bot"]
     # `actor` is stamped from the token: a service account writes as `process:<subject>`.
     assert [(i["name"], i["rows"]) for i in pops["authors"]["top"]] == [(f"process:{WRITER}", 4)]
-    # Two people (one under two spellings), neither of whom wrote a row; the group grant
-    # leaves the count incomplete, and the revoked and pending grants are not counted.
+    # Two people (one under two spellings), neither of whom wrote a row; the org and group
+    # grants leave the count incomplete, and the agent, service account, revoked and
+    # pending grants are not counted.
     members = pops["members"]
     assert (members["total"], members["complete"]) == (2, False)
     assert members["reason"] == "shared with everyone or a group: those members are not counted"

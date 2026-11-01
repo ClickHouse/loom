@@ -222,3 +222,14 @@ def test_a_zero_population_limit_keeps_the_totals(monkeypatch: pytest.MonkeyPatc
     observed = [p for p in out.populations if p.population != "members"]
     assert all(p.top == [] and p.total for p in observed)
     assert all(st.params["lim"] == 1 for st in ch.statements(" AS name"))
+
+
+@pytest.mark.parametrize(("llm_fake", "embedder_fake"), [(True, False), (False, True)])
+def test_capabilities_say_what_serves_the_process(
+    monkeypatch: pytest.MonkeyPatch, llm_fake: bool, embedder_fake: bool
+) -> None:
+    _ch().install(monkeypatch, *_GET_CLIENT)
+    monkeypatch.setattr(namespace_inventory, "llm_is_fake", lambda: llm_fake)
+    monkeypatch.setattr(namespace_inventory, "embedder_is_fake", lambda: embedder_fake)
+    enabled = {c.name: c.enabled for c in _run().capabilities}
+    assert enabled == {"llm": not llm_fake, "embedder": not embedder_fake}

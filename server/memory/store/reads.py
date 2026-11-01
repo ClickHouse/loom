@@ -15,7 +15,7 @@ from server.identity.domain.read_scope import ReadFilters, scope_and, scope_wher
 from server.memory.domain.delete_marks import DELETE_VERSION_TRACE
 from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 from server.memory.domain.identity_columns import IdentityColumn
-from server.memory.domain.temporal_sql import as_of_predicate
+from server.memory.domain.temporal_sql import as_of_predicate, served_status_sql
 from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
 from server.memory.store.sql import (
@@ -792,30 +792,6 @@ def _identity_where(identity: Identity, where: list[str], params: dict[str, Any]
         params["sid"] = identity.session_id
 
 
-def _served_where(
-    *,
-    include_tombstoned: bool = False,
-    include_duplicates: bool = False,
-    include_superseded: bool = False,
-    include_proposed: bool = False,
-) -> list[str]:
-    """The row filters of `memory.list`, shared by its page, its total and the
-    namespace tallies; with no flag set, the rows it serves by default."""
-    where = []
-    if not include_tombstoned:
-        where.append("tombstoned_at IS NULL")
-    if not include_duplicates:
-        # A duplicate's canonical is in the same scan.
-        where.append("status != 'duplicate'")
-    if not include_superseded:
-        # A retired row is served only when asked.
-        where.append("status != 'superseded'")
-    if not include_proposed:
-        # A fact on trial is served only when asked.
-        where.append("status != 'proposed'")
-    return where
-
-
 async def list_by_namespace(
     identity: Identity,
     *,
@@ -870,12 +846,8 @@ async def list_by_namespace(
         "org = {org:String}",
         "namespace = {ns:String}",
     ]
-    where += _served_where(
-        include_tombstoned=include_tombstoned,
-        include_duplicates=include_duplicates,
-        include_superseded=include_superseded,
-        include_proposed=include_proposed,
-    )
+    if not include_tombstoned:
+        where.append("tombstoned_at IS NULL")
     params: dict[str, Any] = {
         "org": identity.org,
         "ns": identity.namespace,
@@ -886,6 +858,15 @@ async def list_by_namespace(
         # Recency reads (startup pack) are casual retrieval; a 'high' row is
         # reachable by key only.
         where.append("sensitivity != 'high'")
+    if not include_duplicates:
+        # A duplicate's canonical is in the same scan.
+        where.append("status != 'duplicate'")
+    if not include_superseded:
+        # A retired row is served only when asked.
+        where.append("status != 'superseded'")
+    if not include_proposed:
+        # A fact on trial is served only when asked.
+        where.append("status != 'proposed'")
     _identity_where(identity, where, params)
     where.extend(scope_where(scope, params))
     if memory_type is not None:
@@ -1141,16 +1122,18 @@ async def count_by_namespace(
         "org = {org:String}",
         "namespace = {ns:String}",
     ]
-    where += _served_where(
-        include_tombstoned=include_tombstoned,
-        include_duplicates=include_duplicates,
-        include_superseded=include_superseded,
-        include_proposed=include_proposed,
-    )
+    if not include_tombstoned:
+        where.append("tombstoned_at IS NULL")
     params: dict[str, Any] = {
         "org": identity.org,
         "ns": identity.namespace,
     }
+    if not include_duplicates:
+        where.append("status != 'duplicate'")  # as list_by_namespace
+    if not include_superseded:
+        where.append("status != 'superseded'")  # as list_by_namespace
+    if not include_proposed:
+        where.append("status != 'proposed'")  # as list_by_namespace
     _identity_where(identity, where, params)
     where.extend(scope_where(scope, params))
     if memory_type is not None:
@@ -1263,15 +1246,16 @@ def _with_usage(row: MemoryRow, totals: dict[str, Any] | None) -> MemoryRow:
     return row.model_copy(update=updates) if updates else row
 
 
-# The rows `memory.list` serves by default.
-_SERVED_ROWS = " AND ".join(_served_where())
+# The rows a read serves: not tombstoned, in a served status (`served_status_sql`, as the
+# search legs read it: not a duplicate, superseded, proposed or rejected row).
+_SERVED_ROWS = f"tombstoned_at IS NULL AND {served_status_sql()}"
 
 
 async def live_tally(
     org: str, namespace: str, *, scope: ReadFilters, ch: _CHClient | None = None
 ) -> tuple[int, datetime | None]:
-    """The rows of the namespace `memory.list` serves inside `scope`, and the newest
-    write among them."""
+    """The rows of the namespace a read serves inside `scope` (`_SERVED_ROWS`), and the
+    newest write among them."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"org": org, "ns": namespace}
     row = await ch.query_one(
