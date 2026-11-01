@@ -79,6 +79,10 @@ class _BulkWriteState:
     """Request-scoped state that flows between the phases of
     `handle_memory_bulk_set`; created at the top of the call, never shared."""
 
+    # False: a restatement, merge or identity duplicate records no `evidence` event.
+    reinforce: bool = True
+    # Entries the conflict check reaches; None reads bulk_conflict_check_max_entries.
+    conflict_check_cap: int | None = None
     existing_ids: dict[str, str] = field(default_factory=dict)
     # Ids minted for keys with no row yet: a key written twice in one batch is one row.
     new_ids: dict[str, str] = field(default_factory=dict)

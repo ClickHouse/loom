@@ -18,6 +18,7 @@ from server.insights.store.provider_staging import session_chunks
 from server.llm import customer
 from server.memory.app.model_attribution import attribution_for, memory_writers
 from server.memory.domain.embed_text import key_axis_text
+from server.memory.domain.import_keys import is_import_key
 from server.memory.domain.okf_evidence import IMPORT_MAX_ITEMS
 from server.memory.domain.sensitivity import joined_overlaps_high, reads_high
 from server.settings import settings
@@ -173,6 +174,10 @@ def _inputs(
                 if "memory_key" not in row:
                     raise RebuildBatchError("source_text_missing")
                 value = key_axis_text(row["memory_key"])
+                if is_import_key(str(row["memory_key"])) and any(row[column]):
+                    # An import key with a key vector from an older build: rebuilt from
+                    # the raw key; `loom reembed --key-only` clears it.
+                    value = str(row["memory_key"])
             if value.strip():
                 texts.append(value)
                 slots.append((index, column))

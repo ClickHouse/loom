@@ -24,6 +24,7 @@ merge, duplicate, conflict or rejected. The verdicts and conflict policies are i
 | Apply one change to many existing rows                | `memory.apply`                  | Dry run by default.                                                             |
 | Clear an agent's or a user's rows                     | `memory.clear`                  | Admin; needs `confirm_subject`.                                                 |
 | Import a curated Markdown file section by section     | `memory.import_curated`         | One memory per heading at `heading_level` (default 2).                          |
+| Import facts another memory system already distilled  | `memory.import`                 | Up to 200 `entries`; see [importing](#importing-from-another-memory-system).    |
 | Mark a candidate fact as wrong                        | `memory.reject`                 | Keeps it from being re-extracted.                                               |
 | Try a fact out before it is served                    | `memory.set(proposed=true)`     | See [proposals](#proposals).                                                    |
 | Store a row with exact typed fields                   | `memory.record.write`           | See [typed records](#typed-records).                                            |
@@ -217,6 +218,108 @@ A row expires only when its writer or the namespace owner asks: `ttl_seconds`,
 `demote` or `anonymize`. `clear_expiry=true` overrides type and namespace defaults. An
 edit to other fields keeps a live expiry. See
 [retention and erasure](./retention-and-erasure.md#writer-set-expiry).
+
+## Importing from another memory system
+
+`memory.import` writes up to 200 facts another memory system already distilled. Each
+entry is the fact's text plus, optionally, `tags`, `valid_at` (when the source first knew
+it), `source_trace` (its id or path there), `category` and `sensitivity`. The write is a
+`memory.bulk_set` underneath, so each entry meets the same checks: identity dedup, the
+lock and pin guards, the blacklist, the sensitivity rule, inline embedding and the
+conflict verdict. Every entry gets the conflict check, whatever
+`LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` caps a `memory.bulk_set` at. In a namespace on
+`newest_wins` that verdict can retire a live memory the imported item updates, as any write
+there does; such an entry answers `written` (`refines`). The value-update linker of the
+extraction path (`LOOM_MEMORY_EXTRACT_VALUE_UPDATES`) never runs for an import.
+
+- **The key comes from the text:** `import:` and the first 24 hex characters of the SHA-256
+  of the text as given, so the same text always lands on the same key. The key is a digest
+  of the text, so anyone who can see a key can confirm a guessed text against it: do not
+  import a secret as an item.
+- **Re-runs write nothing new:** an entry whose key holds its text comes back `skipped`
+  (`unchanged`) in any session the token may read (an `own_session` token reads only its
+  own, see below), and the stored row keeps the tags, `valid_at`, `source_trace` and
+  sensitivity it was written with; an entry naming another `sensitivity` answers `skipped`
+  (`sensitivity_kept`), and `memory.set` changes the stored level. The import reinforces
+  nothing, unlike a restatement through `memory.set` or `memory.bulk_set`, so re-runs never
+  raise a memory's reinforcement; a fact already held under another key comes back `held`.
+- **An item edited in the source** has new text and so a new key: the import adds it and
+  leaves the old fact as it is (the conflict check may flag the pair), so delete or revise
+  the old one yourself.
+- **The text is embedded and indexed alone:** a key that is only the digest (`import:` and
+  24 lowercase hex characters, nothing else) puts no `(#key)` suffix on the excerpt a row is
+  embedded and lexically indexed by, and builds no key-axis vector, so an imported fact
+  relates to other memories through its text, as a hand-written one does. A later
+  `memory.set` or `memory.bulk_set` of the same key follows the same rule, so its vector
+  stays comparable with the imported one; a key of any other shape keeps its suffix. Only
+  the first 1,200 characters of an item's JSON encoding are embedded and indexed (a non-
+  ASCII character takes six of them, one outside the Basic Multilingual Plane twelve), so
+  split a longer item into several.
+- **A key that was deleted, retired or rejected stays so:** before the write, the import
+  reads each key's newest version in every session of the identity that the token may read
+  (only its own session for an `own_session` token), tombstones and rows of every status
+  included; the newest version across those sessions decides, whichever session holds it. A
+  key its owner deleted comes back `skipped` (`deleted`), one a newer fact retired `skipped`
+  (`superseded`) and one marked wrong (`memory.reject`) `skipped` (`rejected`); none is
+  written again. A key holding a proposal comes back `skipped` (`proposed`): only
+  `memory.proposal_decide` moves a fact out of its trial. A live key holding other text was
+  corrected (`memory.set`, `memory.update_by_id`, a pin) or anonymized by an expiry
+  (`on_expire=anonymize`) and comes back `skipped` (`revised`), before the bulk write's own
+  pin and lock guards. A status the import does not recognise leaves the key as it is too,
+  as `skipped` (`unknown`). The read and the write are not atomic: a delete that lands
+  between them is written over. Text deleted, retired or rejected under another key is
+  imported again under its `import:` key: the bulk write's dedup sees live rows only.
+- **A tombstone has no way back through the import:** `memory.delete`, `memory.clear` and
+  an expiry with `on_expire=tombstone` all write one, so clearing an agent and importing
+  from the source again answers `skipped` (`deleted`) for every such item. Bring the keys
+  back with `memory.restore` within 14 days of the delete (a re-import then answers
+  `unchanged`), or remove the scope's rows with `erasure.request` and `purge=true`: a key
+  with no rows left is imported as new.
+- **Provenance:** every row is `source_class=imported`, `valid_at` is the source's time
+  and `created_at` the import's. An entry with no `source_trace` is traced by its key.
+- **Categories:** a `category` the namespace registered (`namespace.register_category`) is
+  linked to the key once the key holds the fact, as `memory.assign_category` links one. A
+  link already stored is left as it is, so a re-run does not bring back a link the owner
+  rescinded, unless the rescind lands while the import runs. When the category is not
+  linked, the result's `note` says why: `category_unregistered` (the namespace has no such
+  category), `category_refused` (a token bounded to one user or one session links none,
+  since a link has neither axis; it is refused `memory.assign_category` too),
+  `category_not_linked` (the key does not hold the fact and has no link) or
+  `category_rescinded` (a link the owner rescinded, left so). The note never changes the
+  entry's outcome. A live link already stored for the key answers no note, and an entry its
+  own request superseded (`newest_wins`) is linked like any written one. What an erasure
+  leaves of the links: [retention and erasure](./retention-and-erasure.md#erasure).
+- **`dry_run=true`** makes every check and writes no memory row, embedding, category link,
+  audit row or usage event. It still pays for the embedding of each entry it sends to the
+  bulk write, since the conflict check reads the vectors (and those vectors land in the
+  embedding cache, `loom.embedding_cache`), and counts a blacklist pattern's hit. A
+  `conflicted` or `refines` entry is previewed before a real write settles its peers, so it
+  may land without the flag or the retirement if its peers change first.
+
+Each result carries the entry's `index`, its `key`, an `outcome` and, when the entry was
+not plainly written, a `reason`:
+
+| `outcome` | `reason`                                                                                                                                                                                                                                                                                                     |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `written` | Empty, `duplicate` or `conflicted` (the status the conflict check stored the row with), or `refines`: under `newest_wins` the item retired the live memories it updates.                                                                                                                                     |
+| `held`    | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key, named in `held_by`); nothing is written or reinforced.                                                                                                                                              |
+| `skipped` | `unchanged`, `sensitivity_kept`, `deleted`, `superseded`, `rejected`, `proposed`, `revised` (the key holds other text: a correction, or an expiry anonymized it), `repeated` (an earlier entry of the request with the same text was written) or `unknown` (logged: a status the import does not recognise). |
+| `refused` | `blacklist`, `pinned` or `locked` (only when the key is pinned or locked between the import's read and its write) or `pinned_peer` (too close to a pinned memory).                                                                                                                                           |
+
+Under `newest_wins`, two entries of one request that state the same attribute differently
+keep only the newer: the later `valid_at` (an undated entry counts as said at the time of
+the import), then the later in the request. The other still answers `written`, and its row
+is stored `superseded`.
+
+An entry with the same text as an earlier one must be identical to it (otherwise the
+request is a 422 naming both indexes), and answers as that entry did, except after a
+write, when it is `skipped` (`repeated`).
+
+`totals` counts the outcomes, and `dry_run` echoes whether the request was a dry run. A request
+with more than 200 entries is refused with 422, and each call draws from its own
+[rate-limit class](../../reference/http-api.md#rate-limits), `memory.import`. The op is
+listed on no MCP toolset: an MCP client calls `loom_memory_import` by name. Fields:
+[operations reference](../../reference/operations/memory.md#memoryimport).
 
 ## Proposals
 

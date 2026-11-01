@@ -105,6 +105,11 @@ nothing in scope is left.
 The op is callable with a writer token, but the handler requires admin on the target
 (403 `AUTH_INSUFFICIENT` otherwise).
 
+Category links (`loom.memory_categories`) carry no user, so a `user_id` erasure leaves them
+and the `memory.import` audit rows that list them. For an imported item the link's key is
+`import:` and a digest of its text, which confirms a guessed text; a `namespace` erasure
+removes the links.
+
 ### The saga
 
 ```mermaid

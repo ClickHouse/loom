@@ -5,7 +5,8 @@ Both are generated from `server.operations.registry.ALL_OPERATIONS`:
   name the same ops;
 - every op has one method in each SDK, at the same group, the method name
   camel-cased in TypeScript (`agent.client.tracker.source_add` ↔
-  `loom.tracker.sourceAdd`);
+  `loom.tracker.sourceAdd`), and a Python keyword spelled with a trailing
+  underscore (`agent.client.memory.import_` ↔ `loom.memory.import`);
 - each Python method calls exactly its own op.
 
 The `--check` of each generator keeps the files current; this test keeps them
@@ -15,6 +16,7 @@ equal to each other.
 from __future__ import annotations
 
 import asyncio
+import keyword
 import re
 from pathlib import Path
 from typing import Any
@@ -44,11 +46,14 @@ def _camel(snake: str) -> str:
 
 def _python_method(op: str) -> tuple[str, str]:
     group, _, rest = op.partition(".")
-    return group, rest.replace(".", "_")
+    method = rest.replace(".", "_")
+    return group, (f"{method}_" if keyword.iskeyword(method) else method)
 
 
 def test_the_generator_names_methods_as_this_test_does() -> None:
     assert split_op("tracker.source.add") == ("tracker", "source_add")
+    # A keyword takes a trailing underscore; camel-casing drops it again for TypeScript.
+    assert split_op("memory.import") == ("memory", "import_") and _camel("import_") == "import"
     assert all(split_op(name) == _python_method(name) for name in PY_OPS)
 
 

@@ -26,6 +26,7 @@ _CREATE = {
     "memory.set_from_messages",
     "memory.bulk_set",
     "memory.record.write",
+    "memory.import",
     "memory.import_curated",
     "memory.copy_to",
     "memory.demonstrate",

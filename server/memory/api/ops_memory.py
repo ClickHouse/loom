@@ -1,7 +1,7 @@
 """The memory.* operations: one ``OPERATIONS`` list, the name the registry
 imports, over the declarations in the ops_<group> modules (crud, search,
-bulk, lifecycle, graph, temporal, admin, evidence_transfer, for_file, move,
-proposals). Their wire models live in the matching models_<group> modules.
+bulk, import, lifecycle, graph, temporal, admin, evidence_transfer, for_file,
+move, proposals). Their wire models live in the matching models_<group> modules.
 
 The SDK exposes `.share()` as an alias over `.promote()` — same wire
 op; there's no separate `memory.share` op.
@@ -61,6 +61,7 @@ from server.memory.api.ops_graph import (
     memory_link,
     memory_related,
 )
+from server.memory.api.ops_import import memory_import
 from server.memory.api.ops_lifecycle import (
     memory_copy_to,
     memory_cross_promote,
@@ -162,6 +163,7 @@ OPERATIONS: list[Operation] = [
     memory_reindex,
     memory_resolve_orphan_duplicates,
     memory_import_curated,
+    memory_import,
     memory_link,
     memory_assign_category,
     memory_stack,

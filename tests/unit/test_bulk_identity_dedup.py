@@ -122,7 +122,8 @@ async def test_same_content_under_another_key_reinforces_the_keeper_and_writes_n
     assert "session_id" not in sql  # any session
     assert "memory_key IN" not in sql  # any key
     assert "select_sequential_consistency = 1" in sql  # a lagging replica must not hide the keeper
-    assert "IN ('active', 'duplicate', 'conflicted')" in sql  # any live status is the same fact
+    assert "IN {live:Array(String)}" in sql  # any live status is the same fact
+    assert params["live"] == ["active", "duplicate", "conflicted"]
     assert params["shas"] == [sha256_value(VALUE)] and params["uid"] == "u"
 
 

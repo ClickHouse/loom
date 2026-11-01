@@ -67,6 +67,7 @@ SEARCHES = ("memory.search", "memory.ask")
 SETS = (
     "memory.set",
     "memory.bulk_set",
+    "memory.import",
     "memory.update",
     "memory.update_by_id",
     "memory.set_from_messages",

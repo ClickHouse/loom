@@ -2677,7 +2677,8 @@ settings:
   # memory_conflict_resolver_recheck_idle_seconds: 300.0
 
   # Entries per bulk call that get the conflict check; later entries are written
-  # unchecked and counted. 0 = none are checked. [restart]
+  # unchecked and counted. 0 = none are checked. memory.import checks every entry
+  # whatever this says. [restart]
   # bulk_conflict_check_max_entries: 200
 
   # Supersession pairs one bulk write follows on the triple plane in the request; the

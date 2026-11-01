@@ -91,6 +91,7 @@ def test_created_at_versioned_table_drops_created_at_so_default_now_wins() -> No
 
 def test_settings_scale_quotas_with_rows() -> None:
     s = rb.in_database_settings(5)
+    assert s["short_circuit_function_evaluation"] == "force_enable"
     assert s["allow_experimental_ai_functions"] == 1
     assert s["ai_function_embedding_max_batch_size"] == 100
     assert s["ai_function_max_api_calls_per_query"] == 1000
@@ -148,3 +149,16 @@ async def test_in_database_statement_runs_through_the_client_with_its_settings(
 
 async def _noop() -> None:
     return None
+
+
+def test_an_import_key_gets_no_key_vector_in_the_database_either() -> None:
+    """As `key_axis_text` gives an import key no axis text, the in-database statement
+    writes it the zero placeholder at key dim 0 (a coded column refuses `[]`); every other
+    key is embedded."""
+    sql = rb.in_database_sql(
+        "memory_embeddings", COLS, model="m", dim=8, credentials="c", where_sql="1"
+    )
+    is_import = "match(memory_key, '^import:[0-9a-f]{24}$')"
+    zeros = "arrayResize(CAST([] AS Array(BFloat16)), 8, toBFloat16(0))"
+    assert f"if({is_import}, {zeros}, CAST(aiEmbed(memory_key, 'm'" in sql
+    assert f"if({is_import}, toUInt16(0), toUInt16(8))" in sql

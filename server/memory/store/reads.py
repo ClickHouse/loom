@@ -328,6 +328,51 @@ async def memory_rows_by_identity_keys(
     return {_identity_key(r): _hydrate(r) for r in rows}
 
 
+async def key_heads_across_sessions(
+    org: str,
+    namespace: str,
+    agent: str,
+    user_id: str,
+    memory_keys: Sequence[str],
+    *,
+    scope: ReadFilters,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """The newest version of each of `memory_keys` across the sessions of the identity
+    `(org, namespace, agent, user_id)` that `scope` may read, tombstones and every status
+    included: `memory_key`, `deleted`, `head_status`, `head_sha256`, `head_sensitivity`.
+    Sequentially consistent, since a write decides on the answer."""
+    if not memory_keys:
+        return []
+    ch = ch or _default_client()
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "agent": agent,
+        "uid": user_id,
+        "keys": sorted(set(memory_keys)),
+    }
+    in_scope = scope_and(scope, params)
+    return await ch.query_all(
+        f"""
+        SELECT memory_key,
+               argMax(tombstoned_at IS NOT NULL, version) AS deleted,
+               argMax(status, version) AS head_status,
+               argMax(content_sha256, version) AS head_sha256,
+               argMax(sensitivity, version) AS head_sensitivity
+        FROM loom.memory
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND agent = {{agent:String}}
+          AND user_id = {{uid:String}}
+          AND memory_key IN {{keys:Array(String)}}{in_scope}
+        GROUP BY memory_key
+        {_SEQUENTIAL}
+        """,
+        params=params,
+    )
+
+
 async def key_holds_established_fact(
     org: str, namespace: str, memory_key: str, *, ch: _CHClient | None = None
 ) -> bool:

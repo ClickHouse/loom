@@ -990,6 +990,29 @@ Enumerate the version history of one memory_key.
 | --- | --- | --- |
 | `rows` | `list[_MemoryHistoryRow]` | Every recorded version of the key, newest first, tombstoned and redacted ones included; empty when the key was never written. |
 
+## `memory.import`
+
+Import items another memory system distilled, through every check a write makes.
+
+`POST /v1/memory.import` · MCP `loom_memory_import` · role `writer` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
+| `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
+| `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
+| `entries` | `list[_MemoryImportEntry]` | required | The items to import, 1 to 200: each one's text, and optionally its tags, the time the source first knew it, its source pointer, a category and a sensitivity tier. |
+| `dry_run` | `bool` | `False` | Make every check and answer each entry's outcome; no memory, link or audit row is written. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `totals` | `_MemoryImportTotals` | How many entries ended each way. |
+| `results` | `list[_MemoryImportResult]` | One result per entry, in request order. |
+| `dry_run` | `bool` | True for a dry run: each outcome is what the import would do; no memory, link or audit row was written. |
+
 ## `memory.import_curated`
 
 Split a curated markdown doc into sections, write each via handle_memory_set, returning per-section verdicts.

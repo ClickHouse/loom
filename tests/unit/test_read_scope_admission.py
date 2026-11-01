@@ -266,6 +266,7 @@ _ACTS_AS_A_USER = [
     "knowledge.upsert",
     "memory.bulk_set",
     "memory.delete",
+    "memory.import",
     "memory.lock",
     "memory.outcome",
     "memory.pin",

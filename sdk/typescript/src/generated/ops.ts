@@ -4785,6 +4785,48 @@ export interface MemoryHistoryOutput {
   rows: MemoryHistoryRow[];
 }
 
+export interface MemoryImportEntry {
+  value: string;
+  tags?: string[];
+  valid_at?: string | null;
+  source_trace?: string;
+  category?: string;
+  sensitivity?: "" | "low" | "medium" | "high";
+}
+
+export interface MemoryImportInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id?: string;
+  session_id?: string;
+  run_id?: string;
+  entries: MemoryImportEntry[];
+  dry_run?: boolean;
+}
+
+export interface MemoryImportTotals {
+  written?: number;
+  held?: number;
+  skipped?: number;
+  refused?: number;
+}
+
+export interface MemoryImportResult {
+  index: number;
+  key: string;
+  outcome: "written" | "held" | "skipped" | "refused";
+  reason?: "" | "blacklist" | "pinned" | "locked" | "pinned_peer" | "merge" | "identity_duplicate" | "unchanged" | "deleted" | "superseded" | "rejected" | "proposed" | "revised" | "sensitivity_kept" | "repeated" | "unknown" | "duplicate" | "conflicted" | "refines";
+  held_by?: string;
+  note?: "" | "category_unregistered" | "category_refused" | "category_not_linked" | "category_rescinded";
+}
+
+export interface MemoryImportOutput {
+  totals: MemoryImportTotals;
+  results: MemoryImportResult[];
+  dry_run?: boolean;
+}
+
 export interface MemoryImportCuratedInput {
   org: string;
   namespace: string;
@@ -9142,6 +9184,7 @@ export type OpName =
   | "memory.get_by_id"
   | "memory.health"
   | "memory.history"
+  | "memory.import"
   | "memory.import_curated"
   | "memory.import_evidence"
   | "memory.keys"
@@ -9482,6 +9525,7 @@ export interface OpMap {
   "memory.get_by_id": { input: MemoryGetByIdInput; output: MemoryGetByIdOutput };
   "memory.health": { input: MemoryHealthInput; output: MemoryHealthOutput };
   "memory.history": { input: MemoryHistoryInput; output: MemoryHistoryOutput };
+  "memory.import": { input: MemoryImportInput; output: MemoryImportOutput };
   "memory.import_curated": { input: MemoryImportCuratedInput; output: MemoryImportCuratedOutput };
   "memory.import_evidence": { input: MemoryImportEvidenceInput; output: MemoryImportEvidenceOutput };
   "memory.keys": { input: MemoryKeysInput; output: MemoryKeysOutput };
@@ -9822,6 +9866,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.get_by_id", group: "memory", method: "getById", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 50, audit: false, readOnly: true },
   { name: "memory.health", group: "memory", method: "health", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "memory.history", group: "memory", method: "history", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
+  { name: "memory.import", group: "memory", method: "import", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
   { name: "memory.import_curated", group: "memory", method: "importCurated", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "memory.import_evidence", group: "memory", method: "importEvidence", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "memory.keys", group: "memory", method: "keys", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 2000, audit: false, readOnly: true },
@@ -9995,4 +10040,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 337;
+export const GENERATED_OP_COUNT = 338;

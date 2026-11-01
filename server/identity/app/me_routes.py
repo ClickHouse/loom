@@ -71,8 +71,10 @@ _SHARING_WRITE_OPS = [
     "memory.pin",
     "memory.promote",
     # The ways agents actually populate a namespace. The hook plugins write almost only
-    # through observe.record; a seeded namespace arrives through set_from_messages; typed
-    # records and knowledge are writes too. Without them every producer would show "0 writes".
+    # through observe.record; a seeded namespace arrives through set_from_messages or
+    # memory.import; typed records and knowledge are writes too. Without them every
+    # producer would show "0 writes".
+    "memory.import",
     "memory.set_from_messages",
     "memory.record.write",
     "knowledge.add",

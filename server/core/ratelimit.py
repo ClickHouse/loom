@@ -45,6 +45,9 @@ _OP_CLASS_OVERRIDES: dict[str, str] = {
     # Cheap high-volume telemetry — rides the big memory bucket, not the
     # read-shaped code bucket.
     "code.outcome": "memory",
+    # One call embeds and conflict-checks up to 200 items: its own bucket, sized like
+    # knowledge.add, so an import never spends the namespace's memory budget.
+    "memory.import": "memory.import",
 }
 
 # Exact-key memory reads: one primary-key lookup each, and the shape an agent that uses loom
@@ -102,6 +105,7 @@ DEFAULT_LIMITS: dict[str, Limit] = {
     "memory.read": Limit(capacity=300, rate=50),
     "knowledge.search": Limit(capacity=20, rate=3),  # ~200/min
     "knowledge.add": Limit(capacity=10, rate=2),  # ~100/min (embedding is downstream-limited)
+    "memory.import": Limit(capacity=10, rate=2),  # each call up to 200 embedded items
     # Read-shaped code-intelligence ops; agents burst on session start.
     "code": Limit(capacity=60, rate=10),  # ~600/min
     "default": Limit(capacity=50, rate=10),

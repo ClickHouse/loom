@@ -1067,7 +1067,12 @@ def test_the_reembed_filter_leaves_out_switched_off_orgs() -> None:
     from server.memory.app import reembed
 
     sql, params = reembed.where_sql(
-        ["org", "tombstoned_at"], "m", org=None, namespace=None, exclude_orgs=frozenset({"acme"})
+        "memory_embeddings",
+        ["org", "tombstoned_at"],
+        "m",
+        org=None,
+        namespace=None,
+        exclude_orgs=frozenset({"acme"}),
     )
     assert "NOT has({off:Array(String)}, org)" in sql and params["off"] == ["acme"]
 

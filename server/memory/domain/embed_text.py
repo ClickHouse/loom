@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from server.memory.domain.excerpt import build_excerpt
+from server.memory.domain.import_keys import is_import_key
 from server.settings import settings
 
 
@@ -34,8 +35,11 @@ def key_axis_text(memory_key: str) -> str:
     """The text the key-axis vector (`memory_key_embedding`) is built from: the humanized key
     ("user_dog_name" -> "user dog name"), so a query shaped like the key matches when the
     value cosine is weak. Every write path and `loom reembed` call this one function so a key
-    embeds one way."""
-    return str(memory_key or "").replace("_", " ").strip().lower()
+    embeds one way. An import key (`is_import_key`) has no words, so it gets no key vector."""
+    key = str(memory_key or "")
+    if is_import_key(key):
+        return ""
+    return key.replace("_", " ").strip().lower()
 
 
 def _build_embed_text(

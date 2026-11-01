@@ -5,7 +5,9 @@ over `sdk/typescript/src/generated/ops.ts`).
 `agent.client.<group>.<method>(body, **options)` is `agent.call("<group>.<rest>",
 body, **options)`: the group is the op name's first segment and the method is
 the rest with `.` turned into `_` (`tracker.source.add` → `tracker.source_add`),
-the snake_case spelling of the TypeScript `loom.tracker.sourceAdd`. Each method
+the snake_case spelling of the TypeScript `loom.tracker.sourceAdd`; a method that
+is a Python keyword takes a trailing underscore (`memory.import` →
+`memory.import_`, TypeScript `loom.memory.import`). Each method
 is typed with the op's `<Op>Body` and `<Op>Output` from `loom.ops`, so a new
 server op reaches both SDKs by regeneration alone. The hand-written clients
 (`agent.memory`, `agent.tasks`, …) stay the high-level layer on top.
@@ -39,10 +41,14 @@ COMMAND = "python scripts/codegen/sdk_py_client_gen.py"
 
 def split_op(name: str) -> tuple[str, str]:
     """`tracker.source.add` → (`tracker`, `source_add`): the group attribute and
-    the method both SDKs expose it as (TypeScript camel-cases the method)."""
+    the method both SDKs expose it as (TypeScript camel-cases the method). A
+    method that is a Python keyword is spelled as PEP 8 spells such a name, with a
+    trailing underscore (`memory.import` → `import_`)."""
     group, _, rest = name.partition(".")
     method = rest.replace(".", "_")
-    if not (group.isidentifier() and method.isidentifier()) or keyword.iskeyword(method):
+    if keyword.iskeyword(method):
+        method += "_"
+    if not (group.isidentifier() and method.isidentifier()):
         raise SystemExit(f"op {name!r} has no valid Python method name")
     return group, method
 

@@ -24,6 +24,7 @@ from typing import Any
 
 from server.llm import customer
 from server.memory.app.model_attribution import attribution_for, memory_writers
+from server.memory.domain.import_keys import IMPORT_KEY_MATCH
 from server.memory.domain.sensitivity import without_high
 from server.settings import settings
 
@@ -63,7 +64,13 @@ def _key_input(row: dict[str, Any]) -> str:
     return key_axis_text(str(row.get("memory_key") or ""))
 
 
+def _is_import_sql(column: str) -> str:
+    """SQL true when `column` holds an import key (`is_import_key`)."""
+    return f"match({column}, '{IMPORT_KEY_MATCH}')"
+
+
 def where_sql(
+    table: str,
     cols: list[str],
     model: str,
     *,
@@ -72,11 +79,17 @@ def where_sql(
     key_only: bool = False,
     exclude_orgs: frozenset[str] = frozenset(),
 ) -> tuple[str, dict[str, Any]]:
-    """Pure: the row filter of a re-embed. Default selects off-model rows;
-    `key_only` selects every live row of the scope regardless of model — the
-    value vectors stay, only the key axis is rebuilt. `exclude_orgs` (orgs
-    whose model calls are switched off) leaves their rows for a later run."""
+    """Pure: the row filter of a re-embed of `table`. Default selects off-model rows.
+    `key_only` selects every live row of the scope regardless of model, except an import
+    key with no key vector; the value vectors stay and only the key axis is rebuilt.
+    `exclude_orgs` (orgs whose model calls are switched off) leaves their rows for a
+    later run."""
     where = [] if key_only else [f"embedding_model != '{model}'"]
+    if key_only:
+        # An import key without a key vector has nothing to rebuild; one with a stale
+        # vector from an older build is cleared.
+        cfg = _TABLES[table]
+        where.append(f"NOT ({_is_import_sql(cfg['key_text'])} AND {cfg['key_dim']} = 0)")
     where.append("embedding_dim > 0")
     params: dict[str, Any] = {}
     if "tombstoned_at" in cols:
@@ -103,7 +116,9 @@ def rewrite_row(
 ) -> dict[str, Any]:
     """Pure: return a copy of `row` re-pointed at the new model/dim/vector,
     preserving every other column. `version` handling per the table engine.
-    `vec=None` keeps the row's own value vector (key-only re-embed)."""
+    `vec=None` keeps the row's own value vector (key-only re-embed); an empty
+    `key_vec` (a key without axis text) leaves the row without a key vector, at
+    key dim 0 as a write leaves it."""
     out = dict(row)
     if vec is not None:
         out[cfg["vec"]] = vec
@@ -111,7 +126,7 @@ def rewrite_row(
     out["embedding_dim"] = dim
     if cfg.get("key_vec") and key_vec is not None:
         out[cfg["key_vec"]] = key_vec
-        out[cfg["key_dim"]] = dim
+        out[cfg["key_dim"]] = dim if key_vec else 0
     if cfg["version"] == "version":
         # One above the row it was read from: it replaces that row (the
         # key-only rewrite shares its sort key) and loses to any version a
@@ -137,6 +152,9 @@ def in_database_sql(
     m = model.replace("'", "\\'")
     cred = credentials.replace("'", "\\'")
 
+    def is_import_key() -> str:  # only a table with a key axis asks
+        return _is_import_sql(cfg["key_text"])
+
     def emb(text_col: str) -> str:
         return f"CAST(aiEmbed({text_col}, '{m}', map('credentials', '{cred}')) AS Array(BFloat16))"
 
@@ -153,10 +171,15 @@ def in_database_sql(
         if c == cfg["vec"]:
             select.append(emb(cfg["text"]))
         elif cfg.get("key_vec") and c == cfg["key_vec"]:
-            select.append(emb(cfg["key_text"]))
+            # An import key (`is_import_key`) gets no key vector, as on every write path: the
+            # zero placeholder an insert pads `[]` to, which a coded column also accepts.
+            zeros = f"arrayResize(CAST([] AS Array(BFloat16)), {int(dim)}, toBFloat16(0))"
+            select.append(f"if({is_import_key()}, {zeros}, {emb(cfg['key_text'])})")
         elif c == "embedding_model":
             select.append(f"'{m}'")
-        elif c == "embedding_dim" or (cfg.get("key_dim") and c == cfg["key_dim"]):
+        elif cfg.get("key_dim") and c == cfg["key_dim"]:
+            select.append(f"if({is_import_key()}, toUInt16(0), toUInt16({int(dim)}))")
+        elif c == "embedding_dim":
             select.append(f"toUInt16({int(dim)})")
         elif cfg["version"] == "version" and c == "version":
             select.append("version + 1")  # as rewrite_row: never above a later write
@@ -172,9 +195,11 @@ def in_database_settings(rows: int) -> dict[str, Any]:
     """Session settings for one in-database re-embed statement: the
     experimental gate, batches of 100 texts per request, and per-query
     quotas sized to the row count (2 calls per row leaves room for the key
-    vector and retries)."""
+    vector and retries). Short-circuit evaluation is forced so an import key's
+    row, whose `if` takes the empty branch, never calls the provider."""
     return {
         "allow_experimental_ai_functions": 1,
+        "short_circuit_function_evaluation": "force_enable",
         "ai_function_embedding_max_batch_size": 100,
         "ai_function_max_api_calls_per_query": max(1000, rows // 100 * 2 + 100),
         "ai_function_max_input_tokens_per_query": max(1_000_000, rows * 2 * 600),
@@ -263,16 +288,22 @@ async def reembed_table(
     Pages of `batch` rows in sort-key order; `start_after` (a resume token's
     key) continues after that row. `left_orgs` collects the orgs switched off
     during the run whose rows were left unwritten.
-    `key_only`: every live row of the scope gets its key-axis vector rebuilt
-    from `key_axis_text` (the value vector is kept); tables without a key
-    axis are skipped."""
+    `key_only`: every live row of the scope but an import key with no key
+    vector gets its key-axis vector rebuilt from `key_axis_text` (the value
+    vector is kept); tables without a key axis are skipped."""
     cfg = _TABLES[table]
     if key_only and not cfg.get("key_text"):
         return 0
     model, dim = embedder.model_name, embedder.dim
     cols = await _cols(ch, table)
     where_clause, params = where_sql(
-        cols, model, org=org, namespace=namespace, key_only=key_only, exclude_orgs=exclude_orgs
+        table,
+        cols,
+        model,
+        org=org,
+        namespace=namespace,
+        key_only=key_only,
+        exclude_orgs=exclude_orgs,
     )
     total = (
         await ch.query_one(
@@ -357,9 +388,14 @@ async def _rewrite_page(
                     for i, v in zip(positions, await embedder.embed_many(texts), strict=True):
                         vecs[i] = v
                 if kvecs is not None:
-                    keys = [_key_input(chunk[i]) for i in positions]
-                    for i, v in zip(positions, await embedder.embed_many(keys), strict=True):
-                        kvecs[i] = v
+                    # A key without axis text (an imported item's digest) is never sent: its
+                    # row is written without a key vector, as every write path leaves it.
+                    key_texts = {i: _key_input(chunk[i]) for i in positions}
+                    keyed = [i for i in positions if key_texts[i]]
+                    if keyed:
+                        vectors = await embedder.embed_many([key_texts[i] for i in keyed])
+                        for i, v in zip(keyed, vectors, strict=True):
+                            kvecs[i] = v
         except customer.GROUP_HOLDS:
             # Switched off since the run began, or the identity refused, asked to wait
             # or unread: its rows wait, and the other groups' vectors are written.
@@ -561,7 +597,9 @@ async def _waiting(
     if key_only and not _TABLES[table].get("key_text"):
         return 0
     cols = await _cols(ch, table)
-    where_clause, params = where_sql(cols, model, org=org, namespace=namespace, key_only=key_only)
+    where_clause, params = where_sql(
+        table, cols, model, org=org, namespace=namespace, key_only=key_only
+    )
     row = await ch.query_one(
         f"SELECT count() AS n FROM loom.{table} FINAL "
         f"WHERE {where_clause} AND has({{off:Array(String)}}, org)",

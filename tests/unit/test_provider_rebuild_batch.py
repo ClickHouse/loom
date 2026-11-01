@@ -93,6 +93,28 @@ async def test_memory_key_uses_the_same_text_recipe_as_normal_writes(target):
 
 
 @pytest.mark.asyncio
+async def test_an_import_key_rebuilds_only_the_key_vector_it_holds(target):
+    """An import key has no key axis text. Without a key vector it is staged empty; with one
+    a build before the import wrote, the migration rebuilds it from the key, not fails."""
+    from server.memory.domain.import_keys import import_key
+
+    key = import_key("Prefers dark roast.")
+    without = {**row_for("memory_embeddings"), "memory_key": key, "memory_key_embedding": [0.0] * 3}
+    stale = {**row_for("memory_embeddings"), "memory_key": key}
+    result = (await rebuild_batch("memory_embeddings", [without, stale], target)).rows
+    target.embed_many.assert_awaited_once_with(["source text", "source text", key])
+    assert [r["memory_key_embedding_dim"] for r in result] == [0, 2]
+
+
+@pytest.mark.asyncio
+async def test_a_key_with_no_axis_text_and_a_vector_still_fails(target):
+    """Only an import key gets its stale key vector rebuilt from the raw key."""
+    row = {**row_for("memory_embeddings"), "memory_key": "___"}
+    with pytest.raises(RebuildBatchError, match="source_text_missing"):
+        await rebuild_batch("memory_embeddings", [row], target)
+
+
+@pytest.mark.asyncio
 async def test_code_uses_context_and_falls_back_to_content(target):
     contextual = row_for("code_chunks")
     raw = {**contextual, "context_text": ""}

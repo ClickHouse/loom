@@ -316,8 +316,8 @@ def _add_reembed_parser(sub: Any) -> None:
     p_reembed.add_argument(
         "--key-only",
         action="store_true",
-        help="Rebuild only the key-axis vector of every live row in "
-        "scope, from the current key-axis text; value vectors are kept",
+        help="Rebuild only the key-axis vectors in scope, from the "
+        "current key-axis text; value vectors are kept",
     )
     p_reembed.add_argument(
         "--resume",

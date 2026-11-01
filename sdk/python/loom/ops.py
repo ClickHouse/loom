@@ -209,6 +209,7 @@ OpName = Literal[
     "memory.get_by_id",
     "memory.health",
     "memory.history",
+    "memory.import",
     "memory.import_curated",
     "memory.import_evidence",
     "memory.keys",
@@ -549,6 +550,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.get_by_id",
     "memory.health",
     "memory.history",
+    "memory.import",
     "memory.import_curated",
     "memory.import_evidence",
     "memory.keys",
@@ -2758,6 +2760,18 @@ OPS: dict[str, OpSpec] = {
         80,
         False,
         True,
+    ),
+    "memory.import": OpSpec(
+        "memory.import",
+        "MemoryImportInput",
+        "MemoryImportBody",
+        "MemoryImportOutput",
+        True,
+        "writer",
+        "experimental",
+        30000,
+        False,
+        False,
     ),
     "memory.import_curated": OpSpec(
         "memory.import_curated",
@@ -11949,6 +11963,93 @@ class MemoryHistoryRow(TypedDict, total=False):
     lock_mode: NotRequired[str]
     lock_reason: NotRequired[str]
     lock_until: NotRequired[Optional[str]]
+
+
+class MemoryImportInput(TypedDict, total=False):
+    "Import items another memory system distilled, through every check a write makes."
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    entries: Required[list["MemoryImportEntry"]]
+    dry_run: NotRequired[bool]
+
+
+class MemoryImportEntry(TypedDict, total=False):
+    value: Required[str]
+    tags: NotRequired[list[str]]
+    valid_at: NotRequired[Optional[str]]
+    source_trace: NotRequired[str]
+    category: NotRequired[str]
+    sensitivity: NotRequired[Literal["", "low", "medium", "high"]]
+
+
+class MemoryImportBody(TypedDict, total=False):
+    "Import items another memory system distilled, through every check a write makes."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    entries: Required[list["MemoryImportEntry"]]
+    dry_run: NotRequired[bool]
+
+
+class MemoryImportOutput(TypedDict, total=False):
+    totals: Required["MemoryImportTotals"]
+    results: Required[list["MemoryImportResult"]]
+    dry_run: NotRequired[bool]
+
+
+class MemoryImportTotals(TypedDict, total=False):
+    written: NotRequired[int]
+    held: NotRequired[int]
+    skipped: NotRequired[int]
+    refused: NotRequired[int]
+
+
+class MemoryImportResult(TypedDict, total=False):
+    index: Required[int]
+    key: Required[str]
+    outcome: Required[Literal["written", "held", "skipped", "refused"]]
+    reason: NotRequired[
+        Literal[
+            "",
+            "blacklist",
+            "pinned",
+            "locked",
+            "pinned_peer",
+            "merge",
+            "identity_duplicate",
+            "unchanged",
+            "deleted",
+            "superseded",
+            "rejected",
+            "proposed",
+            "revised",
+            "sensitivity_kept",
+            "repeated",
+            "unknown",
+            "duplicate",
+            "conflicted",
+            "refines",
+        ]
+    ]
+    held_by: NotRequired[str]
+    note: NotRequired[
+        Literal[
+            "",
+            "category_unregistered",
+            "category_refused",
+            "category_not_linked",
+            "category_rescinded",
+        ]
+    ]
 
 
 class MemoryImportCuratedInput(TypedDict, total=False):

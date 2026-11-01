@@ -1,5 +1,5 @@
-"""memory.bulk_set, the batch write path set_from_messages writes through:
-the live-row lookup, identity dedup, entity resolution, conflict verdicts,
+"""memory.bulk_set, the batch write path set_from_messages and memory.import write
+through: the live-row lookup, identity dedup, entity resolution, conflict verdicts,
 the insert, and the projections and audit that follow it."""
 
 from __future__ import annotations
@@ -65,6 +65,7 @@ from server.memory.app.triple_projections import reconcile_row_facts, write_deri
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.conflicts import kept_versions
 from server.memory.domain.memory_types import is_embedded
+from server.memory.domain.temporal_sql import LIVE_STATUSES
 from server.memory.domain.webhook_events import EventType
 from server.observability.budget_shape import note_budget_shape
 
@@ -158,6 +159,7 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
                 "agent": input.agent,
                 "uid": input.user_id,
                 "shas": _shas,
+                "live": list(LIVE_STATUSES),
             }
             # Under own_session the keeper must be in the caller's session too.
             in_scope = scope_and(request_scope(), params)
@@ -173,7 +175,7 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
                   AND content_sha256 IN {{shas:Array(String)}}{in_scope}
                 GROUP BY content_sha256, memory_key
                 HAVING argMax(tombstoned_at IS NULL, version) = 1
-                   AND argMax(status, version) IN ('active', 'duplicate', 'conflicted')
+                   AND argMax(status, version) IN {{live:Array(String)}}
                 ORDER BY content_sha256, memory_key
                 SETTINGS select_sequential_consistency = 1
                 """,
@@ -255,7 +257,12 @@ async def _bulk_verdicts(
     # so a merge or a pinned rejection never lands a row; duplicate / conflicted are stamped
     # on the rows.
     verdicts = await _bulk_conflict_verdicts(
-        input, state.memory_rows, state.entry_metas, state.pending, value_vectors
+        input,
+        state.memory_rows,
+        state.entry_metas,
+        state.pending,
+        value_vectors,
+        cap=state.conflict_check_cap,
     )
     clock.mark("verdicts")
     plan = _apply_verdicts(state, emb_idx_of, verdicts)
@@ -649,9 +656,10 @@ async def _bulk_settle_verdicts(
     # restatement is the same fact said again under the same key: the usage fold turns the
     # evidence event into memory_embeddings.reinforcement_count, the search-side boost; the
     # row itself is not rewritten or re-embedded.
-    await _record_evidence(input, plan.reinforce_ids, "auto_reinforce bump")
-    await _record_evidence(input, state.identity_dup_ids, "identity-dedup reinforcement")
-    await _record_evidence(input, state.restated_ids, "restatement reinforcement")
+    if state.reinforce:
+        await _record_evidence(input, plan.reinforce_ids, "auto_reinforce bump")
+        await _record_evidence(input, state.identity_dup_ids, "identity-dedup reinforcement")
+        await _record_evidence(input, state.restated_ids, "restatement reinforcement")
 
 
 async def _record_evidence(input: MemoryBulkSetInput, memory_ids: list[str], what: str) -> None:
@@ -949,9 +957,17 @@ async def _bulk_follow_row_supersessions(
 
 async def handle_memory_bulk_set(
     input: MemoryBulkSetInput,
+    *,
+    dry_run: bool = False,
+    conflict_check_cap: int | None = None,
+    reinforce: bool = True,
 ) -> MemoryBulkSetOutput:
     """One CH insert for all rows; one more for embeddings. Versions are
-    each unique (nanosecond) to preserve LWW semantics."""
+    each unique (nanosecond) to preserve LWW semantics.
+
+    - `dry_run`: return after the verdicts; no row is inserted.
+    - `conflict_check_cap`: overrides `bulk_conflict_check_max_entries`.
+    - `reinforce=False`: no `evidence` event for a restatement, merge or identity duplicate."""
     ch = get_client()
     embedder = get_embedder()
     now_utc = datetime.now(UTC)
@@ -960,7 +976,10 @@ async def handle_memory_bulk_set(
 
     _bulk_work: dict[str, Any] = {}
     _bulk_clock = StageClock(_bulk_work)
-    state = _BulkWriteState()
+    state = _BulkWriteState(
+        conflict_check_cap=conflict_check_cap,
+        reinforce=reinforce,
+    )
     await _bulk_existing_lookup(ch, input, state)
 
     identity_dupes = await _bulk_identity_dupes(ch, input)
@@ -979,6 +998,9 @@ async def handle_memory_bulk_set(
     )
 
     plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)
+    if dry_run:
+        _bulk_clock.finish()
+        return _bulk_output(state, plan, _bulk_work)
     # After the verdicts: settling the batch moves entries to unchanged or pinned.
     _bulk_log_skips(state)
 
@@ -1011,7 +1033,13 @@ async def handle_memory_bulk_set(
         _bulk_clock,
     )
     _bulk_clock.finish()
+    return _bulk_output(state, plan, _bulk_work)
 
+
+def _bulk_output(
+    state: _BulkWriteState, plan: BulkVerdictPlan, work: dict[str, Any]
+) -> MemoryBulkSetOutput:
+    """The response: each entry's result, the verdict lists and the write's phase times."""
     return MemoryBulkSetOutput(
         written=state.results,
         retyped=state.retyped,
@@ -1027,7 +1055,7 @@ async def handle_memory_bulk_set(
         unchecked=plan.unchecked,
         identity_duplicates=state.identity_duplicates,
         skipped_blacklisted=state.skipped_blacklisted,
-        stage_ms=dict(_bulk_work.get("stage_ms", {})),
+        stage_ms=dict(work.get("stage_ms", {})),
     )
 
 
@@ -1064,13 +1092,15 @@ async def _bulk_conflict_verdicts(
     entry_metas: list[tuple[Any, ...]],
     pending: list[tuple[Any, ...]],
     value_vectors: list[list[float]],
+    *,
+    cap: int | None = None,
 ) -> dict[int, Any]:
-    """check_on_commit for every searchable entry, concurrency-bounded. Keys
-    are indexes into memory_rows; values are ConflictResults. A bulk past the
-    cap checks the first N and writes the rest unchecked (the caller counts
-    them); a check that errors counts as clear — the write must not fail
-    because the check could not run — except one the model-call switch holds
-    (`customer.HOLDS`), which the write answers as its own embeds would."""
+    """check_on_commit for every searchable entry, concurrency-bounded. Keys are
+    indexes into memory_rows; values are ConflictResults. A bulk past the cap (`cap`,
+    else bulk_conflict_check_max_entries) checks the first N and writes the rest
+    unchecked (the caller counts them); a check that errors counts as clear — the write
+    must not fail because the check could not run — except one the model-call switch
+    holds (`customer.HOLDS`), which the write answers as its own embeds would."""
     import asyncio
 
     from server.memory.app.conflicts import check_on_commit
@@ -1078,7 +1108,9 @@ async def _bulk_conflict_verdicts(
 
     if not pending or not value_vectors:
         return {}
-    cap = max(int(_settings.bulk_conflict_check_max_entries), 0)
+    if cap is None:
+        cap = int(_settings.bulk_conflict_check_max_entries)
+    cap = max(cap, 0)
     sem = asyncio.Semaphore(int(_settings.bulk_conflict_check_concurrency))
     out: dict[int, Any] = {}
 

@@ -15,21 +15,23 @@ before ClickHouse applies it; watch `system.mutations`.
 ## Re-embed and re-extract
 
 - **`loom reembed`** re-embeds memory, entity and conversation vectors whose
-  `embedding_model` differs from the configured embedder. Loom never re-embeds on its
-  own, so run it after changing `LOOM_EMBEDDING_MODEL` (and `LOOM_EMBEDDING_DIM`). Scope
-  with `--org` / `--namespace`; `--dry-run` counts the rows; `--delete-old` removes the
-  old-model rows afterwards; `--key-only` rebuilds only the key-axis vector of each live
-  row. `--in-database <named collection>` runs the embedding inside ClickHouse with
-  `aiEmbed` (ClickHouse 26.7 or later) as one `INSERT … SELECT` per table instead of a
-  Python loop. It is refused while a customer or identity header is set or the inference
-  gateway is required: ClickHouse's own calls name no customer or identity and skip the
-  gateway's host check. The Python path reads `--batch-size` rows at a time in sort-key
-  order and prints a `resume:` token after each page; `--resume <token>` continues an
-  interrupted run there. The Python path never sends a conversation turn whose text reads as
-  high to the embedder: the row stays on the old model, which search does not read,
-  until `--delete-old` removes it. A memory row's vector follows its sensitivity label.
-  `--in-database` cannot check the text and re-embeds such a turn too; search still holds
-  it back ([sensitivity](../architecture/security.md#sensitivity)).
+  `embedding_model` differs from the configured embedder. Loom never re-embeds on its own,
+  so run it after changing `LOOM_EMBEDDING_MODEL` (and `LOOM_EMBEDDING_DIM`). Scope with
+  `--org` / `--namespace`; `--dry-run` counts the rows; `--delete-old` removes the old-model
+  rows afterwards; `--key-only` rebuilds only the key-axis vector of each live row, except
+  an import key (`import:` and a digest), which has none: a row without one is skipped, and
+  one an older build embedded is cleared. `--in-database <named collection>` runs the
+  embedding inside ClickHouse with `aiEmbed` (ClickHouse 26.7 or later) as one
+  `INSERT … SELECT` per table instead of a Python loop. It is refused while a customer or
+  identity header is set or the inference gateway is required: ClickHouse's own calls name no
+  customer or identity and skip the gateway's host check. The Python path reads
+  `--batch-size` rows at a time in sort-key order and prints a `resume:` token after each
+  page; `--resume <token>` continues an interrupted run there. The Python path never sends a
+  conversation turn whose text reads as high to the embedder: the row stays on the old
+  model, which search does not read, until `--delete-old` removes it. A memory row's vector
+  follows its sensitivity label. `--in-database` cannot check the text and re-embeds such a
+  turn too; search still holds it back
+  ([sensitivity](../architecture/security.md#sensitivity)).
 - **A model of another width.** On ClickHouse 26.8 or later a fresh install codes its
   vector columns (`Quantized`) where `enable_quantized_codec` can be on
   ([ClickHouse](../architecture/clickhouse.md#gated-clickhouse-settings)), and a coded

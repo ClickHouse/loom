@@ -443,6 +443,14 @@ async def _keys_and_fence(ch: RecordingCH, c: dict[str, Any]) -> None:
     await M.live_keys(ORG, NS, scope=WHOLE_NAMESPACE, limit=10, ch=ch)
     row = {"agent": AGENT, "user_id": "-", "session_id": "-", "memory_key": "k", "version": 1}
     await M.versions_above(ORG, NS, [row], ch=ch)
+    # memory.import's read of each key's newest version in every session of the identity
+    pinned = ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    for user_id, scope in (("-", WHOLE_NAMESPACE), ("u1", pinned)):
+        await M.key_heads_across_sessions(ORG, NS, AGENT, user_id, ["k1", "k2"], scope=scope, ch=ch)
+    # and its read of the category links already stored for its keys
+    from server.memory.store import categories
+
+    await categories.link_states(ORG, NS, ["k1", "k2"], ch=ch)
 
 
 async def _memory_workers(ch: RecordingCH, c: dict[str, Any]) -> None:

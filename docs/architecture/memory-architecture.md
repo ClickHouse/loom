@@ -401,6 +401,45 @@ blacklisted entry is skipped, not raised; pinned and locked keys come back in
 `skipped_pinned` and `skipped_locked`. One hash-only `memory.bulk_set` audit row records
 the write.
 
+`memory.import` (`handle_memory_import` in `memory/app/memory_import.py`) writes through
+`handle_memory_bulk_set`, so an imported item meets every check above. The bulk write's
+live-row lookup reads the caller's session only and skips tombstones, so first the import
+reads each key's newest version across the sessions of the identity inside the request's
+read scope (`key_heads_across_sessions`; an `own_session` token reads only its own session).
+A key whose newest version is a tombstone, or superseded, rejected or proposed, is left as
+it is; a live one is `unchanged` when it holds the item's text (`sensitivity_kept` when the
+entry names another sensitivity; the stored level stands) and `revised` when it holds other
+text. Only a key with no version goes to the bulk write. That read and the write are not
+atomic: a delete that lands between them is written over. A bulk result with no version that
+no check refused, no merge took and no other key holds is the skip gate's or identity
+dedup's answer for the key itself, so the entry is `unchanged`.
+
+Each item's key is `import:` and 24 hex characters of the SHA-256 of its text (`import_key`
+in `memory/domain/import_keys.py`), and each entry declares `source_class=imported`. A key
+of exactly that shape (`is_import_key`) gets no `(#key)` suffix from `build_excerpt` and no
+text from `key_axis_text`, whichever write stores it, so the row is embedded and lexically
+indexed by its value alone; a row written before (an older build, or a write under such a
+key) keeps its stored excerpt through `loom reembed` until its next write. The key is a
+digest of the text, so a guessable text can be confirmed from its key wherever keys are
+shown. The key axis's automatic probe of key reuse (`key_axis_auto`) leaves import keys out,
+so a large import does not turn the axis off for the namespace's own keys.
+
+The import passes three options to the bulk write. `detect_updates=False`: the value-update
+linker never retires a live memory on its behalf. `conflict_check_cap` set to the number of
+entries it writes: the conflict check reaches every entry whatever
+`bulk_conflict_check_max_entries` says. `reinforce=False`: no restatement, merge or identity
+duplicate records an `evidence` event, so a re-run reinforces nothing. Its dry run passes
+`dry_run=True`, and the bulk write returns once the verdicts are in: every check has run,
+and nothing is written but a blacklist pattern's hit count and the vectors it embedded,
+which land in `loom.embedding_cache`, as on a `memory.set` dry run. Category links go
+through `memory/store/categories.py`, the statements `memory.assign_category` runs. The
+import reads the links of its keys before the write and adds only pairs never stored, so a
+link the owner rescinded stays rescinded (a rescind that lands between that read and the
+insert is written over, as a delete is), and the new links leave one `memory.import` audit
+row of keys and category names. It sends its entries to the bulk write oldest first (by
+`valid_at`, an undated one counting as now, then request order), because under `newest_wins`
+the later of two statements of one attribute in a batch retires the earlier.
+
 `memory.set_from_messages` runs a step pipeline over a `WorkflowState`
 (`memory/app/pipeline.py`, `DEFAULT_PIPELINE`) and writes through the bulk path:
 
@@ -1277,6 +1316,7 @@ writes no outbox rows ([rule 22](rolling-upgrades.md#the-rules)).
 | `server/memory/app/update.py`                                                                                                                                   | `memory.update`, `memory.update_by_id`.                                                             |
 | `server/memory/app/extract/handler.py`                                                                                                                          | `set_from_messages`.                                                                                |
 | `server/memory/app/bulk_set.py`, `server/memory/app/bulk_rows.py`, `server/memory/app/bulk_verdicts.py`                                                         | `bulk_set`, its rows, `apply_bulk_verdicts`.                                                        |
+| `server/memory/app/memory_import.py`, `server/memory/domain/memory_import.py`, `server/memory/store/categories.py`                                              | `memory.import`, its keys and outcomes, and the category links it shares with `assign_category`.    |
 | `server/memory/app/pipeline.py`                                                                                                                                 | `DEFAULT_PIPELINE`, `register_step`, `run_pipeline`; its text rules are in `server/memory/domain/`. |
 | `server/memory/app/{conflicts,conflict_resolver,key_supersession}.py`, `server/memory/workers/conflict_resolver.py`                                             | Verdicts, the conflict resolver and supersession.                                                   |
 | `server/memory/app/search/`, `server/memory/app/retrieval/`, `server/memory/domain/search_sql.py`                                                               | Search phases and leg SQL.                                                                          |
