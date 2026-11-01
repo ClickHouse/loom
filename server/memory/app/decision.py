@@ -365,20 +365,19 @@ def _outcome_payload(
 async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcomeOutput:
     ch = get_client()
 
-    def not_found() -> NotFoundError:
-        return NotFoundError(
-            f"no active decision {input.memory_key!r} in {input.org}/{input.namespace}",
-            memory_key=input.memory_key,
-        )
+    not_found = NotFoundError(
+        f"no active decision {input.memory_key!r} in {input.org}/{input.namespace}",
+        memory_key=input.memory_key,
+    )
 
     # The row write is conditional on the writer row read with the record, so a delete of
     # it since then refuses the outcome instead of writing the deleted row back. A row that
     # changed (another outcome, a re-record) is read again, with its record, once.
-    for _ in range(2):
+    for attempt in (1, 2):
         # Only the record's live writer revises it; record and writer come from one read.
         writer = await live_writer_record(input.org, input.namespace, input.memory_key, ch=ch)
         if writer is None:
-            raise not_found()
+            raise not_found
         payload, tags = _outcome_payload(input, writer)
         identity = Identity(
             org=input.org,
@@ -391,7 +390,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
         )
         if row is None:
-            raise not_found()
+            raise not_found
         try:
             await _write_decision(
                 org=input.org,
@@ -406,23 +405,21 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
                 valid_at=None,
                 if_match_sha256=sha256_value_json(json.dumps(row.value, default=str)),
             )
+            break
         except HTTPException as e:
-            # memory.set's hash mismatch is the HTTPException coded PRECONDITION_FAILED (the
-            # record half never raises that code); the lease's busy answer is a
-            # PreconditionFailedError and is not caught here.
+            # memory.set's hash mismatch; the lease's busy PreconditionFailedError passes through.
             if not (isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED"):
                 raise
-            continue
-        break
-    else:
-        current = await get_by_key(
-            identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
-        )
-        if current is None:
-            raise not_found()
-        raise PreconditionFailedError(
-            "the decision changed while its outcome was being written; call decision.outcome again"
-        )
+            if attempt == 2:
+                current = await get_by_key(
+                    identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
+                )
+                if current is None:
+                    raise not_found from None
+                raise PreconditionFailedError(
+                    "the decision changed while its outcome was being written; "
+                    "call decision.outcome again"
+                ) from None
 
     # Close the loop: the memories the deciding run relied on earn (or lose)
     # credit from the realized outcome — the feedback every decision log lacks.

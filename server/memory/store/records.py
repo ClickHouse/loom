@@ -20,7 +20,8 @@ WHERE org = {org:String}
   AND status = 'active'
   AND tombstoned_at IS NULL
 """
-_FROM_ACTIVE_OF_KEY = _FROM_ACTIVE_OF_SCHEMA + "  AND memory_key = {key:String}\n"
+_FROM_ACTIVE_OF_KEY = f"""{_FROM_ACTIVE_OF_SCHEMA}  AND memory_key = {{key:String}}
+"""
 # The key's live decision rows, under any identity: the tombstone check and the writer read.
 _FROM_LIVE_DECISION_ROWS = """
 FROM loom.memory FINAL
@@ -32,8 +33,7 @@ WHERE org = {org:String}
 """
 
 # Computed columns take new names: `AS status` would shadow the column in the WHERE.
-_CLOSE_ACTIVE_RECORD = (
-    """
+_CLOSE_ACTIVE_RECORD = f"""
 INSERT INTO loom.memory_records
     (record_id, org, namespace, schema_id, schema_name, memory_key,
      memory_id, identity_agent, user_id, session_id, record_json,
@@ -42,13 +42,12 @@ INSERT INTO loom.memory_records
 SELECT
     record_id, org, namespace, schema_id, schema_name, memory_key,
     memory_id, identity_agent, user_id, session_id, record_json,
-    {status:String} AS new_status, valid_at,
-    if(valid_to IS NULL, {close:DateTime}, valid_to) AS new_valid_to,
-    greatest(version + 1, {ver:UInt64}) AS new_version, created_at,
-    greatest(updated_at, {now:DateTime}) AS new_updated_at,
-    {tombstoned_at:Nullable(DateTime)} AS new_tombstoned_at"""
-    + _FROM_ACTIVE_OF_KEY
-)
+    {{status:String}} AS new_status, valid_at,
+    if(valid_to IS NULL, {{close:DateTime}}, valid_to) AS new_valid_to,
+    greatest(version + 1, {{ver:UInt64}}) AS new_version, created_at,
+    greatest(updated_at, {{now:DateTime}}) AS new_updated_at,
+    {{tombstoned_at:Nullable(DateTime)}} AS new_tombstoned_at
+{_FROM_ACTIVE_OF_KEY}"""
 
 # Retires the record unless its writer still has a live decision row under the key.
 _TOMBSTONE_DECISION_RECORD = f"""{_CLOSE_ACTIVE_RECORD}
@@ -76,11 +75,10 @@ ORDER BY version DESC
 LIMIT 1"""
 
 # The active decision records of several keys.
-_ACTIVE_DECISION_RECORDS = (
-    "SELECT memory_key, record_json, created_at"
-    + _FROM_ACTIVE_OF_SCHEMA
-    + "  AND memory_key IN {keys:Array(String)}\n"
-)
+_ACTIVE_DECISION_RECORDS = f"""
+SELECT memory_key, record_json, created_at
+{_FROM_ACTIVE_OF_SCHEMA}  AND memory_key IN {{keys:Array(String)}}
+"""
 
 
 class ActiveRecord(NamedTuple):
@@ -139,7 +137,8 @@ async def tombstone_decision_record(
     ch: _CHClient | None = None,
 ) -> None:
     """Tombstone the key's active decision record unless its writer still has a live
-    decision row there. It writes no other row, so it reads the clock itself."""
+    decision row there. No other row is written with it to supply `now`, so it reads
+    the clock."""
     ch = ch or _default_client()
     now = naive_utc_now_seconds()
     await ch.execute(
