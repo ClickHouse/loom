@@ -73,18 +73,17 @@ class DecisionRecordInput(BaseModel):
 
 
 class DecisionRecordOutput(BaseModel):
-    # The decision's key, derived from category + scenario, to pass to `decision.outcome` and
-    # `decision.chain`; after a merge, the key memory.set merged it into ("" if that row can
-    # no longer be read).
+    # The decision's key, derived from category + scenario; pass it to
+    # `decision.outcome` and `decision.chain`.
     memory_key: str
-    # The id of the `decision` record version written; "" after a merge.
+    # The id of the `decision` record version written.
     record_id: str
     # True when an active decision for the same category + scenario existed
     # and is now superseded by this one.
     superseded_prior: bool = False
     # How many `caused` / `influenced` edges were written; a failed link is skipped.
     edges_written: int = 0
-    # Plain-text hint naming the follow-up operations, or why nothing was written after a merge.
+    # Plain-text hint naming the follow-up operations.
     next: str = ""
 
 
@@ -174,10 +173,7 @@ class DecisionOutcomeInput(BaseModel):
 class DecisionOutcomeOutput(BaseModel):
     # The decision's key, echoed.
     memory_key: str
-    # False when memory.set merged the revision into another decision of the same text
-    # and nothing was written; a missing decision answers 404 instead.
+    # Always true: a missing decision answers 404 instead.
     updated: bool
     # memories credited through the run ledger (run.complete memories_used).
     memories_credited: int = 0
-    # Why nothing was written when `updated` is false; "" otherwise.
-    next: str = ""

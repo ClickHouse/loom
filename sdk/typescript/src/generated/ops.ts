@@ -2604,7 +2604,6 @@ export interface DecisionOutcomeOutput {
   memory_key: string;
   updated: boolean;
   memories_credited?: number;
-  next?: string;
 }
 
 export interface DecisionPrecedentsInput {

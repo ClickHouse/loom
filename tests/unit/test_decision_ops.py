@@ -182,7 +182,7 @@ def env(monkeypatch):
 
     async def fake_set(inp):
         calls["set"].append(inp)
-        return SimpleNamespace(version=1, conflict_verdict="clear")
+        return SimpleNamespace(version=1)
 
     async def fake_link(inp):
         calls["link"].append(inp)
@@ -442,47 +442,6 @@ def test_record_status_values_match_the_table_enum() -> None:
     in_table = re.findall(r"'(\w+)' = \d+", enum.group(1))
     in_model = get_args(MemoryRecordRow.model_fields["status"].annotation)
     assert tuple(in_table) == in_model == ("active", "superseded", "rejected", "tombstoned")
-
-
-def test_a_pinned_peer_refusal_does_not_name_the_key(monkeypatch) -> None:
-    # _own_pin_refusal tells the writer's pinned row from a close pinned peer by
-    # `memory_key`, which only memory.set's same-key guard puts in its refusal (that half
-    # runs in test_a_pinned_decision_refuses_its_writer_and_names_memory_unpin).
-    from fastapi import HTTPException
-
-    from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import set_commit
-    from server.memory.app.decision import _own_pin_refusal
-    from server.memory.domain.conflicts import ConflictResult
-
-    async def _rejected(**_kw: Any) -> ConflictResult:
-        return ConflictResult(verdict="rejected", peers=[], pinned_blocker_id="m-1")
-
-    async def _cfg() -> Any:
-        return SimpleNamespace(check_kwargs=dict)
-
-    monkeypatch.setattr("server.memory.app.conflicts.check_on_commit", _rejected)
-    inp = MemorySetInput(
-        org="o",
-        namespace="n",
-        agent="a",
-        memory_key="decision:k",
-        value="v",
-        memory_type="decision",
-    )
-    w = set_commit._SetWrite(
-        input=inp,
-        version=0,
-        retyped_from="",
-        existing=None,
-        expires_at=None,
-        serialized_value="v",
-        embedding=[1.0],
-    )
-    with pytest.raises(HTTPException) as peer:
-        asyncio.run(set_commit._set_conflict_verdict(w, _cfg()))
-    assert peer.value.detail["code"] == "PINNED_CONFLICT"
-    assert _own_pin_refusal(peer.value, "decision:k") is None
 
 
 def test_record_passes_files_source_and_class_to_the_memory_row(env) -> None:
