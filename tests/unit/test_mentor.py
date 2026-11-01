@@ -953,7 +953,7 @@ M_EVIDENCE = "AS returned_hits"
 M_INDEXED = "FROM loom.memory_embeddings FINAL"
 M_RETENTION = "SELECT retention_days FROM loom.namespaces"
 M_REPORTED = "SELECT uniqExact(k) AS n FROM ("
-M_GRADED = "SELECT countIf(grade != '') AS n FROM loom.agent_runs"
+M_GRADED = "SELECT count() AS n FROM loom.agent_runs FINAL"
 # Every evidence read answering, for a test about one of them.
 _EVIDENCE_ROWS: dict[str, Any] = {
     M_EVIDENCE: [{"attempts": 1, "successes": 1, "committed_writes": 0, "returned_hits": 0}],
@@ -1075,14 +1075,22 @@ def test_a_failed_evidence_read_leaves_its_rungs_uncounted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ch = _CH(
-        {M_EVIDENCE: RuntimeError("down"), M_INDEXED: [{"n": 3}], M_REPORTED: RuntimeError("x")}
+        {
+            **_EVIDENCE_ROWS,
+            M_INDEXED: [{"n": 3}],
+            M_RETENTION: [{"retention_days": 0}],
+            M_EVIDENCE: RuntimeError("down"),
+            M_REPORTED: RuntimeError("x"),
+        }
     )
     out = _brief(monkeypatch, ch)
     ladder = {e.rung: e.count for e in out.usage_evidence}
     assert ladder["attempt"] is None and ladder["returned_hit"] is None
-    assert ladder["indexed_write"] == 3 and ladder["client_acknowledged"] is None
-    assert "evidence: RuntimeError" in out.skipped and "reported_keys: RuntimeError" in out.skipped
-    assert out.ledger_from is None
+    assert ladder["client_acknowledged"] is None
+    # The other reads still answer.
+    assert ladder["indexed_write"] == 3 and ladder["task_outcome"] == 0
+    assert out.skipped == ["evidence: RuntimeError", "reported_keys: RuntimeError"]
+    assert out.ledger_from is None and out.ledger_retention_days == 0
 
 
 def test_mentor_brief_when_the_mentor_is_off_is_an_honest_empty_brief(

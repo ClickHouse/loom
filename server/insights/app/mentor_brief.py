@@ -196,7 +196,8 @@ _RUNG_MEANING: dict[EvidenceRung, str] = {
         "distinct memory keys the agent reported relying on: its runs' `run.complete` "
         "`memories_used` (chunk ids left out) and its `memory.outcome` calls, by key or id, "
         "that said `used` or `positive` and landed on a row; the client's own report, not "
-        "verified"
+        "verified. Not counted: the Python SDK's `outcome` and `outcome_by_key`, which name "
+        "no agent (recorded under `*`), and `memory.outcome_run`, which takes none"
     ),
     "task_outcome": (
         "the agent's runs in the window that carry a grade (`run.grade` pass or fail), as "

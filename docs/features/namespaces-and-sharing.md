@@ -202,15 +202,15 @@ across agents and is recorded under `*` (`memory.search` and `memory.ask` from t
 MCP's cross-agent reads, a `memory.outcome` that names no agent) is not counted. A brief
 about no agent in particular has no ladder.
 
-| Rung                  | Source   | Counts                                                                                                                                                                      |
-| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `attempt`             | `server` | calls made, answered or not; not the dashboard's, a brief, or the verdict a deferred `memory.ask` leaves                                                                    |
-| `success`             | `server` | those that returned without an error; a read that found nothing counts                                                                                                      |
-| `committed_write`     | `server` | `memory.set` calls that stored a row: not a no-op, a dry run or a replay                                                                                                    |
-| `indexed_write`       | `server` | memory keys first created in the window, by any write op, with a vector from the current embedder, in a served status and not expired                                       |
-| `returned_hit`        | `server` | a `memory.search` or `memory.ask` that did not abstain, a `search.query` with a memory, document or conversation hit, a get that found its key                              |
-| `client_acknowledged` | `client` | distinct memory keys the agent reported relying on: `run.complete` `memories_used` and a `memory.outcome` (by key or id) that said `used` or `positive` and landed on a row |
-| `task_outcome`        | `client` | the agent's runs graded `pass` or `fail` (`run.grade`), as the grader reported it                                                                                           |
+| Rung                  | Source   | Counts                                                                                                                                                                                                                                               |
+| --------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `attempt`             | `server` | calls made, answered or not; not the dashboard's, a brief, or the verdict a deferred `memory.ask` leaves                                                                                                                                             |
+| `success`             | `server` | those that returned without an error; a read that found nothing counts                                                                                                                                                                               |
+| `committed_write`     | `server` | `memory.set` calls that stored a row: not a no-op, a dry run or a replay                                                                                                                                                                             |
+| `indexed_write`       | `server` | memory keys first created in the window, by any write op, with a vector from the current embedder, in a served status and not expired                                                                                                                |
+| `returned_hit`        | `server` | a `memory.search` or `memory.ask` that did not abstain, a `search.query` with a memory, document or conversation hit, a get that found its key                                                                                                       |
+| `client_acknowledged` | `client` | distinct memory keys the agent reported relying on: `run.complete` `memories_used` and a `memory.outcome` (by key or id) that said `used` or `positive` and landed on a row; not the Python SDK's `outcome` calls (no agent) or `memory.outcome_run` |
+| `task_outcome`        | `client` | the agent's runs graded `pass` or `fail` (`run.grade`), as the grader reported it                                                                                                                                                                    |
 
 A returned hit does not show that the answer reached the model or changed its work.
 `ledger_from` is the agent's oldest ledger row in the window, and `ledger_retention_days`

@@ -597,8 +597,8 @@ async def graded_runs(
     ch = ch or _default_client()
     (row,) = await ch.query_all(
         f"""
-        SELECT countIf(grade != '') AS n FROM loom.agent_runs FINAL
-        WHERE {_SCOPE} AND agent = {{agent:String}}
+        SELECT count() AS n FROM loom.agent_runs FINAL
+        WHERE {_SCOPE} AND agent = {{agent:String}} AND grade != ''
           AND started_at >= now() - INTERVAL {{win:UInt32}} SECOND
         """,
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
