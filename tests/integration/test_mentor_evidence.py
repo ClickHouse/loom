@@ -1,7 +1,7 @@
 """mentor.brief's evidence ladder over real calls: each rung counts what the ledger and
 the stores show, a write that stored nothing is not committed, a read that found nothing
 or abstained is not a returned hit, the dashboard's and the mentor's own calls are not
-the agent's, and a task outcome is never observed.
+the agent's, and a graded run is the task outcome, as its grader reported it.
 
 Skips without LOOM_BASE_URL (tests/integration/conftest.py).
 """
@@ -46,7 +46,7 @@ def test_the_ladder_counts_what_the_calls_show(
         _call(c, "memory.set", {**fact, "value": "Reports go out on Mondays", "dry_run": True})
         _call(c, "memory.get", {**ident, "memory_key": "pref/report"})
         _call(c, "memory.get", {**ident, "memory_key": "pref/absent"})
-        # A bulk read with one key found answered; a read by id that found its row did too.
+        # A bulk read with one key found answered.
         bulk = {**ident, "memory_keys": ["pref/report", "pref/absent"]}
         _call(c, "memory.bulk_get", bulk)
         stored = _call(c, "memory.get", {**ident, "memory_key": "pref/report"})
@@ -106,22 +106,25 @@ def test_the_ladder_counts_what_the_calls_show(
         # A grader's verdict on the run is its outcome, as the grader reports it.
         grade = {"org": org, "namespace": ns, "run_id": run["run_id"], "grade": "pass"}
         _call(c, "run.grade", {**grade, "source": "ci"})
-        # An outcome label is a second way to report reliance (on another fact).
+        # An outcome label is a second way to report reliance (on another fact, by id); a
+        # label on a key that holds no row lands nowhere and is not counted.
         day = {**ident, "memory_key": "pref/day", "value": "Standups are at nine"}
-        _call(c, "memory.set", day)
-        used = {**ident, "memory_key": "pref/day", "outcome": "used"}
+        day_id = _call(c, "memory.set", day)["memory_id"]
+        used = {**ident, "memory_id": day_id, "outcome": "used"}
         assert _call(c, "memory.outcome", used)["recorded"] is True
+        missing = {**ident, "memory_key": "pref/nowhere", "outcome": "used"}
+        assert _call(c, "memory.outcome", missing)["recorded"] is False
 
         def brief() -> Any:
             # A brief is ledgered under the agent it names; the ladder leaves it out.
             body = {"org": org, "namespace": ns, "agent": AGENT}
             out = _call(c, "mentor.brief", body)
             ladder = {e["rung"]: e for e in out["evidence"]}
-            return (out, ladder) if ladder["attempt"]["count"] == 19 else None
+            return (out, ladder) if ladder["attempt"]["count"] == 20 else None
 
-        out, ladder = wait_until(brief, max_wait=30.0, description="nineteen calls in the ledger")
+        out, ladder = wait_until(brief, max_wait=30.0, description="twenty calls in the ledger")
     counts = {rung: e["count"] for rung, e in ladder.items()}
-    assert counts["success"] == 19
+    assert counts["success"] == 20
     # Three writes stored a row; the replay, the restatement and the dry run did not.
     assert counts["committed_write"] == 3
     # The deleted row no longer counts.
@@ -130,7 +133,8 @@ def test_the_ladder_counts_what_the_calls_show(
     # two search.query calls with a hit answered, and the ask when it did not abstain; the
     # miss and the abstaining search did not.
     assert counts["returned_hit"] == 6 + (0 if asked["abstain"] else 1)
-    # Two keys reported relied on (one by the run, one by an outcome), as the client's word.
+    # Two keys reported relied on (one by the run, one by an outcome by id), as the
+    # client's word; the label that landed nowhere is not one.
     assert (counts["client_acknowledged"], ladder["client_acknowledged"]["source"]) == (
         2,
         "client",

@@ -171,12 +171,11 @@ async def _adoption(profile: mentor_rules.MentorProfile) -> list[MentorAdoption]
 _RUNG_MEANING: dict[EvidenceRung, str] = {
     "attempt": (
         "calls the ledger records under this agent, answered or not (the dashboard's calls "
-        "and the briefs about the agent left out). Not counted: any call whose body names "
-        "no agent, which the ledger records under none (a read by id, an MCP "
-        "`memory.update`, the Python SDK's `memory.update`, `memory.outcome` and "
-        "`memory.outcome_run` by default), or "
-        "that reads across agents (`agent: *`, as the SDKs' `memory.search` and "
-        "`memory.ask` and MCP's cross-agent reads send it)"
+        "and the briefs about the agent left out). Not counted: a call whose body names no "
+        "agent, which the ledger records under none (a read by id, an MCP `memory.update`, "
+        "the Python SDK's `memory.update` by default), or that reads across agents and is "
+        "recorded under `*` (`memory.search` and `memory.ask` from the SDKs, MCP's "
+        "cross-agent reads, a `memory.outcome` that names no agent)"
     ),
     "success": "of those, calls that returned without an error; a read that found nothing counts",
     "committed_write": (
@@ -195,8 +194,9 @@ _RUNG_MEANING: dict[EvidenceRung, str] = {
     ),
     "client_acknowledged": (
         "distinct memory keys the agent reported relying on: its runs' `run.complete` "
-        "`memories_used` (chunk ids left out) and its `memory.outcome` calls that said "
-        "`used` or `positive`; the client's own report, not verified"
+        "`memories_used` (chunk ids left out) and its `memory.outcome` calls, by key or id, "
+        "that said `used` or `positive` and landed on a row; the client's own report, not "
+        "verified"
     ),
     "task_outcome": (
         "the agent's runs in the window that carry a grade (`run.grade` pass or fail), as "

@@ -137,6 +137,9 @@ IDENTIFIER_KEYS: frozenset[str] = frozenset(
         # `out_noop='true'` is the noop row; dry_run is the argument.
         "conflict_verdict",
         "noop",
+        # Whether an outcome label landed on a row (`memory.outcome` answers false for a
+        # row it did not find), so a label counts only when it did.
+        "recorded",
         # The write's advice to the agent about its VALUE
         # (today "value is base64-encoded (…)"), so the share of agents that
         # encode is one GROUP BY on the prefix.

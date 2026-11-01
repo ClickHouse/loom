@@ -562,16 +562,24 @@ async def reported_keys(
 ) -> int:
     """How many distinct memory keys the agent reported relying on in the window: its runs'
     `run.complete` `memories_used` (`chunk:` ids, which name a passage rather than a
-    memory, left out) and its `memory.outcome` calls that said `used` or `positive`."""
+    memory, left out) and its `memory.outcome` calls that said `used` or `positive` and
+    landed on a row, by key or by id (an id resolved to its key)."""
     ch = ch or _default_client()
+    labels = (
+        f"{_LEDGER_AGENT} AND {_COUNTED_CALL} AND success AND operation = 'memory.outcome' "
+        "AND args['outcome'] IN ('used', 'positive') AND args['out_recorded'] = 'true'"
+    )
     (row,) = await ch.query_all(
         f"""
         SELECT uniqExact(k) AS n FROM (
             SELECT k FROM ({_CREDITED_KEYS}) WHERE NOT startsWith(k, 'chunk:')
             UNION ALL
-            SELECT args['memory_key'] AS k {_LEDGER_AGENT} AND kind = 'request' AND success
-              AND operation = 'memory.outcome' AND args['outcome'] IN ('used', 'positive')
-              AND args['memory_key'] != ''
+            SELECT args['memory_key'] AS k {labels} AND args['memory_key'] != ''
+            UNION ALL
+            SELECT memory_key AS k FROM loom.memory FINAL
+            WHERE {_SCOPE} AND toString(memory_id) IN (
+                SELECT args['memory_id'] {labels} AND args['memory_key'] = ''
+            )
         )
         """,
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
