@@ -135,3 +135,19 @@ async def test_an_own_user_read_never_serves_another_users_body(monkeypatch):
     h._row_identity = ("a", "u2", "s1")
     await _expand_unit_bodies([h], _input())
     assert h.content_excerpt == CLIP and h.body_truncated is True
+
+
+@pytest.mark.asyncio
+async def test_a_shared_row_is_read_under_the_callers_identity(monkeypatch):
+    # a promoted row's embedding names the `_shared` agent, which no loom.memory row has
+    reads = []
+
+    async def fake_get_many(identity, keys, **_):
+        reads.append(identity.agent)
+        return [SimpleNamespace(memory_key=k, value="the body", sensitivity="") for k in keys]
+
+    monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
+    h = _hit("k", session_id="-")
+    h._row_identity = ("_shared", "-", "-")
+    await _expand_unit_bodies([h], _input())
+    assert reads == ["*"] and h.content_excerpt == "the body"

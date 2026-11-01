@@ -174,7 +174,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
             {
                 "org": input.org,
                 "namespace": input.namespace,
-                "agent": "_shared",  # sentinel — shared rows aren't agent-scoped
+                "agent": shared_repo.SHARED_AGENT,
                 "user_id": "-",
                 "session_id": "-",
                 "memory_key": target_key,
