@@ -773,6 +773,7 @@
  "memory_search_reinforcement_weight": 0.15,
  "memory_search_rerank_timeout_s": 8.0,
  "memory_search_sensitivity_demote": 0.1,
+ "memory_search_set_chunk_rows": 64,
  "memory_search_set_expansion_leg_top_k": 2,
  "memory_search_set_expansion_max_added": 5,
  "memory_search_set_expansion_min_similarity": 0.5,

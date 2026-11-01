@@ -167,9 +167,9 @@ def fold_set_chunks(
 ) -> list[SearchHit]:
     """Fold the verbatim chunks of long memory.set values onto the rows `rows` names
     (`_set_chunk_rows`): onto the row when it is pooled, as its hit when it is not; a chunk
-    `rows` names no row for is dropped. With `rows` None (shared scope, a failed read) a
-    chunk folds onto its writer's pooled fact of the key, else any pooled fact of the key.
-    Conversation chunks pass through."""
+    `rows` names no row for is dropped. With `rows` None (shared scope, a failed read), and
+    for a chunk whose leg read no writer, a chunk folds onto its writer's pooled fact of the
+    key, else any pooled fact of the key. Conversation chunks pass through."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
     out = [h for h in hits if not _is_set_chunk(h)]
@@ -184,9 +184,9 @@ def fold_set_chunks(
             continue
         parent_key = str(h.parent_memory_key)
         found = None
-        if rows is not None:
-            cid = _chunk_id(h)
-            found = rows.get(cid) if cid else None
+        cid = _chunk_id(h)
+        if rows is not None and cid is not None:
+            found = rows.get(cid)
             if found is None:
                 continue  # no served row's value cuts it
         target: tuple[str, ...]
@@ -241,25 +241,23 @@ def _chunk_id(h: SearchHit) -> ChunkId | None:
 async def _set_chunk_rows(
     ch: _CHClient, q: SearchQuery, hits: list[SearchHit]
 ) -> dict[ChunkId, SetChunkRow] | None:
-    """The served row each pooled set chunk was cut from: the writer's live row of the key
-    whose current value cuts that chunk (`set_chunk_identities`), the newest when several
-    do. A chunk no row's value cuts any more (a later write replaced it) names none. None
-    under shared scope, where the writer's private row is never served, and when a read
-    fails."""
+    """The served row each pooled set chunk was cut from: of the writer's newest served rows
+    of the key (`memory_search_set_chunk_rows` of them), the newest whose current value cuts
+    that chunk (`set_chunk_identities`). A chunk none of them cuts names none. None under
+    shared scope, where the writer's private row is never served, and when a read fails."""
     from server.memory.app.set_chunks import set_chunk_identities
 
-    if not any(_is_set_chunk(h) for h in hits):
-        return {}
     pooled = {cid for h in hits if _is_set_chunk(h) and (cid := _chunk_id(h))}
     if not pooled:
-        return None  # no chunk names its writer: fold by key
+        return {}
     if q.scope != "private":
         return None
     # served whatever its vector: a row whose embedding is still pending has its chunks
     where, params = _build_where(q, ranked=False)
     params["set_rows"] = sorted({(c.agent, c.user_id, c.memory_key) for c in pooled})
-    # the writer's newest served rows of the key: a window holds at most top_k of them
-    params["per_key"] = int(q.top_k)
+    from server.settings import settings
+
+    params["per_key"] = int(settings.memory_search_set_chunk_rows)
     try:
         served = await ch.query_all(
             f"""
@@ -282,15 +280,16 @@ async def _set_chunk_rows(
         log.warning("set chunk rows read failed (fail-open): %s", e)
         return None
     out: dict[ChunkId, SetChunkRow] = {}
-    for r in sorted(served, key=lambda r: int(r["version"])):  # the newest match wins
+    for r in served:  # newest first: the first row whose value cuts a chunk names it
         row = row_key_of(q.namespace, r)
         if row not in values:
             continue
         cuts = set_chunk_identities(*values[row])
-        writer_key = (row.agent, row.user_id, row.memory_key)
+        found = SetChunkRow((row.agent, row.user_id, row.session_id), int(r["version"]))
         for c in pooled:
-            if (c.agent, c.user_id, c.memory_key) == writer_key and (c.chunk_index, c.sha) in cuts:
-                out[c] = SetChunkRow((row.agent, row.user_id, row.session_id), int(r["version"]))
+            if (c.agent, c.user_id, c.memory_key) == (row.agent, row.user_id, row.memory_key):
+                if (c.chunk_index, c.sha) in cuts:
+                    out.setdefault(c, found)
     return out
 
 
@@ -309,7 +308,8 @@ async def _row_values(
           AND tombstoned_at IS NULL
     """
     found: list[dict[str, Any]] = []
-    for part in chunks(sorted({tuple(row_key_of(q.namespace, r))[1:] for r in rows})):
+    keys = {(r["agent"], r["user_id"], r["session_id"], r["memory_key"]) for r in rows}
+    for part in chunks(sorted(keys)):
         found += await ch.query_all(sql, params={"org": q.org, "ns": q.namespace, "rows": part})
     return {
         row_key_of(q.namespace, r): (parse_memory_value(r["value"]), str(r["memory_type"]))

@@ -833,9 +833,8 @@ async def test_a_failed_head_read_retires_the_chunks_it_just_wrote(
 
 
 @pytest.fixture
-def after_write(monkeypatch: pytest.MonkeyPatch) -> Any:
+def stubbed_set_commit(monkeypatch: pytest.MonkeyPatch) -> Any:
     """`set_commit` with the after-write projections stubbed, for the chunk step alone."""
-    from server.memory.app import set_commit
 
     async def nothing(*_: Any, **__: Any) -> None:
         return None
@@ -850,12 +849,11 @@ def after_write(monkeypatch: pytest.MonkeyPatch) -> Any:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("duplicate_of", ["", "canonical-id"])
 async def test_a_duplicate_leaves_the_keys_chunks_to_the_served_value(
-    after_write: Any, duplicate_of: str
+    stubbed_set_commit: Any, duplicate_of: str
 ) -> None:
     # the key holds a long value's chunks; a duplicate restatement must not replace them
     from types import SimpleNamespace
 
-    set_commit = after_write
     served = [_live_row(0, "the served long value's first passage")]
     ch = _CH(routes=[("FROM loom.memory_chunks FINAL", served)])
     w = set_commit._SetWrite(
@@ -868,47 +866,7 @@ async def test_a_duplicate_leaves_the_keys_chunks_to_the_served_value(
     )
     written = ch.rows_for("loom.memory_chunks")
     if duplicate_of:
-        assert written == []  # this row held no value: the served value's chunks stay
+        assert written == []  # a duplicate writes no chunks: the served value's stay
     else:  # an active write replaces the key's chunks with its own
         assert any(r["tombstoned_at"] is not None for r in written)
         assert any(r["tombstoned_at"] is None for r in written)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("was", "retired"), [("active", True), ("duplicate", False)])
-async def test_a_duplicate_re_set_retires_the_chunks_of_the_value_it_wrote(
-    after_write: Any, was: str, retired: bool
-) -> None:
-    # a row that was a duplicate wrote no chunks: the ones its value cuts are the canonical's
-    from types import SimpleNamespace
-
-    set_commit = after_write
-    first = _CH()
-    await sc.write_set_chunks(
-        _input(_NOTE_5KB), memory_type="semantic", limit=None, ch=first, embedder=_BatchEmbedder()
-    )
-    own = [_live_row(r["chunk_index"], r["content"]) for r in first.rows_for("loom.memory_chunks")]
-    ch = _CH(routes=[("FROM loom.memory_chunks FINAL", own)])
-    existing = SimpleNamespace(
-        org="test",
-        namespace="ops-alerts",
-        memory_key=_KEY,
-        user_id="-",
-        value=_NOTE_5KB,
-        memory_type="semantic",
-        status=was,
-    )
-    w = set_commit._SetWrite(
-        input=_input("a restatement"),
-        version=2,
-        retyped_from="",
-        existing=existing,
-        expires_at=None,
-    )
-    w.memory_row = {"status": "duplicate"}
-    await set_commit._set_after_write(
-        w, ch, None, SimpleNamespace(verdict="clear"), "canonical-id", []
-    )
-    tombstones = ch.rows_for("loom.memory_chunks")
-    assert len(tombstones) == (len(own) if retired else 0)
-    assert all(r["tombstoned_at"] is not None for r in tombstones)

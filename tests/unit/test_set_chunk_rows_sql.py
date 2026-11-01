@@ -133,11 +133,19 @@ async def test_under_shared_scope_no_row_is_read() -> None:
 
 
 @pytest.mark.asyncio
-async def test_only_the_writers_newest_rows_of_the_key_are_read() -> None:
-    # a window holds at most top_k rows of a key: the read keeps that many, newest first
-    old = [_row("u", f"s{i}", i, LONG_V2) for i in range(1, 6)]
-    ch = _LocalCH(*old, _row("u", "s9", 9, LONG_V1))
+async def test_only_the_writers_newest_rows_of_the_key_are_matched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_search_set_chunk_rows", 1)
+    ch = _LocalCH(
+        *[_row("u", f"s{i}", i, LONG_V2) for i in range(1, 6)], _row("u", "s9", 9, LONG_V1)
+    )
     chunk = _chunk("u", LONG_V1)
-    assert await _set_chunk_rows(ch, _q(top_k=1), [chunk]) == _named(chunk, "s9", 9)
-    # the value an older row holds is past the bound: its chunk names no row
-    assert await _set_chunk_rows(ch, _q(top_k=1), [_chunk("u", LONG_V2)]) == {}
+    assert await _set_chunk_rows(ch, _q(), [chunk]) == _named(chunk, "s9", 9)
+    # a value only rows past the bound hold names no row
+    assert await _set_chunk_rows(ch, _q(), [_chunk("u", LONG_V2)]) == {}
+    monkeypatch.setattr(settings, "memory_search_set_chunk_rows", 64)
+    older = _chunk("u", LONG_V2)
+    assert await _set_chunk_rows(ch, _q(), [older]) == _named(older, "s5", 5)
