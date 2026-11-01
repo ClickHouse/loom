@@ -31,10 +31,13 @@ def test_sort_key_breaks_score_ties_by_distance_then_key() -> None:
 
 
 def test_sort_key_tolerates_missing_fields() -> None:
-    assert hit_sort_key(SimpleNamespace(memory_key="k")) == (-0.0, 0.0, "k")
+    assert hit_sort_key(SimpleNamespace(memory_key="k")) == (-0.0, 0.0, "k", "", "", "")
     assert hit_sort_key(SimpleNamespace(rank_score=None, distance=None, memory_key=None)) == (
         -0.0,
         0.0,
+        "",
+        "",
+        "",
         "",
     )
 
@@ -140,3 +143,15 @@ def test_bench_helpers_score_agreement() -> None:
     assert rep.results[2].mean_jaccard == round(1 / 3, 4)
     j: dict[str, Any] = rep.to_json()
     assert j["queries"] == 3 and len(j["unstable"]) == 1
+
+
+def test_two_rows_of_one_key_with_equal_scores_sort_by_their_writer() -> None:
+    # one key holds a row per writer and session: the row settles the tie
+    def row(user: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            memory_key="k", rank_score=0.5, distance=0.5, identity=("a", user, "s1")
+        )
+
+    first, second = row("u1"), row("u2")
+    assert sorted([second, first], key=hit_sort_key) == [first, second]
+    assert sorted([first, second], key=hit_sort_key) == [first, second]

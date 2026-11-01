@@ -176,15 +176,17 @@ def fold_set_chunks(
         if not _is_set_chunk(h):
             continue
         parent_key = str(h.parent_memory_key)
-        found = None
+        identity: RowIdentity | None
         if rows is None:
             target: tuple[str, ...] = (parent_key,)
+            identity, version = None, h.version
         else:
             cid = _chunk_id(h)
             found = rows.get(cid) if cid is not None else None
             if found is None:
                 continue  # no served row's value is known to cut it
             target = (*found.identity, parent_key)
+            identity, version = found.identity, found.version
         if target in at:
             parent = out[at[target]]
             out[at[target]] = replace(parent, **_folded_fields(parent, h))
@@ -195,9 +197,9 @@ def fold_set_chunks(
             memory_key=parent_key,
             source="fact",
             parent_memory_key="",
-            identity=found.identity if found is not None else None,
-            session_id=found.identity[2] if found is not None else "",
-            version=found.version if found is not None else h.version,
+            identity=identity,
+            session_id=identity[2] if identity else "",
+            version=version,
             score_components={
                 **dict(h.score_components or {}),
                 "folded_chunks": 1.0,
