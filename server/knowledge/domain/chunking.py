@@ -134,8 +134,7 @@ _THEMATIC_BREAK = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$")
 # are left alone, since `__init__` and `max_rows` are names far more often than emphasis.
 _EMPHASIS = re.compile(r"(?<![\w*])(\*{1,3})(?=\S)([^*]+?)(?<=\S)\1(?![\w*])")
 # Characters of a heading line its markup is read in (the rest is kept as written),
-# so the title patterns above stay bounded; a section path carries this head of a
-# title.
+# so the title patterns above stay bounded.
 _TITLE_MAX = 500  # not a setting: a bound on hostile input, not a tuning knob
 
 
@@ -201,13 +200,6 @@ def _atx_line(line: str) -> tuple[int, str] | None:
     return (len(m.group(1)), _atx(m.group(2) or "")) if m else None
 
 
-def _atx_body(line: str) -> str | None:
-    """An ATX heading line's text before cleanup (`''` for an empty heading such
-    as `# #`), or None when `line` is no ATX heading."""
-    atx = _atx_line(line)
-    return atx[1] if atx else None
-
-
 def _heading_at(lines: list[str], i: int) -> tuple[int, str, int]:
     """(depth, title, lines consumed) of a heading starting at line `i`: ATX,
     HTML, or setext (the text line plus its underline); depth 0 when the line
@@ -238,15 +230,51 @@ def _heading_at(lines: list[str], i: int) -> tuple[int, str, int]:
     return 0, "", 1
 
 
+class _Opaque:
+    """Which lines are inside a fenced code block or an HTML block, where a `#`
+    or an underline is text, never a heading (CommonMark's block rules)."""
+
+    def __init__(self) -> None:
+        self.fence: str | None = None
+        # What ends the open HTML block: its end marker, or '' for a blank line.
+        self.html: str | None = None
+        self.after_text = False  # a paragraph line before, which a tag-only line cannot interrupt
+
+    def takes(self, line: str) -> bool:
+        """Whether `line` belongs to an open block, or opens a fence."""
+        if self.html is not None:
+            if (not line.strip()) if not self.html else self.html in line.lower():
+                self.html = None
+        else:
+            fence = _fence_marker(line)
+            if not fence and self.fence is None:
+                return False
+            if self.fence is None:
+                self.fence = fence
+            elif _closes_fence(line, self.fence):
+                self.fence = None
+        self.after_text = False
+        return True
+
+    def text(self, line: str) -> None:
+        """`line` is no heading: it may open an HTML block."""
+        opened = _html_block(line)
+        if opened is not None and (opened[1] or not self.after_text):
+            end = opened[0]
+            # A block ends on its opening line when its end marker is there too.
+            self.html = None if end and end in line.lower() else end
+        self.after_text = bool(line.strip()) and self.html is None
+
+
 def detect_sections(content: str) -> list[Section]:
     """Split `content` on headings. Returns sections in document order, the
     first being the preamble (empty path) when text precedes the first
-    heading. Fenced code blocks are opaque: a `#` inside them is a comment,
-    not a heading. Returns [] when the document has no headings at all."""
+    heading. Fenced code blocks and HTML blocks are opaque: a `#` inside them is
+    text, not a heading. Returns [] when the document has no headings at all."""
     lines = content.split("\n")
     sections: list[Section] = []
     stack: list[tuple[int, str]] = []  # (depth, title)
-    in_fence: str | None = None
+    opaque = _Opaque()
     offset = 0
     cur = Section(path=(), depth=0, start=0)
     saw_heading = False
@@ -259,33 +287,25 @@ def detect_sections(content: str) -> list[Section]:
     n = len(lines)
     while i < n:
         line = lines[i]
-        line_len = len(line) + 1
-        fence = _fence_marker(line)
-        if fence or in_fence is not None:
-            if in_fence is None and fence:
-                in_fence = fence
-            elif in_fence is not None and _closes_fence(line, in_fence):
-                in_fence = None
-            cur.lines.append(line)
-            offset += line_len
-            i += 1
-            continue
-
-        depth, title, consumed = _heading_at(lines, i)
-        if depth and title:
-            saw_heading = True
-            _close(cur, offset)
-            while stack and stack[-1][0] >= depth:
-                stack.pop()
-            stack.append((depth, title))
-            heading_len = sum(len(lines[i + k]) + 1 for k in range(consumed))
-            cur = Section(path=tuple(t for _, t in stack), depth=depth, start=offset + heading_len)
-            offset += heading_len
-            i += consumed
-            continue
-
+        if not opaque.takes(line):
+            depth, title, consumed = _heading_at(lines, i)
+            if depth and title:
+                saw_heading = True
+                _close(cur, offset)
+                while stack and stack[-1][0] >= depth:
+                    stack.pop()
+                stack.append((depth, title))
+                heading_len = sum(len(lines[i + k]) + 1 for k in range(consumed))
+                cur = Section(
+                    path=tuple(t for _, t in stack), depth=depth, start=offset + heading_len
+                )
+                offset += heading_len
+                i += consumed
+                opaque.after_text = False
+                continue
+            opaque.text(line)
         cur.lines.append(line)
-        offset += line_len
+        offset += len(line) + 1
         i += 1
 
     _close(cur, offset)
@@ -378,22 +398,12 @@ def outline(chunks: list[Chunk]) -> list[OutlineEntry]:
 
 
 __all__ = [
-    "_atx_body",
     "Chunk",
-    "chunk_document",
-    "_clean_title",
-    "_closes_fence",
-    "detect_sections",
-    "_fence_marker",
-    "_heading_at",
-    "_html_block",
-    "_LIST_ITEM",
-    "outline",
-    "OutlineEntry",
     "Section",
+    "OutlineEntry",
     "SEPARATOR",
-    "_SETEXT_UNDERLINE",
-    "_THEMATIC_BREAK",
-    "_TITLE_MAX",
+    "detect_sections",
     "window",
+    "chunk_document",
+    "outline",
 ]

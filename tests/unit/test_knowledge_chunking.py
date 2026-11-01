@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from server.knowledge.domain.chunking import (
     chunk_document,
     detect_sections,
@@ -214,7 +216,7 @@ def test_an_html_block_line_over_a_rule_is_no_heading() -> None:
     assert [s.path for s in detect_sections("<b>Warning</b>\n---\n\nx\n")] == [("Warning",)]
 
 
-def test_an_html_block_ends_at_its_end_marker() -> None:
+def test_the_line_after_an_html_block_s_end_marker_can_be_a_title() -> None:
     """A comment, `<?`, `<!` or raw-text block ends on the line holding its end
     marker and interrupts a paragraph, so the line after it can be a title."""
     for text in (
@@ -274,3 +276,35 @@ def test_hostile_markdown_lines_chunk_in_bounded_time() -> None:
         start = time.perf_counter()
         chunk_document(line, size=1500, stride=1200)
         assert time.perf_counter() - start < 5.0, line[:20]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<!--\n## Draft\n-->\n\nbody\n",  # a comment runs to its `-->`
+        "<pre>\n# not a heading\n</pre>\n",  # a raw-text block to its end tag
+        "<PRE>\n# not a heading\n</Pre>\n",
+        "<div>\nTitle\n---\n</div>\n",  # a block-tag block to the next blank line
+        "<div>\n# Title\n</div>\n",
+        "<!DOCTYPE html\n# x\n>\n",  # a declaration to its `>`
+    ],
+)
+def test_a_line_inside_an_html_block_is_no_heading(text: str) -> None:
+    assert not any(s.path for s in detect_sections(text)), text
+
+
+def test_an_html_block_ends_where_commonmark_ends_it() -> None:
+    assert [s.path for s in detect_sections("<div>\nx\n\n# After\n") if s.path] == [("After",)]
+    assert [s.path for s in detect_sections("<!-- one line -->\n# After\n") if s.path] == [
+        ("After",)
+    ]
+    # A line of only tags cannot interrupt a paragraph, so the heading below is read.
+    assert [s.path for s in detect_sections("para\n<span>\n# Next\n") if s.path] == [("Next",)]
+    # A one-line <hN> is a heading, not the start of a block.
+    assert [s.path for s in detect_sections("<h2>Setup</h2>\n\nx\n") if s.path] == [("Setup",)]
+
+
+def test_an_autolink_over_a_rule_is_a_heading() -> None:
+    assert [s.path for s in detect_sections("<https://example.com>\n---\n\nx\n")] == [
+        ("https://example.com",)
+    ]
