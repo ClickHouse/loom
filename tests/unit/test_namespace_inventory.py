@@ -262,6 +262,7 @@ def test_integrations_are_counted_for_admins_only(monkeypatch: pytest.MonkeyPatc
     out = _run()
     (integrations,) = [s for s in out.sections if s.plane == "integrations"]
     assert not integrations.complete and integrations.count is None
+    assert integrations.reason == "counted for namespace admins only"
     assert not ch.statements("loom.memory_webhooks")
 
 

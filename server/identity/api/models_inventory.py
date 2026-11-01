@@ -77,7 +77,8 @@ class InventoryPopulation(BaseModel):
     population: Population
     # Distinct identities in the population; None when it did not run.
     total: int | None
-    # The largest by row count (members: none listed here, page them with `grants.list`).
+    # The largest by row count (members: none listed; `grants.list` on the namespace, and
+    # on each ancestor of a collection, lists their grants).
     top: list[InventoryIdentity] = Field(default_factory=list)
     # False when the total is missing or, for members, when a grant opens the namespace
     # to people it does not name: `reason` says which.
