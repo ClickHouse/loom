@@ -431,8 +431,8 @@ async def _tombstone_where(
     return n
 
 
-# The most locked identities one mutation names: a hash renders in about 21 bytes, so a
-# bucket's list stays well inside one bound field (128 KiB) even when hashing leaves it
+# The locked identities one mutation names on average: a hash renders in about 21 bytes, so
+# a bucket's list stays well inside one bound field (128 KiB) even when hashing leaves it
 # larger than the average. A replicated table keeps the command in Keeper, so it stays small.
 _LOCKED_PER_MUTATION = 2_500  # not a setting: a bound of the ClickHouse form field
 _IDENTITY_HASH = "cityHash64(agent, user_id, session_id, memory_key)"

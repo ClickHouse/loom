@@ -320,10 +320,10 @@ async def test_a_clear_names_a_bounded_number_of_locked_identities_per_mutation(
     from server.core.ch_params import chunks
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app.handlers import handle_memory_clear
-    from server.memory.store.lifecycle import _LOCKED_PER_MUTATION
     from tests.unit.ch_fake import RecordingCH
 
-    hashes = [{"h": 2**63 + 7919 * i} for i in range(locked_n)]  # full-width UInt64s
+    # full-width UInt64s, spread unevenly over the buckets as real hashes are
+    hashes = [{"h": 2**63 + (i * 2654435761) % 2**62} for i in range(locked_n)]
     ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": locked_n}], times=1)
     ch.on("SELECT count() AS n", [{"n": 100_000}])
     ch.on("SELECT DISTINCT cityHash64(agent, user_id, session_id, memory_key) AS h", hashes)
@@ -335,10 +335,9 @@ async def test_a_clear_names_a_bounded_number_of_locked_identities_per_mutation(
     assert len(alters) == mutations
     assert all("SELECT" not in a.sql for a in alters)
     bound = [a.params["locked"] for a in alters]
-    assert all(len(part) <= _LOCKED_PER_MUTATION for part in bound)
     # each list binds as one form field, which ClickHouse caps at 128 KiB
     assert all(len(list(chunks(part, limit=128 << 10))) == 1 for part in bound)
-    assert sorted(h for part in bound for h in part) == [r["h"] for r in hashes]
+    assert sorted(h for part in bound for h in part) == sorted(r["h"] for r in hashes)
 
 
 @pytest.mark.asyncio
