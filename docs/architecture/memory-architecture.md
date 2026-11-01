@@ -979,7 +979,8 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    them), then keyed reads of their values over `memory`, a form field at a time, only
    when a private-scope pool holds such a chunk. A chunk none of those rows' values cuts
    is dropped, and so is every chunk of the pool when the read fails; under shared scope a
-   chunk folds onto a pooled fact of its key, or becomes a hit of the key. The match
+   chunk folds onto a pooled fact of its key, or becomes the hit of the key's promoted row
+   `(_shared, -, -)`. The match
    recomputes a row's chunks with the running build's chunker (`set_chunks.py`): a change
    to its geometry leaves stored chunks unmatched until their keys are re-set, and a lower
    chunk cap those past it.

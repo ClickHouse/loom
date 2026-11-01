@@ -165,3 +165,43 @@ async def test_a_descended_row_carries_its_version(monkeypatch) -> None:
     )
     await _run_digest_descent(ctx)
     assert [h.version for h in ctx.all_hits[1:]] == [9]
+
+
+async def test_a_promoted_row_a_set_chunk_already_pooled_is_not_added_again(monkeypatch) -> None:
+    # under shared scope a set chunk's hit names the key's promoted row
+    import server.core.ch as ch_mod
+    from server.memory.api.models_search import _MemorySearchHit
+    from server.memory.app.search.digest_descent import _run_digest_descent
+
+    row = {"memory_key": "k", "agent": "_shared", "user_id": "-", "session_id": "-"}
+
+    class _CH:
+        async def query_all(self, sql, params=None):
+            return [row]
+
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
+    digest = SimpleNamespace(
+        namespace="n",
+        memory_key="summary:s1",
+        source="summary",
+        rank_score=0.9,
+        score_components={"summary_cosine": 0.9},
+    )
+    passage = _MemorySearchHit(
+        memory_key="k",
+        memory_type="semantic",
+        content_excerpt="the passage",
+        distance=0.2,
+        similarity=0.8,
+        namespace="n",
+    )
+    passage._row_identity = ("_shared", "-", "-")
+    ctx = SimpleNamespace(
+        input=MemorySearchInput(org="o", namespace="n", agent="a", query="q", scope="shared"),
+        all_hits=[digest, passage],
+        actual_work={},
+        query_vec=[0.1],
+        embedder=SimpleNamespace(model_name="m"),
+    )
+    await _run_digest_descent(ctx)
+    assert ctx.all_hits == [digest, passage]

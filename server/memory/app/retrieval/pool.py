@@ -181,8 +181,9 @@ def fold_set_chunks(
         parent_key = str(h.parent_memory_key)
         target: tuple[str, ...]
         if rows is None:
-            # the chunk's writer is private; what search serves of the key is its promoted row
-            target, identity, version = (parent_key,), _SHARED_ROW, h.version
+            # the chunk's writer is private; what search serves of the key is its promoted
+            # row, whose version this read does not know
+            target, identity, version = (parent_key,), _SHARED_ROW, 0
         else:
             cid = _chunk_id(h)
             found = rows.get(cid) if cid is not None else None

@@ -53,6 +53,9 @@ def collapse_rows(hits: list[_MemorySearchHit], namespace: str) -> list[_MemoryS
             slot[key] = len(out)
             out.append(h)
         elif h.rank_score > out[slot[key]].rank_score:
+            # one row, so one set of tags: a hit made from a chunk read none
+            if not h._row_tags:
+                h._row_tags = out[slot[key]]._row_tags
             out[slot[key]] = h
     return out
 
