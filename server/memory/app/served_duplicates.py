@@ -91,13 +91,6 @@ _Truth = dict[RowKey, DuplicateStatus]
 _Canon = dict[tuple[str, str], CanonicalRow]
 
 
-async def _truth(org: str, rows: list[RowKey], scope: ReadFilters) -> _Truth:
-    import server.memory.store as memory_repo
-
-    found = await memory_repo.status_by_rows(org, rows, scope=scope)
-    return {r.row_key: r for r in found}
-
-
 async def _canonicals(
     org: str, namespaces: list[str], ids: list[str], scope: ReadFilters
 ) -> _Canon:
@@ -129,9 +122,12 @@ async def hide_pool_duplicates(ctx: Any) -> None:
     ns_default = str(input.namespace)
     scope = request_scope()
     try:
-        # a hit that names no row (a set chunk whose row could not be read) is not judged
+        import server.memory.store as memory_repo
+
+        # a hit that names no row (a set chunk whose row was not read) is not judged
         rows = [hit_row_key(h, ns_default) for h in facts if names_row(h)]
-        truth = await _truth(input.org, rows, scope)
+        found = await memory_repo.status_by_rows(input.org, rows, scope=scope)
+        truth: _Truth = {r.row_key: r for r in found}
     except Exception as e:  # noqa: BLE001 — hiding is a filter, never a failure
         log.warning("memory.search: duplicate status read failed: %s", e)
         return

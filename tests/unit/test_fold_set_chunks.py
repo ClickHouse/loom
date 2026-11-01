@@ -16,7 +16,7 @@ import pytest
 
 from server.memory.app.retrieval import SearchHit, fusion
 from server.memory.app.retrieval import pool as S
-from server.memory.app.retrieval.pool import fold_set_chunks
+from server.memory.app.retrieval.pool import SetChunkRow, fold_set_chunks
 
 
 def _hit(
@@ -217,7 +217,7 @@ def _writer_chunk(user: str, excerpt: str = "") -> SearchHit:
 def test_a_chunk_folds_onto_the_row_it_was_cut_from() -> None:
     mine = replace(_hit("lesson_a", 0.5), identity=("a", "u1", "s1"))
     theirs = replace(_hit("lesson_a", 0.4), identity=("a", "u2", "s2"))
-    rows = {("a", "u2", "lesson_a"): ("a", "u2", "s2")}
+    rows = {("a", "u2", "lesson_a"): SetChunkRow(("a", "u2", "s2"), 7)}
     out = fold_set_chunks([mine, theirs, _writer_chunk("u2")], rows)
     by_writer = {h.identity: h for h in out}
     assert len(out) == 2
@@ -228,18 +228,26 @@ def test_a_chunk_folds_onto_the_row_it_was_cut_from() -> None:
 def test_a_chunk_of_a_newer_value_leaves_an_older_session_row_alone() -> None:
     # the chunks hold the writer's newest value (s2); only the s1 row is pooled
     older = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
-    rows = {("a", "u", "lesson_a"): ("a", "u", "s2")}
+    rows = {("a", "u", "lesson_a"): SetChunkRow(("a", "u", "s2"), 7)}
     out = fold_set_chunks([older, _writer_chunk("u", "the s2 passage")], rows)
     by_session = {h.identity[2]: h for h in out}
     assert by_session["s1"].content_excerpt == "lesson_a"
     assert by_session["s2"].content_excerpt == "the s2 passage"
-    assert by_session["s2"].session_id == "s2"
+    assert (by_session["s2"].session_id, by_session["s2"].version) == ("s2", 7)
 
 
-def test_a_chunk_whose_row_could_not_be_read_names_none() -> None:
+def test_with_no_rows_read_a_chunk_folds_by_its_key_as_before() -> None:
+    # shared scope, or the read failed: onto a pooled fact of the key, else a keyed hit
+    pooled = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
+    (folded,) = fold_set_chunks([pooled, _writer_chunk("u", "the passage")])
+    assert (folded.identity, folded.content_excerpt) == (("a", "u", "s1"), "the passage")
     (hit,) = fold_set_chunks([_writer_chunk("u2")])
-    assert (hit.memory_key, hit.source) == ("lesson_a", "fact")
-    assert (hit.identity, hit.session_id) == (None, "")
+    assert (hit.memory_key, hit.source, hit.identity, hit.session_id) == (
+        "lesson_a",
+        "fact",
+        None,
+        "",
+    )
 
 
 def test_a_chunk_whose_row_is_not_served_is_dropped() -> None:
