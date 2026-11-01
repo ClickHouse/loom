@@ -217,10 +217,9 @@ def intra_batch_supersessions(
     both "The capital of Soviet Union is Moscow" and "… is Russellville"; the
     verdicts compare each new row with the store, never with its batch
     siblings, and the value-update linker skips same-day pairs — so both would
-    land active and the reader could cite Moscow. Within a batch the later row
-    is the newer statement of the attribute (the extractor keeps reading
-    order): returns (older index, newer index) pairs, same memory type only.
-    Pure."""
+    land active and the reader could cite Moscow. Returns (earlier, later)
+    index pairs by place in the batch, same memory type only; the caller orders
+    each pair by which statement is newer. Pure."""
     # Stricter than `templated_substitution`, which the cosine gate backs on
     # the store path: here nothing else vouches for the pair, so the two texts
     # must share their subject and predicate and differ only in the object
@@ -251,8 +250,8 @@ def stamp_intra_batch_supersessions(
     now: datetime,
 ) -> list[tuple[str, str]]:
     """Apply `intra_batch_supersessions` pairs to the rows about to be
-    inserted: the earlier row of each pair takes status `superseded`, `superseded_by` =
-    the later row's id and `invalid_at` = the later row's `valid_at` (else `now`),
+    inserted, each pair (older, newer): the older row takes status `superseded`,
+    `superseded_by` = the newer row's id and `invalid_at` = its `valid_at` (else `now`),
     mirrored on its own version's embedding row. A pair under one key is two versions
     of one row, which FINAL already settles: it is skipped (a guard; the bulk passes only
     the versions it keeps). Every memory row ends with

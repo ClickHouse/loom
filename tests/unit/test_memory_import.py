@@ -789,30 +789,38 @@ async def test_a_pair_in_one_import_retires_the_older_dated_fact(
     assert status[older["value"]] == "superseded"
 
 
+_CAPITALS = [
+    "The capital of Soviet Union is Moscow",
+    "The capital of Soviet Union is Russellville",
+    "The capital of Soviet Union is Paris",
+]
+_NEW, _OLD = datetime(2024, 6, 1, tzinfo=UTC), datetime(2021, 1, 1)
+
+
+async def _newest_wins(*_: Any, **__: Any) -> str:
+    return "newest_wins"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("first_at", "second_at", "retired"),
+    ("valid_at", "survivor"),
     [
-        (datetime(2024, 6, 1, tzinfo=UTC), datetime(2021, 1, 1), 1),  # newer first
-        (datetime(2021, 1, 1), datetime(2024, 6, 1, tzinfo=UTC), 0),
-        (None, datetime(2021, 1, 1), 0),  # undated: the later row in the batch is newer
+        ([_NEW, _OLD], 0),  # the later valid_at wins, naive and aware compared as UTC
+        ([_OLD, _NEW], 1),
+        ([None, None], 1),  # undated: the later place in the batch
+        ([_OLD, None], 0),  # a dated statement over an undated one
+        ([None, _OLD], 1),
+        ([_NEW, None, _OLD], 0),  # one order for the whole attribute, so no cycle
     ],
 )
-async def test_a_bulk_write_retires_the_older_dated_row_of_an_in_batch_pair(
-    monkeypatch, first_at: datetime | None, second_at: datetime | None, retired: int
+async def test_a_bulk_write_keeps_the_newest_statement_of_an_in_batch_attribute(
+    monkeypatch, valid_at: list[datetime | None], survivor: int
 ) -> None:
-    """Every bulk caller (memory.set_from_messages too): the later `valid_at` survives an
-    in-batch pair, naive and aware times compared as UTC; undated, the batch order decides."""
+    """Every bulk caller, memory.set_from_messages too: under newest_wins exactly one
+    statement of an attribute stays active."""
     from server.memory.app.bulk_rows import _BulkWriteState
 
-    async def _policy(*_: Any, **__: Any) -> str:
-        return "newest_wins"
-
-    monkeypatch.setattr("server.memory.app.conflicts.namespace_conflict_policy", _policy)
-    values = [
-        "The capital of Soviet Union is Moscow",
-        "The capital of Soviet Union is Russellville",
-    ]
+    monkeypatch.setattr("server.memory.app.conflicts.namespace_conflict_policy", _newest_wins)
     state = _BulkWriteState()
     state.memory_rows = [
         {
@@ -823,14 +831,30 @@ async def test_a_bulk_write_retires_the_older_dated_row_of_an_in_batch_pair(
             "version": 1,
             "valid_at": at,
         }
-        for i, (value, at) in enumerate(zip(values, [first_at, second_at], strict=True))
+        for i, (value, at) in enumerate(zip(_CAPITALS, valid_at, strict=False))
     ]
-    bulk = MemoryBulkSetInput(**_IDENT, entries=[{"memory_key": "k0", "value": values[0]}])
-    pairs = await _bulk_set_mod._bulk_intra_batch_pairs(StubCH(), bulk, state)
-    survivor = 1 - retired
-    assert pairs == [(f"m{retired}", f"m{survivor}")]
-    assert [r["status"] for r in state.memory_rows][retired] == "superseded"
-    assert state.memory_rows[survivor]["status"] == "active"
+    bulk = MemoryBulkSetInput(**_IDENT, entries=[{"memory_key": "k0", "value": _CAPITALS[0]}])
+    await _bulk_set_mod._bulk_intra_batch_pairs(StubCH(), bulk, state)
+    status = [r["status"] for r in state.memory_rows]
+    assert status[survivor] == "active"
+    assert status.count("active") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_bulk_set_handler_keeps_the_later_dated_statement(harness, monkeypatch) -> None:
+    monkeypatch.setattr("server.memory.app.conflicts.namespace_conflict_policy", _newest_wins)
+    ch = _StoreCH()
+    harness(ch)
+    bulk = MemoryBulkSetInput(
+        **_IDENT,
+        entries=[
+            {"memory_key": "capital_now", "value": _CAPITALS[0], "valid_at": _NEW},
+            {"memory_key": "capital_then", "value": _CAPITALS[1], "valid_at": _OLD},
+        ],
+    )
+    await _bulk_set_mod.handle_memory_bulk_set(bulk)
+    status = {r["memory_key"]: r["status"] for r in ch.rows_for("loom.memory")}
+    assert status == {"capital_now": "active", "capital_then": "superseded"}
 
 
 @pytest.mark.asyncio

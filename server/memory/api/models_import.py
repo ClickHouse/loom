@@ -104,7 +104,7 @@ class _MemoryImportTotals(BaseModel):
     written: int = 0
     # Entries another memory already held.
     held: int = 0
-    # Entries whose key was left as it is, or that repeated an earlier entry.
+    # Entries whose key was left as it is, or that repeated an entry written earlier.
     skipped: int = 0
     # Entries a check refused.
     refused: int = 0

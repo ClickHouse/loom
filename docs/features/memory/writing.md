@@ -281,7 +281,7 @@ there does; such an entry answers `written` (`refines`).
   `category_not_linked` (the key does not hold the fact) or `category_rescinded`. Either way
   the fact is still imported.
 - **`dry_run=true`** makes every check and writes no memory row, embedding, category link,
-  audit row or usage event. It still pays for every entry's embedding, since the conflict
+  audit row or usage event. It still pays for the embedding of each entry it sends to the bulk write, since the conflict
   check reads the vectors, and counts a blacklist pattern's hit. A `conflicted` or `refines`
   entry is previewed before a real write settles its peers, so it may land without the flag
   or the retirement if its peers change first.
@@ -297,8 +297,8 @@ not plainly written, a `reason`:
 | `refused` | `blacklist`, `pinned` or `locked` (only when the key is pinned or locked between the import's read and its write) or `pinned_peer` (too close to a pinned memory).                                                                                                                                                                       |
 
 Under `newest_wins`, two entries of one request that state the same attribute differently
-keep only the newer: the one with the later `valid_at`, or the later in the request when
-either has none. The other still answers `written`, and its row is stored `superseded`.
+keep only the newer: a dated entry over an undated one, then the later `valid_at`, then the
+later in the request. The other still answers `written`, and its row is stored `superseded`.
 
 An entry with the same text as an earlier one must be identical to it (otherwise the
 request is a 422 naming both indexes), and answers as that entry did, except after a

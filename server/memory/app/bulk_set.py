@@ -337,14 +337,14 @@ async def _bulk_mark_same_key(ch: Any, input: MemoryBulkSetInput, state: _BulkWr
 async def _bulk_intra_batch_pairs(
     ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState
 ) -> list[tuple[str, str]]:
-    """Phase 9: under `newest_wins`, stamp the earlier row of each templated
-    pair inside the batch as superseded (before the insert); returns the
-    (older, newer) id pairs for the triple plane's follow step."""
+    """Phase 9: under `newest_wins`, stamp the older row of each templated pair
+    inside the batch as superseded (before the insert); returns the (older, newer)
+    id pairs for the triple plane's follow step. Older is by `_recency`."""
     # Two statements of one attribute inside the same write ("The capital of Soviet Union is
     # Moscow" and "… is Russellville" in one chunk) would both land active: the verdicts
     # compare a row with the store, not with its batch siblings, and the value-update linker
-    # skips same-day pairs. Under `newest_wins` the later row in the batch supersedes the
-    # earlier before the insert; the pair also feeds the triple plane's follow step below.
+    # skips same-day pairs. Under `newest_wins` the newer row supersedes the older before the
+    # insert; the pair also feeds the triple plane's follow step below.
     _intra_pairs: list[tuple[str, str]] = []
     if state.memory_rows:
         try:
@@ -359,8 +359,9 @@ async def _bulk_intra_batch_pairs(
                 # Only versions FINAL keeps pair: one the batch replaced says nothing now.
                 rows = state.memory_rows
                 kept = {id(r) for r in kept_versions(rows).values()}
+                # One total order, so the pairs of one attribute cannot form a cycle.
                 _ib = [
-                    (j, i) if _dated_after(rows[i], rows[j]) else (i, j)
+                    (i, j) if _recency(rows, i) < _recency(rows, j) else (j, i)
                     for i, j in intra_batch_supersessions(
                         [str(r.get("value") or "") for r in rows],
                         [str(r.get("memory_type") or "") for r in rows],
@@ -372,7 +373,7 @@ async def _bulk_intra_batch_pairs(
                 )
                 if _intra_pairs:
                     log.info(
-                        "bulk_set: %d templated pair(s) inside the batch; the earlier row of each "
+                        "bulk_set: %d templated pair(s) inside the batch; the older row of each "
                         "is superseded before the insert",
                         len(_intra_pairs),
                     )
@@ -381,12 +382,12 @@ async def _bulk_intra_batch_pairs(
     return _intra_pairs
 
 
-def _dated_after(row: dict[str, Any], other: dict[str, Any]) -> bool:
-    """Whether both rows carry a `valid_at` and `row`'s is later: `row` is then the newer
-    fact whatever its place in the batch, so it survives the pair, as a store pair is
-    ordered by `valid_at` too."""
-    mine, theirs = to_naive_utc(row.get("valid_at")), to_naive_utc(other.get("valid_at"))
-    return mine is not None and theirs is not None and mine > theirs
+def _recency(rows: list[dict[str, Any]], i: int) -> tuple[bool, datetime, int]:
+    """How new row `i`'s statement is within its batch: a dated row is newer than an
+    undated one, then the later `valid_at` (naive and aware read as UTC), then the later
+    place in the batch."""
+    at = to_naive_utc(rows[i].get("valid_at"))
+    return (at is not None, at or datetime.min, i)
 
 
 def _settle_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
