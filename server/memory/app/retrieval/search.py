@@ -34,6 +34,7 @@ from server.memory.app.retrieval.side_legs import (
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_sql import _build_where, _plane_enabled
 from server.memory.domain.search_types import (
+    RowKey,
     SearchHit,
     SearchQuery,
     SearchTraceHit,
@@ -317,14 +318,12 @@ async def _merge_leg_hits(
     if record_hits:
         hits.extend(record_hits)
 
-    # Content-aware dedup keyed on (memory_key, content_excerpt): distinct
-    # facts can share a key (multi-event questions), so keying on memory_key
-    # alone would hide all but the strongest. Same-content duplicates across
-    # planes still collapse to the strongest candidate.
+    # One row seen by several planes collapses to its strongest hit; distinct rows of a key
+    # stay, even when their excerpts open alike.
     if hits:
-        deduped: dict[tuple[str, str], SearchHit] = {}
+        deduped: dict[tuple[RowKey, str], SearchHit] = {}
         for hit in hits:
-            dk = (hit.memory_key, hit.content_excerpt)
+            dk = (hit_row_key(hit), hit.content_excerpt)
             prior = deduped.get(dk)
             if prior is None or (hit.rank_score, -hit.distance) > (
                 prior.rank_score,

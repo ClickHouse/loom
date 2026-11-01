@@ -114,11 +114,11 @@ def truth(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         org: str, rows: list[tuple[str, ...]], *, scope: Any = None, ch: Any = None
     ) -> list[DuplicateStatus]:
         env.status_calls += 1
-        # as loom.memory: every stored row has a session, so a key without one matches none
+        # the rows these tests store all live in session s1; a writer-only key names none
         return [
             _status(row, **env.status[row.memory_key])
             for row in rows
-            if row.memory_key in env.status and row.session_id
+            if row.memory_key in env.status and row.session_id == "s1"
         ]
 
     async def canonical_rows_by_ids(

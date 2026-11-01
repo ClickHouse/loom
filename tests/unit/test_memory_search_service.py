@@ -1289,3 +1289,14 @@ def test_a_record_hit_names_no_memory_row() -> None:
     )
     # read and keyed like any hit that names no row; its session stays as provenance
     assert (hit.identity, hit.session_id) == (None, "s1")
+
+
+@pytest.mark.asyncio
+async def test_two_writers_rows_of_a_key_whose_excerpts_open_alike_both_stay() -> None:
+    ch = StubCH()
+    row = {**_hit(), "session_id": "s1"}
+    ch.query_all_returns.append(
+        [{**row, "agent": "a", "user_id": "u1"}, {**row, "agent": "a", "user_id": "u2"}]
+    )
+    out = await vector_search(_q(), ch=ch)
+    assert sorted(h.identity for h in out) == [("a", "u1", "s1"), ("a", "u2", "s1")]

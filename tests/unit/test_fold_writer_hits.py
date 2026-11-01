@@ -34,6 +34,10 @@ def _wire(key: str, score: float, excerpt: str, *, version: int = 1, **row: Any)
     return hit
 
 
+def _rows(h: Any) -> Any:
+    return h._row_identity
+
+
 def test_a_chunk_folds_onto_its_writers_newest_row_where_it_sat() -> None:
     chunk = _wire("k", 0.9, "the passage", writer=("a", "u"))
     other = _wire("j", 0.7, "another key", identity=("a", "u", "s1"))
@@ -42,18 +46,24 @@ def test_a_chunk_folds_onto_its_writers_newest_row_where_it_sat() -> None:
     theirs = _wire("k", 0.4, "u2's row", identity=("a", "u2", "s1"))
     out = fold_writer_hits([chunk, other, older, newest, theirs], "n")
     # the chunks hold the writer's newest value: only that row takes the passage
-    assert out == [newest, other, older, theirs]
-    assert (newest.rank_score, newest.content_excerpt) == (0.9, "the passage")
-    assert newest.distance == pytest.approx(0.1) and newest.similarity == 0.9
-    assert older.content_excerpt == "the s1 value"
+    assert [_rows(h) for h in out] == [
+        ("a", "u", "s2"),
+        ("a", "u", "s1"),
+        ("a", "u", "s1"),
+        ("a", "u2", "s1"),
+    ]
+    folded = out[0]
+    assert (folded.rank_score, folded.content_excerpt, folded.version) == (0.9, "the passage", 2)
+    assert folded.distance == pytest.approx(0.1) and folded.similarity == 0.9
+    assert out[2] is older and older.content_excerpt == "the s1 value"
 
 
 def test_a_row_that_outscores_its_chunk_keeps_its_text_and_place() -> None:
     row = _wire("k", 0.8, "the value's head", identity=("a", "u", "s1"))
     chunk = _wire("k", 0.3, "the passage", writer=("a", "u"))
-    assert fold_writer_hits([row, chunk], "n") == [row]
-    assert (row.rank_score, row.content_excerpt) == (0.8, "the value's head")
-    assert row.score_components == {"folded_chunks": 1.0}
+    (folded,) = fold_writer_hits([row, chunk], "n")
+    assert (folded.rank_score, folded.content_excerpt) == (0.8, "the value's head")
+    assert folded.score_components == {"folded_chunks": 1.0}
 
 
 def test_a_chunk_whose_row_is_not_pooled_stays() -> None:
@@ -67,8 +77,18 @@ def test_two_chunks_of_one_writer_and_key_from_separate_legs_are_one_hit() -> No
     first = _wire("k", 0.6, "one passage", writer=("a", "u"))
     second = _wire("k", 0.8, "another passage", writer=("a", "u"))
     theirs = _wire("k", 0.4, "u2's chunk", writer=("a", "u2"))
-    assert fold_writer_hits([first, theirs, second], "n") == [first, theirs]
-    assert (first.rank_score, first.content_excerpt) == (0.8, "another passage")
+    merged, kept = fold_writer_hits([first, theirs, second], "n")
+    assert kept is theirs and merged._row_writer == ("a", "u")
+    assert (merged.rank_score, merged.content_excerpt) == (0.8, "another passage")
+
+
+def test_a_writer_hit_brings_every_chunk_it_stands_for() -> None:
+    chunk = _wire("k", 0.3, "a passage", writer=("a", "u"))
+    chunk.score_components = {"folded_chunks": 2.0}  # two chunks of one leg
+    row = _wire("k", 0.8, "the value's head", identity=("a", "u", "s1"))
+    (folded,) = fold_writer_hits([chunk, row], "n")
+    assert folded._row_identity == ("a", "u", "s1")
+    assert folded.score_components == {"folded_chunks": 2.0}
 
 
 @pytest.mark.asyncio
@@ -99,7 +119,7 @@ async def test_the_chunk_folds_before_the_duplicates_are_read(monkeypatch) -> No
         namespaces=["n"],
     )
     await assemble._drop_excluded_and_duplicates(ctx)
-    assert seen == [[row]]
+    assert [[_rows(h) for h in pool] for pool in seen] == [[("a", "u", "s1")]]
 
 
 def test_a_writer_only_hit_stands_for_its_writers_row_and_keeps_its_own_row_key() -> None:

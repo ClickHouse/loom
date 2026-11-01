@@ -208,3 +208,42 @@ async def test_an_anchor_row_carries_its_version(monkeypatch) -> None:
     )
     await _run_anchor_pool(ctx)
     assert [(h._row_identity, h.version) for h in ctx.all_hits] == [(("a", "u", "s2"), 9)]
+
+
+async def test_an_anchor_row_of_another_writer_joins_though_its_excerpt_matches(
+    monkeypatch,
+) -> None:
+    import server.core.ch as ch_mod
+    from server.memory.app.search.anchor_pool import _run_anchor_pool
+
+    row = {"memory_key": "k", "agent": "a", "session_id": "s1", "content_excerpt": "t"}
+
+    class _CH:
+        async def query_all(self, sql, params=None):
+            return [
+                {**row, "user_id": "u1", "similarity": 0.5},
+                {**row, "user_id": "u2", "similarity": 0.5},
+            ]
+
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
+    pooled = _MemorySearchHit(
+        memory_key="k",
+        memory_type="semantic",
+        content_excerpt="t",
+        distance=0.5,
+        similarity=0.5,
+        namespace="n",
+    )
+    pooled._row_identity = ("a", "u1", "s1")
+    ctx = SimpleNamespace(
+        input=_inp(top_k=5),
+        all_hits=[pooled],
+        actual_work={},
+        namespaces=["n"],
+        effective_entity_filter=["alice"],
+        resolved_dates=[],
+        query_vec=[0.1],
+        embedder=SimpleNamespace(model_name="m"),
+    )
+    await _run_anchor_pool(ctx)
+    assert [h._row_identity for h in ctx.all_hits[1:]] == [("a", "u2", "s1")]

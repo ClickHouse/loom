@@ -115,10 +115,11 @@ def _is_set_chunk(h: Any) -> bool:
 
 
 def folded_fields(row: Any, chunk: Any) -> dict[str, Any]:
-    """The fields a row takes when a chunk of its value folds onto it: one more folded
-    chunk and, when the chunk out-scored it, the chunk's score, distance and passage."""
+    """The fields a row takes when a chunk of its value folds onto it: the chunks it stands
+    for and, when the chunk out-scored it, the chunk's score, distance and passage."""
     components = dict(row.score_components or {})
-    components["folded_chunks"] = float(components.get("folded_chunks", 0.0)) + 1.0
+    folded = float((chunk.score_components or {}).get("folded_chunks", 1.0))
+    components["folded_chunks"] = float(components.get("folded_chunks", 0.0)) + folded
     if float(chunk.rank_score or 0.0) <= float(row.rank_score or 0.0):
         return {"score_components": components}
     components["folded_lift"] = 1.0

@@ -13,7 +13,7 @@ from server.memory.app.search.scoring import _anchor_rank_score
 from server.memory.app.search.sql import _anchor_pool_where, anchor_pool_sql
 from server.memory.app.search_tag_filter import stamp_row_tags as _stamp_row_tags
 from server.memory.domain.search_sql import agent_filter
-from server.memory.domain.search_types import row_identity
+from server.memory.domain.search_types import hit_row_key, row_identity, row_key_of
 
 log = logging.getLogger(__package__)
 
@@ -69,9 +69,8 @@ async def _run_anchor_pool(ctx: SearchContext) -> None:
         and getattr(input, "recipe", "") != "fast"
     ):
         return
-    anchor_seen = {
-        (h.namespace or input.namespace, h.memory_key, h.content_excerpt) for h in ctx.all_hits
-    }
+    # one key holds a row per writer and session: skip only the rows already pooled
+    anchor_seen = {hit_row_key(h, input.namespace) for h in ctx.all_hits}
     # Anchor rows enter strictly below the weakest pooled candidate
     # (see _anchor_rank_score); the floor is the pool's minimum raw
     # base score at injection time.
@@ -130,8 +129,10 @@ async def _run_anchor_pool(ctx: SearchContext) -> None:
             for row in anchor_rows:
                 mk = str(row.get("memory_key") or "")
                 excerpt = str(row.get("content_excerpt") or "")
-                key = (ns, mk, excerpt)
-                if not mk or key in anchor_seen:
+                if not mk:
+                    continue
+                key = row_key_of(ns, row)
+                if key in anchor_seen:
                     continue
                 anchor_seen.add(key)
                 sim = float(row.get("similarity") or 0.0)

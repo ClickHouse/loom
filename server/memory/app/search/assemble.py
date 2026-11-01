@@ -40,35 +40,37 @@ def _drop_excluded_keys(ctx: SearchContext) -> None:
 
 
 def fold_writer_hits(hits: list[_MemorySearchHit], namespace: str) -> list[_MemorySearchHit]:
-    """Fold each set chunk that names only its writer onto that writer's newest pooled row
-    of the key, as `fold_set_chunks` folds a chunk onto a pooled parent, at the earlier of
-    the two positions; with no such row, onto the first such chunk of its writer and key.
-    A key's chunks hold the writer's newest value; when that row is not pooled, an older
-    pooled row of the writer takes the passage."""
+    """Fold each writer-only set chunk onto its writer's newest pooled row of the key, at
+    the earlier position; chunks with no such row merge into the first of them."""
     if not any(hit_writer(h) for h in hits):
         return hits
-    rows: dict[tuple[str, str, str, str], _MemorySearchHit] = {}
+    newest: dict[tuple[str, str, str, str], _MemorySearchHit] = {}
     for h in hits:
         key = hit_row_key(h, namespace).writer_key()
-        if names_row(h) and (key not in rows or h.version > rows[key].version):
-            rows[key] = h
+        if names_row(h) and (key not in newest or h.version > newest[key].version):
+            newest[key] = h
     out: list[_MemorySearchHit] = []
-    placed: set[int] = set()
+    slot: dict[tuple[str, str, str, str], int] = {}
     for h in hits:
-        row = None
-        if hit_writer(h):
-            row = rows.setdefault(hit_row_key(h, namespace).writer_key(), h)
-        if row is not None and row is not h:
-            fields = folded_fields(row, h)
-            for name, value in fields.items():
-                setattr(row, name, value)
-            if "rank_score" in fields:
-                row.similarity = max(row.similarity, h.similarity)
-        target = row or h
-        if id(target) not in placed:
-            placed.add(id(target))
-            out.append(target)
+        key = hit_row_key(h, namespace).writer_key()
+        if not (hit_writer(h) or newest.get(key) is h):
+            out.append(h)
+        elif key not in slot:
+            slot[key] = len(out)
+            out.append(h)
+        else:
+            held = out[slot[key]]
+            # the row is the hit that stays; the chunks fold onto it
+            row, chunk = (h, held) if newest.get(key) is h else (held, h)
+            out[slot[key]] = _folded(row, chunk)
     return out
+
+
+def _folded(row: _MemorySearchHit, chunk: _MemorySearchHit) -> _MemorySearchHit:
+    fields = folded_fields(row, chunk)
+    if "rank_score" in fields:
+        fields["similarity"] = max(row.similarity, chunk.similarity)
+    return row.model_copy(update=fields)
 
 
 async def _drop_excluded_and_duplicates(ctx: SearchContext) -> None:
