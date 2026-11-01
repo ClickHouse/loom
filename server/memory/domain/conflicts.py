@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from server.core.datetimes import to_naive_utc
+
 
 @dataclass(frozen=True)
 class ConflictPeer:
@@ -211,15 +213,20 @@ def kept_versions(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 
 def intra_batch_supersessions(
-    values: list[str], types: list[str] | None = None
+    values: list[str],
+    types: list[str] | None = None,
+    valid_at: list[datetime | None] | None = None,
+    written_at: datetime = datetime.max,
 ) -> list[tuple[int, int]]:
     """The templated substitutions INSIDE one write. A 35-statement chunk holds
     both "The capital of Soviet Union is Moscow" and "… is Russellville"; the
     verdicts compare each new row with the store, never with its batch
     siblings, and the value-update linker skips same-day pairs — so both would
-    land active and the reader could cite Moscow. Returns (earlier, later)
-    index pairs by place in the batch, same memory type only; the caller orders
-    each pair by which statement is newer. Pure."""
+    land active and the reader could cite Moscow. Returns (older, newer) index
+    pairs, same memory type only. The newer statement has the later `valid_at`
+    (naive and aware read as UTC; an undated row counts as said at `written_at`),
+    then the later place in the batch: one order for every pair, so the pairs of
+    one attribute never form a cycle. Pure."""
     # Stricter than `templated_substitution`, which the cosine gate backs on
     # the store path: here nothing else vouches for the pair, so the two texts
     # must share their subject and predicate and differ only in the object
@@ -228,6 +235,11 @@ def intra_batch_supersessions(
     # update; a looser one-span rule would pair them and supersede the update).
     from server.memory.domain.triples_follow_rows import object_substitution
 
+    dates = list(valid_at or [])
+    when = [
+        (to_naive_utc(dates[k]) if k < len(dates) and dates[k] else written_at, k)
+        for k in range(len(values))
+    ]
     out: list[tuple[int, int]] = []
     n = len(values)
     for j in range(n):
@@ -239,7 +251,7 @@ def intra_batch_supersessions(
                 continue
             vi = values[i] or ""
             if vi and templated_substitution(vi, vj) and object_substitution(vi, vj):
-                out.append((i, j))
+                out.append((i, j) if when[i] < when[j] else (j, i))
     return out
 
 

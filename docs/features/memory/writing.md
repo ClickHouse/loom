@@ -299,8 +299,9 @@ not plainly written, a `reason`:
 | `refused` | `blacklist`, `pinned` or `locked` (only when the key is pinned or locked between the import's read and its write) or `pinned_peer` (too close to a pinned memory).                                                                                                                                                                                                                 |
 
 Under `newest_wins`, two entries of one request that state the same attribute differently
-keep only the newer: a dated entry over an undated one, then the later `valid_at`, then the
-later in the request. The other still answers `written`, and its row is stored `superseded`.
+keep only the newer: the later `valid_at` (an undated entry counts as said at the time of
+the import), then the later in the request. The other still answers `written`, and its row
+is stored `superseded`.
 
 An entry with the same text as an earlier one must be identical to it (otherwise the
 request is a 422 naming both indexes), and answers as that entry did, except after a

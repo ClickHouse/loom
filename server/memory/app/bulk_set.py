@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
-from server.core.datetimes import naive_utc_now, to_naive_utc
+from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.vectors import codes_state
@@ -65,6 +65,7 @@ from server.memory.app.triple_projections import reconcile_row_facts, write_deri
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.conflicts import kept_versions
 from server.memory.domain.memory_types import is_embedded
+from server.memory.domain.temporal_sql import LIVE_STATUSES
 from server.memory.domain.webhook_events import EventType
 from server.observability.budget_shape import note_budget_shape
 
@@ -158,6 +159,7 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
                 "agent": input.agent,
                 "uid": input.user_id,
                 "shas": _shas,
+                "live": list(LIVE_STATUSES),
             }
             # Under own_session the keeper must be in the caller's session too.
             in_scope = scope_and(request_scope(), params)
@@ -173,7 +175,7 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
                   AND content_sha256 IN {{shas:Array(String)}}{in_scope}
                 GROUP BY content_sha256, memory_key
                 HAVING argMax(tombstoned_at IS NULL, version) = 1
-                   AND argMax(status, version) IN ('active', 'duplicate', 'conflicted')
+                   AND argMax(status, version) IN {{live:Array(String)}}
                 ORDER BY content_sha256, memory_key
                 SETTINGS select_sequential_consistency = 1
                 """,
@@ -339,7 +341,7 @@ async def _bulk_intra_batch_pairs(
 ) -> list[tuple[str, str]]:
     """Phase 9: under `newest_wins`, stamp the older row of each templated pair
     inside the batch as superseded (before the insert); returns the (older, newer)
-    id pairs for the triple plane's follow step. Older is by `_recency`."""
+    id pairs for the triple plane's follow step."""
     # Two statements of one attribute inside the same write ("The capital of Soviet Union is
     # Moscow" and "… is Russellville" in one chunk) would both land active: the verdicts
     # compare a row with the store, not with its batch siblings, and the value-update linker
@@ -359,17 +361,19 @@ async def _bulk_intra_batch_pairs(
                 # Only versions FINAL keeps pair: one the batch replaced says nothing now.
                 rows = state.memory_rows
                 kept = {id(r) for r in kept_versions(rows).values()}
-                # One total order, so the pairs of one attribute cannot form a cycle.
+                now = naive_utc_now()
                 _ib = [
-                    (i, j) if _recency(rows, i) < _recency(rows, j) else (j, i)
+                    (i, j)
                     for i, j in intra_batch_supersessions(
                         [str(r.get("value") or "") for r in rows],
                         [str(r.get("memory_type") or "") for r in rows],
+                        [r.get("valid_at") for r in rows],
+                        written_at=now,
                     )
                     if id(rows[i]) in kept and id(rows[j]) in kept
                 ]
                 _intra_pairs = stamp_intra_batch_supersessions(
-                    state.memory_rows, state.embedding_rows, _ib, naive_utc_now()
+                    state.memory_rows, state.embedding_rows, _ib, now
                 )
                 if _intra_pairs:
                     log.info(
@@ -380,14 +384,6 @@ async def _bulk_intra_batch_pairs(
         except Exception as e:  # noqa: BLE001 — the rows still land; the pair goes to review
             log.warning("bulk_set: intra-batch supersession skipped (non-fatal): %s", e)
     return _intra_pairs
-
-
-def _recency(rows: list[dict[str, Any]], i: int) -> tuple[bool, datetime, int]:
-    """How new row `i`'s statement is within its batch: a dated row is newer than an
-    undated one, then the later `valid_at` (naive and aware read as UTC), then the later
-    place in the batch."""
-    at = to_naive_utc(rows[i].get("valid_at"))
-    return (at is not None, at or datetime.min, i)
 
 
 def _settle_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:

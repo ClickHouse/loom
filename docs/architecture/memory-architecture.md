@@ -398,11 +398,11 @@ batch form of the point write:
 
 Versions are nanosecond stamps, so last-writer-wins holds per key inside a batch. Under
 `newest_wins`, two statements of one templated attribute inside a batch keep only the newer
-(`_bulk_intra_batch_pairs`, ordered by `_recency`): a dated row over an undated one, then
-the later `valid_at` (naive and aware read as UTC), then the later place in the batch. A
+(`intra_batch_supersessions`): the later `valid_at` (naive and aware read as UTC; an undated
+row counts as said at the time of the write), then the later place in the batch. A
 blacklisted entry is skipped, not raised; pinned and locked keys come back in
-`skipped_pinned` and `skipped_locked`. One hash-only `memory.bulk_set` audit row records
-the write.
+`skipped_pinned` and `skipped_locked`. One hash-only `memory.bulk_set` audit row records the
+write.
 
 `memory.import` (`handle_memory_import` in `memory/app/memory_import.py`) writes through
 `handle_memory_bulk_set`, so an imported item meets every check above. The bulk write's

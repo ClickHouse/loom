@@ -8,6 +8,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, Final, Literal
 
+from server.memory.domain.temporal_sql import LIVE_STATUSES
+
 Outcome = Literal["written", "held", "skipped", "refused"]
 # Why an entry was not plainly written; the values are listed in
 # docs/features/memory/writing.md#importing-from-another-memory-system.
@@ -37,9 +39,6 @@ Note = Literal[
     "", "category_unregistered", "category_refused", "category_not_linked", "category_rescinded"
 ]
 
-# A live head's status: the import writes the key through the bulk write, unless the head
-# already holds the item's text (`unchanged`) or other text (`revised`).
-_LIVE: Final = frozenset({"active", "duplicate", "conflicted"})
 # A head status that leaves the key as it is, skipped under the status's own name.
 _LEFT_AS_IS: Final[dict[str, Reason]] = {
     "tombstoned": "deleted",
@@ -63,7 +62,7 @@ def skip_reasons(
         reason: Reason
         if row["deleted"]:
             reason = "deleted"
-        elif status in _LIVE:
+        elif status in LIVE_STATUSES:  # holds its fact: the item's text, or other text
             reason = "unchanged" if row["head_sha256"] == content_shas[key] else "revised"
         else:
             reason = _LEFT_AS_IS.get(status, "unknown")
