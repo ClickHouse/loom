@@ -152,15 +152,37 @@ async def test_an_item_on_trial_is_left_proposed(control_plane_url: str) -> None
 
 
 @pytest.mark.asyncio
-async def test_a_dry_run_writes_nothing(control_plane_url: str) -> None:
+async def test_a_dry_run_writes_nothing(control_plane_url: str, ch_client) -> None:
     from loom import Agent
 
+    ns = _ns()
     value = "The staging cluster runs in us-east-2."
-    async with Agent(org=ORG, namespace=_ns(), agent=AGENT, base_url=control_plane_url) as a:
-        out = await a.client.memory.import_({**_entries(value), "dry_run": True})
-        got = await a.call("memory.get", memory_key=_key(value))
+    body = {"entries": [{"value": value, "category": "infra"}], "dry_run": True}
+    async with Agent(org=ORG, namespace=ns, agent=AGENT, base_url=control_plane_url) as a:
+        await a.call("namespace.register_category", name="infra", description="Hosts.")
+        out = await a.client.memory.import_(body)
     assert out["dry_run"] is True and _outcomes(out) == [("written", "")], out
-    assert got["found"] is False
+    for table in ("memory", "memory_embeddings", "memory_categories", "audit_log"):
+        rows = ch_client.query(
+            f"SELECT count() FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}"
+            + (" AND event_type LIKE 'memory.%'" if table == "audit_log" else ""),
+            parameters={"o": ORG, "n": ns},
+        ).result_rows
+        assert rows[0][0] == 0, table
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_from_another_session_writes_nothing(control_plane_url: str) -> None:
+    from loom import Agent
+
+    text = "Backups run nightly at 02:00."
+    async with Agent(org=ORG, namespace=_ns(), agent=AGENT, base_url=control_plane_url) as a:
+        first = await a.call("memory.import", _entries(text), session_id="s1")
+        again = await a.call("memory.import", _entries(text), session_id="s2")
+        history = await a.call("memory.history", memory_key=_key(text), session_id="s1")
+    assert _outcomes(first) == [("written", "")], first
+    assert _outcomes(again) == [("skipped", "unchanged")], again
+    assert len(history["rows"]) == 1, history
 
 
 @pytest.mark.asyncio

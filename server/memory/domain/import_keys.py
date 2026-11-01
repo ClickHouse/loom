@@ -23,6 +23,6 @@ def import_key(value: str) -> str:
     return IMPORT_KEY_PREFIX + sha256_text(value)[:IMPORT_KEY_HEX]
 
 
-def is_digest_key(memory_key: str) -> bool:
+def is_import_key(memory_key: str) -> bool:
     """Whether `memory_key` is exactly what `import_key` derives, nothing before or after."""
     return _DIGEST_KEY.fullmatch(memory_key) is not None

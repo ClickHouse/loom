@@ -1,5 +1,5 @@
 """The key-axis text: one builder for every write path and the re-embed, none
-for an imported item's digest key (which the re-embed never sends), a key-only
+for an imported item's key (which the re-embed never sends), a key-only
 re-embed that leaves value vectors alone, and the bench's instance scoring."""
 
 from __future__ import annotations
@@ -10,8 +10,8 @@ import pytest
 
 from bench.k_curve import QuestionAtK, gold_instances, instance_in, score, summarise
 from server.memory.app.reembed import _TABLES, _key_input, rewrite_row, where_sql
-from server.memory.domain.digest_keys import import_key
 from server.memory.domain.embed_text import key_axis_text
+from server.memory.domain.import_keys import import_key
 
 
 def test_key_axis_text_is_the_humanized_key() -> None:
@@ -19,7 +19,7 @@ def test_key_axis_text_is_the_humanized_key() -> None:
     assert key_axis_text("") == ""
 
 
-def test_a_digest_key_has_no_key_axis_text() -> None:
+def test_an_import_key_has_no_key_axis_text() -> None:
     digest = import_key("Prefers dark roast.")
     assert key_axis_text(digest) == "" and _key_input({"memory_key": digest}) == ""
     assert key_axis_text("import:dark_roast") == "import:dark roast"
@@ -80,7 +80,7 @@ def test_a_rewrite_without_a_key_vector_leaves_the_key_dim_at_zero() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_reembed_never_sends_a_digest_key_to_the_embedder(
+async def test_a_reembed_never_sends_an_import_key_to_the_embedder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.llm import customer
@@ -129,7 +129,7 @@ async def test_a_reembed_never_sends_a_digest_key_to_the_embedder(
     assert emb.batches == [['"Prefers dark roast."', '"Dark." (#coffee_order)'], ["coffee order"]]
     dims = {r["memory_key"]: r["memory_key_embedding_dim"] for r in ch.rows}
     assert dims == {digest: 0, "coffee_order": 2}
-    # A key-only pass over digest keys alone calls the embedder not at all.
+    # A key-only pass over import keys alone calls the embedder not at all.
     emb = _Emb()
     await reembed._rewrite_page(ch, emb, "memory_embeddings", chunk[:1], key_only=True)
     assert emb.batches == [] and [r["memory_key_embedding_dim"] for r in ch.rows] == [0]

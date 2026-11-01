@@ -1004,13 +1004,13 @@ Import memory items another memory system already distilled into the caller's na
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `entries` | `list[_ImportEntry]` | required | The items to import, 1 to 200: each one's text, and optionally its tags, the time the source first knew it, its source pointer, a category and a sensitivity tier. |
+| `entries` | `list[_MemoryImportEntry]` | required | The items to import, 1 to 200: each one's text, and optionally its tags, the time the source first knew it, its source pointer, a category and a sensitivity tier. |
 | `dry_run` | `bool` | `False` | Make every check and answer each entry's outcome, writing nothing. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `totals` | `_ImportTotals` | How many entries ended each way. |
-| `results` | `list[_ImportEntryResult]` | One result per entry, in request order. |
+| `totals` | `_MemoryImportTotals` | How many entries ended each way. |
+| `results` | `list[_MemoryImportResult]` | One result per entry, in request order. |
 | `dry_run` | `bool` | True when nothing was written: each outcome is what the import would do. |
 
 ## `memory.import_curated`

@@ -1,6 +1,6 @@
 """What `memory.import` decides with no I/O: what the stored versions of a key say
 before the write, and how an entry repeating an earlier one of the request answers.
-The key itself is `digest_keys.import_key`.
+The key itself is `import_keys.import_key`.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Final, Literal
 
 Outcome = Literal["written", "held", "skipped", "refused"]
-# Why an entry was not plainly written; each value is documented on `_ImportEntryResult`.
+# Why an entry was not plainly written; each value is documented on `_MemoryImportResult`.
 Reason = Literal[
     "",
     "blacklist",

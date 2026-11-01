@@ -32,9 +32,9 @@ from server.memory.app import bulk_set as _bulk_set_mod
 from server.memory.app import memory_import as _import_mod
 from server.memory.app.memory_import import handle_memory_import
 from server.memory.domain.conflicts import ConflictResult
-from server.memory.domain.digest_keys import import_key, is_digest_key
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.excerpt import EXCERPT_LIMIT, build_excerpt
+from server.memory.domain.import_keys import import_key, is_import_key
 from server.operations.base import Role
 from tests.unit.bulk_stubs import BatchEmbedder, StubCH, no_delete_in_flight, wire_stubs
 from tests.unit.memory_rows import projection_row
@@ -241,8 +241,8 @@ def test_the_key_hashes_the_text_as_given() -> None:
     "key",
     [import_key("Prefers dark roast."), "import:" + "0" * 24, "import:0123456789abcdef01234567"],
 )
-def test_a_key_of_the_derived_shape_is_a_digest_key(key: str) -> None:
-    assert is_digest_key(key)
+def test_a_key_of_the_derived_shape_is_an_import_key(key: str) -> None:
+    assert is_import_key(key)
 
 
 @pytest.mark.parametrize(
@@ -263,11 +263,11 @@ def test_a_key_of_the_derived_shape_is_a_digest_key(key: str) -> None:
         "",
     ],
 )
-def test_any_other_key_is_not_a_digest_key(key: str) -> None:
-    assert not is_digest_key(key)
+def test_any_other_key_is_not_an_import_key(key: str) -> None:
+    assert not is_import_key(key)
 
 
-def test_a_digest_key_adds_nothing_to_the_text_and_a_readable_key_keeps_its_suffix() -> None:
+def test_an_import_key_adds_nothing_to_the_text_and_a_readable_key_keeps_its_suffix() -> None:
     value = json.dumps("Prefers dark roast coffee.")
     digest = import_key("Prefers dark roast coffee.")
     assert embedding_texts("semantic", value, value, digest) == (value, value, "")

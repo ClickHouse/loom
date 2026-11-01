@@ -4785,7 +4785,7 @@ export interface MemoryHistoryOutput {
   rows: MemoryHistoryRow[];
 }
 
-export interface ImportEntry {
+export interface MemoryImportEntry {
   value: string;
   tags?: string[];
   valid_at?: string | null;
@@ -4801,18 +4801,18 @@ export interface MemoryImportInput {
   user_id?: string;
   session_id?: string;
   run_id?: string;
-  entries: ImportEntry[];
+  entries: MemoryImportEntry[];
   dry_run?: boolean;
 }
 
-export interface ImportTotals {
+export interface MemoryImportTotals {
   written?: number;
   held?: number;
   skipped?: number;
   refused?: number;
 }
 
-export interface ImportEntryResult {
+export interface MemoryImportResult {
   index: number;
   key: string;
   outcome: "written" | "held" | "skipped" | "refused";
@@ -4821,8 +4821,8 @@ export interface ImportEntryResult {
 }
 
 export interface MemoryImportOutput {
-  totals: ImportTotals;
-  results: ImportEntryResult[];
+  totals: MemoryImportTotals;
+  results: MemoryImportResult[];
   dry_run?: boolean;
 }
 

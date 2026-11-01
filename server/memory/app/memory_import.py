@@ -23,16 +23,15 @@ from server.memory.api.models_bulk import (
     _BulkSetResult,
 )
 from server.memory.api.models_import import (
-    MAX_IMPORT_ENTRIES,
     MemoryImportInput,
     MemoryImportOutput,
-    _ImportEntry,
-    _ImportEntryResult,
-    _ImportTotals,
+    _MemoryImportEntry,
+    _MemoryImportResult,
+    _MemoryImportTotals,
 )
 from server.memory.app.bulk_set import handle_memory_bulk_set
 from server.memory.app.provenance import writer_actor
-from server.memory.domain.digest_keys import import_key
+from server.memory.domain.import_keys import import_key
 from server.memory.domain.memory_import import (
     Outcome,
     Reason,
@@ -82,10 +81,10 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
     )
     shas = {key: sha256_value(input.entries[i].value) for key, i in first.items()}
     outcomes = await _write(input, keys, first, skip_reasons(heads, shas))
-    results: list[_ImportEntryResult] = []
+    results: list[_MemoryImportResult] = []
     for i, key in enumerate(keys):
         outcome, reason = outcomes[key] if first[key] == i else repeat_outcome(outcomes[key])
-        results.append(_ImportEntryResult(index=i, key=key, outcome=outcome, reason=reason))
+        results.append(_MemoryImportResult(index=i, key=key, outcome=outcome, reason=reason))
     await _categorize(input, results, category_ids, stored_links, linkable=linkable)
     return _output(input, results)
 
@@ -114,7 +113,7 @@ async def _write(
         _bulk_input(input, [(input.entries[i], keys[i]) for i in pending]),
         dry_run=input.dry_run,
         # Every entry is checked, whatever bulk_conflict_check_max_entries caps a bulk at.
-        conflict_check_cap=MAX_IMPORT_ENTRIES,
+        conflict_check_cap=len(pending),
         # A re-run must not reinforce the same rows again, so no run reinforces any.
         reinforce=False,
     )
@@ -141,7 +140,7 @@ def _entry_outcome(key: str, result: _BulkSetResult, held_by: str | None) -> tup
 
 
 def _bulk_input(
-    input: MemoryImportInput, entries: list[tuple[_ImportEntry, str]]
+    input: MemoryImportInput, entries: list[tuple[_MemoryImportEntry, str]]
 ) -> MemoryBulkSetInput:
     """The bulk write of `entries`, each under its key, in the caller's identity."""
     return MemoryBulkSetInput(
@@ -170,7 +169,7 @@ def _bulk_input(
 
 async def _categorize(
     input: MemoryImportInput,
-    results: list[_ImportEntryResult],
+    results: list[_MemoryImportResult],
     category_ids: dict[str, str],
     stored: dict[tuple[str, str], bool],
     *,
@@ -180,7 +179,7 @@ async def _categorize(
     key holds the item. A link already `stored` (live or not) is left as it is, so a re-run
     never brings back one the owner rescinded. The new links get one audit row: keys and
     category names, never the text."""
-    wanted: list[tuple[_ImportEntryResult, tuple[str, str]]] = []  # (result, (key, cat id))
+    wanted: list[tuple[_MemoryImportResult, tuple[str, str]]] = []  # (result, (key, cat id))
     for result, entry in zip(results, input.entries, strict=True):
         if not entry.category:
             continue
@@ -212,11 +211,11 @@ async def _categorize(
     )
 
 
-def _output(input: MemoryImportInput, results: list[_ImportEntryResult]) -> MemoryImportOutput:
+def _output(input: MemoryImportInput, results: list[_MemoryImportResult]) -> MemoryImportOutput:
     """The response: the totals and each entry's result."""
     counts = Counter(r.outcome for r in results)
     return MemoryImportOutput(
-        totals=_ImportTotals(
+        totals=_MemoryImportTotals(
             written=counts["written"],
             held=counts["held"],
             skipped=counts["skipped"],

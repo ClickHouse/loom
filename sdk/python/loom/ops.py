@@ -11974,11 +11974,11 @@ class MemoryImportInput(TypedDict, total=False):
     user_id: NotRequired[str]
     session_id: NotRequired[str]
     run_id: NotRequired[str]
-    entries: Required[list["ImportEntry"]]
+    entries: Required[list["MemoryImportEntry"]]
     dry_run: NotRequired[bool]
 
 
-class ImportEntry(TypedDict, total=False):
+class MemoryImportEntry(TypedDict, total=False):
     value: Required[str]
     tags: NotRequired[list[str]]
     valid_at: NotRequired[Optional[str]]
@@ -11996,24 +11996,24 @@ class MemoryImportBody(TypedDict, total=False):
     user_id: NotRequired[str]
     session_id: NotRequired[str]
     run_id: NotRequired[str]
-    entries: Required[list["ImportEntry"]]
+    entries: Required[list["MemoryImportEntry"]]
     dry_run: NotRequired[bool]
 
 
 class MemoryImportOutput(TypedDict, total=False):
-    totals: Required["ImportTotals"]
-    results: Required[list["ImportEntryResult"]]
+    totals: Required["MemoryImportTotals"]
+    results: Required[list["MemoryImportResult"]]
     dry_run: NotRequired[bool]
 
 
-class ImportTotals(TypedDict, total=False):
+class MemoryImportTotals(TypedDict, total=False):
     written: NotRequired[int]
     held: NotRequired[int]
     skipped: NotRequired[int]
     refused: NotRequired[int]
 
 
-class ImportEntryResult(TypedDict, total=False):
+class MemoryImportResult(TypedDict, total=False):
     index: Required[int]
     key: Required[str]
     outcome: Required[Literal["written", "held", "skipped", "refused"]]

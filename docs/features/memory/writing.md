@@ -231,13 +231,15 @@ conflict verdict. Every entry gets the conflict check, whatever
 
 - **The key comes from the text:** `import:` and the first 24 hex characters of the SHA-256
   of the text as given. The same text always lands on the same key, so a re-run writes
-  nothing new: its entries come back `skipped` (`unchanged`) in any session, and the stored
-  row keeps the tags, `valid_at`, `source_trace` and sensitivity it was written with. An
-  item edited in the source has new text and so a new key: the import adds it and leaves the
-  old fact as it is (the conflict check may flag the pair), so delete or revise the old one
-  yourself. The import reinforces nothing, unlike a restatement through `memory.set` or
-  `memory.bulk_set`, so re-runs never raise a memory's reinforcement; a fact already held
-  under another key comes back `held`.
+  nothing new: its entries come back `skipped` (`unchanged`) in any session the token may
+  read (an `own_session` token reads only its own, see below), and the stored row keeps the
+  tags, `valid_at`, `source_trace` and sensitivity it was written with. An item edited in
+  the source has new text and so a new key: the import adds it and leaves the old fact as it
+  is (the conflict check may flag the pair), so delete or revise the old one yourself. The
+  import reinforces nothing, unlike a restatement through `memory.set` or `memory.bulk_set`,
+  so re-runs never raise a memory's reinforcement; a fact already held under another key
+  comes back `held`. The key is a digest of the text, so anyone who can see a key can
+  confirm a guessed text against it: do not import a secret as an item.
 - **The text is embedded and indexed alone:** a key that is only the digest (`import:` and
   24 lowercase hex characters, nothing else) puts no `(#key)` suffix on the excerpt a row
   is embedded and lexically indexed by, and builds no key-axis vector, so an imported fact
@@ -270,11 +272,12 @@ conflict verdict. Every entry gets the conflict check, whatever
 - **Categories:** a `category` the namespace registered (`namespace.register_category`) is
   linked to the key once the key holds the fact, as `memory.assign_category` links one. A
   link already stored is left as it is, so a re-run does not bring back a link the owner
-  rescinded. When the category is not linked, the result's `note` says why:
-  `category_unregistered` (the namespace has no such category), `category_refused` (a token
-  bounded to one user or one session links none, since a link has neither axis; it is
-  refused `memory.assign_category` too), `category_not_linked` (the key does not hold the
-  fact) or `category_rescinded`. Either way the fact is still imported.
+  rescinded, unless the rescind lands while the import runs. When the category is not
+  linked, the result's `note` says why: `category_unregistered` (the namespace has no such
+  category), `category_refused` (a token bounded to one user or one session links none,
+  since a link has neither axis; it is refused `memory.assign_category` too),
+  `category_not_linked` (the key does not hold the fact) or `category_rescinded`. Either way
+  the fact is still imported.
 - **`dry_run=true`** makes every check and writes no memory row, embedding, category link,
   audit row or usage event. It still pays for every entry's embedding, since the conflict
   check reads the vectors, and counts a blacklist pattern's hit. A `conflicted` entry is

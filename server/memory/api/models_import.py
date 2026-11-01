@@ -27,7 +27,7 @@ MAX_IMPORT_TRACE_CHARS = 512
 MAX_IMPORT_CATEGORY_CHARS = 256
 
 
-class _ImportEntry(BaseModel):
+class _MemoryImportEntry(BaseModel):
     # The item's text, stored verbatim; at least one character that is not whitespace.
     # Its key is `import:` and the first 24 hex characters of the text's SHA-256, so the
     # same text always lands on the same key.
@@ -68,7 +68,7 @@ class MemoryImportInput(_Identity):
 
     # The items to import, 1 to 200: each one's text, and optionally its tags, the time
     # the source first knew it, its source pointer, a category and a sensitivity tier.
-    entries: list[_ImportEntry] = Field(..., min_length=1, max_length=MAX_IMPORT_ENTRIES)
+    entries: list[_MemoryImportEntry] = Field(..., min_length=1, max_length=MAX_IMPORT_ENTRIES)
     # Make every check and answer each entry's outcome, writing nothing.
     dry_run: bool = False
 
@@ -84,7 +84,7 @@ class MemoryImportInput(_Identity):
         return self
 
 
-class _ImportEntryResult(BaseModel):
+class _MemoryImportResult(BaseModel):
     # The entry's position in the request's `entries`.
     index: int
     # The key the item is stored under, or would be.
@@ -106,7 +106,7 @@ class _ImportEntryResult(BaseModel):
     note: Note = ""
 
 
-class _ImportTotals(BaseModel):
+class _MemoryImportTotals(BaseModel):
     # Entries whose key got a new version.
     written: int = 0
     # Entries another memory already held.
@@ -119,8 +119,8 @@ class _ImportTotals(BaseModel):
 
 class MemoryImportOutput(BaseModel):
     # How many entries ended each way.
-    totals: _ImportTotals
+    totals: _MemoryImportTotals
     # One result per entry, in request order.
-    results: list[_ImportEntryResult]
+    results: list[_MemoryImportResult]
     # True when nothing was written: each outcome is what the import would do.
     dry_run: bool = False
