@@ -534,7 +534,7 @@ async def test_a_key_its_owner_corrected_is_left_corrected(harness) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_key_restored_after_its_delete_is_held_again(harness) -> None:
+async def test_a_key_restored_after_its_delete_is_unchanged(harness) -> None:
     ch = _StoreCH()
     harness(ch)
     item = {"value": "Dog is Biscuit."}
@@ -1045,9 +1045,9 @@ async def test_a_rerun_adds_no_link_already_stored(harness) -> None:
         ("written", "", True, True, False, "category_rescinded"),
         ("refused", "blacklist", True, True, None, "category_not_linked"),
         ("held", "merge", True, True, None, "category_not_linked"),
-        ("written", "", True, True, None, None),  # None: link it
-        ("skipped", "unchanged", True, True, None, None),
-        ("skipped", "repeated", True, True, None, None),
+        ("written", "", True, True, None, ""),  # no note: the key is linked
+        ("skipped", "unchanged", True, True, None, ""),
+        ("skipped", "repeated", True, True, None, ""),
     ],
 )
 def test_the_category_note_of_each_case(
@@ -1056,7 +1056,7 @@ def test_the_category_note_of_each_case(
     linkable: bool,
     registered: bool,
     stored_live: bool | None,
-    note: str | None,
+    note: str,
 ) -> None:
     from server.memory.domain.memory_import import category_note
 
@@ -1221,3 +1221,26 @@ def test_the_op_draws_from_its_own_rate_class() -> None:
     from server.core.ratelimit import op_class_for
 
     assert op_class_for("memory.import") == "memory.import"
+
+
+@pytest.mark.asyncio
+async def test_the_heads_read_stays_inside_a_session_bounded_token() -> None:
+    """An `own_session` token answers deleted, revised or superseded only for keys in its
+    own session: the heads read carries the token's user and session."""
+    from server.identity.domain.read_scope import ReadFilters
+
+    reads: list[tuple[str, dict[str, Any]]] = []
+
+    class _Recording:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            reads.append((sql, params))
+            return []
+
+    scope = ReadFilters(scope="own_session", user_id="u", session_id="s1")
+    await memory_repo.key_heads_across_sessions(
+        "test", "personal", "cursor", "u", ["import:k"], scope=scope, ch=_Recording()
+    )
+    ((sql, params),) = reads
+    assert "user_id = {scope_uid:String}" in sql and "session_id = {scope_sid:String}" in sql
+    assert (params["scope_uid"], params["scope_sid"]) == ("u", "s1")
+    assert "select_sequential_consistency = 1" in sql

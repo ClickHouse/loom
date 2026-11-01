@@ -14,7 +14,7 @@ from server.memory.domain.memory_import import Note, Outcome, Reason
 
 # The most entries one call takes; the bulk write conflict-checks every one of them,
 # whatever LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES caps a memory.bulk_set at.
-MAX_IMPORT_ENTRIES = 200  # not a setting: a wire bound the request schema and SDKs publish
+MAX_IMPORT_ENTRIES = 200  # not a setting: a wire bound the request schema publishes
 # The longest item text, in characters, a bound on what one row stores. Only the first
 # 1,200 characters of its JSON encoding (`excerpt.EXCERPT_LIMIT`) are embedded and indexed.
 MAX_IMPORT_VALUE_CHARS = 30_000  # not a setting: a wire bound

@@ -90,16 +90,17 @@ def category_note(
     linkable: bool,
     registered: bool,
     stored_live: bool | None,
-) -> Note | None:
-    """The note on an entry that names a category, or None to link it. `stored_live` is
-    the stored link of its key to the category: True live, False rescinded, None never
-    linked. A stored link is left as it is, so a re-run never brings back a rescinded one."""
+) -> Note:
+    """The note on an entry that names a category; '' when its key is linked or is about
+    to be. `stored_live` is the stored link of the key to the category: True live, False
+    rescinded, None never linked. A stored link is left as it is, so a re-run never brings
+    back a rescinded one."""
     if not linkable:
         return "category_refused"
     if not registered:
         return "category_unregistered"
-    if stored_live is not None:
-        return "" if stored_live else "category_rescinded"
-    if not holds_item(outcome, reason):
+    if stored_live is False:
+        return "category_rescinded"
+    if stored_live is None and not holds_item(outcome, reason):
         return "category_not_linked"
-    return None
+    return ""

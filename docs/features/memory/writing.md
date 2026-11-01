@@ -284,9 +284,8 @@ extraction path (`LOOM_MEMORY_EXTRACT_VALUE_UPDATES`) never runs for an import.
   `category_not_linked` (the key does not hold the fact and has no link) or
   `category_rescinded` (a link the owner rescinded, left so). The note never changes the
   entry's outcome. A live link already stored for the key answers no note, and an entry its
-  own request superseded (`newest_wins`) is linked like any written one. A user-scope
-  `erasure.request` leaves an import's category links and its `memory.import` audit row,
-  keys included; a namespace-scope one removes the links.
+  own request superseded (`newest_wins`) is linked like any written one. What an erasure
+  leaves of the links: [retention and erasure](./retention-and-erasure.md#erasure).
 - **`dry_run=true`** makes every check and writes no memory row, embedding, category link,
   audit row or usage event. It still pays for the embedding of each entry it sends to the
   bulk write, since the conflict check reads the vectors, and counts a blacklist pattern's

@@ -197,7 +197,8 @@ async def _categorize(
     *,
     linkable: bool,
 ) -> None:
-    """Note each entry's category (`category_note`) and link the ones it says to link.
+    """Note each entry's category (`category_note`) and link the key of each entry with no
+    note and no stored link.
     The new links get one audit row: keys and category names, never the text."""
     links: set[tuple[str, str]] = set()
     for result, entry in zip(results, input.entries, strict=True):
@@ -211,10 +212,9 @@ async def _categorize(
             registered=entry.category in category_ids,
             stored_live=stored.get(link),
         )
-        if note is None:
+        result.note = note
+        if not note and link not in stored:
             links.add(link)
-        else:
-            result.note = note
     new = sorted(links)
     if not new or input.dry_run:
         return
