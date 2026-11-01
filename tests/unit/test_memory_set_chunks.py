@@ -834,8 +834,8 @@ async def test_a_failed_head_read_retires_the_chunks_it_just_wrote(
 
 
 @pytest.fixture
-def stubbed_set_commit(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """`set_commit` with the after-write projections stubbed, for the chunk step alone."""
+def stubbed_after_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`set_commit`'s after-write projections stubbed, for the chunk step alone."""
 
     async def nothing(*_: Any, **__: Any) -> None:
         return None
@@ -844,10 +844,9 @@ def stubbed_set_commit(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(set_commit, "project_stated_relations", nothing)
     monkeypatch.setattr(set_commit, "follow_beside_response", lambda **_: None)
     monkeypatch.setattr(set_commit, "peer_id_in_read_scope", lambda *_: "")
-    return set_commit
 
 
-async def _after_write(set_commit: Any, duplicate_of: str) -> list[dict[str, Any]]:
+async def _after_write(duplicate_of: str) -> list[dict[str, Any]]:
     # one memory.set's after-write step over a key that holds a long value's chunks
     served = [_live_row(0, "the served long value's first passage")]
     ch = _CH(routes=[("FROM loom.memory_chunks FINAL", served)])
@@ -864,15 +863,15 @@ async def _after_write(set_commit: Any, duplicate_of: str) -> list[dict[str, Any
 
 @pytest.mark.asyncio
 async def test_a_duplicate_leaves_the_keys_chunks_to_the_served_value(
-    stubbed_set_commit: Any,
+    stubbed_after_write: None,
 ) -> None:
-    assert await _after_write(stubbed_set_commit, "canonical-id") == []
+    assert await _after_write("canonical-id") == []
 
 
 @pytest.mark.asyncio
 async def test_an_active_write_replaces_the_keys_chunks_with_its_own(
-    stubbed_set_commit: Any,
+    stubbed_after_write: None,
 ) -> None:
-    written = await _after_write(stubbed_set_commit, "")
+    written = await _after_write("")
     assert any(r["tombstoned_at"] is not None for r in written)
     assert any(r["tombstoned_at"] is None for r in written)

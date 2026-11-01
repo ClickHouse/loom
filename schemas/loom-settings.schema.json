@@ -4322,7 +4322,7 @@
           "default": 64,
           "minimum": 1,
           "type": "integer",
-          "description": "How many of a writer's newest served rows of one key a pooled memory.set chunk is matched against, by value, to find the row it was cut from."
+          "description": "How many of a writer's served rows of one key, those with the newest vectors, a pooled memory.set chunk is matched against, by value, to find the row it was cut from."
         },
         "memory_search_set_expansion_leg_top_k": {
           "default": 2,

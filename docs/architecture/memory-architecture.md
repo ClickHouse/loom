@@ -973,14 +973,15 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    | records          | `side_legs.py`               | `memory_records`.                                                                                                                                                                                         |
 
    A pooled chunk of a long `memory.set` value folds onto the row whose current value
-   cuts it (`pool.py`, `fold_set_chunks`): one read of the writer's newest served rows of
-   the key over `memory_embeddings` (`memory_search_set_chunk_rows` of them), then keyed
-   reads of their values over `memory`, a form field at a time, only when a private-scope
-   pool holds such a chunk. A chunk none of those rows' values cuts is dropped, and so is
-   every chunk of the pool when the read fails; under shared scope a chunk folds onto a
-   pooled fact of its key, or becomes a hit of the key. The match recomputes a row's
-   chunks with today's chunker (`set_chunks.py`): a change to its geometry leaves stored
-   chunks unmatched until their keys are re-set, and a lower chunk cap those past it.
+   cuts it (`pool.py`, `fold_set_chunks`): one read of the writer's served rows of the key
+   with the newest vectors over `memory_embeddings` (`memory_search_set_chunk_rows` of
+   them), then keyed reads of their values over `memory`, a form field at a time, only
+   when a private-scope pool holds such a chunk. A chunk none of those rows' values cuts
+   is dropped, and so is every chunk of the pool when the read fails; under shared scope a
+   chunk folds onto a pooled fact of its key, or becomes a hit of the key. The match
+   recomputes a row's chunks with the running build's chunker (`set_chunks.py`): a change
+   to its geometry leaves stored chunks unmatched until their keys are re-set, and a lower
+   chunk cap those past it.
 
    Additive pools follow: sub-queries, set expansion, the entity and date anchor pool
    (`anchor_pool.py`) and the key-match arm (`key_match.py`). The assembler folds in the

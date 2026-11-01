@@ -273,14 +273,23 @@ def test_a_chunk_folds_only_onto_the_row_it_is_named_for() -> None:
 @pytest.mark.asyncio
 async def test_a_failed_row_read_names_no_row_and_its_chunks_drop() -> None:
     from server.memory.app.retrieval.pool import _set_chunk_rows
-    from tests.unit.test_memory_search_service import _q
+    from server.memory.domain.search_types import SearchQuery
 
     class _Down:
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
             raise RuntimeError("ClickHouse is unreachable")
 
     chunk = _writer_chunk("u", "a passage")
-    rows = await _set_chunk_rows(_Down(), _q(), [chunk])
+    q = SearchQuery(
+        org="o",
+        namespace="n",
+        scope="private",
+        agent="a",
+        embedding_model="m",
+        query_vec=[0.1],
+        top_k=5,
+    )
+    rows = await _set_chunk_rows(_Down(), q, [chunk])
     assert rows == {}
     pooled = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
     assert fold_set_chunks([pooled, chunk], rows) == [pooled]

@@ -169,22 +169,22 @@ def fold_set_chunks(
         if (getattr(h, "source", "") or "fact") == "chunk":
             continue
         if rows is None:
-            at.setdefault(("key", h.memory_key), pos)
+            at.setdefault((h.memory_key,), pos)
         elif h.identity:
-            at.setdefault(("row", *h.identity, h.memory_key), pos)
+            at.setdefault((*h.identity, h.memory_key), pos)
     for h in hits:
         if not _is_set_chunk(h):
             continue
         parent_key = str(h.parent_memory_key)
         found = None
         if rows is None:
-            target: tuple[str, ...] = ("key", parent_key)
+            target: tuple[str, ...] = (parent_key,)
         else:
             cid = _chunk_id(h)
             found = rows.get(cid) if cid else None
             if found is None:
                 continue  # no served row's value is known to cut it
-            target = ("row", *found.identity, parent_key)
+            target = (*found.identity, parent_key)
         if target in at:
             parent = out[at[target]]
             out[at[target]] = replace(parent, **_folded_fields(parent, h))
@@ -229,9 +229,10 @@ def _chunk_id(h: SearchHit) -> ChunkId | None:
 async def _set_chunk_rows(
     ch: _CHClient, q: SearchQuery, hits: list[SearchHit]
 ) -> dict[ChunkId, SetChunkRow] | None:
-    """The served row each pooled set chunk was cut from: of the writer's newest served rows
-    of the key (`memory_search_set_chunk_rows` of them), the newest whose current value cuts
-    that chunk (`set_chunk_identities`). A chunk none of them cuts, or every chunk when a
+    """The served row each pooled set chunk was cut from: of the writer's served rows of the
+    key with the newest vectors (`memory_search_set_chunk_rows` of them; a status change
+    re-writes a vector too), the first whose current value cuts that chunk
+    (`set_chunk_identities`). A chunk none of them cuts, or every chunk when a
     read fails, names none. None under shared scope, where the writer's private row is
     never served: the chunks fold by key."""
     if not any(_is_set_chunk(h) for h in hits):
