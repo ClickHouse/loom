@@ -174,7 +174,8 @@ _FILL_INERT = frozenset(
         "_namespace_membership",
         "_namespace_snapshot",
         "_namespace_catalog",
-        # The read scope comes from the request, not the input's own fields.
+        # The handler takes its scope from the admission binding, never its input's
+        # fields; population_limit is a bound parameter.
         "_namespace_inventory",
     }
 )
