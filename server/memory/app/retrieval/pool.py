@@ -147,6 +147,10 @@ class SetChunkRow(NamedTuple):
     tags: tuple[str, ...]
 
 
+# the key's promoted row: tags unknown, so alone it fails a hard tag filter
+_SHARED_SET_CHUNK_ROW = SetChunkRow(_SHARED_ROW, 0, ())
+
+
 class ChunkId(NamedTuple):
     """A pooled set chunk: its writer, its parent key, and its own index and hash."""
 
@@ -180,16 +184,15 @@ def fold_set_chunks(
         if not _is_set_chunk(h):
             continue
         parent_key = str(h.parent_memory_key)
+        target: tuple[str, ...]
         if rows is None:
-            # the key's promoted row: tags unknown, so alone it fails a hard tag filter
-            row = SetChunkRow(_SHARED_ROW, 0, ())
+            row, target = _SHARED_SET_CHUNK_ROW, (parent_key,)
         else:
             cid = _chunk_id(h)
-            named = rows.get(cid) if cid is not None else None
-            if named is None:
+            found = rows.get(cid) if cid is not None else None
+            if found is None:
                 continue  # no served row's value is known to cut it
-            row = named
-        target = (parent_key,) if rows is None else (*row.identity, parent_key)
+            row, target = found, (*found.identity, parent_key)
         _, _, session = row.identity
         if target in at:
             parent = out[at[target]]

@@ -101,7 +101,7 @@ class CanonicalRef:
         )
 
 
-class _NamesRow:
+class _RowKeyed:
     """A row read with its identity columns."""
 
     __slots__ = ()
@@ -117,7 +117,7 @@ class _NamesRow:
 
 
 @dataclass(frozen=True, slots=True)
-class DuplicateStatus(_NamesRow):
+class DuplicateStatus(_RowKeyed):
     """A pooled row's live status, and the canonical it names when it is a duplicate."""
 
     namespace: str
@@ -142,7 +142,7 @@ class DuplicateStatus(_NamesRow):
 
 
 @dataclass(frozen=True, slots=True)
-class CanonicalRow(_NamesRow):
+class CanonicalRow(_RowKeyed):
     """The live active row behind a `duplicate_of` id."""
 
     namespace: str
@@ -181,7 +181,7 @@ class CanonicalRow(_NamesRow):
 
 
 @dataclass(frozen=True, slots=True)
-class SupersededSuccessor(_NamesRow):
+class SupersededSuccessor(_RowKeyed):
     """A superseded key's successor id, the successor's key when it is still
     live ('' otherwise), and when the row was retired."""
 

@@ -377,6 +377,7 @@ def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
         {"password": "$ecr3tPass"},
         {"password": "ab\\cd1234"},
         {"password": "abc\bdef12"},
+        {"client_secret": "/q8ZtR3mKp9x"},  # base64 may open with `/`; a path has two segments
     ],
 )
 def test_a_credential_under_a_credential_key_reads_high(value: object) -> None:
