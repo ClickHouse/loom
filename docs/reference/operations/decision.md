@@ -48,6 +48,7 @@ Close the loop on a decision once reality has answered: record what actually hap
 | `memory_key` | `str` | The decision's key, echoed. |
 | `updated` | `bool` | False when memory.set merged the revision into another decision of the same text and nothing was written; a missing decision answers 404 instead. |
 | `memories_credited` | `int` | memories credited through the run ledger (run.complete memories_used). |
+| `next` | `str` | Why nothing was written when `updated` is false; "" otherwise. |
 
 ## `decision.precedents`
 

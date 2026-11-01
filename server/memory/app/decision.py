@@ -131,6 +131,18 @@ class _Written(NamedTuple):
     merged_into_key: str = ""
 
 
+def _merged_hint(merged_into_key: str, op: str) -> str:
+    if merged_into_key:
+        return (
+            f"memory.set merged this into the decision {merged_into_key}, which has the same "
+            "text; nothing was written. Use that key."
+        )
+    return (
+        "memory.set merged this into a decision that can no longer be read; nothing was "
+        f"written. Call {op} again."
+    )
+
+
 async def _write_decision(
     *,
     org: str,
@@ -234,17 +246,11 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         valid_at=input.valid_at,
     )
     if written.record_id is None:
-        if written.merged_into_key:
-            hint = (
-                f"memory.set merged this into the decision {written.merged_into_key}, which "
-                "has the same text; nothing was written. Use that key."
-            )
-        else:
-            hint = (
-                "memory.set merged this into a decision that can no longer be read; nothing "
-                "was written. Call decision.record again."
-            )
-        return DecisionRecordOutput(memory_key=written.merged_into_key, record_id="", next=hint)
+        return DecisionRecordOutput(
+            memory_key=written.merged_into_key,
+            record_id="",
+            next=_merged_hint(written.merged_into_key, "decision.record"),
+        )
 
     edges = 0
     evidence = [f"decision.record: {payload['scenario'][:200]}"]
@@ -444,7 +450,11 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         ) from None
     if written.record_id is None:
         # Nothing was stored, so the run's memories earn no credit from it.
-        return DecisionOutcomeOutput(memory_key=input.memory_key, updated=False)
+        return DecisionOutcomeOutput(
+            memory_key=input.memory_key,
+            updated=False,
+            next=_merged_hint(written.merged_into_key, "decision.outcome"),
+        )
 
     # Close the loop: the memories the deciding run relied on earn (or lose)
     # credit from the realized outcome — the feedback every decision log lacks.

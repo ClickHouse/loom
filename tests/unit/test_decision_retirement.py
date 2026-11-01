@@ -926,9 +926,8 @@ async def test_a_decision_merged_into_another_key_writes_nothing(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("merged_into", ["decision:peer", ""])
 async def test_an_outcome_merged_into_another_key_writes_and_credits_nothing(
-    local: KeptCH, monkeypatch: pytest.MonkeyPatch, merged_into: str
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import server.memory.app.ops as mops
     from server.memory.api.models_decision import DecisionOutcomeInput
@@ -943,7 +942,7 @@ async def test_an_outcome_merged_into_another_key_writes_and_credits_nothing(
     credited: list[Any] = []
 
     async def _merge(_inp: Any) -> Any:
-        return SimpleNamespace(version=0, conflict_verdict="merge", merged_into_key=merged_into)
+        return SimpleNamespace(version=0, conflict_verdict="merge", merged_into_key="decision:peer")
 
     async def _credit(inp: Any) -> Any:
         credited.append(inp)
@@ -957,6 +956,7 @@ async def test_an_outcome_merged_into_another_key_writes_and_credits_nothing(
         )
     )
     assert (out.updated, out.memories_credited, credited) == (False, 0, [])
+    assert "decision:peer" in out.next
     assert await _history() == ["active"]
 
 

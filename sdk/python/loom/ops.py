@@ -8775,6 +8775,7 @@ class DecisionOutcomeOutput(TypedDict, total=False):
     memory_key: Required[str]
     updated: Required[bool]
     memories_credited: NotRequired[int]
+    next: NotRequired[str]
 
 
 class DecisionPrecedentsInput(TypedDict, total=False):

@@ -165,3 +165,5 @@ class DecisionOutcomeOutput(BaseModel):
     updated: bool
     # memories credited through the run ledger (run.complete memories_used).
     memories_credited: int = 0
+    # Why nothing was written when `updated` is false; "" otherwise.
+    next: str = ""
