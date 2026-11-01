@@ -64,6 +64,11 @@ def _key_input(row: dict[str, Any]) -> str:
     return key_axis_text(str(row.get("memory_key") or ""))
 
 
+def _is_import_sql(column: str) -> str:
+    """SQL true when `column` holds an import key (`is_import_key`)."""
+    return f"match({column}, '^{IMPORT_KEY_PATTERN}$')"
+
+
 def where_sql(
     cols: list[str],
     model: str,
@@ -79,8 +84,9 @@ def where_sql(
     whose model calls are switched off) leaves their rows for a later run."""
     where = [] if key_only else [f"embedding_model != '{model}'"]
     if key_only and "memory_key" in cols:
-        # An import key has no key axis to rebuild: rewriting its row would change nothing.
-        where.append(f"NOT match(memory_key, '^{IMPORT_KEY_PATTERN}$')")
+        # An import key without a key vector has nothing to rebuild; one with a stale
+        # vector (written by a build before the import) is selected and cleared.
+        where.append(f"NOT ({_is_import_sql('memory_key')} AND memory_key_embedding_dim = 0)")
     where.append("embedding_dim > 0")
     params: dict[str, Any] = {}
     if "tombstoned_at" in cols:
@@ -143,9 +149,6 @@ def in_database_sql(
     m = model.replace("'", "\\'")
     cred = credentials.replace("'", "\\'")
 
-    key_text = cfg.get("key_text")
-    is_import = f"match({key_text}, '^{IMPORT_KEY_PATTERN}$')" if key_text else ""
-
     def emb(text_col: str) -> str:
         return f"CAST(aiEmbed({text_col}, '{m}', map('credentials', '{cred}')) AS Array(BFloat16))"
 
@@ -163,11 +166,14 @@ def in_database_sql(
             select.append(emb(cfg["text"]))
         elif cfg.get("key_vec") and c == cfg["key_vec"]:
             # An import key has no axis text: no key vector, as `key_axis_text` decides.
+            is_import = _is_import_sql(cfg["key_text"])
             select.append(f"if({is_import}, CAST([] AS Array(BFloat16)), {emb(cfg['key_text'])})")
         elif c == "embedding_model":
             select.append(f"'{m}'")
         elif cfg.get("key_dim") and c == cfg["key_dim"]:
-            select.append(f"if({is_import}, toUInt16(0), toUInt16({int(dim)}))")
+            select.append(
+                f"if({_is_import_sql(cfg['key_text'])}, toUInt16(0), toUInt16({int(dim)}))"
+            )
         elif c == "embedding_dim":
             select.append(f"toUInt16({int(dim)})")
         elif cfg["version"] == "version" and c == "version":

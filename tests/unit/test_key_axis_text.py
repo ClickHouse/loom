@@ -34,13 +34,14 @@ def test_reembed_key_input_uses_the_same_builder() -> None:
     assert _key_input(row) == key_axis_text("john_yoga_experience") == "john yoga experience"
 
 
-def test_key_only_where_selects_every_live_row_of_the_scope_but_import_keys() -> None:
+def test_key_only_where_selects_every_live_row_but_an_import_key_without_a_vector() -> None:
     cols = ["memory_key", "tombstoned_at"]
     sql, params = where_sql(cols, "m", org="o", namespace="n", key_only=True)
     assert "embedding_model" not in sql
     assert sql == (
-        "NOT match(memory_key, '^import:[0-9a-f]{24}$') AND embedding_dim > 0"
-        " AND tombstoned_at IS NULL AND org = {org:String} AND namespace = {ns:String}"
+        "NOT (match(memory_key, '^import:[0-9a-f]{24}$') AND memory_key_embedding_dim = 0)"
+        " AND embedding_dim > 0 AND tombstoned_at IS NULL AND org = {org:String}"
+        " AND namespace = {ns:String}"
     )
     assert params == {"org": "o", "ns": "n"}
     sql_default, _ = where_sql(cols, "m", org=None, namespace=None)
@@ -129,6 +130,14 @@ async def test_a_reembed_never_sends_an_import_key_to_the_embedder(
     assert emb.batches == [['"Prefers dark roast."', '"Dark." (#coffee_order)'], ["coffee order"]]
     dims = {r["memory_key"]: r["memory_key_embedding_dim"] for r in ch.rows}
     assert dims == {digest: 0, "coffee_order": 2}
+    # A key-only pass over an import key with a stale vector clears it, calling no embedder.
+    emb = _Emb()
+    stale = {**chunk[0], "memory_key_embedding": [0.3, 0.4], "memory_key_embedding_dim": 2}
+    await reembed._rewrite_page(ch, emb, "memory_embeddings", [stale], key_only=True)
+    assert emb.batches == []
+    assert [(r["memory_key_embedding"], r["memory_key_embedding_dim"]) for r in ch.rows] == [
+        ([], 0)
+    ]
 
 
 def test_gold_instances_split_set_answers_and_drop_counts() -> None:

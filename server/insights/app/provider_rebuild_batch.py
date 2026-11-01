@@ -173,6 +173,10 @@ def _inputs(
                 if "memory_key" not in row:
                     raise RebuildBatchError("source_text_missing")
                 value = key_axis_text(row["memory_key"])
+                if not value and any(row[column]):
+                    # An import key a build before the import embedded anyway: rebuild what
+                    # it holds; `loom reembed --key-only` clears it.
+                    value = str(row["memory_key"])
             if value.strip():
                 texts.append(value)
                 slots.append((index, column))

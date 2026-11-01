@@ -105,7 +105,7 @@ DEFAULT_LIMITS: dict[str, Limit] = {
     "memory.read": Limit(capacity=300, rate=50),
     "knowledge.search": Limit(capacity=20, rate=3),  # ~200/min
     "knowledge.add": Limit(capacity=10, rate=2),  # ~100/min (embedding is downstream-limited)
-    "memory.import": Limit(capacity=10, rate=2),  # ~120/min, each up to 200 embedded items
+    "memory.import": Limit(capacity=10, rate=2),  # each call up to 200 embedded items
     # Read-shaped code-intelligence ops; agents burst on session start.
     "code": Limit(capacity=60, rate=10),  # ~600/min
     "default": Limit(capacity=50, rate=10),
