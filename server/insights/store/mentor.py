@@ -475,6 +475,14 @@ async def last_calls(
 _COUNTED_CALL = "kind = 'request' AND consumer != 'loom-ui' AND operation != 'mentor.brief'"
 
 
+def _aggregate(row: dict[str, Any] | None) -> dict[str, Any]:
+    """An aggregate's one row. None (which an aggregate with no GROUP BY never answers)
+    is a failed read, so the brief names it in `skipped` rather than reporting zero."""
+    if row is None:
+        raise LookupError("the aggregate answered no row")
+    return row
+
+
 async def call_evidence(
     org: str,
     namespace: str,
@@ -510,7 +518,7 @@ async def call_evidence(
         """,
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
-    return dict(row)
+    return _aggregate(row)
 
 
 async def indexed_writes(
@@ -543,7 +551,7 @@ async def indexed_writes(
             "model": model,
         },
     )
-    return int(row["n"])
+    return int(_aggregate(row)["n"])
 
 
 async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
@@ -566,4 +574,4 @@ async def reported_keys(
         f"SELECT uniqExact(k) AS n FROM ({_CREDITED_KEYS}) WHERE NOT startsWith(k, 'chunk:')",
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
-    return int(row["n"])
+    return int(_aggregate(row)["n"])
