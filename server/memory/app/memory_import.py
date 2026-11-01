@@ -1,5 +1,5 @@
 """memory.import: items another memory system distilled, written through
-`handle_memory_bulk_set` under keys their text derives. What each entry answers is in
+`handle_memory_bulk_set` under keys derived from their text. What each entry answers is in
 docs/features/memory/writing.md#importing-from-another-memory-system.
 """
 
@@ -51,6 +51,8 @@ _CHECK_OF: dict[str, Reason] = {
     LOCKED: "locked",
     REJECTED: "pinned_peer",
 }
+# An entry's outcome, its reason and the key that holds its text (identity_duplicate only).
+_Answer = tuple[Outcome, Reason, str]
 # The reason of a written entry whose verdict is not a plain write.
 _STORED_AS: dict[str, Reason] = {
     "duplicate": "duplicate",
@@ -84,11 +86,12 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
         input.org, input.namespace, input.agent, input.user_id, list(first), scope=scope
     )
     content_shas = {key: sha256_value(input.entries[i].value) for key, i in first.items()}
-    outcomes, keepers = await _write(input, keys, first, skip_reasons(heads, content_shas))
+    answers = await _write(input, keys, first, skip_reasons(heads, content_shas))
     results: list[_MemoryImportResult] = []
     for i, key in enumerate(keys):
-        outcome, reason = outcomes[key] if first[key] == i else repeat_outcome(outcomes[key])
-        held_by = keepers.get(key, "") if reason == "identity_duplicate" else ""
+        outcome, reason, held_by = answers[key]
+        if first[key] != i:
+            outcome, reason = repeat_outcome((outcome, reason))
         results.append(
             _MemoryImportResult(index=i, key=key, outcome=outcome, reason=reason, held_by=held_by)
         )
@@ -101,16 +104,15 @@ async def _write(
     keys: list[str],
     first: dict[str, int],
     skip: dict[str, Reason],
-) -> tuple[dict[str, tuple[Outcome, Reason]], dict[str, str]]:
-    """Key → the outcome of the first entry of its text: skipped with its `skip` reason,
-    or written through memory.bulk_set. Also key → the key identity dedup found holding
-    the text."""
-    outcomes: dict[str, tuple[Outcome, Reason]] = {}
+) -> dict[str, _Answer]:
+    """Key → the answer of the first entry of its text: skipped with its `skip` reason,
+    or written through memory.bulk_set."""
+    outcomes: dict[str, _Answer] = {}
     pending: list[int] = []
     for key, i in first.items():
         reason = skip.get(key, "")
         if reason:
-            outcomes[key] = ("skipped", reason)
+            outcomes[key] = ("skipped", reason, "")
         else:
             pending.append(i)
     unknown = [key for key, reason in skip.items() if reason == "unknown"]
@@ -121,7 +123,7 @@ async def _write(
             unknown[:5],
         )
     if not pending:
-        return outcomes, {}
+        return outcomes
     # The source exports in any order, and under newest_wins the later of two statements
     # of one attribute in a batch retires the earlier: oldest first, an undated item
     # counting as said now.
@@ -138,23 +140,23 @@ async def _write(
     for i, result in zip(pending, written.written, strict=True):
         key = keys[i]
         outcomes[key] = _entry_outcome(key, result, written.identity_duplicates.get(key))
-    return outcomes, written.identity_duplicates
+    return outcomes
 
 
-def _entry_outcome(key: str, result: _BulkSetResult, held_by: str | None) -> tuple[Outcome, Reason]:
-    """The outcome of an entry the bulk write answered. A result with no version that no
+def _entry_outcome(key: str, result: _BulkSetResult, held_by: str | None) -> _Answer:
+    """The answer of an entry the bulk write answered. A result with no version that no
     check refused, no merge took and no other key holds is the skip gate's or identity
     dedup's answer for this key: the key holds the text already."""
     verdict = result.conflict_verdict
     if result.version:
-        return "written", _STORED_AS.get(verdict, "")
+        return "written", _STORED_AS.get(verdict, ""), ""
     if verdict in REFUSED:
-        return "refused", _CHECK_OF[verdict]
+        return "refused", _CHECK_OF[verdict], ""
     if verdict == "merge":
-        return "held", "merge"
+        return "held", "merge", ""
     if held_by is not None and held_by != key:
-        return "held", "identity_duplicate"
-    return "skipped", "unchanged"
+        return "held", "identity_duplicate", held_by
+    return "skipped", "unchanged", ""
 
 
 def _bulk_input(
@@ -222,7 +224,7 @@ async def _categorize(
         "memory.import",
         org=input.org,
         namespace=input.namespace,
-        actor=writer_actor() or "-",
+        actor=writer_actor("-"),
         subject={
             "count": len(new),
             "category_links": [{"memory_key": k, "category": names[c]} for k, c in new],

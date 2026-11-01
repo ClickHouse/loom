@@ -1,6 +1,6 @@
 """memory.import end to end through the Python SDK's generated client
 (`agent.client.memory.import_`), as test_memory_bulk.py drives memory.bulk_set: items
-written under keys their text derives and stamped `imported`, re-runs that add no
+written under keys derived from their text and stamped `imported`, re-runs that add no
 version, an item its owner deleted or rejected that a re-run leaves so, a proposal left
 on trial, a dry run that writes nothing, each refusal named on its entry, categories
 linked or noted, a rescinded link left rescinded and a hash-only audit trail. Over raw

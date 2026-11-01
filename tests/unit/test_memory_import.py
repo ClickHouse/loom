@@ -1,5 +1,5 @@
 """memory.import: items another memory system distilled, written through the bulk
-write path under keys their text derives.
+write path under keys derived from their text.
 
 The key is a digest of the text, so a re-run writes nothing new and the item is embedded
 and lexically indexed by its value alone; every check the bulk write makes answers per
