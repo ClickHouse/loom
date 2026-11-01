@@ -51,6 +51,10 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client
             [[datetime.now(UTC), org, ns, AGENT, "memory.ask.consistency", "verdict", 0]],
             column_names=["ts", "org", "namespace", "agent", "operation", "kind", "success"],
         )
+        # A delete answers `found` too; it is not a read that answered.
+        _call(c, "memory.set", {**ident, "memory_key": "tmp/scratch", "value": "Draft note"})
+        deleted = _call(c, "memory.delete", {**ident, "memory_key": "tmp/scratch"})
+        assert deleted["found"] is True, deleted
         # The dashboard reading under the agent's name is not the agent's use.
         _call(c, "memory.get", {**ident, "memory_key": "pref/report", "consumer": "loom-ui"})
         # The agent reports what it relied on when its run completes.
@@ -63,13 +67,14 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client
             body = {"org": org, "namespace": ns, "agent": AGENT}
             out = _call(c, "mentor.brief", body)
             ladder = {e["rung"]: e for e in out["evidence"]}
-            return (out, ladder) if ladder["attempt"]["count"] == 10 else None
+            return (out, ladder) if ladder["attempt"]["count"] == 12 else None
 
-        out, ladder = wait_until(brief, max_wait=30.0, description="ten calls in the ledger")
+        out, ladder = wait_until(brief, max_wait=30.0, description="twelve calls in the ledger")
     counts = {rung: e["count"] for rung, e in ladder.items()}
-    assert counts["success"] == 10
-    # The write stored a row; the restatement and the dry run did not.
-    assert counts["committed_write"] == 1
+    assert counts["success"] == 12
+    # Two writes stored a row; the restatement and the dry run did not.
+    assert counts["committed_write"] == 2
+    # The deleted row is no longer one a search can serve.
     assert counts["indexed_write"] == 1
     # The get that found its key and the search with a hit answered, and the ask when it
     # did not abstain; the miss and the abstaining search did not.

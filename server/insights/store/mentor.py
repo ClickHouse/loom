@@ -12,6 +12,7 @@ from server.core.grant_sql import LIVE_GRANT
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
 from server.memory.domain.namespace_shapes import STRUCTURED_TYPES
+from server.memory.domain.temporal_sql import served_status_sql
 from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL as _TRANSCRIPT_ROW
 
 _TRACKER_TAG_RE = "(^|[^a-z])(test|tests|flaky|ci|regression|crash|failure|failing)([^a-z]|$)"
@@ -481,23 +482,26 @@ async def call_evidence(
     window_seconds: int,
     *,
     searches: tuple[str, ...],
+    found_reads: tuple[str, ...],
     ch: _CHClient | None = None,
 ) -> dict[str, Any]:
     """What the agent's calls in the window show, from the call ledger: attempts,
-    successes, `memory.set` calls that stored a row (a dry run answers `noop` too), reads
-    that answered, and the oldest row the ledger still holds for the agent."""
+    successes, `memory.set` calls that stored a row (`noop` false: a merge or a dry run
+    answers true, and an MCP idempotent replay records no result), reads that answered,
+    and the oldest row the ledger still holds for the agent."""
     ch = ch or _default_client()
     row = await ch.query_one(
         f"""
         SELECT countIf({_COUNTED_CALL}) AS attempts,
                countIf({_COUNTED_CALL} AND success) AS successes,
                countIf({_COUNTED_CALL} AND success AND operation = 'memory.set'
-                       AND args['out_noop'] != 'true') AS committed_writes,
+                       AND args['out_noop'] = 'false') AS committed_writes,
                countIf({_COUNTED_CALL} AND success AND (
                    (operation IN {_in(searches)} AND args['out_abstain'] != 'true')
-                   OR toUInt64OrZero(args['out_section_hits']) > 0
-                   OR args['out_found'] = 'true'
-                   OR toUInt64OrZero(args['out_found_n']) > 0)) AS returned_hits,
+                   OR (operation = 'search.query'
+                       AND toUInt64OrZero(args['out_section_hits']) > 0)
+                   OR (operation IN {_in(found_reads)} AND (args['out_found'] = 'true'
+                       OR toUInt64OrZero(args['out_found_n']) > 0)))) AS returned_hits,
                if(count() = 0, NULL, min(ts)) AS oldest_row
         FROM loom.agent_events
         WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN}
@@ -510,15 +514,17 @@ async def call_evidence(
 async def indexed_writes(
     org: str, namespace: str, agent: str, window_seconds: int, *, ch: _CHClient | None = None
 ) -> int:
-    """Memory keys the agent first created in the window, by any write op, that have a
-    search vector now (an embedding row keeps its first `created_at` across versions; a
-    row still waiting for the embedder has `embedding_dim = 0`)."""
+    """Memory keys the agent first created in the window, by any write op, that a default
+    search can serve now: a search vector (a row still waiting for the embedder has
+    `embedding_dim = 0`), a served status, not past `expires_at`. An embedding row keeps
+    its first `created_at` across versions."""
     ch = ch or _default_client()
     row = await ch.query_one(
         f"""
         SELECT uniqExact(memory_key) AS n FROM loom.memory_embeddings FINAL
         WHERE {_SCOPE} AND agent = {{agent:String}} AND tombstoned_at IS NULL
           AND created_at >= now() - INTERVAL {{win:UInt32}} SECOND AND embedding_dim > 0
+          AND {served_status_sql()} AND (expires_at IS NULL OR expires_at > now())
         """,
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )

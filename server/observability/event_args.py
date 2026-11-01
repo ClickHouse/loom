@@ -612,8 +612,10 @@ def request_work_stage_columns(work: Any) -> dict[str, str]:
     return _retrieval_work_columns({"stage_ms": part})
 
 
-# The plane sections of a sectioned search's answer (`search.query`).
-_SEARCH_SECTIONS = ("memory", "knowledge", "profile", "conversations")
+# The plane sections of a sectioned search's answer (`search.query`) whose hits say it
+# answered. `profile` is left out: it falls back to matching by meaning, so it answers
+# nearly any query.
+_SEARCH_SECTIONS = ("memory", "knowledge", "conversations")
 
 
 def _read_outcome_columns(result: dict[str, Any]) -> dict[str, str]:
@@ -634,13 +636,14 @@ def _read_outcome_columns(result: dict[str, Any]) -> dict[str, str]:
         out[RESULT_PREFIX + "found_n"] = str(len(results))
         out[RESULT_PREFIX + "missing_n"] = str(len(missing))
     # A sectioned search (`search.query`) answers with a hit list per plane and no top-level
-    # `abstain`: the hits across its sections say whether it answered.
-    sections = [result.get(k) for k in _SEARCH_SECTIONS]
-    if any(isinstance(sec, dict) and "results" in sec for sec in sections):
+    # `abstain`: the hits across its sections say whether it answered. A section that
+    # abstained keeps its below-threshold hits as evidence; they are not an answer.
+    sections = [sec for sec in (result.get(k) for k in _SEARCH_SECTIONS) if isinstance(sec, dict)]
+    if any("results" in sec for sec in sections):
         hits = sum(
             len(sec["results"])
             for sec in sections
-            if isinstance(sec, dict) and isinstance(sec.get("results"), list)
+            if isinstance(sec.get("results"), list) and sec.get("abstain") is not True
         )
         out[RESULT_PREFIX + "section_hits"] = str(hits)
     return out

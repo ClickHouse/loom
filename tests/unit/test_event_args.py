@@ -240,5 +240,12 @@ def test_a_sectioned_search_records_its_hits_across_sections() -> None:
     )
     assert project_result(answered)["out_section_hits"] == "3"
     assert project_result(SearchOutput(memory={"results": []}))["out_section_hits"] == "0"
+    # An abstaining memory section keeps its hits as evidence, not as an answer; the
+    # profile section answers nearly any query by meaning, so it is not counted.
+    abstained = SearchOutput(
+        memory={"abstain": True, "results": [{"memory_key": "a"}]},
+        profile={"results": [{"label": "role"}]},
+    )
+    assert project_result(abstained)["out_section_hits"] == "0"
     # A result with no sections records nothing.
     assert "out_section_hits" not in project_result({"results": [1, 2]})

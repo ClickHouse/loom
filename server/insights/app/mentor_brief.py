@@ -3,7 +3,9 @@ hints shown vs followed per code."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Awaitable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -176,13 +178,13 @@ _RUNG_MEANING: dict[EvidenceRung, str] = {
         "do not say on the ledger whether they stored one, so they are not counted"
     ),
     "indexed_write": (
-        "memory keys the agent first created in the window, by any write op, that now "
-        "have a search vector"
+        "memory keys the agent first created in the window, by any write op, that a "
+        "default search can serve now (a vector, a served status, not expired)"
     ),
     "returned_hit": (
         "reads that answered: a `memory.search` or `memory.ask` that did not abstain, a "
-        "`search.query` with a hit, a read that found what it asked for; whether the answer "
-        "reached the model or changed its work is not recorded"
+        "`search.query` with a memory, document or conversation hit, a get that found its "
+        "key; whether the answer reached the model or changed its work is not recorded"
     ),
     "client_acknowledged": (
         "distinct memory keys the agent's runs reported relying on (`run.complete` "
@@ -196,46 +198,51 @@ def _rung(rung: EvidenceRung, count: int | None, source: EvidenceSource) -> Ment
     return MentorEvidence(rung=rung, count=count, source=source, meaning=_RUNG_MEANING[rung])
 
 
+# The reads that answer `found` for what they were asked: a `found` from a delete or an
+# unsave is not a read that answered.
+_FOUND_READS = (*mentor_rules.GETS, "memory.get_by_id")
+
+
 async def _evidence(
     profile: mentor_rules.MentorProfile,
 ) -> tuple[list[MentorEvidence], datetime | None, int | None, list[str]]:
-    """The evidence ladder, the oldest call the ledger holds in the window, how long the
-    ledger keeps this namespace's rows, and the reads that failed ("step: reason"). Read
-    at each brief, not from the cached profile; each read stands alone: a failed one
+    """The evidence ladder, the oldest ledger row in the window, how long the ledger keeps
+    this namespace's rows, and the reads that failed ("step: reason"). Read at each brief,
+    not from the cached profile; the four reads run at once and stand alone: a failed one
     leaves its rungs without a count."""
     ch = get_client()
     who = (profile.org, profile.namespace, profile.agent, int(profile.window_seconds))
     failed: list[str] = []
-    calls: dict[str, Any] = {}
-    try:
-        calls = await mentor_store.call_evidence(
-            *who,
-            searches=mentor_rules.SEARCHES,
-            ch=ch,
-        )
-    except Exception as exc:  # noqa: BLE001 — the ledger rungs read as uncounted
-        log.warning("mentor evidence read failed: %s", exc)
-        failed.append(f"evidence: {type(exc).__name__}")
-    indexed: int | None = None
-    try:
-        indexed = await mentor_store.indexed_writes(*who, ch=ch)
-    except Exception as exc:  # noqa: BLE001 — the indexed rung reads as uncounted
-        log.warning("mentor indexed-writes read failed: %s", exc)
-        failed.append(f"indexed_writes: {type(exc).__name__}")
-    reported: int | None = None
-    try:
-        reported = await mentor_store.reported_keys(*who, ch=ch)
-    except Exception as exc:  # noqa: BLE001 — the acknowledged rung reads as uncounted
-        log.warning("mentor reported-keys read failed: %s", exc)
-        failed.append(f"reported_keys: {type(exc).__name__}")
-    retention: int | None = None
-    try:
-        own = await mentor_store.namespace_retention_days(profile.org, profile.namespace, ch=ch)
-        # A namespace's own retention wins over the table's global one.
-        retention = own or int(settings.retention_agent_events_days)
-    except Exception as exc:  # noqa: BLE001 — the brief omits the retention
-        log.warning("mentor retention read failed: %s", exc)
-        failed.append(f"retention: {type(exc).__name__}")
+
+    async def read[T](step: str, coro: Awaitable[T]) -> T | None:
+        try:
+            return await coro
+        except Exception as exc:  # noqa: BLE001 — a failed read leaves its rungs uncounted
+            log.warning("mentor %s read failed: %s", step, exc)
+            failed.append(f"{step}: {type(exc).__name__}")
+            return None
+
+    calls_read, indexed, reported, own_retention = await asyncio.gather(
+        read(
+            "evidence",
+            mentor_store.call_evidence(
+                *who, searches=mentor_rules.SEARCHES, found_reads=_FOUND_READS, ch=ch
+            ),
+        ),
+        read("indexed_writes", mentor_store.indexed_writes(*who, ch=ch)),
+        read("reported_keys", mentor_store.reported_keys(*who, ch=ch)),
+        read(
+            "retention",
+            mentor_store.namespace_retention_days(profile.org, profile.namespace, ch=ch),
+        ),
+    )
+    calls = calls_read or {}
+    # A namespace's own retention wins over the table's global one.
+    retention = (
+        None
+        if own_retention is None
+        else own_retention or int(settings.retention_agent_events_days)
+    )
 
     def counted(key: str) -> int | None:
         return int(calls[key]) if key in calls else None

@@ -1020,6 +1020,13 @@ def test_the_namespace_retention_wins_over_the_ledger_default(
     assert "the call ledger keeps 30d of rows" in handler.render_table(out)
 
 
+def test_a_failed_retention_read_leaves_the_retention_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out = _brief(monkeypatch, _CH({M_RETENTION: RuntimeError("down")}))
+    assert out.ledger_retention_days is None and "retention: RuntimeError" in out.skipped
+
+
 def test_a_failed_evidence_read_leaves_its_rungs_uncounted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
