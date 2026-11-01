@@ -103,13 +103,13 @@ _BLOCK_TAGS = (
 # The start of an HTML block, by CommonMark's start condition: 1-5 (a raw-text
 # tag, `<!--`, `<?`, `<![CDATA[`, `<!X`) end on the line holding their end
 # marker, 6 (a block-level tag) and 7 (a line holding one open or closing tag)
-# at a blank line. A tag's attributes are one `[^>]*` run, so the pattern stays
-# linear.
+# at a blank line. A tag name is CommonMark's (letters, digits, `-`: `<YOUR_KEY>`
+# is text); its attributes are one `[^>]*` run, so the pattern stays linear.
 _HTML_OPEN = re.compile(
     r"^ {0,3}(?:<(?P<raw>pre|script|style|textarea)(?=[\s>]|$)|(?P<comment><!--)"
     r"|(?P<pi><\?)|(?P<cdata><!\[CDATA\[)|(?P<decl><![A-Za-z])"
     rf"|(?P<block></?(?:{_BLOCK_TAGS})(?=[\s/>]|$))"
-    r"|(?P<tags></?[A-Za-z][\w-]*(?:[\s/][^>]*)?>[ \t]*\r?$))",
+    r"|(?P<tags></?[A-Za-z][A-Za-z0-9-]*(?:[\s/][^>]*)?>[ \t]*\r?$))",
     re.IGNORECASE,
 )
 _HTML_END = {"comment": "-->", "pi": "?>", "cdata": "]]>", "decl": ">"}

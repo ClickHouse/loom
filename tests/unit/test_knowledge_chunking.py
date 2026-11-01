@@ -333,3 +333,11 @@ def test_a_one_line_hn_heading_opens_a_block_to_the_blank_line() -> None:
         ("A",),
         ("B",),
     ]
+
+
+def test_a_placeholder_in_angle_brackets_is_text_not_a_tag() -> None:
+    text = "Set it:\n\n<YOUR_API_KEY>\n## Next\n\nbody\n"
+    assert [s.path for s in detect_sections(text) if s.path] == [("Next",)]
+    assert [s.path for s in detect_sections("<API_TOKEN>\n---\n\nx\n") if s.path] == [
+        ("<API_TOKEN>",)
+    ]
