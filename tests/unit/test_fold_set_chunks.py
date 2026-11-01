@@ -247,6 +247,12 @@ def test_a_chunk_of_a_newer_value_leaves_an_older_session_row_alone() -> None:
     assert (by_session["s2"].session_id, by_session["s2"].version) == ("s2", 7)
 
 
+def test_a_hit_made_from_a_chunk_carries_its_rows_tags() -> None:
+    rows = {ChunkId("a", "u", "lesson_a", 0, _SHA): SetChunkRow(("a", "u", "s2"), 7, ("t",))}
+    (hit,) = fold_set_chunks([_writer_chunk("u")], rows)
+    assert hit.tags == ["t"]
+
+
 def test_under_shared_scope_a_chunk_folds_onto_a_fact_of_its_key() -> None:
     # no row is read (the writer's private row is never served there)
     shared = replace(_hit("lesson_a", 0.5), identity=("_shared", "-", "-"))

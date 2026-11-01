@@ -293,9 +293,6 @@ def test_leg_hits_are_stamped_with_the_rows_tags() -> None:
     assert _stamp_leg_tags(leg, _hit("chunk:s:1", "chunk"))._row_tags is None
     # a leg that read an untagged row stamps the empty tuple (known, empty)
     assert _stamp_leg_tags(SimpleNamespace(tags=[]), _hit("k", "anchor"))._row_tags == ()
-    # a fact hit made from a set chunk read none: the belt reads its row's
-    made = SimpleNamespace(tags=[], score_components={"folded_from_chunk": 2.0})
-    assert _stamp_leg_tags(made, _hit("k", "fact"))._row_tags is None
 
 
 @pytest.mark.asyncio

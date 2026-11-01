@@ -140,10 +140,11 @@ def _folded_fields(row: SearchHit, chunk: SearchHit) -> dict[str, Any]:
 
 
 class SetChunkRow(NamedTuple):
-    """The row a memory.set chunk was cut from, and its vector's version."""
+    """The row a memory.set chunk was cut from, its vector's version and tags."""
 
     identity: RowIdentity
     version: int
+    tags: tuple[str, ...] = ()
 
 
 class ChunkId(NamedTuple):
@@ -182,14 +183,15 @@ def fold_set_chunks(
         target: tuple[str, ...]
         if rows is None:
             # the chunk's writer is private; what search serves of the key is its promoted
-            # row, whose version this read does not know
-            target, identity, version = (parent_key,), _SHARED_ROW, 0
+            # row, whose version and tags this read does not know (a hard tag filter drops it)
+            target, identity, version, tags = (parent_key,), _SHARED_ROW, 0, []
         else:
             cid = _chunk_id(h)
             found = rows.get(cid) if cid is not None else None
             if found is None:
                 continue  # no served row's value is known to cut it
-            target, identity, version = (*found.identity, parent_key), found.identity, found.version
+            target, identity = (*found.identity, parent_key), found.identity
+            version, tags = found.version, list(found.tags)
         _, _, session = identity
         if target in at:
             parent = out[at[target]]
@@ -204,6 +206,7 @@ def fold_set_chunks(
             identity=identity,
             session_id=session,
             version=version,
+            tags=tags,
             score_components={
                 **dict(h.score_components or {}),
                 "folded_chunks": 1.0,
@@ -254,7 +257,8 @@ async def _set_chunk_rows(
         served = await ch.query_all(
             f"""
             SELECT e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id,
-                   e.memory_key AS memory_key, max(e.version) AS version
+                   e.memory_key AS memory_key, max(e.version) AS version,
+                   argMax(e.tags, e.version) AS tags
             FROM loom.memory_embeddings AS e FINAL
             WHERE e.org = {{org:String}}
               AND e.namespace = {{ns:String}}
@@ -283,7 +287,8 @@ async def _set_chunk_rows(
         for c in by_writer.get((row.agent, row.user_id, row.memory_key), []):
             if (c.chunk_index, c.sha) in cuts:
                 identity = (row.agent, row.user_id, row.session_id)
-                out.setdefault(c, SetChunkRow(identity, int(r["version"])))
+                tags = tuple(str(t) for t in r["tags"])
+                out.setdefault(c, SetChunkRow(identity, int(r["version"]), tags))
     return out
 
 

@@ -30,14 +30,15 @@ def _row(
     status: str = "active",
     valid_to: str = "NULL",
     model: str = "text-embedding-3-small",
+    tags: str = "[]",
 ) -> list[str]:
     """A row's vector at `version` and its stored value."""
     return [
         "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
         "memory_key, memory_type, scope, content_excerpt, embedding, memory_key_embedding, "
-        "embedding_model, embedding_dim, version, status, valid_to) VALUES ('clickhouse', 'ns', "
-        f"'bot', '{user}', '{session}', 'lesson_a', 'semantic', 'private', 't', {_VEC}, {_VEC}, "
-        f"'{model}', 3072, {version}, '{status}', {valid_to})",
+        "embedding_model, embedding_dim, version, status, valid_to, tags) VALUES ('clickhouse', "
+        f"'ns', 'bot', '{user}', '{session}', 'lesson_a', 'semantic', 'private', 't', {_VEC}, "
+        f"{_VEC}, '{model}', 3072, {version}, '{status}', {valid_to}, {tags})",
         "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
         "memory_type, value, version, status) VALUES ('clickhouse', 'ns', 'bot', "
         f"'{user}', '{session}', 'lesson_a', 'semantic', '{value}', {version}, '{status}')",
@@ -124,6 +125,15 @@ async def test_a_row_embedded_under_another_model_still_names_its_chunks() -> No
 async def test_a_row_outside_the_hard_tags_is_not_served() -> None:
     ch = _LocalCH(_row("u", "s1", 1, LONG_V1))
     assert await _set_chunk_rows(ch, _q(tags=["kind:lesson"]), [_chunk("u", LONG_V1)]) == {}
+
+
+@pytest.mark.asyncio
+async def test_a_row_inside_the_hard_tags_names_its_chunk_with_its_tags() -> None:
+    # the hit made from the chunk is stamped with them, so the tag belt judges its own row
+    ch = _LocalCH(_row("u", "s1", 1, LONG_V1, tags="['kind:lesson', 'x']"))
+    chunk = _chunk("u", LONG_V1)
+    (named,) = (await _set_chunk_rows(ch, _q(tags=["kind:lesson"]), [chunk])).values()
+    assert named == SetChunkRow(("bot", "u", "s1"), 1, ("kind:lesson", "x"))
 
 
 @pytest.mark.asyncio

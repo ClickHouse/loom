@@ -52,8 +52,13 @@ def collapse_rows(hits: list[_MemorySearchHit], namespace: str) -> list[_MemoryS
         if key not in slot:
             slot[key] = len(out)
             out.append(h)
-        elif h.rank_score > out[slot[key]].rank_score:
-            out[slot[key]] = h
+        else:
+            kept = out[slot[key]]
+            winner, other = (h, kept) if h.rank_score > kept.rank_score else (kept, h)
+            # one row has one set of tags: a hit made from a shared chunk read none
+            if not winner._row_tags:
+                winner._row_tags = other._row_tags
+            out[slot[key]] = winner
     return out
 
 

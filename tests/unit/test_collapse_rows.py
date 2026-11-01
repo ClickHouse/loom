@@ -34,6 +34,18 @@ def test_one_row_pooled_twice_keeps_its_stronger_hit_where_the_first_sat() -> No
     assert collapse_rows([head, other, passage, theirs], "n") == [passage, other, theirs]
 
 
+@pytest.mark.parametrize("passage_first", [True, False])
+def test_the_kept_hit_has_the_tags_a_leg_read_of_its_row(passage_first: bool) -> None:
+    # a hit made from a shared-scope chunk read none; the hard tag belt checks `_row_tags`
+    head = _wire("k", 0.5, "the value's head", ("_shared", "-", "-"))
+    head._row_tags = ("kind:lesson",)
+    passage = _wire("k", 0.9, "the passage", ("_shared", "-", "-"))
+    passage._row_tags = ()
+    hits = [passage, head] if passage_first else [head, passage]
+    (kept,) = collapse_rows(hits, "n")
+    assert kept is passage and kept._row_tags == ("kind:lesson",)
+
+
 def test_hits_that_name_no_row_are_left_alone() -> None:
     a, b = _wire("k", 0.5, "one"), _wire("k", 0.6, "two")
     assert collapse_rows([a, b], "n") == [a, b]
