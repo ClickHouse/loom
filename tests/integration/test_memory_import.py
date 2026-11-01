@@ -141,6 +141,24 @@ async def test_a_rerun_leaves_an_item_its_owner_corrected_corrected(control_plan
 
 
 @pytest.mark.asyncio
+async def test_a_rerun_naming_another_sensitivity_keeps_the_stored_level(
+    control_plane_url: str,
+) -> None:
+    from loom import Agent
+
+    text = "The team offsite is in Lisbon."
+    item = {"value": text, "sensitivity": "low"}
+    async with Agent(org=ORG, namespace=_ns(), agent=AGENT, base_url=control_plane_url) as a:
+        await a.client.memory.import_({"entries": [item]})
+        same = await a.client.memory.import_({"entries": [item]})
+        other = await a.client.memory.import_({"entries": [{**item, "sensitivity": "medium"}]})
+        got = await a.call("memory.get", memory_key=_key(text))
+    assert _outcomes(same) == [("skipped", "unchanged")], same
+    assert _outcomes(other) == [("skipped", "sensitivity_kept")], other
+    assert got["sensitivity"] == "low"
+
+
+@pytest.mark.asyncio
 async def test_an_item_on_trial_is_left_proposed(control_plane_url: str) -> None:
     from loom import Agent
 
