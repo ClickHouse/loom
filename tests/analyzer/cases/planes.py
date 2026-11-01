@@ -939,7 +939,16 @@ def cases() -> list[Case]:
     )
     out.append(Case("profiles", "server.memory.store.profile_sources", _profiles, {}))
     out.append(Case("grants_repo", "server.identity.store.grants", _grants_repo, {}))
-    out.append(Case("mentor_evidence", "server.insights.store.mentor", _mentor_evidence, {}))
+    out.append(
+        Case(
+            "mentor_evidence",
+            "server.insights.store.mentor",
+            _mentor_evidence,
+            {},
+            # Each read is an aggregate: one row, every column it reads back.
+            rows=lambda sql, params: [{"n": 0, "retention_days": 0}],
+        )
+    )
     out.append(
         Case(
             "memory_list_score",
