@@ -407,10 +407,11 @@ live-row lookup reads the caller's session only and skips tombstones, so first t
 reads each key's newest version across the sessions of the identity inside the request's
 read scope (`key_heads_across_sessions`; an `own_session` token reads only its own session).
 A key whose newest version is a tombstone, or superseded, rejected or proposed, is left as
-it is; a live one is `unchanged` when it holds the item's text and `revised` when it holds
-other text. Only a key with no version goes to the bulk write. That read and the write are
-not atomic: a delete that lands between them is written over. A bulk result with no version
-that no check refused, no merge took and no other key holds is the skip gate's or identity
+it is; a live one is `unchanged` when it holds the item's text (`sensitivity_kept` when the
+entry names another sensitivity; the stored level stands) and `revised` when it holds other
+text. Only a key with no version goes to the bulk write. That read and the write are not
+atomic: a delete that lands between them is written over. A bulk result with no version that
+no check refused, no merge took and no other key holds is the skip gate's or identity
 dedup's answer for the key itself, so the entry is `unchanged`.
 
 Each item's key is `import:` and 24 hex characters of the SHA-256 of its text (`import_key`

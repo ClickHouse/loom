@@ -153,10 +153,12 @@ async def _noop() -> None:
 
 def test_an_import_key_gets_no_key_vector_in_the_database_either() -> None:
     """As `key_axis_text` gives an import key no axis text, the in-database statement
-    writes it an empty key vector at key dim 0; every other key is embedded."""
+    writes it the zero placeholder at key dim 0 (a coded column refuses `[]`); every other
+    key is embedded."""
     sql = rb.in_database_sql(
         "memory_embeddings", COLS, model="m", dim=8, credentials="c", where_sql="1"
     )
     is_import = "match(memory_key, '^import:[0-9a-f]{24}$')"
-    assert f"if({is_import}, CAST([] AS Array(BFloat16)), CAST(aiEmbed(memory_key, 'm'" in sql
+    zeros = "arrayResize(CAST([] AS Array(BFloat16)), 8, toBFloat16(0))"
+    assert f"if({is_import}, {zeros}, CAST(aiEmbed(memory_key, 'm'" in sql
     assert f"if({is_import}, toUInt16(0), toUInt16(8))" in sql

@@ -168,9 +168,11 @@ def in_database_sql(
         if c == cfg["vec"]:
             select.append(emb(cfg["text"]))
         elif cfg.get("key_vec") and c == cfg["key_vec"]:
-            # An import key (`is_import_key`) gets no key vector, as on every write path.
+            # An import key (`is_import_key`) gets no key vector, as on every write path: the
+            # zero placeholder an insert pads `[]` to, which a coded column also accepts.
             is_import = _is_import_sql(cfg["key_text"])
-            select.append(f"if({is_import}, CAST([] AS Array(BFloat16)), {emb(cfg['key_text'])})")
+            none = f"arrayResize(CAST([] AS Array(BFloat16)), {int(dim)}, toBFloat16(0))"
+            select.append(f"if({is_import}, {none}, {emb(cfg['key_text'])})")
         elif c == "embedding_model":
             select.append(f"'{m}'")
         elif cfg.get("key_dim") and c == cfg["key_dim"]:
