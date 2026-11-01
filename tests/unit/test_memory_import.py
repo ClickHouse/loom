@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -166,18 +167,22 @@ def harness(monkeypatch: pytest.MonkeyPatch):
     """Wire the bulk write to a `_StoreCH` with nothing reaching a server, and record
     what it leaves: embedding rows, usage events and audit rows. `verdicts` scripts the
     conflict check per value (clear otherwise); `blacklist` names a refused substring."""
+    import server.core.ch as ch_mod
     from server.settings import settings
 
     no_delete_in_flight(monkeypatch)
     # One conflict statement per fact: the scripted check stands in for it.
     monkeypatch.setattr(settings, "memory_write_candidate_batch", 0)
+    real_client = ch_mod.get_client
+    stubs: list[Any] = []
 
     def make(ch: _StoreCH, *, blacklist: str = "") -> SimpleNamespace:
         rec = SimpleNamespace(
             embedder=BatchEmbedder(), embedded=[], events=[], audits=[], verdicts={}
         )
         wire_stubs(monkeypatch, ch, rec.embedder, rec.embedded)
-        monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+        stubs.append(lambda: ch)
+        monkeypatch.setattr(ch_mod, "get_client", stubs[-1])
         monkeypatch.setattr(memory_repo, "key_heads_across_sessions", ch.key_heads)
 
         async def _find_match(*, org: str, namespace: str, value: str) -> Any:
@@ -207,7 +212,12 @@ def harness(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr("server.memory.app.webhooks.announce", _announce)
         return rec
 
-    return make
+    yield make
+    # A module first imported during the test bound the stub with `from server.core.ch
+    # import get_client`; give it the real client back, or later tests write into `ch`.
+    for mod in list(sys.modules.values()):
+        if any(getattr(mod, "get_client", None) is stub for stub in stubs):
+            mod.get_client = real_client
 
 
 def _input(*entries: dict[str, Any], dry_run: bool = False) -> MemoryImportInput:
