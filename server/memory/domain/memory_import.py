@@ -51,6 +51,10 @@ _LEFT_AS_IS: Final[dict[str, Reason]] = {
 }
 
 
+# The reasons of a skipped entry whose key holds its item.
+_HOLDS_ITEM: Final[frozenset[Reason]] = frozenset({"unchanged", "sensitivity_kept", "repeated"})
+
+
 def skip_reasons(
     heads: Iterable[Mapping[str, Any]],
     content_shas: Mapping[str, str],
@@ -92,8 +96,7 @@ def repeat_outcome(outcome: Outcome, reason: Reason) -> tuple[Outcome, Reason]:
 def holds_item(outcome: Outcome, reason: Reason) -> bool:
     """Whether an entry's key holds its item once the write is done: written now, there
     already, or written by an earlier entry of the request."""
-    held = ("unchanged", "sensitivity_kept", "repeated")
-    return outcome == "written" or (outcome == "skipped" and reason in held)
+    return outcome == "written" or (outcome == "skipped" and reason in _HOLDS_ITEM)
 
 
 def category_note(

@@ -152,6 +152,9 @@ def in_database_sql(
     m = model.replace("'", "\\'")
     cred = credentials.replace("'", "\\'")
 
+    def is_import_key() -> str:  # only a table with a key axis asks
+        return _is_import_sql(cfg["key_text"])
+
     def emb(text_col: str) -> str:
         return f"CAST(aiEmbed({text_col}, '{m}', map('credentials', '{cred}')) AS Array(BFloat16))"
 
@@ -171,13 +174,11 @@ def in_database_sql(
             # An import key (`is_import_key`) gets no key vector, as on every write path: the
             # zero placeholder an insert pads `[]` to, which a coded column also accepts.
             zeros = f"arrayResize(CAST([] AS Array(BFloat16)), {int(dim)}, toBFloat16(0))"
-            is_import = _is_import_sql(cfg["key_text"])
-            select.append(f"if({is_import}, {zeros}, {emb(cfg['key_text'])})")
+            select.append(f"if({is_import_key()}, {zeros}, {emb(cfg['key_text'])})")
         elif c == "embedding_model":
             select.append(f"'{m}'")
         elif cfg.get("key_dim") and c == cfg["key_dim"]:
-            is_import = _is_import_sql(cfg["key_text"])
-            select.append(f"if({is_import}, toUInt16(0), toUInt16({int(dim)}))")
+            select.append(f"if({is_import_key()}, toUInt16(0), toUInt16({int(dim)}))")
         elif c == "embedding_dim":
             select.append(f"toUInt16({int(dim)})")
         elif cfg["version"] == "version" and c == "version":

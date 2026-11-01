@@ -17,8 +17,8 @@ header read:
 
 The cap is `LOOM_MAX_REQUEST_BYTES` (32 MiB by default — a 400-message
 `memory.set_from_messages` is a few hundred KB, the largest `memory.import`
-about 10 MB of ASCII text, more when its text is non-ASCII). Websocket and
-lifespan scopes pass through untouched.
+about 10 MB of printable ASCII text, more when its text is non-ASCII or control
+characters). Websocket and lifespan scopes pass through untouched.
 """
 
 from __future__ import annotations
