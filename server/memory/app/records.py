@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
@@ -325,6 +325,11 @@ def _record_key(
     return memory_key, key_source
 
 
+# A decision is one writer's statement, and the record it supersedes may be another
+# writer's: keeping that record's fields would serve them past their writer's delete.
+_STATED_WHOLE = frozenset({SCHEMA_NAME})
+
+
 async def _fold_onto_active_record(
     ch: CHClient,
     input: MemoryRecordWriteInput,
@@ -334,12 +339,11 @@ async def _fold_onto_active_record(
     record_id: str,
     version: int,
     now: datetime,
-    carry_prior: bool,
 ) -> _RecordFold:
     """Field-level fold onto the active record for this key: an empty incoming field keeps
-    the survivor's value (not when `carry_prior` is false), spelling variants are
-    agreement, and a real disagreement is recorded with both values before the incoming
-    one wins."""
+    the survivor's value, spelling variants are agreement, and a real disagreement is
+    recorded with both values before the incoming one wins. A record of a schema in
+    `_STATED_WHOLE` keeps nothing of the survivor."""
     fold_out: dict[str, Any] = {}
     superseded_id = ""
     conflict_rows: list[dict[str, Any]] = []
@@ -349,16 +353,14 @@ async def _fold_onto_active_record(
             input.org, input.namespace, input.schema_name, memory_key, ch=ch
         )
         if prior_row is not None:
-            from server.memory.domain.record_fold import fold
+            from server.memory.domain.record_fold import fold, restate
 
             try:
                 prior_json = json.loads(prior_row.record_json or "{}")
             except json.JSONDecodeError:
                 prior_json = {}
-            result = fold(prior_json, record_json)
-            if not carry_prior:
-                # Keep the report of what agreed, was added or changed; drop the merge.
-                result = replace(result, merged=record_json, filled_from_prior=[])
+            combine = restate if input.schema_name in _STATED_WHOLE else fold
+            result = combine(prior_json, record_json)
             record_json = result.merged
             filled_fields = list(result.filled_from_prior)
             fold_out = result.as_dict()
@@ -483,8 +485,7 @@ async def _carry_folded_fields(
 
 
 async def handle_memory_record_write(input: MemoryRecordWriteInput) -> MemoryRecordWriteOutput:
-    """Write one typed record. A decision record is stated whole: nothing is kept from the
-    one it supersedes, which may be another writer's."""
+    """Write one typed record."""
     schema = await _schema_by_name(input.org, input.namespace, input.schema_name)
     if not schema or str(schema.get("status")) != "active":
         raise HTTPException(
@@ -519,7 +520,6 @@ async def handle_memory_record_write(input: MemoryRecordWriteInput) -> MemoryRec
         record_id=record_id,
         version=version,
         now=now,
-        carry_prior=input.schema_name != SCHEMA_NAME,
     )
     record_json = fold.record_json
     # Supersede prior active state for this logical key before inserting: every

@@ -86,7 +86,8 @@ class KeptCH:
     """A ClickHouse client over clickhouse-local whose database is kept under `path`, so
     each statement sees what the earlier ones wrote. An insert into one of the `_UNREAD`
     side tables is dropped unless the fixture created it; any other statement on a table
-    the fixture did not create raises."""
+    the fixture did not create raises. Statement `settings` are ignored, and a row is
+    inlined between `$$` quotes, so a value holding `$$` cannot be inserted."""
 
     def __init__(self, path: Path, *setup: str) -> None:
         self.path = path

@@ -18,6 +18,17 @@ _ACTIVE = """org = {org:String}
   AND status = 'active'
   AND tombstoned_at IS NULL"""
 
+# The identities with a live decision row under the key.
+_LIVE_WRITERS = """
+    SELECT agent, user_id, session_id
+    FROM loom.memory FINAL
+    WHERE org = {org:String}
+      AND namespace = {ns:String}
+      AND memory_key = {key:String}
+      AND memory_type = 'decision'
+      AND tombstoned_at IS NULL
+  """
+
 # Computed columns take new names: `AS status` would shadow the column in the WHERE.
 _CLOSE_ACTIVE_RECORD = f"""
 INSERT INTO loom.memory_records
@@ -39,15 +50,7 @@ WHERE {_ACTIVE}
 
 # Retires the record unless its writer still has a live decision row under the key.
 _TOMBSTONE_DECISION_RECORD = f"""{_CLOSE_ACTIVE_RECORD}
-  AND (identity_agent, user_id, session_id) NOT IN (
-      SELECT agent, user_id, session_id
-      FROM loom.memory FINAL
-      WHERE org = {{org:String}}
-        AND namespace = {{ns:String}}
-        AND memory_key = {{key:String}}
-        AND memory_type = 'decision'
-        AND tombstoned_at IS NULL
-  )
+  AND (identity_agent, user_id, session_id) NOT IN ({_LIVE_WRITERS})
 {_SEQUENTIAL}"""
 
 # The newest active record whose writer still has a live decision row under the key.
@@ -56,15 +59,7 @@ SELECT identity_agent, user_id, session_id, record_json, created_at
 FROM loom.memory_records FINAL
 WHERE {_ACTIVE}
   AND memory_key = {{key:String}}
-  AND (identity_agent, user_id, session_id) IN (
-      SELECT agent, user_id, session_id
-      FROM loom.memory FINAL
-      WHERE org = {{org:String}}
-        AND namespace = {{ns:String}}
-        AND memory_key = {{key:String}}
-        AND memory_type = 'decision'
-        AND tombstoned_at IS NULL
-  )
+  AND (identity_agent, user_id, session_id) IN ({_LIVE_WRITERS})
 ORDER BY version DESC
 LIMIT 1
 {_SEQUENTIAL}"""

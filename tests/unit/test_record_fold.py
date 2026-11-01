@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from server.memory.domain.record_fold import canonical, fold, is_empty
+from server.memory.domain.record_fold import canonical, fold, is_empty, restate
 
 
 def test_incoming_empty_keeps_the_survivor_value() -> None:
@@ -47,3 +47,13 @@ def test_as_dict_is_wire_shaped() -> None:
     d = fold({"a": 1}, {"a": 2}).as_dict()
     assert set(d) == {"agreed", "filled_from_prior", "added", "unioned", "changed"}
     assert d["changed"][0]["field"] == "a"
+
+
+def test_restate_keeps_nothing_of_the_prior_and_reports_the_change() -> None:
+    prior = {"outcome": "rollback", "reasoning": "fast", "tags": ["a"]}
+    incoming = {"outcome": "Hotfix", "reasoning": "", "tags": ["a"], "owner": "ops"}
+    out = restate(prior, incoming)
+    assert out.merged == incoming
+    assert out.filled_from_prior == [] and out.unioned == []
+    assert out.agreed == ["tags"] and out.added == ["owner"]
+    assert out.changed == [{"field": "outcome", "prior": "rollback", "incoming": "Hotfix"}]

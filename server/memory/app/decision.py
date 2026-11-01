@@ -9,7 +9,6 @@ outcome = a record revision that also credits the deciding run's memories.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime
 from typing import Any
@@ -19,7 +18,6 @@ from fastapi import HTTPException
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import NotFoundError, PreconditionFailedError
-from server.core.hashing import sha256_value_json
 from server.core.naming import SENTINEL, named
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_crud import MemorySetInput
@@ -180,7 +178,9 @@ async def _write_decision(
     )
     # Retire the record if the writer's row was deleted before the record landed.
     try:
-        await tombstone_decision_record(org, namespace, key, version=next_version())
+        await tombstone_decision_record(
+            org, namespace, key, version=next_version(), ch=get_client()
+        )
     except Exception as e:  # noqa: BLE001 — the decision is written
         log.warning("decision: closing record check failed for %s: %s", key, e)
     return str(rec_out.record_id)
@@ -369,6 +369,8 @@ def _no_active_decision(input: DecisionOutcomeInput) -> NotFoundError:
 
 
 async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcomeOutput:
+    from server.memory.app.write import stored_sha256
+
     ch = get_client()
 
     # Only the record's live writer revises it; record and writer come from one read.
@@ -383,9 +385,13 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         user_id=writer.user_id,
         session_id=writer.session_id,
     )
-    row = await get_by_key(
-        identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
-    )
+
+    async def read_row() -> Any:
+        return await get_by_key(
+            identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
+        )
+
+    row = await read_row()
     if row is None:
         raise _no_active_decision(input)
     # Conditional on the row read with the record, so a delete since then is not written back.
@@ -401,16 +407,13 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             payload=payload,
             tags=tags,
             valid_at=None,
-            if_match_sha256=sha256_value_json(json.dumps(row.value, default=str)),
+            if_match_sha256=stored_sha256(row),
         )
     except HTTPException as e:
         # memory.set's hash mismatch; the lease's busy PreconditionFailedError passes through.
         if not (isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED"):
             raise
-        current = await get_by_key(
-            identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
-        )
-        if current is None:
+        if await read_row() is None:
             raise _no_active_decision(input) from None
         raise PreconditionFailedError(
             "the decision changed while its outcome was being written; call decision.outcome again"
