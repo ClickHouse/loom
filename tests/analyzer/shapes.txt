@@ -337,7 +337,6 @@
 2e457daf2af4	WITH docs AS ( SELECT thread_id, msg_id, any(role) AS msg_role, argMax(content, ts) AS body, max(ts) AS saved_at, arrayFilter(t -> length(t) >= ?, splitByNonAlpha(lowerUTF8(body))) AS words FROM loom.
 2e755b234427	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 2ed709d1c719	SELECT count() AS n FROM loom.memory_belief_sources FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)}
-2ee4ee1bfe55	SELECT e.agent AS agent, e.user_id AS user_id, e.memory_key AS memory_key, argMax(e.session_id, e.version) AS session_id FROM loom.memory_embeddings AS e FINAL WHERE e.org = {org:String} AND e.namespa
 2eeae7d3e832	SELECT path, scope, kind, start_line, end_line, content FROM loom.code_chunks FINAL WHERE org = {org:String} AND namespace = {ns:String} AND path IN {paths:Array(String)} AND tombstoned_at IS NULL AND
 2f87519d6c67	SELECT count() AS n FROM loom.memory_records FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND tombstoned_at IS NULL
 2fa32d5135f2	SELECT count() AS n FROM loom.entity_triple_rows WHERE org = {org:String} AND user_id = {uid:String} AND ?
@@ -656,6 +655,7 @@
 5c5bd0cdac42	SELECT count() AS n, if(n = ?, NULL, max(ingested_at)) AS latest FROM loom.documents FINAL WHERE org = {org:String} AND namespace = {ns:String} AND superseded_at IS NULL
 5c7221c42763	SELECT to_key AS memory_key, relation, toString(created_at) AS created_at FROM loom.operator_edges FINAL WHERE org = {o:String} AND namespace = {n:String} AND from_key = {k:String} AND tombstoned_at I
 5cabda4ce6f7	SELECT count() AS n FROM loom.conversation_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String}
+5d23890ef1a1	SELECT e.agent AS agent, e.user_id AS user_id, e.memory_key AS memory_key, argMax(e.session_id, e.version) AS session_id, argMax(e.org = {org:String} AND e.namespace = {ns:String} AND e.scope = {scope
 5d2e62ce8f95	SELECT count() AS n FROM loom.memory_drops WHERE org = {org:String} AND namespace = {ns:String}
 5d5b141b0268	SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, memory_type, -- Prefer the native JSON column when populated; fall back to value. if(length(toString(value_json)) > ?, toStrin
 5d8fbc4e4072	SELECT count() AS n FROM loom.memory_record_versions WHERE org = {org:String} AND namespace IN {ns:Array(String)}

@@ -242,19 +242,7 @@ def test_a_chunk_with_no_known_row_names_none() -> None:
     assert (hit.identity, hit.session_id) == (None, "")
 
 
-@pytest.mark.asyncio
-async def test_the_rows_of_the_pools_set_chunks_are_read_once_under_the_fact_filters() -> None:
-    from server.memory.app.retrieval.pool import _set_chunk_rows
-    from tests.unit.test_memory_search_service import StubCH, _q
-
-    ch = StubCH()
-    ch.query_all_returns.append(
-        [{"agent": "a", "user_id": "u", "memory_key": "lesson_a", "session_id": "s2"}]
-    )
-    rows = await _set_chunk_rows(ch, _q(), [_writer_chunk("u"), _hit("other", 0.4)])
-    assert rows == {("a", "u", "lesson_a"): ("a", "u", "s2")}
-    ((sql, params),) = ch.query_all_calls
-    assert "argMax(e.session_id, e.version)" in sql and params["set_rows"] == [
-        ("a", "u", "lesson_a")
-    ]
-    assert await _set_chunk_rows(StubCH(), _q(), [_hit("other", 0.4)]) == {}
+def test_a_chunk_of_a_row_the_fact_leg_leaves_out_is_dropped() -> None:
+    older = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
+    rows = {("a", "u", "lesson_a"): None}
+    assert fold_set_chunks([older, _writer_chunk("u", "the lapsed passage")], rows) == [older]

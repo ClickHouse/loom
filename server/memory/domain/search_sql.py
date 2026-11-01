@@ -50,9 +50,8 @@ def agent_or_shared_predicate(alias: str = "e") -> str:
 
 def exclude_pooled(where: list[str], params: dict[str, Any], hits: Sequence[SearchHit]) -> None:
     """Leave the rows `hits` already pooled out of a leg over `loom.memory_embeddings AS e`.
-    A key holds a row per writer and session, so each hit names its row. A record, a summary
-    and a folded set chunk name none and leave out none: the writer's row may join, and the
-    chunk folds onto it at assembly."""
+    A key holds a row per writer and session, so each hit names its row; a record or a
+    summary names none and leaves out none."""
     rows = sorted(
         (r.agent, r.user_id, r.session_id, r.memory_key)
         for r in {hit_row_key(h) for h in hits if names_row(h)}

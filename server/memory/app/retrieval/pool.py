@@ -14,7 +14,6 @@ from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_sql import _build_where, exclude_pooled
 from server.memory.domain.search_types import (
     RowIdentity,
-    RowKey,
     SearchHit,
     SearchQuery,
     _CHClient,
@@ -117,12 +116,11 @@ def _is_set_chunk(h: Any) -> bool:
     )
 
 
-def folded_fields(row: Any, chunk: Any) -> dict[str, Any]:
-    """The fields a row takes when a chunk of its value folds onto it: the chunks it stands
-    for and, when the chunk out-scored it, the chunk's score, distance and passage."""
+def _folded_fields(row: Any, chunk: Any) -> dict[str, Any]:
+    """The fields a row takes when a chunk of its value folds onto it: one more folded
+    chunk and, when the chunk out-scored it, the chunk's score, distance and passage."""
     components = dict(row.score_components or {})
-    folded = float((chunk.score_components or {}).get("folded_chunks", 1.0))
-    components["folded_chunks"] = float(components.get("folded_chunks", 0.0)) + folded
+    components["folded_chunks"] = float(components.get("folded_chunks", 0.0)) + 1.0
     if float(chunk.rank_score or 0.0) <= float(row.rank_score or 0.0):
         return {"score_components": components}
     components["folded_lift"] = 1.0
@@ -141,13 +139,14 @@ def _fold_key(h: SearchHit) -> tuple[str, ...]:
 
 
 def fold_set_chunks(
-    hits: list[SearchHit], rows: Mapping[tuple[str, str, str], RowIdentity] | None = None
+    hits: list[SearchHit], rows: Mapping[tuple[str, str, str], RowIdentity | None] | None = None
 ) -> list[SearchHit]:
     """Fold the verbatim chunks of long memory.set values onto
     their parent fact, so a fact-only namespace never sees a chunk id.
 
     `rows` names the row a chunk was cut from, by (agent, user_id, parent key)
-    (`_set_chunk_rows`): a chunk's own session is `memory.set:<key>`. A chunk
+    (`_set_chunk_rows`): a chunk's own session is `memory.set:<key>`. A chunk of a
+    row the fact leg leaves out is dropped. A chunk
     whose row is in the pool gives it the better of the two scores and, when
     the chunk out-scored it, its passage as the excerpt — the row's stored
     excerpt is only the value's head, and the passage that matched must
@@ -176,9 +175,13 @@ def fold_set_chunks(
         if not _is_set_chunk(h):
             continue
         parent_key = str(h.parent_memory_key)
-        identity = rows.get((h.identity[0], h.identity[1], parent_key)) if h.identity else None
-        namespace = hit_row_key(h).namespace
-        row_key = RowKey(namespace, *identity, parent_key) if identity else (namespace, parent_key)
+        identity = None
+        if h.identity:
+            writer_key = (h.identity[0], h.identity[1], parent_key)
+            if writer_key in rows and rows[writer_key] is None:
+                continue  # cut from a row the fact leg leaves out
+            identity = rows.get(writer_key)
+        row_key = _fold_key(replace(h, memory_key=parent_key, identity=identity))
         parent = by_row.get(row_key)
         if parent is None:
             idx_s = str(h.memory_key).rpartition(":")[2]
@@ -201,7 +204,7 @@ def fold_set_chunks(
             by_row[row_key] = converted
             out.append(converted)
             continue
-        merged = replace(parent, **folded_fields(parent, h))
+        merged = replace(parent, **_folded_fields(parent, h))
         by_row[row_key] = merged
         out[out.index(parent)] = merged
     out.sort(key=hit_sort_key)
@@ -210,12 +213,13 @@ def fold_set_chunks(
 
 async def _set_chunk_rows(
     ch: _CHClient, q: SearchQuery, hits: list[SearchHit]
-) -> dict[tuple[str, str, str], RowIdentity]:
-    """(agent, user_id, memory_key) -> the row a set chunk of the pool was cut from: the
-    writer's newest row of the key that the fact leg's filters admit. A key's chunks are
-    kept per writer and hold its newest value; a later lock or status change of an older
-    row gives that row the higher version. One read, only when the pool holds a set chunk;
-    fail-open (a chunk then names no row)."""
+) -> dict[tuple[str, str, str], RowIdentity | None]:
+    """(agent, user_id, memory_key) -> the row a set chunk of the pool was cut from: a
+    key's chunks are kept per writer and hold its newest value, so the writer's newest live
+    row of the key; None when that row is one the fact leg's filters leave out, whose
+    chunks are not served either. A later lock or status change of an older row gives that
+    row the higher version. One read, only when the pool holds a set chunk; fail-open (a
+    chunk then names no row)."""
     wanted = sorted(
         {
             (h.identity[0], h.identity[1], str(h.parent_memory_key))
@@ -225,16 +229,18 @@ async def _set_chunk_rows(
     )
     if not wanted:
         return {}
-    where, params = _build_where(q)
-    where.append(
-        "(e.agent, e.user_id, e.memory_key) IN {set_rows:Array(Tuple(String, String, String))}"
-    )
+    admitted, params = _build_where(q)
     params["set_rows"] = wanted
     sql = f"""
         SELECT e.agent AS agent, e.user_id AS user_id, e.memory_key AS memory_key,
-               argMax(e.session_id, e.version) AS session_id
+               argMax(e.session_id, e.version) AS session_id,
+               argMax({" AND ".join(admitted)}, e.version) AS served
         FROM loom.memory_embeddings AS e FINAL
-        WHERE {" AND ".join(where)}
+        WHERE e.org = {{org:String}}
+          AND e.namespace = {{ns:String}}
+          AND (e.agent, e.user_id, e.memory_key)
+              IN {{set_rows:Array(Tuple(String, String, String))}}
+          AND e.tombstoned_at IS NULL
         GROUP BY e.agent, e.user_id, e.memory_key
     """
     try:
@@ -244,9 +250,7 @@ async def _set_chunk_rows(
         return {}
     return {
         (str(r["agent"]), str(r["user_id"]), str(r["memory_key"])): (
-            str(r["agent"]),
-            str(r["user_id"]),
-            str(r["session_id"]),
+            (str(r["agent"]), str(r["user_id"]), str(r["session_id"])) if r["served"] else None
         )
         for r in found
     }
