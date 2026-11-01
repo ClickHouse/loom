@@ -293,7 +293,7 @@ def _fact_rows_to_hits(
 
 def _writer_prefix(h: SearchHit) -> tuple[str, str, str]:
     # a chunk is redundant only beside a fact of its own writer
-    agent, user_id = h.identity[:2] if h.identity else ("", "")
+    agent, user_id = h.identity[:2] if h.identity is not None else ("", "")
     return agent, user_id, h.content_excerpt[:60]
 
 

@@ -149,3 +149,26 @@ async def test_only_the_writers_newest_rows_of_the_key_are_matched(
     monkeypatch.setattr(settings, "memory_search_set_chunk_rows", 64)
     older = _chunk("u", LONG_V2)
     assert await _set_chunk_rows(ch, _q(), [older]) == _named(older, "s5", 5)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("category", "named"), [("runbooks", True), ("other", False)])
+async def test_a_hard_category_decides_whether_the_row_is_served(
+    category: str, named: bool
+) -> None:
+    # the category filter is a subquery inside the served test's argMax
+    ch = _LocalCH(
+        _row("u", "s1", 1, LONG_V1),
+        [
+            "SET enable_quantized_codec = 1",
+            ddl("categories"),
+            ddl("memory_categories"),
+            "INSERT INTO loom.categories (org, namespace, category_id, name, embedding) VALUES "
+            f"('clickhouse', 'ns', 'c1', 'runbooks', {_VEC}), ('clickhouse', 'ns', 'c2', 'other', {_VEC})",
+            "INSERT INTO loom.memory_categories (org, namespace, memory_key, category_id) "
+            "VALUES ('clickhouse', 'ns', 'lesson_a', 'c1')",
+        ],
+    )
+    chunk = _chunk("u", LONG_V1)
+    rows = await _set_chunk_rows(ch, _q(category=category), [chunk])
+    assert rows == (_named(chunk, "s1", 1) if named else {})

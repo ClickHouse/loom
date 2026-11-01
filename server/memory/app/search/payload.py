@@ -278,7 +278,7 @@ async def _expand_unit_bodies(
         # other hit are read under the caller's identity.
         ns = str(getattr(h, "namespace", "") or input.namespace)
         who = getattr(h, "_row_identity", None)
-        if who and who[0] != SHARED_AGENT:
+        if who is not None and who[0] != SHARED_AGENT:
             return (ns, *who)
         return (ns, str(getattr(input, "agent", "*") or "*"), _reader_user_id(input), _sid(h))
 

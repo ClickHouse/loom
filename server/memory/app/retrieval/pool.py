@@ -223,7 +223,7 @@ def _chunk_index(h: SearchHit) -> int | None:
 
 def _chunk_id(h: SearchHit) -> ChunkId | None:
     index = _chunk_index(h)
-    if not h.identity or index is None:
+    if h.identity is None or index is None:
         return None
     return ChunkId(h.identity[0], h.identity[1], str(h.parent_memory_key), index, h.chunk_sha256)
 
@@ -239,7 +239,7 @@ async def _set_chunk_rows(
     never served: the chunks fold by key."""
     if q.scope != "private":
         return None
-    pooled = {cid for h in hits if _is_set_chunk(h) and (cid := _chunk_id(h))}
+    pooled = {cid for h in hits if _is_set_chunk(h) and (cid := _chunk_id(h)) is not None}
     if not pooled:
         return {}
     # served whatever its vector: a row whose embedding is still pending has its chunks
