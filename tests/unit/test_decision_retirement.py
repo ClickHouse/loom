@@ -1010,6 +1010,38 @@ async def test_a_delete_the_write_fence_catches_answers_not_found(
     assert await _history() == ["tombstoned", "active"]
 
 
+def _set_with_pin_guard(ch: KeptCH, monkeypatch: pytest.MonkeyPatch) -> None:
+    """memory.set reduced to its real pin guard against the caller's live row, and its insert."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+    from server.memory.app.write import _guard_existing_row
+
+    async def _set(inp: Any) -> Any:
+        identity = memory_repo.Identity(
+            org=inp.org,
+            namespace=inp.namespace,
+            agent=inp.agent,
+            user_id=inp.user_id,
+            session_id=inp.session_id,
+        )
+        existing = await memory_repo.get_by_key(
+            identity, inp.memory_key, strong=True, scope=WHOLE_NAMESPACE
+        )
+        _guard_existing_row(existing, inp, "")
+        row = _memory_row(inp.agent, inp.memory_type, time.time_ns())
+        row.update(pinned=inp.pinned, value=json.dumps(inp.value), memory_key=inp.memory_key)
+        await ch.insert("loom.memory", [row])
+        return SimpleNamespace(version=row["version"], conflict_verdict="clear")
+
+    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _set)
+
+
+async def _pin_claudes_row(ch: KeptCH, version: int) -> None:
+    pinned_row = _memory_row("claude", "decision", version + 1)
+    pinned_row["pinned"] = True
+    await ch.insert("loom.memory", [pinned_row])
+
+
 @pytest.mark.asyncio
 async def test_an_outcome_on_a_pinned_decision_keeps_the_pin(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
@@ -1020,31 +1052,73 @@ async def test_an_outcome_on_a_pinned_decision_keeps_the_pin(
     from server.memory import store as memory_repo
     from server.memory.api.models_decision import DecisionOutcomeInput
     from server.memory.app import decision as h
-    from server.memory.app.write import _guard_existing_row
 
     await h.ensure_schema("o", "n")
-    version = await _write_decision_rows(local, "claude")
-    pinned_row = _memory_row("claude", "decision", version + 1)
-    pinned_row["pinned"] = True
-    await local.insert("loom.memory", [pinned_row])
-    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
-
-    async def _set(inp: Any) -> Any:
-        existing = await memory_repo.get_by_key(
-            identity, inp.memory_key, strong=True, scope=WHOLE_NAMESPACE
-        )
-        _guard_existing_row(existing, inp, "")
-        row = _memory_row(inp.agent, inp.memory_type, time.time_ns())
-        row.update(pinned=inp.pinned, value=json.dumps(inp.value))
-        await local.insert("loom.memory", [row])
-        return SimpleNamespace(version=row["version"], conflict_verdict="clear")
-
-    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _set)
+    await _pin_claudes_row(local, await _write_decision_rows(local, "claude"))
+    _set_with_pin_guard(local, monkeypatch)
     out = await h.handle_decision_outcome(
         DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
     )
     assert out.updated is True
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
     row = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
     assert row is not None and row.pinned is True
     seed = await _seed_decision()
     assert seed is not None and seed.realized_outcome == "ok"
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_decision_refuses_its_writer_and_names_memory_unpin(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi import HTTPException
+
+    from server.memory.app import decision as h
+
+    await h.ensure_schema("o", "n")
+    await _pin_claudes_row(local, await _write_decision_rows(local, "claude"))
+    _set_with_pin_guard(local, monkeypatch)
+    again = record_input(
+        category="deploy",
+        scenario="Roll back or hotfix the image?",
+        outcome="hotfix",
+        caused_by=[],
+        influenced_by=[],
+    )
+    with pytest.raises(HTTPException) as refused:
+        await h.handle_decision_record(again)
+    assert refused.value.status_code == 409
+    assert refused.value.detail["code"] == "PINNED_CONFLICT"
+    assert "memory.unpin" in refused.value.detail["message"]
+    assert "memory.update" not in refused.value.detail["message"]
+    assert (await _seed_decision()).outcome == "rollback"
+    assert await _history() == ["active"]
+
+
+@pytest.mark.asyncio
+async def test_another_identitys_decision_supersedes_a_pinned_one(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A pin guards its writer's row, not the record: another identity's decision on the
+    # same scenario is the record's new writer, and the pinned row stays as it was.
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+    from server.memory.app import decision as h
+
+    await h.ensure_schema("o", "n")
+    await _pin_claudes_row(local, await _write_decision_rows(local, "claude"))
+    _set_with_pin_guard(local, monkeypatch)
+    await h.handle_decision_record(
+        record_input(
+            agent="maintainer",
+            category="deploy",
+            scenario="Roll back or hotfix the image?",
+            outcome="hotfix",
+            caused_by=[],
+            influenced_by=[],
+        )
+    )
+    assert (await _seed_decision()).outcome == "hotfix"
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
+    row = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
+    assert row is not None and row.pinned is True

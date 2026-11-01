@@ -258,7 +258,8 @@ was `caused_by` or `influenced_by`. It writes:
 
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
 (`superseded_prior=true`); history keeps it. When the writer of a pinned decision decides it again, the call is
-refused with 409 `PINNED_CONFLICT` and nothing is written; an admin unpins it with `memory.unpin` first. The new
+refused with 409 `PINNED_CONFLICT` and nothing is written; an admin unpins it with `memory.unpin` first. The pin
+guards only its writer's row: another identity's decision on the same scenario still supersedes the record. The new
 record holds only what the new decision states: fields it leaves out, and an earlier `realized_outcome` or `success`,
 are not carried over, whether it is written by `decision.record` or `memory.record.write`. A `decision.outcome`
 without `success` keeps the record's verdict. When another decision key already holds the same text, `memory.set`

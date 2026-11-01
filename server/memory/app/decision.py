@@ -167,25 +167,40 @@ async def _write_decision(
     from server.memory.app.write import handle_memory_set
 
     conf = payload.get("confidence")
-    set_out = await handle_memory_set(
-        MemorySetInput(
-            org=org,
-            namespace=namespace,
-            agent=agent,
-            user_id=user_id or "-",
-            session_id=session_id or "-",
-            run_id=run_id or "-",
-            memory_key=key,
-            memory_type="decision",
-            value=svc.memory_value(payload),
-            tags=tags,
-            confidence=float(conf) if isinstance(conf, (int, float)) and conf > 0 else 1.0,
-            source_trace=f"run:{run_id}" if named(run_id) else "decision",
-            valid_at=valid_at,
-            if_match_sha256=if_match_sha256,
-            pinned=pinned,
+    try:
+        set_out = await handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace=namespace,
+                agent=agent,
+                user_id=user_id or "-",
+                session_id=session_id or "-",
+                run_id=run_id or "-",
+                memory_key=key,
+                memory_type="decision",
+                value=svc.memory_value(payload),
+                tags=tags,
+                confidence=float(conf) if isinstance(conf, (int, float)) and conf > 0 else 1.0,
+                source_trace=f"run:{run_id}" if named(run_id) else "decision",
+                valid_at=valid_at,
+                if_match_sha256=if_match_sha256,
+                pinned=pinned,
+            )
         )
-    )
+    except HTTPException as e:
+        # The writer's own row is pinned. memory.set's advice (memory.update, memory.pin)
+        # would change the row and not the record.
+        detail: dict[str, Any] = e.detail if isinstance(e.detail, dict) else {}
+        if detail.get("code") != "PINNED_CONFLICT" or detail.get("memory_key") != key:
+            raise
+        raise HTTPException(
+            status_code=409,
+            detail={
+                **detail,
+                "message": f"decision {key!r} is pinned: an admin calls memory.unpin, then "
+                "the decision can be recorded again",
+            },
+        ) from None
     if set_out.conflict_verdict == "merge":
         # memory.set stored no row, so a record here would not match the writer's row.
         return _Written(None, set_out.merged_into_key)
