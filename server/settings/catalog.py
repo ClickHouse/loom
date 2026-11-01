@@ -5463,7 +5463,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "namespace.guide_history": 60,
     # A claim on the guide (two KeeperMap writes), one point read, one insert.
     "namespace.guide_set": 250,
-    # Nine concurrent namespace-sized aggregates, the widest a GROUP BY over live memory.
+    # Nine concurrent namespace-sized aggregates, the widest a GROUP BY over live memory;
+    # a collection adds the tree read and one ancestor-grant check in its members leg.
     "namespace.inventory": 800,
     "namespace.join": 80,
     "namespace.leave": 80,

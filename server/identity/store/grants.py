@@ -252,7 +252,7 @@ _NOT_A_PERSON = f"{_SHARED_WIDER} OR startsWith(lowerUTF8(subject), '{SERVICE_AC
 
 async def member_count(org: str, namespace: str, *, ch: _CHClient | None = None) -> tuple[int, int]:
     """(people holding an active grant, folded as `people_page` folds them; active grants
-    to everyone or a group, whose members are not listed). A pending request alone
+    to everyone, a group or an agent, whose members are not listed). A pending request alone
     grants nothing and is not counted."""
     ch = ch or _default_client()
     row = await ch.query_one(
