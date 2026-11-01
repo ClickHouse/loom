@@ -21,7 +21,7 @@ from server.auth.authz import check_authorized, is_org_readable_code_namespace
 from server.auth.context import current_auth
 from server.auth.fail_closed import note_answered_unverified
 from server.core.datetimes import naive_utc_now_seconds
-from server.core.errors import BackendTimeoutError, BackendUnavailableError, OverloadedError
+from server.core.errors import BACKEND_NOT_NOW
 from server.embedding.embedder import embedder_is_fake
 from server.identity.api.models_inventory import (
     InventoryCapability,
@@ -51,9 +51,6 @@ from server.tasks.app.run import run_tally
 log = logging.getLogger(__name__)
 
 _NARROWED = "not counted under a read scope bound to one user or session"
-# The store is down or overloaded: the call fails, as every read does, so an outage is
-# not answered as a successful report of empty sections.
-_NOT_NOW = (BackendUnavailableError, BackendTimeoutError, OverloadedError)
 # Observed population → the memory column that names it.
 _COLUMN: dict[ObservedPopulation, IdentityColumn] = {
     "agents": "agent",
@@ -109,12 +106,10 @@ async def handle_namespace_inventory(input: NamespaceInventoryInput) -> Namespac
 async def _section(
     plane: InventoryPlane, read: Awaitable[tuple[int, datetime | None]]
 ) -> InventorySection:
-    try:
-        n, latest = await read
-    except _NOT_NOW:
-        raise
-    except Exception as e:  # noqa: BLE001 — one plane's failure leaves the others standing
-        return _missing(plane, _failed(plane, e))
+    tally, failed = await _attempt(plane, read)
+    if tally is None:
+        return _missing(plane, failed)
+    n, latest = tally
     return InventorySection(plane=plane, count=n, latest_at=latest, complete=True)
 
 
@@ -150,14 +145,17 @@ async def _members(org: str, ns: str) -> InventoryPopulation:
     if sharing.is_personal(ns):
         # A personal collection takes no grant: its owner reaches it by name.
         return _not_counted("members", "a personal collection: its owner holds no grant")
-    try:
-        people, shared = await grants_repo.member_count(org, ns)
+
+    async def grants() -> tuple[tuple[int, int], bool]:
+        counted = await grants_repo.member_count(org, ns)
         # Only a collection inherits: a parent's grants reach every child.
         inherited = sharing.is_collection(ns) and len((await sharing.tree(org)).lineage(ns)) > 1
-    except _NOT_NOW:
-        raise
-    except Exception as e:  # noqa: BLE001 — one population's failure leaves the others standing
-        return _not_counted("members", _failed("members", e))
+        return counted, inherited
+
+    read, failed = await _attempt("members", grants())
+    if read is None:
+        return _not_counted("members", failed)
+    (people, shared), inherited = read
     wider = []
     if await is_org_readable_code_namespace(org, ns):
         wider.append("readable by everyone in the org")
@@ -176,12 +174,12 @@ async def _members(org: str, ns: str) -> InventoryPopulation:
 async def _observed(
     org: str, ns: str, population: ObservedPopulation, limit: int
 ) -> InventoryPopulation:
-    try:
-        total, top = await identity_tally(org, ns, _COLUMN[population], limit=limit)
-    except _NOT_NOW:
-        raise
-    except Exception as e:  # noqa: BLE001 — one population's failure leaves the others standing
-        return _not_counted(population, _failed(population, e))
+    tally, failed = await _attempt(
+        population, identity_tally(org, ns, _COLUMN[population], limit=limit)
+    )
+    if tally is None:
+        return _not_counted(population, failed)
+    total, top = tally
     return InventoryPopulation(
         population=population,
         total=total,
@@ -192,6 +190,18 @@ async def _observed(
 
 def _not_counted(population: Population, reason: str) -> InventoryPopulation:
     return InventoryPopulation(population=population, total=None, complete=False, reason=reason)
+
+
+async def _attempt[T](what: str, read: Awaitable[T]) -> tuple[T | None, str]:
+    """`read`'s result, or None and why it failed. A store outage is raised (the call
+    fails, as any read does); any other failure is logged and labeled, and the other
+    legs still answer."""
+    try:
+        return await read, ""
+    except BACKEND_NOT_NOW:
+        raise
+    except Exception as e:  # noqa: BLE001 — one leg's failure leaves the others standing
+        return None, _failed(what, e)
 
 
 def _failed(what: str, e: Exception) -> str:
