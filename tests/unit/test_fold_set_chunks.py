@@ -125,7 +125,11 @@ def test_finish_pool_folds_before_the_chunk_cap_and_floor(monkeypatch: pytest.Mo
     async def no_backfill(ch, q, hits):
         return hits
 
+    async def by_key(ch, q, hits):
+        return None  # fold the chunks by key: the order of fold and cap is the subject
+
     monkeypatch.setattr(S, "_recency_backfill", no_backfill)
+    monkeypatch.setattr(S, "_set_chunk_rows", by_key)
     monkeypatch.setattr(settings, "memory_search_chunk_min_share", 0.4)
     q = SimpleNamespace(
         top_k=5, recency_intent=False, recency_pool_weight=0.0, chunk_max_share=None
@@ -241,17 +245,17 @@ def test_a_chunk_of_a_newer_value_leaves_an_older_session_row_alone() -> None:
     assert (by_session["s2"].session_id, by_session["s2"].version) == ("s2", 7)
 
 
-def test_with_no_rows_read_a_chunk_that_names_its_writer_is_dropped() -> None:
-    # shared scope, or the read failed: no passage beats another value's
-    pooled = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
-    assert fold_set_chunks([pooled, _writer_chunk("u", "a stale passage")], None) == [pooled]
+def test_under_shared_scope_a_chunk_folds_onto_a_fact_of_its_key() -> None:
+    # no row is read (the writer's private row is never served there)
+    shared = replace(_hit("lesson_a", 0.5), identity=("_shared", "-", "-"))
+    (folded,) = fold_set_chunks([shared, _writer_chunk("u", "the passage")], None)
+    assert (folded.identity, folded.content_excerpt) == (("_shared", "-", "-"), "the passage")
 
 
-def test_a_chunk_whose_leg_read_no_writer_folds_onto_a_fact_of_its_key() -> None:
+def test_a_chunk_no_row_is_named_for_is_dropped() -> None:
+    # the read found no served row whose value cuts it, or the read failed
     pooled = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
-    chunk = replace(_set_chunk("lesson_a", 0, 0.9, "the passage"), identity=None)
-    (folded,) = fold_set_chunks([pooled, chunk], {})
-    assert (folded.identity, folded.content_excerpt) == (("a", "u", "s1"), "the passage")
+    assert fold_set_chunks([pooled, _writer_chunk("u", "a stale passage")], {}) == [pooled]
 
 
 def test_a_chunk_whose_row_is_not_served_is_dropped() -> None:

@@ -124,7 +124,7 @@ async def hide_pool_duplicates(ctx: Any) -> None:
     try:
         import server.memory.store as memory_repo
 
-        # a hit that names no row (a set chunk whose row was not read) is not judged
+        # a hit that names no row (a set chunk under shared scope) is not judged
         rows = [hit_row_key(h, ns_default) for h in facts if names_row(h)]
         found = await memory_repo.status_by_rows(input.org, rows, scope=scope)
         truth: _Truth = {r.row_key: r for r in found}
