@@ -167,8 +167,8 @@ async def _adoption(profile: mentor_rules.MentorProfile) -> list[MentorAdoption]
 # What each rung counts, and what it does not show.
 _RUNG_MEANING: dict[EvidenceRung, str] = {
     "attempt": (
-        "calls the agent made, answered or not (the dashboard's and the mentor's own "
-        "calls left out)"
+        "calls the agent made, answered or not (the dashboard's calls and the briefs about "
+        "the agent left out)"
     ),
     "success": "of those, calls that returned without an error; a read that found nothing counts",
     "committed_write": (
@@ -181,12 +181,12 @@ _RUNG_MEANING: dict[EvidenceRung, str] = {
     ),
     "returned_hit": (
         "reads that answered: a `memory.search` or `memory.ask` that did not abstain, a "
-        "`search.query` with a hit, a get that found its key; whether the answer reached "
-        "the model or changed its work is not recorded"
+        "`search.query` with a hit, a read that found what it asked for; whether the answer "
+        "reached the model or changed its work is not recorded"
     ),
     "client_acknowledged": (
         "distinct memory keys the agent's runs reported relying on (`run.complete` "
-        "`memories_used`): the client's own report, not verified"
+        "`memories_used`, chunk ids left out): the client's own report, not verified"
     ),
     "task_outcome": "not observed: Loom records no task outcome",
 }
@@ -210,7 +210,6 @@ async def _evidence(
     try:
         calls = await mentor_store.call_evidence(
             *who,
-            gets=mentor_rules.GETS,
             searches=mentor_rules.SEARCHES,
             ch=ch,
         )
@@ -250,7 +249,7 @@ async def _evidence(
         _rung("client_acknowledged", reported, "client"),
         _rung("task_outcome", None, "none"),
     ]
-    return rungs, calls.get("oldest_call"), retention, failed
+    return rungs, calls.get("oldest_row"), retention, failed
 
 
 async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:

@@ -110,7 +110,7 @@ class MentorBriefOutput(BaseModel):
     # The agent's use of Loom in the window, one rung each from a call made to a task
     # outcome (never observed); a rung whose read failed has no count and is in `skipped`.
     evidence: list[MentorEvidence] = Field(default_factory=list)
-    # Oldest call of this agent the ledger holds in the window; None when it holds none.
+    # Oldest ledger row of this agent in the window, of any kind; None when it holds none.
     ledger_from: datetime | None = None
     # Days the call ledger keeps this namespace's rows (0: until deleted). When the window
     # is longer, its oldest part is gone and the rungs read from the ledger (`attempt`,

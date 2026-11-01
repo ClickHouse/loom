@@ -976,7 +976,7 @@ def test_mentor_brief_climbs_the_evidence_ladder_from_attempt_to_outcome(
         "successes": 37,
         "committed_writes": 12,
         "returned_hits": 9,
-        "oldest_call": datetime(2026, 1, 2),
+        "oldest_row": datetime(2026, 1, 2),
     }
     ch = _CH(
         {
@@ -998,7 +998,8 @@ def test_mentor_brief_climbs_the_evidence_ladder_from_attempt_to_outcome(
         "client_acknowledged",
         "task_outcome",
     ]
-    assert ladder["attempt"] == (40, "server") and ladder["returned_hit"] == (9, "server")
+    assert ladder["attempt"] == (40, "server") and ladder["success"] == (37, "server")
+    assert ladder["committed_write"] == (12, "server") and ladder["returned_hit"] == (9, "server")
     assert ladder["indexed_write"] == (11, "server")
     # What the agent said it relied on is its own report; a task outcome is never observed.
     assert ladder["client_acknowledged"] == (4, "client")

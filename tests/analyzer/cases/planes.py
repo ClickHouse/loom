@@ -899,7 +899,6 @@ async def _mentor_evidence(ch: RecordingCH, c: dict[str, Any]) -> None:
     who = (ORG, NS, "agent-a", 604800)
     await mentor_store.call_evidence(
         *who,
-        gets=mentor_rules.GETS,
         searches=mentor_rules.SEARCHES,
         ch=ch,
     )

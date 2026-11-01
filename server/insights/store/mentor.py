@@ -40,8 +40,8 @@ _SEARCHABLE_ROW = (
 )
 
 
-# The memory keys the agent's runs in the window reported relying on (`run.complete`
-# `memories_used`), one row per key credited.
+# The keys the agent's runs in the window reported relying on (`run.complete`
+# `memories_used`: memory keys and `chunk:` ids), one row per key credited.
 _CREDITED_KEYS = (
     "SELECT arrayJoin(memories_used) AS k FROM loom.agent_runs FINAL "
     f"WHERE {_SCOPE} AND agent = {{agent:String}} "
@@ -468,37 +468,39 @@ async def last_calls(
     )
 
 
+# A call the evidence ladder counts as the agent's: a request row (not a deferred verdict
+# a call left behind), not the dashboard's traffic, and not a brief, which is ledgered
+# under the agent it names.
+_COUNTED_CALL = "kind = 'request' AND consumer != 'loom-ui' AND operation != 'mentor.brief'"
+
+
 async def call_evidence(
     org: str,
     namespace: str,
     agent: str,
     window_seconds: int,
     *,
-    gets: tuple[str, ...],
     searches: tuple[str, ...],
     ch: _CHClient | None = None,
 ) -> dict[str, Any]:
     """What the agent's calls in the window show, from the call ledger: attempts,
     successes, `memory.set` calls that stored a row (a dry run answers `noop` too), reads
-    that answered, and the oldest call the ledger still holds. Only request rows count (not
-    a deferred verdict a call left behind); the dashboard's traffic and the mentor's own
-    reads are left out: neither is the agent using Loom."""
+    that answered, and the oldest row the ledger still holds for the agent."""
     ch = ch or _default_client()
     row = await ch.query_one(
         f"""
-        SELECT count() AS attempts,
-               countIf(success) AS successes,
-               countIf(success AND operation = 'memory.set'
+        SELECT countIf({_COUNTED_CALL}) AS attempts,
+               countIf({_COUNTED_CALL} AND success) AS successes,
+               countIf({_COUNTED_CALL} AND success AND operation = 'memory.set'
                        AND args['out_noop'] != 'true') AS committed_writes,
-               countIf(success AND (
+               countIf({_COUNTED_CALL} AND success AND (
                    (operation IN {_in(searches)} AND args['out_abstain'] != 'true')
-                   OR (operation = 'search.query'
-                       AND toUInt64OrZero(args['out_section_hits']) > 0)
-                   OR (operation IN {_in(gets)} AND (args['out_found'] = 'true'
-                       OR toUInt64OrZero(args['out_found_n']) > 0)))) AS returned_hits,
-               if(attempts = 0, NULL, min(ts)) AS oldest_call
-        {_LEDGER_AGENT} AND kind = 'request' AND consumer != 'loom-ui'
-          AND NOT startsWith(operation, 'mentor.')
+                   OR toUInt64OrZero(args['out_section_hits']) > 0
+                   OR args['out_found'] = 'true'
+                   OR toUInt64OrZero(args['out_found_n']) > 0)) AS returned_hits,
+               if(count() = 0, NULL, min(ts)) AS oldest_row
+        FROM loom.agent_events
+        WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN}
         """,
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
@@ -536,10 +538,11 @@ async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | 
 async def reported_keys(
     org: str, namespace: str, agent: str, window_seconds: int, *, ch: _CHClient | None = None
 ) -> int:
-    """How many distinct memory keys the agent's runs in the window reported relying on."""
+    """How many distinct memory keys the agent's runs in the window reported relying on
+    (`chunk:` ids, which name a passage rather than a memory, left out)."""
     ch = ch or _default_client()
     row = await ch.query_one(
-        f"SELECT uniqExact(k) AS n FROM ({_CREDITED_KEYS})",
+        f"SELECT uniqExact(k) AS n FROM ({_CREDITED_KEYS}) WHERE NOT startsWith(k, 'chunk:')",
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
     return int(row["n"]) if row else 0

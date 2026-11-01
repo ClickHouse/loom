@@ -80,5 +80,6 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client
         "client",
     )
     assert (counts["task_outcome"], ladder["task_outcome"]["source"]) == (None, "none")
-    assert out["ledger_from"] is not None and out["ledger_retention_days"] == 0
+    # The retention is the server's (0 unless it sets one): known, whatever its value.
+    assert out["ledger_from"] is not None and out["ledger_retention_days"] is not None
     assert not [s for s in out["skipped"] if s.split(":")[0] in ("evidence", "indexed_writes")]
