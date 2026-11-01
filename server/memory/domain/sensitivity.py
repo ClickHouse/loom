@@ -433,6 +433,9 @@ _SECRET_REFERENCE = re.compile(
 )
 
 
+_ASSIGNMENT_STOPS = str.maketrans("\"',;", "____")
+
+
 def _keyed_credential(key: str, value: str) -> str:
     """`password: <value>` for a token-shaped string under a key that ends in a credential
     word (`password`, `dbPassword`, `client_secret`), for the assignment pattern to read; ''
@@ -446,7 +449,8 @@ def _keyed_credential(key: str, value: str) -> str:
         return ""
     if not (any(c.isalpha() for c in v) and any(c.isdigit() for c in v)):
         return ""
-    return f"password: {v}"
+    # the assignment pattern stops at a quote, comma or semicolon; this text only feeds it
+    return "password: " + v.translate(_ASSIGNMENT_STOPS)
 
 
 def _keyed_secret(key: str, value: Any) -> str:

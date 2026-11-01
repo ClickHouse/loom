@@ -456,8 +456,12 @@ async def _unlocked_parts(
     unlocked = f"{scope_sql} AND {_IDENTITY_HASH} NOT IN {{locked:Array(UInt64)}}"
     parts = []
     for b in range(buckets):
-        where = unlocked if buckets == 1 else f"{unlocked} AND {_IDENTITY_HASH} % {buckets} = {b}"
-        parts.append((where, {"locked": [h for h in hashes if h % buckets == b]}))
+        where = unlocked
+        extra: dict[str, Any] = {"locked": [h for h in hashes if h % buckets == b]}
+        if buckets > 1:
+            where += f" AND {_IDENTITY_HASH} % {{buckets:UInt32}} = {{bucket:UInt32}}"
+            extra |= {"buckets": buckets, "bucket": b}
+        parts.append((where, extra))
     return parts
 
 

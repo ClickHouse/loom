@@ -818,8 +818,8 @@ async def tombstone_documents_by_user(
     """Supersede the documents the user wrote, in any namespace of the org; a
     purge deletes every version of theirs instead, after superseding another
     writer's versions that one of theirs replaced, so none reads as live again."""
+    ch = ch or _default_client()
     if purge_mode():
-        ch = ch or _default_client()
         rows = await ch.query_all(_USERS_DOCUMENTS, params={"org": org, "uid": user_id})
         for part in chunks(hashes(rows)):
             await count_then_mutate(

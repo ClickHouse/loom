@@ -30,8 +30,6 @@ from server.settings import settings
 
 log = logging.getLogger("server.memory.app.retrieval")
 
-_SHARED_ROW: RowIdentity = (SHARED_AGENT, "-", "-")  # a promoted row's identity
-
 
 async def _recency_backfill(
     ch: _CHClient, q: SearchQuery, hits: list[SearchHit]
@@ -148,7 +146,7 @@ class SetChunkRow(NamedTuple):
 
 
 # the key's promoted row: tags unknown, so alone it fails a hard tag filter
-_SHARED_SET_CHUNK_ROW = SetChunkRow(_SHARED_ROW, 0, ())
+_SHARED_SET_CHUNK_ROW = SetChunkRow((SHARED_AGENT, "-", "-"), 0, ())
 
 
 class ChunkId(NamedTuple):

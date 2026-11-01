@@ -1236,7 +1236,7 @@ community's entity or label, a document's `source_uri`) is bound as its `cityHas
 computed by ClickHouse on both sides: nothing bounds a stored name, and one name can be
 longer than the form field a bound value travels in. A slice's mutation tag hashes its
 bound values but not the stamp, so each slice waits for its own mutation, and a step
-re-run after a crash reads the same slices again and waits for the ones still pending.
+re-run after a crash re-reads its slices and waits for any of its own still pending.
 
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no

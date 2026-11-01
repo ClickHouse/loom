@@ -379,6 +379,10 @@ def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
         {"password": "ab\\cd1234"},
         {"password": "abc\bdef12"},
         {"client_secret": "/q8ZtR3mKp9x"},  # base64 may open with `/`; a path has two segments
+        {"password": "Abc;12345678"},
+        {"db_password": "p@ss,w0rd99"},
+        {"password": 'ab"cd12345'},
+        {"password": "config/db/pass1"},  # a relative path is not a reference
     ],
 )
 def test_a_credential_under_a_credential_key_reads_high(value: object) -> None:
