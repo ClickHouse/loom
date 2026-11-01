@@ -75,7 +75,7 @@ async def handle_namespace_inventory(input: NamespaceInventoryInput) -> Namespac
         _integrations(org, ns, scope),
     ]
     populations = [
-        _members(org, ns, scope),
+        _members(org, ns),
         *(_observed(org, ns, p, input.population_limit) for p in get_args(ObservedPopulation)),
     ]
     section_rows, population_rows = await asyncio.gather(
@@ -130,9 +130,8 @@ def _missing(plane: InventoryPlane, reason: str) -> InventorySection:
     return InventorySection(plane=plane, count=None, latest_at=None, complete=False, reason=reason)
 
 
-async def _members(org: str, ns: str, scope: ReadFilters) -> InventoryPopulation:
-    if scope.narrowed:
-        return _not_counted("members", _NARROWED)
+async def _members(org: str, ns: str) -> InventoryPopulation:
+    # Grants hold no user's memory: counted under any scope, as `grants.list` lists them.
     if sharing.is_personal(ns):
         # A personal collection takes no grant: its owner reaches it by name.
         return _not_counted("members", "a personal collection: its owner holds no grant")

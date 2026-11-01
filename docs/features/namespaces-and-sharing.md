@@ -96,14 +96,14 @@ halfway leaves the source intact and the target without the row. The learnings q
 
 ## Reading a namespace's health
 
-| Operation             | Answers                                                                                                                                                                                                                                                                    |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `namespace.inventory` | What the namespace holds and who appears in it: live counts and newest write for memories, records, documents, runs and integrations; the member count; the agents, authors and subjects observed on memory rows; whether a real model and embedder serve this deployment. |
-| `namespace.summary`   | Counts by memory type, top entities, recent writes and recalls, distinct agents, last activity.                                                                                                                                                                            |
-| `namespace.validate`  | An integrity report: stuck conflicts, low-confidence rows, rows still waiting for an embedding. Run it after a batch of writes or when a recall looks wrong.                                                                                                               |
-| `namespace.audit`     | Whether the namespace is used as a memory or as an object store: exact-key reads against searches, hash-shaped keys, double-encoded or oversized values, leases stored as memories, version churn. Each finding carries a remedy.                                          |
-| `namespace.taxonomy`  | The live vocabulary: top tags, entities, memory types and communities.                                                                                                                                                                                                     |
-| `agents.connected`    | The agents active in a window (default 24 hours): last and first seen, ops, namespaces touched and cost per agent. Answers "is my client actually talking to Loom?"                                                                                                        |
+| Operation             | Answers                                                                                                                                                                                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `namespace.inventory` | What the namespace holds and who appears in it: live counts and newest write for memories, records, documents, runs and integrations; the member count; the agents, authors and subjects observed on memory rows; whether a real model and embedder serve the process that answered. |
+| `namespace.summary`   | Counts by memory type, top entities, recent writes and recalls, distinct agents, last activity.                                                                                                                                                                                      |
+| `namespace.validate`  | An integrity report: stuck conflicts, low-confidence rows, rows still waiting for an embedding. Run it after a batch of writes or when a recall looks wrong.                                                                                                                         |
+| `namespace.audit`     | Whether the namespace is used as a memory or as an object store: exact-key reads against searches, hash-shaped keys, double-encoded or oversized values, leases stored as memories, version churn. Each finding carries a remedy.                                                    |
+| `namespace.taxonomy`  | The live vocabulary: top tags, entities, memory types and communities.                                                                                                                                                                                                               |
+| `agents.connected`    | The agents active in a window (default 24 hours): last and first seen, ops, namespaces touched and cost per agent. Answers "is my client actually talking to Loom?"                                                                                                                  |
 
 `namespace.inventory` keeps each population apart. `members` counts the people holding an
 active grant, not a pending request, a group, an agent or a service account (page them
@@ -115,8 +115,8 @@ collection's owner holds no grant, so its count is `complete: false` too. A sect
 failed, or that the caller may not read, says so with `complete: false` and a reason: the
 integrations count is for namespace admins, and under a read scope bound to one user
 (`read_scope=own_user` or `own_session`, or a token pinned to a user) the memory, record
-and run counts are that user's, documents are counted namespace-wide as `knowledge.*`
-reads them, and integrations and members are not counted.
+and run counts are that user's, documents and members are counted namespace-wide as
+`knowledge.*` and `grants.list` read them, and integrations are not counted.
 
 `loom audit-namespace` runs `namespace.audit` from the shell; the
 [optimize a namespace guide](../guides/optimize-namespace.md) turns its findings into a

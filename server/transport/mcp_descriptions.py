@@ -1828,7 +1828,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "What a namespace holds and who appears in it, read-only: live counts and "
         "newest write for memories, records, documents, runs and integrations; the "
         "member count; the agents, authors and subjects seen on memory rows; whether "
-        "a real model and embedder serve this deployment. A section not counted says why "
+        "a real model and embedder serve the answering process. A section not counted says why "
         "(`complete: false`). `read_scope=own_user` with `user_id` counts one user."
     ),
     "namespace.summary": (

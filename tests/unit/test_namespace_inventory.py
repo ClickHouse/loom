@@ -158,18 +158,20 @@ def test_a_narrowed_scope_bounds_every_read_and_leaves_out_the_rest(
 ) -> None:
     ch = _ch().install(monkeypatch, *_GET_CLIENT)
     out = _run(ReadFilters(scope="own_user", user_id="u1", session_id=None))
-    bounded = [c for c in ch.calls if "loom.documents" not in c.sql]
+    # Documents and grants are the namespace's under any scope, as knowledge.* and
+    # grants.list read them.
+    bounded = [
+        c for c in ch.calls if "loom.documents" not in c.sql and "namespace_grants" not in c.sql
+    ]
     assert bounded
     for st in bounded:
         assert "{scope_uid:String}" in st.sql and st.params["scope_uid"] == "u1", st.sql
-    # Documents are the namespace's under any scope, as knowledge.* reads them.
     assert [s.count for s in out.sections if s.plane == "documents"] == [3]
-    assert not ch.statements("loom.namespace_grants")
     assert not ch.statements("loom.memory_webhooks")
     missing = {s.plane for s in out.sections if not s.complete}
     assert missing == {"integrations"}
     pops = {p.population: p for p in out.populations}
-    assert not pops["members"].complete and pops["members"].total is None
+    assert (pops["members"].total, pops["members"].complete) == (2, True)
     assert (out.scope.read_scope, out.scope.user_id, out.scope.session_id) == (
         "own_user",
         "u1",
@@ -180,7 +182,8 @@ def test_a_narrowed_scope_bounds_every_read_and_leaves_out_the_rest(
 def test_an_own_session_scope_names_its_session(monkeypatch: pytest.MonkeyPatch) -> None:
     ch = _ch().install(monkeypatch, *_GET_CLIENT)
     out = _run(ReadFilters(scope="own_session", user_id="u1", session_id="s1"))
-    assert all(st.params["scope_sid"] == "s1" for st in ch.calls if "loom.documents" not in st.sql)
+    bounded = [c for c in ch.calls if "documents" not in c.sql and "grants" not in c.sql]
+    assert all(st.params["scope_sid"] == "s1" for st in bounded)
     assert (out.scope.user_id, out.scope.session_id) == ("u1", "s1")
 
 

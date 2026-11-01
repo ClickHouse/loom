@@ -281,9 +281,9 @@ than `namespace`:
   `user_id` the body names.
 - A `context.pack` leg the scope cannot bound (conversations, which carry no user, and
   the runs manifest, which reads every session of a user) answers nothing.
-- `namespace.inventory` counts memories, records and runs inside the scope and documents
-  namespace-wide (as `knowledge.*` reads them), and lists integrations and the member
-  count as not counted (`complete: false`).
+- `namespace.inventory` counts memories, records and runs inside the scope, documents and
+  members namespace-wide (as `knowledge.*` and `grants.list` read them), and lists
+  integrations as not counted (`complete: false`), since `webhook.list` is refused.
 - A blacklist pattern refuses every user's writes but records no user (its
   `created_by` is the token subject, which every per-user token of one backend
   shares), so every `blacklist.*` op is refused with `AUTH_INSUFFICIENT`: patterns
