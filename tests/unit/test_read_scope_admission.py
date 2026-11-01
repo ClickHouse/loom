@@ -335,8 +335,12 @@ def test_the_gate_refuses_an_unpinned_own_user_token_on_an_unscoped_op() -> None
 def _readers() -> list[Any]:
     from server.memory.app import curation, profile_search
     from server.memory.store import conflicts, history, reads, session_briefs
+    from server.tasks.store import runs
 
     return [
+        reads.live_tally,
+        reads.identity_tally,
+        runs.run_tally,
         reads.get_by_key,
         reads.get_by_id,
         reads.get_many_by_keys,

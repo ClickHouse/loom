@@ -203,6 +203,7 @@ HANDLER_MODULES = (
     ("_namespace_snapshot", "server.identity.app.namespace_snapshot"),
     ("_namespace_catalog", "server.identity.app.namespace_catalog"),
     ("namespace_validate", "server.identity.app.namespace_validate"),
+    ("_namespace_inventory", "server.identity.app.namespace_inventory"),
     ("namespace_ontology", "server.identity.app.namespace_ontology"),
     ("memory_records", "server.memory.app.records"),
     ("_memory_curation", "server.memory.app.curation"),
@@ -878,11 +879,13 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
 
 
 async def _grants_repo(ch: RecordingCH, c: dict[str, Any]) -> None:
-    """The grants `collection.create` reads to find another holder of the name;
-    `grants.list` reads through its handler."""
+    """The grants `collection.create` reads to find another holder of the name, and the
+    member count `namespace.inventory` takes over a collection's lineage; `grants.list`
+    reads through its handler."""
     from server.identity.store import grants as grants_repo
 
     await grants_repo.list_active(ORG, NS, ch=ch)
+    await grants_repo.member_count(ORG, ["col-a", "col-b"], ch=ch)
 
 
 def cases() -> list[Case]:

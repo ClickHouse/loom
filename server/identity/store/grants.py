@@ -14,6 +14,7 @@ from typing import Any
 from server.core import grant_cache
 from server.core.datetimes import to_naive_utc
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT, grant_rank_sql, has_aliases_sql
+from server.core.principals import AGENT, EVERYONE, GROUP, SERVICE_ACCOUNT
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.grants import GrantPerson, GrantState, PendingGrant
 
@@ -237,6 +238,48 @@ async def people_page(
         },
     )
     return [GrantPerson.from_row(r) for r in rows]
+
+
+# Grants that open a collection to more people than they name: the org (`everyone`, `*`),
+# a group, and an agent (every end user signed in under it). With service accounts, they
+# are the subjects that are not one person; `user:<id>` is an end user, so a person.
+_SHARED_WIDER = (
+    f"lowerUTF8(subject) IN ('{EVERYONE}', '*') OR startsWith(lowerUTF8(subject), '{GROUP}') "
+    f"OR startsWith(lowerUTF8(subject), '{AGENT}')"
+)
+_NOT_A_PERSON = f"{_SHARED_WIDER} OR startsWith(lowerUTF8(subject), '{SERVICE_ACCOUNT}')"
+
+
+# `_PEOPLE_PAGE` over a collection's lineage (it and its ancestors): a parent's grant
+# reaches every child, so one person's grants anywhere on it fold into one row.
+_LINEAGE_PEOPLE = _PEOPLE_PAGE.replace(
+    "namespace = {ns:String}", "namespace IN {lineage:Array(String)}"
+)
+
+
+async def member_count(
+    org: str, lineage: list[str], *, ch: _CHClient | None = None
+) -> tuple[int, int]:
+    """Returns `(people, shared)`. `people` is the people holding an active grant on any
+    namespace of `lineage` (a namespace and, for a collection, its ancestors), folded as
+    `people_page` folds them; `shared` is the active grants to everyone, a group or an
+    agent, whose members are not listed. A pending request alone is not counted."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        f"SELECT countIf(status = 'active' AND NOT ({_NOT_A_PERSON})) AS people, "
+        f"countIf(status = 'active' AND ({_SHARED_WIDER})) AS shared "
+        f"FROM ({_LINEAGE_PEOPLE})",
+        # The whole folded set: no keyset (`first`), no limit.
+        params={
+            "org": org,
+            "lineage": lineage,
+            "first": True,
+            "at": "1970-01-01 00:00:00",
+            "sub": "",
+            "lim": 2**32 - 1,
+        },
+    )
+    return (int(row["people"]), int(row["shared"])) if row else (0, 0)
 
 
 async def find_active_grant(

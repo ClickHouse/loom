@@ -452,7 +452,7 @@ def test_an_end_user_does_not_read_an_org_readable_code_namespace(
     async def _not_restricted(org: str, namespace: str) -> bool:
         return False
 
-    monkeypatch.setattr(authz, "_is_org_readable_code_namespace", _readable)
+    monkeypatch.setattr(authz, "is_org_readable_code_namespace", _readable)
     monkeypatch.setattr(authz, "may_be_restricted", _not_restricted)
     member = _person(subject="ann@acme.io", is_service_account=False, roles=(Role.VIEWER,))
     asyncio.run(authz.check_authorized(member, Role.VIEWER, ORG, "code-acme"))

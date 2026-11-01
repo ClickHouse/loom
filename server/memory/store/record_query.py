@@ -1,13 +1,22 @@
-"""The statement memory.record.query reads a schema's records with: field
-predicates over the typed field rows, one row per record."""
+"""The statements over a namespace's records: memory.record.query's field
+predicates over the typed field rows (one row per record), and the count of its
+active records."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
 
+from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.record_values import FIELD_RE
+
+
+def _live_record(alias: str = "") -> str:
+    """A record a read serves: its active version, not tombstoned."""
+    return f"{alias}status = 'active' AND {alias}tombstoned_at IS NULL"
+
 
 _OP_SQL = {"eq": "=", "ne": "!=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
 
@@ -26,8 +35,7 @@ def _build_record_query(input: Any) -> tuple[str, dict[str, Any]]:
         "r.org = {org:String}",
         "r.namespace = {ns:String}",
         "r.schema_name = {schema:String}",
-        "r.status = 'active'",
-        "r.tombstoned_at IS NULL",
+        _live_record("r."),
     ]
     params: dict[str, Any] = {
         "org": input.org,
@@ -153,3 +161,19 @@ def _build_record_query(input: Any) -> tuple[str, dict[str, Any]]:
         "LIMIT {lim:UInt32}"
     )
     return sql, params
+
+
+async def active_record_tally(
+    org: str, namespace: str, *, ch: _CHClient | None = None
+) -> tuple[int, datetime | None]:
+    """Active records of the namespace (a rewritten record's earlier version is a
+    `superseded` row), and the newest write among them."""
+    ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace}
+    row = await ch.query_one(
+        "SELECT count() AS n, if(n = 0, NULL, max(updated_at)) AS latest "
+        "FROM loom.memory_records FINAL WHERE org = {org:String} AND namespace = {ns:String} "
+        f"AND {_live_record()}",
+        params,
+    )
+    return (int(row["n"]), row["latest"]) if row else (0, None)

@@ -100,7 +100,7 @@ async def test_the_gate_with_a_known_grant_reads_no_grants(monkeypatch: pytest.M
         return False
 
     monkeypatch.setattr(authz, "may_be_restricted", not_restricted)
-    monkeypatch.setattr(authz, "_is_org_readable_code_namespace", not_restricted)
+    monkeypatch.setattr(authz, "is_org_readable_code_namespace", not_restricted)
     viewer = AuthInfo(
         subject="v@example.com",
         org="o",

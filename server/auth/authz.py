@@ -142,7 +142,7 @@ async def check_authorized(
         and (auth.org == org or auth.has_role(Role.PLATFORM_ADMIN))
         # A service's end user is no member of the org's code.
         and not principal_id(auth.subject, USER)
-        and await _is_org_readable_code_namespace(org, namespace)
+        and await is_org_readable_code_namespace(org, namespace)
     ):
         return
 
@@ -324,7 +324,7 @@ async def _check_delegated(
     is_read = required_role.value <= Role.VIEWER.value
     if await may_be_restricted(org, namespace):
         await _check_restricted(auth, required_role, org, namespace, grants)
-    elif is_read and auth.org == org and await _is_org_readable_code_namespace(org, namespace):
+    elif is_read and auth.org == org and await is_org_readable_code_namespace(org, namespace):
         return
     elif not (is_read and _is_code_namespace(org, namespace)):
         ceiling = ceiling_role(auth, org, namespace, write=not is_read)
@@ -570,7 +570,7 @@ def _is_code_namespace(org: str, namespace: str) -> bool:
     return directory().code_entry(org, namespace) is not None
 
 
-async def _is_org_readable_code_namespace(org: str, namespace: str) -> bool:
+async def is_org_readable_code_namespace(org: str, namespace: str) -> bool:
     """True for a configured code-plane entry the deployment marks
     org_readable (LOOM_CODE_ORG_READABLE or the entry's own flag). No I/O.
 

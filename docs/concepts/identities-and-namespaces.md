@@ -237,7 +237,7 @@ another user's memories into the answer. `read_scope` bounds a read inside the n
 | `own_session`         | rows written under the `session_id` the request names |
 
 `memory.search`, `memory.search_trace`, `memory.ask`, `memory.recall`, `context.pack`,
-`profile.render` and `profile.structured` take it; `profile.structured` refuses
+`namespace.inventory`, `profile.render` and `profile.structured` take it; `profile.structured` refuses
 `own_session`, since a user's profile spans their sessions. A token can carry a
 `read_scope` claim (and a pinned `read_user_id`) that is a ceiling: a request can narrow it but never widen it, and a
 scoped read without the `user_id` or `session_id` it binds to is refused with
@@ -279,7 +279,12 @@ than `namespace`:
   token lists them under keys prefixed `~<user>~` (or `~<user>~<session>~`).
 - `code.search` breaks ties with the scope's own user's recent files, whatever
   `user_id` the body names.
-- A leg whose rows carry no user (conversations, runs) answers nothing.
+- A `context.pack` leg the scope cannot bound (conversations, which carry no user, and
+  the runs manifest, which reads every session of a user) answers nothing.
+- `namespace.inventory` counts memories and runs, and the agents, authors and subjects on
+  its memory rows, inside the scope; documents and members namespace-wide (as `knowledge.*`
+  and `grants.list` read them), and lists records (one per key, whoever wrote it last)
+  and integrations (`webhook.list` is refused) as not counted (`complete: false`).
 - A blacklist pattern refuses every user's writes but records no user (its
   `created_by` is the token subject, which every per-user token of one backend
   shares), so every `blacklist.*` op is refused with `AUTH_INSUFFICIENT`: patterns

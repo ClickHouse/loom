@@ -122,6 +122,20 @@ async def namespace_webhooks(
         )
 
 
+async def webhook_tally(
+    org: str, namespace: str, *, ch: _CHClient | None = None
+) -> tuple[int, datetime | None]:
+    """How many live registrations the namespace has, and the newest one."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT count() AS n, if(n = 0, NULL, max(created_at)) AS latest "
+        f"FROM {WEBHOOKS} FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND is_deleted = 0",
+        {"org": org, "ns": namespace},
+    )
+    return (int(row["n"]), row["latest"]) if row else (0, None)
+
+
 async def live_webhooks(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
     """Every live registration of the deployment: what each process's copy and
     the delivery worker read. Registrations are few (a cap per namespace)."""

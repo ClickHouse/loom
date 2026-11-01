@@ -6520,6 +6520,57 @@ export interface NamespaceGuideSetOutput {
   current?: NamespaceGuideGetOutput | null;
 }
 
+export interface NamespaceInventoryInput {
+  org: string;
+  namespace: string;
+  read_scope?: "namespace" | "own_user" | "own_session";
+  user_id?: string | null;
+  session_id?: string | null;
+  population_limit?: number;
+}
+
+export interface InventoryScope {
+  org: string;
+  namespace: string;
+  read_scope: "namespace" | "own_user" | "own_session";
+  user_id: string | null;
+  session_id: string | null;
+}
+
+export interface InventorySection {
+  plane: "memories" | "records" | "documents" | "runs" | "integrations";
+  count: number | null;
+  latest_at: string | null;
+  complete: boolean;
+  reason?: string;
+}
+
+export interface InventoryPopulation {
+  population: "members" | "agents" | "authors" | "subjects";
+  total: number | null;
+  top?: InventoryIdentity[];
+  complete: boolean;
+  reason?: string;
+}
+
+export interface InventoryIdentity {
+  name: string;
+  rows: number;
+}
+
+export interface InventoryCapability {
+  name: "llm" | "embedder";
+  enabled: boolean;
+}
+
+export interface NamespaceInventoryOutput {
+  scope: InventoryScope;
+  sections: InventorySection[];
+  populations: InventoryPopulation[];
+  capabilities: InventoryCapability[];
+  computed_at: string; // date-time
+}
+
 export interface NamespaceJoinInput {
   org: string;
   namespace: string;
@@ -9146,6 +9197,7 @@ export type OpName =
   | "namespace.guide_get"
   | "namespace.guide_history"
   | "namespace.guide_set"
+  | "namespace.inventory"
   | "namespace.join"
   | "namespace.leave"
   | "namespace.list"
@@ -9485,6 +9537,7 @@ export interface OpMap {
   "namespace.guide_get": { input: NamespaceGuideGetInput; output: NamespaceGuideGetOutput };
   "namespace.guide_history": { input: NamespaceGuideHistoryInput; output: NamespaceGuideHistoryOutput };
   "namespace.guide_set": { input: NamespaceGuideSetInput; output: NamespaceGuideSetOutput };
+  "namespace.inventory": { input: NamespaceInventoryInput; output: NamespaceInventoryOutput };
   "namespace.join": { input: NamespaceJoinInput; output: NamespaceJoinOutput };
   "namespace.leave": { input: NamespaceLeaveInput; output: NamespaceLeaveOutput };
   "namespace.list": { input: NamespaceListInput; output: NamespaceListOutput };
@@ -9824,6 +9877,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "namespace.guide_get", group: "namespace", method: "guideGet", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 40, audit: false, readOnly: true },
   { name: "namespace.guide_history", group: "namespace", method: "guideHistory", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: true },
   { name: "namespace.guide_set", group: "namespace", method: "guideSet", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 250, audit: true, readOnly: false },
+  { name: "namespace.inventory", group: "namespace", method: "inventory", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "namespace.join", group: "namespace", method: "join", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "namespace.leave", group: "namespace", method: "leave", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "namespace.list", group: "namespace", method: "list", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: false },
@@ -9939,4 +9993,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 336;
+export const GENERATED_OP_COUNT = 337;

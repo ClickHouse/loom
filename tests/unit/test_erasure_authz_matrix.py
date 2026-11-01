@@ -116,7 +116,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     monkeypatch.setattr(authz, "_lookup_grant", _no_grant)
     monkeypatch.setattr(authz, "may_be_restricted", _false)
-    monkeypatch.setattr(authz, "_is_org_readable_code_namespace", _false)
+    monkeypatch.setattr(authz, "is_org_readable_code_namespace", _false)
     monkeypatch.setattr(handlers, "begin_erasure", _begin)
     for name in (
         "export_memory",

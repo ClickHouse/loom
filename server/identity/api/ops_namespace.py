@@ -32,6 +32,10 @@ from server.identity.api.models import (
     NamespaceSnapshotInput,
     NamespaceSnapshotOutput,
 )
+from server.identity.api.models_inventory import (
+    NamespaceInventoryInput,
+    NamespaceInventoryOutput,
+)
 from server.identity.api.models_namespace_catalog import (
     NamespaceAuditInput,
     NamespaceAuditOutput,
@@ -80,6 +84,7 @@ from server.identity.app.namespace_guide import (
     handle_namespace_guide_history,
     handle_namespace_guide_set,
 )
+from server.identity.app.namespace_inventory import handle_namespace_inventory
 from server.identity.app.namespace_membership import (
     handle_namespace_cancel_request,
     handle_namespace_join,
@@ -334,6 +339,18 @@ namespace_summary = Operation(
 )
 
 
+namespace_inventory = Operation(
+    name="namespace.inventory",
+    maturity="experimental",
+    input_model=NamespaceInventoryInput,
+    output_model=NamespaceInventoryOutput,
+    handler=handle_namespace_inventory,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+
 namespace_validate = Operation(
     name="namespace.validate",
     input_model=NamespaceValidateInput,
@@ -436,6 +453,7 @@ OPERATIONS: list[Operation] = [
     namespace_list_categories,
     namespace_search_categories,
     namespace_summary,
+    namespace_inventory,
     namespace_validate,
     namespace_audit,
     namespace_register_ontology,

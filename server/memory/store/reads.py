@@ -14,7 +14,8 @@ from server.core.tag_sql import TagFilter, tag_where
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.domain.delete_marks import DELETE_VERSION_TRACE
 from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
-from server.memory.domain.temporal_sql import as_of_predicate
+from server.memory.domain.identity_columns import IdentityColumn
+from server.memory.domain.temporal_sql import as_of_predicate, served_status_sql
 from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
 from server.memory.store.sql import (
@@ -1243,3 +1244,61 @@ def _with_usage(row: MemoryRow, totals: dict[str, Any] | None) -> MemoryRow:
     if usage_last_recalled:
         updates["last_recalled_at"] = usage_last_recalled
     return row.model_copy(update=updates) if updates else row
+
+
+# The memory rows the inventory counts: not tombstoned and in a served status
+# (`served_status_sql`, as the search legs read it: not a duplicate, superseded,
+# proposed or rejected row). Expiry and validity follow `memory.list` and `memory.get`:
+# a row past `expires_at` or `valid_to` is served until the sweep, so it counts.
+_SERVED_ROWS = f"tombstoned_at IS NULL AND {served_status_sql()}"
+
+
+async def live_tally(
+    org: str, namespace: str, *, scope: ReadFilters, ch: _CHClient | None = None
+) -> tuple[int, datetime | None]:
+    """The namespace's memory rows inside `scope` (`_SERVED_ROWS`), and the newest write
+    among them."""
+    ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace}
+    row = await ch.query_one(
+        "SELECT count() AS n, if(n = 0, NULL, max(updated_at)) AS latest FROM loom.memory FINAL "
+        f"WHERE org = {{org:String}} AND namespace = {{ns:String}} AND {_SERVED_ROWS}"
+        + scope_and(scope, params),
+        params,
+    )
+    return (int(row["n"]), row["latest"]) if row else (0, None)
+
+
+# Identity column → the rows that name one. `user_id` '-' is the unset identity, never
+# a user; `actor` '' is a row written before it was stamped.
+_NAMED: dict[IdentityColumn, str] = {
+    "agent": "agent != ''",
+    "actor": "actor != ''",
+    "user_id": "user_id NOT IN ('', '-')",
+}
+
+
+async def identity_tally(
+    org: str,
+    namespace: str,
+    column: IdentityColumn,
+    *,
+    scope: ReadFilters,
+    limit: int,
+    ch: _CHClient | None = None,
+) -> tuple[int, list[tuple[str, int]]]:
+    """Distinct values of `column` (agent, actor or user_id) on the rows `live_tally`
+    counts, and the `limit` that carry the most rows."""
+    ch = ch or _default_client()
+    # The total rides on the listed rows, so at least one is read.
+    params: dict[str, Any] = {"org": org, "ns": namespace, "lim": max(1, limit)}
+    rows = await ch.query_all(
+        f"SELECT {column} AS name, count() AS n, count() OVER () AS total "
+        "FROM loom.memory FINAL "
+        f"WHERE org = {{org:String}} AND namespace = {{ns:String}} AND {_SERVED_ROWS} "
+        f"AND {_NAMED[column]}{scope_and(scope, params)} "
+        f"GROUP BY {column} ORDER BY n DESC, name LIMIT {{lim:UInt32}}",
+        params,
+    )
+    total = int(rows[0]["total"]) if rows else 0
+    return total, [(str(r["name"]), int(r["n"])) for r in rows][:limit]

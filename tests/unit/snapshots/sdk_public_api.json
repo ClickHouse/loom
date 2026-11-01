@@ -1244,6 +1244,10 @@
               "body",
               "options"
             ],
+            "inventory": [
+              "body",
+              "options"
+            ],
             "join": [
               "body",
               "options"

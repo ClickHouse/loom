@@ -266,6 +266,7 @@ OpName = Literal[
     "namespace.guide_get",
     "namespace.guide_history",
     "namespace.guide_set",
+    "namespace.inventory",
     "namespace.join",
     "namespace.leave",
     "namespace.list",
@@ -605,6 +606,7 @@ OP_NAMES: tuple[str, ...] = (
     "namespace.guide_get",
     "namespace.guide_history",
     "namespace.guide_set",
+    "namespace.inventory",
     "namespace.join",
     "namespace.leave",
     "namespace.list",
@@ -3440,6 +3442,18 @@ OPS: dict[str, OpSpec] = {
         250,
         True,
         False,
+    ),
+    "namespace.inventory": OpSpec(
+        "namespace.inventory",
+        "NamespaceInventoryInput",
+        "NamespaceInventoryBody",
+        "NamespaceInventoryOutput",
+        True,
+        "viewer",
+        "experimental",
+        800,
+        False,
+        True,
     ),
     "namespace.join": OpSpec(
         "namespace.join",
@@ -14592,6 +14606,74 @@ class NamespaceGuideSetOutput(TypedDict, total=False):
     conflict: NotRequired[bool]
     revision: Required[int]
     current: NotRequired[Optional["NamespaceGuideGetOutput"]]
+
+
+class NamespaceInventoryInput(TypedDict, total=False):
+    "What one namespace holds and who appears in it, with what was not counted."
+
+    org: Required[str]
+    namespace: Required[str]
+    read_scope: NotRequired[Literal["namespace", "own_user", "own_session"]]
+    user_id: NotRequired[Optional[str]]
+    session_id: NotRequired[Optional[str]]
+    population_limit: NotRequired[int]
+
+
+class NamespaceInventoryBody(TypedDict, total=False):
+    "What one namespace holds and who appears in it, with what was not counted."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    read_scope: NotRequired[Literal["namespace", "own_user", "own_session"]]
+    user_id: NotRequired[Optional[str]]
+    session_id: NotRequired[Optional[str]]
+    population_limit: NotRequired[int]
+
+
+class NamespaceInventoryOutput(TypedDict, total=False):
+    scope: Required["InventoryScope"]
+    sections: Required[list["InventorySection"]]
+    populations: Required[list["InventoryPopulation"]]
+    capabilities: Required[list["InventoryCapability"]]
+    computed_at: Required[str]  # date-time as ISO-8601 text
+
+
+class InventoryScope(TypedDict, total=False):
+    "The boundary every count below was read under."
+
+    org: Required[str]
+    namespace: Required[str]
+    read_scope: Required[Literal["namespace", "own_user", "own_session"]]
+    user_id: Required[Optional[str]]
+    session_id: Required[Optional[str]]
+
+
+class InventorySection(TypedDict, total=False):
+    plane: Required[Literal["memories", "records", "documents", "runs", "integrations"]]
+    count: Required[Optional[int]]
+    latest_at: Required[Optional[str]]
+    complete: Required[bool]
+    reason: NotRequired[str]
+
+
+class InventoryPopulation(TypedDict, total=False):
+    "One population: the namespace's members, or identities observed on its rows."
+
+    population: Required[Literal["members", "agents", "authors", "subjects"]]
+    total: Required[Optional[int]]
+    top: NotRequired[list["InventoryIdentity"]]
+    complete: Required[bool]
+    reason: NotRequired[str]
+
+
+class InventoryIdentity(TypedDict, total=False):
+    name: Required[str]
+    rows: Required[int]
+
+
+class InventoryCapability(TypedDict, total=False):
+    name: Required[Literal["llm", "embedder"]]
+    enabled: Required[bool]
 
 
 class NamespaceJoinInput(TypedDict, total=False):

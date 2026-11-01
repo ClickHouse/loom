@@ -84,6 +84,24 @@ KEY_ENVS: dict[str, tuple[str, ...]] = {
 }
 
 
+def embedder_is_fake() -> bool:
+    """True when the configured embedding model is served by the fake n-gram embedder
+    (no semantic vectors): a fake model or provider, or a keyed provider without its key.
+    False for a model name no provider serves: building its embedder fails, so no fake
+    serves it either."""
+    try:
+        provider = provider_for(settings.embedding_model)
+    except ValueError:
+        return False
+    return provider == "fake" or _key_missing(provider)
+
+
+def _key_missing(provider: str) -> bool:
+    """A keyed provider with none of its keys set and no keyless gateway in front."""
+    keyless = provider in ("openai", "compatible") and gateway.keyless()
+    return bool(KEY_ENVS.get(provider)) and not provider_key(provider) and not keyless
+
+
 def get_embedder() -> Embedder:
     """The configured text embedder, cached per process.
 
@@ -102,9 +120,7 @@ def _served(name: str) -> Embedder:
     if provider in ("prefix", "alias"):
         # Labels over the served model, never the served model itself.
         raise ValueError(f"unknown embedding model: {name!r}")
-    keys = KEY_ENVS.get(provider, ())
-    keyless = provider in ("openai", "compatible") and gateway.keyless()
-    if keys and not provider_key(provider) and not keyless:
+    if _key_missing(provider):
         logging.getLogger(__name__).error(
             "No real embedder configured. LOOM_EMBEDDING_MODEL=%s but %s is not set — "
             "falling back to fake-ngram-%d (NOT production-quality; will mis-rank "
@@ -112,7 +128,7 @@ def _served(name: str) -> Embedder:
             "LOOM_EMBEDDING_MODEL=local:bge-small (384-dim) or local:bge-base (768-dim), "
             "with the `local-embedder` extra (fastembed).",
             name,
-            " / ".join(keys),
+            " / ".join(KEY_ENVS[provider]),
             settings.embedding_dim,
         )
         from server.embedding.fake import FakeNGramEmbedder

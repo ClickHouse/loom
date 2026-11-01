@@ -1086,3 +1086,9 @@ async def recent_run_heads(
     return await runs_store.recent_run_heads(
         ch, org, namespace, where=where, params=params, limit=int(limit)
     )
+
+
+async def run_tally(org: str, namespace: str) -> tuple[int, datetime | None]:
+    """How many runs the namespace holds inside the request's read scope, and the
+    newest start."""
+    return await runs_store.run_tally(get_client(), org, namespace, scope=request_scope())

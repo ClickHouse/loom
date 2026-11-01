@@ -37,7 +37,7 @@ from server.memory.api.models_records import (
 from server.memory.domain import record_constraints
 from server.memory.domain.record_values import FIELD_RE, _check_record_fields, coerce_record_value
 from server.memory.store import next_version
-from server.memory.store.record_query import _build_record_query
+from server.memory.store.record_query import _build_record_query, active_record_tally
 
 _FIELD_TYPES = {"string", "number", "integer", "boolean"}
 
@@ -775,3 +775,8 @@ async def handle_memory_record_conflicts(
         for r in rows[: input.limit]
     ]
     return MemoryRecordConflictsOutput(rows=out, truncated=len(rows) > input.limit)
+
+
+async def record_tally(org: str, namespace: str) -> tuple[int, datetime | None]:
+    """How many active records the namespace holds, and the newest write."""
+    return await active_record_tally(org, namespace)

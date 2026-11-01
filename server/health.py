@@ -55,18 +55,16 @@ def _health_provider_fields(
     from server.code.app.index.sandbox import layout_refusal, sandbox_state
     from server.core.ch import reader_user_error, reader_user_state
     from server.core.vectors import codes_state
-    from server.embedding.embedder import effective_embedding_dim
+    from server.embedding.embedder import effective_embedding_dim, embedder_is_fake
     from server.insights.app import provider_runtime
-    from server.llm.client import provider_key_missing
+    from server.llm.client import llm_is_fake
     from server.observability import instance as _instance
     from server.observability import provider_health
     from server.observability.problems import HealthState, collect_problems, derive_status
     from server.workers import leader as _leader
 
-    embedding_model = settings.embedding_model
-    llm_provider = settings.llm_provider
-    fake_embedding = embedding_model.startswith("fake")
-    fake_llm = llm_provider == "fake" or provider_key_missing(llm_provider)
+    fake_embedding = embedder_is_fake()
+    fake_llm = llm_is_fake()
     provider_status = provider_health.status()
     probed_dim = effective_embedding_dim()
     width_mismatches = codes_state.width_mismatches(probed_dim)
@@ -101,11 +99,11 @@ def _health_provider_fields(
     )
     return {
         "status": derive_status(ch_ok, problems),
-        "embedding_model": embedding_model,
+        "embedding_model": settings.embedding_model,
         "embedding_dim_configured": settings.embedding_dim,
         "embedding_dim_probed": probed_dim,
         "embedding_dim_mismatch": probed_dim != settings.embedding_dim,
-        "llm_provider": llm_provider,
+        "llm_provider": settings.llm_provider,
         "llm_model": settings.llm_model,
         "providers_degraded": fake_embedding or fake_llm or provider_status["degraded"],
         "fake_embedding": fake_embedding,

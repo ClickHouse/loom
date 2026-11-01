@@ -226,6 +226,11 @@ class BackendTimeoutError(LoomServerError):
         super().__init__(message, statement_class=statement_class, timeout_s=timeout_s)
 
 
+# A read the server could not make now (down, past its deadline, out of connections):
+# answered 503/504 so a caller retries, never a refusal or an empty answer.
+BACKEND_NOT_NOW = (BackendUnavailableError, BackendTimeoutError, OverloadedError)
+
+
 class EmbedTimeoutError(LoomServerError):
     """503 — the query embedding did not answer within
     `memory_search_embed_bound_s` on any attempt. The search wrote nothing;

@@ -112,6 +112,14 @@ def provider_key_missing(provider: str) -> bool:
     return _key_absent(provider)
 
 
+def llm_is_fake() -> bool:
+    """True when completions run on the fake client: configured so, or a keyed
+    provider's key is absent."""
+    from server.settings import settings
+
+    return settings.llm_provider == "fake" or provider_key_missing(settings.llm_provider)
+
+
 _cached: LLMClient | None = None
 
 

@@ -194,6 +194,29 @@ Save a new revision of the namespace's guide after you change one of its convent
 | `revision` | `int` | The current revision after the call (the one written, or the one that refused it), which the next edit passes as `expected_revision`. |
 | `current` | `NamespaceGuideGetOutput \| None` | On a conflict, the current guide; otherwise None. |
 
+## `namespace.inventory`
+
+What one namespace holds and who appears in it, with what was not counted.
+
+`POST /v1/namespace.inventory` · MCP `loom_namespace_inventory` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `read_scope` | `Literal['namespace', 'own_user', 'own_session']` | `'namespace'` | `own_user` / `own_session` bound the memory and run counts and the observed populations to `user_id` (and `session_id`); documents and members stay namespace-wide, records and integrations are not counted. |
+| `user_id` | `str \| None` | `None` | The user `own_user` / `own_session` count; ignored under `namespace`. |
+| `session_id` | `str \| None` | `None` | The session `own_session` counts; ignored under the other scopes. |
+| `population_limit` | `int` | `20` | At most this many entries in each observed population (most rows first). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `scope` | `InventoryScope` | The boundary every count was read under. |
+| `sections` | `list[InventorySection]` | One per plane, in a fixed order: memories, records, documents, runs, integrations. |
+| `populations` | `list[InventoryPopulation]` | Members, then the agents, authors and subjects observed on live memory rows. |
+| `capabilities` | `list[InventoryCapability]` | Whether a real model and a real embedder serve this process (a keyed model without its key is served by the fake). |
+| `computed_at` | `datetime` | When the reads started. |
+
 ## `namespace.join`
 
 Self-add as a viewer on a public namespace.

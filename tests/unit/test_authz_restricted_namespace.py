@@ -173,7 +173,7 @@ async def test_org_readable_code_rule_does_not_apply(restricted) -> None:
     await _denied(
         _scoped(ns_roles=(("clickgap-public", "writer"),), namespaces=("clickgap-public",))
     )
-    assert not await authz._is_org_readable_code_namespace(ORG, NS)
+    assert not await authz.is_org_readable_code_namespace(ORG, NS)
 
 
 @pytest.mark.asyncio
