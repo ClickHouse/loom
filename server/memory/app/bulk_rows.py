@@ -617,7 +617,7 @@ def write_step_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
         elif step.outcome is StepOutcome.LOCKED:
             res.conflict_verdict = LOCKED
             state.skipped_locked.append(res.memory_key)
-        elif step.outcome is StepOutcome.COPY and step.repeats is not None:  # only a repeat
+        elif step.outcome is StepOutcome.COPY and step.repeats is not None:  # narrows repeats
             _copy_verdict(state, plan, step, step.repeats)
 
 

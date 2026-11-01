@@ -67,8 +67,8 @@ ASSIGNMENT_WORDS = (
     r"auth[_-]?token|bearer|client[_-]?secret|private[_-]?key"
 )
 
-# the characters that end an assignment's value; `_keyed_credential` replaces them in what
-# it states
+# besides whitespace, the characters that end an assignment's value; `_keyed_credential`
+# replaces them in what it states
 _ASSIGNMENT_STOP_CHARS = "\"',;"
 _ASSIGNMENT_VALUE_CHAR = rf"[^\s{re.escape(_ASSIGNMENT_STOP_CHARS)}]"
 
