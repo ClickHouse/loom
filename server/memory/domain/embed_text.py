@@ -6,8 +6,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from server.memory.domain.digest_keys import is_digest_key
 from server.memory.domain.excerpt import build_excerpt
-from server.memory.domain.memory_import import is_digest_key
 from server.settings import settings
 
 

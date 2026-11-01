@@ -10,20 +10,21 @@ from pydantic import BaseModel, Field, field_validator
 
 from server.memory.api.models_common import _Identity
 from server.memory.domain.delete_marks import caller_trace
-from server.memory.domain.memory_import import Outcome, Reason
+from server.memory.domain.memory_import import Note, Outcome, Reason
 
-# The most entries one memory.import takes. The bulk write conflict-checks every one of
-# them, whatever LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES caps a memory.bulk_set at.
-MAX_IMPORT_ENTRIES = 200  # not a setting: a wire bound the request schema and SDKs publish
+# Wire bounds the request schema and the SDKs publish, so not settings.
+# The most entries one call takes; the bulk write conflict-checks every one of them,
+# whatever LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES caps a memory.bulk_set at.
+MAX_IMPORT_ENTRIES = 200
 # The longest item text, in characters, a bound on what one row stores. Only the first
 # 1,200 characters (`excerpt.EXCERPT_LIMIT`) are embedded and lexically indexed.
-MAX_IMPORT_VALUE_CHARS = 30_000  # not a setting: a wire bound
+MAX_IMPORT_VALUE_CHARS = 30_000
 # The most tags one item carries, and the longest tag.
-MAX_IMPORT_TAGS = 64  # not a setting: a wire bound
-MAX_IMPORT_TAG_CHARS = 256  # not a setting: a wire bound
+MAX_IMPORT_TAGS = 64
+MAX_IMPORT_TAG_CHARS = 256
 # The longest source pointer and category name an item names.
-MAX_IMPORT_TRACE_CHARS = 512  # not a setting: a wire bound
-MAX_IMPORT_CATEGORY_CHARS = 256  # not a setting: a wire bound
+MAX_IMPORT_TRACE_CHARS = 512
+MAX_IMPORT_CATEGORY_CHARS = 256
 
 
 class _ImportEntry(BaseModel):
@@ -43,9 +44,8 @@ class _ImportEntry(BaseModel):
     source_trace: str = Field(default="", max_length=MAX_IMPORT_TRACE_CHARS)
     # A category registered in the namespace (namespace.register_category) that the
     # item's key is linked to, as memory.assign_category links one, once the key holds the
-    # item. A name the namespace has not registered links nothing and is noted
-    # `category_unregistered`, and a token bounded to one user links none and is noted
-    # `category_refused`; the entry is still imported. '' = none.
+    # item. When it is not linked, the result's `note` says why; the entry is still
+    # imported. '' = none.
     category: str = Field(default="", max_length=MAX_IMPORT_CATEGORY_CHARS)
     # Sensitivity tier; '' = detect from the value, as memory.bulk_set does.
     sensitivity: Literal["", "low", "medium", "high"] = ""
@@ -89,12 +89,13 @@ class _ImportEntryResult(BaseModel):
     # (conflict: too close to a pinned memory). reinforced: merge, or identity_duplicate
     # (the same text under another key). skipped: unchanged, the key's newest status
     # (deleted, superseded, rejected, proposed), or repeated (an earlier entry with the
-    # same text was written). written: the status the row was stored with, if not active.
+    # same text was written). written: duplicate or conflicted, the conflict verdict's status.
     reason: Reason = ""
-    # Why the entry's category was not linked: `category_unregistered` (the namespace has
-    # not registered it) or `category_refused` (the token is bounded to one user, and a
-    # category link has no user axis). '' otherwise.
-    note: str = ""
+    # Why the entry's category is not linked to its key: category_unregistered,
+    # category_refused (a token bounded to one user; a link has no user axis),
+    # category_not_linked (the key does not hold the item) or category_rescinded (the owner
+    # removed that link, and the import leaves it removed). '' when it is linked.
+    note: Note = ""
 
 
 class _ImportTotals(BaseModel):

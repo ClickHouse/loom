@@ -6,7 +6,7 @@ limit and shape.
 
 from __future__ import annotations
 
-from server.memory.domain.memory_import import is_digest_key
+from server.memory.domain.digest_keys import is_digest_key
 from server.settings import settings
 
 EXCERPT_LIMIT = 1200

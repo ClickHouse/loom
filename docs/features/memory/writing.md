@@ -250,7 +250,8 @@ conflict verdict. Every entry gets the conflict check, whatever
   fact retired `skipped` (`superseded`) and one marked wrong (`memory.reject`) `skipped`
   (`rejected`); none is written again. A key holding a proposal comes back `skipped`
   (`proposed`): only `memory.proposal_decide` moves a fact out of its trial. A status the
-  import does not recognise leaves the key as it is too, as `skipped` (`unknown`).
+  import does not recognise leaves the key as it is too, as `skipped` (`unknown`). The read
+  and the write are not atomic: a delete that lands between them is written over.
 - **A tombstone has no way back through the import:** `memory.delete`, `memory.clear` and
   an expiry with `on_expire=tombstone` all write one, so clearing an agent and importing
   from the source again answers `skipped` (`deleted`) for every such item. Bring the keys
@@ -260,11 +261,13 @@ conflict verdict. Every entry gets the conflict check, whatever
 - **Provenance:** every row is `source_class=imported`, `valid_at` is the source's time
   and `created_at` the import's. An entry with no `source_trace` is traced by its key.
 - **Categories:** a `category` the namespace registered (`namespace.register_category`) is
-  linked to the key once the key holds the fact, as `memory.assign_category` links one. An
-  unregistered name links nothing, and the entry comes back with `note`
-  `category_unregistered`. A token bounded to one user links no category, since a link has
-  no user axis (it is refused `memory.assign_category` too): `note` `category_refused`.
-  Either way the fact is still imported.
+  linked to the key once the key holds the fact, as `memory.assign_category` links one. A
+  link already stored is left as it is, so a re-run does not bring back a link the owner
+  rescinded. When the category is not linked, the result's `note` says why:
+  `category_unregistered` (the namespace has no such category), `category_refused` (a
+  token bounded to one user links none, since a link has no user axis; it is refused
+  `memory.assign_category` too), `category_not_linked` (the key does not hold the fact) or
+  `category_rescinded`. Either way the fact is still imported.
 - **`dry_run=true`** makes every check and writes no memory row, embedding, category link,
   audit row or usage event. It still pays for every entry's embedding, since the conflict
   check reads the vectors, and counts a blacklist pattern's hit. A `conflicted` entry is
@@ -274,12 +277,12 @@ conflict verdict. Every entry gets the conflict check, whatever
 Each result carries the entry's `index`, its `key`, an `outcome` and, when the entry was
 not plainly written, a `reason`:
 
-| `outcome`    | `reason`                                                                                                                                                                                                                                                                                                                                                |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `written`    | Empty, or the status the row was stored with: `duplicate` or `conflicted`.                                                                                                                                                                                                                                                                              |
-| `reinforced` | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key); that memory was reinforced.                                                                                                                                                                                                                   |
-| `skipped`    | `unchanged` (the key holds the fact already, in this session or another), `deleted`, `superseded`, `rejected` or `proposed` (the key's newest version), `repeated` (an earlier entry of the request with the same text was written) or `unknown` (logged: a state the import does not recognise, or a result it cannot explain; no category is linked). |
-| `refused`    | `blacklist`, `pinned` (the key holds another pinned value), `locked` (the key is `read_only`) or `conflict` (too close to a pinned memory).                                                                                                                                                                                                             |
+| `outcome`    | `reason`                                                                                                                                                                                                                                                                                           |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `written`    | Empty, or `duplicate` or `conflicted`, the status the conflict check stored the row with.                                                                                                                                                                                                          |
+| `reinforced` | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key); that memory was reinforced.                                                                                                                                                              |
+| `skipped`    | `unchanged` (the key holds the fact already, in this session or another), `deleted`, `superseded`, `rejected` or `proposed` (the key's newest version), `repeated` (an earlier entry of the request with the same text was written) or `unknown` (logged: a status the import does not recognise). |
+| `refused`    | `blacklist`, `pinned` (the key holds another pinned value), `locked` (the key is `read_only`) or `conflict` (too close to a pinned memory).                                                                                                                                                        |
 
 An entry with the same text as an earlier one answers as that entry did, except after a
 write, when it is `skipped` (`repeated`).

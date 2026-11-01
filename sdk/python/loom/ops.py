@@ -12037,7 +12037,15 @@ class ImportEntryResult(TypedDict, total=False):
             "conflicted",
         ]
     ]
-    note: NotRequired[str]
+    note: NotRequired[
+        Literal[
+            "",
+            "category_unregistered",
+            "category_refused",
+            "category_not_linked",
+            "category_rescinded",
+        ]
+    ]
 
 
 class MemoryImportCuratedInput(TypedDict, total=False):

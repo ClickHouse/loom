@@ -4817,7 +4817,7 @@ export interface ImportEntryResult {
   key: string;
   outcome: "written" | "reinforced" | "skipped" | "refused";
   reason?: "" | "blacklist" | "pinned" | "locked" | "conflict" | "merge" | "identity_duplicate" | "unchanged" | "deleted" | "superseded" | "rejected" | "proposed" | "repeated" | "unknown" | "duplicate" | "conflicted";
-  note?: string;
+  note?: "" | "category_unregistered" | "category_refused" | "category_not_linked" | "category_rescinded";
 }
 
 export interface MemoryImportOutput {

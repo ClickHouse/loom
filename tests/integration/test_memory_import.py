@@ -1,10 +1,11 @@
 """memory.import end to end through the Python SDK's generated client
 (`agent.client.memory.import_`), as test_memory_bulk.py drives memory.bulk_set: items
 written under keys their text derives and stamped `imported`, re-runs that add no
-version, an item its owner deleted or rejected that a re-run leaves so, a proposal left on trial, a dry run that writes
-nothing, each refusal named on its entry, categories linked or noted and a hash-only
-audit trail. Over raw HTTP and MCP: the exact 422 past 200 entries, and the tool a
-gateway calls with the identity its token carries."""
+version, an item its owner deleted or rejected that a re-run leaves so, a proposal left
+on trial, a dry run that writes nothing, each refusal named on its entry, categories
+linked or noted, a rescinded link left rescinded and a hash-only audit trail. Over raw
+HTTP and MCP: the exact 422 past 200 entries, a token bounded to one user, and the tool
+a gateway calls with the identity its token carries."""
 
 from __future__ import annotations
 
@@ -214,6 +215,35 @@ async def test_a_registered_category_is_linked_and_an_unregistered_one_noted(
         parameters={"o": ORG, "n": ns},
     ).result_rows
     assert [r[0] for r in rows] == [_key(dog)]
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_leaves_a_rescinded_category_link_rescinded(
+    control_plane_url: str, ch_client
+) -> None:
+    from loom import Agent
+
+    ns = _ns()
+    body = {"entries": [{"value": "Dog is Biscuit.", "category": "pets"}]}
+    async with Agent(org=ORG, namespace=ns, agent=AGENT, base_url=control_plane_url) as a:
+        await a.call("namespace.register_category", name="pets", description="Animals at home.")
+        await a.client.memory.import_(body)
+        await a.call(
+            "memory.assign_category",
+            memory_key=_key("Dog is Biscuit."),
+            category_name="pets",
+            tombstone=True,
+        )
+        again = await a.client.memory.import_(body)
+    assert [(r["outcome"], r["note"]) for r in again["results"]] == [
+        ("skipped", "category_rescinded")
+    ], again
+    live = ch_client.query(
+        "SELECT count() FROM loom.memory_categories FINAL "
+        "WHERE org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL",
+        parameters={"o": ORG, "n": ns},
+    ).result_rows
+    assert live[0][0] == 0
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@
 bulk write path.
 
 Each entry becomes a memory.bulk_set entry under the key its text derives
-(`server.memory.domain.memory_import.import_key`), declared `source_class=imported`,
+(`server.memory.domain.digest_keys.import_key`), declared `source_class=imported`,
 so an import makes every check a bulk write makes: the identity's content-hash dedup,
 the skip gate, the lock and pin guards, the blacklist, the sensitivity rule, inline
 embedding and the conflict verdicts; and it leaves the bulk write's hash-only audit
@@ -43,15 +43,17 @@ from server.memory.api.models_import import (
 )
 from server.memory.app.bulk_set import handle_memory_bulk_set
 from server.memory.app.provenance import writer_actor
+from server.memory.domain.digest_keys import import_key
 from server.memory.domain.memory_import import (
+    CATEGORY_NOT_LINKED,
     CATEGORY_REFUSED,
+    CATEGORY_RESCINDED,
     CATEGORY_UNREGISTERED,
     UNCHANGED,
     UNKNOWN,
     Outcome,
     Reason,
     holds_item,
-    import_key,
     repeat_outcome,
     skip_reasons,
 )
@@ -92,30 +94,11 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
     )
     outcomes = await _write(input, keys, first, skip_reasons(heads))
     results: list[_ImportEntryResult] = []
-    for i, (entry, key) in enumerate(zip(input.entries, keys, strict=True)):
+    for i, key in enumerate(keys):
         outcome, reason = outcomes[key] if first[key] == i else repeat_outcome(outcomes[key])
-        results.append(
-            _ImportEntryResult(
-                index=i,
-                key=key,
-                outcome=outcome,
-                reason=reason,
-                note=_category_note(entry.category, category_ids, linkable=linkable),
-            )
-        )
-    if linkable and not input.dry_run:
-        await _link_categories(input, results, category_ids)
+        results.append(_ImportEntryResult(index=i, key=key, outcome=outcome, reason=reason))
+    await _categorize(input, results, category_ids, linkable=linkable)
     return _output(input, results)
-
-
-def _category_note(category: str, registered: dict[str, str], *, linkable: bool) -> str:
-    """The note on an entry's category: refused under a token bounded to one user,
-    unregistered when the namespace holds no such category, else none."""
-    if not category:
-        return ""
-    if not linkable:
-        return CATEGORY_REFUSED
-    return "" if category in registered else CATEGORY_UNREGISTERED
 
 
 async def _write(
@@ -139,7 +122,6 @@ async def _write(
             pending.append(i)
     if not pending:
         return outcomes
-    unchanged: list[str] = []
     written = await handle_memory_bulk_set(
         _bulk_input(input, [(input.entries[i], keys[i]) for i in pending]),
         dry_run=input.dry_run,
@@ -147,29 +129,17 @@ async def _write(
         conflict_check_cap=MAX_IMPORT_ENTRIES,
         # A re-run reinforces nothing its own keys already hold.
         reinforce_own_key=False,
-        unchanged_into=unchanged,
     )
     for i, result in zip(pending, written.written, strict=True):
         key = keys[i]
-        outcomes[key] = _entry_outcome(
-            key,
-            result,
-            unchanged=key in unchanged,
-            held_by=written.identity_duplicates.get(key),
-        )
+        outcomes[key] = _entry_outcome(key, result, written.identity_duplicates.get(key))
     return outcomes
 
 
-def _entry_outcome(
-    key: str, result: _BulkSetResult, *, unchanged: bool, held_by: str | None
-) -> tuple[Outcome, Reason]:
-    """The outcome and reason of an entry the bulk write answered: written (with the
-    status its row was stored with when that is not `active`), refused by the check
-    named, reinforced (a merge, or the same text under another key), or skipped as
-    unchanged when the skip gate found this session's row under the key holding the text,
-    or identity dedup found the key itself holding it in another session. Any other result
-    is logged and answered skipped/unknown, linking no category: the write has committed by
-    then, so one odd row never fails the batch."""
+def _entry_outcome(key: str, result: _BulkSetResult, held_by: str | None) -> tuple[Outcome, Reason]:
+    """The outcome of an entry the bulk write answered. A result with no version that no
+    check refused, no merge took and no other key holds is the skip gate's or identity
+    dedup's answer for this key: the key holds the text already."""
     verdict = result.conflict_verdict
     if result.version:
         return "written", _STORED_AS.get(verdict, "")
@@ -177,12 +147,9 @@ def _entry_outcome(
         return "refused", _CHECK_OF[verdict]
     if verdict == "merge":
         return "reinforced", "merge"
-    if unchanged or held_by == key:
-        return "skipped", UNCHANGED
-    if held_by is not None:
+    if held_by is not None and held_by != key:
         return "reinforced", "identity_duplicate"
-    log.warning("memory.import: the bulk write's result for %r matches no outcome: %r", key, result)
-    return "skipped", UNKNOWN
+    return "skipped", UNCHANGED
 
 
 def _bulk_input(
@@ -213,32 +180,48 @@ def _bulk_input(
     )
 
 
-async def _link_categories(
-    input: MemoryImportInput, results: list[_ImportEntryResult], category_ids: dict[str, str]
+async def _categorize(
+    input: MemoryImportInput,
+    results: list[_ImportEntryResult],
+    category_ids: dict[str, str],
+    *,
+    linkable: bool,
 ) -> None:
-    """Link each entry's registered category to its key once the key holds the item,
-    and record the links in one audit row: keys and category names, never the text."""
-    holding = {r.key for r in results if holds_item(r.outcome, r.reason)}
-    links = sorted(
-        {
-            (result.key, entry.category)
-            for result, entry in zip(results, input.entries, strict=True)
-            if entry.category in category_ids and result.key in holding
-        }
-    )
-    if not links:
+    """Note each entry's category, and link a registered one to the entry's key once the
+    key holds the item. A link already stored is left as it is, so a re-run never brings
+    back one the owner rescinded. The new links get one audit row: keys and category
+    names, never the text."""
+    wanted: list[tuple[_ImportEntryResult, tuple[str, str]]] = []
+    for result, entry in zip(results, input.entries, strict=True):
+        if not entry.category:
+            continue
+        if not linkable:
+            result.note = CATEGORY_REFUSED
+        elif entry.category not in category_ids:
+            result.note = CATEGORY_UNREGISTERED
+        elif not holds_item(result.outcome, result.reason):
+            result.note = CATEGORY_NOT_LINKED
+        else:
+            wanted.append((result, (result.key, category_ids[entry.category])))
+    if not wanted:
         return
-    await categories.link(
-        input.org, input.namespace, [(key, category_ids[name]) for key, name in links]
-    )
+    stored = await categories.link_states(input.org, input.namespace, [k for _, (k, _) in wanted])
+    for result, link in wanted:
+        if stored.get(link) is False:
+            result.note = CATEGORY_RESCINDED
+    new = sorted({link for _, link in wanted if link not in stored})
+    if not new or input.dry_run:
+        return
+    await categories.link(input.org, input.namespace, new)
+    names = {cid: name for name, cid in category_ids.items()}
     await audit.emit(
         "memory.import",
         org=input.org,
         namespace=input.namespace,
         actor=writer_actor() or "-",
         subject={
-            "count": len(links),
-            "category_links": [{"memory_key": k, "category": c} for k, c in links],
+            "count": len(new),
+            "category_links": [{"memory_key": k, "category": names[c]} for k, c in new],
         },
     )
 

@@ -20,24 +20,21 @@ import pydantic
 import pytest
 
 import server.memory.store as memory_repo
-from server.cli.import_recall import _recall_memory_key
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value
 from server.memory.api.models_bulk import (
     REFUSED,
     MemoryBulkSetInput,
-    MemoryBulkSetOutput,
     _BulkSetEntry,
-    _BulkSetResult,
 )
 from server.memory.api.models_import import MAX_IMPORT_ENTRIES, MemoryImportInput
 from server.memory.app import bulk_set as _bulk_set_mod
 from server.memory.app import memory_import as _import_mod
 from server.memory.app.memory_import import handle_memory_import
 from server.memory.domain.conflicts import ConflictResult
+from server.memory.domain.digest_keys import import_key, is_digest_key
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.excerpt import EXCERPT_LIMIT, build_excerpt
-from server.memory.domain.memory_import import import_key, is_digest_key
 from server.operations.base import Role
 from tests.unit.bulk_stubs import BatchEmbedder, StubCH, no_delete_in_flight, wire_stubs
 from tests.unit.memory_rows import projection_row
@@ -91,7 +88,8 @@ class _StoreCH(StubCH):
     - the import's own read (`key_heads`): each asked key's newest version across
       sessions, a tombstone or a superseded row included.
 
-    The category read answers the namespace's `registry` (name → id)."""
+    The category read answers the namespace's `registry` (name → id), and the link read
+    the newest link row it was sent per (key, category)."""
 
     def __init__(
         self, rows: list[dict[str, Any]] | None = None, *, registry: dict[str, str] | None = None
@@ -112,6 +110,16 @@ class _StoreCH(StubCH):
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         params = params or {}
+        if "FROM loom.memory_categories" in sql:
+            sent = self.rows_for("loom.memory_categories")
+            asked = [r for r in sent if r["memory_key"] in params["keys"]]
+            heads: dict[tuple[str, str], dict[str, Any]] = {}
+            for r in asked:  # ReplacingMergeTree(created_at): the latest row of a link wins
+                heads[(r["memory_key"], r["category_id"])] = r
+            return [
+                {"memory_key": k, "category_id": c, "live": r["tombstoned_at"] is None}
+                for (k, c), r in heads.items()
+            ]
         if "FROM loom.categories" in sql:
             return [
                 {"name": n, "category_id": self.registry[n]}
@@ -220,13 +228,9 @@ def test_the_key_is_import_and_24_hex_of_the_sha256_of_the_text() -> None:
     assert import_key(value) == "import:" + digest[:24]
 
 
-@pytest.mark.parametrize("value", ["Prefers dark roast.", "  café au lait  ", "one\ntwo"])
-def test_the_key_hashes_the_text_as_the_recall_importer_does(value: str) -> None:
-    """The text is hashed as given, whitespace and case kept: the recall importer's
-    content-hash key carries the same digest."""
-    digest = import_key(value).removeprefix("import:")
-    assert _recall_memory_key("memories", None, value) == f"recall_memories_{digest}"
-    assert import_key(value) != import_key(value + " ")
+def test_the_key_hashes_the_text_as_given() -> None:
+    assert import_key("Prefers dark roast.") != import_key("Prefers dark roast. ")
+    assert import_key("Prefers dark roast.") != import_key("prefers dark roast.")
 
 
 # ---- the embedded text -----------------------------------------------------
@@ -590,29 +594,6 @@ async def test_a_key_in_a_state_the_import_does_not_know_is_left_as_it_is(harnes
     assert ch.rows_for("loom.memory") == [] and "no state it knows" in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_a_bulk_result_no_outcome_matches_is_logged_never_raised(
-    harness, monkeypatch, caplog
-) -> None:
-    """No real path reaches this today: a version-0 result with no verdict that neither the
-    skip gate nor identity dedup explains. The write has committed by then, so the entry
-    is answered skipped/unknown and logged, and its category is not linked."""
-    ch = _StoreCH(registry={"pets": "cat-1"})
-    harness(ch)
-    value = "Dog is Biscuit."
-
-    async def _bulk(_input: Any, **_: Any) -> MemoryBulkSetOutput:
-        return MemoryBulkSetOutput(
-            written=[_BulkSetResult(memory_key=import_key(value), version=0)]
-        )
-
-    monkeypatch.setattr(_import_mod, "handle_memory_bulk_set", _bulk)
-    out = await handle_memory_import(_input({"value": value, "category": "pets"}))
-    assert _outcomes(out) == [("skipped", "unknown")]
-    assert "matches no outcome" in caplog.text
-    assert ch.rows_for("loom.memory_categories") == []
-
-
 # ---- the inherited checks, per entry ---------------------------------------
 
 
@@ -868,6 +849,46 @@ async def test_a_rerun_links_a_category_registered_since(harness) -> None:
     assert (again.results[0].outcome, again.results[0].note) == ("skipped", "")
     links = ch.rows_for("loom.memory_categories")
     assert [r["memory_key"] for r in links] == [import_key("Dog is Biscuit.")]
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_leaves_a_rescinded_link_rescinded_and_audits_nothing(harness) -> None:
+    from server.memory.store import categories
+
+    ch = _StoreCH(registry={"pets": "cat-1"})
+    rec = harness(ch)
+    item = {"value": "Dog is Biscuit.", "category": "pets"}
+    await handle_memory_import(_input(item))
+    key = import_key("Dog is Biscuit.")
+    await categories.link("test", "personal", [(key, "cat-1")], tombstone=True, ch=ch)
+    rec.audits.clear()
+    again = await handle_memory_import(_input(item))
+    assert (again.results[0].outcome, again.results[0].note) == ("skipped", "category_rescinded")
+    links = ch.rows_for("loom.memory_categories")
+    assert len(links) == 2 and links[-1]["tombstoned_at"] is not None
+    assert "memory.import" not in dict(rec.audits)
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_adds_no_link_already_stored(harness) -> None:
+    ch = _StoreCH(registry={"pets": "cat-1"})
+    rec = harness(ch)
+    item = {"value": "Dog is Biscuit.", "category": "pets"}
+    await handle_memory_import(_input(item))
+    rec.audits.clear()
+    again = await handle_memory_import(_input(item))
+    assert (again.results[0].outcome, again.results[0].note) == ("skipped", "")
+    assert len(ch.rows_for("loom.memory_categories")) == 1
+    assert "memory.import" not in dict(rec.audits)
+
+
+@pytest.mark.asyncio
+async def test_a_category_on_an_entry_its_key_does_not_hold_is_not_linked(harness) -> None:
+    ch = _StoreCH(registry={"pets": "cat-1"})
+    harness(ch, blacklist="launch code")
+    out = await handle_memory_import(_input({"value": "The launch code is 1.", "category": "pets"}))
+    assert [(r.outcome, r.note) for r in out.results] == [("refused", "category_not_linked")]
+    assert ch.rows_for("loom.memory_categories") == []
 
 
 @pytest.mark.asyncio

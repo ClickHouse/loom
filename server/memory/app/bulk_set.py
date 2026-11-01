@@ -958,15 +958,13 @@ async def handle_memory_bulk_set(
     dry_run: bool = False,
     conflict_check_cap: int | None = None,
     reinforce_own_key: bool = True,
-    unchanged_into: list[str] | None = None,
 ) -> MemoryBulkSetOutput:
     """One CH insert for all rows; one more for embeddings. Versions are
     each unique (nanosecond) to preserve LWW semantics.
 
     - `dry_run`: return after the verdicts, writing nothing.
     - `conflict_check_cap`: overrides `bulk_conflict_check_max_entries`.
-    - `reinforce_own_key=False`: no `evidence` event for an entry its own key already holds.
-    - `unchanged_into`: receives the keys the skip gate found unchanged."""
+    - `reinforce_own_key=False`: no `evidence` event for an entry its own key already holds."""
     ch = get_client()
     embedder = get_embedder()
     now_utc = datetime.now(UTC)
@@ -978,7 +976,6 @@ async def handle_memory_bulk_set(
     state = _BulkWriteState(
         conflict_check_cap=conflict_check_cap,
         reinforce_own_key=reinforce_own_key,
-        unchanged_keys=[] if unchanged_into is None else unchanged_into,
     )
     await _bulk_existing_lookup(ch, input, state)
 

@@ -10,8 +10,8 @@ import pytest
 
 from bench.k_curve import QuestionAtK, gold_instances, instance_in, score, summarise
 from server.memory.app.reembed import _TABLES, _key_input, rewrite_row, where_sql
+from server.memory.domain.digest_keys import import_key
 from server.memory.domain.embed_text import key_axis_text
-from server.memory.domain.memory_import import import_key
 
 
 def test_key_axis_text_is_the_humanized_key() -> None:
