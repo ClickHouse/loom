@@ -352,16 +352,27 @@ def writers_covered(hits: Iterable[Any], namespace: str = "") -> set[tuple[str, 
     }
 
 
+def already_pooled(hit: Any, pool: Iterable[Any], namespace: str = "") -> bool:
+    """Whether `pool` already holds the stored row `hit` is: that row, a folded set chunk of
+    its writer and key, or, for a folded set chunk, any row of its writer and key."""
+    key = hit_row_key(hit, namespace)
+    rows = {hit_row_key(h, namespace) for h in pool}
+    if hit_writer(hit):
+        return key.writer_key() in {r.writer_key() for r in rows}
+    return key in rows or key.writer_key() in writers_covered(pool, namespace)
+
+
 def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
     """(namespace, agent, user_id, session_id, memory_key) of the stored row a hit is: one
     key holds a row for each writer and session, so a key alone does not name one row.
     For a `SearchHit` or a wire hit alike. A folded set chunk has its writer and no
     session; a hit whose leg read no identity has only its session."""
-    writer = hit_writer(hit)
-    identity = _identity(hit) or (
-        (*writer, "") if writer else ("", "", str(getattr(hit, "session_id", "") or ""))
-    )
-    agent, user_id, session_id = identity
+    if identity := _identity(hit):
+        agent, user_id, session_id = identity
+    elif writer := hit_writer(hit):
+        (agent, user_id), session_id = writer, ""
+    else:
+        agent, user_id, session_id = "", "", str(getattr(hit, "session_id", "") or "")
     return RowKey(
         str(getattr(hit, "namespace", "") or namespace),
         agent,

@@ -62,6 +62,7 @@ def exclude_pooled(where: list[str], params: dict[str, Any], hits: Sequence[Sear
         (r.agent, r.user_id, r.session_id, r.memory_key)
         for r in {hit_row_key(h) for h in hits if names_row(h)}
     )
+    # the leg reads one namespace: a writer key's namespace is the leg's
     writers = sorted({(a, u, k) for _ns, a, u, k in writers_covered(hits)})
     if rows:
         where.append(

@@ -258,6 +258,20 @@ async def test_a_hit_naming_only_its_writer_takes_its_writers_key_status(
 
 
 @pytest.mark.asyncio
+async def test_a_canonical_a_folded_chunk_of_its_writer_stands_for_is_not_seated_twice(
+    truth: SimpleNamespace,
+) -> None:
+    truth.status = {"dup_a": _dup("c-1"), "canon_a": _ACTIVE}
+    truth.canon = {"c-1": _canon("canon_a")}  # written by ("a", "-")
+    chunk = _hit("canon_a", rank=0.5, session="", who=None)
+    chunk._row_writer = ("a", "-")
+    ctx = _ctx([_hit("dup_a", rank=0.9), chunk])
+    await sd.hide_pool_duplicates(ctx)
+    assert [h.memory_key for h in ctx.all_hits] == ["canon_a"]
+    assert ctx.all_hits[0] is chunk
+
+
+@pytest.mark.asyncio
 async def test_an_active_row_is_served(truth: SimpleNamespace) -> None:
     truth.status = {"k": _ACTIVE}
     ctx = _ctx([_hit("k", rank=0.9)])
