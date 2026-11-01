@@ -58,3 +58,16 @@ def test_knowledge_hit_keeps_namespace_and_section() -> None:
     hit = _hit(base | {"namespace": "team-a", "section_path": ["A", "B"], "section": "A > B"})
     assert (hit.namespace, hit.section_path, hit.section) == ("team-a", ("A", "B"), "A > B")
     assert (_hit(base).namespace, _hit(base).section_path) == ("", ())
+
+
+async def test_decision_record_sends_files_and_refuses_a_bare_string(agent: Agent) -> None:
+    cap: Any = agent.transport._post_once
+    kw: dict[str, Any] = dict(category="c", scenario="s", reasoning="r", outcome="o")
+    await agent.decision.record(
+        **kw, files=("src/a.cpp",), source_class="derived", source_resource_id="doc:1"
+    )
+    sent = cap.last("/v1/decision.record")
+    assert sent["files"] == ["src/a.cpp"] and sent["source_class"] == "derived"
+    assert sent["source_resource_id"] == "doc:1"
+    with pytest.raises(TypeError):
+        await agent.decision.record(**kw, files="src/a.cpp")

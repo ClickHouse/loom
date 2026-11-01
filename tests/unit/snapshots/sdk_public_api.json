@@ -2178,7 +2178,10 @@
           "run_id",
           "session_id",
           "user_id",
-          "valid_at"
+          "valid_at",
+          "files",
+          "source_resource_id",
+          "source_class"
         ]
       }
     },

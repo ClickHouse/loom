@@ -68,7 +68,7 @@ BEFORE deciding, ask what was decided in similar situations: semantic search ove
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `precedents` | `list[DecisionRow]` | Active past decisions, most similar scenario first. |
+| `precedents` | `list[DecisionRow]` | Active past decisions, the most similar decision statement first. |
 | `embedding_model` | `str` | The embedder the underlying memory search used. |
 
 ## `decision.record`
@@ -86,7 +86,7 @@ Record a DECISION as a first-class object — call it whenever you choose betwee
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The run this decision was made in (run.begin). |
 | `category` | `str` | required | category + scenario identify the decision: re-deciding the same scenario supersedes the earlier record (history keeps it). |
-| `scenario` | `str` | required | The situation that needed deciding; it is what `decision.precedents` matches. |
+| `scenario` | `str` | required | The situation that needed deciding; `decision.precedents` matches a query against the decision's statement, which includes the start of the scenario. |
 | `reasoning` | `str` | required | Why this outcome was chosen. |
 | `outcome` | `str` | required | What was decided. |
 | `alternatives` | `list[str]` | *(computed)* | What was considered and not chosen — the field every "why not X" question needs and most decision logs omit. |
@@ -96,6 +96,9 @@ Record a DECISION as a first-class object — call it whenever you choose betwee
 | `influenced_by` | `list[str]` | *(computed)* | Keys that shaped the decision without causing it; each becomes an `influenced` edge. |
 | `tags` | `list[str]` | *(computed)* | Extra tags on the memory row, beside `decision` and `decision:category:<category>`. |
 | `valid_at` | `datetime \| None` | `None` | Real-world time the decision took effect; None = now. |
+| `files` | `list[str] \| None` | `None` | The repo files this decision governs (repo-relative path or bare filename); memory.for_file serves it before an edit of them. |
+| `source_class` | `Literal['derived', 'external', 'imported'] \| None` | `None` | Declare that this decision was derived from other content (`derived`) or came from outside (`external`, `imported`). |
+| `source_resource_id` | `str` | `''` | The file path, document id or URL this decision was taken from, cited on its hits. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

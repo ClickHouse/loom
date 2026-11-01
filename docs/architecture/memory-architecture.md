@@ -110,13 +110,17 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
       `duplicate`;
     - any other close peer: `conflict`.
 
+    A `decision` row (`KEY_IDENTIFIED_TYPES`) is identified by its key: a close peer in
+    the writer's read scope answers `conflict`, pinned or not, and no pinned peer refuses
+    it.
+
     Under a token bounded to one user (`read_user_id`), peers outside that user's rows are
     treated as absent, with two exceptions that hold across the whole namespace by design: a
-    close pinned peer still rejects the write (409 `PINNED_CONFLICT`), and `proposed=true`
-    still may not land on a key that holds any user's established fact (409
-    `KEY_HOLDS_FACT`). A pin protects the namespace's fact from every writer, and a proposal
-    must not retire anyone's fact. The refusal names no row, id or value, so the narrowed
-    token learns only that its write was refused.
+    close pinned peer still rejects the write (409 `PINNED_CONFLICT`; a decision excepted),
+    and `proposed=true` still may not land on a key that holds any user's established fact
+    (409 `KEY_HOLDS_FACT`). A pin protects the namespace's fact from every writer, and a
+    proposal must not retire anyone's fact. The refusal names no row, id or value, so the
+    narrowed token learns only that its write was refused.
 
     No verdict on the write calls an LLM. With the conflict resolver on, the peer read
     reaches down to `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY` (0.60), and a write

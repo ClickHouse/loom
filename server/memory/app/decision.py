@@ -9,6 +9,7 @@ outcome = a record revision that also credits the deciding run's memories.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, NamedTuple
@@ -41,9 +42,21 @@ from server.memory.api.models_records import (
 )
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app import decisions as svc
+from server.memory.app.set_commit import count_attribute_tags, count_write
 from server.memory.domain.decision_schema import SCHEMA_FIELDS, SCHEMA_NAME
+from server.memory.domain.decision_statement import alternatives, memory_value
+from server.memory.domain.provenance import DeclaredSourceClass, is_declarable
+from server.memory.domain.sensitivity import (
+    ATTRIBUTE_TAG_PREFIX,
+    SENSITIVITY_TAG_PREFIX,
+    Sensitivity,
+    attribute_tags,
+    detector_text,
+    resolve_sensitivity,
+)
 from server.memory.store import (
     Identity,
+    MemoryRow,
     WriterRecord,
     active_decision_records,
     get_by_key,
@@ -98,9 +111,6 @@ async def _decision_records(
 
 
 def _row(key: str, rec: dict[str, Any], similarity: float = 0.0) -> Any:
-    alts = rec.get("alternatives") or []
-    if isinstance(alts, str):
-        alts = [a for a in alts.split("\n") if a.strip()]
     conf = rec.get("confidence")
     succ = rec.get("success")
     return DecisionRow(
@@ -109,7 +119,7 @@ def _row(key: str, rec: dict[str, Any], similarity: float = 0.0) -> Any:
         scenario=str(rec.get("scenario") or ""),
         reasoning=str(rec.get("reasoning") or ""),
         outcome=str(rec.get("outcome") or ""),
-        alternatives=[str(a) for a in alts],
+        alternatives=alternatives(rec),
         confidence=float(conf) if isinstance(conf, (int, float)) else None,
         decision_maker=str(rec.get("decision_maker") or ""),
         run_id=str(rec.get("run_id") or ""),
@@ -118,6 +128,35 @@ def _row(key: str, rec: dict[str, Any], similarity: float = 0.0) -> Any:
         made_at=str(rec.get("made_at") or ""),
         similarity=float(similarity),
     )
+
+
+# ------------------------------------------------------------------ tags
+
+
+# The tags a decision's memory row is written with (`_decision_tags`); on an outcome's
+# rewrite these are rebuilt, with the server's labels, and every other tag is the caller's.
+_DECISION_TAG = "decision"
+_OUTCOME_KNOWN = "decision:outcome-known"
+_SUCCESS = "decision:success"
+_FAILURE = "decision:failure"
+_REBUILT_TAGS = (_DECISION_TAG, _OUTCOME_KNOWN, _SUCCESS, _FAILURE)
+
+
+def _category_tag(category: str) -> str:
+    return f"decision:category:{category.strip().lower()}"
+
+
+def _decision_tags(
+    category: str, *, outcome_known: bool = False, success: bool | None = None
+) -> list[str]:
+    """The `decision` tags of a decision's memory row: the marker and the category, and
+    after `decision.outcome` the outcome-known mark and its success or failure."""
+    tags = [_DECISION_TAG, _category_tag(category)]
+    if outcome_known:
+        tags.append(_OUTCOME_KNOWN)
+        if success is not None:
+            tags.append(_SUCCESS if success else _FAILURE)
+    return tags
 
 
 # ------------------------------------------------------------------ handlers
@@ -165,6 +204,9 @@ async def _write_decision(
     payload: dict[str, Any],
     tags: list[str],
     valid_at: datetime | None,
+    files: list[str] | None,
+    source_class: DeclaredSourceClass | None,
+    source_resource_id: str,
     if_match_sha256: str = "",
     pinned: bool = False,
 ) -> _Written:
@@ -175,6 +217,7 @@ async def _write_decision(
     from server.memory.app.records import handle_memory_record_write
     from server.memory.app.write import handle_memory_set
 
+    statement, sensitivity, added = await _statement_and_labels(org, namespace, payload, tags)
     conf = payload.get("confidence")
     set_out = await handle_memory_set(
         MemorySetInput(
@@ -186,11 +229,15 @@ async def _write_decision(
             run_id=run_id or "-",
             memory_key=key,
             memory_type="decision",
-            value=svc.memory_value(payload),
-            tags=tags,
+            value=statement,
+            tags=[*tags, *added],
             confidence=float(conf) if isinstance(conf, (int, float)) and conf > 0 else 1.0,
             source_trace=f"run:{run_id}" if named(run_id) else "decision",
             valid_at=valid_at,
+            files=files,
+            source_class=source_class,
+            source_resource_id=source_resource_id,
+            sensitivity=sensitivity,
             if_match_sha256=if_match_sha256,
             pinned=pinned,
         )
@@ -198,6 +245,7 @@ async def _write_decision(
     if set_out.conflict_verdict == "merge":
         # memory.set stored no row, so a record here would not match the writer's row.
         return _Written(None, set_out.merged_into_key)
+    count_attribute_tags(namespace, added)
     rec_out = await handle_memory_record_write(
         MemoryRecordWriteInput(
             org=org,
@@ -219,6 +267,36 @@ async def _write_decision(
     return _Written(str(rec_out.record_id))
 
 
+async def _statement_and_labels(
+    org: str, namespace: str, payload: dict[str, Any], tags: list[str]
+) -> tuple[str, Sensitivity, list[str]]:
+    """Run memory.set's blacklist, sensitivity and attribute checks on the whole decision
+    before the record is written, since the row holds only a clipped statement. Returns
+    (statement, sensitivity, attribute labels to add). A blacklisted decision raises."""
+    from server.memory.app.blacklist_guard import enforce_on_insert
+
+    statement = memory_value(payload)
+    try:
+        # Every field whole, then the statement as memory.set stores it (JSON-encoded), so
+        # a pattern anchored to the stored value matches here as it would there.
+        full_text = "\n".join(svc.blacklist_fields(payload))
+        await enforce_on_insert(org=org, namespace=namespace, value=full_text)
+        await enforce_on_insert(org=org, namespace=namespace, value=json.dumps(statement))
+    except HTTPException:
+        count_write(namespace, "blacklisted")
+        raise
+    except Exception:
+        # An accounting hook, as in memory.set: an outage counts as `error`, re-raised.
+        count_write(namespace, "error")
+        raise
+    fields = svc.statement_fields(payload)
+    sensitivity = resolve_sensitivity("", detector_text([*fields, statement]))
+    added: list[str] = []
+    for field in fields:
+        added += attribute_tags(field, [*tags, *added])
+    return statement, sensitivity, added
+
+
 async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOutput:
     from server.memory.app.ops import handle_memory_link
 
@@ -238,11 +316,7 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         "run_id": named(input.run_id),
         "made_at": made_at,
     }
-    tags = [
-        "decision",
-        f"decision:category:{payload['category'].lower()}",
-        *[t for t in input.tags if t],
-    ]
+    tags = [*_decision_tags(payload["category"]), *[t for t in input.tags if t]]
     try:
         written = await _write_decision(
             org=input.org,
@@ -255,6 +329,10 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
             payload=payload,
             tags=tags,
             valid_at=input.valid_at,
+            # Unset: the files the decision's text names; the statement is clipped.
+            files=input.files if input.files is not None else svc.decision_files(payload),
+            source_class=input.source_class,
+            source_resource_id=input.source_resource_id,
         )
     except HTTPException as e:
         refusal = _own_pin_refusal(e, key)
@@ -318,7 +396,7 @@ async def handle_decision_precedents(input: DecisionPrecedentsInput) -> Decision
     from server.memory.app.search import handle_memory_search
 
     ch = get_client()
-    tags = [f"decision:category:{input.category.strip().lower()}"] if input.category.strip() else []
+    tags = [_category_tag(input.category)] if input.category.strip() else []
     res = await handle_memory_search(
         MemorySearchInput(
             org=input.org,
@@ -395,23 +473,25 @@ async def handle_decision_chain(input: DecisionChainInput) -> DecisionChainOutpu
     )
 
 
-def _outcome_payload(
-    input: DecisionOutcomeInput, writer: WriterRecord
-) -> tuple[dict[str, Any], list[str]]:
-    """The writer's record with the outcome applied, and the row's tags."""
+def _outcome_payload(input: DecisionOutcomeInput, writer: WriterRecord) -> dict[str, Any]:
+    """The writer's record with the outcome applied."""
     payload = svc.parse_record_json(writer.record_json)
     payload["realized_outcome"] = input.realized_outcome.strip()
     if input.success is not None:
         payload["success"] = input.success
     payload["made_at"] = writer.created_at.isoformat()
-    tags = [
-        "decision",
-        f"decision:category:{str(payload.get('category') or '').lower()}",
-        "decision:outcome-known",
-    ]
-    if payload.get("success") is not None:
-        tags.append("decision:success" if payload["success"] else "decision:failure")
-    return payload, tags
+    return payload
+
+
+def _outcome_tags(row: MemoryRow, payload: dict[str, Any]) -> list[str]:
+    """The decision tags rebuilt for the outcome, then the caller's tags the row carries;
+    the server's sensitivity and attribute labels are worked out again on the write."""
+    category = str(payload.get("category") or "")
+    rebuilt = {*_REBUILT_TAGS, _category_tag(category)}
+    server_labels = (SENSITIVITY_TAG_PREFIX, ATTRIBUTE_TAG_PREFIX)
+    kept = [t for t in row.tags if t not in rebuilt and not t.startswith(server_labels)]
+    success = payload.get("success")
+    return [*_decision_tags(category, outcome_known=True, success=success), *kept]
 
 
 def _no_active_decision(input: DecisionOutcomeInput) -> NotFoundError:
@@ -430,7 +510,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     writer = await live_writer_record(input.org, input.namespace, input.memory_key, ch=ch)
     if writer is None:
         raise _no_active_decision(input)
-    payload, tags = _outcome_payload(input, writer)
+    payload = _outcome_payload(input, writer)
     identity = Identity(
         org=input.org,
         namespace=input.namespace,
@@ -458,8 +538,13 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             run_id=str(payload.get("run_id") or "-"),
             key=input.memory_key,
             payload=payload,
-            tags=tags,
+            tags=_outcome_tags(row, payload),
             valid_at=None,
+            # The record holds neither files nor source: the row keeps its own, so the
+            # outcome's text cannot swap them.
+            files=row.files,
+            source_class=row.source_class if is_declarable(row.source_class) else None,
+            source_resource_id=row.source_resource_id,
             if_match_sha256=stored_sha256(row),
             pinned=row.pinned,
         )

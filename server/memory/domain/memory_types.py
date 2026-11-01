@@ -32,6 +32,11 @@ NON_SEARCHABLE_TYPES: frozenset[str] = frozenset({"episodic", "profile"})
 # claim. Reach them explicitly with memory_type="reflection".
 HIDDEN_FROM_UNFILTERED_SEARCH: frozenset[str] = frozenset({"reflection"})
 
+# Types whose rows are identified by their key, not their text: a decision's key is
+# its category + scenario, so two decisions under different keys are two decisions
+# however alike they read.
+KEY_IDENTIFIED_TYPES: frozenset[str] = frozenset({"decision"})
+
 
 def excluded_from_unfiltered_search() -> list[str]:
     """Every type an unfiltered memory.search / memory.ask leaves out:

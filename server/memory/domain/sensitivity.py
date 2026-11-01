@@ -36,13 +36,20 @@ import bisect
 import json
 import re
 from collections.abc import Callable, Hashable, Iterable, Iterator, Sequence
-from typing import Any, Final
+from typing import Any, Final, Literal, TypeGuard, get_args
 
 from server.memory.domain import chunk_shape
 
 HIGH: Final = "high"
 MEDIUM: Final = "medium"
-LEVELS: Final = ("", "low", "medium", "high")
+# A row's sensitivity tier, as a write names it.
+Sensitivity = Literal["", "low", "medium", "high"]
+LEVELS: Final[tuple[Sensitivity, ...]] = get_args(Sensitivity)
+
+
+def is_level(level: str) -> TypeGuard[Sensitivity]:
+    return level in LEVELS
+
 
 # A block without its closing line runs through its base64 body, so every chunk it covers
 # is held. The header-line alternatives come first, or the class would take the `Proc` of
@@ -369,7 +376,7 @@ def _reads_high_text(text: str) -> bool:
     return any(pat.search(text) for pat in _HIGH_SHAPES) or _has_card(text)
 
 
-def detect_sensitivity(text: str) -> str:
+def detect_sensitivity(text: str) -> Sensitivity:
     """Classify `text`: 'high' for a credential, card, SSN or stated PIN, 'medium' for
     contact details or an IBAN, '' otherwise. Order matters — a line with both is 'high'."""
     if not text:
@@ -685,11 +692,11 @@ def listed_text(text: Any) -> str:
     return "" if reads_high(t) else t
 
 
-def resolve_sensitivity(requested: str | None, text: str) -> str:
+def resolve_sensitivity(requested: str | None, text: str) -> Sensitivity:
     """The caller's explicit level wins; an unset level is detected from the
     value when `memory_sensitivity_autodetect` is on, else stays ''."""
     level = (requested or "").strip().lower()
-    if level in LEVELS and level:
+    if level and is_level(level):
         return level
     from server.settings import settings
 
@@ -698,18 +705,18 @@ def resolve_sensitivity(requested: str | None, text: str) -> str:
     return detect_sensitivity(text or "")
 
 
-def max_sensitivity(levels: Iterable[str | None]) -> str:
+def max_sensitivity(levels: Iterable[str | None]) -> Sensitivity:
     """The highest tier among `levels` ('' < low < medium < high); unknown
     strings count as ''."""
     best = 0
     for lv in levels:
         v = (lv or "").strip().lower()
-        if v in LEVELS:
+        if is_level(v):
             best = max(best, LEVELS.index(v))
     return LEVELS[best]
 
 
-def inherited_sensitivity(source_levels: Iterable[str | None], text: str) -> str:
+def inherited_sensitivity(source_levels: Iterable[str | None], text: str) -> Sensitivity:
     """Label for a row synthesised FROM other rows (a consolidated topic
     memory, a merged canonical row): never lower than its most sensitive
     source, and never lower than what the synthesised text itself contains.

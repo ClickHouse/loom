@@ -19,9 +19,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.memory.domain.decision_schema import SCHEMA_FIELDS, SCHEMA_NAME
-
+from server.memory.domain.decision_statement import alternatives, collapse_ws
+from server.memory.domain.files import detect_value_files
 CHAIN_RELATIONS: tuple[str, ...] = ("caused", "influenced", "derived_from")
 MAX_ALTERNATIVES = 10
+ALTERNATIVE_CHARS = 300
 MAX_CHAIN_NODES = 200
 
 
@@ -37,10 +39,10 @@ def clean_alternatives(items: list[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for a in items or []:
-        t = " ".join(str(a).split()).strip()
+        t = collapse_ws(a)
         if t and t.lower() not in seen:
             seen.add(t.lower())
-            out.append(t[:300])
+            out.append(t[:ALTERNATIVE_CHARS])
         if len(out) >= MAX_ALTERNATIVES:
             break
     return out
@@ -63,26 +65,39 @@ def record_fields(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return fields
 
 
-def memory_value(payload: dict[str, Any]) -> dict[str, Any]:
-    """The searchable memory row's value: structured, so a precedent hit
-    carries its fields, and the embed text reads as prose."""
-    alts = payload.get("alternatives") or []
-    if isinstance(alts, str):
-        alts = [a for a in alts.split("\n") if a.strip()]
-    return {
-        "kind": "decision",
-        "category": payload.get("category", ""),
-        "scenario": payload.get("scenario", ""),
-        "reasoning": payload.get("reasoning", ""),
-        "outcome": payload.get("outcome", ""),
-        "alternatives": list(alts),
-        "confidence": payload.get("confidence"),
-        "decision_maker": payload.get("decision_maker", ""),
-        "run_id": payload.get("run_id", ""),
-        "realized_outcome": payload.get("realized_outcome", ""),
-        "success": payload.get("success"),
-        "made_at": payload.get("made_at", ""),
-    }
+_TEXT_FIELDS = ("category", "scenario", "outcome", "reasoning")
+
+
+def statement_fields(payload: dict[str, Any]) -> list[str]:
+    """The fields the statement is built from, as the record stores them (alternatives at
+    their ALTERNATIVE_CHARS cut): what the row's sensitivity and attribute labels read (the
+    row never holds `decision_maker` or `run_id`)."""
+    names = (*_TEXT_FIELDS, "realized_outcome")
+    texts = [str(payload.get(f) or "") for f in names] + alternatives(payload)
+    return [t for t in texts if t.strip()]
+
+
+def blacklist_fields(payload: dict[str, Any]) -> list[str]:
+    """Every caller-written field of the decision as the record stores it: what the
+    blacklist reads, the statement's fields plus `decision_maker` and `run_id`."""
+    extra = [str(payload.get(f) or "") for f in ("decision_maker", "run_id")]
+    return statement_fields(payload) + [t for t in extra if t.strip()]
+
+
+def _without_cut_token(alternative: str) -> str:
+    """A stored alternative cut at ALTERNATIVE_CHARS without the token it may end inside.
+    One exactly ALTERNATIVE_CHARS long was perhaps not cut; it errs on attaching nothing."""
+    if len(alternative) < ALTERNATIVE_CHARS:
+        return alternative
+    return alternative.rsplit(" ", 1)[0] if " " in alternative else ""
+
+
+def decision_files(payload: dict[str, Any]) -> list[str] | None:
+    """The files the decision's text names, as the record stores it (never the realized
+    outcome's); None when it names none, so a re-record keeps the row's files."""
+    alts = [_without_cut_token(a) for a in alternatives(payload)]
+    texts = [str(payload.get(f) or "") for f in _TEXT_FIELDS] + alts
+    return detect_value_files("\n".join(texts)) or None
 
 
 def parse_record_json(raw: Any) -> dict[str, Any]:

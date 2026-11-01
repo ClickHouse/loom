@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
 from server.memory.api.models_crud import MemoryGetOutput
 from server.memory.domain.delete_marks import caller_trace
+from server.memory.domain.sensitivity import Sensitivity
 from server.operations.base import MCP_HIDDEN
 
 # ============================================================
@@ -79,7 +80,7 @@ class _BulkSetEntry(BaseModel):
     evidence: str = ""
     grounding: str = ""
     # Sensitivity tier; '' = detect from the value.
-    sensitivity: Literal["", "low", "medium", "high"] = ""
+    sensitivity: Sensitivity = ""
 
     @field_validator("source_trace")
     @classmethod

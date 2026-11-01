@@ -2640,6 +2640,9 @@ export interface DecisionRecordInput {
   influenced_by?: string[];
   tags?: string[];
   valid_at?: string | null;
+  files?: string[] | null;
+  source_class?: "derived" | "external" | "imported" | null;
+  source_resource_id?: string;
 }
 
 export interface DecisionRecordOutput {

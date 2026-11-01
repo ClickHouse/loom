@@ -28,7 +28,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Final
+from typing import Final, Literal, TypeGuard, get_args
 
 from server.core.errors import ValidationError
 
@@ -38,7 +38,13 @@ SOURCE_CLASSES: Final[frozenset[str]] = frozenset(
 # What a request body is allowed to say about its own write: only a downgrade.
 # `derived`: an inference over other memories is lower
 # standing than an assertion, so declaring it is a downgrade too.
-CALLER_DECLARABLE: Final[frozenset[str]] = frozenset({"external", "imported", "derived"})
+DeclaredSourceClass = Literal["derived", "external", "imported"]
+CALLER_DECLARABLE: Final[frozenset[str]] = frozenset(get_args(DeclaredSourceClass))
+
+
+def is_declarable(source_class: str) -> TypeGuard[DeclaredSourceClass]:
+    return source_class in CALLER_DECLARABLE
+
 
 # source_trace conventions already in the data → class.
 _TRACE_PREFIXES: Final[tuple[tuple[str, str], ...]] = (
@@ -146,7 +152,7 @@ def source_class_for(
     if req:
         if req not in SOURCE_CLASSES:
             raise ValidationError(f"source_class {req!r} is not one of {sorted(SOURCE_CLASSES)}")
-        if req not in CALLER_DECLARABLE:
+        if not is_declarable(req):
             raise ValidationError(
                 f"source_class {req!r} is decided by the server; a caller may only "
                 f"declare {sorted(CALLER_DECLARABLE)}"
