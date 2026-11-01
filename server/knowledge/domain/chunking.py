@@ -23,8 +23,8 @@ from dataclasses import dataclass, field
 from typing import TypedDict
 
 # The closing `#` run is stripped in `_atx` (a pattern tail backtracks on long
-# blanks); a bare `#` is an empty heading, `#hashtag` none.
-_ATX = re.compile(r"^(#{1,6})(?:[ \t]+(.*)|[ \t]*\r?)$")
+# blanks); a bare `#` is an empty heading, `#hashtag` none. Indented up to three spaces.
+_ATX = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*\r?)$")
 # Indented up to three spaces (a tab is four columns); `\r?`: a CRLF line keeps its `\r`.
 _SETEXT_UNDERLINE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*\r?$")
 _HTML_H = re.compile(r"^\s*<h([1-6])[^>]*>(.*?)</h\1>\s*$", re.IGNORECASE)
@@ -102,14 +102,14 @@ _BLOCK_TAGS = (
 )
 # The start of an HTML block, by CommonMark's start condition: 1-5 (a raw-text
 # tag, `<!--`, `<?`, `<![CDATA[`, `<!X`) end on the line holding their end
-# marker, 6 (a block-level tag) and 7 (a line of only tags) at a blank line.
-# A tag's attributes are one `[^>]*` run, so a repeated tag has one way to match
-# and the pattern stays linear.
+# marker, 6 (a block-level tag) and 7 (a line holding one open or closing tag)
+# at a blank line. A tag's attributes are one `[^>]*` run, so the pattern stays
+# linear.
 _HTML_OPEN = re.compile(
     r"^ {0,3}(?:<(?P<raw>pre|script|style|textarea)(?=[\s>]|$)|(?P<comment><!--)"
     r"|(?P<pi><\?)|(?P<cdata><!\[CDATA\[)|(?P<decl><![A-Za-z])"
     rf"|(?P<block></?(?:{_BLOCK_TAGS})(?=[\s/>]|$))"
-    r"|(?P<tags>(?:</?[A-Za-z][\w-]*(?:[\s/][^>]*)?>\s*)+$))",
+    r"|(?P<tags></?[A-Za-z][\w-]*(?:[\s/][^>]*)?>[ \t]*\r?$))",
     re.IGNORECASE,
 )
 _HTML_END = {"comment": "-->", "pi": "?>", "cdata": "]]>", "decl": ">"}
@@ -222,7 +222,9 @@ def _heading_at(lines: list[str], i: int) -> tuple[int, str, int]:
         and not _LIST_ITEM.match(line)
         and not _THEMATIC_BREAK.match(line)
         and _html_block(line) is None
-        # A line closing a comment: read one line at a time, it may be inside one.
+        # A comment opened inside a paragraph is not a block and is not tracked, so a
+        # line ending one (`Intro <!-- a` ... `b -->`) is refused: a heuristic, as
+        # CommonMark would take a plain `Next step -->` over `---` as a title.
         and not line.rstrip().endswith("-->")
         and not line.lstrip().startswith(">")
     ):
@@ -243,7 +245,8 @@ class _Opaque:
     def takes(self, line: str) -> bool:
         """Whether `line` belongs to an open block, or opens a fence."""
         if self.html is not None:
-            if (not line.strip()) if not self.html else self.html in line.lower():
+            ends = self.html in line.lower() if self.html else not line.strip()
+            if ends:
                 self.html = None
         else:
             fence = _fence_marker(line)
@@ -263,7 +266,19 @@ class _Opaque:
             end = opened[0]
             # A block ends on its opening line when its end marker is there too.
             self.html = None if end and end in line.lower() else end
-        self.after_text = bool(line.strip()) and self.html is None
+            self.after_text = False
+            return
+        # Only a paragraph's line: a rule or an empty `#` line ends what is above it.
+        self.after_text = (
+            bool(line.strip()) and not _THEMATIC_BREAK.match(line) and _atx_line(line) is None
+        )
+
+    def heading(self, line: str) -> None:
+        """`line` started a heading. A one-line `<hN>` opens a block-tag HTML
+        block in CommonMark, which runs to the next blank line."""
+        self.after_text = False
+        if _HTML_H.match(line):
+            self.html = ""
 
 
 def detect_sections(content: str) -> list[Section]:
@@ -299,9 +314,9 @@ def detect_sections(content: str) -> list[Section]:
                 cur = Section(
                     path=tuple(t for _, t in stack), depth=depth, start=offset + heading_len
                 )
+                opaque.heading(line)
                 offset += heading_len
                 i += consumed
-                opaque.after_text = False
                 continue
             opaque.text(line)
         cur.lines.append(line)

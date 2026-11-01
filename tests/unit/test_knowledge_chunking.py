@@ -308,3 +308,28 @@ def test_an_autolink_over_a_rule_is_a_heading() -> None:
     assert [s.path for s in detect_sections("<https://example.com>\n---\n\nx\n")] == [
         ("https://example.com",)
     ]
+
+
+def test_a_line_of_several_tags_is_a_paragraph_a_heading_can_interrupt() -> None:
+    text = '<a href="https://x"><img src="logo.png"></a>\n# Project\n\nbody\n'
+    assert [s.path for s in detect_sections(text) if s.path] == [("Project",)]
+
+
+def test_one_tag_on_a_line_after_a_closed_block_opens_a_block() -> None:
+    text = '<!-- toc -->\n<img src="x">\n# X\n'
+    assert not any(s.path for s in detect_sections(text))
+    rule = '---\n<img src="x">\n# X\n'  # a rule is no paragraph either
+    assert not any(s.path for s in detect_sections(rule))
+
+
+def test_an_atx_heading_may_be_indented_up_to_three_spaces() -> None:
+    assert [s.path for s in detect_sections("   # Setup\n\nx\n") if s.path] == [("Setup",)]
+    assert not any(s.path for s in detect_sections("    # code\n\nx\n")), "four spaces is code"
+
+
+def test_a_one_line_hn_heading_opens_a_block_to_the_blank_line() -> None:
+    assert [s.path for s in detect_sections("<h2>A</h2>\n# B\n") if s.path] == [("A",)]
+    assert [s.path for s in detect_sections("<h2>A</h2>\n\n# B\n") if s.path] == [
+        ("A",),
+        ("B",),
+    ]
