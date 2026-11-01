@@ -257,7 +257,41 @@ was `caused_by` or `influenced_by`. It writes:
 - an edge from each `caused_by` / `influenced_by` key to the decision.
 
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
-(`superseded_prior=true`); history keeps it.
+(`superseded_prior=true`); history keeps it. When the writer of a pinned decision decides it again, the call is
+refused with 409 `PINNED_CONFLICT` and nothing is written; an admin unpins it with `memory.unpin` first. The pin
+guards only its writer's row: another identity's decision on the same scenario still supersedes the record. The new
+record holds only what the new decision states: fields it leaves out, and an earlier `realized_outcome` or `success`,
+are not carried over, whether it is written by `decision.record` or `memory.record.write`. A `decision.outcome`
+without `success` keeps the record's verdict. When another decision key already holds the same text, `memory.set`
+merges the row into it and nothing is written: `decision.record` answers that key (empty if that decision can no
+longer be read) with an empty `record_id` and no edges, and `decision.outcome` answers `updated=false`, credits no
+memories and names that key in `next` (or, when that decision can no longer be read, asks for the call again).
+
+The record holds the text of its last writer, the agent, user and session that recorded it, so a delete of that
+writer's decision row retires it; an expired row still counts as live. Another identity's row under the same key was
+superseded in the record plane and does not keep the record.
+
+- **Retires the record**: `memory.delete` or `memory.delete_version` of the writer's decision row, including
+  `memory.move` with `keep_redirect=false` and `memory.apply` with `action="delete"`, which delete through
+  `memory.delete`; `conflicts.resolve` and `memory.dedup_resolve` for the side they tombstone; `blacklist.add`
+  with `sweep=true` and `blacklist.sweep`. `decision.chain`, `decision.precedents` and `decision.outcome` stop
+  serving it, and `memory.record.history` shows the last version with `status="tombstoned"`. Two retirements that
+  race can each write a tombstoned version, so history may list the tombstone twice.
+- **After a retirement**: `memory.restore`, or `namespace.rollback` past the delete, revives the row but not the
+  record; call `decision.record` again. A row moved with `keep_redirect=false` is no longer a decision: its new key
+  has no record, and `decision.record` with the same category and scenario records it again under its derived key.
+- **Leaves the record active**: a delete of another identity's row; `memory.clear` and `namespace.rollback`, which
+  tombstone rows another way; `memory.move` with `keep_redirect=true`, whose redirect row still counts as the
+  writer's live row under the old key; a `memory.set` under the writer's identity that rewrites the key with another
+  `memory_type`; the expiry sweep's tombstone of an expired writer row.
+- **A record with no decision row**: `memory.record.write` on the `decision` schema writes the record alone.
+  `decision.chain` serves it, and `decision.outcome` answers not-found for it; record decisions with `decision.record`.
+- **`decision.outcome`**: writes under the record's writer, keeping a pinned row's pin, and answers not-found when
+  the writer's row is not live. Its row write is conditional on the row it read: it answers 409
+  `PRECONDITION_FAILED` when the decision changes during the call or another conditional write holds the key, and 503
+  when the key's lease store is unreachable; call it again. The condition is on the row's value, not its pin: a
+  `memory.unpin` that lands between the outcome's read and its write is undone, as the outcome writes the row pinned
+  again.
 
 | Operation             | Role   | Does                                                                                               |
 | --------------------- | ------ | -------------------------------------------------------------------------------------------------- |

@@ -2604,6 +2604,7 @@ export interface DecisionOutcomeOutput {
   memory_key: string;
   updated: boolean;
   memories_credited?: number;
+  next?: string;
 }
 
 export interface DecisionPrecedentsInput {
@@ -5445,6 +5446,7 @@ export interface MemoryRecordRow {
   memory_id?: string;
   record?: Record<string, unknown>;
   field_states?: Record<string, string>;
+  status?: "active" | "superseded" | "rejected" | "tombstoned";
   valid_at?: string | null;
   valid_to?: string | null;
 }

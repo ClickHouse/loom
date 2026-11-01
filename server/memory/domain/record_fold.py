@@ -17,6 +17,9 @@ Identity fields never reach here differently: the canonical key already
 agreed, or the write would not be a supersession. The loser of rule 5
 stays queryable through memory.record.history (the superseded row keeps
 its record_json) and through loom.memory_record_conflicts.
+
+`restate` is the decision schema's rule: the incoming record is the whole record, and
+agreed, added and changed fields are still reported.
 """
 
 from __future__ import annotations
@@ -110,4 +113,22 @@ def fold(prior: dict[str, Any], incoming: dict[str, Any]) -> FoldResult:
             continue
         merged[name] = i
         out.changed.append({"field": name, "prior": p, "incoming": i})
+    return out
+
+
+def restate(prior: dict[str, Any], incoming: dict[str, Any]) -> FoldResult:
+    """`incoming` as the whole record: nothing is kept from `prior`. Reports what agreed,
+    was added or changed among the fields `incoming` states; a field it leaves empty is
+    stored empty and not reported."""
+    out = FoldResult(merged=dict(incoming))
+    for name, i in incoming.items():
+        p = prior.get(name)
+        if is_empty(i):
+            continue
+        if is_empty(p):
+            out.added.append(name)
+        elif canonical(p) == canonical(i):
+            out.agreed.append(name)
+        else:
+            out.changed.append({"field": name, "prior": p, "incoming": i})
     return out

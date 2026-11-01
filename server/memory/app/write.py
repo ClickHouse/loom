@@ -70,6 +70,13 @@ _WRITE_OUTCOME_BY_ERROR_CODE: dict[str, str] = {
 _WRITE_OUTCOME_UNMAPPED = "error"
 
 
+def stored_sha256(row: Any) -> str:
+    """The hash `if_match_sha256` is checked against: of the row's stored value."""
+    if row is None or row.value is None:
+        return ""
+    return _content_sha256_of_stored(json.dumps(row.value, default=str))
+
+
 def _guard_existing_row(
     existing: Any, input: MemorySetInput, retyped_from: str
 ) -> tuple[bool, MemorySetOutput | None]:
@@ -86,11 +93,7 @@ def _guard_existing_row(
     assert_own_row(existing, op="memory.set")  # a code-namespace member's own rows
     if existing is None:
         return False, None
-    existing_sha = getattr(existing, "content_sha256", "") or (
-        _content_sha256_of_stored(json.dumps(existing.value, default=str))
-        if existing.value is not None
-        else ""
-    )
+    existing_sha = getattr(existing, "content_sha256", "") or stored_sha256(existing)
     restated = _content_sha256(input.value) == existing_sha
     if not restated:
         _lock.assert_unlocked(existing, "value", op="memory.set")
@@ -471,11 +474,7 @@ async def _set_check_if_match(w: _SetWrite) -> None:
             strong=True,
             scope=request_scope(),
         )
-        current_sha = (
-            _content_sha256_of_stored(json.dumps(existing.value, default=str))
-            if existing is not None and existing.value is not None
-            else ""
-        )
+        current_sha = stored_sha256(existing)
         if current_sha != input.if_match_sha256:
             raise HTTPException(
                 status_code=409,

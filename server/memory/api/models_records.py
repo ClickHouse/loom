@@ -232,6 +232,9 @@ class MemoryRecordRow(BaseModel):
     memory_id: str = ""
     record: dict[str, Any] = Field(default_factory=dict)
     field_states: dict[str, str] = Field(default_factory=dict)
+    # The version's lifecycle state; memory.record.query selects active rows, history also
+    # shows superseded versions and the tombstoned one a decision retirement wrote.
+    status: Literal["active", "superseded", "rejected", "tombstoned"] = "active"
     valid_at: datetime | None = None
     valid_to: datetime | None = None
 

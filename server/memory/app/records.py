@@ -35,8 +35,9 @@ from server.memory.api.models_records import (
     SchemaFieldOutput,
 )
 from server.memory.domain import record_constraints
+from server.memory.domain.decision_schema import SCHEMA_NAME
 from server.memory.domain.record_values import FIELD_RE, _check_record_fields, coerce_record_value
-from server.memory.store import next_version
+from server.memory.store import active_record, next_version, supersede_active_record
 from server.memory.store.record_query import _build_record_query, active_record_tally
 
 _FIELD_TYPES = {"string", "number", "integer", "boolean"}
@@ -336,43 +337,32 @@ async def _fold_onto_active_record(
 ) -> _RecordFold:
     """Field-level fold onto the active record for this key: an empty incoming field keeps
     the survivor's value, spelling variants are agreement, lists union, and a real
-    disagreement is recorded with both values before the incoming one wins."""
+    disagreement is recorded with both values before the incoming one wins. A decision
+    record keeps nothing of the survivor."""
     fold_out: dict[str, Any] = {}
     superseded_id = ""
     conflict_rows: list[dict[str, Any]] = []
     filled_fields: list[str] = []
     if memory_key:
-        prior_rows = await ch.query_all(
-            """
-            SELECT toString(record_id) AS rid, toString(memory_id) AS mid, record_json
-            FROM loom.memory_records FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND schema_name = {schema:String} AND memory_key = {key:String}
-              AND status = 'active' AND tombstoned_at IS NULL
-            ORDER BY version DESC
-            LIMIT 1
-            """,
-            {
-                "org": input.org,
-                "ns": input.namespace,
-                "schema": input.schema_name,
-                "key": memory_key,
-            },
+        prior_row = await active_record(
+            input.org, input.namespace, input.schema_name, memory_key, ch=ch
         )
-        if prior_rows:
-            from server.memory.domain.record_fold import fold
+        if prior_row is not None:
+            from server.memory.domain.record_fold import fold, restate
 
-            prior_row = prior_rows[0]
             try:
-                prior_json = json.loads(str(prior_row.get("record_json") or "{}"))
+                prior_json = json.loads(prior_row.record_json or "{}")
             except json.JSONDecodeError:
                 prior_json = {}
-            result = fold(prior_json, record_json)
+            # A decision is one writer's statement, and the survivor may be another
+            # writer's: keeping its fields would serve them past their writer's delete.
+            combine = restate if input.schema_name == SCHEMA_NAME else fold
+            result = combine(prior_json, record_json)
             record_json = result.merged
-            fold_out = result.as_dict()
-            superseded_id = str(prior_row["rid"])
             filled_fields = list(result.filled_from_prior)
-            prior_mid = str(prior_row.get("mid") or "") or None
+            fold_out = result.as_dict()
+            superseded_id = prior_row.record_id
+            prior_mid = prior_row.memory_id
             conflict_rows = [
                 {
                     "org": input.org,
@@ -394,57 +384,6 @@ async def _fold_onto_active_record(
                 for c in result.changed
             ]
     return _RecordFold(record_json, fold_out, superseded_id, conflict_rows, filled_fields)
-
-
-async def _supersede_active_record(
-    ch: CHClient,
-    input: MemoryRecordWriteInput,
-    memory_key: str,
-    *,
-    version: int,
-    now: datetime,
-) -> None:
-    """Close the key's active record ahead of the new one; a no-op for an anonymous record."""
-    if memory_key:
-        await ch.execute(
-            """
-            INSERT INTO loom.memory_records
-                (record_id, org, namespace, schema_id, schema_name, memory_key,
-                 memory_id, identity_agent, user_id, session_id, record_json,
-                 status, valid_at, valid_to, version, created_at, updated_at,
-                 tombstoned_at)
-            SELECT
-                record_id, org, namespace, schema_id, schema_name, memory_key,
-                memory_id, identity_agent, user_id, session_id, record_json,
-                -- Computed columns must NOT reuse source column names
-                -- (`AS status` would shadow the column and turn the
-                -- `status = 'active'` predicate below into
-                -- 'superseded' = 'active' — constant false, silent no-op;
-                -- see server/code/store/index/edges.py live_edges_for_path). INSERT..SELECT
-                -- maps by POSITION, so the alias names are free.
-                'superseded' AS new_status, valid_at,
-                if(valid_to IS NULL, {close:DateTime}, valid_to) AS new_valid_to,
-                {ver:UInt64} AS new_version, created_at,
-                {now:DateTime} AS new_updated_at,
-                tombstoned_at
-            FROM loom.memory_records FINAL
-            WHERE org = {org:String}
-              AND namespace = {ns:String}
-              AND schema_name = {schema:String}
-              AND memory_key = {key:String}
-              AND status = 'active'
-              AND tombstoned_at IS NULL
-            """,
-            params={
-                "org": input.org,
-                "ns": input.namespace,
-                "schema": input.schema_name,
-                "key": memory_key,
-                "close": input.valid_at or now,
-                "ver": version,
-                "now": now,
-            },
-        )
 
 
 def _record_field_rows(
@@ -579,8 +518,18 @@ async def handle_memory_record_write(
     # write mints a fresh record_id, so without this two writes for the same
     # memory_key both stay 'active'. Close the prior validity interval
     # (valid_to := new fact's valid_at, or now() when world-time is unknown) so
-    # as-of reads still see it. No-op for anonymous ("") records.
-    await _supersede_active_record(ch, input, memory_key, version=version, now=now)
+    # as-of reads still see it.
+    if memory_key:
+        await supersede_active_record(
+            input.org,
+            input.namespace,
+            input.schema_name,
+            memory_key,
+            close_at=input.valid_at or now,
+            version=version,
+            now=now,
+            ch=ch,
+        )
 
     await get_client().insert(
         "loom.memory_records",
@@ -643,8 +592,12 @@ async def _records_by_ids(
     if history:
         source = "loom.memory_record_versions"
         order = "ORDER BY updated_at DESC, version DESC LIMIT 1 BY record_id, version"
+        # Serves the tombstoned version a decision delete wrote; hides any other row with
+        # tombstoned_at set.
+        visible = "AND (status = 'tombstoned' OR tombstoned_at IS NULL)"
     else:
         source, order = "loom.memory_records FINAL", "ORDER BY updated_at DESC"
+        visible = "AND tombstoned_at IS NULL"
     # `AS rid`/`AS mid`, never `AS record_id`/`AS memory_id`: a same-name
     # alias SHADOWS the column, so `record_id IN {ids:Array(UUID)}` would
     # compare the String alias against UUIDs and match nothing, so every hydration would
@@ -652,12 +605,12 @@ async def _records_by_ids(
     rec_rows = await get_client().query_all(
         f"""
         SELECT toString(record_id) AS rid, memory_key,
-               toString(memory_id) AS mid, record_json, valid_at, valid_to
+               toString(memory_id) AS mid, record_json, status, valid_at, valid_to
         FROM {source}
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
           AND record_id IN {{ids:Array(UUID)}}
-          AND tombstoned_at IS NULL
+          {visible}
         {order}
         """,
         params={"org": org, "ns": namespace, "ids": record_ids},
@@ -691,6 +644,7 @@ async def _records_by_ids(
                 memory_id=str(row.get("mid") or ""),
                 record=record,
                 field_states=states.get(rid, {}),
+                status=row["status"],
                 valid_at=row.get("valid_at"),
                 valid_to=row.get("valid_to"),
             )

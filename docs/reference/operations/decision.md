@@ -38,16 +38,17 @@ Close the loop on a decision once reality has answered: record what actually hap
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `memory_key` | `str` | required | The active decision to update; an unknown key answers 404. |
+| `memory_key` | `str` | required | The active decision to update; answers 404 when there is none, or when the record's writer has no live decision row under the key. |
 | `realized_outcome` | `str` | required | What actually happened, stored on the decision record. |
-| `success` | `bool \| None` | `None` | None = outcome known but not judged; True/False also credits (or marks) the memories the deciding run relied on, via the run ledger. |
+| `success` | `bool \| None` | `None` | None keeps the record's verdict; True/False sets it and credits (or marks) the deciding run's memories. |
 | `agent` | `str` | `'*'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `memory_key` | `str` | The decision's key, echoed. |
-| `updated` | `bool` | Always true: a missing decision answers 404 instead. |
+| `updated` | `bool` | False when memory.set merged the revision into another decision of the same text and nothing was written; a missing decision answers 404 instead. |
 | `memories_credited` | `int` | memories credited through the run ledger (run.complete memories_used). |
+| `next` | `str` | Why nothing was written when `updated` is false; "" otherwise. |
 
 ## `decision.precedents`
 
@@ -98,10 +99,10 @@ Record a DECISION as a first-class object — call it whenever you choose betwee
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `memory_key` | `str` | The decision's key, derived from category + scenario; pass it to `decision.outcome` and `decision.chain`. |
-| `record_id` | `str` | The id of the `decision` record version written. |
+| `memory_key` | `str` | The decision's key, derived from category + scenario, to pass to `decision.outcome` and `decision.chain`; after a merge, the key memory.set merged it into ("" if that row can no longer be read). |
+| `record_id` | `str` | The id of the `decision` record version written; "" after a merge. |
 | `superseded_prior` | `bool` | True when an active decision for the same category + scenario existed and is now superseded by this one. |
 | `edges_written` | `int` | How many `caused` / `influenced` edges were written; a failed link is skipped. |
-| `next` | `str` | Plain-text hint naming the follow-up operations. |
+| `next` | `str` | Plain-text hint naming the follow-up operations, or why nothing was written after a merge. |
 
 <!-- prettier-ignore-end -->

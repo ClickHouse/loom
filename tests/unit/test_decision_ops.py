@@ -1,10 +1,13 @@
-"""Decisions as first-class records: key derivation, field
-shaping, the causal walk, and the four handlers over stubbed planes."""
+"""Decisions as first-class records: key derivation, field shaping, the causal walk and
+the four handlers over stubbed planes. The clickhouse-local tests of the record's
+retirement and the outcome's write are in test_decision_retirement.py."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -12,7 +15,10 @@ from unittest.mock import patch
 import pytest
 
 from server.memory.app import decisions as svc
+from server.memory.domain.decision_schema import SCHEMA_FIELDS
 from server.memory.domain.edge_relations import canonical_link_relation
+from tests.unit.clickhouse_local import ddl
+from tests.unit.decision_inputs import record_input
 
 
 def test_decision_key_is_the_record_plane_identity_key() -> None:
@@ -36,7 +42,7 @@ def test_record_fields_mark_absent_optionals_and_join_alternatives() -> None:
     assert f["alternatives"] == {"value": "hotfix\nwait", "state": "value"}
     assert f["realized_outcome"] == {"state": "absent"} and f["success"] == {"state": "absent"}
     assert f["confidence"]["value"] == 0.8
-    assert set(f) == {s["name"] for s in svc.SCHEMA_FIELDS}
+    assert set(f) == {s["name"] for s in SCHEMA_FIELDS}
 
 
 def test_clean_alternatives_dedupes_and_caps() -> None:
@@ -89,7 +95,7 @@ class _CH:
         self.queries.append(sql)
         if "FROM loom.memory_records" in sql:
             return [
-                {"memory_key": k, "record_json": json.dumps(v), "created_at": None}
+                {"memory_key": k, "record_json": json.dumps(v), "created_at": datetime(2026, 1, 1)}
                 for k, v in self.records.items()
                 if k in (params or {}).get("keys", [])
             ]
@@ -107,8 +113,18 @@ class _CH:
         self.queries.append(sql)
         if "FROM loom.agent_runs" in sql:
             return {"memories_used": list(self.run_used)}
-        if "identity_agent" in sql:
-            return {"identity_agent": "claude", "user_id": "-", "session_id": "s1"}
+        if "FROM loom.memory FINAL" in sql and "memory_type = 'decision'" in sql:
+            (key,) = (params or {})["keys"]
+            rec = self.records.get(key)
+            if rec is None:
+                return None
+            return {
+                "identity_agent": "claude",
+                "user_id": "-",
+                "session_id": "s1",
+                "record_json": json.dumps(rec),
+                "created_at": datetime(2026, 1, 1),
+            }
         return None
 
 
@@ -142,7 +158,7 @@ def env(monkeypatch):
 
     async def fake_set(inp):
         calls["set"].append(inp)
-        return SimpleNamespace(version=1)
+        return SimpleNamespace(version=1, conflict_verdict="clear")
 
     async def fake_link(inp):
         calls["link"].append(inp)
@@ -156,6 +172,9 @@ def env(monkeypatch):
             for i, k in enumerate(ch.records)
         ]
         return SimpleNamespace(results=hits, embedding_model="fake")
+
+    async def fake_tombstone(*_a, **_k):
+        return None
 
     async def fake_outcome_run(inp):
         calls["outcome_run"].append(inp)
@@ -174,38 +193,25 @@ def env(monkeypatch):
     monkeypatch.setattr(mops, "handle_memory_link", fake_link)
     monkeypatch.setattr(mops, "handle_memory_outcome_run", fake_outcome_run)
     monkeypatch.setattr(msearch, "handle_memory_search", fake_search)
+
+    async def fake_get_by_key(identity, memory_key, **_kw):
+        # The writer's live row: the last memory.set under the key.
+        sets = [c for c in calls["set"] if c.memory_key == memory_key]
+        return SimpleNamespace(value=sets[-1].value, pinned=False) if sets else None
+
+    monkeypatch.setattr(h, "tombstone_decision_records", fake_tombstone)
+    monkeypatch.setattr(h, "get_by_key", fake_get_by_key)
     with patch.object(h, "get_client", return_value=ch):
         yield ch, calls, h
 
 
-def _record_input(**over: Any):
-    from server.memory.api.models_decision import DecisionRecordInput
-
-    base: dict[str, Any] = dict(
-        org="o",
-        namespace="n",
-        agent="claude",
-        run_id="r1",
-        category="Deploy",
-        scenario="Roll back or hotfix the 26.5 image?",
-        reasoning="Rollback is 2 minutes; the fix is untested.",
-        outcome="rollback",
-        alternatives=["hotfix forward", "wait"],
-        confidence=0.8,
-        caused_by=["ci:flaky-runner"],
-        influenced_by=["policy:no-friday-deploys", ""],
-    )
-    base.update(over)
-    return DecisionRecordInput(**base)
-
-
 def test_record_writes_schema_once_record_memory_and_edges(env) -> None:
     ch, calls, h = env
-    out = asyncio.run(h.handle_decision_record(_record_input()))
+    out = asyncio.run(h.handle_decision_record(record_input()))
     key = svc.decision_key("Deploy", "Roll back or hotfix the 26.5 image?")
     assert out.memory_key == key and out.record_id == "rec-1" and out.superseded_prior is False
     assert len(calls["schema"]) == 1 and calls["schema"][0].name == "decision"
-    assert [f.name for f in calls["schema"][0].fields] == [s["name"] for s in svc.SCHEMA_FIELDS]
+    assert [f.name for f in calls["schema"][0].fields] == [s["name"] for s in SCHEMA_FIELDS]
     rec = calls["record"][0]
     assert rec.schema_name == "decision" and rec.memory_key == key
     assert rec.fields["alternatives"].value == "hotfix forward\nwait"
@@ -224,7 +230,7 @@ def test_record_writes_schema_once_record_memory_and_edges(env) -> None:
     assert all(ln.to_key == key and ln.run_id == "r1" for ln in calls["link"])
     assert "decision.outcome" in out.next
     # second write for the same scenario: schema not re-registered, prior reported
-    again = asyncio.run(h.handle_decision_record(_record_input(outcome="hotfix forward")))
+    again = asyncio.run(h.handle_decision_record(record_input(outcome="hotfix forward")))
     assert again.superseded_prior is True and len(calls["schema"]) == 1
 
 
@@ -232,10 +238,10 @@ def test_precedents_search_decisions_and_join_records(env) -> None:
     from server.memory.api.models_decision import DecisionPrecedentsInput
 
     ch, calls, h = env
-    asyncio.run(h.handle_decision_record(_record_input()))
+    asyncio.run(h.handle_decision_record(record_input()))
     asyncio.run(
         h.handle_decision_record(
-            _record_input(scenario="Pin or float the runner image?", outcome="pin")
+            record_input(scenario="Pin or float the runner image?", outcome="pin")
         )
     )
     out = asyncio.run(
@@ -262,7 +268,7 @@ def test_chain_walks_authored_edges_and_attaches_decisions(env) -> None:
     from server.memory.api.models_decision import DecisionChainInput
 
     ch, calls, h = env
-    d = asyncio.run(h.handle_decision_record(_record_input()))
+    d = asyncio.run(h.handle_decision_record(record_input()))
     ch.edges.append((d.memory_key, "incident:2026-09-11", "caused"))
     out = asyncio.run(
         h.handle_decision_chain(
@@ -285,7 +291,7 @@ def test_outcome_revises_the_record_and_credits_the_run(env) -> None:
     from server.memory.api.models_decision import DecisionOutcomeInput
 
     ch, calls, h = env
-    d = asyncio.run(h.handle_decision_record(_record_input()))
+    d = asyncio.run(h.handle_decision_record(record_input()))
     ch.run_used = ["ci:flaky-runner", "runbook:rollback"]
     out = asyncio.run(
         h.handle_decision_outcome(
@@ -313,6 +319,16 @@ def test_outcome_revises_the_record_and_credits_the_run(env) -> None:
         "runbook:rollback",
     ]
     assert run_call.run_id == "r1"
+
+
+def test_the_writer_read_and_the_tombstone_are_sequential() -> None:
+    # Pinned by text: a single-node engine treats the setting as a no-op, so no local
+    # test can show a replica missing the delete's tombstone.
+    from server.memory.store import records
+
+    sequential = "SETTINGS select_sequential_consistency = 1"
+    assert records._LIVE_WRITER_RECORD.rstrip().endswith(sequential)
+    assert records._TOMBSTONE_DECISION_RECORDS.rstrip().endswith(sequential)
 
 
 def test_outcome_on_unknown_decision_is_not_found(env) -> None:
@@ -343,3 +359,77 @@ def test_ops_registered_and_search_accepts_decision_type() -> None:
         MemorySearchInput(org="o", namespace="n", query="q", memory_type="decision").memory_type
         == "decision"
     )
+
+
+def test_a_failing_closing_check_still_records_the_decision(env, monkeypatch) -> None:
+    _, calls, h = env
+
+    async def _fails(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("timeout")
+
+    monkeypatch.setattr(h, "tombstone_decision_records", _fails)
+    out = asyncio.run(h.handle_decision_record(record_input()))
+    assert out.record_id == "rec-1" and len(calls["record"]) == 1 and len(calls["set"]) == 1
+
+
+def test_decision_ops_do_not_honour_a_read_scope() -> None:
+    # decision.outcome reads the writer's identity across every user of the key, which a
+    # user- or session-scoped token must not see; the transport gate refuses a token bound
+    # below the namespace for every op that does not honour a read scope.
+    from server.identity.domain.read_scope import honours_read_scope
+
+    for name in ("decision.record", "decision.precedents", "decision.chain", "decision.outcome"):
+        assert not honours_read_scope(name), name
+
+
+def test_record_status_values_match_the_table_enum() -> None:
+    from typing import get_args
+
+    from server.memory.api.models_records import MemoryRecordRow
+
+    enum = re.search(r"`status` Enum8\(([^)]*)\)", ddl("memory_records"))
+    assert enum is not None
+    in_table = re.findall(r"'(\w+)' = \d+", enum.group(1))
+    in_model = get_args(MemoryRecordRow.model_fields["status"].annotation)
+    assert tuple(in_table) == in_model == ("active", "superseded", "rejected", "tombstoned")
+
+
+def test_a_pinned_peer_refusal_does_not_name_the_key(monkeypatch) -> None:
+    # _own_pin_refusal tells the writer's pinned row from a close pinned peer by
+    # `memory_key`, which only memory.set's same-key guard puts in its refusal (that half
+    # runs in test_a_pinned_decision_refuses_its_writer_and_names_memory_unpin).
+    from fastapi import HTTPException
+
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import set_commit
+    from server.memory.app.decision import _own_pin_refusal
+    from server.memory.domain.conflicts import ConflictResult
+
+    async def _rejected(**_kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="rejected", peers=[], pinned_blocker_id="m-1")
+
+    async def _cfg() -> Any:
+        return SimpleNamespace(check_kwargs=dict)
+
+    monkeypatch.setattr("server.memory.app.conflicts.check_on_commit", _rejected)
+    inp = MemorySetInput(
+        org="o",
+        namespace="n",
+        agent="a",
+        memory_key="decision:k",
+        value="v",
+        memory_type="decision",
+    )
+    w = set_commit._SetWrite(
+        input=inp,
+        version=0,
+        retyped_from="",
+        existing=None,
+        expires_at=None,
+        serialized_value="v",
+        embedding=[1.0],
+    )
+    with pytest.raises(HTTPException) as peer:
+        asyncio.run(set_commit._set_conflict_verdict(w, _cfg()))
+    assert peer.value.detail["code"] == "PINNED_CONFLICT"
+    assert _own_pin_refusal(peer.value, "decision:k") is None

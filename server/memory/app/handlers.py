@@ -1092,8 +1092,8 @@ async def _retire_derived(
     existing: Any, *, version: int, op: str, only_its_chunks: bool = False
 ) -> tuple[int, int]:
     """Retire what was derived from the row a tombstone at `version` removed: its vectors,
-    its chunks, a procedure's run ledger, and the summaries built from it. Returns how many
-    consolidated summaries it tombstoned and downgraded."""
+    its chunks, a procedure's run ledger, a decision's record, and the summaries built from
+    it. Returns how many consolidated summaries it tombstoned and downgraded."""
     import server.memory.store as memory_repo
 
     ch = get_client()
@@ -1138,13 +1138,22 @@ async def _retire_derived(
     # A procedure's run ledger must not outlive the procedure.
     # Best-effort: the tombstone above is the erasure of record; a ledger
     # failure is logged, not raised, and namespace erasure sweeps it anyway.
-    if getattr(existing, "memory_type", "") == "procedural":
+    if existing.memory_type == "procedural":
         try:
             await memory_repo.delete_procedure_runs_by_key(
                 existing.org, existing.namespace, existing.memory_key
             )
         except Exception as e:  # noqa: BLE001 — the tombstone stands
             log.warning("%s: procedure_runs cascade failed for %s: %s", op, existing.memory_key, e)
+    # A decision's record is retired once its writer's row is gone, or decision.chain and
+    # decision.precedents keep serving the text the writer deleted.
+    if existing.memory_type == "decision":
+        try:
+            await memory_repo.tombstone_decision_records(
+                existing.org, existing.namespace, [existing.memory_key], version=version, ch=ch
+            )
+        except Exception as e:  # noqa: BLE001 — the tombstone stands
+            log.warning("%s: decision record not retired for %s: %s", op, existing.memory_key, e)
     # A summary built from this row now says something its evidence no
     # longer supports. If none of its sources survive it goes too; otherwise
     # it is downgraded to `conflicted` (review queue) with a

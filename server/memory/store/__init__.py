@@ -12,6 +12,7 @@ imports only the ones above it:
                   column a ReplacingMergeTree write carries forward)
 - `sql`         — statement fragments shared by reads and writes, and the
                   read-your-writes switch
+- `records`     — active typed records: reads, supersede and decision tombstone copies
 - `inserts`     — the committed insert funnels for loom.memory and
                   loom.memory_embeddings
 - `reads`       — heads of loom.memory by key, id, key list and namespace
@@ -138,6 +139,16 @@ from server.memory.store.reads import (
     statuses_by_ids,
     versions_above,
 )
+from server.memory.store.records import (
+    ActiveRecord,
+    DecisionRecord,
+    WriterRecord,
+    active_decision_records,
+    active_record,
+    live_writer_record,
+    supersede_active_record,
+    tombstone_decision_records,
+)
 from server.memory.store.redaction import (
     delete_ask_precedents_by_key,
     delete_llm_response_cache_by_key,
@@ -191,6 +202,11 @@ __all__ = [
     "version_time",
     "reemit_version",
     "_SEQUENTIAL",
+    "ActiveRecord",
+    "DecisionRecord",
+    "WriterRecord",
+    "active_decision_records",
+    "active_record",
     "apply_entities_batch",
     "build_embedding_row",
     "build_first_version_row",
@@ -262,6 +278,7 @@ __all__ = [
     "live_rows_for_keys",
     "live_ids_in_scope",
     "live_keys",
+    "live_writer_record",
     "live_shared_embedding_rows_for_key",
     "live_source_count",
     "live_tally",
@@ -297,10 +314,12 @@ __all__ = [
     "status_divergence_sql",
     "statuses_by_ids",
     "stored_value_text",
+    "supersede_active_record",
     "supersede_duplicates",
     "superseded_successors",
     "tombstone_by_id",
     "tombstone_cascade_by_ids",
+    "tombstone_decision_records",
     "tombstone_embeddings_for_key",
     "tombstone_entity_vectors_for_keys",
     "tombstone_vectors_of",

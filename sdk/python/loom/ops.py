@@ -8775,6 +8775,7 @@ class DecisionOutcomeOutput(TypedDict, total=False):
     memory_key: Required[str]
     updated: Required[bool]
     memories_credited: NotRequired[int]
+    next: NotRequired[str]
 
 
 class DecisionPrecedentsInput(TypedDict, total=False):
@@ -12930,6 +12931,7 @@ class MemoryRecordRow(TypedDict, total=False):
     memory_id: NotRequired[str]
     record: NotRequired[dict[str, Any]]
     field_states: NotRequired[dict[str, str]]
+    status: NotRequired[Literal["active", "superseded", "rejected", "tombstoned"]]
     valid_at: NotRequired[Optional[str]]
     valid_to: NotRequired[Optional[str]]
 

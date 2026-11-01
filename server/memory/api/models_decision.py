@@ -59,17 +59,18 @@ class DecisionRecordInput(BaseModel):
 
 
 class DecisionRecordOutput(BaseModel):
-    # The decision's key, derived from category + scenario; pass it to
-    # `decision.outcome` and `decision.chain`.
+    # The decision's key, derived from category + scenario, to pass to `decision.outcome` and
+    # `decision.chain`; after a merge, the key memory.set merged it into ("" if that row can
+    # no longer be read).
     memory_key: str
-    # The id of the `decision` record version written.
+    # The id of the `decision` record version written; "" after a merge.
     record_id: str
     # True when an active decision for the same category + scenario existed
     # and is now superseded by this one.
     superseded_prior: bool = False
     # How many `caused` / `influenced` edges were written; a failed link is skipped.
     edges_written: int = 0
-    # Plain-text hint naming the follow-up operations.
+    # Plain-text hint naming the follow-up operations, or why nothing was written after a merge.
     next: str = ""
 
 
@@ -145,12 +146,13 @@ class DecisionChainOutput(BaseModel):
 class DecisionOutcomeInput(BaseModel):
     org: str
     namespace: str
-    # The active decision to update; an unknown key answers 404.
+    # The active decision to update; answers 404 when there is none, or when the record's
+    # writer has no live decision row under the key.
     memory_key: str = Field(min_length=1)
     # What actually happened, stored on the decision record.
     realized_outcome: str = Field(min_length=1, max_length=2000)
-    # None = outcome known but not judged; True/False also credits (or marks)
-    # the memories the deciding run relied on, via the run ledger.
+    # None keeps the record's verdict; True/False sets it and credits (or marks) the
+    # deciding run's memories.
     success: bool | None = None
     agent: str = Field(default="*")
 
@@ -158,7 +160,10 @@ class DecisionOutcomeInput(BaseModel):
 class DecisionOutcomeOutput(BaseModel):
     # The decision's key, echoed.
     memory_key: str
-    # Always true: a missing decision answers 404 instead.
+    # False when memory.set merged the revision into another decision of the same text
+    # and nothing was written; a missing decision answers 404 instead.
     updated: bool
     # memories credited through the run ledger (run.complete memories_used).
     memories_credited: int = 0
+    # Why nothing was written when `updated` is false; "" otherwise.
+    next: str = ""
