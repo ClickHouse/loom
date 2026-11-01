@@ -180,18 +180,17 @@ def fold_set_chunks(
         if not _is_set_chunk(h):
             continue
         parent_key = str(h.parent_memory_key)
-        target: tuple[str, ...]
         if rows is None:
             # the key's promoted row: tags unknown, so alone it fails a hard tag filter
-            target, identity, version, tags = (parent_key,), _SHARED_ROW, 0, []
+            row = SetChunkRow(_SHARED_ROW, 0, ())
         else:
             cid = _chunk_id(h)
-            found = rows.get(cid) if cid is not None else None
-            if found is None:
+            named = rows.get(cid) if cid is not None else None
+            if named is None:
                 continue  # no served row's value is known to cut it
-            target, identity = (*found.identity, parent_key), found.identity
-            version, tags = found.version, list(found.tags)
-        _, _, session = identity
+            row = named
+        target = (parent_key,) if rows is None else (*row.identity, parent_key)
+        _, _, session = row.identity
         if target in at:
             parent = out[at[target]]
             out[at[target]] = replace(parent, **_folded_fields(parent, h))
@@ -202,10 +201,10 @@ def fold_set_chunks(
             memory_key=parent_key,
             source="fact",
             parent_memory_key="",
-            identity=identity,
+            identity=row.identity,
             session_id=session,
-            version=version,
-            tags=tags,
+            version=row.version,
+            tags=list(row.tags),
             score_components={
                 **dict(h.score_components or {}),
                 "folded_chunks": 1.0,

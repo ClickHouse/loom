@@ -101,8 +101,23 @@ class CanonicalRef:
         )
 
 
+class _NamesRow:
+    """A row read with its identity columns."""
+
+    __slots__ = ()
+    namespace: str
+    agent: str
+    user_id: str
+    session_id: str
+    memory_key: str
+
+    @property
+    def row_key(self) -> RowKey:
+        return RowKey(self.namespace, self.agent, self.user_id, self.session_id, self.memory_key)
+
+
 @dataclass(frozen=True, slots=True)
-class DuplicateStatus:
+class DuplicateStatus(_NamesRow):
     """A pooled row's live status, and the canonical it names when it is a duplicate."""
 
     namespace: str
@@ -125,13 +140,9 @@ class DuplicateStatus:
             canonical_id=_s(r, "canonical_id"),
         )
 
-    @property
-    def row_key(self) -> RowKey:
-        return RowKey(self.namespace, self.agent, self.user_id, self.session_id, self.memory_key)
-
 
 @dataclass(frozen=True, slots=True)
-class CanonicalRow:
+class CanonicalRow(_NamesRow):
     """The live active row behind a `duplicate_of` id."""
 
     namespace: str
@@ -168,13 +179,9 @@ class CanonicalRow:
             sensitivity=_s(r, "sensitivity"),
         )
 
-    @property
-    def row_key(self) -> RowKey:
-        return RowKey(self.namespace, self.agent, self.user_id, self.session_id, self.memory_key)
-
 
 @dataclass(frozen=True, slots=True)
-class SupersededSuccessor:
+class SupersededSuccessor(_NamesRow):
     """A superseded key's successor id, the successor's key when it is still
     live ('' otherwise), and when the row was retired."""
 
@@ -199,10 +206,6 @@ class SupersededSuccessor:
             successor_key=_s(r, "successor_key"),
             superseded_at=_s(r, "superseded_at"),
         )
-
-    @property
-    def row_key(self) -> RowKey:
-        return RowKey(self.namespace, self.agent, self.user_id, self.session_id, self.memory_key)
 
 
 @dataclass(frozen=True, slots=True)

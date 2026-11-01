@@ -49,7 +49,8 @@ def test_the_kept_hit_has_the_tags_a_leg_read_of_its_row(passage_first: bool) ->
 def test_a_kept_hit_that_read_its_tags_keeps_them() -> None:
     stronger = _wire("k", 0.9, "the passage", ("a", "u", "s1"))
     stronger._row_tags = ("kind:lesson",)
-    weaker = _wire("k", 0.5, "the value's head", ("a", "u", "s1"))  # its leg read no tags
+    weaker = _wire("k", 0.5, "the value's head", ("a", "u", "s1"))
+    weaker._row_tags = ()  # stamped empty, as a shared-scope chunk hit is
     (kept,) = collapse_rows([weaker, stronger], "n")
     assert kept is stronger and kept._row_tags == ("kind:lesson",)
 

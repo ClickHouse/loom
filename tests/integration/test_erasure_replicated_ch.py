@@ -189,7 +189,7 @@ async def test_a_user_with_chunks_and_no_memory_keys_binds_an_empty_slice(
     assert await steps_memory.tombstone_memory_chunks_by_user(org, USER, ch=ch) == 1
 
 
-async def test_a_clear_past_one_mutations_worth_of_locks_runs_one_mutation_per_bucket(
+async def test_a_clear_past_one_mutations_worth_of_locks_keeps_every_locked_row_live(
     raw: Any, db: str, ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.memory.store import lifecycle
