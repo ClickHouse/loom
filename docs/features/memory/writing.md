@@ -233,18 +233,19 @@ there does; such an entry answers `written` (`refines`). The value-update linker
 extraction path (`LOOM_MEMORY_EXTRACT_VALUE_UPDATES`) never runs for an import.
 
 - **The key comes from the text:** `import:` and the first 24 hex characters of the SHA-256
-  of the text as given. The same text always lands on the same key, so a re-run writes
-  nothing new: its entries come back `skipped` (`unchanged`) in any session the token may
-  read (an `own_session` token reads only its own, see below), and the stored row keeps the
-  tags, `valid_at`, `source_trace` and sensitivity it was written with; an entry naming
-  another `sensitivity` answers `skipped` (`sensitivity_kept`), and `memory.set` changes the
-  stored level. An item edited in the source has new text and so a new key: the import adds
-  it and leaves the old fact as it is (the conflict check may flag the pair), so delete or
-  revise the old one yourself. The import reinforces nothing, unlike a restatement through
-  `memory.set` or `memory.bulk_set`, so re-runs never raise a memory's reinforcement; a fact
-  already held under another key comes back `held`. The key is a digest of the text, so
-  anyone who can see a key can confirm a guessed text against it: do not import a secret as
-  an item.
+  of the text as given, so the same text always lands on the same key. The key is a digest
+  of the text, so anyone who can see a key can confirm a guessed text against it: do not
+  import a secret as an item.
+- **Re-runs write nothing new:** an entry whose key holds its text comes back `skipped`
+  (`unchanged`) in any session the token may read (an `own_session` token reads only its
+  own, see below), and the stored row keeps the tags, `valid_at`, `source_trace` and
+  sensitivity it was written with; an entry naming another `sensitivity` answers `skipped`
+  (`sensitivity_kept`), and `memory.set` changes the stored level. The import reinforces
+  nothing, unlike a restatement through `memory.set` or `memory.bulk_set`, so re-runs never
+  raise a memory's reinforcement; a fact already held under another key comes back `held`.
+- **An item edited in the source** has new text and so a new key: the import adds it and
+  leaves the old fact as it is (the conflict check may flag the pair), so delete or revise
+  the old one yourself.
 - **The text is embedded and indexed alone:** a key that is only the digest (`import:` and
   24 lowercase hex characters, nothing else) puts no `(#key)` suffix on the excerpt a row is
   embedded and lexically indexed by, and builds no key-axis vector, so an imported fact
@@ -257,17 +258,17 @@ extraction path (`LOOM_MEMORY_EXTRACT_VALUE_UPDATES`) never runs for an import.
 - **A key that was deleted, retired or rejected stays so:** before the write, the import
   reads each key's newest version in every session of the identity that the token may read
   (only its own session for an `own_session` token), tombstones and rows of every status
-  included. A key its owner deleted comes back `skipped` (`deleted`), one a newer fact
-  retired `skipped` (`superseded`) and one marked wrong (`memory.reject`) `skipped`
-  (`rejected`); none is written again. A key holding a proposal comes back `skipped`
-  (`proposed`): only `memory.proposal_decide` moves a fact out of its trial. A live key
-  holding other text was corrected (`memory.set`, `memory.update_by_id`, a pin) or
-  anonymized by an expiry (`on_expire=anonymize`) and comes back `skipped` (`revised`),
-  before the bulk write's own pin and lock guards. A status the import does not recognise
-  leaves the key as it is too, as `skipped` (`unknown`). The read and the write are not
-  atomic: a delete that lands between them is written over. Text deleted, retired or
-  rejected under another key is imported again under its `import:` key: the bulk write's
-  dedup sees live rows only.
+  included; the newest version across those sessions decides, whichever session holds it. A
+  key its owner deleted comes back `skipped` (`deleted`), one a newer fact retired `skipped`
+  (`superseded`) and one marked wrong (`memory.reject`) `skipped` (`rejected`); none is
+  written again. A key holding a proposal comes back `skipped` (`proposed`): only
+  `memory.proposal_decide` moves a fact out of its trial. A live key holding other text was
+  corrected (`memory.set`, `memory.update_by_id`, a pin) or anonymized by an expiry
+  (`on_expire=anonymize`) and comes back `skipped` (`revised`), before the bulk write's own
+  pin and lock guards. A status the import does not recognise leaves the key as it is too,
+  as `skipped` (`unknown`). The read and the write are not atomic: a delete that lands
+  between them is written over. Text deleted, retired or rejected under another key is
+  imported again under its `import:` key: the bulk write's dedup sees live rows only.
 - **A tombstone has no way back through the import:** `memory.delete`, `memory.clear` and
   an expiry with `on_expire=tombstone` all write one, so clearing an agent and importing
   from the source again answers `skipped` (`deleted`) for every such item. Bring the keys
@@ -297,12 +298,12 @@ extraction path (`LOOM_MEMORY_EXTRACT_VALUE_UPDATES`) never runs for an import.
 Each result carries the entry's `index`, its `key`, an `outcome` and, when the entry was
 not plainly written, a `reason`:
 
-| `outcome` | `reason`                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `written` | Empty, `duplicate` or `conflicted` (the status the conflict check stored the row with), or `refines`: under `newest_wins` the item retired the live memories it updates.                                                                                                                                                                                                                                                                                                    |
-| `held`    | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key, named in `held_by`); nothing is written or reinforced.                                                                                                                                                                                                                                                                                                             |
-| `skipped` | `unchanged` (the key holds the fact already, in this session or another), `deleted`, `superseded`, `rejected` or `proposed` (the key's newest version), `revised` (the key holds other text: a correction, or an expiry anonymized it), `sensitivity_kept` (the key holds the text at another sensitivity than the entry names), `repeated` (an earlier entry of the request with the same text was written) or `unknown` (logged: a status the import does not recognise). |
-| `refused` | `blacklist`, `pinned` or `locked` (only when the key is pinned or locked between the import's read and its write) or `pinned_peer` (too close to a pinned memory).                                                                                                                                                                                                                                                                                                          |
+| `outcome` | `reason`                                                                                                                                                                                                                                                                                                     |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `written` | Empty, `duplicate` or `conflicted` (the status the conflict check stored the row with), or `refines`: under `newest_wins` the item retired the live memories it updates.                                                                                                                                     |
+| `held`    | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key, named in `held_by`); nothing is written or reinforced.                                                                                                                                              |
+| `skipped` | `unchanged`, `sensitivity_kept`, `deleted`, `superseded`, `rejected`, `proposed`, `revised` (the key holds other text: a correction, or an expiry anonymized it), `repeated` (an earlier entry of the request with the same text was written) or `unknown` (logged: a status the import does not recognise). |
+| `refused` | `blacklist`, `pinned` or `locked` (only when the key is pinned or locked between the import's read and its write) or `pinned_peer` (too close to a pinned memory).                                                                                                                                           |
 
 Under `newest_wins`, two entries of one request that state the same attribute differently
 keep only the newer: the later `valid_at` (an undated entry counts as said at the time of

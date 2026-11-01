@@ -91,6 +91,7 @@ def test_created_at_versioned_table_drops_created_at_so_default_now_wins() -> No
 
 def test_settings_scale_quotas_with_rows() -> None:
     s = rb.in_database_settings(5)
+    assert s["short_circuit_function_evaluation"] == "force_enable"
     assert s["allow_experimental_ai_functions"] == 1
     assert s["ai_function_embedding_max_batch_size"] == 100
     assert s["ai_function_max_api_calls_per_query"] == 1000

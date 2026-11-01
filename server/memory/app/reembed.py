@@ -168,7 +168,7 @@ def in_database_sql(
         if c == cfg["vec"]:
             select.append(emb(cfg["text"]))
         elif cfg.get("key_vec") and c == cfg["key_vec"]:
-            # An import key has no axis text: no key vector, as `key_axis_text` decides.
+            # An import key (`is_import_key`) gets no key vector, as on every write path.
             is_import = _is_import_sql(cfg["key_text"])
             select.append(f"if({is_import}, CAST([] AS Array(BFloat16)), {emb(cfg['key_text'])})")
         elif c == "embedding_model":
@@ -193,9 +193,11 @@ def in_database_settings(rows: int) -> dict[str, Any]:
     """Session settings for one in-database re-embed statement: the
     experimental gate, batches of 100 texts per request, and per-query
     quotas sized to the row count (2 calls per row leaves room for the key
-    vector and retries)."""
+    vector and retries). Short-circuit evaluation is forced so an import key's
+    row, whose `if` takes the empty branch, never calls the provider."""
     return {
         "allow_experimental_ai_functions": 1,
+        "short_circuit_function_evaluation": "force_enable",
         "ai_function_embedding_max_batch_size": 100,
         "ai_function_max_api_calls_per_query": max(1000, rows // 100 * 2 + 100),
         "ai_function_max_input_tokens_per_query": max(1_000_000, rows * 2 * 600),

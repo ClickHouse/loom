@@ -5,8 +5,8 @@ category names and linking memory keys to them.
 so a live name resolves to one id. `loom.memory_categories` is
 `ReplacingMergeTree(created_at)` keyed `(org, namespace, memory_key, category_id)`,
 so linking a key again replaces its link. memory.assign_category and memory.import
-link through here (the import reads the links it would add first);
-namespace.register_category writes the registry.
+link through here; the import first reads the links its keys already have
+(`link_states`). namespace.register_category writes the registry.
 """
 
 from __future__ import annotations
