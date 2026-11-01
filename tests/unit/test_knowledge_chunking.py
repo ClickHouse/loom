@@ -244,16 +244,10 @@ def test_a_bare_hash_is_an_empty_heading_and_never_a_setext_title() -> None:
 
 
 def test_a_long_heading_keeps_its_text_and_reads_markup_in_a_bounded_head() -> None:
-    from server.knowledge.domain import chunking
-
-    for line in ("*a " * 30000, "<b>x " * 20000, "`a" * 30000):
-        head, rest = line[: chunking._TITLE_MAX], line[chunking._TITLE_MAX :]
-        title = chunking._clean_title(line)
-        assert title.startswith(chunking._clean_title(head).rsplit(" ", 1)[0])
-        assert title.endswith(" ".join(rest.split())[-200:])
-    long = "word " * 200 + "tail"
-    (section,) = [s for s in detect_sections(f"# {long}\n\nbody\n") if s.path]
-    assert section.path[0].endswith("tail"), "no text of a long heading is dropped"
+    long = "**x** " + "w " * 300 + "**tail**"  # its closing emphasis past the first 500
+    ((title,),) = [s.path for s in detect_sections(f"# {long}\n\nbody\n") if s.path]
+    assert title.startswith("x w w") and title.endswith("**tail**")
+    assert len(title) == len(" ".join(long.split())) - 4, "only the first `**` pair is dropped"
 
 
 def test_a_heading_line_with_a_long_run_of_blanks_is_read_whole() -> None:
@@ -341,3 +335,39 @@ def test_a_placeholder_in_angle_brackets_is_text_not_a_tag() -> None:
     assert [s.path for s in detect_sections("<API_TOKEN>\n---\n\nx\n") if s.path] == [
         ("<API_TOKEN>",)
     ]
+
+
+@pytest.mark.parametrize(
+    ("heading", "title"),
+    [
+        ("## `max_rows`", "max_rows"),
+        ("## Option<String> fields", "Option<String> fields"),
+        ("## Map<a, b>", "Map<a, b>"),
+        ("## Promise<T>", "Promise<T>"),
+        ("## <your token>", "<your token>"),
+        ('## <Badge text="beta" />', '<Badge text="beta" />'),
+        ("## Using C#", "Using C#"),
+        ("## __init__", "__init__"),
+        ("## _Note_", "_Note_"),
+        ("## 2 * 3", "2 * 3"),
+        ("## a*b*c", "a*b*c"),
+        ("## a<br/>b", "a b"),
+        ("## a<img src=x>b", "a b"),
+        ("## ``a`b``", "a`b"),
+        ("## Don`t", "Don`t"),
+        ("## **Note", "**Note"),
+        ("## **The `foo` option**", "The foo option"),
+        ("*Note*\n---", "Note"),
+        ("*args\n---", "*args"),
+        ("--force\n---", "--force"),
+        ("-1 is negative\n===", "-1 is negative"),
+    ],
+)
+def test_a_title_drops_only_inline_tags_code_backticks_and_matched_emphasis(
+    heading: str, title: str
+) -> None:
+    assert [s.path for s in detect_sections(f"{heading}\n\nx\n") if s.path] == [(title,)]
+
+
+def test_a_backtick_run_with_a_backtick_after_it_opens_no_fence() -> None:
+    assert [s.path for s in detect_sections("```js``` is inline\n# B\n") if s.path] == [("B",)]

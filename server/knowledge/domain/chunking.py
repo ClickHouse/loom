@@ -22,8 +22,9 @@ import re
 from dataclasses import dataclass, field
 from typing import TypedDict
 
-# The closing `#` run is stripped in `_atx` (a pattern tail backtracks on long
-# blanks); a bare `#` is an empty heading, `#hashtag` none. Indented up to three spaces.
+# The closing `#` run is stripped in `_without_closing_hashes` (a pattern tail
+# backtracks on long blanks); a bare `#` is an empty heading, `#hashtag` none.
+# Indented up to three spaces.
 _ATX = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*\r?)$")
 # Indented up to three spaces (a tab is four columns); `\r?`: a CRLF line keeps its `\r`.
 _SETEXT_UNDERLINE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*\r?$")
@@ -167,7 +168,7 @@ def _without_anchor(text: str) -> str:
     return text
 
 
-def _atx(body: str) -> str:
+def _without_closing_hashes(body: str) -> str:
     """An ATX heading's text: without trailing blanks or `\r`, nor a closing `#`
     run that a blank precedes (`## Closed ##`; `## Using C#` keeps its `#`)."""
     body = body.rstrip(" \t\r")
@@ -197,7 +198,7 @@ def _atx_line(line: str) -> tuple[int, str] | None:
     """(depth, text before cleanup) of an ATX heading line, the text `''` for an
     empty heading such as `# #`; None when `line` is no ATX heading."""
     m = _ATX.match(line)
-    return (len(m.group(1)), _atx(m.group(2) or "")) if m else None
+    return (len(m.group(1)), _without_closing_hashes(m.group(2) or "")) if m else None
 
 
 def _heading_at(lines: list[str], i: int) -> tuple[int, str, int]:
