@@ -35,6 +35,7 @@ from server.memory.domain.conflicts import ConflictPeer, ConflictResult
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.excerpt import EXCERPT_LIMIT, build_excerpt
 from server.memory.domain.import_keys import import_key, is_import_key
+from server.memory.domain.temporal_sql import LIVE_STATUSES
 from server.operations.base import Role
 from tests.unit.bulk_stubs import BatchEmbedder, StubCH, no_delete_in_flight, wire_stubs
 from tests.unit.memory_rows import projection_row
@@ -71,10 +72,6 @@ def _newest(rows: list[dict[str, Any]], key: Any) -> list[dict[str, Any]]:
         if group not in out or int(row["version"]) > int(out[group]["version"]):
             out[group] = row
     return list(out.values())
-
-
-# The statuses identity dedup counts as holding a fact.
-_HOLDING = ("active", "duplicate", "conflicted")
 
 
 class _StoreCH(StubCH):
@@ -136,7 +133,7 @@ class _StoreCH(StubCH):
             return [
                 {k: r[k] for k in ("content_sha256", "memory_key", "memory_id")}
                 for r in heads
-                if r["tombstoned_at"] is None and r["status"] in _HOLDING
+                if r["tombstoned_at"] is None and r["status"] in LIVE_STATUSES
             ]
         return []
 
@@ -763,18 +760,31 @@ async def test_an_item_that_retires_a_live_memory_says_so(harness, monkeypatch) 
     assert retired == [(import_key(value), ["m-old"])]
 
 
+_CAPITALS = [
+    "The capital of Soviet Union is Moscow",
+    "The capital of Soviet Union is Russellville",
+    "The capital of Soviet Union is Paris",
+]
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("newest_first", [True, False])
-async def test_a_pair_in_one_import_retires_the_older_dated_fact(
-    harness, monkeypatch, newest_first: bool
+@pytest.mark.parametrize(
+    ("valid_at", "survivor"),
+    [
+        (["2024-06-01T00:00:00Z", "2021-01-01T00:00:00"], 0),  # newest first; naive is UTC
+        (["2021-01-01T00:00:00", "2024-06-01T00:00:00Z"], 1),
+        ([None, None], 1),  # undated: the later in the request
+        (["2021-01-01T00:00:00Z", None], 1),  # an undated item counts as said now
+        ([None, "2021-01-01T00:00:00Z"], 0),
+        (["2024-06-01T00:00:00Z", None, "2021-01-01T00:00:00Z"], 1),
+    ],
+)
+async def test_an_import_keeps_the_newest_statement_of_an_attribute(
+    harness, monkeypatch, valid_at: list[str | None], survivor: int
 ) -> None:
-    """Under newest_wins, two entries stating one attribute differently: the one with the
-    earlier `valid_at` is retired, whatever order the source exported them in."""
-    newer = {"value": "The capital of Soviet Union is Moscow", "valid_at": "2024-06-01T00:00:00Z"}
-    older = {
-        "value": "The capital of Soviet Union is Russellville",
-        "valid_at": "2021-01-01T00:00:00Z",
-    }
+    """Under newest_wins, entries stating one attribute differently: whatever order the
+    source exported them in, only the newest stays active, and each result keeps its own
+    entry's key."""
 
     async def _policy(*_: Any, **__: Any) -> str:
         return "newest_wins"
@@ -782,11 +792,16 @@ async def test_a_pair_in_one_import_retires_the_older_dated_fact(
     monkeypatch.setattr("server.memory.app.conflicts.namespace_conflict_policy", _policy)
     ch = _StoreCH()
     harness(ch)
-    entries = [newer, older] if newest_first else [older, newer]
-    await handle_memory_import(_input(*entries))
+    entries = [
+        {"value": value, "valid_at": at} for value, at in zip(_CAPITALS, valid_at, strict=False)
+    ]
+    out = await handle_memory_import(_input(*entries))
+    assert [r.key for r in out.results] == [import_key(e["value"]) for e in entries]
+    assert {r.outcome for r in out.results} == {"written"}
     status = {json.loads(r["value"]): r["status"] for r in ch.rows_for("loom.memory")}
-    assert status[newer["value"]] == "active"
-    assert status[older["value"]] == "superseded"
+    assert [status[e["value"]] for e in entries] == [
+        "active" if i == survivor else "superseded" for i in range(len(entries))
+    ]
 
 
 @pytest.mark.asyncio

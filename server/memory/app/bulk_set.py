@@ -339,14 +339,14 @@ async def _bulk_mark_same_key(ch: Any, input: MemoryBulkSetInput, state: _BulkWr
 async def _bulk_intra_batch_pairs(
     ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState
 ) -> list[tuple[str, str]]:
-    """Phase 9: under `newest_wins`, stamp the older row of each templated pair
-    inside the batch as superseded (before the insert); returns the (older, newer)
-    id pairs for the triple plane's follow step."""
+    """Phase 9: under `newest_wins`, stamp the earlier row of each templated
+    pair inside the batch as superseded (before the insert); returns the
+    (older, newer) id pairs for the triple plane's follow step."""
     # Two statements of one attribute inside the same write ("The capital of Soviet Union is
     # Moscow" and "… is Russellville" in one chunk) would both land active: the verdicts
     # compare a row with the store, not with its batch siblings, and the value-update linker
-    # skips same-day pairs. Under `newest_wins` the newer row supersedes the older before the
-    # insert; the pair also feeds the triple plane's follow step below.
+    # skips same-day pairs. Under `newest_wins` the later row in the batch supersedes the
+    # earlier before the insert; the pair also feeds the triple plane's follow step below.
     _intra_pairs: list[tuple[str, str]] = []
     if state.memory_rows:
         try:
@@ -361,23 +361,20 @@ async def _bulk_intra_batch_pairs(
                 # Only versions FINAL keeps pair: one the batch replaced says nothing now.
                 rows = state.memory_rows
                 kept = {id(r) for r in kept_versions(rows).values()}
-                now = naive_utc_now()
                 _ib = [
                     (i, j)
                     for i, j in intra_batch_supersessions(
                         [str(r.get("value") or "") for r in rows],
                         [str(r.get("memory_type") or "") for r in rows],
-                        [r.get("valid_at") for r in rows],
-                        written_at=now,
                     )
                     if id(rows[i]) in kept and id(rows[j]) in kept
                 ]
                 _intra_pairs = stamp_intra_batch_supersessions(
-                    state.memory_rows, state.embedding_rows, _ib, now
+                    state.memory_rows, state.embedding_rows, _ib, naive_utc_now()
                 )
                 if _intra_pairs:
                     log.info(
-                        "bulk_set: %d templated pair(s) inside the batch; the older row of each "
+                        "bulk_set: %d templated pair(s) inside the batch; the earlier row of each "
                         "is superseded before the insert",
                         len(_intra_pairs),
                     )

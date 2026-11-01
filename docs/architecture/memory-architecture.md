@@ -396,13 +396,10 @@ batch form of the point write:
 - the same four verdicts plus intra-batch pairs (`_bulk_verdicts`, `apply_bulk_verdicts`);
 - one insert per table, then links, projections and follow-row supersessions.
 
-Versions are nanosecond stamps, so last-writer-wins holds per key inside a batch. Under
-`newest_wins`, two statements of one templated attribute inside a batch keep only the newer
-(`intra_batch_supersessions`): the later `valid_at` (naive and aware read as UTC; an undated
-row counts as said at the time of the write), then the later place in the batch. A
+Versions are nanosecond stamps, so last-writer-wins holds per key inside a batch. A
 blacklisted entry is skipped, not raised; pinned and locked keys come back in
-`skipped_pinned` and `skipped_locked`. One hash-only `memory.bulk_set` audit row records the
-write.
+`skipped_pinned` and `skipped_locked`. One hash-only `memory.bulk_set` audit row records
+the write.
 
 `memory.import` (`handle_memory_import` in `memory/app/memory_import.py`) writes through
 `handle_memory_bulk_set`, so an imported item meets every check above. The bulk write's
@@ -434,7 +431,9 @@ blacklist pattern's hit count, as on a `memory.set` dry run. Category links go t
 the links of its keys before the write and adds only pairs never stored, so a link the owner
 rescinded stays rescinded (a rescind that lands between that read and the insert is written
 over, as a delete is), and the new links leave one `memory.import` audit row of keys and
-category names.
+category names. It sends its entries to the bulk write oldest first (by `valid_at`, an
+undated one counting as now, then request order), because under `newest_wins` the later of
+two statements of one attribute in a batch retires the earlier.
 
 `memory.set_from_messages` runs a step pipeline over a `WorkflowState`
 (`memory/app/pipeline.py`, `DEFAULT_PIPELINE`) and writes through the bulk path:

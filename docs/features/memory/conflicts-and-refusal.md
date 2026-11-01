@@ -165,9 +165,8 @@ When Loom retires memories on its own, each path that retired rows records them 
 - the conflict resolver, for an update it is sure of (`conflict_resolver`);
 - `newest_wins` on a key written again (`same_key_newest_wins`);
 - a templated substitution under `newest_wins` (`newest_wins_contradiction`);
-- `newest_wins` inside one bulk batch (the newer statement survives: the later `valid_at`,
-  an undated one counting as said at the write, then the later in the batch), or behind a
-  repaired single-valued triple (`newest_wins_contradiction`);
+- `newest_wins` inside one bulk batch, or behind a repaired single-valued triple
+  (`newest_wins_contradiction`);
 - a value update (`value_update`).
 
 A write that retires rows through several paths leaves one record per path, and a path

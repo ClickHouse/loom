@@ -9,7 +9,7 @@ import logging
 from collections import Counter
 
 import server.memory.store as memory_repo
-from server.core.datetimes import to_naive_utc
+from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.core.hashing import sha256_value
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_bulk import (
@@ -122,6 +122,11 @@ async def _write(
         )
     if not pending:
         return outcomes, {}
+    # The source exports in any order, and under newest_wins the later of two statements
+    # of one attribute in a batch retires the earlier: oldest first, an undated item
+    # counting as said now.
+    now = naive_utc_now()
+    pending.sort(key=lambda i: (to_naive_utc(input.entries[i].valid_at) or now, i))
     written = await handle_memory_bulk_set(
         _bulk_input(input, [(input.entries[i], keys[i]) for i in pending]),
         dry_run=input.dry_run,

@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import Any
-
-import pytest
-
 from server.memory.domain.conflicts import intra_batch_supersessions
-from tests.unit.test_memory_import import _IDENT, _StoreCH, harness  # noqa: F401
 
 
 def test_later_row_of_a_templated_pair_supersedes_the_earlier() -> None:
@@ -165,100 +159,3 @@ def test_a_key_written_twice_is_never_superseded_by_itself() -> None:
     ]
     stamp_intra_batch_supersessions(rows, embs, [(1, 2)], datetime(2026, 1, 1))
     assert [e["status"] for e in embs] == ["active", "superseded", "active"]
-
-
-# ---- which statement of a pair is newer ------------------------------------
-
-_CAPITALS = [
-    "The capital of Soviet Union is Moscow.",
-    "The capital of Soviet Union is Russellville.",
-    "The capital of Soviet Union is Paris.",
-]
-_NEW, _OLD = datetime(2024, 6, 1, tzinfo=UTC), datetime(2021, 1, 1)
-_NOW = datetime(2026, 1, 1)
-
-
-@pytest.mark.parametrize(
-    ("valid_at", "survivor"),
-    [
-        ([_NEW, _OLD], 0),  # the later valid_at wins, naive and aware compared as UTC
-        ([_OLD, _NEW], 1),
-        ([None, None], 1),  # undated: the later place in the batch
-        ([_OLD, None], 1),  # an undated statement is said now, after a past date
-        ([None, _OLD], 0),
-        ([_NEW, None, _OLD], 1),  # one order for the whole attribute, so no cycle
-        ([_OLD, _NEW, None], 2),
-    ],
-)
-def test_exactly_the_newest_statement_of_an_attribute_survives(
-    valid_at: list[datetime | None], survivor: int
-) -> None:
-    from server.memory.domain.conflicts import stamp_intra_batch_supersessions
-
-    rows = [
-        {"memory_id": f"m{i}", "memory_key": f"k{i}", "value": v, "valid_at": at}
-        for i, (v, at) in enumerate(zip(_CAPITALS, valid_at, strict=False))
-    ]
-    pairs = intra_batch_supersessions(
-        [r["value"] for r in rows], valid_at=valid_at, written_at=_NOW
-    )
-    stamp_intra_batch_supersessions(rows, [], pairs, _NOW)
-    assert [r["status"] == "active" for r in rows] == [i == survivor for i in range(len(rows))]
-    # Each retired row points at a newer one, so following the chain ends at the survivor.
-    by_id = {r["memory_id"]: r for r in rows}
-    for row in rows:
-        seen = set()
-        while row["status"] == "superseded" and row["memory_id"] not in seen:
-            seen.add(row["memory_id"])
-            row = by_id[row["superseded_by"]]
-        assert row["memory_id"] == f"m{survivor}"
-
-
-async def _newest_wins(*_: Any, **__: Any) -> str:
-    return "newest_wins"
-
-
-@pytest.mark.asyncio
-async def test_a_bulk_write_passes_the_rows_dates_and_its_write_time(monkeypatch) -> None:
-    """Every bulk caller, memory.set_from_messages too: a past-dated statement does not
-    retire an undated one written now."""
-    from server.memory.api.models_bulk import MemoryBulkSetInput
-    from server.memory.app import bulk_set
-    from server.memory.app.bulk_rows import _BulkWriteState
-    from tests.unit.bulk_stubs import StubCH
-
-    monkeypatch.setattr("server.memory.app.conflicts.namespace_conflict_policy", _newest_wins)
-    state = _BulkWriteState()
-    state.memory_rows = [
-        {"memory_id": "paris", "memory_key": "k0", "value": _CAPITALS[2], "valid_at": _OLD},
-        {"memory_id": "moscow", "memory_key": "k1", "value": _CAPITALS[0], "valid_at": None},
-    ]
-    for row in state.memory_rows:
-        row.update(memory_type="semantic", version=1)
-    bulk = MemoryBulkSetInput(
-        org="o", namespace="n", agent="a", entries=[{"memory_key": "k0", "value": "x"}]
-    )
-    assert await bulk_set._bulk_intra_batch_pairs(StubCH(), bulk, state) == [("paris", "moscow")]
-
-
-@pytest.mark.asyncio
-async def test_a_bulk_set_handler_keeps_the_later_dated_statement(
-    harness,  # noqa: F811 — the import's fixture
-    monkeypatch,
-) -> None:
-    from server.memory.api.models_bulk import MemoryBulkSetInput
-    from server.memory.app import bulk_set
-
-    monkeypatch.setattr("server.memory.app.conflicts.namespace_conflict_policy", _newest_wins)
-    ch = _StoreCH()
-    harness(ch)
-    bulk = MemoryBulkSetInput(
-        **_IDENT,
-        entries=[
-            {"memory_key": "capital_now", "value": _CAPITALS[0], "valid_at": _NEW},
-            {"memory_key": "capital_then", "value": _CAPITALS[1], "valid_at": _OLD},
-        ],
-    )
-    await bulk_set.handle_memory_bulk_set(bulk)
-    status = {r["memory_key"]: r["status"] for r in ch.rows_for("loom.memory")}
-    assert status == {"capital_now": "active", "capital_then": "superseded"}
