@@ -430,15 +430,15 @@ entries it writes: the conflict check reaches every entry whatever
 `bulk_conflict_check_max_entries` says. `reinforce=False`: no restatement, merge or identity
 duplicate records an `evidence` event, so a re-run reinforces nothing. Its dry run passes
 `dry_run=True`, and the bulk write returns once the verdicts are in: every check has run,
-and nothing is written but a blacklist pattern's hit count, as on a `memory.set` dry run.
-Category links go through `memory/store/categories.py`, the statements
-`memory.assign_category` runs. The import reads the links of its keys before the write and
-adds only pairs never stored, so a link the owner rescinded stays rescinded (a rescind that
-lands between that read and the insert is written over, as a delete is), and the new links
-leave one `memory.import` audit row of keys and category names. It sends its entries to the
-bulk write oldest first (by `valid_at`, an undated one counting as now, then request order),
-because under `newest_wins` the later of two statements of one attribute in a batch retires
-the earlier.
+and nothing is written but a blacklist pattern's hit count and the vectors it embedded,
+which land in `loom.embedding_cache`, as on a `memory.set` dry run. Category links go
+through `memory/store/categories.py`, the statements `memory.assign_category` runs. The
+import reads the links of its keys before the write and adds only pairs never stored, so a
+link the owner rescinded stays rescinded (a rescind that lands between that read and the
+insert is written over, as a delete is), and the new links leave one `memory.import` audit
+row of keys and category names. It sends its entries to the bulk write oldest first (by
+`valid_at`, an undated one counting as now, then request order), because under `newest_wins`
+the later of two statements of one attribute in a batch retires the earlier.
 
 `memory.set_from_messages` runs a step pipeline over a `WorkflowState`
 (`memory/app/pipeline.py`, `DEFAULT_PIPELINE`) and writes through the bulk path:

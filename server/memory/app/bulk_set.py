@@ -965,7 +965,7 @@ async def handle_memory_bulk_set(
     """One CH insert for all rows; one more for embeddings. Versions are
     each unique (nanosecond) to preserve LWW semantics.
 
-    - `dry_run`: return after the verdicts, writing nothing.
+    - `dry_run`: return after the verdicts; no row is inserted.
     - `conflict_check_cap`: overrides `bulk_conflict_check_max_entries`.
     - `reinforce=False`: no `evidence` event for a restatement, merge or identity duplicate."""
     ch = get_client()
