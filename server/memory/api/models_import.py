@@ -4,7 +4,7 @@ the caller's namespace through the bulk write path."""
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -12,6 +12,7 @@ from server.core.datetimes import to_naive_utc
 from server.memory.api.models_common import _Identity
 from server.memory.domain.delete_marks import caller_trace
 from server.memory.domain.memory_import import Note, Outcome, Reason
+from server.memory.domain.sensitivity import Sensitivity
 
 # The most entries one call takes; the bulk write conflict-checks every one of them,
 # whatever LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES caps a memory.bulk_set at.
@@ -42,7 +43,7 @@ class _MemoryImportEntry(BaseModel):
     # result's `note` says when it is not linked).
     category: str = Field(default="", max_length=MAX_IMPORT_CATEGORY_CHARS)
     # Sensitivity tier; '' = detect from the value, as memory.bulk_set does.
-    sensitivity: Literal["", "low", "medium", "high"] = ""
+    sensitivity: Sensitivity = ""
 
     @field_validator("source_trace")
     @classmethod

@@ -871,7 +871,7 @@ async def test_a_delete_before_the_outcome_writes_answers_not_found(
 
 
 @pytest.mark.asyncio
-async def test_a_delete_inside_the_outcomes_row_write_answers_not_found(
+async def test_a_delete_after_the_outcomes_row_write_answers_not_found(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The delete lands after the outcome's row write and before its record write: the
@@ -881,12 +881,18 @@ async def test_a_delete_inside_the_outcomes_row_write_answers_not_found(
     from server.memory import store as memory_repo
     from server.memory.api.models_decision import DecisionOutcomeInput
     from server.memory.app import decision as h
+    from server.memory.app import write
 
-    async def _delete_after_the_outcome(_call: int) -> None:
-        if "decision:outcome-known" in seen[-1].tags:
+    _set_into(local, monkeypatch)
+    write_row = write.handle_memory_set
+
+    async def _write_then_delete(inp: Any) -> Any:
+        out = await write_row(inp)
+        if "decision:outcome-known" in inp.tags:
             await _delete("claude")
+        return out
 
-    seen = _set_into(local, monkeypatch, before=_delete_after_the_outcome)
+    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _write_then_delete)
     await h.handle_decision_record(
         record_input(
             category="deploy",
@@ -900,6 +906,10 @@ async def test_a_delete_inside_the_outcomes_row_write_answers_not_found(
             DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
         )
     assert await _seed_decision() is None
+    active = await local.query_all(
+        "SELECT 1 FROM loom.memory_records FINAL WHERE status = 'active' AND tombstoned_at IS NULL"
+    )
+    assert active == []
     identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
     assert await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE) is None
 
