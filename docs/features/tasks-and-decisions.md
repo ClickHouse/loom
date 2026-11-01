@@ -308,9 +308,12 @@ superseded in the record plane and does not keep the record.
 - **A record with no decision row**: `memory.record.write` on the `decision` schema writes the record alone.
   `decision.chain` serves it, and `decision.outcome` answers not-found for it; record decisions with `decision.record`.
 - **`decision.outcome`**: writes under the record's writer, keeping a pinned row's pin, and answers not-found when
-  the writer's row is not live. Its row write is conditional on the row it read: it answers 409
-  `PRECONDITION_FAILED` when the decision changes during the call or another conditional write holds the key, and 503
-  when the key's lease store is unreachable; call it again. The condition is on the row's value, not its pin: a
+  the writer's row is not live. Its row write is conditional on the row it read: it answers 409 `PRECONDITION_FAILED`
+  when the decision changes during the call or another conditional write holds the key, and 503 when the key's lease
+  store is unreachable; call it again. A re-record that keeps the decision's text leaves the row's value as it was,
+  so the outcome also checks the writer's record before its row write and again before its record write, and answers
+  the same 409 when it moved; caught at the second check, the row holds the outcome's statement until the call is
+  made again, and that call counts as a restatement of the row. The condition is on the row's value, not its pin: a
   `memory.unpin` that lands between the outcome's read and its write is undone, as the outcome writes the row pinned
   again.
 

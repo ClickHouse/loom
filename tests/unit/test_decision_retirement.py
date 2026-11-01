@@ -767,8 +767,11 @@ async def test_an_outcome_after_a_same_text_re_record_answers_a_conflict(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A re-record under another run writes the same statement, so the row's hash does not
-    # move; the outcome still writes nothing over the re-record's record.
+    # move. Landing inside the outcome's row write, it is caught before the record: the
+    # record stays the re-record's, and the row holds the outcome's statement until a retry.
     from server.core.errors import PreconditionFailedError
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
     from server.memory.api.models_decision import DecisionOutcomeInput
     from server.memory.app import decision as h
 
@@ -776,7 +779,7 @@ async def test_an_outcome_after_a_same_text_re_record_answers_a_conflict(
     re_recorded = []
 
     async def _re_record_inside_the_outcome(_call: int) -> None:
-        if seen[-1].tags.count("decision:outcome-known") and not re_recorded:
+        if "decision:outcome-known" in seen[-1].tags and not re_recorded:
             re_recorded.append(True)
             await h.handle_decision_record(
                 record_input(**scenario, run_id="r2", caused_by=[], influenced_by=[])
@@ -790,6 +793,44 @@ async def test_an_outcome_after_a_same_text_re_record_answers_a_conflict(
         )
     seed = await _seed_decision()
     assert seed is not None and seed.run_id == "r2" and seed.realized_outcome == ""
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
+    row = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
+    assert row is not None and row.value.endswith("Realized: ok.")
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_after_a_re_record_before_its_write_writes_nothing(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The re-record lands between the outcome's read and its row write: the outcome is
+    # refused before it writes anything.
+    from server.core.errors import PreconditionFailedError
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    scenario = {"category": "deploy", "scenario": "Roll back or hotfix the image?"}
+    _set_into(local, monkeypatch)
+    await h.handle_decision_record(record_input(**scenario, caused_by=[], influenced_by=[]))
+    checked = h._checked_statement
+
+    async def _re_record_then_check(*args: Any) -> Any:
+        if "realized_outcome" in args[2] and args[2]["realized_outcome"]:
+            await h.handle_decision_record(
+                record_input(**scenario, run_id="r2", caused_by=[], influenced_by=[])
+            )
+        return await checked(*args)
+
+    monkeypatch.setattr(h, "_checked_statement", _re_record_then_check)
+    with pytest.raises(PreconditionFailedError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
+    row = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
+    assert row is not None and "Realized" not in row.value
+    assert (await _seed_decision()).run_id == "r2"
 
 
 @pytest.mark.asyncio

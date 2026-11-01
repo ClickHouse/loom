@@ -192,11 +192,20 @@ async def _write_decision(
     before the record does. `if_match_sha256` makes the row write conditional on the live
     row's hash (memory.set answers 409 PRECONDITION_FAILED otherwise); `pinned` keeps a
     pinned row's pin. `revises` is the record an outcome read: a re-record since then may
-    leave the row's hash as it was, so the record is checked again before it is replaced."""
+    leave the row's hash as it was, so the record is checked again before the row and
+    before the record are written."""
     from server.memory.app.records import handle_memory_record_write
     from server.memory.app.write import handle_memory_set
 
     statement, sensitivity, added = await _checked_statement(org, namespace, payload, tags)
+
+    async def check_revised() -> None:
+        if revises is None:
+            return
+        if await live_writer_record(org, namespace, key, ch=get_client()) != revises:
+            raise _decision_changed()
+
+    await check_revised()
     conf = payload.get("confidence")
     await handle_memory_set(
         MemorySetInput(
@@ -222,13 +231,7 @@ async def _write_decision(
         )
     )
     count_attribute_tags(namespace, added)
-    if (
-        revises is not None
-        and await live_writer_record(org, namespace, key, ch=get_client()) != revises
-    ):
-        raise PreconditionFailedError(
-            "the decision changed while its outcome was being written; call decision.outcome again"
-        )
+    await check_revised()
     rec_out = await handle_memory_record_write(
         MemoryRecordWriteInput(
             org=org,
@@ -469,6 +472,12 @@ def _outcome_tags(row: MemoryRow, payload: dict[str, Any]) -> list[str]:
     return [*_decision_tags(category, outcome_known=True, success=success), *kept]
 
 
+def _decision_changed() -> PreconditionFailedError:
+    return PreconditionFailedError(
+        "the decision changed while its outcome was being written; call decision.outcome again"
+    )
+
+
 def _no_active_decision(input: DecisionOutcomeInput) -> NotFoundError:
     return NotFoundError(
         f"no active decision {input.memory_key!r} in {input.org}/{input.namespace}",
@@ -532,9 +541,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             raise
         if await read_row() is None:
             raise _no_active_decision(input) from None
-        raise PreconditionFailedError(
-            "the decision changed while its outcome was being written; call decision.outcome again"
-        ) from None
+        raise _decision_changed() from None
 
     # Close the loop: the memories the deciding run relied on earn (or lose)
     # credit from the realized outcome — the feedback every decision log lacks.
