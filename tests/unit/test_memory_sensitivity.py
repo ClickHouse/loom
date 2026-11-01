@@ -354,6 +354,7 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
         {"password": "${DB_PASSWORD}"},
         {"password": "vault:kv/db/password1"},
         {"password": "/etc/key1x"},
+        {"client_secret": "/q8Zt/R3mKp9x"},  # two /-segments read as a path: a known miss
         {"password": "../secrets/db1"},
         {"password": "$DB_PASS1"},
         {"batch_sizes": [256, 512, 1024]},

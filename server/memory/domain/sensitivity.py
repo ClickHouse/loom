@@ -428,7 +428,7 @@ _ASSIGNMENT_KEY = re.compile(rf"(?i)(?:{ASSIGNMENT_WORDS})")
 # A value that names where a secret lives rather than holding it: `env:OPENAI_API_KEY`,
 # `vault:kv/db`, `${DB_PASSWORD}`, `$DB_PASSWORD`, a path.
 _SECRET_REFERENCE = re.compile(
-    # a path has two segments: a base64 secret may open with one `/`
+    # a path: ~/, ./, ../ or two /-segments (a base64 secret may open with one /)
     r"(?i)(?:env|vault|secret|ref):|\$\{|(?-i:\$[A-Z_][A-Z0-9_]*$)|~/|/[^/]+/|\.\.?/"
 )
 

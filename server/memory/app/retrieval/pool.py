@@ -193,12 +193,12 @@ def fold_set_chunks(
             if found is None:
                 continue  # no served row's value is known to cut it
             row, target = found, (*found.identity, parent_key)
-        _, _, session = row.identity
         if target in at:
             parent = out[at[target]]
             out[at[target]] = replace(parent, **_folded_fields(parent, h))
             continue
         index = _chunk_index(h)
+        _, _, session = row.identity
         converted = replace(
             h,
             memory_key=parent_key,
