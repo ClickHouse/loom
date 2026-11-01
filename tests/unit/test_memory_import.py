@@ -793,7 +793,8 @@ async def test_an_import_keeps_the_newest_statement_of_an_attribute(
     ch = _StoreCH()
     harness(ch)
     entries = [
-        {"value": value, "valid_at": at} for value, at in zip(_CAPITALS, valid_at, strict=False)
+        {"value": value, "valid_at": at}
+        for value, at in zip(_CAPITALS[: len(valid_at)], valid_at, strict=True)
     ]
     out = await handle_memory_import(_input(*entries))
     assert [r.key for r in out.results] == [import_key(e["value"]) for e in entries]
