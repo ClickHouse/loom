@@ -100,6 +100,13 @@ async def test_two_rows_holding_one_value_give_the_chunk_to_the_newest() -> None
 
 
 @pytest.mark.asyncio
+async def test_a_newer_duplicate_of_the_value_leaves_the_chunk_to_the_served_row() -> None:
+    ch = _LocalCH(_row("u", "s1", 1, LONG_V1), _row("u", "s2", 5, LONG_V1, status="duplicate"))
+    chunk = _chunk("u", LONG_V1)
+    assert await _set_chunk_rows(ch, _q(), [chunk]) == _named(chunk, "s1", 1)
+
+
+@pytest.mark.asyncio
 async def test_a_row_the_fact_leg_does_not_serve_names_none() -> None:
     ch = _LocalCH(_row("u", "s1", 1, LONG_V1, valid_to="'2001-01-01 00:00:00'"))
     assert await _set_chunk_rows(ch, _q(), [_chunk("u", LONG_V1)]) == {}

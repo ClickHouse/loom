@@ -861,7 +861,51 @@ async def test_a_duplicate_leaves_the_keys_chunks_to_the_served_value(
     )
     written = ch.rows_for("loom.memory_chunks")
     if duplicate_of:
-        assert written == []
+        assert written == []  # this row held no value: the served value's chunks stay
     else:  # an active write replaces the key's chunks with its own
         assert any(r["tombstoned_at"] is not None for r in written)
         assert any(r["tombstoned_at"] is None for r in written)
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_re_set_retires_the_chunks_of_the_value_it_replaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.app import set_commit
+
+    async def nothing(*_: Any, **__: Any) -> None:
+        return None
+
+    monkeypatch.setattr(set_commit, "_set_post_insert", nothing)
+    monkeypatch.setattr(set_commit, "project_stated_relations", nothing)
+    monkeypatch.setattr(set_commit, "follow_beside_response", lambda **_: None)
+    monkeypatch.setattr(set_commit, "peer_id_in_read_scope", lambda *_: "")
+    first = _CH()
+    await sc.write_set_chunks(
+        _input(_NOTE_5KB), memory_type="semantic", limit=None, ch=first, embedder=_BatchEmbedder()
+    )
+    own = [_live_row(r["chunk_index"], r["content"]) for r in first.rows_for("loom.memory_chunks")]
+    ch = _CH(routes=[("FROM loom.memory_chunks FINAL", own)])
+    existing = SimpleNamespace(
+        org="test",
+        namespace="ops-alerts",
+        memory_key=_KEY,
+        user_id="-",
+        value=_NOTE_5KB,
+        memory_type="semantic",
+    )
+    w = set_commit._SetWrite(
+        input=_input("a restatement"),
+        version=2,
+        retyped_from="",
+        existing=existing,
+        expires_at=None,
+    )
+    w.memory_row = {"status": "duplicate"}
+    await set_commit._set_after_write(
+        w, ch, None, SimpleNamespace(verdict="clear"), "canonical-id", []
+    )
+    retired = ch.rows_for("loom.memory_chunks")
+    assert len(retired) == len(own) and all(r["tombstoned_at"] is not None for r in retired)

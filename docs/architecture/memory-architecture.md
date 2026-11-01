@@ -973,9 +973,10 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    | records          | `side_legs.py`               | `memory_records`.                                                                                                                                                                                         |
 
    A pooled chunk of a long `memory.set` value folds onto the row whose current value
-   cuts it (`pool.py`, `fold_set_chunks`): one read of the writer's rows of the key over
-   `memory_embeddings` and one keyed read of their values over `memory`, only when a
-   private-scope pool holds such a chunk. A chunk no served row's value cuts is dropped.
+   cuts it (`pool.py`, `fold_set_chunks`): one read of the writer's newest served rows of
+   the key over `memory_embeddings`, then keyed reads of their values over `memory`, a
+   form field at a time, only when a private-scope pool holds such a chunk. A chunk no
+   served row's value cuts is dropped.
 
    Additive pools follow: sub-queries, set expansion, the entity and date anchor pool
    (`anchor_pool.py`) and the key-match arm (`key_match.py`). The assembler folds in the
