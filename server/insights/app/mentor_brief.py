@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.ch import get_client
+from server.embedding import get_embedder
 from server.insights.api.models_mentor import (
     EvidenceRung,
     EvidenceSource,
@@ -169,23 +170,24 @@ async def _adoption(profile: mentor_rules.MentorProfile) -> list[MentorAdoption]
 # What each rung counts, and what it does not show.
 _RUNG_MEANING: dict[EvidenceRung, str] = {
     "attempt": (
-        "calls the agent made, answered or not (the dashboard's calls and the briefs about "
-        "the agent left out)"
+        "calls the ledger records under this agent, answered or not (the dashboard's calls "
+        "and the briefs about the agent left out); a call that names no agent, such as a "
+        "read by id, is recorded under none and not counted"
     ),
     "success": "of those, calls that returned without an error; a read that found nothing counts",
     "committed_write": (
-        "`memory.set` calls that stored a row (not a no-op or a dry run); other write ops "
-        "do not say on the ledger whether they stored one, so they are not counted"
+        "`memory.set` calls that stored a row (not a no-op, a dry run or a replay); other "
+        "write ops do not say on the ledger whether they stored one, so they are not counted"
     ),
     "indexed_write": (
-        "memory keys the agent first created in the window, by any write op, that a "
-        "default search can serve now (a vector, a served status, not expired)"
+        "memory keys the agent first created in the window, by any write op, that have a "
+        "vector from the current embedder, in a served status and not expired"
     ),
     "returned_hit": (
         "reads that answered: a `memory.search` or `memory.ask` that did not abstain, a "
-        "`search.query` with a memory, document or conversation hit (not a profile match "
-        "or a duplicate-check verdict), a get that found its "
-        "key; whether the answer reached the model or changed its work is not recorded"
+        "`search.query` with a memory, document or conversation hit (not a profile match or "
+        "a duplicate-check verdict), a get that found its key; whether the answer reached the "
+        "model or changed its work is not recorded"
     ),
     "client_acknowledged": (
         "distinct memory keys the agent's runs reported relying on (`run.complete` "
@@ -225,7 +227,10 @@ async def _evidence(
                 *who, searches=mentor_rules.SEARCHES, found_reads=mentor_rules.FOUND_READS, ch=ch
             ),
         ),
-        read("indexed_writes", mentor_store.indexed_writes(*who, ch=ch)),
+        read(
+            "indexed_writes",
+            mentor_store.indexed_writes(*who, model=get_embedder().model_name, ch=ch),
+        ),
         read("reported_keys", mentor_store.reported_keys(*who, ch=ch)),
         read(
             "retention",

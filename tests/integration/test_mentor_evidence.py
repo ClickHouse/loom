@@ -48,12 +48,27 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client
         bulk = {**ident, "memory_keys": ["pref/report", "pref/absent"]}
         _call(c, "memory.bulk_get", bulk)
         stored = _call(c, "memory.get", {**ident, "memory_key": "pref/report"})
-        # The read by id names no namespace or agent of its own; the ledger takes them
-        # from the body.
-        by_id = {**ident, "memory_id": stored["memory_id"]}
+        # A read by id names no agent, so the ledger records it under none: it is not this
+        # agent's call.
+        by_id = {"org": org, "memory_id": stored["memory_id"]}
         assert _call(c, "memory.get_by_id", by_id)["found"] is True
         abstained = _call(c, "memory.search", {**ident, "query": "zebra migration in Kenya"})
         assert abstained["abstain"] is True, abstained
+        # Over MCP: a get that found its key, and `loom_search` (search.query) with a hit.
+        mcp_results = []
+        for n, (tool, args) in enumerate(
+            (
+                ("loom_memory_get", {**ident, "memory_key": "pref/report"}),
+                ("loom_search", {**ident, "query": "when do reports go out"}),
+            )
+        ):
+            rpc = {"jsonrpc": "2.0", "id": n, "method": "tools/call"}
+            rpc["params"] = {"name": tool, "arguments": args}
+            mcp = c.post("/mcp", json=rpc)
+            assert mcp.status_code == 200 and mcp.json()["result"]["isError"] is False, mcp.text
+            mcp_results.append(mcp.json()["result"]["structuredContent"])
+        assert mcp_results[1]["memory"]["results"], mcp_results[1]
+
         # `loom_search` (search.query) answers with hits per plane: one here.
         searched = _call(c, "search.query", {**ident, "query": "when do reports go out"})
         assert searched["memory"]["results"], searched
@@ -81,19 +96,19 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client
             body = {"org": org, "namespace": ns, "agent": AGENT}
             out = _call(c, "mentor.brief", body)
             ladder = {e["rung"]: e for e in out["evidence"]}
-            return (out, ladder) if ladder["attempt"]["count"] == 16 else None
+            return (out, ladder) if ladder["attempt"]["count"] == 17 else None
 
-        out, ladder = wait_until(brief, max_wait=30.0, description="sixteen calls in the ledger")
+        out, ladder = wait_until(brief, max_wait=30.0, description="seventeen calls in the ledger")
     counts = {rung: e["count"] for rung, e in ladder.items()}
-    assert counts["success"] == 16
+    assert counts["success"] == 17
     # Two writes stored a row; the replay, the restatement and the dry run did not.
     assert counts["committed_write"] == 2
     # The deleted row is no longer one a search can serve.
     assert counts["indexed_write"] == 1
-    # The two gets that found their key, the bulk read with one hit, the read by id and the
-    # search with a hit answered, and the ask when it did not abstain; the miss and the
-    # abstaining search did not.
-    assert counts["returned_hit"] == 5 + (0 if asked["abstain"] else 1)
+    # The two gets and the MCP get that found their key, the bulk read with one hit and the
+    # two search.query calls with a hit answered, and the ask when it did not abstain; the
+    # miss and the abstaining search did not.
+    assert counts["returned_hit"] == 6 + (0 if asked["abstain"] else 1)
     # One key reported relied on, as the client's own word.
     assert (counts["client_acknowledged"], ladder["client_acknowledged"]["source"]) == (
         1,

@@ -903,7 +903,7 @@ async def _mentor_evidence(ch: RecordingCH, c: dict[str, Any]) -> None:
         found_reads=mentor_rules.FOUND_READS,
         ch=ch,
     )
-    await mentor_store.indexed_writes(*who, ch=ch)
+    await mentor_store.indexed_writes(*who, model="fake-ngram-1024", ch=ch)
     await mentor_store.reported_keys(*who, ch=ch)
     await mentor_store.namespace_retention_days(ORG, NS, ch=ch)
 

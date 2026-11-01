@@ -487,8 +487,10 @@ async def call_evidence(
 ) -> dict[str, Any]:
     """What the agent's calls in the window show, from the call ledger: attempts,
     successes, `memory.set` calls that stored a row (`noop` false: a merge or a dry run
-    answers true, and an idempotent replay records no result), reads that answered,
-    and the oldest row the ledger still holds for the agent."""
+    answers true), reads that answered (`abstain` false, a hit, a found key), and the
+    oldest row the ledger still holds for the agent. Each count needs the result column
+    that shows it, so an idempotent replay, which records no result, counts as an attempt
+    and nothing more."""
     ch = ch or _default_client()
     row = await ch.query_one(
         f"""
@@ -497,7 +499,7 @@ async def call_evidence(
                countIf({_COUNTED_CALL} AND success AND operation = 'memory.set'
                        AND args['out_noop'] = 'false') AS committed_writes,
                countIf({_COUNTED_CALL} AND success AND (
-                   (operation IN {_in(searches)} AND args['out_abstain'] != 'true')
+                   (operation IN {_in(searches)} AND args['out_abstain'] = 'false')
                    OR (operation = 'search.query'
                        AND toUInt64OrZero(args['out_section_hits']) > 0)
                    OR (operation IN {_in(found_reads)} AND (args['out_found'] = 'true'
@@ -512,21 +514,34 @@ async def call_evidence(
 
 
 async def indexed_writes(
-    org: str, namespace: str, agent: str, window_seconds: int, *, ch: _CHClient | None = None
+    org: str,
+    namespace: str,
+    agent: str,
+    window_seconds: int,
+    *,
+    model: str,
+    ch: _CHClient | None = None,
 ) -> int:
-    """Memory keys the agent first created in the window, by any write op, that a default
-    search can serve now: a search vector (a row still waiting for the embedder has
-    `embedding_dim = 0`), a served status, not past `expires_at`. An embedding row keeps
-    its first `created_at` across versions."""
+    """Memory keys the agent first created in the window, by any write op, that have a
+    search vector from `model` (the deployment's embedder; a row still waiting has
+    `embedding_dim = 0`), in a served status and not past `expires_at`. An embedding row
+    keeps its first `created_at` across versions."""
     ch = ch or _default_client()
     row = await ch.query_one(
         f"""
         SELECT uniqExact(memory_key) AS n FROM loom.memory_embeddings FINAL
         WHERE {_SCOPE} AND agent = {{agent:String}} AND tombstoned_at IS NULL
-          AND created_at >= now() - INTERVAL {{win:UInt32}} SECOND AND embedding_dim > 0
+          AND created_at >= now() - INTERVAL {{win:UInt32}} SECOND
+          AND embedding_model = {{model:String}} AND embedding_dim > 0
           AND {served_status_sql()} AND (expires_at IS NULL OR expires_at > now())
         """,
-        params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "win": int(window_seconds),
+            "model": model,
+        },
     )
     return int(row["n"]) if row else 0
 
