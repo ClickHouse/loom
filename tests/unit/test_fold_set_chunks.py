@@ -282,3 +282,15 @@ async def test_a_failed_row_read_names_no_row_and_its_chunks_drop() -> None:
     assert rows == {}
     pooled = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
     assert fold_set_chunks([pooled, chunk], rows) == [pooled]
+
+
+def test_under_shared_scope_a_converted_chunk_names_no_row() -> None:
+    # the chunk names its private writer; the hit made from it must not
+    chunk = replace(
+        _set_chunk("lesson_z", 0, 0.7, "a passage"),
+        identity=("a", "u", "memory.set:lesson_z"),
+        session_id="memory.set:lesson_z",
+        version=5,
+    )
+    (hit,) = fold_set_chunks([chunk], None)
+    assert (hit.memory_key, hit.identity, hit.session_id, hit.version) == ("lesson_z", None, "", 5)

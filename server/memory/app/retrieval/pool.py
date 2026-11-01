@@ -170,7 +170,7 @@ def fold_set_chunks(
             continue
         if rows is None:
             at.setdefault((h.memory_key,), pos)
-        elif h.identity:
+        elif h.identity is not None:
             at.setdefault((*h.identity, h.memory_key), pos)
     for h in hits:
         if not _is_set_chunk(h):
@@ -198,7 +198,7 @@ def fold_set_chunks(
             source="fact",
             parent_memory_key="",
             identity=identity,
-            session_id=identity[2] if identity else "",
+            session_id=identity[2] if identity is not None else "",
             version=version,
             score_components={
                 **dict(h.score_components or {}),
