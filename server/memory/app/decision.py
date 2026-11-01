@@ -222,7 +222,10 @@ async def _write_decision(
         )
     )
     count_attribute_tags(namespace, added)
-    if revises is not None and await live_writer_record(org, namespace, key) != revises:
+    if (
+        revises is not None
+        and await live_writer_record(org, namespace, key, ch=get_client()) != revises
+    ):
         raise PreconditionFailedError(
             "the decision changed while its outcome was being written; call decision.outcome again"
         )
