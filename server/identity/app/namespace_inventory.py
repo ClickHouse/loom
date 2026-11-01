@@ -146,16 +146,17 @@ async def _members(org: str, ns: str) -> InventoryPopulation:
         # A personal collection takes no grant: its owner reaches it by name.
         return _not_counted("members", "a personal collection: its owner holds no grant")
 
-    async def grants() -> tuple[tuple[int, int], bool]:
-        counted = await grants_repo.member_count(org, ns)
-        # Only a collection inherits: a parent's grants reach every child.
-        inherited = sharing.is_collection(ns) and len((await sharing.tree(org)).lineage(ns)) > 1
-        return counted, inherited
-
-    read, failed = await _attempt("members", grants())
-    if read is None:
+    counted, failed = await _attempt("members", grants_repo.member_count(org, ns))
+    if counted is None:
         return _not_counted("members", failed)
-    (people, shared), inherited = read
+    people, shared = counted
+    # Only a collection inherits: a parent's grants reach every child.
+    inherited = False
+    if sharing.is_collection(ns):
+        tree, failed = await _attempt("members", sharing.tree(org))
+        if tree is None:
+            return _not_counted("members", failed)
+        inherited = len(tree.lineage(ns)) > 1
     wider = []
     if await is_org_readable_code_namespace(org, ns):
         wider.append("readable by everyone in the org")
@@ -205,5 +206,5 @@ async def _attempt[T](what: str, read: Awaitable[T]) -> tuple[T | None, str]:
 
 
 def _failed(what: str, e: Exception) -> str:
-    log.warning("namespace.inventory: %s read failed: %s", what, type(e).__name__)
+    log.warning("namespace.inventory: %s read failed: %s", what, e, exc_info=True)
     return f"read failed: {type(e).__name__}"

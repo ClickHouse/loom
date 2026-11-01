@@ -278,3 +278,14 @@ def test_a_request_narrowed_to_one_user_counts_that_user(seeded: Any) -> None:
     assert sections["memories"]["count"] == 1
     pops = {p["population"]: p for p in out["populations"]}
     assert pops["subjects"]["total"] == 1
+
+
+def test_an_empty_namespace_reports_no_write_time(control_plane_url: str) -> None:
+    org, ns = unique_org("inventory-empty"), "inventory-empty"
+    with httpx.Client(base_url=control_plane_url, timeout=60.0) as c:
+        out = _call(c, _mint(org, ns), "namespace.inventory", {"org": org, "namespace": ns})
+    for section in out["sections"]:
+        # max() over no rows is the epoch; the statement answers NULL instead.
+        assert (section["count"], section["latest_at"]) == (0, None), section
+    observed = [p for p in out["populations"] if p["population"] != "members"]
+    assert all(p["total"] == 0 and p["top"] == [] for p in observed)
