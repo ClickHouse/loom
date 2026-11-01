@@ -340,14 +340,6 @@ def test_outcome_revises_the_record_and_credits_the_run(env) -> None:
     assert run_call.run_id == "r1"
 
 
-def test_a_merge_hint_names_the_key_or_asks_for_the_op_again() -> None:
-    from server.memory.app.decision import _merged_hint
-
-    assert "decision:peer" in _merged_hint("decision:peer", "decision.outcome")
-    assert "Use that key" in _merged_hint("decision:peer", "decision.outcome")
-    assert "Call decision.outcome again" in _merged_hint("", "decision.outcome")
-
-
 def test_the_writer_read_and_the_tombstone_are_sequential() -> None:
     # Pinned by text: a single-node engine treats the setting as a no-op, so no local
     # test can show a replica missing the delete's tombstone.

@@ -132,15 +132,16 @@ class _Written(NamedTuple):
 
 
 def _merged_hint(merged_into_key: str, op: str) -> str:
-    if merged_into_key:
+    if not merged_into_key:
         return (
-            f"memory.set merged this into the decision {merged_into_key}, which has the same "
-            "text; nothing was written. Use that key."
+            "memory.set merged this into a decision that can no longer be read; nothing was "
+            f"written. Call {op} again."
         )
-    return (
-        "memory.set merged this into a decision that can no longer be read; nothing was "
-        f"written. Call {op} again."
+    hint = (
+        f"memory.set merged this into the decision {merged_into_key}, which has the same text; "
+        "nothing was written"
     )
+    return f"{hint}. Use that key." if op == "decision.record" else f"{hint} under this key."
 
 
 async def _write_decision(

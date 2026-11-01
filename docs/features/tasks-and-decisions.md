@@ -262,7 +262,8 @@ out, and an earlier `realized_outcome` or `success`, are not carried over, wheth
 or `memory.record.write`. A `decision.outcome` without `success` keeps the record's verdict. When another decision
 key already holds the same text, `memory.set` merges the row into it and nothing is written: `decision.record`
 answers that key (empty if that decision can no longer be read) with an empty `record_id` and no edges, and
-`decision.outcome` answers `updated=false`, credits no memories and names that key in `next`.
+`decision.outcome` answers `updated=false`, credits no memories and names that key in `next` (or, when that
+decision can no longer be read, asks for the call again).
 
 The record holds the text of its last writer, the agent, user and session that recorded it, so a delete of that
 writer's decision row retires it; an expired row still counts as live. Another identity's row under the same key was
