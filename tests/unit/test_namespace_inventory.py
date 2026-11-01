@@ -29,24 +29,11 @@ def _ch(*first: tuple[str, Any]) -> RecordingCH:
         .on("FROM loom.agent_runs", [{"n": 2, "latest": AT}])
         .on("FROM loom.documents", [{"n": 3, "latest": AT}])
         .on("FROM loom.memory_webhooks", [{"n": 1, "latest": AT}])
-        .on("loom.namespace_grants", [_person("a@x"), _person("b@x")])
+        .on("loom.namespace_grants", [{"n": 2}])
         .on("SELECT agent AS name", [{"name": "bot", "n": 7, "total": 1}])
         .on("SELECT actor AS name", [{"name": "u1@x", "n": 5, "total": 2}])
         .on("SELECT user_id AS name", [{"name": "u1", "n": 4, "total": 3}])
     )
-
-
-def _person(subject: str) -> dict[str, Any]:
-    return {
-        "subject": subject,
-        "role": "viewer",
-        "status": "active",
-        "pending_role": None,
-        "pending_since": None,
-        "granted_at": AT,
-        "granted_by": "owner",
-        "also": [],
-    }
 
 
 def _run(scope: ReadFilters | None = None, **kw: Any) -> Any:
@@ -151,11 +138,3 @@ def test_a_zero_population_limit_keeps_the_totals(monkeypatch: pytest.MonkeyPatc
     observed = [p for p in out.populations if p.population != "members"]
     assert all(p.top == [] and p.total for p in observed)
     assert all(st.params["lim"] == 1 for st in ch.statements(" AS name"))
-
-
-def test_members_past_the_cap_are_not_a_complete_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(namespace_inventory, "_MEMBER_COUNT_CAP", 1)
-    _ch().install(monkeypatch)
-    (members,) = [p for p in _run().populations if p.population == "members"]
-    assert (members.total, members.complete) == (1, False)
-    assert "grants.list" in members.reason

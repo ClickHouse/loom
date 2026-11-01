@@ -1,5 +1,6 @@
 """namespace.inventory over real rows: counts per plane, members apart from the identities
-observed on rows, the unset user never a subject, and a token pinned to one user counting
+observed on rows (members counted per person, as `grants.list` folds them), the unset
+user never a subject, and a token pinned to one user counting
 only that user's rows while documents and members are left out.
 
 Skips without LOOM_BASE_URL (tests/integration/conftest.py).
@@ -56,6 +57,9 @@ def seeded(control_plane_url: str) -> Any:
                         "value": f"{user} prefers option {i} for the weekly report",
                     },
                 )
+        for member in ("reader@example.com", "Reader@Example.com", "editor@example.com"):
+            body = {"org": org, "namespace": ns, "subject": member, "role": "viewer"}
+            _call(c, wide, "grants.create", body)
         _call(
             c,
             wide,
@@ -82,7 +86,9 @@ def test_the_inventory_counts_planes_and_keeps_populations_apart(seeded: Any) ->
     subjects = {i["name"]: i["rows"] for i in pops["subjects"]["top"]}
     assert subjects == {"u1": 2, "u2": 1} and pops["subjects"]["total"] == 2
     assert [i["name"] for i in pops["agents"]["top"]] == ["bot"]
-    assert pops["authors"]["total"] >= 1 and pops["members"]["complete"]
+    assert pops["authors"]["total"] >= 1
+    # Two people (one under two spellings), neither of whom wrote a row.
+    assert (pops["members"]["total"], pops["members"]["complete"]) == (2, True)
 
 
 def test_a_token_pinned_to_one_user_counts_only_that_user(seeded: Any) -> None:

@@ -31,10 +31,6 @@ from server.identity.store import inventory as inventory_repo
 from server.operations.base import Role
 from server.settings import settings
 
-# Members are counted up to this many; past it the total reads as the cap with
-# `complete: false`, and `grants.list` pages the directory.
-_MEMBER_COUNT_CAP = 1000
-
 _NARROWED = "not counted under a read scope bound to one user or session"
 
 
@@ -114,19 +110,12 @@ async def _members(org: str, ns: str, scope: ReadFilters) -> InventoryPopulation
             population="members", total=None, complete=False, reason=_NARROWED
         )
     try:
-        people = await grants_repo.people_page(org, ns, after=None, limit=_MEMBER_COUNT_CAP + 1)
+        total = await grants_repo.people_count(org, ns)
     except Exception as e:  # noqa: BLE001 — one population's failure leaves the others standing
         return InventoryPopulation(
             population="members", total=None, complete=False, reason=_failed(e)
         )
-    if len(people) > _MEMBER_COUNT_CAP:
-        return InventoryPopulation(
-            population="members",
-            total=_MEMBER_COUNT_CAP,
-            complete=False,
-            reason=f"more than {_MEMBER_COUNT_CAP}; page them with grants.list",
-        )
-    return InventoryPopulation(population="members", total=len(people), complete=True)
+    return InventoryPopulation(population="members", total=total, complete=True)
 
 
 async def _observed(

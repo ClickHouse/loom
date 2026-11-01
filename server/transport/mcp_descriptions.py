@@ -1824,6 +1824,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "namespace.guide_history": (
         "The guide's revisions, newest first, with summary, note, writer and length."
     ),
+    "namespace.inventory": (
+        "What a namespace holds and who appears in it, read-only: live counts and "
+        "newest write for memories, records, documents, runs and integrations; the "
+        "member count; the agents, authors and subjects seen on memory rows; whether "
+        "a model and an embedder are configured. A section not counted says why "
+        "(`complete: false`). `read_scope=own_user` with `user_id` counts one user."
+    ),
     "namespace.summary": (
         "One namespace at a glance: memory counts by type, top entities, "
         "recent writes and recalls, distinct agents, last activity."
