@@ -931,3 +931,34 @@ async def test_an_outcome_merged_into_another_key_answers_not_updated(
     )
     assert out.updated is False
     assert await _history() == ["active"]
+
+
+@pytest.mark.asyncio
+async def test_a_delete_the_write_fence_catches_answers_not_found(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The delete lands after memory.set's hash check, and its write fence refuses the insert.
+    from fastapi import HTTPException
+
+    from server.core.errors import NotFoundError
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    await _write_decision_rows(local, "claude")
+
+    async def _fenced(_inp: Any) -> Any:
+        await _delete("claude")
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PRECONDITION_FAILED",
+                "message": "the key was deleted after the if_match_sha256 check",
+            },
+        )
+
+    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _fenced)
+    with pytest.raises(NotFoundError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    assert await _history() == ["tombstoned", "active"]
