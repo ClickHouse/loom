@@ -12,7 +12,6 @@ from fastapi import HTTPException
 
 from server.core.ch import CHClient, caller_shaped, get_client
 from server.core.datetimes import naive_utc_now
-from server.identity.app.request_scope import request_scope
 from server.memory.api.models_records import (
     MemoryRecordConflictRow,
     MemoryRecordConflictsInput,
@@ -779,6 +778,5 @@ async def handle_memory_record_conflicts(
 
 
 async def record_tally(org: str, namespace: str) -> tuple[int, datetime | None]:
-    """How many active records the namespace holds inside the request's read scope,
-    and the newest write."""
-    return await active_record_tally(org, namespace, scope=request_scope())
+    """How many active records the namespace holds, and the newest write."""
+    return await active_record_tally(org, namespace)

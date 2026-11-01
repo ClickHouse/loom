@@ -1246,16 +1246,18 @@ def _with_usage(row: MemoryRow, totals: dict[str, Any] | None) -> MemoryRow:
     return row.model_copy(update=updates) if updates else row
 
 
-# The rows a read serves: not tombstoned, in a served status (`served_status_sql`, as the
-# search legs read it: not a duplicate, superseded, proposed or rejected row).
+# The memory rows the inventory counts: not tombstoned and in a served status
+# (`served_status_sql`, as the search legs read it: not a duplicate, superseded,
+# proposed or rejected row). Expiry and validity follow `memory.list` and `memory.get`:
+# a row past `expires_at` or `valid_to` is served until the sweep, so it counts.
 _SERVED_ROWS = f"tombstoned_at IS NULL AND {served_status_sql()}"
 
 
 async def live_tally(
     org: str, namespace: str, *, scope: ReadFilters, ch: _CHClient | None = None
 ) -> tuple[int, datetime | None]:
-    """The rows of the namespace a read serves inside `scope` (`_SERVED_ROWS`), and the
-    newest write among them."""
+    """The namespace's memory rows inside `scope` (`_SERVED_ROWS`), and the newest write
+    among them."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"org": org, "ns": namespace}
     row = await ch.query_one(

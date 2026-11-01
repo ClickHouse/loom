@@ -203,6 +203,7 @@ HANDLER_MODULES = (
     ("_namespace_snapshot", "server.identity.app.namespace_snapshot"),
     ("_namespace_catalog", "server.identity.app.namespace_catalog"),
     ("namespace_validate", "server.identity.app.namespace_validate"),
+    ("_namespace_inventory", "server.identity.app.namespace_inventory"),
     ("namespace_ontology", "server.identity.app.namespace_ontology"),
     ("memory_records", "server.memory.app.records"),
     ("_memory_curation", "server.memory.app.curation"),

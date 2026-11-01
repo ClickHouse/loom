@@ -68,7 +68,7 @@ async def handle_namespace_inventory(input: NamespaceInventoryInput) -> Namespac
     org, ns = input.org, input.namespace
     sections = [
         _section("memories", memory_tally(org, ns)),
-        _section("records", record_tally(org, ns)),
+        _records(org, ns, scope),
         # Documents are the namespace's under any scope, as `knowledge.*` reads them.
         _section("documents", current_document_count(org, ns)),
         _section("runs", run_tally(org, ns)),
@@ -109,6 +109,14 @@ async def _section(
     except Exception as e:  # noqa: BLE001 — one plane's failure leaves the others standing
         return _missing(plane, _failed(plane, e))
     return InventorySection(plane=plane, count=n, latest_at=latest, complete=True)
+
+
+async def _records(org: str, ns: str, scope: ReadFilters) -> InventorySection:
+    # A record key holds one active record whoever writes it, so a narrowed count would
+    # show a user the keys someone else wrote last, not what is theirs.
+    if scope.narrowed:
+        return _missing("records", _NARROWED)
+    return await _section("records", record_tally(org, ns))
 
 
 async def _integrations(org: str, ns: str, scope: ReadFilters) -> InventorySection:

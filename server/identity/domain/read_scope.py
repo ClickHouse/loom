@@ -296,9 +296,9 @@ SCOPED_OPS = frozenset(
         "memory.stack",
         "memory.statuses",
         "memory.timeline",
-        # Memory, record and run counts carry the scope; documents and members are
-        # counted as `knowledge.*` and `grants.list` read them. Webhooks are not read under
-        # a narrowed scope: `webhook.list` is refused to a narrowed token.
+        # Memory and run counts carry the scope; documents and members are counted as
+        # `knowledge.*` and `grants.list` read them. Records (one per key, whoever wrote it)
+        # and webhooks (`webhook.list` is refused) are not read under a narrowed scope.
         "namespace.inventory",
         "procedure.list",
         "procedure.match",

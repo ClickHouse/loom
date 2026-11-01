@@ -10,7 +10,6 @@ from typing import Any
 from fastapi import HTTPException
 
 from server.core.repo_base import _CHClient, _default_client
-from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.memory.domain.record_values import FIELD_RE
 
 # A record a read serves: its active version, not tombstoned.
@@ -162,16 +161,16 @@ def _build_record_query(input: Any) -> tuple[str, dict[str, Any]]:
 
 
 async def active_record_tally(
-    org: str, namespace: str, *, scope: ReadFilters, ch: _CHClient | None = None
+    org: str, namespace: str, *, ch: _CHClient | None = None
 ) -> tuple[int, datetime | None]:
-    """Active records of the namespace inside `scope` (a rewritten record's earlier
-    version is a `superseded` row), and the newest write among them."""
+    """Active records of the namespace (a rewritten record's earlier version is a
+    `superseded` row), and the newest write among them."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"org": org, "ns": namespace}
     row = await ch.query_one(
         "SELECT count() AS n, if(n = 0, NULL, max(updated_at)) AS latest "
         "FROM loom.memory_records FINAL WHERE org = {org:String} AND namespace = {ns:String} "
-        f"AND {_LIVE_RECORD.format(r='')}" + scope_and(scope, params),
+        f"AND {_LIVE_RECORD.format(r='')}",
         params,
     )
     return (int(row["n"]), row["latest"]) if row else (0, None)

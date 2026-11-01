@@ -168,8 +168,9 @@ def test_a_narrowed_scope_bounds_every_read_and_leaves_out_the_rest(
         assert "{scope_uid:String}" in st.sql and st.params["scope_uid"] == "u1", st.sql
     assert [s.count for s in out.sections if s.plane == "documents"] == [3]
     assert not ch.statements("loom.memory_webhooks")
+    assert not ch.statements("loom.memory_records")
     missing = {s.plane for s in out.sections if not s.complete}
-    assert missing == {"integrations"}
+    assert missing == {"records", "integrations"}
     pops = {p.population: p for p in out.populations}
     assert (pops["members"].total, pops["members"].complete) == (2, True)
     assert (out.scope.read_scope, out.scope.user_id, out.scope.session_id) == (
@@ -183,6 +184,7 @@ def test_an_own_session_scope_names_its_session(monkeypatch: pytest.MonkeyPatch)
     ch = _ch().install(monkeypatch, *_GET_CLIENT)
     out = _run(ReadFilters(scope="own_session", user_id="u1", session_id="s1"))
     bounded = [c for c in ch.calls if "documents" not in c.sql and "grants" not in c.sql]
+    assert bounded
     assert all(st.params["scope_sid"] == "s1" for st in bounded)
     assert (out.scope.user_id, out.scope.session_id) == ("u1", "s1")
 
