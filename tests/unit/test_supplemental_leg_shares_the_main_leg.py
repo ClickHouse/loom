@@ -39,7 +39,6 @@ def _ctx(**input_kw: Any) -> SimpleNamespace:
         chronological_intent="",
         query_vec=[0.1] * 4,
         pool_top_k=30,
-        all_hits=[],
     )
 
 

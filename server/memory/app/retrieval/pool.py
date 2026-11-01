@@ -18,8 +18,6 @@ from server.memory.domain.search_types import (
     _CHClient,
     hit_row_key,
     hit_sort_key,
-    hit_writer,
-    names_row,
     row_identity,
 )
 
@@ -135,15 +133,18 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
     rank-neutral: a folded parent sits exactly where its chunk sat."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
-    # A chunk folds onto its writer's row of the key. Its session is `memory.set:<key>`,
-    # not the row's, so it matches on namespace, agent, user_id and key alone.
+    # A chunk folds onto its writer's newest row of the key. Its session is
+    # `memory.set:<key>`, not the row's, so it matches on namespace, agent, user_id and key.
     by_row: dict[tuple[str, ...], SearchHit] = {}
     out: list[SearchHit] = []
     for h in hits:
         if not _is_set_chunk(h):
             out.append(h)
             if (getattr(h, "source", "") or "fact") != "chunk":
-                by_row.setdefault(hit_row_key(h).writer_key(), h)
+                # a key's chunks hold its writer's newest value: fold onto the newest row
+                key = hit_row_key(h).writer_key()
+                if key not in by_row or h.version > by_row[key].version:
+                    by_row[key] = h
     for h in hits:
         if not _is_set_chunk(h):
             continue
@@ -190,39 +191,6 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
         out[out.index(parent)] = merged
     out.sort(key=hit_sort_key)
     return out
-
-
-def fold_writer_hits(hits: list[Any], namespace: str = "") -> list[Any]:
-    """Fold each set chunk that names only its writer onto its writer's row of the key once
-    a later leg pooled that row, as `fold_set_chunks` folds a chunk onto a pooled parent: the
-    row takes the better score and, when the chunk out-scored it, the chunk's passage, and
-    sits where the higher of the two sat."""
-    if not any(hit_writer(h) for h in hits):
-        return hits
-    rows: dict[tuple[str, str, str, str], Any] = {}
-    for h in hits:
-        if names_row(h):
-            rows.setdefault(hit_row_key(h, namespace).writer_key(), h)
-    out: list[Any] = []
-    placed: set[int] = set()
-    for h in hits:
-        row = rows.get(hit_row_key(h, namespace).writer_key()) if hit_writer(h) else None
-        if row is not None:
-            _fold_onto(row, h)
-        target = row if row is not None else h
-        if id(target) not in placed:
-            placed.add(id(target))
-            out.append(target)
-    return out
-
-
-def _fold_onto(row: Any, chunk: Any) -> None:
-    components = row.score_components
-    components["folded_chunks"] = float(components.get("folded_chunks", 0.0)) + 1.0
-    if float(chunk.rank_score or 0.0) > float(row.rank_score or 0.0):
-        row.rank_score = chunk.rank_score
-        row.content_excerpt = chunk.content_excerpt or row.content_excerpt
-        components["folded_lift"] = 1.0
 
 
 async def _finish_pool(ch: _CHClient, hits: list[SearchHit], q: SearchQuery) -> list[SearchHit]:

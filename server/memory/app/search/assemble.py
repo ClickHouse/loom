@@ -9,7 +9,6 @@ from collections import Counter
 from typing import Any
 
 from server.memory.api.models_search import _MemorySearchHit
-from server.memory.app.retrieval.pool import fold_writer_hits
 from server.memory.app.search.anchor_pool import _enforce_agent_scope
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.digest_descent import (
@@ -22,6 +21,7 @@ from server.memory.app.search.vector_legs import _plane_fields, _stamp_leg_tags
 from server.memory.app.search_tag_filter import enforce_hard_tag_filter as _enforce_hard_tag_filter
 from server.memory.app.served_duplicates import hide_pool_duplicates
 from server.memory.app.served_superseded import annotate_pool_superseded
+from server.memory.domain.search_types import hit_row_key, hit_writer, names_row
 
 log = logging.getLogger(__package__)
 
@@ -36,6 +36,43 @@ def _drop_excluded_keys(ctx: SearchContext) -> None:
     before = len(ctx.all_hits)
     ctx.all_hits = [h for h in ctx.all_hits if str(getattr(h, "memory_key", "") or "") not in excl]
     ctx.actual_work["excluded_keys_dropped"] = before - len(ctx.all_hits)
+
+
+def fold_writer_hits(hits: list[_MemorySearchHit], namespace: str) -> list[_MemorySearchHit]:
+    """Fold each set chunk that names only its writer onto that writer's newest pooled row
+    of the key, whose value the chunks hold, once a later leg pooled one: the row takes the
+    better score and, when the chunk out-scored it, the chunk's passage, at the earlier of
+    the two positions."""
+    if not any(hit_writer(h) for h in hits):
+        return hits
+    rows: dict[tuple[str, str, str, str], _MemorySearchHit] = {}
+    for h in hits:
+        key = hit_row_key(h, namespace).writer_key()
+        if names_row(h) and (key not in rows or h.version > rows[key].version):
+            rows[key] = h
+    out: list[_MemorySearchHit] = []
+    placed: set[int] = set()
+    for h in hits:
+        row = rows.get(hit_row_key(h, namespace).writer_key()) if hit_writer(h) else None
+        if row is not None:
+            _fold_onto(row, h)
+        target = row or h
+        if id(target) not in placed:
+            placed.add(id(target))
+            out.append(target)
+    return out
+
+
+def _fold_onto(row: _MemorySearchHit, chunk: _MemorySearchHit) -> None:
+    # the merge `fold_set_chunks` makes, on a wire hit
+    components = row.score_components
+    components["folded_chunks"] = float(components.get("folded_chunks", 0.0)) + 1.0
+    if chunk.rank_score > row.rank_score:
+        row.rank_score = chunk.rank_score
+        row.distance = min(row.distance, chunk.distance)
+        row.similarity = max(row.similarity, chunk.similarity)
+        row.content_excerpt = chunk.content_excerpt or row.content_excerpt
+        components["folded_lift"] = 1.0
 
 
 async def _drop_excluded_and_duplicates(ctx: SearchContext) -> None:

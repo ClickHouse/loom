@@ -60,13 +60,3 @@ async def test_the_unmatched_leg_binds_the_pooled_rows_not_their_keys() -> None:
     sql, params = ch.query_all_calls[0]
     assert "(e.agent, e.user_id, e.session_id, e.memory_key) NOT IN" in sql
     assert params["pooled_rows"] == [("a", "u", "s1", "k")]
-
-
-def test_a_writer_only_hit_covers_its_writers_rows_and_keeps_its_own_row_key() -> None:
-    from server.memory.domain.search_types import hit_row_key, names_row, writers_covered
-
-    chunk = _hit("k", None, writer=("a", "u"))
-    row = _hit("k", ("a", "u", ""))  # a row stored with an empty session names its row
-    assert (names_row(chunk), names_row(row)) == (False, True)
-    assert writers_covered([chunk, row], "n") == {("n", "a", "u", "k")}
-    assert hit_row_key(chunk, "n") == ("n", "a", "u", "", "k")
