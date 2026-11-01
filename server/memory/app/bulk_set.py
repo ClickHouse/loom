@@ -8,7 +8,6 @@ import asyncio
 import logging
 from collections import Counter
 from contextvars import ContextVar
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
@@ -990,11 +989,7 @@ async def handle_memory_bulk_set(
 
     _bulk_work: dict[str, Any] = {}
     _bulk_clock = StageClock(_bulk_work)
-    state = _BulkWriteState(
-        now_utc=datetime.now(UTC),
-        conflict_check_cap=conflict_check_cap,
-        reinforce=reinforce,
-    )
+    state = _BulkWriteState(conflict_check_cap=conflict_check_cap, reinforce=reinforce)
     await _bulk_existing_lookup(ch, input, state)
 
     identity_dupes = await _bulk_identity_dupes(ch, input)

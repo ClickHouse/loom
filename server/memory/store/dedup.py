@@ -433,7 +433,7 @@ async def status_by_rows(
         f"""
         SELECT namespace, agent, user_id, session_id, memory_key,
                toString(status) AS row_status,
-               ifNull(toString(duplicate_of), '') AS canonical_id
+               duplicate_of AS canonical_id
         FROM loom.memory FINAL
         WHERE org = {{org:String}}
           AND (namespace, agent, user_id, session_id, memory_key)
