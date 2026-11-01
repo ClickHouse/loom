@@ -227,7 +227,9 @@ it), `source_trace` (its id or path there), `category` and `sensitivity`. The wr
 `memory.bulk_set` underneath, so each entry meets the same checks: identity dedup, the
 lock and pin guards, the blacklist, the sensitivity rule, inline embedding and the
 conflict verdict. Every entry gets the conflict check, whatever
-`LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` caps a `memory.bulk_set` at.
+`LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` caps a `memory.bulk_set` at. In a namespace on
+`newest_wins` that verdict can retire a live memory the imported item updates, as any write
+there does; such an entry answers `written` (`refines`).
 
 - **The key comes from the text:** `import:` and the first 24 hex characters of the SHA-256
   of the text as given. The same text always lands on the same key, so a re-run writes
@@ -289,10 +291,10 @@ not plainly written, a `reason`:
 
 | `outcome` | `reason`                                                                                                                                                                                                                                                                                                                                 |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `written` | Empty, or `duplicate` or `conflicted`, the status the conflict check stored the row with.                                                                                                                                                                                                                                                |
-| `held`    | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key); nothing is written or reinforced.                                                                                                                                                                                              |
+| `written` | Empty, `duplicate` or `conflicted` (the status the conflict check stored the row with), or `refines`: under `newest_wins` the item retired the live memories it updates.                                                                                                                                                                 |
+| `held`    | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key, named in `held_by`); nothing is written or reinforced.                                                                                                                                                                          |
 | `skipped` | `unchanged` (the key holds the fact already, in this session or another), `deleted`, `superseded`, `rejected` or `proposed` (the key's newest version), `revised` (the key holds other text), `repeated` (an earlier entry of the request with the same text was written) or `unknown` (logged: a status the import does not recognise). |
-| `refused` | `blacklist`, `pinned` or `locked` (only when the key is pinned or locked between the import's read and its write) or `conflict` (too close to a pinned memory).                                                                                                                                                                          |
+| `refused` | `blacklist`, `pinned` or `locked` (only when the key is pinned or locked between the import's read and its write) or `pinned_peer` (too close to a pinned memory).                                                                                                                                                                       |
 
 An entry with the same text as an earlier one must be identical to it (otherwise the
 request is a 422 naming both indexes), and answers as that entry did, except after a

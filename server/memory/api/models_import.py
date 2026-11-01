@@ -93,12 +93,15 @@ class _MemoryImportResult(BaseModel):
     # (the key is left as it is; `reason` says why) | refused (a check refused it).
     outcome: Outcome
     # Why, when the outcome is not a plain write. refused: the check that refused it
-    # (conflict: too close to a pinned memory). held: merge, or identity_duplicate
+    # (pinned_peer: too close to a pinned memory). held: merge, or identity_duplicate
     # (the same text under another key). skipped: unchanged, the key's newest status
     # (deleted, superseded, rejected, proposed), revised (the key holds other text), or
     # repeated (an earlier entry with the same text was written), or unknown (a status the
-    # import does not recognise). written: duplicate or conflicted, the verdict's status.
+    # import does not recognise). written: duplicate or conflicted (the verdict's status),
+    # or refines (under newest_wins the item retired the live memories it updates).
     reason: Reason = ""
+    # The key holding the text, for an identity_duplicate entry; '' otherwise.
+    held_by: str = ""
     # Why the entry's category is not linked to its key: category_unregistered,
     # category_refused (a token bounded to one user or one session; a link has neither axis),
     # category_not_linked (the key does not hold the item) or category_rescinded (the owner

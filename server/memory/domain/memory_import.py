@@ -15,7 +15,7 @@ Reason = Literal[
     "blacklist",
     "pinned",
     "locked",
-    "conflict",
+    "pinned_peer",
     "merge",
     "identity_duplicate",
     "unchanged",
@@ -28,6 +28,7 @@ Reason = Literal[
     "unknown",
     "duplicate",
     "conflicted",
+    "refines",
 ]
 
 # Why an entry's category is not linked to its key; '' when it is.

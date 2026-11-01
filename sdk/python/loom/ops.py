@@ -12023,7 +12023,7 @@ class MemoryImportResult(TypedDict, total=False):
             "blacklist",
             "pinned",
             "locked",
-            "conflict",
+            "pinned_peer",
             "merge",
             "identity_duplicate",
             "unchanged",
@@ -12036,8 +12036,10 @@ class MemoryImportResult(TypedDict, total=False):
             "unknown",
             "duplicate",
             "conflicted",
+            "refines",
         ]
     ]
+    held_by: NotRequired[str]
     note: NotRequired[
         Literal[
             "",

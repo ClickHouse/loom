@@ -448,6 +448,7 @@ async def test_the_same_text_under_another_key_is_held_and_never_reinforced(harn
     for _ in range(2):
         out = await handle_memory_import(_input({"value": value}))
         assert _outcomes(out) == [("held", "identity_duplicate")]
+    assert out.results[0].held_by == "user_dog_name"
     assert out.totals.held == 1 and ch.rows_for("loom.memory") == []
     assert rec.events == []
 
@@ -664,7 +665,7 @@ async def test_each_check_that_refuses_an_entry_is_named_on_it(harness) -> None:
         ("refused", "blacklist"),
         ("skipped", "revised"),
         ("skipped", "revised"),
-        ("refused", "conflict"),
+        ("refused", "pinned_peer"),
     ]
     assert out.totals.model_dump() == {"written": 1, "held": 0, "skipped": 2, "refused": 2}
     assert [r["memory_key"] for r in ch.rows_for("loom.memory")] == [import_key(plain)]
@@ -705,6 +706,27 @@ async def test_the_conflict_verdicts_that_write_or_hold_are_named(harness, monke
     )
     assert marks == [(rows[import_key(other)]["memory_id"], ["m-rival"])]
     assert rec.events == []  # the merge target is not reinforced
+
+
+@pytest.mark.asyncio
+async def test_an_item_that_retires_a_live_memory_says_so(harness, monkeypatch) -> None:
+    """Under newest_wins the conflict check can answer `refines`: the item is written and
+    retires the live memories it updates, and the entry names that."""
+    value = "Prod deploys are Fridays."
+    peer = ConflictPeer("m-old", "deploy_day", 0.9, False, "", agent="cursor", user_id="u")
+    ch = _StoreCH()
+    rec = harness(ch)
+    rec.verdicts[value] = ConflictResult(verdict="refines", peers=[peer], refined_peers=[peer])
+    retired: list[tuple[str, list[str]]] = []
+
+    async def _refine(*, new_memory_key: str, refined_peers: list[Any], **_: Any) -> int:
+        retired.append((new_memory_key, [p.memory_id for p in refined_peers]))
+        return len(refined_peers)
+
+    monkeypatch.setattr("server.memory.app.conflicts.apply_refines", _refine)
+    out = await handle_memory_import(_input({"value": value}))
+    assert _outcomes(out) == [("written", "refines")]
+    assert retired == [(import_key(value), ["m-old"])]
 
 
 @pytest.mark.asyncio
@@ -819,7 +841,7 @@ async def test_a_dry_run_answers_every_outcome_the_real_run_does(harness) -> Non
         ("refused", "blacklist"),
         ("skipped", "revised"),
         ("skipped", "revised"),
-        ("refused", "conflict"),
+        ("refused", "pinned_peer"),
         ("held", "merge"),
         ("written", "duplicate"),
         ("held", "identity_duplicate"),
@@ -1007,7 +1029,7 @@ async def test_every_entry_is_checked_whatever_the_bulk_cap_says(
     monkeypatch.setattr("server.memory.app.conflicts.check_on_commit", _check)
     out = await handle_memory_import(_input(*entries))
     assert sorted(checked) == sorted(e["value"] for e in entries)
-    assert (out.results[150].outcome, out.results[150].reason) == ("refused", "conflict")
+    assert (out.results[150].outcome, out.results[150].reason) == ("refused", "pinned_peer")
     assert out.totals.model_dump() == {
         "written": MAX_IMPORT_ENTRIES - 1,
         "held": 0,

@@ -201,7 +201,7 @@ async def test_each_refusal_and_held_entry_is_named_on_its_entry(
         await a.call("memory.set", memory_key="wiki_location", value=kept)
         out = await a.client.memory.import_(_entries(plain, secret, pinned, kept))
         refused = await a.call("memory.get", memory_key=_key(secret))
-        held = await a.call("memory.get", memory_key=_key(pinned))
+        revised = await a.call("memory.get", memory_key=_key(pinned))
     assert _outcomes(out) == [
         ("written", ""),
         ("refused", "blacklist"),
@@ -209,7 +209,7 @@ async def test_each_refusal_and_held_entry_is_named_on_its_entry(
         ("held", "identity_duplicate"),
     ], out
     assert out["totals"] == {"written": 1, "held": 1, "skipped": 1, "refused": 1}
-    assert refused["found"] is False and held["value"] == "Trains leave daily."
+    assert refused["found"] is False and revised["value"] == "Trains leave daily."
 
 
 @pytest.mark.asyncio
@@ -230,6 +230,7 @@ async def test_a_pinned_memorys_own_text_is_held_by_it_and_competes_with_nothing
         pinned = await a.call("memory.get", memory_key="deploy_policy")
         imported = await a.call("memory.get", memory_key=_key(text))
     assert _outcomes(out) == [("held", "identity_duplicate")], out
+    assert out["results"][0]["held_by"] == "deploy_policy"
     assert imported["found"] is False
     assert (pinned["value"], pinned["pinned"]) == (text, True)
 

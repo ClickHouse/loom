@@ -49,10 +49,14 @@ _CHECK_OF: dict[str, Reason] = {
     BLACKLISTED: "blacklist",
     PINNED: "pinned",
     LOCKED: "locked",
-    REJECTED: "conflict",
+    REJECTED: "pinned_peer",
 }
-# The status a written entry's verdict stores its row with when it is not `active`.
-_STORED_AS: dict[str, Reason] = {"duplicate": "duplicate", "conflict": "conflicted"}
+# The reason of a written entry whose verdict is not a plain write.
+_STORED_AS: dict[str, Reason] = {
+    "duplicate": "duplicate",
+    "conflict": "conflicted",
+    "refines": "refines",
+}
 
 
 async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
@@ -80,11 +84,14 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
         input.org, input.namespace, input.agent, input.user_id, list(first), scope=scope
     )
     shas = {key: sha256_value(input.entries[i].value) for key, i in first.items()}
-    outcomes = await _write(input, keys, first, skip_reasons(heads, shas))
+    outcomes, keepers = await _write(input, keys, first, skip_reasons(heads, shas))
     results: list[_MemoryImportResult] = []
     for i, key in enumerate(keys):
         outcome, reason = outcomes[key] if first[key] == i else repeat_outcome(outcomes[key])
-        results.append(_MemoryImportResult(index=i, key=key, outcome=outcome, reason=reason))
+        held_by = keepers.get(key, "") if reason == "identity_duplicate" else ""
+        results.append(
+            _MemoryImportResult(index=i, key=key, outcome=outcome, reason=reason, held_by=held_by)
+        )
     await _categorize(input, results, category_ids, stored_links, linkable=linkable)
     return _output(input, results)
 
@@ -94,9 +101,10 @@ async def _write(
     keys: list[str],
     first: dict[str, int],
     skip: dict[str, Reason],
-) -> dict[str, tuple[Outcome, Reason]]:
+) -> tuple[dict[str, tuple[Outcome, Reason]], dict[str, str]]:
     """Key → the outcome of the first entry of its text: skipped with its `skip` reason,
-    or written through memory.bulk_set."""
+    or written through memory.bulk_set. Also key → the key identity dedup found holding
+    the text."""
     outcomes: dict[str, tuple[Outcome, Reason]] = {}
     pending: list[int] = []
     for key, i in first.items():
@@ -108,7 +116,7 @@ async def _write(
         else:
             pending.append(i)
     if not pending:
-        return outcomes
+        return outcomes, {}
     written = await handle_memory_bulk_set(
         _bulk_input(input, [(input.entries[i], keys[i]) for i in pending]),
         dry_run=input.dry_run,
@@ -120,7 +128,7 @@ async def _write(
     for i, result in zip(pending, written.written, strict=True):
         key = keys[i]
         outcomes[key] = _entry_outcome(key, result, written.identity_duplicates.get(key))
-    return outcomes
+    return outcomes, written.identity_duplicates
 
 
 def _entry_outcome(key: str, result: _BulkSetResult, held_by: str | None) -> tuple[Outcome, Reason]:
