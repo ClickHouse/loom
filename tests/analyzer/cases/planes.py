@@ -174,6 +174,8 @@ _FILL_INERT = frozenset(
         "_namespace_membership",
         "_namespace_snapshot",
         "_namespace_catalog",
+        # The read scope comes from the request, not the input's own fields.
+        "_namespace_inventory",
     }
 )
 
