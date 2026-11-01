@@ -196,7 +196,7 @@ def env(monkeypatch):
     async def fake_get_by_key(identity, memory_key, **_kw):
         # The writer's live row: the last memory.set under the key.
         sets = [c for c in calls["set"] if c.memory_key == memory_key]
-        return SimpleNamespace(value=sets[-1].value) if sets else None
+        return SimpleNamespace(value=sets[-1].value, pinned=False) if sets else None
 
     monkeypatch.setattr(h, "tombstone_decision_record", fake_tombstone)
     monkeypatch.setattr(h, "get_by_key", fake_get_by_key)

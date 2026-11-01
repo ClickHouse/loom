@@ -271,10 +271,10 @@ superseded in the record plane and does not keep the record.
 
 - **Retires the record**: `memory.delete` or `memory.delete_version` of the writer's decision row, including
   `memory.move` with `keep_redirect=false` and `memory.apply` with `action="delete"`, which delete through
-  `memory.delete`; `conflicts.resolve` and `memory.dedup_resolve` for the side they tombstone, and the
-  `blacklist.add` sweep. `decision.chain`, `decision.precedents` and `decision.outcome` stop serving it, and
-  `memory.record.history` shows the last version with `status="tombstoned"`. Two retirements that race can each
-  write a tombstoned version, so history may list the tombstone twice.
+  `memory.delete`; `conflicts.resolve` and `memory.dedup_resolve` for the side they tombstone; `blacklist.add`
+  with `sweep=true` and `blacklist.sweep`. `decision.chain`, `decision.precedents` and `decision.outcome` stop
+  serving it, and `memory.record.history` shows the last version with `status="tombstoned"`. Two retirements that
+  race can each write a tombstoned version, so history may list the tombstone twice.
 - **After a retirement**: `memory.restore`, or `namespace.rollback` past the delete, revives the row but not the
   record; call `decision.record` again. A row moved with `keep_redirect=false` is no longer a decision: its new key
   has no record, and `decision.record` with the same category and scenario records it again under its derived key.
@@ -284,10 +284,10 @@ superseded in the record plane and does not keep the record.
   `memory_type`; the expiry sweep's tombstone of an expired writer row.
 - **A record with no decision row**: `memory.record.write` on the `decision` schema writes the record alone.
   `decision.chain` serves it, and `decision.outcome` answers not-found for it; record decisions with `decision.record`.
-- **`decision.outcome`**: writes under the record's writer, and answers not-found when the writer's row is not live.
-  Its row write is conditional on the row it read: it answers 409 `PRECONDITION_FAILED` when the decision changes
-  during the call or another conditional write holds the key, and 503 when the key's lease store is unreachable; call
-  it again.
+- **`decision.outcome`**: writes under the record's writer, keeping a pinned row's pin, and answers not-found when
+  the writer's row is not live. Its row write is conditional on the row it read: it answers 409
+  `PRECONDITION_FAILED` when the decision changes during the call or another conditional write holds the key, and 503
+  when the key's lease store is unreachable; call it again.
 
 | Operation             | Role   | Does                                                                                               |
 | --------------------- | ------ | -------------------------------------------------------------------------------------------------- |

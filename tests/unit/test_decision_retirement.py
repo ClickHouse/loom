@@ -1008,3 +1008,43 @@ async def test_a_delete_the_write_fence_catches_answers_not_found(
             DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
         )
     assert await _history() == ["tombstoned", "active"]
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_on_a_pinned_decision_keeps_the_pin(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # memory.set's real pin guard refuses a changed value that does not pin; the outcome
+    # pins, so it lands and the row stays pinned.
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+    from server.memory.app.write import _guard_existing_row
+
+    await h.ensure_schema("o", "n")
+    version = await _write_decision_rows(local, "claude")
+    pinned_row = _memory_row("claude", "decision", version + 1)
+    pinned_row["pinned"] = True
+    await local.insert("loom.memory", [pinned_row])
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
+
+    async def _set(inp: Any) -> Any:
+        existing = await memory_repo.get_by_key(
+            identity, inp.memory_key, strong=True, scope=WHOLE_NAMESPACE
+        )
+        _guard_existing_row(existing, inp, "")
+        row = _memory_row(inp.agent, inp.memory_type, time.time_ns())
+        row.update(pinned=inp.pinned, value=json.dumps(inp.value))
+        await local.insert("loom.memory", [row])
+        return SimpleNamespace(version=row["version"], conflict_verdict="clear")
+
+    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _set)
+    out = await h.handle_decision_outcome(
+        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+    )
+    assert out.updated is True
+    row = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
+    assert row is not None and row.pinned is True
+    seed = await _seed_decision()
+    assert seed is not None and seed.realized_outcome == "ok"

@@ -157,11 +157,12 @@ async def _write_decision(
     tags: list[str],
     valid_at: datetime | None,
     if_match_sha256: str = "",
+    pinned: bool = False,
 ) -> _Written:
     """Memory row + record under one key. The row goes first: a delete keeps the record
     only while its writer's row is live, so that row must exist before the record does.
     `if_match_sha256` makes the row write conditional on the live row's hash (memory.set
-    answers 409 PRECONDITION_FAILED otherwise)."""
+    answers 409 PRECONDITION_FAILED otherwise); `pinned` keeps a pinned row's pin."""
     from server.memory.app.records import handle_memory_record_write
     from server.memory.app.write import handle_memory_set
 
@@ -182,6 +183,7 @@ async def _write_decision(
             source_trace=f"run:{run_id}" if named(run_id) else "decision",
             valid_at=valid_at,
             if_match_sha256=if_match_sha256,
+            pinned=pinned,
         )
     )
     if set_out.conflict_verdict == "merge":
@@ -202,9 +204,7 @@ async def _write_decision(
     )
     # Retire the record if the writer's row was deleted before the record landed.
     try:
-        await tombstone_decision_record(
-            org, namespace, key, version=next_version(), ch=get_client()
-        )
+        await tombstone_decision_record(org, namespace, key, version=next_version())
     except Exception as e:  # noqa: BLE001 — the decision is written
         log.warning("decision: closing record check failed for %s: %s", key, e)
     return _Written(str(rec_out.record_id))
@@ -438,6 +438,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             tags=tags,
             valid_at=None,
             if_match_sha256=stored_sha256(row),
+            pinned=row.pinned,
         )
     except HTTPException as e:
         # memory.set's hash mismatch, or its write fence finding the key deleted since the
