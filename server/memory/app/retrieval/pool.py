@@ -144,7 +144,7 @@ class SetChunkRow(NamedTuple):
 
     identity: RowIdentity
     version: int
-    tags: tuple[str, ...] = ()
+    tags: tuple[str, ...]
 
 
 class ChunkId(NamedTuple):
@@ -183,7 +183,8 @@ def fold_set_chunks(
         target: tuple[str, ...]
         if rows is None:
             # the chunk's writer is private; what search serves of the key is its promoted
-            # row, whose version and tags this read does not know (a hard tag filter drops it)
+            # row, whose version and tags this read does not know; alone, a hard tag filter
+            # drops it
             target, identity, version, tags = (parent_key,), _SHARED_ROW, 0, []
         else:
             cid = _chunk_id(h)
@@ -287,8 +288,7 @@ async def _set_chunk_rows(
         for c in by_writer.get((row.agent, row.user_id, row.memory_key), []):
             if (c.chunk_index, c.sha) in cuts:
                 identity = (row.agent, row.user_id, row.session_id)
-                tags = tuple(str(t) for t in r["tags"])
-                out.setdefault(c, SetChunkRow(identity, int(r["version"]), tags))
+                out.setdefault(c, SetChunkRow(identity, int(r["version"]), tuple(r["tags"])))
     return out
 
 

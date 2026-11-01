@@ -76,7 +76,7 @@ def _chunk(user: str, value: str, index: int = 0) -> SearchHit:
 
 def _named(chunk: SearchHit, session: str, version: int) -> dict[Any, SetChunkRow]:
     key = ("bot", "u", "lesson_a", 0, chunk.chunk_sha256)
-    return {key: SetChunkRow(("bot", "u", session), version)}
+    return {key: SetChunkRow(("bot", "u", session), version, ())}
 
 
 @pytest.mark.asyncio

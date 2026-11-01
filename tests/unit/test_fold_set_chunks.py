@@ -228,7 +228,7 @@ def _writer_chunk(user: str, excerpt: str = "") -> SearchHit:
 def test_a_chunk_folds_onto_the_row_it_was_cut_from() -> None:
     mine = replace(_hit("lesson_a", 0.5), identity=("a", "u1", "s1"))
     theirs = replace(_hit("lesson_a", 0.4), identity=("a", "u2", "s2"))
-    rows = {ChunkId("a", "u2", "lesson_a", 0, _SHA): SetChunkRow(("a", "u2", "s2"), 7)}
+    rows = {ChunkId("a", "u2", "lesson_a", 0, _SHA): SetChunkRow(("a", "u2", "s2"), 7, ())}
     out = fold_set_chunks([mine, theirs, _writer_chunk("u2")], rows)
     by_writer = {h.identity: h for h in out}
     assert len(out) == 2
@@ -239,7 +239,7 @@ def test_a_chunk_folds_onto_the_row_it_was_cut_from() -> None:
 def test_a_chunk_of_a_newer_value_leaves_an_older_session_row_alone() -> None:
     # the chunks hold the writer's newest value (s2); only the s1 row is pooled
     older = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
-    rows = {ChunkId("a", "u", "lesson_a", 0, _SHA): SetChunkRow(("a", "u", "s2"), 7)}
+    rows = {ChunkId("a", "u", "lesson_a", 0, _SHA): SetChunkRow(("a", "u", "s2"), 7, ())}
     out = fold_set_chunks([older, _writer_chunk("u", "the s2 passage")], rows)
     by_session = {h.identity[2]: h for h in out}
     assert by_session["s1"].content_excerpt == "lesson_a"

@@ -46,6 +46,15 @@ def test_the_kept_hit_has_the_tags_a_leg_read_of_its_row(passage_first: bool) ->
     assert kept is passage and kept._row_tags == ("kind:lesson",)
 
 
+def test_a_kept_hit_that_read_its_tags_keeps_them() -> None:
+    head = _wire("k", 0.9, "the value's head", ("a", "u", "s1"))
+    head._row_tags = ("mine",)
+    other = _wire("k", 0.5, "the passage", ("a", "u", "s1"))
+    other._row_tags = ("other",)
+    (kept,) = collapse_rows([other, head], "n")
+    assert kept is head and kept._row_tags == ("mine",)
+
+
 def test_hits_that_name_no_row_are_left_alone() -> None:
     a, b = _wire("k", 0.5, "one"), _wire("k", 0.6, "two")
     assert collapse_rows([a, b], "n") == [a, b]
