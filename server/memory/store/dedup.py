@@ -459,6 +459,43 @@ async def status_by_rows(
     return [DuplicateStatus.from_row(r) for r in found]
 
 
+async def status_by_keys(
+    org: str,
+    keys: list[tuple[str, str]],
+    *,
+    scope: ReadFilters,
+    ch: _CHClient | None = None,
+) -> list[DuplicateStatus]:
+    """The status of each (namespace, memory_key) a search pooled through a hit that names
+    no row (a folded set chunk): `duplicate`, naming the newest duplicate's canonical, when
+    no live row of the key in `scope` is served and one is a duplicate; `active` otherwise.
+    The identity fields are empty, as the hit's are."""
+    wanted = sorted({k for k in keys if k[1]})
+    if not wanted:
+        return []
+    ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "keys": wanted}
+    in_scope = scope_and(scope, params)
+    found = await query_all_sliced(
+        ch,
+        f"""
+        SELECT namespace, memory_key,
+               if(countIf(status IN ('active', 'conflicted')) = 0
+                  AND countIf(status = 'duplicate') > 0, 'duplicate', 'active') AS row_status,
+               argMaxIf(duplicate_of, version, status = 'duplicate') AS canonical_id
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}}
+          AND (namespace, memory_key) IN {{keys:Array(Tuple(String, String))}}
+          AND tombstoned_at IS NULL{in_scope}
+        GROUP BY namespace, memory_key
+        SETTINGS select_sequential_consistency = 0
+        """,
+        params,
+        "keys",
+    )
+    return [DuplicateStatus.from_row(r) for r in found]
+
+
 async def canonical_rows_by_ids(
     org: str,
     namespaces: list[str],

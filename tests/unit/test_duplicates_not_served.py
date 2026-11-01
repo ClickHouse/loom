@@ -77,7 +77,7 @@ def _hit(
     ns: str = "",
     tags: Any = None,
     session: str = "",
-    who: tuple[str, str, str] | None = None,
+    who: tuple[str, str, str] | None = ("a", "-", "s1"),  # a fact leg names its row
 ) -> Any:
     hit = _MemorySearchHit(
         memory_key=key,
@@ -126,7 +126,14 @@ def truth(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
             ]
         ]
 
+    async def status_by_keys(
+        org: str, keys: list[tuple[str, str]], *, scope: Any = None, ch: Any = None
+    ) -> list[DuplicateStatus]:
+        env.status_calls += 1
+        return [_status((ns, "", "", "", k), **env.status[k]) for ns, k in keys if k in env.status]
+
     monkeypatch.setattr(memory_repo, "status_by_rows", status_by_rows)
+    monkeypatch.setattr(memory_repo, "status_by_keys", status_by_keys)
     monkeypatch.setattr(memory_repo, "canonical_rows_by_ids", canonical_rows_by_ids)
     return env
 
@@ -224,6 +231,17 @@ async def test_duplicate_with_no_live_canonical_is_hidden_without_substitute(
     await sd.hide_pool_duplicates(ctx)
     assert [h.memory_key for h in ctx.all_hits] == ["b"]
     assert ctx.actual_work == {"duplicates_hidden": 1, "duplicates_resolved": 0}
+
+
+@pytest.mark.asyncio
+async def test_a_hit_naming_no_row_takes_its_keys_status(truth: SimpleNamespace) -> None:
+    # a folded set chunk names its key but no row: the key's status decides it
+    truth.status = {"dup_a": _dup("c-1"), "b": _ACTIVE}
+    named = _hit("b", rank=0.8, session="s1", who=("a", "u", "s1"))
+    ctx = _ctx([_hit("dup_a", rank=0.9, who=None), named])
+    await sd.hide_pool_duplicates(ctx)
+    assert [h.memory_key for h in ctx.all_hits] == ["b"]
+    assert truth.status_calls == 2  # one read by row, one by key
 
 
 @pytest.mark.asyncio

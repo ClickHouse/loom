@@ -42,6 +42,7 @@ from server.memory.store.dedup import (
     find_row_by_key_namespace,
     get_canonical_row,
     live_ids_in_scope,
+    status_by_keys,
     status_by_rows,
     superseded_successors,
 )
@@ -312,6 +313,7 @@ __all__ = [
     "serialize_value",
     "SESSION_SUMMARY_PERSISTED_COLS",
     "session_writers",
+    "status_by_keys",
     "status_by_rows",
     "status_divergence_sql",
     "statuses_by_ids",

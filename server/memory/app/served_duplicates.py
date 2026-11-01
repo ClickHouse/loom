@@ -92,10 +92,22 @@ _Canon = dict[tuple[str, str], CanonicalRow]
 
 
 async def _truth(org: str, rows: list[RowKey], scope: ReadFilters) -> _Truth:
+    """Each pooled row's status. A hit that names no row (a stored row's user_id is never
+    empty) takes its key's status, as one row of the key would."""
     import server.memory.store as memory_repo
 
-    found = await memory_repo.status_by_rows(org, rows, scope=scope)
-    return {r.row_key: r for r in found}
+    named = [r for r in rows if r[2]]
+    unnamed = [r for r in rows if not r[2]]
+    truth: _Truth = {}
+    if named:
+        found = await memory_repo.status_by_rows(org, named, scope=scope)
+        truth = {s.row_key: s for s in found}
+    if unnamed:
+        keys = sorted({(r[0], r[4]) for r in unnamed})
+        found = await memory_repo.status_by_keys(org, keys, scope=scope)
+        by_key = {(s.namespace, s.memory_key): s for s in found}
+        truth.update({r: by_key[(r[0], r[4])] for r in unnamed if (r[0], r[4]) in by_key})
+    return truth
 
 
 async def _canonicals(
