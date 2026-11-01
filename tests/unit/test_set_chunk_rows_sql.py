@@ -23,24 +23,30 @@ def _row(
     session: str,
     version: int,
     *,
+    history: list[tuple[int, str]] | None = None,
     status: str = "active",
     valid_to: str = "NULL",
+    tombstoned: bool = False,
     model: str = "text-embedding-3-small",
-    written: int | None = None,
-    sha: str = "",
 ) -> list[str]:
-    """The vector of a row at `version`, and its value write at `written` (its version
-    unless a later status change re-wrote the vector)."""
-    sha = (sha or session).ljust(64, "0")
+    """A row's vector at `version` and its value history, (version, value) oldest first:
+    by default one write of the value `session` at `version`."""
+    history = history or [(version, session)]
+    current = history[-1][1].ljust(64, "0")
+    gone = "'2001-01-01 00:00:00'" if tombstoned else "NULL"
     return [
         "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
         "memory_key, memory_type, scope, content_excerpt, embedding, memory_key_embedding, "
-        "embedding_model, embedding_dim, version, status, valid_to) VALUES ('clickhouse', 'ns', "
-        f"'bot', '{user}', '{session}', 'lesson_a', 'semantic', 'private', 't', {_VEC}, {_VEC}, "
-        f"'{model}', 3072, {version}, '{status}', {valid_to})",
-        "INSERT INTO loom.memory_versions (org, namespace, agent, user_id, session_id, "
-        "memory_key, version, content_sha256) VALUES ('clickhouse', 'ns', 'bot', "
-        f"'{user}', '{session}', 'lesson_a', {written or version}, '{sha}')",
+        "embedding_model, embedding_dim, version, status, valid_to, tombstoned_at, "
+        "content_sha256) VALUES ('clickhouse', 'ns', 'bot', "
+        f"'{user}', '{session}', 'lesson_a', 'semantic', 'private', 't', {_VEC}, {_VEC}, "
+        f"'{model}', 3072, {version}, '{status}', {valid_to}, {gone}, '{current}')",
+        *(
+            "INSERT INTO loom.memory_versions (org, namespace, agent, user_id, session_id, "
+            "memory_key, version, content_sha256) VALUES ('clickhouse', 'ns', 'bot', "
+            f"'{user}', '{session}', 'lesson_a', {v}, '{value.ljust(64, '0')}')"
+            for v, value in history
+        ),
     ]
 
 
@@ -83,10 +89,29 @@ async def test_a_chunk_names_its_writers_latest_written_row_of_the_key() -> None
 async def test_a_later_status_change_of_an_older_row_does_not_take_the_chunks() -> None:
     # s1's vector was re-written at version 3 when s2's write marked both conflicted
     ch = _LocalCH(
-        _row("u", "s1", 3, status="conflicted", written=1),
+        _row("u", "s1", 3, history=[(1, "x"), (3, "x")], status="conflicted"),
         _row("u", "s2", 2, status="conflicted"),
     )
     assert await _set_chunk_rows(ch, _q(), [_chunk("u")]) == _row_of("s2", 2)
+
+
+@pytest.mark.asyncio
+async def test_a_value_that_came_back_counts_from_its_return() -> None:
+    # s1 wrote x, then w, then (after s2 wrote y) x again: the chunks hold s1's x
+    ch = _LocalCH(
+        _row("u", "s1", 30, history=[(10, "x"), (15, "w"), (30, "x")]),
+        _row("u", "s2", 20),
+    )
+    assert await _set_chunk_rows(ch, _q(), [_chunk("u")]) == _row_of("s1", 30)
+
+
+@pytest.mark.asyncio
+async def test_a_value_restored_after_another_sessions_delete_names_its_row() -> None:
+    ch = _LocalCH(
+        _row("u", "s1", 30, history=[(10, "x"), (30, "x")]),
+        _row("u", "s2", 20, tombstoned=True),
+    )
+    assert await _set_chunk_rows(ch, _q(), [_chunk("u")]) == _row_of("s1", 30)
 
 
 @pytest.mark.asyncio

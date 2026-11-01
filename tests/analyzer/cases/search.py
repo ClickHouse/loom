@@ -202,7 +202,28 @@ def cases() -> list[Case]:
             _recall_credit_closer,
             {},
         ),
-        Case("pool.set_chunk_rows", "server.memory.app.retrieval.pool", _set_chunk_rows, {}),
+        Case(
+            "pool.set_chunk_rows",
+            "server.memory.app.retrieval.pool",
+            _set_chunk_rows,
+            {},
+            # a live row of the key, so the history read runs too
+            rows=rows_by_substring(
+                {
+                    "max(e.version) AS version": [
+                        {
+                            "agent": "a",
+                            "user_id": "u",
+                            "session_id": "s1",
+                            "memory_key": "k1",
+                            "version": 1,
+                            "content_sha256": "0",
+                            "served": 1,
+                        }
+                    ]
+                }
+            ),
+        ),
         Case(
             "vector_search.modes",
             MODULE,

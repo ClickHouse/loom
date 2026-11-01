@@ -131,28 +131,16 @@ def _folded_fields(row: Any, chunk: Any) -> dict[str, Any]:
 
 
 def fold_set_chunks(
-    hits: list[SearchHit], rows: Mapping[tuple[str, str, str], SetChunkRow] | None = None
+    hits: list[SearchHit], rows: Mapping[tuple[str, str, str], SetChunkRow] | None
 ) -> list[SearchHit]:
     """Fold the verbatim chunks of long memory.set values onto their parent fact, so a
-    fact-only namespace never sees a chunk id.
-
-    `rows` names the row each chunk was cut from, by (agent, user_id, parent key)
-    (`_set_chunk_rows`): a chunk's own session is `memory.set:<key>`. A chunk folds onto
-    that row when it is pooled, becomes that row's hit when it is not, and is dropped when
-    the row is not served. With no `rows` (shared scope, or the read failed) a chunk folds
-    onto a pooled fact of its key, or becomes a hit of the key that names no row.
-
-    Folding gives the row the better of the two scores and, when the chunk out-scored it,
-    the chunk's passage as the excerpt: the row's stored excerpt is only the value's head,
-    and the passage that matched must survive for memory.ask's window. A converted hit is
-    `source="fact"` with the chunk's passage, scores and dates and empty tags (the
-    handler's tag point-read fills fact hits by key when the request asks). Several chunks
-    of one row collapse to one hit, and order is re-established by `hit_sort_key`.
-    Conversation chunks (no memory.set session) pass through untouched. `score_components`
-    records the fold: `folded_chunks` (count), for a converted hit `folded_from_chunk` (the
-    chunk index), and `folded_lift` when the row's score is a chunk's; downstream fact-only
-    boosts (the asserted tie-break) skip such a row, so a folded parent sits exactly where
-    its chunk sat."""
+    fact-only namespace never sees a chunk id. `rows` names the row each chunk was cut
+    from (`_set_chunk_rows`; a chunk's own session is `memory.set:<key>`): the chunk folds
+    onto that row when it is pooled, becomes that row's hit when it is not, and is dropped
+    when the row is not served. With `rows` None (shared scope, or the read failed) a
+    chunk folds onto a pooled fact of its key, or becomes a hit of the key that names no
+    row. A fold gives the row the chunk's score and passage when the chunk out-scored it
+    (`_folded_fields`); conversation chunks pass through untouched."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
     by_row: dict[tuple[str, ...], SearchHit] = {}
@@ -213,11 +201,11 @@ async def _set_chunk_rows(
     ch: _CHClient, q: SearchQuery, hits: list[SearchHit]
 ) -> dict[tuple[str, str, str], SetChunkRow] | None:
     """(agent, user_id, memory_key) -> the row each set chunk of the pool was cut from,
-    when the fact leg would serve it. A key's chunks hold their writer's latest value
-    write, so the row is the writer's session whose current value was written last, read
-    from `loom.memory_versions` (a status change rewrites a vector's version, not its
-    value). One read, only when the pool holds a set chunk; None under shared scope, where
-    the writer's private row is never served, and when the read fails."""
+    when the fact leg would serve it: a key's chunks hold their writer's latest value
+    write, so the writer's live row whose current value was written last
+    (`_value_written`); a deleted row's chunks go with it.
+    Two keyed reads, only when a private-scope pool holds a set chunk; None under shared
+    scope, where the writer's private row is never served, and when a read fails."""
     wanted = sorted(
         {
             (h.identity[0], h.identity[1], str(h.parent_memory_key))
@@ -231,39 +219,79 @@ async def _set_chunk_rows(
         return None
     where, params = _build_where(q)
     # served whatever its vector: a row whose embedding is still pending has its chunks
-    served = [w for w in where if w not in VECTOR_PREDICATES]
+    served = " AND ".join(w for w in where if w not in VECTOR_PREDICATES)
+    # the vector predicates' params stay home, the query vector above all
     params = {k: v for k, v in params.items() if k not in ("q", "model", "top_k")}
     params["set_rows"] = wanted
-    sql = f"""
-        SELECT e.agent AS agent, e.user_id AS user_id, e.memory_key AS memory_key,
-               e.session_id AS session_id, e.version AS version
-        FROM loom.memory_embeddings AS e FINAL
-        WHERE {" AND ".join(served)}
-          AND (e.agent, e.user_id, e.session_id, e.memory_key) IN (
-              SELECT agent, user_id, argMax(session_id, written), memory_key
-              FROM (
-                  SELECT agent, user_id, session_id, memory_key, min(version) AS written
-                  FROM loom.memory_versions
-                  WHERE org = {{org:String}}
-                    AND namespace = {{ns:String}}
-                    AND (agent, user_id, memory_key)
-                        IN {{set_rows:Array(Tuple(String, String, String))}}
-                  GROUP BY agent, user_id, session_id, memory_key, content_sha256
-              )
-              GROUP BY agent, user_id, memory_key
-          )
-    """
     try:
-        found = await ch.query_all(sql, params=params)
+        live = await ch.query_all(
+            f"""
+            SELECT e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id,
+                   e.memory_key AS memory_key, max(e.version) AS version,
+                   any(e.content_sha256) AS content_sha256, max({served}) AS served
+            FROM loom.memory_embeddings AS e FINAL
+            WHERE e.org = {{org:String}}
+              AND e.namespace = {{ns:String}}
+              AND (e.agent, e.user_id, e.memory_key)
+                  IN {{set_rows:Array(Tuple(String, String, String))}}
+              AND e.tombstoned_at IS NULL
+            GROUP BY e.agent, e.user_id, e.session_id, e.memory_key
+            """,
+            params=params,
+        )
+        written = await _value_written(ch, q, live)
     except Exception as e:  # noqa: BLE001 — naming a chunk's row never fails a search
         log.warning("set chunk rows read failed (fail-open): %s", e)
         return None
+    latest: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for r in live:
+        key = (str(r["agent"]), str(r["user_id"]), str(r["memory_key"]))
+        if key not in latest or written[_row_of(r)] > written[_row_of(latest[key])]:
+            latest[key] = r
     return {
-        (str(r["agent"]), str(r["user_id"]), str(r["memory_key"])): SetChunkRow(
-            (str(r["agent"]), str(r["user_id"]), str(r["session_id"])), int(r["version"])
-        )
-        for r in found
+        key: SetChunkRow((key[0], key[1], str(r["session_id"])), int(r["version"]))
+        for key, r in latest.items()
+        if r["served"]
     }
+
+
+def _row_of(r: Mapping[str, Any]) -> tuple[str, str, str, str]:
+    return str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"])
+
+
+async def _value_written(
+    ch: _CHClient, q: SearchQuery, live: list[dict[str, Any]]
+) -> dict[tuple[str, str, str, str], int]:
+    """When each row's current value was written: the first version of the run of its
+    history that holds its current hash, so a status change or a metadata copy does not
+    move it and a value that came back counts from its return. A row with no history
+    counts from its vector's version."""
+    rows = sorted({_row_of(r) for r in live})
+    current = {_row_of(r): str(r["content_sha256"]) for r in live}
+    out = {_row_of(r): int(r["version"]) for r in live}
+    if not rows:
+        return out
+    history = await ch.query_all(
+        """
+        SELECT agent, user_id, session_id, memory_key,
+               arraySort(x -> x.1, groupArray((version, toString(content_sha256)))) AS run
+        FROM loom.memory_versions
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND (agent, user_id, session_id, memory_key)
+              IN {rows:Array(Tuple(String, String, String, String))}
+        GROUP BY agent, user_id, session_id, memory_key
+        """,
+        params={"org": q.org, "ns": q.namespace, "rows": rows},
+    )
+    for h in history:
+        row = _row_of(h)
+        start = None
+        for version, sha in h["run"]:
+            start = (start or int(version)) if sha == current[row] else None
+        if start is not None:
+            out[row] = start
+    return out
 
 
 async def _finish_pool(ch: _CHClient, hits: list[SearchHit], q: SearchQuery) -> list[SearchHit]:
