@@ -42,7 +42,7 @@ nothing; a leg that errors fails open and the response names it in `degraded`.
 | **Fact, key axis**    | The same table's `memory_key` vector                    | A question that names the attribute a key encodes. Scores `least(value distance, key distance)`.             |
 | **Lexical**           | Lowercased, stemmed and lemmatised excerpts and the key | Exact identifiers, numbers and rare words that embed poorly. Stemming runs in ClickHouse (`stem`).           |
 | **BM25**              | Per-token IDF and corpus length roll-ups                | Rare-term weighting for `bm25_hybrid`, with a live tail so new rows count at once.                           |
-| **Verbatim chunks**   | `loom.memory_chunks`                                    | A passage deep inside a long value or transcript; chunk hits fold onto their parent fact.                    |
+| **Verbatim chunks**   | `loom.memory_chunks`                                    | A passage deep inside a long value or transcript; a long value's chunk folds onto the row it was cut from, its writer's latest value write of the key. |
 | **Session digests**   | `loom.session_summaries`                                | "What happened in that session"; with digest descent the top digests pull their sessions' best facts in.     |
 | **Entity**            | `loom.entity_vectors`, `loom.entity_summaries`          | Rows about an entity the query names, even when the wording differs.                                         |
 | **Graph**             | `loom.entity_edges`, `loom.entity_triples`              | Rows one hop from the query's entities, and rows carrying a matching (subject, relation, object) triple.     |
