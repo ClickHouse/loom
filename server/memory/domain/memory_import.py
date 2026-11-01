@@ -10,7 +10,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Final, Literal
 
 from server.core.hashing import hash_text
-from server.memory.domain.temporal_sql import LIVE_STATUSES
+from server.memory.domain.temporal_sql import LIVE_STATUSES, PROPOSED_STATUS, SUPERSEDED_STATUS
 
 Outcome = Literal["written", "held", "skipped", "refused"]
 # Why an entry was not plainly written; the values are listed in
@@ -45,9 +45,9 @@ Note = Literal[
 # A head status that leaves the key as it is, skipped under the status's own name.
 _LEFT_AS_IS: Final[dict[str, Reason]] = {
     "tombstoned": "deleted",
-    "superseded": "superseded",
+    SUPERSEDED_STATUS: "superseded",
     "rejected": "rejected",
-    "proposed": "proposed",
+    PROPOSED_STATUS: "proposed",
 }
 
 

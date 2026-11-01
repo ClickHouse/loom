@@ -1005,7 +1005,7 @@ Import items another memory system distilled, through every check a write makes.
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `entries` | `list[_MemoryImportEntry]` | required | The items to import, 1 to 200: each one's text, and optionally its tags, the time the source first knew it, its source pointer, a category and a sensitivity tier. |
-| `dry_run` | `bool` | `False` | Make every check and answer each entry's outcome, writing nothing. |
+| `dry_run` | `bool` | `False` | Make every check and answer each entry's outcome; no memory, link or audit row is written. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

@@ -69,7 +69,7 @@ class MemoryImportInput(_Identity):
     # The items to import, 1 to 200: each one's text, and optionally its tags, the time
     # the source first knew it, its source pointer, a category and a sensitivity tier.
     entries: list[_MemoryImportEntry] = Field(..., min_length=1, max_length=MAX_IMPORT_ENTRIES)
-    # Make every check and answer each entry's outcome, writing nothing.
+    # Make every check and answer each entry's outcome; no memory, link or audit row is written.
     dry_run: bool = False
 
     @model_validator(mode="after")

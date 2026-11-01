@@ -44,3 +44,16 @@ async def test_no_keys_send_no_statement() -> None:
         == []
     )
     assert ch.reads == []
+
+
+@pytest.mark.asyncio
+async def test_a_namespace_token_reads_every_session_tombstones_and_statuses_included() -> None:
+    ch = _Recording()
+    scope = ReadFilters(scope="namespace", user_id="", session_id=None)
+    await memory_repo.key_heads_across_sessions(
+        "o", "n", "a", "-", ["import:k"], scope=scope, ch=ch
+    )
+    ((sql, params),) = ch.reads
+    assert "session_id" not in sql and "tombstoned_at IS NULL" not in sql
+    assert "status" not in sql.split("WHERE", 1)[1].split("GROUP BY", 1)[0]
+    assert params["keys"] == ["import:k"] and "scope_uid" not in params

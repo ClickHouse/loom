@@ -159,7 +159,6 @@ def in_database_sql(
     # an alias named like a column would shadow that column inside WHERE
     # (`'new-model' AS embedding_model` made `embedding_model != 'new-model'`
     # select nothing — the alias-shadow class the SQL lint checks for).
-    is_import = _is_import_sql(cfg["key_text"]) if cfg.get("key_text") else ""
     select: list[str] = []
     insert_cols: list[str] = []
     for c in cols:
@@ -172,10 +171,12 @@ def in_database_sql(
             # An import key (`is_import_key`) gets no key vector, as on every write path: the
             # zero placeholder an insert pads `[]` to, which a coded column also accepts.
             zeros = f"arrayResize(CAST([] AS Array(BFloat16)), {int(dim)}, toBFloat16(0))"
+            is_import = _is_import_sql(cfg["key_text"])
             select.append(f"if({is_import}, {zeros}, {emb(cfg['key_text'])})")
         elif c == "embedding_model":
             select.append(f"'{m}'")
         elif cfg.get("key_dim") and c == cfg["key_dim"]:
+            is_import = _is_import_sql(cfg["key_text"])
             select.append(f"if({is_import}, toUInt16(0), toUInt16({int(dim)}))")
         elif c == "embedding_dim":
             select.append(f"toUInt16({int(dim)})")
