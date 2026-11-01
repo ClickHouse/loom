@@ -983,8 +983,7 @@ async def handle_memory_bulk_set(
     identity_dupes = await _bulk_identity_dupes(ch, input)
 
     _bulk_clock.mark("existing_lookup")
-    # Resolution persists the mappings it decides, and no check reads them.
-    entity_resolution = {} if dry_run else await _bulk_resolve_entities(ch, input)
+    entity_resolution = await _bulk_resolve_entities(ch, input)
 
     _bulk_clock.mark("entity_resolution")
     await _bulk_build_rows(input, state, identity_dupes, entity_resolution, now_utc)

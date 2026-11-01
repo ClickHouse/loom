@@ -176,7 +176,7 @@
         "bulk_conflict_check_max_entries": {
           "default": 200,
           "type": "integer",
-          "description": "Entries per bulk call that get the conflict check; later entries are written unchecked and counted. 0 = none are checked."
+          "description": "Entries per bulk call that get the conflict check; later entries are written unchecked and counted. 0 = none are checked. memory.import checks every entry whatever this says."
         },
         "calibration_refresh_seconds": {
           "default": 60.0,

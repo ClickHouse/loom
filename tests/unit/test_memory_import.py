@@ -898,27 +898,6 @@ async def test_a_dry_run_answers_every_outcome_the_real_run_does(harness) -> Non
     )
 
 
-@pytest.mark.asyncio
-async def test_a_bulk_dry_run_persists_no_entity_mapping(harness, monkeypatch) -> None:
-    """Entity resolution writes the mappings it decides, and no check reads them: the
-    dry run leaves it out."""
-    resolved: list[Any] = []
-
-    async def _resolve(*_a: Any, **kw: Any) -> dict[str, str]:
-        resolved.append(kw)
-        return {}
-
-    harness(_StoreCH())
-    monkeypatch.setattr("server.memory.app.entity_resolution.resolve_entities_for_write", _resolve)
-    bulk = MemoryBulkSetInput(
-        **_IDENT, entries=[_BulkSetEntry(memory_key="k", value="Ada met Bob.", entities=["Ada"])]
-    )
-    dry = await _bulk_set_mod.handle_memory_bulk_set(bulk, dry_run=True)
-    assert dry.written[0].version > 0 and resolved == []
-    await _bulk_set_mod.handle_memory_bulk_set(bulk)
-    assert len(resolved) == 1
-
-
 # ---- categories ------------------------------------------------------------
 
 

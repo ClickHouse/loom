@@ -2220,7 +2220,7 @@ class MemorySettings(BaseModel):
         default=300.0, ge=0
     )
     # Entries per bulk call that get the conflict check; later entries are written unchecked
-    # and counted. 0 = none are checked.
+    # and counted. 0 = none are checked. memory.import checks every entry whatever this says.
     bulk_conflict_check_max_entries: int = 200
     # Supersession pairs one bulk write follows on the triple plane in the request; the
     # rest are recorded for the projection repair to follow. 0 = the repair follows all.

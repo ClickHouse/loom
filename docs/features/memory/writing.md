@@ -282,9 +282,9 @@ there does; such an entry answers `written` (`refines`).
   the fact is still imported.
 - **`dry_run=true`** makes every check and writes no memory row, embedding, category link,
   audit row or usage event. It still pays for every entry's embedding, since the conflict
-  check reads the vectors, and counts a blacklist pattern's hit. A `conflicted` entry is
-  previewed before the peer marks a real write settles, so it may land unflagged if its
-  peers change first.
+  check reads the vectors, and counts a blacklist pattern's hit. A `conflicted` or `refines`
+  entry is previewed before a real write settles its peers, so it may land without the flag
+  or the retirement if its peers change first.
 
 Each result carries the entry's `index`, its `key`, an `outcome` and, when the entry was
 not plainly written, a `reason`:
