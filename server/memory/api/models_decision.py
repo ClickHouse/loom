@@ -70,8 +70,7 @@ class DecisionRecordOutput(BaseModel):
     superseded_prior: bool = False
     # How many `caused` / `influenced` edges were written; a failed link is skipped.
     edges_written: int = 0
-    # Plain-text hint naming the follow-up operations, or why nothing was written after a
-    # merge.
+    # Plain-text hint naming the follow-up operations, or why nothing was written after a merge.
     next: str = ""
 
 
