@@ -114,7 +114,8 @@ class _CH:
         if "FROM loom.agent_runs" in sql:
             return {"memories_used": list(self.run_used)}
         if "FROM loom.memory FINAL" in sql and "memory_type = 'decision'" in sql:
-            rec = self.records.get((params or {}).get("key"))
+            (key,) = (params or {})["keys"]
+            rec = self.records.get(key)
             if rec is None:
                 return None
             return {
@@ -393,9 +394,10 @@ def test_record_status_values_match_the_table_enum() -> None:
     assert tuple(in_table) == in_model == ("active", "superseded", "rejected", "tombstoned")
 
 
-def test_only_memory_sets_own_key_pin_refusal_names_the_key(monkeypatch) -> None:
+def test_a_pinned_peer_refusal_does_not_name_the_key(monkeypatch) -> None:
     # _own_pin_refusal tells the writer's pinned row from a close pinned peer by
-    # `memory_key`, which only memory.set's same-key guard puts in its refusal.
+    # `memory_key`, which only memory.set's same-key guard puts in its refusal (that half
+    # runs in test_a_pinned_decision_refuses_its_writer_and_names_memory_unpin).
     from fastapi import HTTPException
 
     from server.memory.api.models_crud import MemorySetInput
@@ -418,8 +420,14 @@ def test_only_memory_sets_own_key_pin_refusal_names_the_key(monkeypatch) -> None
         value="v",
         memory_type="decision",
     )
-    w = SimpleNamespace(
-        input=inp, retyped_from="", memory_id="", new_sha="", serialized_value="v", embedding=[1.0]
+    w = set_commit._SetWrite(
+        input=inp,
+        version=0,
+        retyped_from="",
+        existing=None,
+        expires_at=None,
+        serialized_value="v",
+        embedding=[1.0],
     )
     with pytest.raises(HTTPException) as peer:
         asyncio.run(set_commit._set_conflict_verdict(w, _cfg()))

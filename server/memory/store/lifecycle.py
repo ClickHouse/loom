@@ -534,7 +534,9 @@ async def tombstone_cascade_by_ids(
         try:
             await tombstone_decision_records(org, namespace, sorted(keys), version=version, ch=ch)
         except Exception as e:  # noqa: BLE001 — the row tombstones stand
-            _log.warning("decision records not retired in %s/%s: %s", org, namespace, e)
+            _log.warning(
+                "decision records not retired in %s/%s for %s: %s", org, namespace, sorted(keys), e
+            )
     return tombstoned
 
 

@@ -61,7 +61,7 @@ _LIVE_WRITER_RECORD = f"""
 SELECT identity_agent, user_id, session_id, record_json, created_at
 FROM loom.memory_records FINAL
 WHERE {_ACTIVE}
-  AND memory_key = {{key:String}}
+  AND memory_key IN {{keys:Array(String)}}
   AND (memory_key, identity_agent, user_id, session_id) IN ({_LIVE_WRITERS})
 ORDER BY version DESC
 LIMIT 1
@@ -213,13 +213,7 @@ async def live_writer_record(
     ch = ch or _default_client()
     row = await ch.query_one(
         _LIVE_WRITER_RECORD,
-        params={
-            "org": org,
-            "ns": namespace,
-            "schema": SCHEMA_NAME,
-            "key": memory_key,
-            "keys": [memory_key],
-        },
+        params={"org": org, "ns": namespace, "schema": SCHEMA_NAME, "keys": [memory_key]},
     )
     if row is None:
         return None

@@ -467,7 +467,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         # memory.set's hash mismatch, its write fence finding the key deleted since the
         # check, or a pin since the read; the lease's busy PreconditionFailedError passes.
         mismatch = isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED"
-        if not (mismatch or _own_pin_refusal(e, input.memory_key)):
+        if not mismatch and _own_pin_refusal(e, input.memory_key) is None:
             raise
         if await read_row() is None:
             raise _no_active_decision(input) from None
