@@ -6,13 +6,14 @@ Each entry becomes a memory.bulk_set entry under the key its text derives
 so an import makes every check a bulk write makes: the identity's content-hash dedup,
 the skip gate, the lock and pin guards, the blacklist, the sensitivity rule, inline
 embedding and the conflict verdicts; and it leaves the bulk write's hash-only audit
-row. A key whose newest version, in any session the caller's token may read, is a
-tombstone or a superseded, rejected or proposed row is left as it is: a re-run never
-brings back what its owner deleted, a newer fact retired or someone marked wrong, nor
-decides a proposal on trial. A dry run makes the same checks and writes no row, link,
-audit row or usage event (the embeddings are paid for and a blacklist hit is counted). A
-category the namespace has registered is linked to the entry's key as
-memory.assign_category links one (`server.memory.store.categories`).
+row, but reinforces nothing. A key whose newest version, in any session the caller's
+token may read, is a tombstone, a superseded, rejected or proposed row, or a live row
+holding other text is left as it is: a re-run never brings back what its owner deleted,
+a newer fact retired, someone marked wrong or corrected, nor decides a proposal on trial.
+A dry run makes the same checks and writes no row, link, audit row or usage event (the
+embeddings are paid for and a blacklist hit is counted). A category the namespace has
+registered is linked to the entry's key as memory.assign_category links one
+(`server.memory.store.categories`).
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from collections import Counter
 
 import server.memory.store as memory_repo
 from server.core.datetimes import to_naive_utc
+from server.core.hashing import sha256_value
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_bulk import (
     BLACKLISTED,
@@ -92,7 +94,8 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
     heads = await memory_repo.key_heads_across_sessions(
         input.org, input.namespace, input.agent, input.user_id, list(first), scope=scope
     )
-    outcomes = await _write(input, keys, first, skip_reasons(heads))
+    shas = {key: sha256_value(input.entries[i].value) for key, i in first.items()}
+    outcomes = await _write(input, keys, first, skip_reasons(heads, shas))
     results: list[_ImportEntryResult] = []
     for i, key in enumerate(keys):
         outcome, reason = outcomes[key] if first[key] == i else repeat_outcome(outcomes[key])
@@ -115,7 +118,7 @@ async def _write(
     for key, i in first.items():
         reason = skip.get(key, "")
         if reason == UNKNOWN:
-            log.warning("memory.import: %r's newest version is in no state it knows; left", key)
+            log.warning("memory.import: key %r has an unknown head status; skipped", key)
         if reason:
             outcomes[key] = ("skipped", reason)
         else:
@@ -127,8 +130,8 @@ async def _write(
         dry_run=input.dry_run,
         # Every entry is checked, whatever bulk_conflict_check_max_entries caps a bulk at.
         conflict_check_cap=MAX_IMPORT_ENTRIES,
-        # A re-run reinforces nothing its own keys already hold.
-        reinforce_own_key=False,
+        # A re-run must not reinforce the same rows again, so no run reinforces any.
+        reinforce=False,
     )
     for i, result in zip(pending, written.written, strict=True):
         key = keys[i]
@@ -146,9 +149,9 @@ def _entry_outcome(key: str, result: _BulkSetResult, held_by: str | None) -> tup
     if verdict in REFUSED:
         return "refused", _CHECK_OF[verdict]
     if verdict == "merge":
-        return "reinforced", "merge"
+        return "held", "merge"
     if held_by is not None and held_by != key:
-        return "reinforced", "identity_duplicate"
+        return "held", "identity_duplicate"
     return "skipped", UNCHANGED
 
 
@@ -191,7 +194,7 @@ async def _categorize(
     key holds the item. A link already stored is left as it is, so a re-run never brings
     back one the owner rescinded. The new links get one audit row: keys and category
     names, never the text."""
-    wanted: list[tuple[_ImportEntryResult, tuple[str, str]]] = []
+    wanted: list[tuple[_ImportEntryResult, tuple[str, str]]] = []  # (result, (key, cat id))
     for result, entry in zip(results, input.entries, strict=True):
         if not entry.category:
             continue
@@ -205,7 +208,8 @@ async def _categorize(
             wanted.append((result, (result.key, category_ids[entry.category])))
     if not wanted:
         return
-    stored = await categories.link_states(input.org, input.namespace, [k for _, (k, _) in wanted])
+    keys = [result.key for result, _link in wanted]
+    stored = await categories.link_states(input.org, input.namespace, keys)
     for result, link in wanted:
         if stored.get(link) is False:
             result.note = CATEGORY_RESCINDED
@@ -232,7 +236,7 @@ def _output(input: MemoryImportInput, results: list[_ImportEntryResult]) -> Memo
     return MemoryImportOutput(
         totals=_ImportTotals(
             written=counts["written"],
-            reinforced=counts["reinforced"],
+            held=counts["held"],
             skipped=counts["skipped"],
             refused=counts["refused"],
         ),

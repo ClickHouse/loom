@@ -79,11 +79,9 @@ class _BulkWriteState:
     """Request-scoped state that flows between the phases of
     `handle_memory_bulk_set`; created at the top of the call, never shared."""
 
-    # Whether a restatement of a row under the entry's own key (this session's, or the same
-    # key's in another session) records an `evidence` event. memory.import turns it off, so a
-    # re-run reinforces nothing it already holds; a merge or the same bytes under another
-    # key still reinforce that row.
-    reinforce_own_key: bool = True
+    # Whether a restatement, a merge or an identity duplicate records an `evidence` event on
+    # the row that holds the fact. memory.import turns it off, so its re-runs reinforce nothing.
+    reinforce: bool = True
     # How many entries the conflict check reaches; None reads bulk_conflict_check_max_entries.
     conflict_check_cap: int | None = None
     existing_ids: dict[str, str] = field(default_factory=dict)
@@ -234,12 +232,8 @@ class _LockView:
         self.lock_until = cols.get("lock_until")
 
 
-def _note_restatement(state: _BulkWriteState, memory_id: str, *, own_key: bool = True) -> None:
-    """Reinforce `memory_id` once for a byte-identical restatement of its value. A row under
-    the entry's own key (`own_key`) is not reinforced when the writer asked for none
-    (`reinforce_own_key`); a merge target, another key's row, always is."""
-    if own_key and not state.reinforce_own_key:
-        return
+def _note_restatement(state: _BulkWriteState, memory_id: str) -> None:
+    """Reinforce `memory_id` once for a byte-identical restatement of its value."""
     if memory_id and memory_id not in state.restated_ids:
         state.restated_ids.append(memory_id)
 
@@ -296,9 +290,7 @@ def _bulk_skip_gate(
         and _dup[1] not in state.rewritten_ids
     ):
         state.identity_duplicates[entry.memory_key] = _dup[0]
-        own_key = _dup[0] == entry.memory_key  # the same key, in another session
-        reinforce = state.reinforce_own_key or not own_key
-        if reinforce and _dup[1] not in state.identity_dup_ids:
+        if _dup[1] not in state.identity_dup_ids:
             state.identity_dup_ids.append(_dup[1])
         state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
         return True
@@ -664,7 +656,7 @@ def copy_restated_verdicts(
         res.pinned_blocker_id = src.pinned_blocker_id
         if src.conflict_verdict == "merge":
             plan.merged.append(res.memory_key)
-            _note_restatement(state, plan.merged_into.get(id(row), ""), own_key=False)
+            _note_restatement(state, plan.merged_into.get(id(row), ""))
         elif src.conflict_verdict == "rejected":
             plan.rejected_pinned.append(res.memory_key)
 

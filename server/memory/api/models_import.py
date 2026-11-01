@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from server.memory.api.models_common import _Identity
 from server.memory.domain.delete_marks import caller_trace
@@ -76,20 +76,32 @@ class MemoryImportInput(_Identity):
     # land unflagged if its peers change first.
     dry_run: bool = False
 
+    @model_validator(mode="after")
+    def _repeats_match(self) -> MemoryImportInput:
+        # An entry repeating an earlier entry's text is not written again, so it may not
+        # carry other labels that would be dropped.
+        first: dict[str, int] = {}
+        for i, entry in enumerate(self.entries):
+            j = first.setdefault(entry.value, i)
+            if self.entries[j] != entry:
+                raise ValueError(f"entries {j} and {i} have the same value but other fields")
+        return self
+
 
 class _ImportEntryResult(BaseModel):
     # The entry's position in the request's `entries`.
     index: int
     # The key the item is stored under, or would be.
     key: str
-    # written | reinforced (another memory holds the fact and was reinforced) | skipped
+    # written | held (another memory holds the fact; nothing is written) | skipped
     # (the key holds the item already) | refused (a check refused it).
     outcome: Outcome
     # Why, when the outcome is not a plain write. refused: the check that refused it
-    # (conflict: too close to a pinned memory). reinforced: merge, or identity_duplicate
+    # (conflict: too close to a pinned memory). held: merge, or identity_duplicate
     # (the same text under another key). skipped: unchanged, the key's newest status
-    # (deleted, superseded, rejected, proposed), or repeated (an earlier entry with the
-    # same text was written). written: duplicate or conflicted, the conflict verdict's status.
+    # (deleted, superseded, rejected, proposed), revised (the key holds other text), or
+    # repeated (an earlier entry with the same text was written). written: duplicate or
+    # conflicted, the conflict verdict's status.
     reason: Reason = ""
     # Why the entry's category is not linked to its key: category_unregistered,
     # category_refused (a token bounded to one user; a link has no user axis),
@@ -101,8 +113,8 @@ class _ImportEntryResult(BaseModel):
 class _ImportTotals(BaseModel):
     # Entries whose key got a new version.
     written: int = 0
-    # Entries another memory already held; that memory was reinforced.
-    reinforced: int = 0
+    # Entries another memory already held.
+    held: int = 0
     # Entries whose key already held them, or repeated an earlier entry.
     skipped: int = 0
     # Entries a check refused.

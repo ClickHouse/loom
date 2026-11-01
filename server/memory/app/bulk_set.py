@@ -654,9 +654,10 @@ async def _bulk_settle_verdicts(
     # restatement is the same fact said again under the same key: the usage fold turns the
     # evidence event into memory_embeddings.reinforcement_count, the search-side boost; the
     # row itself is not rewritten or re-embedded.
-    await _record_evidence(input, plan.reinforce_ids, "auto_reinforce bump")
-    await _record_evidence(input, state.identity_dup_ids, "identity-dedup reinforcement")
-    await _record_evidence(input, state.restated_ids, "restatement reinforcement")
+    if state.reinforce:
+        await _record_evidence(input, plan.reinforce_ids, "auto_reinforce bump")
+        await _record_evidence(input, state.identity_dup_ids, "identity-dedup reinforcement")
+        await _record_evidence(input, state.restated_ids, "restatement reinforcement")
 
 
 async def _record_evidence(input: MemoryBulkSetInput, memory_ids: list[str], what: str) -> None:
@@ -957,14 +958,14 @@ async def handle_memory_bulk_set(
     *,
     dry_run: bool = False,
     conflict_check_cap: int | None = None,
-    reinforce_own_key: bool = True,
+    reinforce: bool = True,
 ) -> MemoryBulkSetOutput:
     """One CH insert for all rows; one more for embeddings. Versions are
     each unique (nanosecond) to preserve LWW semantics.
 
     - `dry_run`: return after the verdicts, writing nothing.
     - `conflict_check_cap`: overrides `bulk_conflict_check_max_entries`.
-    - `reinforce_own_key=False`: no `evidence` event for an entry its own key already holds."""
+    - `reinforce=False`: no `evidence` event for a restatement, merge or identity duplicate."""
     ch = get_client()
     embedder = get_embedder()
     now_utc = datetime.now(UTC)
@@ -975,7 +976,7 @@ async def handle_memory_bulk_set(
     _bulk_clock = StageClock(_bulk_work)
     state = _BulkWriteState(
         conflict_check_cap=conflict_check_cap,
-        reinforce_own_key=reinforce_own_key,
+        reinforce=reinforce,
     )
     await _bulk_existing_lookup(ch, input, state)
 

@@ -4807,7 +4807,7 @@ export interface MemoryImportInput {
 
 export interface ImportTotals {
   written?: number;
-  reinforced?: number;
+  held?: number;
   skipped?: number;
   refused?: number;
 }
@@ -4815,8 +4815,8 @@ export interface ImportTotals {
 export interface ImportEntryResult {
   index: number;
   key: string;
-  outcome: "written" | "reinforced" | "skipped" | "refused";
-  reason?: "" | "blacklist" | "pinned" | "locked" | "conflict" | "merge" | "identity_duplicate" | "unchanged" | "deleted" | "superseded" | "rejected" | "proposed" | "repeated" | "unknown" | "duplicate" | "conflicted";
+  outcome: "written" | "held" | "skipped" | "refused";
+  reason?: "" | "blacklist" | "pinned" | "locked" | "conflict" | "merge" | "identity_duplicate" | "unchanged" | "deleted" | "superseded" | "rejected" | "proposed" | "revised" | "repeated" | "unknown" | "duplicate" | "conflicted";
   note?: "" | "category_unregistered" | "category_refused" | "category_not_linked" | "category_rescinded";
 }
 

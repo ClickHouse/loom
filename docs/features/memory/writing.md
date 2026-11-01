@@ -231,10 +231,12 @@ conflict verdict. Every entry gets the conflict check, whatever
 
 - **The key comes from the text:** `import:` and the first 24 hex characters of the
   SHA-256 of the text as given. The same text always lands on the same key, so a re-run
-  writes nothing new: its entries come back `skipped` (`unchanged`). Unlike a restatement
-  through `memory.set` or `memory.bulk_set`, a re-run does not reinforce a row its own key
-  holds; a fact found under another key (a merge, or the same text there) is reinforced as
-  on any write.
+  writes nothing new: its entries come back `skipped` (`unchanged`). An item edited in the
+  source has new text and so a new key: the import adds it and leaves the old fact as it
+  is (the conflict check may flag the pair), so delete or revise the old one yourself. The
+  import reinforces nothing, unlike a restatement through `memory.set` or
+  `memory.bulk_set`, so re-runs never raise a memory's reinforcement; a fact already held
+  under another key comes back `held`.
 - **The text is embedded and indexed alone:** a key that is only the digest (`import:` and
   24 lowercase hex characters, nothing else) puts no `(#key)` suffix on the excerpt a row
   is embedded and lexically indexed by, and builds no key-axis vector, so an imported fact
@@ -249,7 +251,9 @@ conflict verdict. Every entry gets the conflict check, whatever
   included. A key its owner deleted comes back `skipped` (`deleted`), one a newer
   fact retired `skipped` (`superseded`) and one marked wrong (`memory.reject`) `skipped`
   (`rejected`); none is written again. A key holding a proposal comes back `skipped`
-  (`proposed`): only `memory.proposal_decide` moves a fact out of its trial. A status the
+  (`proposed`): only `memory.proposal_decide` moves a fact out of its trial. A live key
+  holding other text was corrected (`memory.set`, `memory.update_by_id`, a pin) and comes
+  back `skipped` (`revised`), before the bulk write's own pin and lock guards. A status the
   import does not recognise leaves the key as it is too, as `skipped` (`unknown`). The read
   and the write are not atomic: a delete that lands between them is written over.
 - **A tombstone has no way back through the import:** `memory.delete`, `memory.clear` and
@@ -277,20 +281,21 @@ conflict verdict. Every entry gets the conflict check, whatever
 Each result carries the entry's `index`, its `key`, an `outcome` and, when the entry was
 not plainly written, a `reason`:
 
-| `outcome`    | `reason`                                                                                                                                                                                                                                                                                           |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `written`    | Empty, or `duplicate` or `conflicted`, the status the conflict check stored the row with.                                                                                                                                                                                                          |
-| `reinforced` | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key); that memory was reinforced.                                                                                                                                                              |
-| `skipped`    | `unchanged` (the key holds the fact already, in this session or another), `deleted`, `superseded`, `rejected` or `proposed` (the key's newest version), `repeated` (an earlier entry of the request with the same text was written) or `unknown` (logged: a status the import does not recognise). |
-| `refused`    | `blacklist`, `pinned` (the key holds another pinned value), `locked` (the key is `read_only`) or `conflict` (too close to a pinned memory).                                                                                                                                                        |
+| `outcome` | `reason`                                                                                                                                                                                                                                                                                                                                 |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `written` | Empty, or `duplicate` or `conflicted`, the status the conflict check stored the row with.                                                                                                                                                                                                                                                |
+| `held`    | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key); nothing is written or reinforced.                                                                                                                                                                                              |
+| `skipped` | `unchanged` (the key holds the fact already, in this session or another), `deleted`, `superseded`, `rejected` or `proposed` (the key's newest version), `revised` (the key holds other text), `repeated` (an earlier entry of the request with the same text was written) or `unknown` (logged: a status the import does not recognise). |
+| `refused` | `blacklist`, `pinned` or `locked` (the bulk write's guards; a key holding other text is `revised` first) or `conflict` (too close to a pinned memory).                                                                                                                                                                                   |
 
-An entry with the same text as an earlier one answers as that entry did, except after a
+An entry with the same text as an earlier one must be identical to it (otherwise the
+request is a 422 naming both indexes), and answers as that entry did, except after a
 write, when it is `skipped` (`repeated`).
 
 `totals` counts the outcomes, and `dry_run` says whether anything was written. A request
 with more than 200 entries is refused with 422, and each call draws from its own
-[rate-limit class](../../reference/http-api.md#rate-limits), `memory.import`. The op is listed on no MCP toolset: an MCP
-client calls `loom_memory_import` by name. Fields:
+[rate-limit class](../../reference/http-api.md#rate-limits), `memory.import`. The op is
+listed on no MCP toolset: an MCP client calls `loom_memory_import` by name. Fields:
 [operations reference](../../reference/operations/memory.md#memoryimport).
 
 ## Proposals

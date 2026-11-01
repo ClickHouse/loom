@@ -407,7 +407,8 @@ skips only tombstones and identity dedup counts only active, duplicate and confl
 so first it reads each key's newest version across the sessions of the identity inside the
 request's read scope (`key_heads_across_sessions`; an `own_session` token reads only its
 own session) and leaves a key whose newest version is a tombstone, or superseded, rejected
-or proposed, as it is. That read and the write are not atomic: a delete that lands between
+or proposed, or live and holding other text (`revised`), as it is. That read and the write
+are not atomic: a delete that lands between
 them is written over. A bulk result with no version that no check refused, no merge took
 and no other key holds is the skip gate's or identity dedup's answer for the key itself,
 so the entry is `unchanged`.
@@ -419,9 +420,8 @@ suffix from `build_excerpt` and no text from `key_axis_text`, whichever write st
 the row is embedded and lexically indexed by its value alone.
 
 The import passes `conflict_check_cap`, so the conflict check reaches every entry whatever
-`bulk_conflict_check_max_entries` says, and `reinforce_own_key=False`, so a re-run records
-no `evidence` event for a row under the entry's own key (a merge or the same bytes under
-another key still reinforce that row). Its dry run passes `dry_run=True`, and the bulk
+`bulk_conflict_check_max_entries` says, and `reinforce=False`, so no restatement, merge or
+identity duplicate records an `evidence` event and a re-run reinforces nothing. Its dry run passes `dry_run=True`, and the bulk
 write returns once the verdicts are in: every check has run, and nothing is written but a
 blacklist pattern's hit count, as on a `memory.set` dry run. Category links go through
 `memory/store/categories.py`, the statements `memory.assign_category` runs. The import

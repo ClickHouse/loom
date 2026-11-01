@@ -12008,7 +12008,7 @@ class MemoryImportOutput(TypedDict, total=False):
 
 class ImportTotals(TypedDict, total=False):
     written: NotRequired[int]
-    reinforced: NotRequired[int]
+    held: NotRequired[int]
     skipped: NotRequired[int]
     refused: NotRequired[int]
 
@@ -12016,7 +12016,7 @@ class ImportTotals(TypedDict, total=False):
 class ImportEntryResult(TypedDict, total=False):
     index: Required[int]
     key: Required[str]
-    outcome: Required[Literal["written", "reinforced", "skipped", "refused"]]
+    outcome: Required[Literal["written", "held", "skipped", "refused"]]
     reason: NotRequired[
         Literal[
             "",
@@ -12031,6 +12031,7 @@ class ImportEntryResult(TypedDict, total=False):
             "superseded",
             "rejected",
             "proposed",
+            "revised",
             "repeated",
             "unknown",
             "duplicate",

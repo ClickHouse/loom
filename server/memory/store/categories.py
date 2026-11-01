@@ -38,7 +38,8 @@ async def link_states(
     org: str, namespace: str, memory_keys: list[str], *, ch: _CHClient | None = None
 ) -> dict[tuple[str, str], bool]:
     """`(memory_key, category_id)` → whether that stored link is live (False: rescinded),
-    for every link of `memory_keys`; a pair never linked is absent."""
+    for every link of `memory_keys`; a pair never linked is absent. Sequentially
+    consistent, since the import adds a link only when this finds none."""
     ch = ch or _default_client()
     rows = await query_all_sliced(
         ch,
@@ -47,6 +48,7 @@ async def link_states(
         FROM loom.memory_categories FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND memory_key IN {keys:Array(String)}
+        SETTINGS select_sequential_consistency = 1
         """,
         {"org": org, "ns": namespace, "keys": sorted(set(memory_keys))},
         "keys",

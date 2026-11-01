@@ -151,6 +151,7 @@ class _StoreCH(StubCH):
                 "memory_key": r["memory_key"],
                 "deleted": r["tombstoned_at"] is not None,
                 "head_status": r["status"],
+                "head_sha256": r["content_sha256"],
             }
             for r in _newest(asked, lambda r: r["memory_key"])
         ]
@@ -354,7 +355,7 @@ async def test_each_item_is_written_under_its_key_as_imported(harness) -> None:
     keys = [import_key("Dog is Biscuit."), import_key("Deploys happen on Tuesday.")]
     assert [(r.index, r.key) for r in out.results] == [(0, keys[0]), (1, keys[1])]
     assert _outcomes(out) == [("written", ""), ("written", "")]
-    assert out.totals.model_dump() == {"written": 2, "reinforced": 0, "skipped": 0, "refused": 0}
+    assert out.totals.model_dump() == {"written": 2, "held": 0, "skipped": 0, "refused": 0}
     rows = {r["memory_key"]: r for r in ch.rows_for("loom.memory")}
     dog, deploys = rows[keys[0]], rows[keys[1]]
     assert dog["value"] == json.dumps("Dog is Biscuit.") and "pets" in dog["tags"]
@@ -382,7 +383,7 @@ async def test_reruns_write_nothing_new_and_reinforce_nothing(harness) -> None:
         assert _outcomes(again) == [("skipped", "unchanged"), ("skipped", "unchanged")]
         assert again.totals.model_dump() == {
             "written": 0,
-            "reinforced": 0,
+            "held": 0,
             "skipped": 2,
             "refused": 0,
         }
@@ -412,7 +413,7 @@ async def test_the_item_imported_in_another_session_is_skipped(harness) -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_same_text_under_another_key_reinforces_that_memory(harness) -> None:
+async def test_the_same_text_under_another_key_is_held_and_never_reinforced(harness) -> None:
     value = "Dog is Biscuit."
     ch = _StoreCH(
         [
@@ -424,25 +425,31 @@ async def test_the_same_text_under_another_key_reinforces_that_memory(harness) -
         ]
     )
     rec = harness(ch)
-    out = await handle_memory_import(_input({"value": value}))
-    assert _outcomes(out) == [("reinforced", "identity_duplicate")]
-    assert out.totals.reinforced == 1 and ch.rows_for("loom.memory") == []
-    assert [(e["memory_id"], e["event_type"]) for e in rec.events] == [("mid-keeper", "evidence")]
+    for _ in range(2):
+        out = await handle_memory_import(_input({"value": value}))
+        assert _outcomes(out) == [("held", "identity_duplicate")]
+    assert out.totals.held == 1 and ch.rows_for("loom.memory") == []
+    assert rec.events == []
 
 
 @pytest.mark.asyncio
 async def test_a_text_repeated_in_one_request_is_written_once(harness) -> None:
     ch = _StoreCH(registry={"pets": "cat-1"})
     harness(ch)
-    out = await handle_memory_import(
-        _input({"value": "Dog is Biscuit."}, {"value": "Dog is Biscuit.", "category": "pets"})
-    )
+    item = {"value": "Dog is Biscuit.", "category": "pets"}
+    out = await handle_memory_import(_input(item, item))
     assert _outcomes(out) == [("written", ""), ("skipped", "repeated")]
     assert out.results[0].key == out.results[1].key
     assert len(ch.rows_for("loom.memory")) == 1
     # The repeat's key holds the item, so its category is linked.
     links = ch.rows_for("loom.memory_categories")
     assert [(r["memory_key"], r["category_id"]) for r in links] == [(out.results[0].key, "cat-1")]
+
+
+def test_a_repeat_with_other_labels_is_refused() -> None:
+    """A repeat is not written again, so labels it adds would be dropped."""
+    with pytest.raises(pydantic.ValidationError, match="entries 0 and 1"):
+        _input({"value": "Dog is Biscuit."}, {"value": "Dog is Biscuit.", "sensitivity": "high"})
 
 
 @pytest.mark.asyncio
@@ -494,6 +501,17 @@ async def test_an_item_superseded_in_another_session_is_not_recreated(harness) -
     harness(ch)
     out = await handle_memory_import(_input({"value": value}))
     assert _outcomes(out) == [("skipped", "superseded")]
+    assert ch.rows_for("loom.memory") == []
+
+
+@pytest.mark.asyncio
+async def test_a_key_its_owner_corrected_is_left_corrected(harness) -> None:
+    value = "Dog is Biscuit."
+    corrected = _row(memory_key=import_key(value), value="Dog is Rex.", content_sha256="f" * 64)
+    ch = _StoreCH([corrected])
+    harness(ch)
+    out = await handle_memory_import(_input({"value": value}))
+    assert _outcomes(out) == [("skipped", "revised")]
     assert ch.rows_for("loom.memory") == []
 
 
@@ -591,7 +609,7 @@ async def test_a_key_in_a_state_the_import_does_not_know_is_left_as_it_is(harnes
     harness(ch)
     out = await handle_memory_import(_input({"value": value}))
     assert _outcomes(out) == [("skipped", "unknown")]
-    assert ch.rows_for("loom.memory") == [] and "no state it knows" in caplog.text
+    assert ch.rows_for("loom.memory") == [] and "unknown head status" in caplog.text
 
 
 # ---- the inherited checks, per entry ---------------------------------------
@@ -599,6 +617,8 @@ async def test_a_key_in_a_state_the_import_does_not_know_is_left_as_it_is(harnes
 
 @pytest.mark.asyncio
 async def test_each_check_that_refuses_an_entry_is_named_on_it(harness) -> None:
+    """A pinned or locked key holding other text was corrected by its owner: it is left as
+    `revised` before the bulk write's own pin and lock guards are reached."""
     plain, secret = "Deploys happen on Tuesday.", "The launch code is zq-1."
     pinned, locked, close = "Dog is Biscuit.", "Cat is Miso.", "Deploys happen on Friday."
     ch = _StoreCH(
@@ -622,32 +642,32 @@ async def test_each_check_that_refuses_an_entry_is_named_on_it(harness) -> None:
     assert _outcomes(out) == [
         ("written", ""),
         ("refused", "blacklist"),
-        ("refused", "pinned"),
-        ("refused", "locked"),
+        ("skipped", "revised"),
+        ("skipped", "revised"),
         ("refused", "conflict"),
     ]
-    assert out.totals.model_dump() == {"written": 1, "reinforced": 0, "skipped": 0, "refused": 4}
+    assert out.totals.model_dump() == {"written": 1, "held": 0, "skipped": 2, "refused": 2}
     assert [r["memory_key"] for r in ch.rows_for("loom.memory")] == [import_key(plain)]
-    # A refused entry's category is not linked.
+    # A refused or skipped entry's category is not linked.
     assert ch.rows_for("loom.memory_categories") == []
 
 
 @pytest.mark.asyncio
-async def test_the_conflict_verdicts_that_write_or_reinforce_are_named(harness) -> None:
+async def test_the_conflict_verdicts_that_write_or_hold_are_named(harness) -> None:
     same, near = "Prod deploys are Tuesdays.", "Prod deploys happen Tuesdays."
     ch = _StoreCH()
     rec = harness(ch)
     rec.verdicts[same] = ConflictResult(verdict="merge", peers=[], existing_memory_id="m-keep")
     rec.verdicts[near] = ConflictResult(verdict="duplicate", peers=[], duplicate_of_id="m-peer")
     out = await handle_memory_import(_input({"value": same}, {"value": near}))
-    assert _outcomes(out) == [("reinforced", "merge"), ("written", "duplicate")]
+    assert _outcomes(out) == [("held", "merge"), ("written", "duplicate")]
     (row,) = ch.rows_for("loom.memory")
     assert (row["memory_key"], row["status"], row["duplicate_of"]) == (
         import_key(near),
         "duplicate",
         "m-peer",
     )
-    assert [e["memory_id"] for e in rec.events] == ["m-keep"]
+    assert rec.events == []  # the merge target is not reinforced
 
 
 @pytest.mark.asyncio
@@ -760,12 +780,12 @@ async def test_a_dry_run_answers_every_outcome_the_real_run_does(harness) -> Non
     expected = [
         ("written", ""),
         ("refused", "blacklist"),
-        ("refused", "pinned"),
-        ("refused", "locked"),
+        ("skipped", "revised"),
+        ("skipped", "revised"),
         ("refused", "conflict"),
-        ("reinforced", "merge"),
+        ("held", "merge"),
         ("written", "duplicate"),
-        ("reinforced", "identity_duplicate"),
+        ("held", "identity_duplicate"),
         ("skipped", "unchanged"),
         ("skipped", "deleted"),
         ("skipped", "superseded"),
@@ -953,7 +973,7 @@ async def test_every_entry_is_checked_whatever_the_bulk_cap_says(
     assert (out.results[150].outcome, out.results[150].reason) == ("refused", "conflict")
     assert out.totals.model_dump() == {
         "written": MAX_IMPORT_ENTRIES - 1,
-        "reinforced": 0,
+        "held": 0,
         "skipped": 0,
         "refused": 1,
     }

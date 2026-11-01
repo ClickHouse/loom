@@ -66,7 +66,7 @@ async def test_each_item_is_written_under_its_text_key_as_imported(
     async with Agent(org=ORG, namespace=ns, agent=AGENT, base_url=control_plane_url) as a:
         out = await a.client.memory.import_(body)
         got = await a.call("memory.get", memory_key=_key(dog))
-    assert out["totals"] == {"written": 2, "reinforced": 0, "skipped": 0, "refused": 0}, out
+    assert out["totals"] == {"written": 2, "held": 0, "skipped": 0, "refused": 0}, out
     assert [r["key"] for r in out["results"]] == [_key(dog), _key(deploys)]
     assert got["found"] is True and got["value"] == dog
     assert got["source_class"] == "imported" and "pets" in got["tags"]
@@ -122,6 +122,25 @@ async def test_a_rerun_leaves_a_rejected_item_rejected(control_plane_url: str) -
 
 
 @pytest.mark.asyncio
+async def test_a_rerun_leaves_an_item_its_owner_corrected_corrected(control_plane_url: str) -> None:
+    from loom import Agent
+
+    text = "The on-call rotation changes on Mondays."
+    async with Agent(org=ORG, namespace=_ns(), agent=AGENT, base_url=control_plane_url) as a:
+        await a.client.memory.import_(_entries(text))
+        got = await a.call("memory.get", memory_key=_key(text))
+        await a.call(
+            "memory.update_by_id",
+            memory_id=got["memory_id"],
+            value="The on-call rotation changes on Tuesdays.",
+        )
+        again = await a.client.memory.import_(_entries(text))
+        after = await a.call("memory.get", memory_key=_key(text))
+    assert _outcomes(again) == [("skipped", "revised")], again
+    assert after["value"] == "The on-call rotation changes on Tuesdays."
+
+
+@pytest.mark.asyncio
 async def test_an_item_on_trial_is_left_proposed(control_plane_url: str) -> None:
     from loom import Agent
 
@@ -145,7 +164,7 @@ async def test_a_dry_run_writes_nothing(control_plane_url: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_each_refusal_and_reinforcement_is_named_on_its_entry(
+async def test_each_refusal_and_held_entry_is_named_on_its_entry(
     control_plane_url: str,
 ) -> None:
     from loom import Agent
@@ -154,7 +173,7 @@ async def test_each_refusal_and_reinforcement_is_named_on_its_entry(
     pinned, kept = "The release train leaves on Mondays.", "The wiki lives at docs.example.test."
     async with Agent(org=ORG, namespace=_ns(), agent=AGENT, base_url=control_plane_url) as a:
         await a.call("blacklist.add", pattern="launch code")
-        # The key the pinned item's text derives already holds another pinned value.
+        # The key the pinned item's text derives already holds other pinned text: revised.
         await a.call("memory.pin", memory_key=_key(pinned), value="Trains leave daily.")
         # The same text is stored under another key of the identity.
         await a.call("memory.set", memory_key="wiki_location", value=kept)
@@ -164,20 +183,20 @@ async def test_each_refusal_and_reinforcement_is_named_on_its_entry(
     assert _outcomes(out) == [
         ("written", ""),
         ("refused", "blacklist"),
-        ("refused", "pinned"),
-        ("reinforced", "identity_duplicate"),
+        ("skipped", "revised"),
+        ("held", "identity_duplicate"),
     ], out
-    assert out["totals"] == {"written": 1, "reinforced": 1, "skipped": 0, "refused": 2}
+    assert out["totals"] == {"written": 1, "held": 1, "skipped": 1, "refused": 1}
     assert refused["found"] is False and held["value"] == "Trains leave daily."
 
 
 @pytest.mark.asyncio
-async def test_a_pinned_memorys_own_text_reinforces_it_and_competes_with_nothing(
+async def test_a_pinned_memorys_own_text_is_held_by_it_and_competes_with_nothing(
     control_plane_url: str,
 ) -> None:
     """The pinned memory's exact text, imported by the same identity: identity dedup
     matches it by content hash before any embedding is compared, so in every
-    environment the entry reinforces the pinned row, nothing lands under the import key,
+    environment the entry is held by the pinned row, nothing lands under the import key,
     and the pin and the value stand. A merely close text is judged by the conflict
     check's similarity, which an embedder decides; the unit tests script that verdict."""
     from loom import Agent
@@ -188,7 +207,7 @@ async def test_a_pinned_memorys_own_text_reinforces_it_and_competes_with_nothing
         out = await a.client.memory.import_(_entries(text))
         pinned = await a.call("memory.get", memory_key="deploy_policy")
         imported = await a.call("memory.get", memory_key=_key(text))
-    assert _outcomes(out) == [("reinforced", "identity_duplicate")], out
+    assert _outcomes(out) == [("held", "identity_duplicate")], out
     assert imported["found"] is False
     assert (pinned["value"], pinned["pinned"]) == (text, True)
 
