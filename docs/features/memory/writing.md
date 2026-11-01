@@ -280,8 +280,10 @@ extraction path (`LOOM_MEMORY_EXTRACT_VALUE_UPDATES`) never runs for an import.
   linked, the result's `note` says why: `category_unregistered` (the namespace has no such
   category), `category_refused` (a token bounded to one user or one session links none,
   since a link has neither axis; it is refused `memory.assign_category` too),
-  `category_not_linked` (the key does not hold the fact) or `category_rescinded`. Either way
-  the fact is still imported.
+  `category_not_linked` (the key does not hold the fact and has no link) or
+  `category_rescinded`. Either way the fact is still imported. A link already stored for the
+  key answers no note, and an entry its own request superseded (`newest_wins`) is linked
+  like any written one.
 - **`dry_run=true`** makes every check and writes no memory row, embedding, category link,
   audit row or usage event. It still pays for the embedding of each entry it sends to the
   bulk write, since the conflict check reads the vectors, and counts a blacklist pattern's
@@ -307,7 +309,7 @@ An entry with the same text as an earlier one must be identical to it (otherwise
 request is a 422 naming both indexes), and answers as that entry did, except after a
 write, when it is `skipped` (`repeated`).
 
-`totals` counts the outcomes, and `dry_run` says whether anything was written. A request
+`totals` counts the outcomes, and `dry_run` echoes whether the request was a dry run. A request
 with more than 200 entries is refused with 422, and each call draws from its own
 [rate-limit class](../../reference/http-api.md#rate-limits), `memory.import`. The op is
 listed on no MCP toolset: an MCP client calls `loom_memory_import` by name. Fields:

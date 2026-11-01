@@ -126,7 +126,7 @@ async def _write(
     # of one attribute in a batch retires the earlier: oldest first, an undated item
     # counting as said now.
     now = naive_utc_now()
-    pending.sort(key=lambda i: (to_naive_utc(input.entries[i].valid_at) or now, i))
+    pending.sort(key=lambda i: to_naive_utc(input.entries[i].valid_at) or now)  # stable
     written = await handle_memory_bulk_set(
         _bulk_input(input, [(input.entries[i], keys[i]) for i in pending]),
         dry_run=input.dry_run,
@@ -207,14 +207,15 @@ async def _categorize(
             result.note = "category_refused"
         elif entry.category not in category_ids:
             result.note = "category_unregistered"
-        elif not holds_item(result.outcome, result.reason):
-            result.note = "category_not_linked"
         else:
             link = (result.key, category_ids[entry.category])
-            if link not in stored:
+            if link in stored:
+                if not stored[link]:
+                    result.note = "category_rescinded"
+            elif not holds_item(result.outcome, result.reason):
+                result.note = "category_not_linked"
+            else:
                 links.add(link)
-            elif not stored[link]:
-                result.note = "category_rescinded"
     new = sorted(links)
     if not new or input.dry_run:
         return

@@ -1037,6 +1037,21 @@ async def test_a_rerun_adds_no_link_already_stored(harness) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_corrected_key_keeps_its_link_and_answers_no_note(harness) -> None:
+    """The key was imported and linked, then its owner corrected it: the re-run answers
+    `revised` and says nothing about a category the key is still linked to."""
+    value = "Dog is Biscuit."
+    ch = _StoreCH(registry={"pets": "cat-1"})
+    harness(ch)
+    item = {"value": value, "category": "pets"}
+    await handle_memory_import(_input(item))
+    ch.rows.append(_row(memory_key=import_key(value), version=2**62, content_sha256="f" * 64))
+    again = await handle_memory_import(_input(item))
+    assert [(r.outcome, r.reason, r.note) for r in again.results] == [("skipped", "revised", "")]
+    assert len(ch.rows_for("loom.memory_categories")) == 1
+
+
+@pytest.mark.asyncio
 async def test_a_category_on_an_entry_its_key_does_not_hold_is_not_linked(harness) -> None:
     ch = _StoreCH(registry={"pets": "cat-1"})
     harness(ch, blacklist="launch code")

@@ -115,5 +115,5 @@ class MemoryImportOutput(BaseModel):
     totals: _MemoryImportTotals
     # One result per entry, in request order.
     results: list[_MemoryImportResult]
-    # True when nothing was written: each outcome is what the import would do.
+    # True for a dry run: each outcome is what the import would do, and nothing was written.
     dry_run: bool = False

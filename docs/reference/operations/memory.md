@@ -1011,7 +1011,7 @@ Import items another memory system distilled, through every memory.bulk_set chec
 | --- | --- | --- |
 | `totals` | `_MemoryImportTotals` | How many entries ended each way. |
 | `results` | `list[_MemoryImportResult]` | One result per entry, in request order. |
-| `dry_run` | `bool` | True when nothing was written: each outcome is what the import would do. |
+| `dry_run` | `bool` | True for a dry run: each outcome is what the import would do, and nothing was written. |
 
 ## `memory.import_curated`
 
