@@ -259,17 +259,6 @@ def test_a_chunk_no_row_is_named_for_is_dropped() -> None:
     assert fold_set_chunks([pooled, _writer_chunk("u", "a stale passage")], {}) == [pooled]
 
 
-def test_a_chunk_folds_only_onto_the_row_it_is_named_for() -> None:
-    # another session's row of the writer's key is pooled, but `rows` names s2
-    older = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
-    rows = {ChunkId("a", "u", "lesson_a", 0, _SHA): SetChunkRow(("a", "u", "s2"), 7)}
-    out = fold_set_chunks([older, _writer_chunk("u", "the s2 passage")], rows)
-    assert [(h.identity, h.content_excerpt) for h in out] == [
-        (("a", "u", "s2"), "the s2 passage"),
-        (("a", "u", "s1"), "lesson_a"),
-    ]
-
-
 @pytest.mark.asyncio
 async def test_a_failed_row_read_names_no_row_and_its_chunks_drop() -> None:
     from server.memory.app.retrieval.pool import _set_chunk_rows

@@ -13,8 +13,9 @@ content_sha256)`; a key's chunks share the deterministic session id
 unchanged chunks collapse under ReplacingMergeTree, chunks that no longer
 exist are tombstoned (a replacing row with `tombstoned_at` set), new ones are
 inserted. A re-set too short to chunk, or filed `duplicate`, writes none and
-leaves the earlier chunks; search serves a chunk only for a row whose current
-value cuts it. `memory.delete` tombstones the key's whole set.
+leaves the earlier chunks; search under private scope serves a chunk only for a
+row whose current value cuts it, and shared scope folds a chunk by its key.
+`memory.delete` tombstones the key's whole set.
 
 Imports only the chunker and leaf services; `server.memory.app.handlers` imports
 this module lazily, at the call site, and search's set-chunk fold reads

@@ -181,7 +181,7 @@ def fold_set_chunks(
             target: tuple[str, ...] = (parent_key,)
         else:
             cid = _chunk_id(h)
-            found = rows.get(cid) if cid else None
+            found = rows.get(cid) if cid is not None else None
             if found is None:
                 continue  # no served row's value is known to cut it
             target = (*found.identity, parent_key)
@@ -195,9 +195,9 @@ def fold_set_chunks(
             memory_key=parent_key,
             source="fact",
             parent_memory_key="",
-            identity=found.identity if found else None,
-            session_id=found.identity[2] if found else "",
-            version=found.version if found else h.version,
+            identity=found.identity if found is not None else None,
+            session_id=found.identity[2] if found is not None else "",
+            version=found.version if found is not None else h.version,
             score_components={
                 **dict(h.score_components or {}),
                 "folded_chunks": 1.0,
@@ -235,8 +235,6 @@ async def _set_chunk_rows(
     (`set_chunk_identities`). A chunk none of them cuts, or every chunk when a
     read fails, names none. None under shared scope, where the writer's private row is
     never served: the chunks fold by key."""
-    if not any(_is_set_chunk(h) for h in hits):
-        return {}
     if q.scope != "private":
         return None
     pooled = {cid for h in hits if _is_set_chunk(h) and (cid := _chunk_id(h))}
