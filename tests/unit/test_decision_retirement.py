@@ -896,20 +896,27 @@ async def test_a_busy_key_lease_refuses_the_outcome_as_it_is(
 
 
 @pytest.mark.asyncio
-async def test_a_decision_merged_into_another_key_writes_no_record(
-    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("merged_into", ["decision:peer", ""])
+async def test_a_decision_merged_into_another_key_writes_nothing(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch, merged_into: str
 ) -> None:
-    # memory.set found the same decision under another key and stored no row: a record here
-    # would have no live writer row, so none is written and the other key is answered.
+    # memory.set found the same text under another decision key and stored no row: no record
+    # and no edges are written, and the answer names that key ("" when its row was not read).
+    import server.memory.app.ops as mops
     from server.memory.app import decision as h
 
     async def _merge(_inp: Any) -> Any:
-        return SimpleNamespace(version=0, conflict_verdict="merge", merged_into_key="decision:peer")
+        return SimpleNamespace(version=0, conflict_verdict="merge", merged_into_key=merged_into)
+
+    async def _no_link(_inp: Any) -> Any:
+        raise AssertionError("an edge was written for a merged decision")
 
     monkeypatch.setattr("server.memory.app.write.handle_memory_set", _merge)
-    out = await h.handle_decision_record(_record_input(caused_by=[], influenced_by=[]))
-    assert (out.memory_key, out.record_id, out.superseded_prior) == ("decision:peer", "", False)
-    assert "nothing written" in out.next
+    monkeypatch.setattr(mops, "handle_memory_link", _no_link)
+    out = await h.handle_decision_record(_record_input())
+    assert (out.memory_key, out.record_id) == (merged_into, "")
+    assert (out.superseded_prior, out.edges_written) == (False, 0)
+    assert "nothing was written" in out.next
     assert await local.query_all("SELECT 1 FROM loom.memory_records") == []
 
 
@@ -937,24 +944,19 @@ async def test_an_outcome_merged_into_another_key_answers_not_updated(
 async def test_a_delete_the_write_fence_catches_answers_not_found(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The delete lands after memory.set's hash check, and its write fence refuses the insert.
-    from fastapi import HTTPException
-
+    # The delete lands after memory.set's hash check; its write fence refuses the insert.
     from server.core.errors import NotFoundError
     from server.memory.api.models_decision import DecisionOutcomeInput
     from server.memory.app import decision as h
+    from server.memory.app.write_fence import lift_above_deletes
 
-    await _write_decision_rows(local, "claude")
+    version = await _write_decision_rows(local, "claude")
 
-    async def _fenced(_inp: Any) -> Any:
+    async def _fenced(inp: Any) -> Any:
         await _delete("claude")
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "PRECONDITION_FAILED",
-                "message": "the key was deleted after the if_match_sha256 check",
-            },
-        )
+        row = _memory_row(inp.agent, inp.memory_type, version + 1)
+        await lift_above_deletes("o", "n", [row], [], conditional=True, ch=local)
+        raise AssertionError("the fence let the write through")
 
     monkeypatch.setattr("server.memory.app.write.handle_memory_set", _fenced)
     with pytest.raises(NotFoundError):

@@ -46,7 +46,7 @@ Close the loop on a decision once reality has answered: record what actually hap
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `memory_key` | `str` | The decision's key, echoed. |
-| `updated` | `bool` | False only when the revision states another decision word for word and nothing was written; a missing decision answers 404 instead. |
+| `updated` | `bool` | False when memory.set merged the revision into another decision of the same text and nothing was written; a missing decision answers 404 instead. |
 | `memories_credited` | `int` | memories credited through the run ledger (run.complete memories_used). |
 
 ## `decision.precedents`
@@ -99,7 +99,7 @@ Record a DECISION as a first-class object — call it whenever you choose betwee
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `memory_key` | `str` | The decision's key, derived from category + scenario; pass it to `decision.outcome` and `decision.chain`. |
-| `record_id` | `str` | The id of the `decision` record version written; "" when nothing was written. |
+| `record_id` | `str` | The id of the `decision` record version written; "" after a merge. |
 | `superseded_prior` | `bool` | True when an active decision for the same category + scenario existed and is now superseded by this one. |
 | `edges_written` | `int` | How many `caused` / `influenced` edges were written; a failed link is skipped. |
 | `next` | `str` | Plain-text hint naming the follow-up operations. |

@@ -60,10 +60,10 @@ class DecisionRecordInput(BaseModel):
 
 class DecisionRecordOutput(BaseModel):
     # The decision's key, derived from category + scenario; pass it to
-    # `decision.outcome` and `decision.chain`. When another decision already states
-    # this one word for word, its key, and nothing new is written.
+    # `decision.outcome` and `decision.chain`. The other decision's key when memory.set
+    # merged this one into it (the same text); nothing is written then.
     memory_key: str
-    # The id of the `decision` record version written; "" when nothing was written.
+    # The id of the `decision` record version written; "" after a merge.
     record_id: str
     # True when an active decision for the same category + scenario existed
     # and is now superseded by this one.
@@ -160,8 +160,8 @@ class DecisionOutcomeInput(BaseModel):
 class DecisionOutcomeOutput(BaseModel):
     # The decision's key, echoed.
     memory_key: str
-    # False only when the revision states another decision word for word and nothing
-    # was written; a missing decision answers 404 instead.
+    # False when memory.set merged the revision into another decision of the same text
+    # and nothing was written; a missing decision answers 404 instead.
     updated: bool
     # memories credited through the run ledger (run.complete memories_used).
     memories_credited: int = 0

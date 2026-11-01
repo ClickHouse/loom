@@ -137,12 +137,11 @@ async def _write_decision(
     valid_at: datetime | None,
     if_match_sha256: str = "",
 ) -> tuple[str, str]:
-    """Memory row + record under one key. Returns the key the decision is under and the
-    record_id, "" when memory.set merged the row into another decision key that already
-    states it. The row goes first: a delete keeps the record only while its writer's row is
-    live, so that row must exist before the record does. `if_match_sha256` makes the row
-    write conditional on the live row's hash (memory.set answers 409 PRECONDITION_FAILED
-    otherwise)."""
+    """Memory row + record under one key. Returns the record_id and "", or "" and the key
+    memory.set merged the row into (another decision of the same text). The row goes
+    first: a delete keeps the record only while its writer's row is live, so that row must
+    exist before the record does. `if_match_sha256` makes the row write conditional on the
+    live row's hash (memory.set answers 409 PRECONDITION_FAILED otherwise)."""
     from server.memory.app.records import handle_memory_record_write
     from server.memory.app.write import handle_memory_set
 
@@ -166,8 +165,8 @@ async def _write_decision(
         )
     )
     if set_out.conflict_verdict == "merge":
-        # No row under the writer, so a record here would be retired at once.
-        return set_out.merged_into_key or key, ""
+        # memory.set stored no row, so a record here would not match the writer's row.
+        return "", set_out.merged_into_key
     rec_out = await handle_memory_record_write(
         MemoryRecordWriteInput(
             org=org,
@@ -188,7 +187,7 @@ async def _write_decision(
         )
     except Exception as e:  # noqa: BLE001 — the decision is written
         log.warning("decision: closing record check failed for %s: %s", key, e)
-    return key, str(rec_out.record_id)
+    return str(rec_out.record_id), ""
 
 
 async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOutput:
@@ -215,7 +214,7 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         f"decision:category:{payload['category'].lower()}",
         *[t for t in input.tags if t],
     ]
-    key, record_id = await _write_decision(
+    record_id, merged_into = await _write_decision(
         org=input.org,
         namespace=input.namespace,
         agent=input.agent,
@@ -227,6 +226,15 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         tags=tags,
         valid_at=input.valid_at,
     )
+    if not record_id:
+        return DecisionRecordOutput(
+            memory_key=merged_into,
+            record_id="",
+            next=(
+                f"memory.set merged this into the decision {merged_into!r}, which has the "
+                "same text; nothing was written."
+            ),
+        )
 
     edges = 0
     evidence = [f"decision.record: {payload['scenario'][:200]}"]
@@ -252,17 +260,16 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
             except Exception as e:  # noqa: BLE001 — an edge never fails the record
                 log.warning("decision.record: edge %s -%s-> %s failed: %s", src, rel, key, e)
 
-    done = "recorded" if record_id else "already states this; nothing written"
     return DecisionRecordOutput(
         memory_key=key,
         record_id=record_id,
-        superseded_prior=bool(record_id) and key in prior,
+        superseded_prior=key in prior,
         edges_written=edges,
         next=(
-            f"decision {key} {done}. "
-            "When the outcome is known, call decision.outcome(memory_key, realized_outcome, "
-            "success) — it also credits the memories the run relied on. Before a similar "
-            "decision, call decision.precedents."
+            f"decision {key} recorded. When the outcome is known, call "
+            "decision.outcome(memory_key, realized_outcome, success) — it also credits "
+            "the memories the run relied on. Before a similar decision, call "
+            "decision.precedents."
         ),
     )
 
@@ -402,7 +409,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         raise _no_active_decision(input)
     # Conditional on the row read with the record, so a delete since then is not written back.
     try:
-        _, record_id = await _write_decision(
+        record_id, _ = await _write_decision(
             org=input.org,
             namespace=input.namespace,
             agent=writer.agent,

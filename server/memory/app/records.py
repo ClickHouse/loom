@@ -336,9 +336,9 @@ async def _fold_onto_active_record(
     now: datetime,
 ) -> _RecordFold:
     """Field-level fold onto the active record for this key: an empty incoming field keeps
-    the survivor's value, spelling variants are agreement, and a real disagreement is
-    recorded with both values before the incoming one wins. A decision record keeps
-    nothing of the survivor."""
+    the survivor's value, spelling variants are agreement, lists union, and a real
+    disagreement is recorded with both values before the incoming one wins. A decision
+    record keeps nothing of the survivor."""
     fold_out: dict[str, Any] = {}
     superseded_id = ""
     conflict_rows: list[dict[str, Any]] = []
