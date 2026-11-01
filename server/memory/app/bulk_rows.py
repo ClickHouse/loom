@@ -547,7 +547,7 @@ def _settle_repeat(step: _Step, src: _Step, held: _Held, rewritten: set[str]) ->
     the earlier row, with its vector, lands as this entry's write and result, and the
     earlier entry keeps its merge."""
     if held.step is src:
-        return Outcome.UNCHANGED
+        return Outcome.UNCHANGED  # src's row landed, maybe by an earlier repeat of it
     if src.outcome is Outcome.PINNED or src.outcome is Outcome.LOCKED:
         return src.outcome  # refused again, as the same memory.set would be
     if src.outcome is not Outcome.KEPT_OUT:

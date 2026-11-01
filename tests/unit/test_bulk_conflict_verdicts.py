@@ -370,6 +370,23 @@ def test_a_restated_merge_before_its_target_is_rewritten_stays_a_merge() -> None
     assert [x["memory_key"] for x in plan.memory_rows] == ["a", "t"]
 
 
+def test_a_second_restatement_after_a_landing_one_is_unchanged() -> None:
+    # a=Berlin merges into T, t=bicycle, then a=Berlin twice. The first restatement lands
+    # the first a's row; the second meets that row as a's value, so it writes nothing.
+    from server.memory.app.bulk_rows import _bulk_skip_gate
+    from server.memory.app.bulk_set import _apply_verdicts
+
+    state = _stored(t=("T", "berlin"))
+    _entry(state, "a", "A1", "berlin")
+    _entry(state, "t", "T", "bike")
+    assert _bulk_skip_gate(NS(memory_key="a"), "berlin", state, {})
+    assert _bulk_skip_gate(NS(memory_key="a"), "berlin", state, {})
+    plan = _apply_verdicts(state, [], {0: NS(verdict="merge", existing_memory_id="T", peers=[])})
+    assert [r.version for r in state.results] == [0, 1, 1, 0]
+    assert [x["memory_key"] for x in plan.memory_rows] == ["a", "t"]
+    assert state.skipped_unchanged == 1
+
+
 def test_a_restated_landing_keeps_the_merge_peers_on_the_merging_entry() -> None:
     # a=Berlin merges into T, t is rewritten, a=Berlin again lands. The first a answers
     # a merge naming T, as memory.set does; the landing names no peer (T's old text).
