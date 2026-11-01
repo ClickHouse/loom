@@ -474,3 +474,31 @@ def test_the_wide_statement_keeps_as_many_rows_of_a_key_as_the_window(
     _run_pool(monkeypatch, ch, shape)
     (wide,) = [p for sql, p in zip(ch.statements, ch.params, strict=True) if "AS n_keys" in sql]
     assert wide["per_key"] == per_key
+
+
+async def test_a_key_match_row_carries_its_version(monkeypatch) -> None:
+    # the folds pick a writer's newest row of a key by version
+    import server.core.ch as ch_mod
+
+    row = {"memory_key": "task_worktree", "agent": "a", "user_id": "u", "session_id": "s1"}
+
+    class _CH:
+        async def query_all(self, sql, params=None):
+            return [{"any_key": 1}] if "any_key" in sql else [{**row, "version": 9}]
+
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
+    inp = MemorySearchInput(
+        org="o", namespace="n", agent="a", query="task worktree", key_match_mode="always"
+    )
+    ctx = SimpleNamespace(
+        input=inp,
+        all_hits=[],
+        actual_work={},
+        namespaces=["n"],
+        query_vec=[0.1],
+        embedder=SimpleNamespace(model_name="m"),
+        endpoint=None,
+        query_shape="",
+    )
+    await _run_key_match_pool(ctx)
+    assert [h.version for h in ctx.all_hits] == [9]

@@ -342,7 +342,7 @@ def hit_writer(hit: Any) -> tuple[str, str] | None:
     return getattr(hit, "_row_writer", None) or getattr(hit, "writer", None)
 
 
-def writers_covered(hits: Iterable[Any], namespace: str = "") -> set[tuple[str, str, str, str]]:
+def writers_covered(hits: Iterable[Any], namespace: str) -> set[tuple[str, str, str, str]]:
     """(namespace, agent, user_id, memory_key) of each hit that knows only its writer: it
     stands for that writer's row of the key, so the duplicate substitution seats none."""
     return {

@@ -912,6 +912,10 @@ def _chunk_neighbor_sql(
                 substring(c.content, 1, 1200) AS content_excerpt,
                 c.content AS content_full,
                 cosineDistance(c.embedding, {{q:Array(Float32)}}) AS distance,
+                c.agent AS agent,
+                c.user_id AS user_id,
+                c.session_id AS session_id,
+                c.parent_memory_key AS parent_memory_key,
                 {date_select}
             FROM loom.memory_chunks AS c FINAL
             {date_join}

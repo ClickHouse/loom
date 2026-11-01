@@ -10,12 +10,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from server.core.tag_sql import tag_predicate
-from server.memory.domain.search_types import (
-    SearchHit,
-    SearchQuery,
-    hit_row_key,
-    names_row,
-)
+from server.memory.domain.search_types import SearchHit, SearchQuery, hit_row_key, names_row
 from server.memory.domain.temporal_sql import as_of_predicate, status_predicate, tombstone_predicate
 
 

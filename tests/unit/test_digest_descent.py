@@ -135,3 +135,33 @@ def test_set_questions_are_detected_and_single_facts_are_not() -> None:
     ):
         assert not is_set_question(q), q
     assert MemoryAskInput(org="o", namespace="n", agent="*", query="q").set_window is None
+
+
+async def test_a_descended_row_carries_its_version(monkeypatch) -> None:
+    # the folds pick a writer's newest row of a key by version
+    import server.core.ch as ch_mod
+    from server.memory.app.search.digest_descent import _run_digest_descent
+
+    row = {"memory_key": "k", "agent": "a", "user_id": "u", "session_id": "s1", "version": 9}
+
+    class _CH:
+        async def query_all(self, sql, params=None):
+            return [row]
+
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
+    digest = SimpleNamespace(
+        namespace="n",
+        memory_key="summary:s1",
+        source="summary",
+        rank_score=0.9,
+        score_components={"summary_cosine": 0.9},
+    )
+    ctx = SimpleNamespace(
+        input=MemorySearchInput(org="o", namespace="n", agent="a", query="q"),
+        all_hits=[digest],
+        actual_work={},
+        query_vec=[0.1],
+        embedder=SimpleNamespace(model_name="m"),
+    )
+    await _run_digest_descent(ctx)
+    assert [h.version for h in ctx.all_hits[1:]] == [9]

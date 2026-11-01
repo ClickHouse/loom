@@ -63,6 +63,7 @@ async def _recency_backfill(
             e.agent AS agent,
             e.user_id AS user_id,
             e.session_id AS session_id,
+            e.version AS version,
             e.tags AS tags
         FROM loom.memory_embeddings AS e FINAL
         WHERE {" AND ".join(where)}
@@ -94,6 +95,7 @@ async def _recency_backfill(
                 verified=bool(int(r.get("verified") or 0)),
                 session_id=str(r.get("session_id") or ""),
                 identity=row_identity(r),
+                version=int(r.get("version") or 0),
                 tags=[str(t) for t in (r.get("tags") or []) if t],
                 score_components={"recency_backfill": 1.0, "rank_score": float(floor)},
             )
@@ -110,6 +112,22 @@ def _is_set_chunk(h: Any) -> bool:
         and bool(getattr(h, "parent_memory_key", "") or "")
         and str(getattr(h, "memory_key", "") or "").startswith(_SET_CHUNK_PREFIX)
     )
+
+
+def folded_fields(row: Any, chunk: Any) -> dict[str, Any]:
+    """The fields a row takes when a chunk of its value folds onto it: one more folded
+    chunk and, when the chunk out-scored it, the chunk's score, distance and passage."""
+    components = dict(row.score_components or {})
+    components["folded_chunks"] = float(components.get("folded_chunks", 0.0)) + 1.0
+    if float(chunk.rank_score or 0.0) <= float(row.rank_score or 0.0):
+        return {"score_components": components}
+    components["folded_lift"] = 1.0
+    return {
+        "score_components": components,
+        "rank_score": float(chunk.rank_score),
+        "distance": min(float(row.distance), float(chunk.distance)),
+        "content_excerpt": chunk.content_excerpt or row.content_excerpt,
+    }
 
 
 def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
@@ -133,15 +151,13 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
     rank-neutral: a folded parent sits exactly where its chunk sat."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
-    # A chunk folds onto its writer's newest row of the key. Its session is
-    # `memory.set:<key>`, not the row's, so it matches on namespace, agent, user_id and key.
+    # A chunk's session is `memory.set:<key>`, not its row's: match on writer and key.
     by_row: dict[tuple[str, ...], SearchHit] = {}
     out: list[SearchHit] = []
     for h in hits:
         if not _is_set_chunk(h):
             out.append(h)
             if (getattr(h, "source", "") or "fact") != "chunk":
-                # a key's chunks hold its writer's newest value: fold onto the newest row
                 key = hit_row_key(h).writer_key()
                 if key not in by_row or h.version > by_row[key].version:
                     by_row[key] = h
@@ -174,19 +190,7 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
             by_row[parent_row] = converted
             out.append(converted)
             continue
-        components = dict(parent.score_components or {})
-        components["folded_chunks"] = float(components.get("folded_chunks", 0.0)) + 1.0
-        if float(h.rank_score or 0.0) > float(parent.rank_score or 0.0):
-            components["folded_lift"] = 1.0
-            merged = replace(
-                parent,
-                rank_score=float(h.rank_score),
-                distance=min(float(parent.distance), float(h.distance)),
-                content_excerpt=h.content_excerpt or parent.content_excerpt,
-                score_components=components,
-            )
-        else:
-            merged = replace(parent, score_components=components)
+        merged = replace(parent, **folded_fields(parent, h))
         by_row[parent_row] = merged
         out[out.index(parent)] = merged
     out.sort(key=hit_sort_key)

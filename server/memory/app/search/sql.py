@@ -182,6 +182,7 @@ def key_match_sql(where_sql: str) -> str:
                e.agent AS agent,
                e.user_id AS user_id,
                e.session_id AS session_id,
+               e.version AS version,
                ifNull(e.source_resource_id, '') AS source_resource_id,
                toString(e.created_at) AS created_at,
                e.tags AS tags,
@@ -337,7 +338,7 @@ def digest_descent_sql(where_sql: str) -> str:
                        toString(coalesce(valid_at, toDateTime(0))) AS valid_at,
                        ifNull(source_resource_id, '') AS source_resource_id,
                        toString(created_at) AS created_at,
-                       tags, agent, user_id, session_id
+                       tags, agent, user_id, session_id, version
                 FROM loom.memory_embeddings FINAL
                 WHERE {where_sql}
                 ORDER BY cosineDistance(embedding, {{qv:Array(Float32)}}) ASC

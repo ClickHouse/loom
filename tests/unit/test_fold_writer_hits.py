@@ -74,8 +74,11 @@ async def test_the_chunk_folds_before_the_duplicates_are_read(monkeypatch) -> No
     async def keep(hits: list[Any], *_: Any) -> list[Any]:
         return hits
 
+    async def keep_pool(ctx: Any) -> None:
+        return None
+
     monkeypatch.setattr(assemble, "hide_pool_duplicates", hide)
-    monkeypatch.setattr(assemble, "annotate_pool_superseded", hide)
+    monkeypatch.setattr(assemble, "annotate_pool_superseded", keep_pool)
     monkeypatch.setattr(assemble, "_enforce_hard_tag_filter", keep)
     monkeypatch.setattr(assemble, "_enforce_agent_scope", lambda hits, *_: hits)
     row = _wire("k", 0.5, "the value's head", identity=("a", "u", "s1"))
@@ -87,7 +90,7 @@ async def test_the_chunk_folds_before_the_duplicates_are_read(monkeypatch) -> No
         namespaces=["n"],
     )
     await assemble._drop_excluded_and_duplicates(ctx)
-    assert seen[0] == [row]
+    assert seen == [[row]]
 
 
 def test_a_writer_only_hit_stands_for_its_writers_row_and_keeps_its_own_row_key() -> None:

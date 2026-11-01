@@ -9,6 +9,7 @@ from collections import Counter
 from typing import Any
 
 from server.memory.api.models_search import _MemorySearchHit
+from server.memory.app.retrieval.pool import folded_fields
 from server.memory.app.search.anchor_pool import _enforce_agent_scope
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.digest_descent import (
@@ -40,9 +41,9 @@ def _drop_excluded_keys(ctx: SearchContext) -> None:
 
 def fold_writer_hits(hits: list[_MemorySearchHit], namespace: str) -> list[_MemorySearchHit]:
     """Fold each set chunk that names only its writer onto that writer's newest pooled row
-    of the key, whose value the chunks hold, once a later leg pooled one: the row takes the
-    better score and, when the chunk out-scored it, the chunk's passage, at the earlier of
-    the two positions."""
+    of the key, as `fold_set_chunks` folds a chunk onto a pooled parent, at the earlier of
+    the two positions. A key's chunks hold the writer's newest value; when that row is not
+    pooled, an older pooled row of the writer takes the passage."""
     if not any(hit_writer(h) for h in hits):
         return hits
     rows: dict[tuple[str, str, str, str], _MemorySearchHit] = {}
@@ -55,24 +56,16 @@ def fold_writer_hits(hits: list[_MemorySearchHit], namespace: str) -> list[_Memo
     for h in hits:
         row = rows.get(hit_row_key(h, namespace).writer_key()) if hit_writer(h) else None
         if row is not None:
-            _fold_onto(row, h)
+            fields = folded_fields(row, h)
+            for name, value in fields.items():
+                setattr(row, name, value)
+            if "rank_score" in fields:
+                row.similarity = max(row.similarity, h.similarity)
         target = row or h
         if id(target) not in placed:
             placed.add(id(target))
             out.append(target)
     return out
-
-
-def _fold_onto(row: _MemorySearchHit, chunk: _MemorySearchHit) -> None:
-    # the merge `fold_set_chunks` makes, on a wire hit
-    components = row.score_components
-    components["folded_chunks"] = float(components.get("folded_chunks", 0.0)) + 1.0
-    if chunk.rank_score > row.rank_score:
-        row.rank_score = chunk.rank_score
-        row.distance = min(row.distance, chunk.distance)
-        row.similarity = max(row.similarity, chunk.similarity)
-        row.content_excerpt = chunk.content_excerpt or row.content_excerpt
-        components["folded_lift"] = 1.0
 
 
 async def _drop_excluded_and_duplicates(ctx: SearchContext) -> None:
@@ -82,7 +75,6 @@ async def _drop_excluded_and_duplicates(ctx: SearchContext) -> None:
     WHERE and is the row the belt exists to judge; on the whole fused pool, so a dropped row
     leaves no hole in top_k and a parked page's tail is as clean as the first page."""
     _drop_excluded_keys(ctx)
-    # a set chunk that named only its writer folds onto the row a later leg pooled
     ctx.all_hits = fold_writer_hits(ctx.all_hits, ctx.input.namespace)
     if getattr(ctx.input, "quality_filter", False):
         from server.memory.domain.fact_quality import drop_junk_and_restatements

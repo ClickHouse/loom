@@ -60,3 +60,17 @@ async def test_the_unmatched_leg_binds_the_pooled_rows_not_their_keys() -> None:
     sql, params = ch.query_all_calls[0]
     assert "(e.agent, e.user_id, e.session_id, e.memory_key) NOT IN" in sql
     assert params["pooled_rows"] == [("a", "u", "s1", "k")]
+
+
+@pytest.mark.asyncio
+async def test_an_unmatched_row_carries_its_version() -> None:
+    from server.memory.app.retrieval.side_legs import _fetch_unmatched_candidates
+    from tests.unit.test_memory_search_service import StubCH, _q
+
+    ch = StubCH()
+    row = {"memory_key": "k", "memory_type": "semantic", "content_excerpt": "t", "distance": 0.4}
+    ch.query_all_returns.append(
+        [{**row, "version": 9, "agent": "a", "user_id": "u", "session_id": "s"}]
+    )
+    (hit,) = await _fetch_unmatched_candidates(ch, _q(), [], limit=5)
+    assert hit.version == 9

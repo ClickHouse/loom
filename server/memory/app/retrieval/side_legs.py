@@ -145,6 +145,7 @@ async def _lexical_recall_fallback(
                 verified=bool(int(r.get("verified") or 0)),
                 session_id=str(r.get("session_id") or ""),
                 identity=row_identity(r),
+                version=int(r.get("version") or 0),
                 # The row's tags ride so the post-fusion belt
                 # can check the hard filter without a second read.
                 tags=[str(t) for t in (r.get("tags") or []) if t],
@@ -467,6 +468,7 @@ async def _fetch_unmatched_candidates(
                 source_class=str(r.get("source_class") or ""),
                 verified=bool(int(r.get("verified") or 0)),
                 identity=row_identity(r),
+                version=int(r.get("version") or 0),
                 tags=[str(t) for t in (r.get("tags") or []) if t],
                 score_components={
                     "unmatched_confidence": 0.05 * confidence,

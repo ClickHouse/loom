@@ -353,6 +353,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                 hit = _MemorySearchHit(
                     memory_key=mk,
                     memory_type=str(row.get("memory_type") or "semantic"),
+                    version=int(row.get("version") or 0),
                     content_excerpt=str(row.get("content_excerpt") or ""),
                     distance=1.0 - sim,
                     similarity=sim,
