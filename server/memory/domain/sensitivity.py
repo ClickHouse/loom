@@ -426,8 +426,10 @@ _KEY_CAPS_WORDS = re.compile(r"[A-Z]{2,}|[A-Z]?[a-z0-9]+")
 
 _ASSIGNMENT_KEY = re.compile(rf"(?i)(?:{ASSIGNMENT_WORDS})")
 # A value that names where a secret lives rather than holding it: `env:OPENAI_API_KEY`,
-# `vault:kv/db`, `${DB_PASSWORD}`, a path.
-_SECRET_REFERENCE = re.compile(r"(?i)(?:env|vault|secret|ref):|\$\{|~?/|\./")
+# `vault:kv/db`, `${DB_PASSWORD}`, `$DB_PASSWORD`, a path.
+_SECRET_REFERENCE = re.compile(
+    r"(?i)(?:env|vault|secret|ref):|\$\{|(?-i:\$[A-Z_][A-Z0-9_]*$)|~?/|\.\.?/"
+)
 
 
 def _keyed_credential(key: str, value: str) -> str:
@@ -496,8 +498,7 @@ def detector_text(value: Any) -> str:
     (`Password:` then the next key, or `256`, `512`, `1024` as a phone number). A key that
     names a PIN-like secret, an SSN or a credential adds its value's stated form
     (`_keyed_secret`), so `{"pin": "4471"}` reads as `pin is 4471` does; other keys label
-    nothing. Iterative, so a
-    deeply nested value cannot stop a worker pass."""
+    nothing. Iterative, so a deeply nested value cannot stop a worker pass."""
     if isinstance(value, str):
         text = value
         try:
