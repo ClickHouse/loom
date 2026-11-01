@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
 from typing import Any, Final, Literal
 
 from server.core.hashing import sha256_text
@@ -25,29 +24,50 @@ IMPORT_KEY_HEX: Final = 24
 _DIGEST_KEY: Final = re.compile(f"{re.escape(IMPORT_KEY_PREFIX)}[0-9a-f]{{{IMPORT_KEY_HEX}}}")
 
 Outcome = Literal["written", "reinforced", "skipped", "refused"]
+# Why an entry was not plainly written; each value is documented on `_ImportEntryResult`.
+Reason = Literal[
+    "",
+    "blacklist",
+    "pinned",
+    "locked",
+    "conflict",
+    "merge",
+    "identity_duplicate",
+    "unchanged",
+    "deleted",
+    "superseded",
+    "rejected",
+    "proposed",
+    "repeated",
+    "unknown",
+    "duplicate",
+    "conflicted",
+]
 
 # The reasons of a skipped entry: its key holds the text already (a re-run), an earlier
 # entry of the request with the same text was written, the key's newest version is a
 # tombstone (its owner deleted it), superseded (a newer fact retired it), rejected (marked
 # wrong) or a proposal on trial (decided only by memory.proposal_decide), or a state the
 # import does not recognise.
-UNCHANGED: Final = "unchanged"
-REPEATED: Final = "repeated"
-DELETED: Final = "deleted"
-SUPERSEDED: Final = "superseded"
-REJECTED: Final = "rejected"
-PROPOSED: Final = "proposed"
-UNKNOWN: Final = "unknown"
+UNCHANGED: Final[Reason] = "unchanged"
+REPEATED: Final[Reason] = "repeated"
+DELETED: Final[Reason] = "deleted"
+UNKNOWN: Final[Reason] = "unknown"
 # The notes of an entry naming a category the namespace has not registered, and of one
 # naming a category under a token bounded to one user, which links none.
 CATEGORY_UNREGISTERED: Final = "category_unregistered"
 CATEGORY_REFUSED: Final = "category_refused"
 
-# The statuses of a live row that holds its fact: a key whose newest version has one is
-# written through the bulk write, which decides what happens to it.
-_HOLDING: Final = frozenset({"active", "duplicate", "conflicted"})
-# The statuses that leave a key as it is, each the reason the entry is skipped.
-_LEFT_AS_IS: Final = frozenset({SUPERSEDED, REJECTED, PROPOSED})
+# A head row's status → the reason the import skips its key. A live row that holds its
+# fact maps to '' and goes through the bulk write, which decides what happens to it.
+_SKIP_OF_STATUS: Final[dict[str, Reason]] = {
+    "active": "",
+    "duplicate": "",
+    "conflicted": "",
+    "superseded": "superseded",
+    "rejected": "rejected",
+    "proposed": "proposed",
+}
 
 
 def import_key(value: str) -> str:
@@ -66,46 +86,26 @@ def is_digest_key(memory_key: str) -> bool:
     return _DIGEST_KEY.fullmatch(memory_key) is not None
 
 
-@dataclass(frozen=True)
-class KeyState:
-    """What the stored versions of one key say before an import writes it: `skip_reason`
-    is why the import leaves the key as it is, from its newest version across every
-    session the caller's token may read (a tombstone, a superseded, rejected or proposed
-    row, or a status the import does not recognise), or '' to write it."""
-
-    skip_reason: str = ""
-
-
-def key_states(heads: Iterable[Mapping[str, Any]]) -> dict[str, KeyState]:
-    """Each key's state, from the newest version of the key in each session (rows with
-    `memory_key`, `head_version`, `deleted` and `head_status`)."""
-    by_key: dict[str, list[Mapping[str, Any]]] = {}
+def skip_reasons(heads: Iterable[Mapping[str, Any]]) -> dict[str, Reason]:
+    """Key → why the import leaves it as it is, from its newest version (rows with
+    `memory_key`, `deleted` and `head_status`): `deleted`, the row's status, `unknown`
+    for a status it does not recognise, or '' to write it."""
+    out: dict[str, Reason] = {}
     for row in heads:
-        by_key.setdefault(str(row["memory_key"]), []).append(row)
-    out: dict[str, KeyState] = {}
-    for key, rows in by_key.items():
-        newest = max(rows, key=lambda r: int(r["head_version"]))
-        status = str(newest["head_status"] or "")
-        if newest["deleted"]:
-            reason = DELETED
-        elif status in _LEFT_AS_IS:
-            reason = status
-        elif status in _HOLDING:
-            reason = ""
-        else:
-            reason = UNKNOWN
-        out[key] = KeyState(skip_reason=reason)
+        status = str(row["head_status"] or "")
+        reason = DELETED if row["deleted"] else _SKIP_OF_STATUS.get(status, UNKNOWN)
+        out[str(row["memory_key"])] = reason
     return out
 
 
-def repeat_outcome(first: tuple[Outcome, str]) -> tuple[Outcome, str]:
+def repeat_outcome(first: tuple[Outcome, Reason]) -> tuple[Outcome, Reason]:
     """How an entry repeating an earlier entry's text answers: skipped as `repeated`
     when the earlier one was written, else as the earlier one did (a refusal, a
     reinforcement, a key left as it is)."""
     return ("skipped", REPEATED) if first[0] == "written" else first
 
 
-def holds_item(outcome: Outcome, reason: str) -> bool:
+def holds_item(outcome: Outcome, reason: Reason) -> bool:
     """Whether an entry's key holds its item once the write is done: written now, there
     already, or written by an earlier entry of the request."""
     return outcome == "written" or (outcome == "skipped" and reason in (UNCHANGED, REPEATED))

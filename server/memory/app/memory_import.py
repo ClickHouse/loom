@@ -48,12 +48,12 @@ from server.memory.domain.memory_import import (
     CATEGORY_UNREGISTERED,
     UNCHANGED,
     UNKNOWN,
-    KeyState,
     Outcome,
+    Reason,
     holds_item,
     import_key,
-    key_states,
     repeat_outcome,
+    skip_reasons,
 )
 from server.memory.store import categories
 from server.observability import audit
@@ -61,14 +61,14 @@ from server.observability import audit
 log = logging.getLogger(__name__)
 
 # The check behind each verdict of `models_bulk.REFUSED`, the entries a bulk write refuses.
-_CHECK_OF: dict[str, str] = {
+_CHECK_OF: dict[str, Reason] = {
     BLACKLISTED: "blacklist",
     PINNED: "pinned",
     LOCKED: "locked",
     REJECTED: "conflict",
 }
 # The status a written entry's verdict stores its row with when it is not `active`.
-_STORED_AS: dict[str, str] = {"duplicate": "duplicate", "conflict": "conflicted"}
+_STORED_AS: dict[str, Reason] = {"duplicate": "duplicate", "conflict": "conflicted"}
 
 
 async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
@@ -90,7 +90,7 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
     heads = await memory_repo.key_heads_across_sessions(
         input.org, input.namespace, input.agent, input.user_id, list(first), scope=scope
     )
-    outcomes = await _write(input, keys, first, key_states(heads))
+    outcomes = await _write(input, keys, first, skip_reasons(heads))
     results: list[_ImportEntryResult] = []
     for i, (entry, key) in enumerate(zip(input.entries, keys, strict=True)):
         outcome, reason = outcomes[key] if first[key] == i else repeat_outcome(outcomes[key])
@@ -122,15 +122,15 @@ async def _write(
     input: MemoryImportInput,
     keys: list[str],
     first: dict[str, int],
-    states: dict[str, KeyState],
-) -> dict[str, tuple[Outcome, str]]:
+    skip: dict[str, Reason],
+) -> dict[str, tuple[Outcome, Reason]]:
     """Key → the outcome of the first entry of its text. A key whose newest version leaves
     it as it is (a tombstone, a superseded, rejected or proposed row, or a state the import
     does not recognise) is skipped with that reason; the rest go through memory.bulk_set."""
-    outcomes: dict[str, tuple[Outcome, str]] = {}
+    outcomes: dict[str, tuple[Outcome, Reason]] = {}
     pending: list[int] = []
     for key, i in first.items():
-        reason = states.get(key, KeyState()).skip_reason
+        reason = skip.get(key, "")
         if reason == UNKNOWN:
             log.warning("memory.import: %r's newest version is in no state it knows; left", key)
         if reason:
@@ -162,7 +162,7 @@ async def _write(
 
 def _entry_outcome(
     key: str, result: _BulkSetResult, *, unchanged: bool, held_by: str | None
-) -> tuple[Outcome, str]:
+) -> tuple[Outcome, Reason]:
     """The outcome and reason of an entry the bulk write answered: written (with the
     status its row was stored with when that is not `active`), refused by the check
     named, reinforced (a merge, or the same text under another key), or skipped as
@@ -174,7 +174,7 @@ def _entry_outcome(
     if result.version:
         return "written", _STORED_AS.get(verdict, "")
     if verdict in REFUSED:
-        return "refused", _CHECK_OF.get(verdict, verdict)
+        return "refused", _CHECK_OF[verdict]
     if verdict == "merge":
         return "reinforced", "merge"
     if unchanged or held_by == key:
@@ -238,7 +238,7 @@ async def _link_categories(
         actor=writer_actor() or "-",
         subject={
             "count": len(links),
-            "category_links": [{"memory_key": k, "category": c} for k, c in links][:200],
+            "category_links": [{"memory_key": k, "category": c} for k, c in links],
         },
     )
 

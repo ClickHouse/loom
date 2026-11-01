@@ -241,6 +241,8 @@ conflict verdict. Every entry gets the conflict check, whatever
   relates to other memories through its text, as a hand-written one does. A later
   `memory.set` or `memory.bulk_set` of the same key follows the same rule, so its vector
   stays comparable with the imported one; a key of any other shape keeps its suffix.
+  Only the first 1,200 characters of an item are embedded and indexed, so split a longer
+  item into several.
 - **What was deleted, retired or rejected stays so:** before the write, the import reads
   each key's newest version in every session of the identity that the token may read (only
   its own session for an `own_session` token), tombstones and rows of every status

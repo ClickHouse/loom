@@ -84,6 +84,8 @@ class _BulkWriteState:
     # re-run reinforces nothing it already holds; a merge or the same bytes under another
     # key still reinforce that row.
     reinforce_own_key: bool = True
+    # How many entries the conflict check reaches; None reads bulk_conflict_check_max_entries.
+    conflict_check_cap: int | None = None
     # The keys the skip gate found unchanged: a live row of this session under the key
     # already holds the entry's bytes and labels. memory.import passes its own list in.
     unchanged_keys: list[str] = field(default_factory=list)

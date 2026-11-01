@@ -12017,7 +12017,26 @@ class ImportEntryResult(TypedDict, total=False):
     index: Required[int]
     key: Required[str]
     outcome: Required[Literal["written", "reinforced", "skipped", "refused"]]
-    reason: NotRequired[str]
+    reason: NotRequired[
+        Literal[
+            "",
+            "blacklist",
+            "pinned",
+            "locked",
+            "conflict",
+            "merge",
+            "identity_duplicate",
+            "unchanged",
+            "deleted",
+            "superseded",
+            "rejected",
+            "proposed",
+            "repeated",
+            "unknown",
+            "duplicate",
+            "conflicted",
+        ]
+    ]
     note: NotRequired[str]
 
 

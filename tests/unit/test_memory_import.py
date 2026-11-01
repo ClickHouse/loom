@@ -88,8 +88,8 @@ class _StoreCH(StubCH):
     - the live-row lookup: each asked identity key's newest version, unless a tombstone;
     - identity dedup: per (content hash, key) of the identity's rows holding an asked hash,
       the newest version, kept when it is live and holds its fact;
-    - the import's own read: each asked key's newest version in each session, a tombstone
-      or a superseded row included.
+    - the import's own read (`key_heads`): each asked key's newest version across
+      sessions, a tombstone or a superseded row included.
 
     The category read answers the namespace's `registry` (name → id)."""
 
@@ -130,20 +130,22 @@ class _StoreCH(StubCH):
                 for r in heads
                 if r["tombstoned_at"] is None and r["status"] in _HOLDING
             ]
-        if "GROUP BY memory_key, session_id" in sql:
-            asked = [r for r in self._stored(params) if r["memory_key"] in params["keys"]]
-            return [
-                {
-                    "memory_key": r["memory_key"],
-                    "session_id": r["session_id"],
-                    "head_version": r["version"],
-                    "deleted": r["tombstoned_at"] is not None,
-                    "head_status": r["status"],
-                    "head_sha256": r["content_sha256"],
-                }
-                for r in _newest(asked, lambda r: (r["memory_key"], r["session_id"]))
-            ]
         return []
+
+    async def key_heads(
+        self, org: str, ns: str, agent: str, uid: str, keys: list[str], **_: Any
+    ) -> list[dict[str, Any]]:
+        """`memory_repo.key_heads_across_sessions`: each key's newest version."""
+        params = {"org": org, "ns": ns, "agent": agent, "uid": uid}
+        asked = [r for r in self._stored(params) if r["memory_key"] in keys]
+        return [
+            {
+                "memory_key": r["memory_key"],
+                "deleted": r["tombstoned_at"] is not None,
+                "head_status": r["status"],
+            }
+            for r in _newest(asked, lambda r: r["memory_key"])
+        ]
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> None:
         return None
@@ -169,6 +171,7 @@ def harness(monkeypatch: pytest.MonkeyPatch):
         )
         wire_stubs(monkeypatch, ch, rec.embedder, rec.embedded)
         monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+        monkeypatch.setattr(memory_repo, "key_heads_across_sessions", ch.key_heads)
 
         async def _find_match(*, org: str, namespace: str, value: str) -> Any:
             if blacklist and blacklist in value:

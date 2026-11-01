@@ -4816,7 +4816,7 @@ export interface ImportEntryResult {
   index: number;
   key: string;
   outcome: "written" | "reinforced" | "skipped" | "refused";
-  reason?: string;
+  reason?: "" | "blacklist" | "pinned" | "locked" | "conflict" | "merge" | "identity_duplicate" | "unchanged" | "deleted" | "superseded" | "rejected" | "proposed" | "repeated" | "unknown" | "duplicate" | "conflicted";
   note?: string;
 }
 

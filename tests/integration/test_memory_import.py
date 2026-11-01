@@ -1,7 +1,7 @@
 """memory.import end to end through the Python SDK's generated client
 (`agent.client.memory.import_`), as test_memory_bulk.py drives memory.bulk_set: items
 written under keys their text derives and stamped `imported`, re-runs that add no
-version, an item its owner deleted that a re-run leaves deleted, a dry run that writes
+version, an item its owner deleted or rejected that a re-run leaves so, a proposal left on trial, a dry run that writes
 nothing, each refusal named on its entry, categories linked or noted and a hash-only
 audit trail. Over raw HTTP and MCP: the exact 422 past 200 entries, and the tool a
 gateway calls with the identity its token carries."""
@@ -44,7 +44,9 @@ def _entries(*texts: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_each_item_is_written_under_its_text_key_as_imported(control_plane_url: str) -> None:
+async def test_each_item_is_written_under_its_text_key_as_imported(
+    control_plane_url: str, ch_client
+) -> None:
     from loom import Agent
 
     dog, deploys = "Dog is Biscuit.", "Deploys happen on Tuesday."
@@ -59,15 +61,23 @@ async def test_each_item_is_written_under_its_text_key_as_imported(control_plane
             {"value": deploys},
         ]
     }
-    async with Agent(org=ORG, namespace=_ns(), agent=AGENT, base_url=control_plane_url) as a:
+    ns = _ns()
+    async with Agent(org=ORG, namespace=ns, agent=AGENT, base_url=control_plane_url) as a:
         out = await a.client.memory.import_(body)
         got = await a.call("memory.get", memory_key=_key(dog))
     assert out["totals"] == {"written": 2, "reinforced": 0, "skipped": 0, "refused": 0}, out
     assert [r["key"] for r in out["results"]] == [_key(dog), _key(deploys)]
     assert got["found"] is True and got["value"] == dog
     assert got["source_class"] == "imported" and "pets" in got["tags"]
+    assert (got["status"], got["memory_type"], got["sensitivity"]) == ("active", "semantic", "")
     assert str(got["valid_at"]).startswith("2021-03-04T05:06:07")
     assert not str(got["created_at"]).startswith("2021-03-04")
+    traces = ch_client.query(
+        "SELECT memory_key, source_trace FROM loom.memory FINAL "
+        "WHERE org = {o:String} AND namespace = {n:String}",
+        parameters={"o": ORG, "n": ns},
+    ).result_rows
+    assert dict(traces) == {_key(dog): "n/7", _key(deploys): _key(deploys)}
 
 
 @pytest.mark.asyncio
@@ -96,6 +106,29 @@ async def test_a_rerun_leaves_an_item_its_owner_deleted_deleted(control_plane_ur
         got = await a.call("memory.get", memory_key=_key(text))
     assert _outcomes(again) == [("skipped", "deleted")], again
     assert got["found"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_leaves_a_rejected_item_rejected(control_plane_url: str) -> None:
+    from loom import Agent
+
+    text = "The build server is called hal."
+    async with Agent(org=ORG, namespace=_ns(), agent=AGENT, base_url=control_plane_url) as a:
+        assert (await a.client.memory.import_(_entries(text)))["totals"]["written"] == 1
+        await a.call("memory.reject", memory_key=_key(text), rejection_reason="wrong host")
+        again = await a.client.memory.import_(_entries(text))
+    assert _outcomes(again) == [("skipped", "rejected")], again
+
+
+@pytest.mark.asyncio
+async def test_an_item_on_trial_is_left_proposed(control_plane_url: str) -> None:
+    from loom import Agent
+
+    text = "Code freeze starts on the 20th."
+    async with Agent(org=ORG, namespace=_ns(), agent=AGENT, base_url=control_plane_url) as a:
+        await a.call("memory.set", memory_key=_key(text), value=text, proposed=True)
+        out = await a.client.memory.import_(_entries(text))
+    assert _outcomes(out) == [("skipped", "proposed")], out
 
 
 @pytest.mark.asyncio
@@ -181,6 +214,48 @@ async def test_a_registered_category_is_linked_and_an_unregistered_one_noted(
         parameters={"o": ORG, "n": ns},
     ).result_rows
     assert [r[0] for r in rows] == [_key(dog)]
+
+
+@pytest.mark.asyncio
+async def test_a_token_bounded_to_one_user_links_no_category(
+    control_plane_url: str, ch_client
+) -> None:
+    from loom import Agent
+
+    from server.auth.jwt import mint_token
+
+    ns = _ns()
+    async with Agent(org=ORG, namespace=ns, agent=AGENT, base_url=control_plane_url) as a:
+        await a.call("namespace.register_category", name="pets", description="Animals at home.")
+    token = mint_token(
+        subject="importer",
+        org=ORG,
+        namespaces=[ns],
+        roles=["writer"],
+        ttl_seconds=600,
+        read_user_id="u1",
+    )
+    body = {
+        "org": ORG,
+        "namespace": ns,
+        "agent": AGENT,
+        "user_id": "u1",
+        "entries": [{"value": "Dog is Biscuit.", "category": "pets"}],
+    }
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60.0) as c:
+        r = await c.post(
+            "/v1/memory.import", json=body, headers={"Authorization": f"Bearer {token}"}
+        )
+    assert r.status_code == 200, r.text[:400]
+    assert [(x["outcome"], x["note"]) for x in r.json()["results"]] == [
+        ("written", "category_refused")
+    ]
+    links = ch_client.query(
+        "SELECT count() FROM loom.memory_categories "
+        "WHERE org = {o:String} AND namespace = {n:String}",
+        parameters={"o": ORG, "n": ns},
+    ).result_rows
+    assert links[0][0] == 0
 
 
 @pytest.mark.asyncio
