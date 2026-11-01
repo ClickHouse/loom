@@ -591,7 +591,11 @@ async def superseded_successors(
     if not wanted:
         return []
     ch = ch or _default_client()
-    params: dict[str, Any] = {"org": org, "nss": sorted({r[0] for r in wanted}), "rows": wanted}
+    params: dict[str, Any] = {
+        "org": org,
+        "nss": sorted({r.namespace for r in wanted}),
+        "rows": wanted,
+    }
     in_scope = scope_and(scope, params)
     found = await query_all_sliced(
         ch,

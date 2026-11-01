@@ -16,6 +16,7 @@ from server.code.domain.index.remote import repo_tag
 from server.code.domain.index.repos import configured_repos
 from server.memory.api.models_crud import CodeLink
 from server.memory.domain import code_change
+from server.memory.domain.search_types import names_row
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
@@ -193,7 +194,7 @@ def _identity(input: Any, hit: Any) -> Ident | None:
     """(namespace, agent, user_id, session_id, memory_key) of the memory the hit was read
     from; None when its leg did not read who wrote it."""
     who = getattr(hit, "_row_identity", None)
-    if who is None:
+    if who is None or not names_row(hit):
         return None
     return (str(getattr(hit, "namespace", "") or input.namespace), *who, str(hit.memory_key))
 

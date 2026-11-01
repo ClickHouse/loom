@@ -10,7 +10,13 @@ from collections.abc import Sequence
 from typing import Any
 
 from server.core.tag_sql import tag_predicate
-from server.memory.domain.search_types import SearchHit, SearchQuery, hit_row_key, names_row
+from server.memory.domain.search_types import (
+    SearchHit,
+    SearchQuery,
+    hit_row_key,
+    names_row,
+    writers_covered,
+)
 from server.memory.domain.temporal_sql import as_of_predicate, status_predicate, tombstone_predicate
 
 
@@ -50,17 +56,27 @@ def agent_or_shared_predicate(alias: str = "e") -> str:
 
 def exclude_pooled(where: list[str], params: dict[str, Any], hits: Sequence[SearchHit]) -> None:
     """Leave the rows `hits` already pooled out of a leg over `loom.memory_embeddings AS e`.
-    A key holds a row per writer and session, so a hit names its row; a hit whose leg read
-    no identity leaves out its whole key. A record is no memory row and leaves out none."""
-    pooled = [hit_row_key(h) for h in hits if names_row(h)]
-    rows = sorted({(r.agent, r.user_id, r.session_id, r.memory_key) for r in pooled})
-    keys = sorted({h.memory_key for h in hits if not names_row(h) and h.source != "record"})
+    A key holds a row per writer and session, so a hit names its row; a hit that knows only
+    its writer leaves out that writer's rows of the key, and one that knows neither the whole
+    key. A record is no memory row and leaves out none."""
+    rows = sorted(
+        (r.agent, r.user_id, r.session_id, r.memory_key)
+        for r in {hit_row_key(h) for h in hits if names_row(h)}
+    )
+    writers = sorted({(a, u, k) for _ns, a, u, k in writers_covered(hits)})
+    keys = sorted({h.memory_key for h in hits if not h.identity and h.source != "record"})
     if rows:
         where.append(
             "(e.agent, e.user_id, e.session_id, e.memory_key)"
             " NOT IN {pooled_rows:Array(Tuple(String, String, String, String))}"
         )
         params["pooled_rows"] = rows
+    if writers:
+        where.append(
+            "(e.agent, e.user_id, e.memory_key)"
+            " NOT IN {pooled_writers:Array(Tuple(String, String, String))}"
+        )
+        params["pooled_writers"] = writers
     if keys:
         where.append("e.memory_key NOT IN {pooled_keys:Array(String)}")
         params["pooled_keys"] = keys

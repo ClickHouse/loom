@@ -290,8 +290,9 @@ class SearchHit:
     # rows and uses their text to mask the sentences that restate them.
     status: str = ""
     version: int = 0
-    # The stored row's (agent, user_id, session_id) for a fact or chunk row; None for a
-    # record and every other plane. Not on the wire.
+    # The stored row's (agent, user_id, session_id) for a fact or chunk row. A folded set
+    # chunk knows only its writer: (agent, user_id, ""), which names no row but covers the
+    # writer's rows of the key. None for a record and every other plane. Not on the wire.
     identity: RowIdentity | None = None
 
 
@@ -312,6 +313,10 @@ class RowKey(NamedTuple):
     session_id: str
     memory_key: str
 
+    def writer_key(self) -> tuple[str, str, str, str]:
+        """(namespace, agent, user_id, memory_key): the row's writer and key, any session."""
+        return self.namespace, self.agent, self.user_id, self.memory_key
+
 
 def row_key_of(namespace: str, row: Mapping[str, Any]) -> RowKey:
     """The RowKey of a result row that read the identity columns."""
@@ -329,6 +334,18 @@ def names_row(hit: Any) -> bool:
     included. A folded set chunk knows its writer but not its row's session."""
     identity = _identity(hit)
     return bool(identity and identity[2])
+
+
+def names_writer_only(hit: Any) -> bool:
+    """Whether a hit knows its writer but not its row (a folded set chunk)."""
+    identity = _identity(hit)
+    return bool(identity and not identity[2])
+
+
+def writers_covered(hits: Any, namespace: str = "") -> set[tuple[str, str, str, str]]:
+    """The writer keys of the hits that know only their writer: each covers its writer's
+    rows of the key, so a later leg adds none of them."""
+    return {hit_row_key(h, namespace).writer_key() for h in hits if names_writer_only(h)}
 
 
 def hit_row_key(hit: Any, namespace: str = "") -> RowKey:

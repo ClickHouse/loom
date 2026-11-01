@@ -30,6 +30,16 @@ def test_a_pooled_row_leaves_out_only_itself() -> None:
     assert len(where) == 2
 
 
+def test_a_writer_only_hit_leaves_out_its_writers_rows_of_the_key() -> None:
+    where: list[str] = []
+    params: dict = {}
+    exclude_pooled(where, params, [_hit("k", ("a", "u", ""))])  # a folded set chunk
+    assert params == {"pooled_writers": [("a", "u", "k")]}
+    assert where == [
+        "(e.agent, e.user_id, e.memory_key) NOT IN {pooled_writers:Array(Tuple(String, String, String))}"
+    ]
+
+
 def test_a_pooled_record_leaves_its_key_open() -> None:
     where: list[str] = []
     params: dict = {}

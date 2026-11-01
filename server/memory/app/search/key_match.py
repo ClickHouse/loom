@@ -18,7 +18,12 @@ from server.memory.app.search.sql import (
     key_match_sql,
 )
 from server.memory.app.search_tag_filter import stamp_row_tags as _stamp_row_tags
-from server.memory.domain.search_types import hit_row_key, row_identity, row_key_of
+from server.memory.domain.search_types import (
+    hit_row_key,
+    row_identity,
+    row_key_of,
+    writers_covered,
+)
 
 log = logging.getLogger(__package__)
 
@@ -265,6 +270,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
     for h in ctx.all_hits:
         seen.setdefault((h.namespace or input.namespace, h.memory_key), []).append(h)
     pooled = {hit_row_key(h, input.namespace) for h in ctx.all_hits}
+    covered = writers_covered(ctx.all_hits, input.namespace)
     _pool_floor = min(
         (float(h.score_components.get("rank_score_raw", h.rank_score)) for h in ctx.all_hits),
         default=0.0,
@@ -347,7 +353,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                 if component_only:
                     continue  # the statement only scores the pooled keys
                 row_key = row_key_of(ns, row)
-                if row_key in pooled:
+                if row_key in pooled or row_key.writer_key() in covered:
                     continue
                 sim = float(row.get("similarity") or 0.0)
                 hit = _MemorySearchHit(

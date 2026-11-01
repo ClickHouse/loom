@@ -13,7 +13,6 @@ from server.identity.app.request_scope import request_scope
 from server.memory.app.search.request import _apply_explain_default
 from server.memory.app.search.tiers import _reader_user_id
 from server.memory.app.search_tag_filter import read_row_tags as _read_row_tags
-from server.memory.domain.search_types import names_row
 from server.memory.domain.sensitivity import reads_high
 from server.memory.store.shared import SHARED_AGENT
 
@@ -275,14 +274,12 @@ async def _expand_unit_bodies(
         return str(getattr(h, "session_id", "") or "") or read_sid
 
     def _writer(h: Any) -> tuple[str, str, str, str]:
-        # A hit that names its row is read under that row's identity, so two writers of
-        # one key in one session each get their own body. Any other hit, and a shared row
-        # (no row of loom.memory), is read under the caller's, where the read picks one row
-        # per key after leaving 'high' rows out, so the plain row the search matched answers.
+        # Read under the row the hit names, or its writer in any session; a shared row (no
+        # row of loom.memory) and any other hit are read under the caller's identity.
         ns = str(getattr(h, "namespace", "") or input.namespace)
-        who = getattr(h, "_row_identity", None)
-        if who and names_row(h) and who[0] != SHARED_AGENT:
-            return (ns, *who)
+        agent, user_id, session_id = getattr(h, "_row_identity", None) or ("", "", "")
+        if agent and agent != SHARED_AGENT:
+            return (ns, agent, user_id, session_id or "*")
         return (ns, str(getattr(input, "agent", "*") or "*"), _reader_user_id(input), _sid(h))
 
     by_writer: dict[tuple[str, str, str, str], list[Any]] = {}
