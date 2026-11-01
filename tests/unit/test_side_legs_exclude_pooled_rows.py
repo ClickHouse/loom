@@ -13,7 +13,6 @@ def _hit(
     key: str,
     identity: tuple[str, str, str] | None,
     source: str = "fact",
-    writer: tuple[str, str] | None = None,
 ) -> SearchHit:
     return SearchHit(
         memory_key=key,
@@ -22,7 +21,6 @@ def _hit(
         distance=0.5,
         identity=identity,
         source=source,
-        writer=writer,
     )
 
 

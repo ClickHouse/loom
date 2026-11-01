@@ -43,7 +43,6 @@ from server.memory.store.dedup import (
     get_canonical_row,
     live_ids_in_scope,
     status_by_rows,
-    status_by_writer_keys,
     superseded_successors,
 )
 from server.memory.store.delete_checks import (
@@ -314,7 +313,6 @@ __all__ = [
     "SESSION_SUMMARY_PERSISTED_COLS",
     "session_writers",
     "status_by_rows",
-    "status_by_writer_keys",
     "status_divergence_sql",
     "statuses_by_ids",
     "stored_value_text",

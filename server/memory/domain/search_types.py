@@ -7,7 +7,7 @@ cycle.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, NamedTuple, Protocol
@@ -293,9 +293,6 @@ class SearchHit:
     # The stored row's (agent, user_id, session_id) for a fact or chunk row; None for a
     # record and every other plane. Not on the wire.
     identity: RowIdentity | None = None
-    # (agent, user_id) of a folded set chunk whose row is not pooled: it names no row but
-    # covers its writer's rows of the key. Not on the wire.
-    writer: tuple[str, str] | None = None
 
 
 def row_identity(row: Mapping[str, Any]) -> RowIdentity | None:
@@ -315,10 +312,6 @@ class RowKey(NamedTuple):
     session_id: str
     memory_key: str
 
-    def writer_key(self) -> tuple[str, str, str, str]:
-        """(namespace, agent, user_id, memory_key): the row's writer and key, any session."""
-        return self.namespace, self.agent, self.user_id, self.memory_key
-
 
 def row_key_of(namespace: str, row: Mapping[str, Any]) -> RowKey:
     """The RowKey of a result row that read the identity columns."""
@@ -336,34 +329,13 @@ def names_row(hit: Any) -> bool:
     return _identity(hit) is not None
 
 
-def hit_writer(hit: Any) -> tuple[str, str] | None:
-    """(agent, user_id) of a hit that knows its writer but not its row (a folded set
-    chunk); None otherwise."""
-    return getattr(hit, "_row_writer", None) or getattr(hit, "writer", None)
-
-
-def writers_covered(hits: Iterable[Any], namespace: str) -> set[tuple[str, str, str, str]]:
-    """(namespace, agent, user_id, memory_key) of each hit that knows only its writer: it
-    stands for that writer's row of the key, so the duplicate substitution seats none."""
-    return {
-        (str(getattr(h, "namespace", "") or namespace), *writer, str(h.memory_key))
-        for h in hits
-        if (writer := hit_writer(h))
-    }
-
-
 def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
     """(namespace, agent, user_id, session_id, memory_key) of the stored row a hit is: one
     key holds a row for each writer and session, so a key alone does not name one row.
-    For a `SearchHit` or a wire hit alike. A folded set chunk has its writer and no
-    session; a hit whose leg read no identity has only its session."""
-    if identity := _identity(hit):
-        agent, user_id, session_id = identity
-    elif writer := hit_writer(hit):
-        agent, user_id = writer
-        session_id = ""
-    else:
-        agent, user_id, session_id = "", "", str(getattr(hit, "session_id", "") or "")
+    For a `SearchHit` or a wire hit alike. A hit whose leg read no identity has only its
+    session."""
+    identity = _identity(hit)
+    agent, user_id, session_id = identity or ("", "", str(getattr(hit, "session_id", "") or ""))
     return RowKey(
         str(getattr(hit, "namespace", "") or namespace),
         agent,

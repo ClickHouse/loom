@@ -459,47 +459,6 @@ async def status_by_rows(
     return [DuplicateStatus.from_row(r) for r in found]
 
 
-async def status_by_writer_keys(
-    org: str,
-    keys: list[tuple[str, str, str, str]],
-    *,
-    scope: ReadFilters,
-    ch: _CHClient | None = None,
-) -> list[DuplicateStatus]:
-    """The status of each (namespace, agent, user_id, memory_key) a search pooled through a
-    hit that knows its writer but not its row (a folded set chunk): `duplicate`, naming the
-    newest duplicate's canonical, when none of that writer's live rows of the key in `scope`
-    is served and one is a duplicate; `active` otherwise. The session is empty, as the
-    hit's is."""
-    wanted = sorted({(ns, agent, user_id, key) for ns, agent, user_id, key in keys if key})
-    if not wanted:
-        return []
-    ch = ch or _default_client()
-    params: dict[str, Any] = {"org": org, "keys": wanted}
-    in_scope = scope_and(scope, params)
-    found = await query_all_sliced(
-        ch,
-        f"""
-        SELECT namespace, agent, user_id, memory_key,
-               countIf(status IN ('active', 'conflicted')) = 0
-                   AND countIf(status = 'duplicate') > 0 AS is_duplicate,
-               if(is_duplicate, 'duplicate', 'active') AS row_status,
-               if(is_duplicate, argMaxIf(duplicate_of, version, status = 'duplicate'), '')
-                   AS canonical_id
-        FROM loom.memory FINAL
-        WHERE org = {{org:String}}
-          AND (namespace, agent, user_id, memory_key)
-              IN {{keys:Array(Tuple(String, String, String, String))}}
-          AND tombstoned_at IS NULL{in_scope}
-        GROUP BY namespace, agent, user_id, memory_key
-        SETTINGS select_sequential_consistency = 0
-        """,
-        params,
-        "keys",
-    )
-    return [DuplicateStatus.from_row(r) for r in found]
-
-
 async def canonical_rows_by_ids(
     org: str,
     namespaces: list[str],

@@ -9,7 +9,6 @@ from collections import Counter
 from typing import Any
 
 from server.memory.api.models_search import _MemorySearchHit
-from server.memory.app.retrieval.pool import folded_fields
 from server.memory.app.search.anchor_pool import _enforce_agent_scope
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.digest_descent import (
@@ -22,7 +21,7 @@ from server.memory.app.search.vector_legs import _plane_fields, _stamp_leg_tags
 from server.memory.app.search_tag_filter import enforce_hard_tag_filter as _enforce_hard_tag_filter
 from server.memory.app.served_duplicates import hide_pool_duplicates
 from server.memory.app.served_superseded import annotate_pool_superseded
-from server.memory.domain.search_types import hit_row_key, hit_writer, names_row
+from server.memory.domain.search_types import RowKey, hit_row_key, names_row
 
 log = logging.getLogger(__package__)
 
@@ -39,38 +38,22 @@ def _drop_excluded_keys(ctx: SearchContext) -> None:
     ctx.actual_work["excluded_keys_dropped"] = before - len(ctx.all_hits)
 
 
-def fold_writer_hits(hits: list[_MemorySearchHit], namespace: str) -> list[_MemorySearchHit]:
-    """Fold each writer-only set chunk onto its writer's newest pooled row of the key, at
-    the earlier position; chunks with no such row merge into the first of them."""
-    if not any(hit_writer(h) for h in hits):
-        return hits
-    keyed = [(hit_row_key(h, namespace).writer_key(), h) for h in hits]
-    newest: dict[tuple[str, str, str, str], _MemorySearchHit] = {}
-    for key, h in keyed:
-        if names_row(h) and (key not in newest or h.version > newest[key].version):
-            newest[key] = h
+def collapse_rows(hits: list[_MemorySearchHit], namespace: str) -> list[_MemorySearchHit]:
+    """One hit per stored row: legs that pooled one row twice (a set chunk's passage and
+    the value's head) keep the higher-ranked hit, at the earlier position."""
     out: list[_MemorySearchHit] = []
-    slot: dict[tuple[str, str, str, str], int] = {}
-    for key, h in keyed:
-        is_row = newest.get(key) is h
-        if not (is_row or hit_writer(h)):
+    slot: dict[RowKey, int] = {}
+    for h in hits:
+        if not names_row(h):
             out.append(h)
-        elif key not in slot:
+            continue
+        key = hit_row_key(h, namespace)
+        if key not in slot:
             slot[key] = len(out)
             out.append(h)
-        else:
-            # the row is the hit that stays; the chunks fold onto it
-            held = out[slot[key]]
-            out[slot[key]] = _folded(h, held) if is_row else _folded(held, h)
+        elif h.rank_score > out[slot[key]].rank_score:
+            out[slot[key]] = h
     return out
-
-
-def _folded(row: _MemorySearchHit, chunk: _MemorySearchHit) -> _MemorySearchHit:
-    # a fact hit, whichever leg pooled the row: duplicate hiding and unit bodies read it
-    fields = {**folded_fields(row, chunk), "source": "fact"}
-    if "rank_score" in fields:
-        fields["similarity"] = max(row.similarity, chunk.similarity)
-    return row.model_copy(update=fields)
 
 
 async def _drop_excluded_and_duplicates(ctx: SearchContext) -> None:
@@ -80,7 +63,7 @@ async def _drop_excluded_and_duplicates(ctx: SearchContext) -> None:
     WHERE and is the row the belt exists to judge; on the whole fused pool, so a dropped row
     leaves no hole in top_k and a parked page's tail is as clean as the first page."""
     _drop_excluded_keys(ctx)
-    ctx.all_hits = fold_writer_hits(ctx.all_hits, ctx.input.namespace)
+    ctx.all_hits = collapse_rows(ctx.all_hits, ctx.input.namespace)
     if getattr(ctx.input, "quality_filter", False):
         from server.memory.domain.fact_quality import drop_junk_and_restatements
 

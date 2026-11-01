@@ -23,13 +23,7 @@ from typing import Any
 
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
-from server.memory.domain.search_types import (
-    RowKey,
-    hit_row_key,
-    hit_writer,
-    names_row,
-    writers_covered,
-)
+from server.memory.domain.search_types import RowKey, hit_row_key, names_row
 from server.memory.store.dedup import CanonicalRow, DuplicateStatus
 
 log = logging.getLogger(__name__)
@@ -88,7 +82,6 @@ def _substitute(h: Any, row: CanonicalRow, ns: str) -> Any:
     try:
         out._row_tags = row.tags
         out._row_identity = (row.agent, row.user_id, row.session_id)
-        out._row_writer = None
     except Exception:  # noqa: BLE001 — a foreign hit type stays as it is
         pass
     return out
@@ -98,25 +91,11 @@ _Truth = dict[RowKey, DuplicateStatus]
 _Canon = dict[tuple[str, str], CanonicalRow]
 
 
-async def _truth(
-    org: str, named: list[RowKey], writer_only: list[RowKey], scope: ReadFilters
-) -> _Truth:
-    """Each pooled row's status: read by row for the hits that name one, by writer and key
-    for a folded set chunk, which knows its writer but not its row's session."""
+async def _truth(org: str, rows: list[RowKey], scope: ReadFilters) -> _Truth:
     import server.memory.store as memory_repo
 
-    truth: _Truth = {}
-    if named:
-        found = await memory_repo.status_by_rows(org, named, scope=scope)
-        truth = {s.row_key: s for s in found}
-    if writer_only:
-        writer_keys = [r.writer_key() for r in writer_only]
-        found = await memory_repo.status_by_writer_keys(org, writer_keys, scope=scope)
-        by_writer = {s.row_key.writer_key(): s for s in found}
-        for r in writer_only:
-            if (status := by_writer.get(r.writer_key())) is not None:
-                truth[r] = status
-    return truth
+    found = await memory_repo.status_by_rows(org, rows, scope=scope)
+    return {r.row_key: r for r in found}
 
 
 async def _canonicals(
@@ -150,10 +129,9 @@ async def hide_pool_duplicates(ctx: Any) -> None:
     ns_default = str(input.namespace)
     scope = request_scope()
     try:
-        # every fact leg reads its row's identity; a folded set chunk knows its writer
-        named = [hit_row_key(h, ns_default) for h in facts if names_row(h)]
-        writer_only = [hit_row_key(h, ns_default) for h in facts if hit_writer(h)]
-        truth = await _truth(input.org, named, writer_only, scope)
+        # every fact leg reads its row's identity
+        rows = [hit_row_key(h, ns_default) for h in facts if names_row(h)]
+        truth = await _truth(input.org, rows, scope)
     except Exception as e:  # noqa: BLE001 — hiding is a filter, never a failure
         log.warning("memory.search: duplicate status read failed: %s", e)
         return
@@ -181,9 +159,7 @@ def _rewrite_pool(
     work: dict[str, Any],
 ) -> list[Any]:
     dup_ids = {id(h) for h in dups}
-    kept = [h for h in hits if id(h) not in dup_ids]
-    present = {hit_row_key(h, ns_default) for h in kept}
-    covered = writers_covered(kept, ns_default)
+    present = {hit_row_key(h, ns_default) for h in hits if id(h) not in dup_ids}
     out: list[Any] = []
     resolved = 0
     for h in hits:
@@ -196,7 +172,7 @@ def _rewrite_pool(
         if row is None:
             continue
         canonical = row.row_key
-        if canonical in present or canonical.writer_key() in covered:
+        if canonical in present:
             continue
         present.add(canonical)
         out.append(_substitute(h, row, ns))

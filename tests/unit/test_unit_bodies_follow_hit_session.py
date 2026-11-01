@@ -167,18 +167,3 @@ async def test_a_record_body_is_read_under_the_callers_session(monkeypatch):
     h.source = "record"
     await _expand_unit_bodies([h], _input(session_id="s1"))
     assert sessions == ["s1"] and h.content_excerpt == "the fact"
-
-
-@pytest.mark.asyncio
-async def test_a_folded_set_chunk_is_read_under_its_writer_in_any_session(monkeypatch):
-    reads = []
-
-    async def fake_get_many(identity, keys, **_):
-        reads.append((identity.agent, identity.user_id, identity.session_id))
-        return [SimpleNamespace(memory_key=k, value="u2's body", sensitivity="") for k in keys]
-
-    monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
-    h = _hit("k", session_id="")
-    h._row_writer = ("a", "u2")  # the writer, not the row
-    await _expand_unit_bodies([h], _input(agent="*", user_id="-"))
-    assert reads == [("a", "u2", "*")] and h.content_excerpt == "u2's body"

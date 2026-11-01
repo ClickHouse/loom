@@ -114,7 +114,7 @@ def truth(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         org: str, rows: list[tuple[str, ...]], *, scope: Any = None, ch: Any = None
     ) -> list[DuplicateStatus]:
         env.status_calls += 1
-        # the rows these tests store all live in session s1; a writer-only key names none
+        # as loom.memory: a key named without its row's session matches no stored row
         return [
             _status(row, **env.status[row.memory_key])
             for row in rows
@@ -132,18 +132,7 @@ def truth(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
             ]
         ]
 
-    async def status_by_writer_keys(
-        org: str, keys: list[tuple[str, ...]], *, scope: Any = None, ch: Any = None
-    ) -> list[DuplicateStatus]:
-        env.status_calls += 1
-        return [
-            _status((ns, agent, user_id, "", k), **env.status[k])
-            for ns, agent, user_id, k in keys
-            if k in env.status
-        ]
-
     monkeypatch.setattr(memory_repo, "status_by_rows", status_by_rows)
-    monkeypatch.setattr(memory_repo, "status_by_writer_keys", status_by_writer_keys)
     monkeypatch.setattr(memory_repo, "canonical_rows_by_ids", canonical_rows_by_ids)
     return env
 
@@ -241,34 +230,6 @@ async def test_duplicate_with_no_live_canonical_is_hidden_without_substitute(
     await sd.hide_pool_duplicates(ctx)
     assert [h.memory_key for h in ctx.all_hits] == ["b"]
     assert ctx.actual_work == {"duplicates_hidden": 1, "duplicates_resolved": 0}
-
-
-@pytest.mark.asyncio
-async def test_a_hit_naming_only_its_writer_takes_its_writers_key_status(
-    truth: SimpleNamespace,
-) -> None:
-    # a folded set chunk knows its writer but not its row: the writer's key status decides it
-    truth.status = {"dup_a": _dup("c-1"), "b": _ACTIVE}
-    named = _hit("b", rank=0.8, session="s1", who=("a", "u", "s1"))
-    chunk = _hit("dup_a", rank=0.9, session="", who=None)
-    chunk._row_writer = ("a", "-")
-    ctx = _ctx([chunk, named])
-    await sd.hide_pool_duplicates(ctx)
-    assert [h.memory_key for h in ctx.all_hits] == ["b"]
-
-
-@pytest.mark.asyncio
-async def test_a_canonical_a_folded_chunk_of_its_writer_stands_for_is_not_seated_twice(
-    truth: SimpleNamespace,
-) -> None:
-    truth.status = {"dup_a": _dup("c-1"), "canon_a": _ACTIVE}
-    truth.canon = {"c-1": _canon("canon_a")}  # written by ("a", "-")
-    chunk = _hit("canon_a", rank=0.5, session="", who=None)
-    chunk._row_writer = ("a", "-")
-    ctx = _ctx([_hit("dup_a", rank=0.9), chunk])
-    await sd.hide_pool_duplicates(ctx)
-    assert [h.memory_key for h in ctx.all_hits] == ["canon_a"]
-    assert ctx.all_hits[0] is chunk
 
 
 @pytest.mark.asyncio
@@ -728,9 +689,6 @@ async def test_repo_duplicate_reads_carry_the_read_scope() -> None:
         "o", [RowKey("n", "a", "u", "s", "k")], scope=one_session, ch=_CH()
     )
     await memory_repo.canonical_rows_by_ids("o", ["n"], [cid], scope=one_session, ch=_CH())
-    await memory_repo.status_by_writer_keys(
-        "o", [("n", "a", "u", "k")], scope=one_session, ch=_CH()
-    )
     for sql, params in sqls:
         assert "user_id = {scope_uid:String}" in sql and "session_id = {scope_sid:String}" in sql
         assert params["scope_uid"] == "u" and params["scope_sid"] == "s"

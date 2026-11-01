@@ -291,6 +291,12 @@ def _fact_rows_to_hits(
     return hits
 
 
+def _writer_prefix(h: SearchHit) -> tuple[str, str, str]:
+    # (agent, user_id, first 60 chars): a hit's leg reads its writer, or reads none
+    agent, user_id = h.identity[:2] if h.identity else ("", "")
+    return agent, user_id, h.content_excerpt[:60]
+
+
 async def _merge_leg_hits(
     ch: _CHClient,
     q: SearchQuery,
@@ -303,10 +309,10 @@ async def _merge_leg_hits(
     into the fact hits, dedup across planes, and append the unmatched
     candidates when asked."""
     if chunk_hits:
-        # Drop chunks whose first 60 chars match a fact's prefix — the fact
+        # Drop a chunk whose first 60 chars match a fact of its own writer — the fact
         # carries the structured signal, the chunk would be redundant.
-        fact_prefixes = {h.content_excerpt[:60] for h in hits if h.source == "fact"}
-        chunk_hits = [c for c in chunk_hits if c.content_excerpt[:60] not in fact_prefixes]
+        fact_prefixes = {_writer_prefix(h) for h in hits if h.source == "fact"}
+        chunk_hits = [c for c in chunk_hits if _writer_prefix(c) not in fact_prefixes]
         hits.extend(chunk_hits)
 
     # Merge the BM25-only union (from the gather), deduped against the rows the ANN and
@@ -318,8 +324,8 @@ async def _merge_leg_hits(
     if record_hits:
         hits.extend(record_hits)
 
-    # One row seen by several planes collapses to its strongest hit; distinct rows of a key
-    # stay, even when their excerpts open alike.
+    # A row seen by several planes with the same excerpt collapses to its strongest hit;
+    # distinct rows of a key stay, even when their excerpts open alike.
     if hits:
         deduped: dict[tuple[RowKey, str], SearchHit] = {}
         for hit in hits:

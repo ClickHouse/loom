@@ -205,42 +205,56 @@ def test_a_folded_row_is_rank_neutral_no_asserted_tiebreak() -> None:
     assert kept.score_components["asserted"] == 1.0 and plain.score_components["asserted"] == 1.0
 
 
-def test_a_chunk_folds_onto_its_own_writers_row_of_the_key() -> None:
-    mine = replace(_hit("lesson_a", 0.5), identity=("a", "u1", "s1"))
-    theirs = replace(_hit("lesson_a", 0.4), identity=("a", "u2", "s2"))
+def _writer_chunk(user: str, excerpt: str = "") -> SearchHit:
     # a set chunk is written under `memory.set:<key>`, never its row's session
-    chunk = replace(
-        _set_chunk("lesson_a", 0, 0.9),
-        identity=("a", "u2", "memory.set:lesson_a"),
+    return replace(
+        _set_chunk("lesson_a", 0, 0.9, excerpt),
+        identity=("a", user, "memory.set:lesson_a"),
         session_id="memory.set:lesson_a",
     )
-    out = fold_set_chunks([mine, theirs, chunk])
+
+
+def test_a_chunk_folds_onto_the_row_it_was_cut_from() -> None:
+    mine = replace(_hit("lesson_a", 0.5), identity=("a", "u1", "s1"))
+    theirs = replace(_hit("lesson_a", 0.4), identity=("a", "u2", "s2"))
+    rows = {("a", "u2", "lesson_a"): ("a", "u2", "s2")}
+    out = fold_set_chunks([mine, theirs, _writer_chunk("u2")], rows)
     by_writer = {h.identity: h for h in out}
     assert len(out) == 2
     assert by_writer[("a", "u2", "s2")].rank_score == 0.9  # lifted by its own chunk
     assert by_writer[("a", "u1", "s1")].rank_score == 0.5
 
 
-def test_a_chunk_without_its_row_in_the_pool_becomes_a_hit_of_its_writer_and_no_row() -> None:
-    chunk = replace(
-        _set_chunk("lesson_a", 0, 0.9),
-        identity=("a", "u2", "memory.set:lesson_a"),
-        session_id="memory.set:lesson_a",
-    )
-    (hit,) = fold_set_chunks([chunk])
-    assert (hit.memory_key, hit.source) == ("lesson_a", "fact")
-    assert (hit.identity, hit.writer, hit.session_id) == (None, ("a", "u2"), "")
-
-
-def test_a_chunk_folds_onto_its_writers_newest_row_of_the_key() -> None:
-    # a key's chunks hold its writer's newest value, whichever session wrote it
-    older = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"), version=1)
-    newest = replace(_hit("lesson_a", 0.4), identity=("a", "u", "s2"), version=2)
-    chunk = replace(
-        _set_chunk("lesson_a", 0, 0.9, "the s2 passage"),
-        identity=("a", "u", "memory.set:lesson_a"),
-    )
-    out = fold_set_chunks([older, newest, chunk])
+def test_a_chunk_of_a_newer_value_leaves_an_older_session_row_alone() -> None:
+    # the chunks hold the writer's newest value (s2); only the s1 row is pooled
+    older = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
+    rows = {("a", "u", "lesson_a"): ("a", "u", "s2")}
+    out = fold_set_chunks([older, _writer_chunk("u", "the s2 passage")], rows)
     by_session = {h.identity[2]: h for h in out}
-    assert by_session["s2"].content_excerpt == "the s2 passage"
     assert by_session["s1"].content_excerpt == "lesson_a"
+    assert by_session["s2"].content_excerpt == "the s2 passage"
+    assert by_session["s2"].session_id == "s2"
+
+
+def test_a_chunk_with_no_known_row_names_none() -> None:
+    (hit,) = fold_set_chunks([_writer_chunk("u2")])
+    assert (hit.memory_key, hit.source) == ("lesson_a", "fact")
+    assert (hit.identity, hit.session_id) == (None, "")
+
+
+@pytest.mark.asyncio
+async def test_the_rows_of_the_pools_set_chunks_are_read_once_under_the_fact_filters() -> None:
+    from server.memory.app.retrieval.pool import _set_chunk_rows
+    from tests.unit.test_memory_search_service import StubCH, _q
+
+    ch = StubCH()
+    ch.query_all_returns.append(
+        [{"agent": "a", "user_id": "u", "memory_key": "lesson_a", "session_id": "s2"}]
+    )
+    rows = await _set_chunk_rows(ch, _q(), [_writer_chunk("u"), _hit("other", 0.4)])
+    assert rows == {("a", "u", "lesson_a"): ("a", "u", "s2")}
+    ((sql, params),) = ch.query_all_calls
+    assert "argMax(e.session_id, e.version)" in sql and params["set_rows"] == [
+        ("a", "u", "lesson_a")
+    ]
+    assert await _set_chunk_rows(StubCH(), _q(), [_hit("other", 0.4)]) == {}

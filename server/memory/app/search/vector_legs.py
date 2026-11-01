@@ -293,11 +293,9 @@ def _stamp_leg_tags[HitT](leg_hit: Any, wire_hit: HitT) -> HitT:
     """A service-layer hit from a fact-table leg (fact, lexical union, unmatched, query
     neighbour) read the row's `tags`; keep them on the wire hit privately. Chunk / summary /
     record hits read none and stay unstamped (the belt does not judge them). The row's
-    stored identity, or a folded set chunk's writer, rides along the same way."""
+    stored identity rides along the same way."""
     if _tagged_row_hit(wire_hit):
         _stamp_row_tags(wire_hit, getattr(leg_hit, "tags", None))
     if (identity := getattr(leg_hit, "identity", None)) is not None:
         wire_hit._row_identity = identity  # type: ignore[attr-defined]
-    if (writer := getattr(leg_hit, "writer", None)) is not None:
-        wire_hit._row_writer = writer  # type: ignore[attr-defined]
     return wire_hit

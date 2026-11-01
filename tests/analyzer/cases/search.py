@@ -175,6 +175,23 @@ async def _recall_credit_closer(ch: RecordingCH, c: dict[str, Any]) -> None:
     recall_credit._reset_for_tests()
 
 
+async def _set_chunk_rows(ch: RecordingCH, c: dict[str, Any]) -> None:
+    # The row a pooled memory.set chunk was cut from
+    from server.memory.app.retrieval.pool import _set_chunk_rows as read
+    from server.memory.domain.search_types import SearchHit
+
+    chunk = SearchHit(
+        memory_key="chunk:memory.set:k1:0",
+        memory_type="episodic",
+        content_excerpt="passage",
+        distance=0.2,
+        source="chunk",
+        parent_memory_key="k1",
+        identity=("a", "u", "memory.set:k1"),
+    )
+    await read(ch, _q(), [chunk])
+
+
 def cases() -> list[Case]:
     from datetime import UTC, datetime
 
@@ -185,6 +202,7 @@ def cases() -> list[Case]:
             _recall_credit_closer,
             {},
         ),
+        Case("pool.set_chunk_rows", "server.memory.app.retrieval.pool", _set_chunk_rows, {}),
         Case(
             "vector_search.modes",
             MODULE,

@@ -1300,3 +1300,24 @@ async def test_two_writers_rows_of_a_key_whose_excerpts_open_alike_both_stay() -
     )
     out = await vector_search(_q(), ch=ch)
     assert sorted(h.identity for h in out) == [("a", "u1", "s1"), ("a", "u2", "s1")]
+
+
+@pytest.mark.asyncio
+async def test_a_chunk_is_dropped_only_for_a_fact_of_its_own_writer() -> None:
+    from dataclasses import replace
+
+    from server.memory.app.retrieval.search import _merge_leg_hits
+    from server.memory.domain.search_types import SearchHit
+
+    text = "the same long value both users stored under one key " * 3
+    fact = SearchHit(
+        memory_key="k",
+        memory_type="semantic",
+        content_excerpt=text,
+        distance=0.2,
+        identity=("a", "u1", "s1"),
+    )
+    chunk = replace(fact, memory_key="chunk:s9:0", source="chunk", identity=("a", "u2", "s9"))
+    own = replace(chunk, memory_key="chunk:s8:0", identity=("a", "u1", "s8"))
+    out = await _merge_leg_hits(StubCH(), _q(), [fact], [chunk, own], [], [])
+    assert [h.memory_key for h in out] == ["k", "chunk:s9:0"]
