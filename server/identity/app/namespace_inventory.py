@@ -133,6 +133,10 @@ async def _integrations(org: str, ns: str, scope: ReadFilters) -> InventorySecti
         # The grant read failed: the request is the server's failure, as in row_in_scope.
         note_answered_unverified()
         return _missing("integrations", _failed("integrations", e))
+    except BACKEND_NOT_NOW:
+        raise
+    except Exception as e:  # noqa: BLE001 — a failed admin check leaves the other legs standing
+        return _missing("integrations", _failed("integrations", e))
     return await _section("integrations", webhook_tally(org, ns))
 
 
@@ -156,18 +160,16 @@ async def _members(org: str, ns: str) -> InventoryPopulation:
         tree, failed = await _attempt("members", sharing.tree(org))
         if tree is None:
             return _not_counted("members", failed)
-        for ancestor in tree.lineage(ns)[1:]:
-            granted, failed = await _attempt("members", grants_repo.member_count(org, ancestor))
-            if granted is None:
-                return _not_counted("members", failed)
-            if any(granted):
-                inherited = True
-                break
+        ancestors = tree.lineage(ns)[1:]
+        found, failed = await _attempt("members", grants_repo.any_live_grant(org, ancestors))
+        if found is None:
+            return _not_counted("members", failed)
+        inherited = found
     wider = []
     if await is_org_readable_code_namespace(org, ns):
         wider.append("readable by everyone in the org")
     if shared:
-        wider.append("shared with everyone or a group")
+        wider.append("shared with everyone, a group or an agent")
     if inherited:
         wider.append("inherits the grants of a parent collection")
     return InventoryPopulation(

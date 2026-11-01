@@ -240,16 +240,14 @@ async def people_page(
     return [GrantPerson.from_row(r) for r in rows]
 
 
-# Grants that open the namespace to more people than they name: the org (`everyone`,
-# `*`) and groups. With agents and service accounts, they are the subjects that are not
-# one person; `user:<id>` is an end user, so a person.
+# Grants that open a collection to more people than they name: the org (`everyone`, `*`),
+# a group, and an agent (every end user signed in under it). With service accounts, they
+# are the subjects that are not one person; `user:<id>` is an end user, so a person.
 _SHARED_WIDER = (
-    f"lowerUTF8(subject) IN ('{EVERYONE}', '*') OR startsWith(lowerUTF8(subject), '{GROUP}')"
+    f"lowerUTF8(subject) IN ('{EVERYONE}', '*') OR startsWith(lowerUTF8(subject), '{GROUP}') "
+    f"OR startsWith(lowerUTF8(subject), '{AGENT}')"
 )
-_NOT_A_PERSON = (
-    f"{_SHARED_WIDER} OR startsWith(lowerUTF8(subject), '{AGENT}') "
-    f"OR startsWith(lowerUTF8(subject), '{SERVICE_ACCOUNT}')"
-)
+_NOT_A_PERSON = f"{_SHARED_WIDER} OR startsWith(lowerUTF8(subject), '{SERVICE_ACCOUNT}')"
 
 
 async def member_count(org: str, namespace: str, *, ch: _CHClient | None = None) -> tuple[int, int]:
@@ -272,6 +270,20 @@ async def member_count(org: str, namespace: str, *, ch: _CHClient | None = None)
         },
     )
     return (int(row["people"]), int(row["shared"])) if row else (0, 0)
+
+
+async def any_live_grant(org: str, namespaces: list[str], *, ch: _CHClient | None = None) -> bool:
+    """Whether any of `namespaces` holds a live grant, to anyone."""
+    if not namespaces:
+        return False
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT count() > 0 AS found FROM loom.namespace_grants FINAL "
+        "WHERE org = {org:String} AND namespace IN {namespaces:Array(String)} "
+        f"AND {LIVE_GRANT}",
+        params={"org": org, "namespaces": namespaces},
+    )
+    return bool(row and row["found"])
 
 
 async def find_active_grant(

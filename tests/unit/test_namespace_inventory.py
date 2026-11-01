@@ -106,7 +106,7 @@ def test_an_unreadable_admin_check_is_the_servers_failure(
 @pytest.mark.parametrize(
     ("people", "shared", "parent", "reason"),
     [
-        (3, 1, "", "shared with everyone or a group: those members are not counted"),
+        (3, 1, "", "shared with everyone, a group or an agent: those members are not counted"),
         (3, 0, "root", "inherits the grants of a parent collection: those members are not counted"),
     ],
 )
@@ -115,7 +115,8 @@ def test_members_shared_wider_are_not_a_complete_count(
 ) -> None:
     _tree(monkeypatch, {"col-n": parent, "root": ""} if parent else {})
     rows = [{"people": people, "shared": shared}]
-    _ch(("loom.namespace_grants", rows)).install(monkeypatch, *_GET_CLIENT)
+    routes = (("AS found", [{"found": True}]), ("loom.namespace_grants", rows))
+    _ch(*routes).install(monkeypatch, *_GET_CLIENT)
     (members,) = [p for p in _run(namespace="col-n").populations if p.population == "members"]
     assert (members.total, members.complete, members.reason) == (people, False, reason)
 
@@ -123,20 +124,17 @@ def test_members_shared_wider_are_not_a_complete_count(
 def test_a_parent_with_no_grants_leaves_the_member_count_complete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _tree(monkeypatch, {"col-n": "col-root", "col-root": ""})
-
-    def grants(sql: str, params: dict[str, Any]) -> list[dict[str, int]]:
-        return [
-            {"people": 2, "shared": 0} if params["ns"] == "col-n" else {"people": 0, "shared": 0}
-        ]
-
-    ch = _ch(("loom.namespace_grants", grants)).install(monkeypatch, *_GET_CLIENT)
+    _tree(monkeypatch, {"col-n": "col-mid", "col-mid": "col-root", "col-root": ""})
+    routes = (
+        ("AS found", [{"found": False}]),
+        ("loom.namespace_grants", [{"people": 2, "shared": 0}]),
+    )
+    ch = _ch(*routes).install(monkeypatch, *_GET_CLIENT)
     (members,) = [p for p in _run(namespace="col-n").populations if p.population == "members"]
     assert (members.total, members.complete) == (2, True)
-    assert sorted(st.params["ns"] for st in ch.statements("loom.namespace_grants")) == [
-        "col-n",
-        "col-root",
-    ]
+    # Every ancestor is checked in one statement.
+    (found,) = ch.statements("AS found")
+    assert found.params["namespaces"] == ["col-mid", "col-root"]
 
 
 def test_a_personal_collection_is_not_a_complete_member_count(
@@ -172,6 +170,19 @@ def test_a_plain_namespace_never_reads_the_collection_tree(
     _ch().install(monkeypatch, *_GET_CLIENT)
     (members,) = [p for p in _run().populations if p.population == "members"]
     assert (members.total, members.complete) == (2, True)
+
+
+def test_an_unexpected_admin_check_error_leaves_the_rest_standing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def broken(*_: Any, **__: Any) -> None:
+        raise RuntimeError("directory unreadable")
+
+    _ch().install(monkeypatch, *_GET_CLIENT)
+    monkeypatch.setattr(namespace_inventory, "check_authorized", broken)
+    sections = {s.plane: s for s in _run().sections}
+    assert sections["integrations"].reason == "read failed: RuntimeError"
+    assert all(s.complete for p, s in sections.items() if p != "integrations")
 
 
 def test_an_outage_fails_the_call(monkeypatch: pytest.MonkeyPatch) -> None:

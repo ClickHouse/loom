@@ -180,15 +180,9 @@ def seeded(control_plane_url: str, ch_client: Any) -> Any:
                 "expires_at",
             ],
         )
-        # Grants to the org and a group widen who reads without naming them; an agent and a
-        # service account are not people; a revoked grant is gone.
-        grants = [
-            ("group:eng", None),
-            ("everyone", None),
-            ("agent:helper", None),
-            ("sa:indexer", None),
-            ("left@example.com", datetime.now(UTC)),
-        ]
+        # A service account is not a person; a revoked grant is gone. (Grants to the org,
+        # a group or an agent exist on collections only: see the collection test below.)
+        grants = [("sa:indexer", None), ("left@example.com", datetime.now(UTC))]
         for subject, revoked in grants:
             ch_client.insert(
                 "loom.namespace_grants",
@@ -236,12 +230,48 @@ def test_the_inventory_counts_planes_and_keeps_populations_apart(seeded: Any) ->
     assert [i["name"] for i in pops["agents"]["top"]] == ["bot"]
     # `actor` is stamped from the token: a service account writes as `process:<subject>`.
     assert [(i["name"], i["rows"]) for i in pops["authors"]["top"]] == [(f"process:{WRITER}", 4)]
-    # Two people (one under two spellings), neither of whom wrote a row; the org and group
-    # grants leave the count incomplete, and the agent, service account, revoked and
-    # pending grants are not counted.
-    members = pops["members"]
-    assert (members["total"], members["complete"]) == (2, False)
-    assert members["reason"] == "shared with everyone or a group: those members are not counted"
+    # Two people (one under two spellings), neither of whom wrote a row; the service
+    # account, revoked and pending grants are not counted.
+    assert (pops["members"]["total"], pops["members"]["complete"]) == (2, True)
+
+
+def test_a_collection_shared_wider_than_its_people_is_not_a_complete_count(
+    control_plane_url: str,
+) -> None:
+    org = unique_org("inventory-col")
+    root, child = f"col-inv-{uuid.uuid4().hex[:6]}", f"col-inv-{uuid.uuid4().hex[:6]}"
+    from server.auth.jwt import mint_token
+
+    admin = mint_token(
+        subject=f"sa:inventory-{uuid.uuid4().hex[:6]}",
+        org=org,
+        namespaces=[root, child],
+        roles=["admin"],
+        ttl_seconds=900,
+        is_service_account=True,
+    )
+    with httpx.Client(base_url=control_plane_url, timeout=60.0) as c:
+        for ns, parent in ((root, ""), (child, root)):
+            _call(c, admin, "collection.create", {"org": org, "namespace": ns, "parent": parent})
+        # An agent grant alone widens the collection. `everyone` and a group match the same
+        # predicate; granting a group needs a provisioned (SCIM) group.
+        for subject in ("user:ann", "agent:helper"):
+            body = {"org": org, "namespace": root, "subject": subject, "role": "viewer"}
+            _call(c, admin, "grants.create", body)
+        members = {}
+        for ns in (root, child):
+            out = _call(c, admin, "namespace.inventory", {"org": org, "namespace": ns})
+            (members[ns],) = [p for p in out["populations"] if p["population"] == "members"]
+    # One person; the agent grant reaches every end user signed in under it.
+    assert (members[root]["total"], members[root]["complete"]) == (1, False)
+    assert members[root]["reason"] == (
+        "shared with everyone, a group or an agent: those members are not counted"
+    )
+    # The child holds no grant of its own and inherits the root's.
+    assert (members[child]["total"], members[child]["complete"]) == (0, False)
+    assert members[child]["reason"] == (
+        "inherits the grants of a parent collection: those members are not counted"
+    )
 
 
 def test_integrations_are_counted_for_admins_only(seeded: Any) -> None:
