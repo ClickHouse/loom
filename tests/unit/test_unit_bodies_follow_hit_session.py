@@ -99,7 +99,7 @@ async def test_a_high_row_is_never_a_search_body(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_two_writers_of_one_key_in_one_session_each_get_their_own_body(monkeypatch):
-    # The read picks one row per key: each hit is read under the row it names.
+    # Each hit is read under the row it names, so neither writer's body hides the other's.
     bodies = {("a", "u1", "s1"): "the first user's body", ("a", "u2", "s1"): "the second's"}
     reads = []
 
@@ -115,3 +115,23 @@ async def test_two_writers_of_one_key_in_one_session_each_get_their_own_body(mon
     assert sorted(reads) == sorted(bodies)
     assert [h.content_excerpt for h in hits] == ["the first user's body", "the second's"]
     assert (returned, elided) == (2, 0)
+
+
+@pytest.mark.asyncio
+async def test_a_hit_read_under_its_own_row_is_still_bounded_by_the_request_scope(monkeypatch):
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory.app.search import payload
+
+    only_u1 = ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    scopes = []
+
+    async def fake_get_many(identity, keys, *, scope, **_):
+        scopes.append(scope)
+        return []
+
+    monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
+    monkeypatch.setattr(payload, "request_scope", lambda: only_u1)
+    h = _hit("k", session_id="s1")
+    h._row_identity = ("a", "u2", "s1")
+    await _expand_unit_bodies([h], _input())
+    assert scopes == [only_u1]

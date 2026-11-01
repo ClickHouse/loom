@@ -299,8 +299,8 @@ async def _expand_unit_bodies(
 
     # one read per writer the hits span, overlapped
     reads = await asyncio.gather(*(_read(w, group) for w, group in by_writer.items()))
-    # The read leaves 'high' rows out before it picks one per key, so the plain row the
-    # search matched answers.
+    # A hit that names no row is read under the caller's identity, where the read picks one
+    # row per key after leaving 'high' rows out, so the plain row the search matched answers.
     stored: dict[tuple[str, ...], Any] = {
         (*writer, str(r.memory_key)): r
         for writer, rows in zip(by_writer, reads, strict=True)
