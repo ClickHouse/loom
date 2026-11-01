@@ -59,9 +59,9 @@ class DecisionRecordInput(BaseModel):
 
 
 class DecisionRecordOutput(BaseModel):
-    # The decision's key, derived from category + scenario; pass it to
-    # `decision.outcome` and `decision.chain`. The other decision's key when memory.set
-    # merged this one into it (the same text); nothing is written then.
+    # The decision's key (the other decision's key when memory.set merged this one into it,
+    # "" if that one can no longer be read), derived from category + scenario; pass it to
+    # `decision.outcome` and `decision.chain`.
     memory_key: str
     # The id of the `decision` record version written; "" after a merge.
     record_id: str

@@ -261,7 +261,8 @@ was `caused_by` or `influenced_by`. It writes:
 out, and an earlier `realized_outcome` or `success`, are not carried over, whether it is written by `decision.record`
 or `memory.record.write`. A `decision.outcome` without `success` keeps the record's verdict. When another decision
 key already holds the same text, `memory.set` merges the row into it and nothing is written: `decision.record`
-answers that key with an empty `record_id` and no edges, and `decision.outcome` answers `updated=false`.
+answers that key (empty if that decision can no longer be read) with an empty `record_id` and no edges, and
+`decision.outcome` answers `updated=false`.
 
 The record holds the text of its last writer, the agent, user and session that recorded it, so a delete of that
 writer's decision row retires it; an expired row still counts as live. Another identity's row under the same key was

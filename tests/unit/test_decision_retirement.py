@@ -916,7 +916,7 @@ async def test_a_decision_merged_into_another_key_writes_nothing(
     out = await h.handle_decision_record(_record_input())
     assert (out.memory_key, out.record_id) == (merged_into, "")
     assert (out.superseded_prior, out.edges_written) == (False, 0)
-    assert "nothing was written" in out.next
+    assert "nothing was written" in out.next and "decision.record again" in out.next
     assert await local.query_all("SELECT 1 FROM loom.memory_records") == []
 
 

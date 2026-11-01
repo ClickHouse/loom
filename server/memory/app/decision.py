@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from fastapi import HTTPException
 
@@ -123,6 +123,14 @@ def _row(key: str, rec: dict[str, Any], similarity: float = 0.0) -> Any:
 # ------------------------------------------------------------------ handlers
 
 
+class _Written(NamedTuple):
+    """The record written, or None when memory.set merged the row into another decision of
+    the same text (`merged_into_key`, "" when that row could not be read)."""
+
+    record_id: str | None
+    merged_into_key: str = ""
+
+
 async def _write_decision(
     *,
     org: str,
@@ -136,12 +144,11 @@ async def _write_decision(
     tags: list[str],
     valid_at: datetime | None,
     if_match_sha256: str = "",
-) -> tuple[str, str]:
-    """Memory row + record under one key. Returns the record_id and "", or "" and the key
-    memory.set merged the row into (another decision of the same text). The row goes
-    first: a delete keeps the record only while its writer's row is live, so that row must
-    exist before the record does. `if_match_sha256` makes the row write conditional on the
-    live row's hash (memory.set answers 409 PRECONDITION_FAILED otherwise)."""
+) -> _Written:
+    """Memory row + record under one key. The row goes first: a delete keeps the record
+    only while its writer's row is live, so that row must exist before the record does.
+    `if_match_sha256` makes the row write conditional on the live row's hash (memory.set
+    answers 409 PRECONDITION_FAILED otherwise)."""
     from server.memory.app.records import handle_memory_record_write
     from server.memory.app.write import handle_memory_set
 
@@ -166,7 +173,7 @@ async def _write_decision(
     )
     if set_out.conflict_verdict == "merge":
         # memory.set stored no row, so a record here would not match the writer's row.
-        return "", set_out.merged_into_key
+        return _Written(None, set_out.merged_into_key)
     rec_out = await handle_memory_record_write(
         MemoryRecordWriteInput(
             org=org,
@@ -187,7 +194,7 @@ async def _write_decision(
         )
     except Exception as e:  # noqa: BLE001 — the decision is written
         log.warning("decision: closing record check failed for %s: %s", key, e)
-    return str(rec_out.record_id), ""
+    return _Written(str(rec_out.record_id))
 
 
 async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOutput:
@@ -214,7 +221,7 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         f"decision:category:{payload['category'].lower()}",
         *[t for t in input.tags if t],
     ]
-    record_id, merged_into = await _write_decision(
+    written = await _write_decision(
         org=input.org,
         namespace=input.namespace,
         agent=input.agent,
@@ -226,15 +233,20 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         tags=tags,
         valid_at=input.valid_at,
     )
-    if not record_id:
+    if written.record_id is None:
+        merged_into = written.merged_into_key
+        if merged_into:
+            hint = (
+                f"memory.set merged this into the decision {merged_into}, which has the same text"
+            )
+        else:
+            hint = "memory.set merged this into a decision that can no longer be read"
         return DecisionRecordOutput(
             memory_key=merged_into,
             record_id="",
-            next=(
-                f"memory.set merged this into the decision {merged_into!r}, which has the "
-                "same text; nothing was written."
-            ),
+            next=f"{hint}; nothing was written. Call decision.record again if it is gone.",
         )
+    record_id = written.record_id
 
     edges = 0
     evidence = [f"decision.record: {payload['scenario'][:200]}"]
@@ -409,7 +421,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         raise _no_active_decision(input)
     # Conditional on the row read with the record, so a delete since then is not written back.
     try:
-        record_id, _ = await _write_decision(
+        written = await _write_decision(
             org=input.org,
             namespace=input.namespace,
             agent=writer.agent,
@@ -466,5 +478,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         except Exception as e:  # noqa: BLE001 — credit is additive
             log.warning("decision.outcome: run credit skipped for %s: %s", run_id, e)
     return DecisionOutcomeOutput(
-        memory_key=input.memory_key, updated=bool(record_id), memories_credited=credited
+        memory_key=input.memory_key,
+        updated=written.record_id is not None,
+        memories_credited=credited,
     )
