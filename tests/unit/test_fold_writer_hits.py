@@ -91,6 +91,19 @@ def test_a_writer_hit_brings_every_chunk_it_stands_for() -> None:
     assert folded.score_components == {"folded_chunks": 2.0}
 
 
+def test_a_chunk_folded_onto_an_anchor_row_makes_it_a_fact_hit() -> None:
+    # duplicate hiding and unit bodies read fact hits only
+    row = _wire("k", 0.2, "the value's head", identity=("a", "u", "s1"))
+    row.source = "anchor"
+    chunk = _wire("k", 0.9, "the passage", writer=("a", "u"))
+    (folded,) = fold_writer_hits([chunk, row], "n")
+    assert (folded.source, folded.rank_score, folded._row_identity) == (
+        "fact",
+        0.9,
+        ("a", "u", "s1"),
+    )
+
+
 @pytest.mark.asyncio
 async def test_the_chunk_folds_before_the_duplicates_are_read(monkeypatch) -> None:
     from server.memory.app.search import assemble

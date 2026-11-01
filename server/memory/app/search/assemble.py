@@ -44,30 +44,30 @@ def fold_writer_hits(hits: list[_MemorySearchHit], namespace: str) -> list[_Memo
     the earlier position; chunks with no such row merge into the first of them."""
     if not any(hit_writer(h) for h in hits):
         return hits
+    keyed = [(hit_row_key(h, namespace).writer_key(), h) for h in hits]
     newest: dict[tuple[str, str, str, str], _MemorySearchHit] = {}
-    for h in hits:
-        key = hit_row_key(h, namespace).writer_key()
+    for key, h in keyed:
         if names_row(h) and (key not in newest or h.version > newest[key].version):
             newest[key] = h
     out: list[_MemorySearchHit] = []
     slot: dict[tuple[str, str, str, str], int] = {}
-    for h in hits:
-        key = hit_row_key(h, namespace).writer_key()
-        if not (hit_writer(h) or newest.get(key) is h):
+    for key, h in keyed:
+        is_row = newest.get(key) is h
+        if not (is_row or hit_writer(h)):
             out.append(h)
         elif key not in slot:
             slot[key] = len(out)
             out.append(h)
         else:
-            held = out[slot[key]]
             # the row is the hit that stays; the chunks fold onto it
-            row, chunk = (h, held) if newest.get(key) is h else (held, h)
-            out[slot[key]] = _folded(row, chunk)
+            held = out[slot[key]]
+            out[slot[key]] = _folded(h, held) if is_row else _folded(held, h)
     return out
 
 
 def _folded(row: _MemorySearchHit, chunk: _MemorySearchHit) -> _MemorySearchHit:
-    fields = folded_fields(row, chunk)
+    # a fact hit, whichever leg pooled the row: duplicate hiding and unit bodies read it
+    fields = {**folded_fields(row, chunk), "source": "fact"}
     if "rank_score" in fields:
         fields["similarity"] = max(row.similarity, chunk.similarity)
     return row.model_copy(update=fields)

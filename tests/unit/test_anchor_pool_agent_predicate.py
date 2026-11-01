@@ -184,8 +184,6 @@ def test_belt_is_a_no_op_without_a_named_agent_and_adds_no_key_when_nothing_fell
 
 async def test_an_anchor_row_carries_its_version(monkeypatch) -> None:
     # the folds pick a writer's newest row of a key by version
-    from types import SimpleNamespace
-
     import server.core.ch as ch_mod
     from server.memory.app.search.anchor_pool import _run_anchor_pool
 

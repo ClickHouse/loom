@@ -152,7 +152,8 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
     rank-neutral: a folded parent sits exactly where its chunk sat."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
-    # A chunk's session is `memory.set:<key>`, not its row's: match on writer and key.
+    # A chunk's session is `memory.set:<key>`, not its row's: match on writer and key, and
+    # take the highest version (a later lock or status change of an older row outranks it).
     by_row: dict[tuple[str, ...], SearchHit] = {}
     out: list[SearchHit] = []
     for h in hits:
