@@ -290,8 +290,8 @@ class SearchHit:
     # rows and uses their text to mask the sentences that restate them.
     status: str = ""
     version: int = 0
-    # The stored row's (agent, user_id, session_id) for a fact, chunk or record row; None
-    # for every other plane. Not on the wire.
+    # The stored row's (agent, user_id, session_id) for a fact or chunk row; None for a
+    # record and every other plane. Not on the wire.
     identity: RowIdentity | None = None
 
 

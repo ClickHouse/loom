@@ -194,9 +194,10 @@ this scope has not run yet, so a thin result is not evidence of absence.
 
 `candidates_total` is the size of the fused pool, counted in rows. One key holds a row
 per writer and session, so a search can serve several rows of one key, each with its own
-`session_id` and text; `LOOM_MEMORY_SEARCH_PER_KEY_CAP` bounds how many. With
-`paging=true` (the `loom_search` tool always asks), a larger pool is parked and
-`next_page` returns a handle to pass as `page=`.
+`session_id` and text. `LOOM_MEMORY_SEARCH_PER_KEY_CAP` bounds how many, except for
+aggregational and `temporal_diff` queries; 0 means no bound. With `paging=true` (the
+`loom_search` tool always asks), a larger pool is parked and `next_page` returns a
+handle to pass as `page=`.
 
 ### Example
 

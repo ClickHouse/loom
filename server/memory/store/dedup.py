@@ -470,7 +470,7 @@ async def status_by_keys(
     no row (a folded set chunk): `duplicate`, naming the newest duplicate's canonical, when
     no live row of the key in `scope` is served and one is a duplicate; `active` otherwise.
     The identity fields are empty, as the hit's are."""
-    wanted = sorted({k for k in keys if k[1]})
+    wanted = sorted({(ns, key) for ns, key in keys if key})
     if not wanted:
         return []
     ch = ch or _default_client()

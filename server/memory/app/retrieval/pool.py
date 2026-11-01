@@ -106,8 +106,8 @@ _SET_CHUNK_PREFIX = "chunk:memory.set:"
 
 def _writer_key(h: SearchHit, memory_key: str) -> tuple[str, str, str, str]:
     """(namespace, agent, user_id, memory_key): the session left out."""
-    namespace, agent, user_id, _session, _key = hit_row_key(h)
-    return namespace, agent, user_id, memory_key
+    r = hit_row_key(h)
+    return r.namespace, r.agent, r.user_id, memory_key
 
 
 def _is_set_chunk(h: Any) -> bool:

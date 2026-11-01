@@ -114,7 +114,12 @@ def truth(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         org: str, rows: list[tuple[str, ...]], *, scope: Any = None, ch: Any = None
     ) -> list[DuplicateStatus]:
         env.status_calls += 1
-        return [_status(row, **env.status[row[4]]) for row in rows if row[4] in env.status]
+        # as loom.memory: a row key without its writer's identity matches no stored row
+        return [
+            _status(row, **env.status[row.memory_key])
+            for row in rows
+            if row.memory_key in env.status and row.user_id
+        ]
 
     async def canonical_rows_by_ids(
         org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
