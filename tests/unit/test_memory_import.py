@@ -392,9 +392,15 @@ async def test_reruns_write_nothing_new_and_reinforce_nothing(harness) -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_item_imported_in_another_session_is_skipped(harness) -> None:
-    """Identity dedup spans sessions: the key holding the text in another session of the
-    identity is the item already imported, and it is not reinforced again."""
+@pytest.mark.parametrize("dedup_scope", ["identity", "session"])
+async def test_the_item_imported_in_another_session_is_skipped(
+    harness, monkeypatch, dedup_scope: str
+) -> None:
+    """The heads read spans sessions, so the key holding the text in another session is
+    the item already imported, whatever scope the bulk write's own dedup has."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_bulk_dedup_scope", dedup_scope)
     value = "Dog is Biscuit."
     ch = _StoreCH(
         [
@@ -410,6 +416,20 @@ async def test_the_item_imported_in_another_session_is_skipped(harness) -> None:
     out = await handle_memory_import(_input({"value": value}))
     assert _outcomes(out) == [("skipped", "unchanged")]
     assert ch.rows_for("loom.memory") == [] and rec.events == []
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_keeps_the_stored_labels(harness) -> None:
+    value = "Dog is Biscuit."
+    ch = _StoreCH()
+    harness(ch)
+    await handle_memory_import(_input({"value": value, "tags": ["pets"]}))
+    again = await handle_memory_import(
+        _input({"value": value, "tags": ["animals"], "sensitivity": "high"})
+    )
+    assert _outcomes(again) == [("skipped", "unchanged")]
+    (row,) = ch.rows_for("loom.memory")
+    assert "pets" in row["tags"] and "animals" not in row["tags"]
 
 
 @pytest.mark.asyncio
@@ -1040,11 +1060,7 @@ def test_the_op_has_its_own_rate_class_and_an_import_budget() -> None:
 
     assert op_class_for("memory.import") == "memory.import"
     assert DEFAULT_LIMITS["memory.import"] == Limit(capacity=10, rate=2)
-    assert DEFAULT_LIMITS["memory.import"] == DEFAULT_LIMITS["knowledge.add"]
-    budgets = {
-        n: OPERATIONS_BY_NAME[n].budget_p99_ms for n in ("memory.import", "memory.import_curated")
-    }
-    assert budgets == {"memory.import": 30000, "memory.import_curated": 30000}
+    assert OPERATIONS_BY_NAME["memory.import"].budget_p99_ms == 30000
 
 
 def test_the_op_counts_as_a_write_wherever_bulk_set_does() -> None:

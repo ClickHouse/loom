@@ -1,19 +1,6 @@
-"""memory.import: memory items another memory system distilled, written through the
-bulk write path.
-
-Each entry becomes a memory.bulk_set entry under the key its text derives
-(`server.memory.domain.digest_keys.import_key`), declared `source_class=imported`,
-so an import makes every check a bulk write makes: the identity's content-hash dedup,
-the skip gate, the lock and pin guards, the blacklist, the sensitivity rule, inline
-embedding and the conflict verdicts; and it leaves the bulk write's hash-only audit
-row, but reinforces nothing. A key whose newest version, in any session the caller's
-token may read, is a tombstone, a superseded, rejected or proposed row, or a live row
-holding other text is left as it is: a re-run never brings back what its owner deleted,
-a newer fact retired, someone marked wrong or corrected, nor decides a proposal on trial.
-A dry run makes the same checks and writes no row, link, audit row or usage event (the
-embeddings are paid for and a blacklist hit is counted). A category the namespace has
-registered is linked to the entry's key as memory.assign_category links one
-(`server.memory.store.categories`).
+"""memory.import: items another memory system distilled, written through
+`handle_memory_bulk_set` under keys their text derives. What each entry answers is in
+docs/features/memory/writing.md#importing-from-another-memory-system.
 """
 
 from __future__ import annotations
@@ -47,12 +34,6 @@ from server.memory.app.bulk_set import handle_memory_bulk_set
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.digest_keys import import_key
 from server.memory.domain.memory_import import (
-    CATEGORY_NOT_LINKED,
-    CATEGORY_REFUSED,
-    CATEGORY_RESCINDED,
-    CATEGORY_UNREGISTERED,
-    UNCHANGED,
-    UNKNOWN,
     Outcome,
     Reason,
     holds_item,
@@ -85,12 +66,17 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
     for i, key in enumerate(keys):
         first.setdefault(key, i)
     scope = request_scope()
-    # A token bounded to one user links no category: a link has no user axis, so it would
-    # reach every user's row under the key (memory.assign_category is refused such a token).
+    # A token bounded below the namespace links no category: a link has no user or session
+    # axis, so it would reach every row under the key (memory.assign_category refuses it too).
     linkable = not scope.narrowed
     named = [entry.category for entry in input.entries if entry.category] if linkable else []
-    # Read before anything is written, so a failed read leaves nothing half done.
+    # Every read runs before the write; only the new links' insert runs after it, and a
+    # retry after that insert fails writes nothing again.
     category_ids = await categories.registered_ids(input.org, input.namespace, named)
+    categorized = [
+        k for k, e in zip(keys, input.entries, strict=True) if e.category in category_ids
+    ]
+    stored_links = await categories.link_states(input.org, input.namespace, categorized)
     heads = await memory_repo.key_heads_across_sessions(
         input.org, input.namespace, input.agent, input.user_id, list(first), scope=scope
     )
@@ -100,7 +86,7 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
     for i, key in enumerate(keys):
         outcome, reason = outcomes[key] if first[key] == i else repeat_outcome(outcomes[key])
         results.append(_ImportEntryResult(index=i, key=key, outcome=outcome, reason=reason))
-    await _categorize(input, results, category_ids, linkable=linkable)
+    await _categorize(input, results, category_ids, stored_links, linkable=linkable)
     return _output(input, results)
 
 
@@ -110,14 +96,13 @@ async def _write(
     first: dict[str, int],
     skip: dict[str, Reason],
 ) -> dict[str, tuple[Outcome, Reason]]:
-    """Key → the outcome of the first entry of its text. A key whose newest version leaves
-    it as it is (a tombstone, a superseded, rejected or proposed row, or a state the import
-    does not recognise) is skipped with that reason; the rest go through memory.bulk_set."""
+    """Key → the outcome of the first entry of its text: skipped with its `skip` reason,
+    or written through memory.bulk_set."""
     outcomes: dict[str, tuple[Outcome, Reason]] = {}
     pending: list[int] = []
     for key, i in first.items():
         reason = skip.get(key, "")
-        if reason == UNKNOWN:
+        if reason == "unknown":
             log.warning("memory.import: key %r has an unknown head status; skipped", key)
         if reason:
             outcomes[key] = ("skipped", reason)
@@ -152,7 +137,7 @@ def _entry_outcome(key: str, result: _BulkSetResult, held_by: str | None) -> tup
         return "held", "merge"
     if held_by is not None and held_by != key:
         return "held", "identity_duplicate"
-    return "skipped", UNCHANGED
+    return "skipped", "unchanged"
 
 
 def _bulk_input(
@@ -187,32 +172,29 @@ async def _categorize(
     input: MemoryImportInput,
     results: list[_ImportEntryResult],
     category_ids: dict[str, str],
+    stored: dict[tuple[str, str], bool],
     *,
     linkable: bool,
 ) -> None:
     """Note each entry's category, and link a registered one to the entry's key once the
-    key holds the item. A link already stored is left as it is, so a re-run never brings
-    back one the owner rescinded. The new links get one audit row: keys and category
-    names, never the text."""
+    key holds the item. A link already `stored` (live or not) is left as it is, so a re-run
+    never brings back one the owner rescinded. The new links get one audit row: keys and
+    category names, never the text."""
     wanted: list[tuple[_ImportEntryResult, tuple[str, str]]] = []  # (result, (key, cat id))
     for result, entry in zip(results, input.entries, strict=True):
         if not entry.category:
             continue
         if not linkable:
-            result.note = CATEGORY_REFUSED
+            result.note = "category_refused"
         elif entry.category not in category_ids:
-            result.note = CATEGORY_UNREGISTERED
+            result.note = "category_unregistered"
         elif not holds_item(result.outcome, result.reason):
-            result.note = CATEGORY_NOT_LINKED
+            result.note = "category_not_linked"
         else:
             wanted.append((result, (result.key, category_ids[entry.category])))
-    if not wanted:
-        return
-    keys = [result.key for result, _link in wanted]
-    stored = await categories.link_states(input.org, input.namespace, keys)
     for result, link in wanted:
         if stored.get(link) is False:
-            result.note = CATEGORY_RESCINDED
+            result.note = "category_rescinded"
     new = sorted({link for _, link in wanted if link not in stored})
     if not new or input.dry_run:
         return

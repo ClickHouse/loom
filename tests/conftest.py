@@ -294,6 +294,7 @@ def mint_test_token():
         roles: list[str] | None = None,
         ttl_seconds: int = 600,
         subject: str = "test-suite",
+        read_user_id: str | None = None,
     ) -> str:
         return mint_token(
             subject=subject,
@@ -302,6 +303,7 @@ def mint_test_token():
             roles=roles or ["writer"],
             ttl_seconds=ttl_seconds,
             is_service_account=True,
+            read_user_id=read_user_id,
         )
 
     return _mint

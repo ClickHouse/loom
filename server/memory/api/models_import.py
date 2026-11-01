@@ -31,7 +31,7 @@ class _ImportEntry(BaseModel):
     # The item's text, stored verbatim; at least one character that is not whitespace.
     # Its key is `import:` and the first 24 hex characters of the text's SHA-256, so the
     # same text always lands on the same key.
-    value: str = Field(..., min_length=1, max_length=MAX_IMPORT_VALUE_CHARS, pattern=r"\S")
+    value: str = Field(..., max_length=MAX_IMPORT_VALUE_CHARS, pattern=r"\S")
     # Labels stored with the item, filterable at recall.
     tags: list[Annotated[str, Field(max_length=MAX_IMPORT_TAG_CHARS)]] = Field(
         default_factory=list, max_length=MAX_IMPORT_TAGS
@@ -69,11 +69,7 @@ class MemoryImportInput(_Identity):
     # The items to import, 1 to 200: each one's text, and optionally its tags, the time
     # the source first knew it, its source pointer, a category and a sensitivity tier.
     entries: list[_ImportEntry] = Field(..., min_length=1, max_length=MAX_IMPORT_ENTRIES)
-    # Make every check and answer the outcome each entry would have, writing no memory row,
-    # embedding, category link, audit row or usage event. The checks still embed every entry
-    # (the conflict check reads the vectors) and count a blacklist pattern's hit, and a
-    # `conflicted` entry is previewed before the peer marks a real write settles: it may
-    # land unflagged if its peers change first.
+    # Make every check and answer each entry's outcome, writing nothing.
     dry_run: bool = False
 
     @model_validator(mode="after")
@@ -100,11 +96,11 @@ class _ImportEntryResult(BaseModel):
     # (conflict: too close to a pinned memory). held: merge, or identity_duplicate
     # (the same text under another key). skipped: unchanged, the key's newest status
     # (deleted, superseded, rejected, proposed), revised (the key holds other text), or
-    # repeated (an earlier entry with the same text was written). written: duplicate or
-    # conflicted, the conflict verdict's status.
+    # repeated (an earlier entry with the same text was written), or unknown (a status the
+    # import does not recognise). written: duplicate or conflicted, the verdict's status.
     reason: Reason = ""
     # Why the entry's category is not linked to its key: category_unregistered,
-    # category_refused (a token bounded to one user; a link has no user axis),
+    # category_refused (a token bounded to one user or one session; a link has neither axis),
     # category_not_linked (the key does not hold the item) or category_rescinded (the owner
     # removed that link, and the import leaves it removed). '' when it is linked.
     note: Note = ""

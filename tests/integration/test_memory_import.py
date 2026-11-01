@@ -267,23 +267,14 @@ async def test_a_rerun_leaves_a_rescinded_category_link_rescinded(
 
 @pytest.mark.asyncio
 async def test_a_token_bounded_to_one_user_links_no_category(
-    control_plane_url: str, ch_client
+    control_plane_url: str, ch_client, mint_test_token
 ) -> None:
     from loom import Agent
-
-    from server.auth.jwt import mint_token
 
     ns = _ns()
     async with Agent(org=ORG, namespace=ns, agent=AGENT, base_url=control_plane_url) as a:
         await a.call("namespace.register_category", name="pets", description="Animals at home.")
-    token = mint_token(
-        subject="importer",
-        org=ORG,
-        namespaces=[ns],
-        roles=["writer"],
-        ttl_seconds=600,
-        read_user_id="u1",
-    )
+    token = mint_test_token(org=ORG, namespaces=[ns], subject="importer", read_user_id="u1")
     body = {
         "org": ORG,
         "namespace": ns,

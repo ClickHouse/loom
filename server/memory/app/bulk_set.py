@@ -1096,8 +1096,8 @@ async def _bulk_conflict_verdicts(
 ) -> dict[int, Any]:
     """check_on_commit for every searchable entry, concurrency-bounded. Keys
     are indexes into memory_rows; values are ConflictResults. A bulk past the
-    cap (`cap`, else bulk_conflict_check_max_entries) checks
-    the first N and writes the rest unchecked (the caller counts them); a check that
+    cap (`cap`, else bulk_conflict_check_max_entries) checks the first N and
+    writes the rest unchecked (the caller counts them); a check that
     errors counts as clear — the write must not fail because the check could not run —
     except one the model-call switch holds (`customer.HOLDS`), which the write answers
     as its own embeds would."""

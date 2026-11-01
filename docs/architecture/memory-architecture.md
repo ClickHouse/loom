@@ -402,32 +402,32 @@ blacklisted entry is skipped, not raised; pinned and locked keys come back in
 the write.
 
 `memory.import` (`handle_memory_import` in `memory/app/memory_import.py`) writes through
-`handle_memory_bulk_set`, so an imported item meets every check above. The live-row lookup
-skips only tombstones and identity dedup counts only active, duplicate and conflicted rows,
-so first it reads each key's newest version across the sessions of the identity inside the
-request's read scope (`key_heads_across_sessions`; an `own_session` token reads only its
-own session) and leaves a key whose newest version is a tombstone, or superseded, rejected
-or proposed, or live and holding other text (`revised`), as it is. That read and the write
-are not atomic: a delete that lands between
-them is written over. A bulk result with no version that no check refused, no merge took
-and no other key holds is the skip gate's or identity dedup's answer for the key itself,
-so the entry is `unchanged`.
+`handle_memory_bulk_set`, so an imported item meets every check above. The bulk write's
+live-row lookup reads the caller's session only and skips tombstones, so first the import
+reads each key's newest version across the sessions of the identity inside the request's
+read scope (`key_heads_across_sessions`; an `own_session` token reads only its own session).
+A key whose newest version is a tombstone, or superseded, rejected or proposed, is left as
+it is; a live one is `unchanged` when it holds the item's text and `revised` when it holds
+other text. Only a key with no version goes to the bulk write. That read and the write are
+not atomic: a delete that lands between them is written over. A bulk result with no version
+that no check refused, no merge took and no other key holds is the skip gate's or identity
+dedup's answer for the key itself, so the entry is `unchanged`.
 
-Each item's key is `import:` and 24 hex characters of the SHA-256 of its text
-(`import_key` in `memory/domain/digest_keys.py`), and each entry declares
-`source_class=imported`. A key of exactly that shape (`is_digest_key`) gets no `(#key)`
-suffix from `build_excerpt` and no text from `key_axis_text`, whichever write stores it, so
-the row is embedded and lexically indexed by its value alone.
+Each item's key is `import:` and 24 hex characters of the SHA-256 of its text (`import_key`
+in `memory/domain/digest_keys.py`), and each entry declares `source_class=imported`. A key
+of exactly that shape (`is_digest_key`) gets no `(#key)` suffix from `build_excerpt` and no
+text from `key_axis_text`, whichever write stores it, so the row is embedded and lexically
+indexed by its value alone.
 
 The import passes `conflict_check_cap`, so the conflict check reaches every entry whatever
 `bulk_conflict_check_max_entries` says, and `reinforce=False`, so no restatement, merge or
-identity duplicate records an `evidence` event and a re-run reinforces nothing. Its dry run passes `dry_run=True`, and the bulk
-write returns once the verdicts are in: every check has run, and nothing is written but a
-blacklist pattern's hit count, as on a `memory.set` dry run. Category links go through
-`memory/store/categories.py`, the statements `memory.assign_category` runs. The import
-reads the links of its keys first and adds only pairs never stored, so a link the owner
-rescinded stays rescinded, and the new links leave one `memory.import` audit row of keys
-and category names.
+identity duplicate records an `evidence` event and a re-run reinforces nothing. Its dry run
+passes `dry_run=True`, and the bulk write returns once the verdicts are in: every check has
+run, and nothing is written but a blacklist pattern's hit count, as on a `memory.set` dry
+run. Category links go through `memory/store/categories.py`, the statements
+`memory.assign_category` runs. The import reads the links of its keys before the write and
+adds only pairs never stored, so a link the owner rescinded stays rescinded, and the new
+links leave one `memory.import` audit row of keys and category names.
 
 `memory.set_from_messages` runs a step pipeline over a `WorkflowState`
 (`memory/app/pipeline.py`, `DEFAULT_PIPELINE`) and writes through the bulk path:

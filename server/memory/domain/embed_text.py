@@ -35,9 +35,7 @@ def key_axis_text(memory_key: str) -> str:
     """The text the key-axis vector (`memory_key_embedding`) is built from: the humanized key
     ("user_dog_name" -> "user dog name"), so a query shaped like the key matches when the
     value cosine is weak. Every write path and `loom reembed` call this one function so a key
-    embeds one way. A key that is only an imported item's digest (`is_digest_key`) has no
-    words a query could share: "", so the row gets no key vector and the key axis reads its
-    value vector, as for any key without axis text."""
+    embeds one way. A digest key (`is_digest_key`) has no words, so it gets no key vector."""
     key = str(memory_key or "")
     if is_digest_key(key):
         return ""
@@ -86,9 +84,7 @@ def embedding_texts(
     procedure's text (situation, name, steps) stands in; the verbatim value column is
     untouched. The embed text is the topic-keyed text (conflict-check canonicalizes the RAW
     serialized value, not this). The key axis is the humanized memory_key, so a query shaped
-    like the key matches even when the value cosine is weak; "" when the key has none, an
-    imported item's digest key included (the excerpt and the embed text then carry the value
-    alone)."""
+    like the key matches even when the value cosine is weak; "" when the key has none."""
     text_source = procedural_text_source(memory_type, value) or serialized_value
     return (
         build_excerpt(text_source, memory_key=memory_key),
