@@ -69,9 +69,10 @@ def skip_reasons(
         if row["deleted"]:
             reason = "deleted"
         elif status in LIVE_STATUSES:  # holds its fact: the item's text, or other text
+            named = sensitivities[key]
             if hash_text(row["head_sha256"]) != content_shas[key]:
                 reason = "revised"
-            elif sensitivities.get(key) and sensitivities[key] != row["head_sensitivity"]:
+            elif named and named != row["head_sensitivity"]:
                 reason = "sensitivity_kept"  # the stored level stands; memory.set changes it
             else:
                 reason = "unchanged"

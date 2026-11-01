@@ -76,18 +76,20 @@ def where_sql(
     org: str | None,
     namespace: str | None,
     key_only: bool = False,
+    table: str = "",
     exclude_orgs: frozenset[str] = frozenset(),
 ) -> tuple[str, dict[str, Any]]:
     """Pure: the row filter of a re-embed. Default selects off-model rows;
     `key_only` selects every live row of the scope regardless of model, except an
-    import key with no key vector; the value vectors stay and only the key axis is
-    rebuilt. `exclude_orgs` (orgs
+    import key with no key vector; the value vectors stay and only the key axis of
+    `table` is rebuilt. `exclude_orgs` (orgs
     whose model calls are switched off) leaves their rows for a later run."""
     where = [] if key_only else [f"embedding_model != '{model}'"]
     if key_only:
-        # Only memory_embeddings has a key axis. An import key without a key vector has
-        # nothing to rebuild; one with a stale vector from an older build is cleared.
-        where.append(f"NOT ({_is_import_sql('memory_key')} AND memory_key_embedding_dim = 0)")
+        # An import key without a key vector has nothing to rebuild; one with a stale
+        # vector from an older build is cleared.
+        cfg = _TABLES[table]
+        where.append(f"NOT ({_is_import_sql(cfg['key_text'])} AND {cfg['key_dim']} = 0)")
     where.append("embedding_dim > 0")
     params: dict[str, Any] = {}
     if "tombstoned_at" in cols:
@@ -291,7 +293,13 @@ async def reembed_table(
     model, dim = embedder.model_name, embedder.dim
     cols = await _cols(ch, table)
     where_clause, params = where_sql(
-        cols, model, org=org, namespace=namespace, key_only=key_only, exclude_orgs=exclude_orgs
+        cols,
+        model,
+        org=org,
+        namespace=namespace,
+        key_only=key_only,
+        table=table,
+        exclude_orgs=exclude_orgs,
     )
     total = (
         await ch.query_one(
@@ -585,7 +593,9 @@ async def _waiting(
     if key_only and not _TABLES[table].get("key_text"):
         return 0
     cols = await _cols(ch, table)
-    where_clause, params = where_sql(cols, model, org=org, namespace=namespace, key_only=key_only)
+    where_clause, params = where_sql(
+        cols, model, org=org, namespace=namespace, key_only=key_only, table=table
+    )
     row = await ch.query_one(
         f"SELECT count() AS n FROM loom.{table} FINAL "
         f"WHERE {where_clause} AND has({{off:Array(String)}}, org)",

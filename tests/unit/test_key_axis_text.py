@@ -36,7 +36,9 @@ def test_reembed_key_input_uses_the_same_builder() -> None:
 
 def test_key_only_where_selects_every_live_row_but_an_import_key_without_a_vector() -> None:
     cols = ["memory_key", "tombstoned_at"]
-    sql, params = where_sql(cols, "m", org="o", namespace="n", key_only=True)
+    sql, params = where_sql(
+        cols, "m", org="o", namespace="n", key_only=True, table="memory_embeddings"
+    )
     assert "embedding_model" not in sql
     assert sql == (
         "NOT (match(memory_key, '^import:[0-9a-f]{24}$') AND memory_key_embedding_dim = 0)"

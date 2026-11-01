@@ -174,7 +174,7 @@ def _inputs(
                 if "memory_key" not in row:
                     raise RebuildBatchError("source_text_missing")
                 value = key_axis_text(row["memory_key"])
-                if not value and is_import_key(str(row["memory_key"])) and any(row[column]):
+                if is_import_key(str(row["memory_key"])) and any(row[column]):
                     # An import key with a key vector from an older build: rebuilt from
                     # the raw key; `loom reembed --key-only` clears it.
                     value = str(row["memory_key"])

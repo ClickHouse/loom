@@ -79,10 +79,12 @@ class _BulkWriteState:
     """Request-scoped state that flows between the phases of
     `handle_memory_bulk_set`; created at the top of the call, never shared."""
 
-    # Whether a restatement, a merge or an identity duplicate records an `evidence` event on
-    # the row that holds the fact. memory.import turns it off, so its re-runs reinforce nothing.
+    # Options the caller set (memory.import sets both):
+    # - whether a restatement, a merge or an identity duplicate records an `evidence` event
+    #   on the row that holds the fact; off, an import's re-runs reinforce nothing;
+    # - how many entries the conflict check reaches; None reads
+    #   bulk_conflict_check_max_entries.
     reinforce: bool = True
-    # How many entries the conflict check reaches; None reads bulk_conflict_check_max_entries.
     conflict_check_cap: int | None = None
     existing_ids: dict[str, str] = field(default_factory=dict)
     # Ids minted for keys with no row yet: a key written twice in one batch is one row.
