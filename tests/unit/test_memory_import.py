@@ -623,21 +623,55 @@ async def test_a_concurrent_import_landing_after_the_read_is_unchanged(
 
 
 @pytest.mark.asyncio
-async def test_a_key_in_a_state_the_import_does_not_know_is_left_as_it_is(harness, caplog) -> None:
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        ("tombstoned", "deleted"),
+        # A status a newer schema adds, which this build does not know.
+        ("archived", "unknown"),
+    ],
+)
+async def test_a_head_status_that_is_not_live_leaves_the_key_as_it_is(
+    harness, caplog, status: str, reason: str
+) -> None:
     value = "Dog is Biscuit."
-    odd = _row(memory_key=import_key(value), content_sha256=sha256_value(value), status="archived")
-    ch = _StoreCH([odd])
+    head = _row(memory_key=import_key(value), content_sha256=sha256_value(value), status=status)
+    ch = _StoreCH([head])
     harness(ch)
     out = await handle_memory_import(_input({"value": value}))
-    assert _outcomes(out) == [("skipped", "unknown")]
-    assert ch.rows_for("loom.memory") == [] and "unknown head status" in caplog.text
+    assert _outcomes(out) == [("skipped", reason)]
+    assert ch.rows_for("loom.memory") == []
+    assert ("unknown head status" in caplog.text) == (reason == "unknown")
+
+
+@pytest.mark.asyncio
+async def test_a_pin_or_lock_landing_after_the_read_refuses_the_entry(harness, monkeypatch) -> None:
+    """The heads read saw nothing; then the keys were pinned and locked with other text.
+    The bulk write's own guards refuse the entries."""
+    pinned, locked = "Dog is Biscuit.", "Cat is Miso."
+    ch = _StoreCH()
+    harness(ch)
+    read = memory_repo.key_heads_across_sessions
+
+    async def _read_then_race(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        heads = await read(*args, **kwargs)
+        ch.rows += [
+            _row(memory_key=import_key(pinned), content_sha256="0" * 64, pinned=1),
+            _row(memory_key=import_key(locked), content_sha256="1" * 64, lock_mode="read_only"),
+        ]
+        return heads
+
+    monkeypatch.setattr(memory_repo, "key_heads_across_sessions", _read_then_race)
+    out = await handle_memory_import(_input({"value": pinned}, {"value": locked}))
+    assert _outcomes(out) == [("refused", "pinned"), ("refused", "locked")]
+    assert ch.rows_for("loom.memory") == []
 
 
 # ---- the inherited checks, per entry ---------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_each_check_that_refuses_an_entry_is_named_on_it(harness) -> None:
+async def test_the_refusals_and_corrected_keys_are_named(harness) -> None:
     """A pinned or locked key holding other text was corrected by its owner: it is left as
     `revised` before the bulk write's own pin and lock guards are reached."""
     plain, secret = "Deploys happen on Tuesday.", "The launch code is zq-1."

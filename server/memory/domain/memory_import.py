@@ -41,6 +41,7 @@ Note = Literal[
 _LIVE: Final = frozenset({"active", "duplicate", "conflicted"})
 # A head status that leaves the key as it is, skipped under the status's own name.
 _LEFT_AS_IS: Final[dict[str, Reason]] = {
+    "tombstoned": "deleted",
     "superseded": "superseded",
     "rejected": "rejected",
     "proposed": "proposed",

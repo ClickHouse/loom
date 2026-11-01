@@ -74,6 +74,34 @@ async def test_a_link_is_one_row_and_a_rescinded_one_carries_its_tombstone() -> 
     assert all((r["org"], r["namespace"]) == ("o", "n") and r["created_at"] for r in rows)
 
 
+class _LinksCH:
+    """loom.memory_categories answering `rows`, the newest version of each link."""
+
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+        self.reads: list[tuple[str, dict[str, Any]]] = []
+
+    async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        self.reads.append((sql, params))
+        return [r for r in self.rows if r["memory_key"] in params["keys"]]
+
+
+@pytest.mark.asyncio
+async def test_link_states_reads_live_and_rescinded_links_of_the_keys() -> None:
+    ch = _LinksCH(
+        [
+            {"memory_key": "k1", "category_id": "cat-1", "live": 1},
+            {"memory_key": "k2", "category_id": "cat-1", "live": 0},
+            {"memory_key": "k3", "category_id": "cat-1", "live": 1},
+        ]
+    )
+    states = await categories.link_states("o", "n", ["k2", "k1", "k1"], ch=ch)
+    assert states == {("k1", "cat-1"): True, ("k2", "cat-1"): False}
+    ((sql, params),) = ch.reads
+    assert "FROM loom.memory_categories FINAL" in sql and "select_sequential_consistency" in sql
+    assert (params["org"], params["ns"], params["keys"]) == ("o", "n", ["k1", "k2"])
+
+
 @pytest.mark.asyncio
 async def test_assign_category_links_rescinds_and_refuses_an_unregistered_name(
     monkeypatch: pytest.MonkeyPatch,

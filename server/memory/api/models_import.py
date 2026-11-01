@@ -57,13 +57,13 @@ class _MemoryImportEntry(BaseModel):
 
 
 class MemoryImportInput(_Identity):
-    """Import memory items another memory system already distilled into the caller's
-    namespace, through every check memory.bulk_set makes.
+    """Import items another memory system distilled, through every memory.bulk_set check.
 
-    Each item is stored under a key derived from its text (`import:` and 24 hex
-    characters of its SHA-256), as `source_class=imported`, so a re-run of the same
-    import writes nothing new. The entries share the caller's identity tuple. A dry run
-    makes every check and answers the outcome each entry would have.
+    The items land in the caller's namespace. Each item is stored under a key derived
+    from its text (`import:` and 24 hex characters of its SHA-256), as
+    `source_class=imported`, so a re-run of the same import writes nothing new. The
+    entries share the caller's identity tuple. A dry run makes every check and answers
+    the outcome each entry would have.
     """
 
     # The items to import, 1 to 200: each one's text, and optionally its tags, the time
