@@ -900,7 +900,7 @@ async def _mentor_evidence(ch: RecordingCH, c: dict[str, Any]) -> None:
     await mentor_store.call_evidence(
         *who,
         searches=mentor_rules.SEARCHES,
-        found_reads=mentor_rules.FOUND_READS,
+        gets=mentor_rules.GETS,
         ch=ch,
     )
     await mentor_store.indexed_writes(*who, model="fake-ngram-1024", ch=ch)

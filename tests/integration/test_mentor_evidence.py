@@ -25,7 +25,9 @@ def _call(c: httpx.Client, op: str, body: dict[str, Any]) -> Any:
     return r.json()
 
 
-def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client: Any) -> None:
+def test_the_ladder_counts_what_the_calls_show(
+    control_plane_url: str, ch_client: Any, mint_test_token: Any
+) -> None:
     org, ns = unique_org("evidence"), "evidence"
     ident = {"org": org, "namespace": ns, "agent": AGENT}
     fact = {**ident, "memory_key": "pref/report", "value": "Reports go out on Fridays"}
@@ -73,9 +75,7 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client
         assert mcp_results[1]["memory"]["results"], mcp_results[1]
         # With a token, an MCP update that names no agent resolves its key namespace-wide,
         # so the ledger records it under no agent: not this agent's call.
-        from server.auth.jwt import mint_token
-
-        token = mint_token(subject=AGENT, org=org, namespaces=[ns], roles=["writer"])
+        token = mint_test_token(org=org, namespaces=[ns], roles=["writer"], subject=AGENT)
         rpc = {"jsonrpc": "2.0", "id": 9, "method": "tools/call"}
         update = {"namespace": ns, "memory_key": "pref/report", "value": "Reports go out Fridays"}
         rpc["params"] = {"name": "loom_memory_update", "arguments": update}

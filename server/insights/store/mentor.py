@@ -475,14 +475,6 @@ async def last_calls(
 _COUNTED_CALL = "kind = 'request' AND consumer != 'loom-ui' AND operation != 'mentor.brief'"
 
 
-def _aggregate(row: dict[str, Any] | None) -> dict[str, Any]:
-    """An aggregate's one row. None (which an aggregate with no GROUP BY never answers)
-    is a failed read, so the brief names it in `skipped` rather than reporting zero."""
-    if row is None:
-        raise LookupError("the aggregate answered no row")
-    return row
-
-
 async def call_evidence(
     org: str,
     namespace: str,
@@ -490,7 +482,7 @@ async def call_evidence(
     window_seconds: int,
     *,
     searches: tuple[str, ...],
-    found_reads: tuple[str, ...],
+    gets: tuple[str, ...],
     ch: _CHClient | None = None,
 ) -> dict[str, Any]:
     """What the agent's calls in the window show, from the call ledger: attempts,
@@ -500,7 +492,8 @@ async def call_evidence(
     that shows it, so an idempotent replay, which records no result, counts as an attempt
     and nothing more."""
     ch = ch or _default_client()
-    row = await ch.query_one(
+    # An aggregate with no GROUP BY answers exactly one row.
+    (row,) = await ch.query_all(
         f"""
         SELECT countIf({_COUNTED_CALL}) AS attempts,
                countIf({_COUNTED_CALL} AND success) AS successes,
@@ -510,7 +503,7 @@ async def call_evidence(
                    (operation IN {_in(searches)} AND args['out_abstain'] = 'false')
                    OR (operation = 'search.query'
                        AND toUInt64OrZero(args['out_section_hits']) > 0)
-                   OR (operation IN {_in(found_reads)} AND (args['out_found'] = 'true'
+                   OR (operation IN {_in(gets)} AND (args['out_found'] = 'true'
                        OR toUInt64OrZero(args['out_found_n']) > 0)))) AS returned_hits,
                if(count() = 0, NULL, min(ts)) AS oldest_row
         FROM loom.agent_events
@@ -518,7 +511,7 @@ async def call_evidence(
         """,
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
-    return _aggregate(row)
+    return row
 
 
 async def indexed_writes(
@@ -535,7 +528,7 @@ async def indexed_writes(
     `embedding_dim = 0`), in a served status and not past `expires_at`. An embedding row
     keeps its first `created_at` across versions."""
     ch = ch or _default_client()
-    row = await ch.query_one(
+    (row,) = await ch.query_all(
         f"""
         SELECT uniqExact(memory_key) AS n FROM loom.memory_embeddings FINAL
         WHERE {_SCOPE} AND agent = {{agent:String}} AND tombstoned_at IS NULL
@@ -551,7 +544,7 @@ async def indexed_writes(
             "model": model,
         },
     )
-    return int(_aggregate(row)["n"])
+    return int(row["n"])
 
 
 async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
@@ -570,8 +563,8 @@ async def reported_keys(
     """How many distinct memory keys the agent's runs in the window reported relying on
     (`chunk:` ids, which name a passage rather than a memory, left out)."""
     ch = ch or _default_client()
-    row = await ch.query_one(
+    (row,) = await ch.query_all(
         f"SELECT uniqExact(k) AS n FROM ({_CREDITED_KEYS}) WHERE NOT startsWith(k, 'chunk:')",
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
-    return int(_aggregate(row)["n"])
+    return int(row["n"])

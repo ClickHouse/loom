@@ -64,10 +64,6 @@ READ_MISS_SHARE = 0.20
 
 GETS = ("memory.get", "memory.bulk_get")
 SEARCHES = ("memory.search", "memory.ask")
-# The reads that answer `found` for what they were asked: a `found` from a delete or an
-# unsave is not a read that answered. (A read by id names no agent, so the ledger
-# records it under none.)
-FOUND_READS = GETS
 SETS = (
     "memory.set",
     "memory.bulk_set",

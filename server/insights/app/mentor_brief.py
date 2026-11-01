@@ -227,7 +227,7 @@ async def _evidence(
         read(
             "evidence",
             mentor_store.call_evidence(
-                *who, searches=mentor_rules.SEARCHES, found_reads=mentor_rules.FOUND_READS, ch=ch
+                *who, searches=mentor_rules.SEARCHES, gets=mentor_rules.GETS, ch=ch
             ),
         ),
         read(
