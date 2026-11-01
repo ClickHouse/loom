@@ -613,8 +613,9 @@ def request_work_stage_columns(work: Any) -> dict[str, str]:
 
 
 # The plane sections of a sectioned search's answer (`search.query`) whose hits say it
-# answered. `profile` is left out: it falls back to matching by meaning, so it answers
-# nearly any query.
+# answered a recall. `profile` is left out: it falls back to matching by meaning, so it
+# answers nearly any query; so is `tracker`, the duplicate-check verdict on a defect
+# report, which answers whether the defect is filed, not what is remembered.
 _SEARCH_SECTIONS = ("memory", "knowledge", "conversations")
 
 

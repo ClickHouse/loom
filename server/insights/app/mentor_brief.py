@@ -183,7 +183,8 @@ _RUNG_MEANING: dict[EvidenceRung, str] = {
     ),
     "returned_hit": (
         "reads that answered: a `memory.search` or `memory.ask` that did not abstain, a "
-        "`search.query` with a memory, document or conversation hit, a get that found its "
+        "`search.query` with a memory, document or conversation hit (not a profile match "
+        "or a duplicate-check verdict), a get that found its "
         "key; whether the answer reached the model or changed its work is not recorded"
     ),
     "client_acknowledged": (

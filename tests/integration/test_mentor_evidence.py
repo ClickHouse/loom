@@ -30,7 +30,13 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client
     ident = {"org": org, "namespace": ns, "agent": AGENT}
     fact = {**ident, "memory_key": "pref/report", "value": "Reports go out on Fridays"}
     with httpx.Client(base_url=control_plane_url, timeout=60.0) as c:
-        _call(c, "memory.set", fact)
+        # A retried write with the same idempotency key is answered from the first one:
+        # one call stored a row, the replay none.
+        retried = {"Idempotency-Key": f"evidence-{org}"}
+        for _ in range(2):
+            r = c.post("/v1/memory.set", json=fact, headers=retried)
+            assert r.status_code == 200, r.text[:400]
+        assert r.headers.get("X-Idempotent-Replay") == "true", dict(r.headers)
         # Restating the fact under another key stores nothing (a merge, `noop`).
         restated = _call(c, "memory.set", {**fact, "memory_key": "pref/again"})
         assert restated["noop"] is True, restated
@@ -75,12 +81,12 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client
             body = {"org": org, "namespace": ns, "agent": AGENT}
             out = _call(c, "mentor.brief", body)
             ladder = {e["rung"]: e for e in out["evidence"]}
-            return (out, ladder) if ladder["attempt"]["count"] == 15 else None
+            return (out, ladder) if ladder["attempt"]["count"] == 16 else None
 
-        out, ladder = wait_until(brief, max_wait=30.0, description="fifteen calls in the ledger")
+        out, ladder = wait_until(brief, max_wait=30.0, description="sixteen calls in the ledger")
     counts = {rung: e["count"] for rung, e in ladder.items()}
-    assert counts["success"] == 15
-    # Two writes stored a row; the restatement and the dry run did not.
+    assert counts["success"] == 16
+    # Two writes stored a row; the replay, the restatement and the dry run did not.
     assert counts["committed_write"] == 2
     # The deleted row is no longer one a search can serve.
     assert counts["indexed_write"] == 1

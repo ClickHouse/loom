@@ -115,9 +115,8 @@ class MentorBriefOutput(BaseModel):
     # Oldest ledger row of this agent in the window, of any kind; None when it holds none.
     ledger_from: datetime | None = None
     # Days the call ledger keeps this namespace's rows (0: until deleted; None when the
-    # read failed). When the window
-    # is longer, its oldest part is gone and the rungs read from the ledger (`attempt`,
-    # `success`, `committed_write`, `returned_hit`) cover less than the window.
+    # read failed). When the window is longer, its oldest part is gone and the rungs read
+    # from the ledger (`attempt`, `success`, `committed_write`, `returned_hit`) cover less.
     ledger_retention_days: int | None = None
     # The namespace's writers in the window, most active first; the brief
     # defaults to the first when the caller has no agent name of its own
