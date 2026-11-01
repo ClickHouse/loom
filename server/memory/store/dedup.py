@@ -422,7 +422,7 @@ async def status_by_rows(
     Only rows inside `scope` are read, so another user's row never names a
     canonical for this read.
     """
-    wanted = sorted({r for r in rows if r[4]})
+    wanted = sorted({r for r in rows if r[-1]})  # a RowKey ends with its memory_key
     if not wanted:
         return []
     ch = ch or _default_client()
@@ -534,7 +534,7 @@ async def superseded_successors(
     still live, and the retirement instant (`invalid_at`, else the row's own `updated_at`).
     The pooled rows only, a slice of them per statement. Both the superseded row and its
     successor are read inside `scope`: a successor outside it is unnamed ('')."""
-    wanted = sorted({r for r in rows if r[4]})
+    wanted = sorted({r for r in rows if r[-1]})  # a RowKey ends with its memory_key
     if not wanted:
         return []
     ch = ch or _default_client()

@@ -118,20 +118,20 @@ async def test_two_writers_of_one_key_in_one_session_each_get_their_own_body(mon
 
 
 @pytest.mark.asyncio
-async def test_a_hit_read_under_its_own_row_is_still_bounded_by_the_request_scope(monkeypatch):
+async def test_an_own_user_read_never_serves_another_users_body(monkeypatch):
     from server.identity.domain.read_scope import ReadFilters
     from server.memory.app.search import payload
 
-    only_u1 = ReadFilters(scope="own_user", user_id="u1", session_id=None)
-    scopes = []
-
+    # The store answers a read only for the user its scope allows.
     async def fake_get_many(identity, keys, *, scope, **_):
-        scopes.append(scope)
-        return []
+        if scope.user_id != identity.user_id:
+            return []
+        return [SimpleNamespace(memory_key=k, value="u2's body", sensitivity="") for k in keys]
 
     monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
+    only_u1 = ReadFilters(scope="own_user", user_id="u1", session_id=None)
     monkeypatch.setattr(payload, "request_scope", lambda: only_u1)
     h = _hit("k", session_id="s1")
     h._row_identity = ("a", "u2", "s1")
     await _expand_unit_bodies([h], _input())
-    assert scopes == [only_u1]
+    assert h.content_excerpt == CLIP and h.body_truncated is True
