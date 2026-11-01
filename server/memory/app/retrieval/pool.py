@@ -11,6 +11,7 @@ from dataclasses import replace
 from typing import Any, NamedTuple
 
 from server.core.ch_params import chunks
+from server.memory.app.set_chunks import set_chunk_identities
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_sql import _build_where, exclude_pooled
 from server.memory.domain.search_types import (
@@ -24,6 +25,7 @@ from server.memory.domain.search_types import (
     row_key_of,
 )
 from server.memory.store.rows import parse_memory_value
+from server.settings import settings
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -135,14 +137,10 @@ def _folded_fields(row: SearchHit, chunk: SearchHit) -> dict[str, Any]:
 
 
 def _fold_keys(identity: RowIdentity | None, memory_key: str) -> list[tuple[str, ...]]:
-    # a fact is found by its row, by its writer and key, and by its key
+    # a fact is found by its row, and by its key
     if not identity:
         return [("key", memory_key)]
-    return [
-        ("row", *identity, memory_key),
-        ("writer", *identity[:2], memory_key),
-        ("key", memory_key),
-    ]
+    return [("row", *identity, memory_key), ("key", memory_key)]
 
 
 class SetChunkRow(NamedTuple):
@@ -166,10 +164,10 @@ def fold_set_chunks(
     hits: list[SearchHit], rows: Mapping[ChunkId, SetChunkRow] | None
 ) -> list[SearchHit]:
     """Fold the verbatim chunks of long memory.set values onto the rows `rows` names
-    (`_set_chunk_rows`): onto the row when it is pooled, as its hit when it is not; a chunk
-    `rows` names no row for is dropped. With `rows` None (shared scope, a failed read), and
-    for a chunk whose leg read no writer, a chunk folds onto its writer's pooled fact of the
-    key, else any pooled fact of the key. Conversation chunks pass through."""
+    (`_set_chunk_rows`): onto the row when it is pooled, as its hit when it is not. A chunk
+    `rows` names no row for is dropped, `rows` None (shared scope, a failed read) included:
+    no passage beats another value's. A chunk whose leg read no writer folds onto a pooled
+    fact of its key. Conversation chunks pass through."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
     out = [h for h in hits if not _is_set_chunk(h)]
@@ -185,17 +183,11 @@ def fold_set_chunks(
         parent_key = str(h.parent_memory_key)
         found = None
         cid = _chunk_id(h)
-        if rows is not None and cid is not None:
-            found = rows.get(cid)
+        if cid is not None:
+            found = (rows or {}).get(cid)
             if found is None:
-                continue  # no served row's value cuts it
-        target: tuple[str, ...]
-        if found is not None:
-            target = ("row", *found.identity, parent_key)
-        elif h.identity and ("writer", *h.identity[:2], parent_key) in at:
-            target = ("writer", *h.identity[:2], parent_key)  # no rows read: its writer's fact
-        else:
-            target = ("key", parent_key)
+                continue  # no served row's value is known to cut it
+        target = ("row", *found.identity, parent_key) if found else ("key", parent_key)
         if target in at:
             parent = out[at[target]]
             out[at[target]] = replace(parent, **_folded_fields(parent, h))
@@ -245,8 +237,6 @@ async def _set_chunk_rows(
     of the key (`memory_search_set_chunk_rows` of them), the newest whose current value cuts
     that chunk (`set_chunk_identities`). A chunk none of them cuts names none. None under
     shared scope, where the writer's private row is never served, and when a read fails."""
-    from server.memory.app.set_chunks import set_chunk_identities
-
     pooled = {cid for h in hits if _is_set_chunk(h) and (cid := _chunk_id(h))}
     if not pooled:
         return {}
@@ -255,8 +245,6 @@ async def _set_chunk_rows(
     # served whatever its vector: a row whose embedding is still pending has its chunks
     where, params = _build_where(q, ranked=False)
     params["set_rows"] = sorted({(c.agent, c.user_id, c.memory_key) for c in pooled})
-    from server.settings import settings
-
     params["per_key"] = int(settings.memory_search_set_chunk_rows)
     try:
         served = await ch.query_all(
@@ -279,17 +267,18 @@ async def _set_chunk_rows(
     except Exception as e:  # noqa: BLE001 — naming a chunk's row never fails a search
         log.warning("set chunk rows read failed (fail-open): %s", e)
         return None
+    by_writer: dict[tuple[str, str, str], list[ChunkId]] = {}
+    for c in pooled:
+        by_writer.setdefault((c.agent, c.user_id, c.memory_key), []).append(c)
     out: dict[ChunkId, SetChunkRow] = {}
     for r in served:  # newest first: the first row whose value cuts a chunk names it
         row = row_key_of(q.namespace, r)
         if row not in values:
             continue
         cuts = set_chunk_identities(*values[row])
-        found = SetChunkRow((row.agent, row.user_id, row.session_id), int(r["version"]))
-        for c in pooled:
-            if (c.agent, c.user_id, c.memory_key) == (row.agent, row.user_id, row.memory_key):
-                if (c.chunk_index, c.sha) in cuts:
-                    out.setdefault(c, found)
+        for c in by_writer.get((row.agent, row.user_id, row.memory_key), []):
+            if (c.chunk_index, c.sha) in cuts:
+                out.setdefault(c, SetChunkRow(row[1:4], int(r["version"])))
     return out
 
 
@@ -329,15 +318,13 @@ async def _finish_pool(ch: _CHClient, hits: list[SearchHit], q: SearchQuery) -> 
     hits = await _recency_backfill(ch, q, hits)
     if q.recency_intent and float(q.recency_pool_weight) > 0.0:
         hits = rerank_by_recency_pool(hits, weight=float(q.recency_pool_weight))
-    from server.settings import settings as _cap_settings
-
     # The request's (or namespace's) chunk share cap; unset = no cap.
     share = 1.0 if q.chunk_max_share is None else float(q.chunk_max_share)
     hits = cap_chunk_share(hits, int(q.top_k), share)
     hits = floor_chunk_share(
         hits,
         int(q.top_k),
-        effective_chunk_floor(float(_cap_settings.memory_search_chunk_min_share), share),
+        effective_chunk_floor(float(settings.memory_search_chunk_min_share), share),
     )
     return hits[: int(q.top_k)]
 

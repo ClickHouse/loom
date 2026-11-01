@@ -9,10 +9,12 @@ search's chunk plane lifts the parent fact.
 
 Chunk rows are keyed `(org, namespace, session_id, chunk_index,
 content_sha256)`; a key's chunks share the deterministic session id
-`memory.set:<memory_key>` so a re-set of the key replaces its own chunks:
+`memory.set:<memory_key>` so a long re-set of the key replaces its own chunks:
 unchanged chunks collapse under ReplacingMergeTree, chunks that no longer
 exist are tombstoned (a replacing row with `tombstoned_at` set), new ones are
-inserted. `memory.delete` tombstones the key's whole set.
+inserted. A re-set too short to chunk, or filed `duplicate`, writes none and
+leaves the earlier chunks; search serves a chunk only for a row whose current
+value cuts it. `memory.delete` tombstones the key's whole set.
 
 Imports only the chunker and leaf services; `server.memory.app.handlers` imports
 this module lazily, at the call site.

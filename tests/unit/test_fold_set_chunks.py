@@ -16,7 +16,7 @@ import pytest
 
 from server.memory.app.retrieval import SearchHit, fusion
 from server.memory.app.retrieval import pool as S
-from server.memory.app.retrieval.pool import SetChunkRow, fold_set_chunks
+from server.memory.app.retrieval.pool import ChunkId, SetChunkRow, fold_set_chunks
 
 
 def _hit(
@@ -206,19 +206,23 @@ def test_a_folded_row_is_rank_neutral_no_asserted_tiebreak() -> None:
     assert kept.score_components["asserted"] == 1.0 and plain.score_components["asserted"] == 1.0
 
 
+_SHA = "5" * 64  # a chunk row's own content_sha256
+
+
 def _writer_chunk(user: str, excerpt: str = "") -> SearchHit:
     # a set chunk is written under `memory.set:<key>`, never its row's session
     return replace(
         _set_chunk("lesson_a", 0, 0.9, excerpt),
         identity=("a", user, "memory.set:lesson_a"),
         session_id="memory.set:lesson_a",
+        chunk_sha256=_SHA,
     )
 
 
 def test_a_chunk_folds_onto_the_row_it_was_cut_from() -> None:
     mine = replace(_hit("lesson_a", 0.5), identity=("a", "u1", "s1"))
     theirs = replace(_hit("lesson_a", 0.4), identity=("a", "u2", "s2"))
-    rows = {("a", "u2", "lesson_a", 0, ""): SetChunkRow(("a", "u2", "s2"), 7)}
+    rows = {ChunkId("a", "u2", "lesson_a", 0, _SHA): SetChunkRow(("a", "u2", "s2"), 7)}
     out = fold_set_chunks([mine, theirs, _writer_chunk("u2")], rows)
     by_writer = {h.identity: h for h in out}
     assert len(out) == 2
@@ -229,7 +233,7 @@ def test_a_chunk_folds_onto_the_row_it_was_cut_from() -> None:
 def test_a_chunk_of_a_newer_value_leaves_an_older_session_row_alone() -> None:
     # the chunks hold the writer's newest value (s2); only the s1 row is pooled
     older = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
-    rows = {("a", "u", "lesson_a", 0, ""): SetChunkRow(("a", "u", "s2"), 7)}
+    rows = {ChunkId("a", "u", "lesson_a", 0, _SHA): SetChunkRow(("a", "u", "s2"), 7)}
     out = fold_set_chunks([older, _writer_chunk("u", "the s2 passage")], rows)
     by_session = {h.identity[2]: h for h in out}
     assert by_session["s1"].content_excerpt == "lesson_a"
@@ -237,23 +241,30 @@ def test_a_chunk_of_a_newer_value_leaves_an_older_session_row_alone() -> None:
     assert (by_session["s2"].session_id, by_session["s2"].version) == ("s2", 7)
 
 
-def test_with_no_rows_read_a_chunk_folds_onto_its_writers_fact_of_the_key() -> None:
-    # shared scope, or the read failed: its writer's pooled fact first, else any, else a hit
-    theirs = replace(_hit("lesson_a", 0.6), identity=("a", "u2", "s1"))
+def test_with_no_rows_read_a_chunk_that_names_its_writer_is_dropped() -> None:
+    # shared scope, or the read failed: no passage beats another value's
     pooled = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
-    out = fold_set_chunks([theirs, pooled, _writer_chunk("u", "the passage")], None)
-    folded = {h.identity: h for h in out}
-    assert folded[("a", "u", "s1")].content_excerpt == "the passage"
-    assert folded[("a", "u2", "s1")].content_excerpt == "lesson_a"
-    (hit,) = fold_set_chunks([_writer_chunk("u2")], None)
-    assert (hit.memory_key, hit.source, hit.identity, hit.session_id) == (
-        "lesson_a",
-        "fact",
-        None,
-        "",
-    )
+    assert fold_set_chunks([pooled, _writer_chunk("u", "a stale passage")], None) == [pooled]
+
+
+def test_a_chunk_whose_leg_read_no_writer_folds_onto_a_fact_of_its_key() -> None:
+    pooled = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
+    chunk = replace(_set_chunk("lesson_a", 0, 0.9, "the passage"), identity=None)
+    (folded,) = fold_set_chunks([pooled, chunk], {})
+    assert (folded.identity, folded.content_excerpt) == (("a", "u", "s1"), "the passage")
 
 
 def test_a_chunk_whose_row_is_not_served_is_dropped() -> None:
     older = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
     assert fold_set_chunks([older, _writer_chunk("u", "the lapsed passage")], {}) == [older]
+
+
+@pytest.mark.parametrize("rows", [0, -1])
+def test_the_set_chunk_row_bound_is_at_least_one(rows: int) -> None:
+    # 0 rows would drop every long value's chunks; a negative one fails its bind
+    from pydantic import ValidationError
+
+    from server.settings import Settings
+
+    with pytest.raises(ValidationError, match="memory_search_set_chunk_rows"):
+        Settings(_env_file=None, memory_search_set_chunk_rows=rows)  # type: ignore[call-arg]
