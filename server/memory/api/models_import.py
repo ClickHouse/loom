@@ -80,7 +80,7 @@ class MemoryImportInput(_Identity):
         for i, entry in enumerate(self.entries):
             j = first.setdefault(entry.value, i)
             if self.entries[j] != entry:
-                raise ValueError(f"entries {j} and {i} have the same value but other fields")
+                raise ValueError(f"entries {j} and {i} have the same value but different fields")
         return self
 
 

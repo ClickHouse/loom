@@ -154,7 +154,7 @@ def _bulk_input(
             _BulkSetEntry(
                 memory_key=key,
                 value=entry.value,
-                tags=list(entry.tags),
+                tags=entry.tags,
                 valid_at=to_naive_utc(entry.valid_at),
                 # An item that names no source is traced by its key, `import:<digest>`.
                 source_trace=entry.source_trace or key,
@@ -179,7 +179,7 @@ async def _categorize(
     key holds the item. A link already `stored` (live or not) is left as it is, so a re-run
     never brings back one the owner rescinded. The new links get one audit row: keys and
     category names, never the text."""
-    wanted: list[tuple[_MemoryImportResult, tuple[str, str]]] = []  # (result, (key, cat id))
+    links: set[tuple[str, str]] = set()
     for result, entry in zip(results, input.entries, strict=True):
         if not entry.category:
             continue
@@ -190,11 +190,12 @@ async def _categorize(
         elif not holds_item(result.outcome, result.reason):
             result.note = "category_not_linked"
         else:
-            wanted.append((result, (result.key, category_ids[entry.category])))
-    for result, link in wanted:
-        if stored.get(link) is False:
-            result.note = "category_rescinded"
-    new = sorted({link for _, link in wanted if link not in stored})
+            link = (result.key, category_ids[entry.category])
+            if stored.get(link) is False:
+                result.note = "category_rescinded"
+            elif link not in stored:
+                links.add(link)
+    new = sorted(links)
     if not new or input.dry_run:
         return
     await categories.link(input.org, input.namespace, new)

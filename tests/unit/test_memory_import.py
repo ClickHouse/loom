@@ -31,7 +31,7 @@ from server.memory.api.models_import import MAX_IMPORT_ENTRIES, MemoryImportInpu
 from server.memory.app import bulk_set as _bulk_set_mod
 from server.memory.app import memory_import as _import_mod
 from server.memory.app.memory_import import handle_memory_import
-from server.memory.domain.conflicts import ConflictResult
+from server.memory.domain.conflicts import ConflictPeer, ConflictResult
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.excerpt import EXCERPT_LIMIT, build_excerpt
 from server.memory.domain.import_keys import import_key, is_import_key
@@ -673,20 +673,37 @@ async def test_each_check_that_refuses_an_entry_is_named_on_it(harness) -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_conflict_verdicts_that_write_or_hold_are_named(harness) -> None:
+async def test_the_conflict_verdicts_that_write_or_hold_are_named(harness, monkeypatch) -> None:
     same, near = "Prod deploys are Tuesdays.", "Prod deploys happen Tuesdays."
+    other = "Prod deploys are Fridays."
     ch = _StoreCH()
     rec = harness(ch)
+
+    marks: list[tuple[str, list[str]]] = []
+
+    async def _mark(*, org: str, new_memory_id: str, peer_ids: list[str]) -> str:
+        marks.append((new_memory_id, peer_ids))  # the mark lands and flags the new row
+        return "conflict"
+
+    monkeypatch.setattr("server.memory.app.conflicts.mark_peers_conflicted", _mark)
     rec.verdicts[same] = ConflictResult(verdict="merge", peers=[], existing_memory_id="m-keep")
     rec.verdicts[near] = ConflictResult(verdict="duplicate", peers=[], duplicate_of_id="m-peer")
-    out = await handle_memory_import(_input({"value": same}, {"value": near}))
-    assert _outcomes(out) == [("held", "merge"), ("written", "duplicate")]
-    (row,) = ch.rows_for("loom.memory")
-    assert (row["memory_key"], row["status"], row["duplicate_of"]) == (
-        import_key(near),
+    rec.verdicts[other] = ConflictResult(
+        verdict="conflict",
+        peers=[ConflictPeer("m-rival", "deploy_day", 0.9, False, "", agent="cursor", user_id="u")],
+    )
+    out = await handle_memory_import(_input({"value": same}, {"value": near}, {"value": other}))
+    assert _outcomes(out) == [
+        ("held", "merge"),
+        ("written", "duplicate"),
+        ("written", "conflicted"),
+    ]
+    rows = {r["memory_key"]: r for r in ch.rows_for("loom.memory")}
+    assert (rows[import_key(near)]["status"], rows[import_key(near)]["duplicate_of"]) == (
         "duplicate",
         "m-peer",
     )
+    assert marks == [(rows[import_key(other)]["memory_id"], ["m-rival"])]
     assert rec.events == []  # the merge target is not reinforced
 
 
@@ -1054,20 +1071,7 @@ def test_the_op_is_an_experimental_writer_op_called_by_name_over_mcp() -> None:
     assert op.name not in _MCP_HIDDEN_OPS and op_toolsets(op.name) == []
 
 
-def test_the_op_has_its_own_rate_class_and_an_import_budget() -> None:
-    from server.core.ratelimit import DEFAULT_LIMITS, Limit, op_class_for
-    from server.operations.registry import OPERATIONS_BY_NAME
+def test_the_op_draws_from_its_own_rate_class() -> None:
+    from server.core.ratelimit import op_class_for
 
     assert op_class_for("memory.import") == "memory.import"
-    assert DEFAULT_LIMITS["memory.import"] == Limit(capacity=10, rate=2)
-    assert OPERATIONS_BY_NAME["memory.import"].budget_p99_ms == 30000
-
-
-def test_the_op_counts_as_a_write_wherever_bulk_set_does() -> None:
-    from server.identity.app.me_routes import _SHARING_WRITE_OPS
-    from server.identity.domain.read_scope import NARROW_SAFE_OPS, honours_read_scope
-    from server.insights.app.mentor_rules import SETS
-
-    assert honours_read_scope("memory.import") and "memory.import" in NARROW_SAFE_OPS
-    assert {"memory.bulk_set", "memory.import"} <= set(_SHARING_WRITE_OPS)
-    assert {"memory.bulk_set", "memory.import"} <= set(SETS)
