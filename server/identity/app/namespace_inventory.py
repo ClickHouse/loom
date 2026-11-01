@@ -150,28 +150,22 @@ async def _members(org: str, ns: str) -> InventoryPopulation:
         # A personal collection takes no grant: its owner reaches it by name.
         return _not_counted("members", "a personal collection: its owner holds no grant")
 
-    counted, failed = await _attempt("members", grants_repo.member_count(org, ns))
-    if counted is None:
-        return _not_counted("members", failed)
-    people, shared = counted
-    # Only a collection inherits: an ancestor's grants reach every child.
-    inherited = False
+    # A collection's readers hold a grant on it or on an ancestor (`lineage`, it first).
+    lineage = [ns]
     if sharing.is_collection(ns):
         tree, failed = await _attempt("members", sharing.tree(org))
         if tree is None:
             return _not_counted("members", failed)
-        ancestors = tree.lineage(ns)[1:]
-        found, failed = await _attempt("members", grants_repo.any_live_grant(org, ancestors))
-        if found is None:
-            return _not_counted("members", failed)
-        inherited = found
+        lineage = tree.lineage(ns)
+    counted, failed = await _attempt("members", grants_repo.member_count(org, lineage))
+    if counted is None:
+        return _not_counted("members", failed)
+    people, shared = counted
     wider = []
     if await is_org_readable_code_namespace(org, ns):
         wider.append("readable by everyone in the org")
     if shared:
         wider.append("shared with everyone, a group or an agent")
-    if inherited:
-        wider.append("inherits the grants of a parent collection")
     return InventoryPopulation(
         population="members",
         total=people,

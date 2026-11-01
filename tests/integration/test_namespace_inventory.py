@@ -235,43 +235,44 @@ def test_the_inventory_counts_planes_and_keeps_populations_apart(seeded: Any) ->
     assert (pops["members"]["total"], pops["members"]["complete"]) == (2, True)
 
 
-def test_a_collection_shared_wider_than_its_people_is_not_a_complete_count(
-    control_plane_url: str,
-) -> None:
-    org = unique_org("inventory-col")
-    root, child = f"col-inv-{uuid.uuid4().hex[:6]}", f"col-inv-{uuid.uuid4().hex[:6]}"
+def test_a_collection_counts_its_lineage_and_flags_wider_shares(control_plane_url: str) -> None:
     from server.auth.jwt import mint_token
 
+    org, tag = unique_org("inventory-col"), uuid.uuid4().hex[:6]
+    root, child = f"col-inv-{tag}", f"col-inv-{tag}-kid"
+    agent, open_ = f"col-inv-{tag}-agent", f"col-inv-{tag}-open"
+    collections = {root: "", child: root, agent: "", open_: ""}
     admin = mint_token(
-        subject=f"sa:inventory-{uuid.uuid4().hex[:6]}",
+        subject=f"sa:inventory-{tag}",
         org=org,
-        namespaces=[root, child],
+        namespaces=list(collections),
         roles=["admin"],
         ttl_seconds=900,
         is_service_account=True,
     )
+    # The creating service account holds an admin grant on each; it is not a person.
+    grants = {
+        root: ["user:ann"],
+        child: ["user:bob"],
+        agent: ["user:cat", "agent:helper"],
+        open_: ["everyone"],
+    }
     with httpx.Client(base_url=control_plane_url, timeout=60.0) as c:
-        for ns, parent in ((root, ""), (child, root)):
+        for ns, parent in collections.items():
             _call(c, admin, "collection.create", {"org": org, "namespace": ns, "parent": parent})
-        # An agent grant alone widens the collection. `everyone` and a group match the same
-        # predicate; granting a group needs a provisioned (SCIM) group.
-        for subject in ("user:ann", "agent:helper"):
-            body = {"org": org, "namespace": root, "subject": subject, "role": "viewer"}
-            _call(c, admin, "grants.create", body)
+        for ns, subjects in grants.items():
+            for subject in subjects:
+                body = {"org": org, "namespace": ns, "subject": subject, "role": "viewer"}
+                _call(c, admin, "grants.create", body)
         members = {}
-        for ns in (root, child):
+        for ns in collections:
             out = _call(c, admin, "namespace.inventory", {"org": org, "namespace": ns})
             (members[ns],) = [p for p in out["populations"] if p["population"] == "members"]
-    # One person; the agent grant reaches every end user signed in under it.
-    assert (members[root]["total"], members[root]["complete"]) == (1, False)
-    assert members[root]["reason"] == (
-        "shared with everyone, a group or an agent: those members are not counted"
-    )
-    # The child holds no grant of its own and inherits the root's.
-    assert (members[child]["total"], members[child]["complete"]) == (0, False)
-    assert members[child]["reason"] == (
-        "inherits the grants of a parent collection: those members are not counted"
-    )
+    counts = {ns: (m["total"], m["complete"]) for ns, m in members.items()}
+    # The child's readers are its own grant holders and its parent's.
+    assert counts == {root: (1, True), child: (2, True), agent: (1, False), open_: (0, False)}
+    wider = "shared with everyone, a group or an agent: those members are not counted"
+    assert members[agent]["reason"] == members[open_]["reason"] == wider
 
 
 def test_integrations_are_counted_for_admins_only(seeded: Any) -> None:

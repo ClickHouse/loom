@@ -103,38 +103,41 @@ def test_an_unreadable_admin_check_is_the_servers_failure(
     assert all(s.complete for p, s in sections.items() if p != "integrations")
 
 
-@pytest.mark.parametrize(
-    ("people", "shared", "parent", "reason"),
-    [
-        (3, 1, "", "shared with everyone, a group or an agent: those members are not counted"),
-        (3, 0, "root", "inherits the grants of a parent collection: those members are not counted"),
-    ],
-)
-def test_members_shared_wider_are_not_a_complete_count(
-    monkeypatch: pytest.MonkeyPatch, people: int, shared: int, parent: str, reason: str
-) -> None:
-    _tree(monkeypatch, {"col-n": parent, "root": ""} if parent else {})
-    rows = [{"people": people, "shared": shared}]
-    routes = (("AS found", [{"found": True}]), ("loom.namespace_grants", rows))
-    _ch(*routes).install(monkeypatch, *_GET_CLIENT)
-    (members,) = [p for p in _run(namespace="col-n").populations if p.population == "members"]
-    assert (members.total, members.complete, members.reason) == (people, False, reason)
+def test_members_shared_wider_are_not_a_complete_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    _ch(("loom.namespace_grants", [{"people": 3, "shared": 1}])).install(monkeypatch, *_GET_CLIENT)
+    (members,) = [p for p in _run().populations if p.population == "members"]
+    assert (members.total, members.complete) == (3, False)
+    assert (
+        members.reason == "shared with everyone, a group or an agent: those members are not counted"
+    )
 
 
-def test_a_parent_with_no_grants_leaves_the_member_count_complete(
+def test_a_collection_counts_the_grant_holders_of_its_whole_lineage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _tree(monkeypatch, {"col-n": "col-mid", "col-mid": "col-root", "col-root": ""})
-    routes = (
-        ("AS found", [{"found": False}]),
-        ("loom.namespace_grants", [{"people": 2, "shared": 0}]),
+    ch = _ch(("loom.namespace_grants", [{"people": 2, "shared": 0}])).install(
+        monkeypatch, *_GET_CLIENT
     )
-    ch = _ch(*routes).install(monkeypatch, *_GET_CLIENT)
     (members,) = [p for p in _run(namespace="col-n").populations if p.population == "members"]
     assert (members.total, members.complete) == (2, True)
-    # Every ancestor is checked in one statement.
-    (found,) = ch.statements("AS found")
-    assert found.params["namespaces"] == ["col-mid", "col-root"]
+    (counted,) = ch.statements("loom.namespace_grants")
+    assert counted.params["lineage"] == ["col-n", "col-mid", "col-root"]
+
+
+def test_a_plain_namespace_counts_its_own_grants(monkeypatch: pytest.MonkeyPatch) -> None:
+    ch = _ch().install(monkeypatch, *_GET_CLIENT)
+    _run()
+    (counted,) = ch.statements("loom.namespace_grants")
+    assert counted.params["lineage"] == ["n"]
+
+
+def test_the_lineage_statement_binds_both_grant_reads() -> None:
+    from server.identity.store import grants as grants_repo
+
+    lineage_sql = grants_repo._LINEAGE_PEOPLE
+    assert lineage_sql.count("namespace IN {lineage:Array(String)}") == 2
+    assert "{ns:String}" not in lineage_sql
 
 
 def test_a_personal_collection_is_not_a_complete_member_count(

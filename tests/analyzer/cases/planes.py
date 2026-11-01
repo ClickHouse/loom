@@ -880,12 +880,12 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
 
 async def _grants_repo(ch: RecordingCH, c: dict[str, Any]) -> None:
     """The grants `collection.create` reads to find another holder of the name, and the
-    ancestor check `namespace.inventory` makes for a collection; `grants.list` reads
-    through its handler."""
+    member count `namespace.inventory` takes over a collection's lineage; `grants.list`
+    reads through its handler."""
     from server.identity.store import grants as grants_repo
 
     await grants_repo.list_active(ORG, NS, ch=ch)
-    await grants_repo.any_live_grant(ORG, ["col-a", "col-b"], ch=ch)
+    await grants_repo.member_count(ORG, ["col-a", "col-b"], ch=ch)
 
 
 def cases() -> list[Case]:

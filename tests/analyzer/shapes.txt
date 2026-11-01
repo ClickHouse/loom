@@ -590,13 +590,11 @@
 55833cd394e4	SELECT text, tokens_in, tokens_out FROM loom.llm_response_cache WHERE model = {model:String} AND key = {key:String} ORDER BY created_at DESC LIMIT ?
 55a62331cd18	WITH ( SELECT ( arrayFlatten(groupArrayIf(pair, own AND live)), arrayFlatten(groupArray( arrayConcat(if(own AND NOT live, pair, []), if(own, [], released_aliases)) )) ) FROM ( -- `own`: the row is the
 55b4e25fe476	ALTER TABLE loom.memory DELETE WHERE (org = {org:String} AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
-55ba0d93f1e5	SELECT countIf(status = ? AND NOT (lowerUTF8(subject) IN (?, ?) OR startsWith(lowerUTF8(subject), ?) OR startsWith(lowerUTF8(subject), ?) OR startsWith(lowerUTF8(subject), ?))) AS people, countIf(stat
 5600bfc98f52	ALTER TABLE loom.session_briefs DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 56154dfb939e	SELECT count() AS n FROM loom.memory_records FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace IN {ns:Array(String)}
 5638c0bba15e	SELECT count() AS n FROM loom.working_memory FINAL WHERE org = {org:String} AND user_id = {uid:String}
 56695d3bc2bb	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.session_id AS session_
 569c9b218f83	ALTER TABLE loom.conflict_allowlist DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync =
-569e646f18e7	SELECT count() > ? AS found FROM loom.namespace_grants FINAL WHERE org = {org:String} AND namespace IN {namespaces:Array(String)} AND revoked_at IS NULL AND status = ?
 56a045b3692e	SELECT kind, number, source_id, component, is_open, created_at, cosineDistance(embedding, {q:Array(Float32)}) AS distance FROM loom.qa_item_embeddings FINAL WHERE org = {org:String} AND namespace = {n
 56e09cc74026	SELECT namespace, JSONExtractString(payload, ?) AS operation, toUInt64(sum(? + JSONExtractUInt(payload, ?))) AS violations, max(JSONExtractFloat(payload, ?)) AS max_overage_ratio, round(avg(JSONExtrac
 56f4c4320d80	SELECT f AS path, uniqExact(pr_number) AS prs FROM loom.code_pr_history FINAL ARRAY JOIN files AS f WHERE org = {org:String} AND namespace = {ns:String} AND merged_at > now() - INTERVAL {days:UInt32}
@@ -872,6 +870,7 @@
 7c175cc79b27	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.session_id AS session_
 7c313a3b4c8e	SELECT term, toUInt64(uniqExactMerge(df_state)) AS df FROM loom.code_term_freq WHERE org = {org:String} AND namespace = {ns:String} AND term IN {tokens:Array(String)} GROUP BY term
 7c322cd85a24	SELECT path, scope, symbol_ids, start_line, end_line, content FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, tombstoned_at FROM loom.code_chunks WHERE org = {org:Strin
+7c3b20c90238	SELECT countIf(status = ? AND NOT (lowerUTF8(subject) IN (?, ?) OR startsWith(lowerUTF8(subject), ?) OR startsWith(lowerUTF8(subject), ?) OR startsWith(lowerUTF8(subject), ?))) AS people, countIf(stat
 7c3bbba376d8	SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, value, toString(value_json) AS object_text FROM loom.memory FINAL WHERE tombstoned_at IS NULL AND sensitivity = ? AND (expires
 7c3c296ceaa7	SELECT toString(evidence_id) AS eid, session_id, role, actor, toString(observed_at) AS observed, content, matched FROM ( SELECT evidence_id, session_id, role, actor, observed_at, content, tombstoned_a
 7c421c9f48b3	SELECT count() AS n FROM loom.task_events WHERE org = {org:String} AND namespace IN {ns:Array(String)}

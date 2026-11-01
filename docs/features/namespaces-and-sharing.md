@@ -108,9 +108,10 @@ halfway leaves the source intact and the target without the row. The learnings q
 `namespace.inventory` keeps each population apart. `members` counts the grant holders: the
 people holding an active grant, not a pending request, a group, an agent or a service
 account (page them with `grants.list`). A token whose own claims name the namespace reads
-it without a grant and is never counted; a collection's grant to `everyone`, a group or an
-agent (every end user signed in under it), an ancestor collection that holds grants, or a
-code namespace readable by the whole org leave the count `complete: false`, since their
+it without a grant and is never counted; a collection counts the grant holders of its
+ancestors too, since a parent's grant reaches every child. A grant to `everyone`, a group
+or an agent (every end user signed in under it) anywhere on that lineage, or a code
+namespace readable by the whole org, leaves the count `complete: false`, since their
 members are not listed. `agents`, `authors` (the `actor` that wrote a row) and `subjects`
 (the `user_id` a row belongs to, never the unset `-`) are identities observed on live
 memory rows, not a directory. A personal collection's owner holds no grant, so its members

@@ -250,19 +250,29 @@ _SHARED_WIDER = (
 _NOT_A_PERSON = f"{_SHARED_WIDER} OR startsWith(lowerUTF8(subject), '{SERVICE_ACCOUNT}')"
 
 
-async def member_count(org: str, namespace: str, *, ch: _CHClient | None = None) -> tuple[int, int]:
-    """(people holding an active grant, folded as `people_page` folds them; active grants
-    to everyone, a group or an agent, whose members are not listed). A pending request alone
-    grants nothing and is not counted."""
+# `_PEOPLE_PAGE` over a collection's lineage (it and its ancestors): a parent's grant
+# reaches every child, so one person's grants anywhere on it fold into one row.
+_LINEAGE_PEOPLE = _PEOPLE_PAGE.replace(
+    "namespace = {ns:String}", "namespace IN {lineage:Array(String)}"
+)
+
+
+async def member_count(
+    org: str, lineage: list[str], *, ch: _CHClient | None = None
+) -> tuple[int, int]:
+    """(people holding an active grant on any namespace of `lineage` — a namespace and,
+    for a collection, its ancestors — folded as `people_page` folds them; active grants
+    to everyone, a group or an agent, whose members are not listed). A pending request
+    alone grants nothing and is not counted."""
     ch = ch or _default_client()
     row = await ch.query_one(
         f"SELECT countIf(status = 'active' AND NOT ({_NOT_A_PERSON})) AS people, "
         f"countIf(status = 'active' AND ({_SHARED_WIDER})) AS shared "
-        f"FROM ({_PEOPLE_PAGE})",
+        f"FROM ({_LINEAGE_PEOPLE})",
         # The whole folded set: no keyset (`first`), no limit.
         params={
             "org": org,
-            "ns": namespace,
+            "lineage": lineage,
             "first": True,
             "at": "1970-01-01 00:00:00",
             "sub": "",
@@ -270,20 +280,6 @@ async def member_count(org: str, namespace: str, *, ch: _CHClient | None = None)
         },
     )
     return (int(row["people"]), int(row["shared"])) if row else (0, 0)
-
-
-async def any_live_grant(org: str, namespaces: list[str], *, ch: _CHClient | None = None) -> bool:
-    """Whether any of `namespaces` holds a live grant, to anyone."""
-    if not namespaces:
-        return False
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        "SELECT count() > 0 AS found FROM loom.namespace_grants FINAL "
-        "WHERE org = {org:String} AND namespace IN {namespaces:Array(String)} "
-        f"AND {LIVE_GRANT}",
-        params={"org": org, "namespaces": namespaces},
-    )
-    return bool(row and row["found"])
 
 
 async def find_active_grant(
