@@ -14609,7 +14609,7 @@ class NamespaceGuideSetOutput(TypedDict, total=False):
 
 
 class NamespaceInventoryInput(TypedDict, total=False):
-    "What one namespace holds: live counts and newest write per plane (memories,"
+    "What one namespace holds and who appears in it, with what was not counted."
 
     org: Required[str]
     namespace: Required[str]
@@ -14620,7 +14620,7 @@ class NamespaceInventoryInput(TypedDict, total=False):
 
 
 class NamespaceInventoryBody(TypedDict, total=False):
-    "What one namespace holds: live counts and newest write per plane (memories,"
+    "What one namespace holds and who appears in it, with what was not counted."
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -14657,7 +14657,7 @@ class InventorySection(TypedDict, total=False):
 
 
 class InventoryPopulation(TypedDict, total=False):
-    "One population. `members` are the people holding an active grant; `agents`, `authors` and"
+    "One population: the namespace's members, or identities observed on its rows."
 
     population: Required[Union[Literal["members"], Literal["agents", "authors", "subjects"]]]
     total: Required[Optional[int]]

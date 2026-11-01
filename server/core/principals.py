@@ -11,8 +11,10 @@ import re
 USER, GROUP, AGENT = "user:", "group:", "agent:"
 PRINCIPAL_PREFIXES = (USER, GROUP, AGENT)
 EVERYONE = "everyone"
+# A service account's subject.
+SERVICE_ACCOUNT = "sa:"
 # Subjects with one spelling: service accounts and these principals.
-ONE_SPELLING = ("sa:", *PRINCIPAL_PREFIXES)
+ONE_SPELLING = (SERVICE_ACCOUNT, *PRINCIPAL_PREFIXES)
 _ID = re.compile(r"[a-z0-9][a-z0-9._@-]{0,127}")
 
 

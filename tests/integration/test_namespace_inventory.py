@@ -87,6 +87,37 @@ def seeded(control_plane_url: str, ch_client: Any) -> Any:
                 "status",
             ],
         )
+        # A registered webhook (registering through the op needs a secret and a public host).
+        ch_client.insert(
+            "loom.memory_webhooks",
+            [
+                [
+                    org,
+                    ns,
+                    "w1",
+                    "https://hooks.example.com/loom",
+                    "s",
+                    ["memory.set"],
+                    datetime.now(UTC),
+                    0,
+                    1,
+                ]
+            ],
+            column_names=[
+                "org",
+                "namespace",
+                "webhook_id",
+                "url",
+                "secret_ref",
+                "events",
+                "created_at",
+                "is_deleted",
+                "version",
+            ],
+        )
+        for user in ("u1", "u2"):
+            body = {"org": org, "namespace": ns, "agent": "bot", "user_id": user, "goal": "report"}
+            _call(c, wide, "run.begin", body)
         # One record written twice: its first version stays as a superseded row.
         _call(c, wide, "memory_schema.register", {"org": org, "namespace": ns, **_SCHEMA})
         for owner in ("u1", "u2"):
@@ -94,6 +125,7 @@ def seeded(control_plane_url: str, ch_client: Any) -> Any:
                 "org": org,
                 "namespace": ns,
                 "agent": "bot",
+                "user_id": "u1",
                 "schema_name": "report_prefs",
                 "memory_key": "weekly",
                 "fields": {"owner": {"value": owner}},
@@ -120,7 +152,8 @@ def test_the_inventory_counts_planes_and_keeps_populations_apart(seeded: Any) ->
     assert sections["memories"]["count"] == 4 and sections["memories"]["latest_at"]
     assert sections["documents"]["count"] == 1
     assert sections["records"]["count"] == 1 and sections["records"]["latest_at"]
-    assert sections["integrations"]["count"] == 0
+    assert sections["runs"]["count"] == 2 and sections["runs"]["latest_at"]
+    assert sections["integrations"]["count"] == 1 and sections["integrations"]["latest_at"]
     assert all(s["complete"] for s in out["sections"]), out["sections"]
     pops = {p["population"]: p for p in out["populations"]}
     subjects = {i["name"]: i["rows"] for i in pops["subjects"]["top"]}
@@ -148,6 +181,7 @@ def test_a_token_pinned_to_one_user_counts_only_that_user(seeded: Any) -> None:
     assert (out["scope"]["read_scope"], out["scope"]["user_id"]) == ("own_user", "u1")
     sections = {s["plane"]: s for s in out["sections"]}
     assert sections["memories"]["count"] == 2
+    assert sections["records"]["count"] == 1 and sections["runs"]["count"] == 1
     for plane in ("documents", "integrations"):
         assert sections[plane]["count"] is None and not sections[plane]["complete"]
     pops = {p["population"]: p for p in out["populations"]}

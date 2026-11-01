@@ -11,12 +11,15 @@ from typing import Any
 import pytest
 
 from server.auth import sharing
+from server.core.principals import personal_name
 from server.identity.api.models_inventory import NamespaceInventoryInput
 from server.identity.app import namespace_inventory
 from server.identity.domain.read_scope import ReadFilters, read_filters_bound
 from tests.unit.ch_fake import RecordingCH
 
 AT = datetime(2026, 1, 2, 3, 4, 5)
+# Modules that imported `get_client` by name.
+_GET_CLIENT = ("server.tasks.app.run",)
 
 
 def _ch(*first: tuple[str, Any]) -> RecordingCH:
@@ -26,7 +29,7 @@ def _ch(*first: tuple[str, Any]) -> RecordingCH:
         ch.on(needle, answer)
     return (
         ch.on("latest FROM loom.memory FINAL", [{"n": 7, "latest": AT}])
-        .on("FROM loom.memory_records", [{"n": 0, "latest": datetime(1970, 1, 1)}])
+        .on("FROM loom.memory_records", [{"n": 0, "latest": None}])
         .on("FROM loom.agent_runs", [{"n": 2, "latest": AT}])
         .on("FROM loom.documents", [{"n": 3, "latest": AT}])
         .on("FROM loom.memory_webhooks", [{"created_at": AT, "webhook_id": "w1"}])
@@ -49,8 +52,8 @@ def _tree(monkeypatch: pytest.MonkeyPatch, parent: dict[str, str]) -> None:
     monkeypatch.setattr(namespace_inventory.sharing, "tree", tree)
 
 
-def _run(scope: ReadFilters | None = None, **kw: Any) -> Any:
-    inp = NamespaceInventoryInput(org="o", namespace="n", **kw)
+def _run(scope: ReadFilters | None = None, namespace: str = "n", **kw: Any) -> Any:
+    inp = NamespaceInventoryInput(org="o", namespace=namespace, **kw)
     if scope is None:
         return asyncio.run(namespace_inventory.handle_namespace_inventory(inp))
     with read_filters_bound(None, scope):
@@ -60,7 +63,7 @@ def _run(scope: ReadFilters | None = None, **kw: Any) -> Any:
 def test_every_plane_and_population_is_counted_namespace_wide(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _ch().install(monkeypatch)
+    _ch().install(monkeypatch, *_GET_CLIENT)
     out = _run()
     sections = {s.plane: s for s in out.sections}
     assert [s.plane for s in out.sections] == [
@@ -83,7 +86,7 @@ def test_every_plane_and_population_is_counted_namespace_wide(
 
 
 def test_the_unset_identity_is_never_a_subject(monkeypatch: pytest.MonkeyPatch) -> None:
-    ch = _ch().install(monkeypatch)
+    ch = _ch().install(monkeypatch, *_GET_CLIENT)
     _run()
     (subjects,) = ch.statements("SELECT user_id AS name")
     assert "user_id NOT IN ('', '-')" in subjects.sql
@@ -92,7 +95,7 @@ def test_the_unset_identity_is_never_a_subject(monkeypatch: pytest.MonkeyPatch) 
 def test_only_active_records_and_active_grants_are_counted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ch = _ch().install(monkeypatch)
+    ch = _ch().install(monkeypatch, *_GET_CLIENT)
     _run()
     (records,) = ch.statements("FROM loom.memory_records")
     assert "status = 'active' AND tombstoned_at IS NULL" in records.sql
@@ -109,7 +112,7 @@ def test_an_unreadable_admin_check_is_the_servers_failure(
         raise e
 
     noted: list[bool] = []
-    _ch().install(monkeypatch)
+    _ch().install(monkeypatch, *_GET_CLIENT)
     monkeypatch.setattr(namespace_inventory, "check_authorized", unverified)
     monkeypatch.setattr(namespace_inventory, "note_answered_unverified", lambda: noted.append(True))
     sections = {s.plane: s for s in _run().sections}
@@ -128,16 +131,58 @@ def test_an_unreadable_admin_check_is_the_servers_failure(
 def test_members_shared_wider_are_not_a_complete_count(
     monkeypatch: pytest.MonkeyPatch, people: int, shared: int, parent: str, reason: str
 ) -> None:
-    _tree(monkeypatch, {"n": parent, "root": ""} if parent else {})
-    _ch(("loom.namespace_grants", [{"people": people, "shared": shared}])).install(monkeypatch)
-    (members,) = [p for p in _run().populations if p.population == "members"]
+    _tree(monkeypatch, {"col-n": parent, "root": ""} if parent else {})
+    rows = [{"people": people, "shared": shared}]
+    _ch(("loom.namespace_grants", rows)).install(monkeypatch, *_GET_CLIENT)
+    (members,) = [p for p in _run(namespace="col-n").populations if p.population == "members"]
     assert (members.total, members.complete, members.reason) == (people, False, reason)
+
+
+def test_a_personal_collection_is_not_a_complete_member_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _ch().install(monkeypatch, *_GET_CLIENT)
+    personal = personal_name("o", "ann@example.com")
+    (members,) = [p for p in _run(namespace=personal).populations if p.population == "members"]
+    assert (members.total, members.complete) == (None, False)
+    assert not ch.statements("loom.namespace_grants")
+
+
+def test_a_plain_namespace_never_reads_the_collection_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def broken(org: str) -> sharing.Tree:
+        raise RuntimeError("tree unreadable")
+
+    monkeypatch.setattr(namespace_inventory.sharing, "tree", broken)
+    _ch().install(monkeypatch, *_GET_CLIENT)
+    (members,) = [p for p in _run().populations if p.population == "members"]
+    assert (members.total, members.complete) == (2, True)
+
+
+def test_an_outage_fails_the_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core.errors import BackendUnavailableError
+
+    def down(sql: str, params: dict[str, Any]) -> Any:
+        raise BackendUnavailableError("clickhouse down")
+
+    _ch(("FROM loom.agent_runs", down)).install(monkeypatch, *_GET_CLIENT)
+    with pytest.raises(BackendUnavailableError):
+        _run()
+
+
+def test_each_empty_plane_reads_no_write_time_in_sql(monkeypatch: pytest.MonkeyPatch) -> None:
+    ch = _ch().install(monkeypatch, *_GET_CLIENT)
+    _run()
+    for table in ("loom.memory FINAL", "loom.memory_records", "loom.agent_runs", "loom.documents"):
+        (st,) = [c for c in ch.statements(table) if "AS latest" in c.sql]
+        assert "if(n = 0, NULL, max(" in st.sql, st.sql
 
 
 def test_a_narrowed_scope_bounds_every_read_and_leaves_out_the_rest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ch = _ch().install(monkeypatch)
+    ch = _ch().install(monkeypatch, *_GET_CLIENT)
     out = _run(ReadFilters(scope="own_user", user_id="u1", session_id=None))
     assert ch.calls
     for st in ch.calls:
@@ -156,7 +201,7 @@ def test_a_narrowed_scope_bounds_every_read_and_leaves_out_the_rest(
 
 
 def test_an_own_session_scope_names_its_session(monkeypatch: pytest.MonkeyPatch) -> None:
-    ch = _ch().install(monkeypatch)
+    ch = _ch().install(monkeypatch, *_GET_CLIENT)
     out = _run(ReadFilters(scope="own_session", user_id="u1", session_id="s1"))
     assert all(st.params["scope_sid"] == "s1" for st in ch.calls)
     assert (out.scope.user_id, out.scope.session_id) == ("u1", "s1")
@@ -168,7 +213,8 @@ def test_a_failed_read_is_labeled_and_the_rest_still_answer(
     def boom(sql: str, params: dict[str, Any]) -> Any:
         raise RuntimeError("table missing")
 
-    _ch(("FROM loom.memory_records", boom), ("SELECT actor AS name", boom)).install(monkeypatch)
+    routes = (("FROM loom.memory_records", boom), ("SELECT actor AS name", boom))
+    _ch(*routes).install(monkeypatch, *_GET_CLIENT)
     out = _run()
     sections = {s.plane: s for s in out.sections}
     assert not sections["records"].complete and sections["records"].count is None
@@ -182,7 +228,7 @@ def test_integrations_are_counted_for_admins_only(monkeypatch: pytest.MonkeyPatc
     async def refuse(*_: Any, **__: Any) -> None:
         raise PermissionError("not an admin")
 
-    ch = _ch().install(monkeypatch)
+    ch = _ch().install(monkeypatch, *_GET_CLIENT)
     monkeypatch.setattr(namespace_inventory, "check_authorized", refuse)
     out = _run()
     (integrations,) = [s for s in out.sections if s.plane == "integrations"]
@@ -191,7 +237,7 @@ def test_integrations_are_counted_for_admins_only(monkeypatch: pytest.MonkeyPatc
 
 
 def test_a_zero_population_limit_keeps_the_totals(monkeypatch: pytest.MonkeyPatch) -> None:
-    ch = _ch().install(monkeypatch)
+    ch = _ch().install(monkeypatch, *_GET_CLIENT)
     out = _run(population_limit=0)
     observed = [p for p in out.populations if p.population != "members"]
     assert all(p.top == [] and p.total for p in observed)

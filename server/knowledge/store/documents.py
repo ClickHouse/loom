@@ -136,12 +136,12 @@ async def count_current(
     newest ingest among them (None when there is none)."""
     ch = ch or _default_client()
     row = await ch.query_one(
-        "SELECT count() AS n, max(ingested_at) AS latest FROM loom.documents FINAL "
+        "SELECT count() AS n, if(n = 0, NULL, max(ingested_at)) AS latest "
+        "FROM loom.documents FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND superseded_at IS NULL",
         params={"org": org, "ns": namespace},
     )
-    n = int(row["n"]) if row else 0
-    return n, (row["latest"] if row and n else None)
+    return (int(row["n"]), row["latest"]) if row else (0, None)
 
 
 async def get_many_by_uris(

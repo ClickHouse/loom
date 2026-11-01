@@ -286,6 +286,20 @@ async def count_runs(
     return int(row["n"])
 
 
+async def run_tally(
+    ch: Any, org: str, ns: str, *, scope: ReadFilters
+) -> tuple[int, datetime | None]:
+    """The namespace's runs inside `scope`, and the newest start among them."""
+    params: dict[str, Any] = {"org": org, "ns": ns}
+    row = await ch.query_one(
+        "SELECT count() AS n, if(n = 0, NULL, max(started_at)) AS latest "
+        "FROM loom.agent_runs FINAL WHERE org = {org:String} AND namespace = {ns:String}"
+        + scope_and(scope, params),
+        params=params,
+    )
+    return (int(row["n"]), row["latest"]) if row else (0, None)
+
+
 async def recent_run_heads(
     ch: Any, org: str, ns: str, *, where: list[str], params: dict[str, Any], limit: int
 ) -> list[dict[str, Any]]:

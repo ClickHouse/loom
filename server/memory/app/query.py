@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import uuid
+from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -916,3 +917,21 @@ async def handle_memory_keys(input: MemoryKeysInput) -> MemoryKeysOutput:
     keys = [MemoryKeyRef(**r) for r in rows[: input.limit]]
     _record_read_exposure("memory.keys", input, list(dict.fromkeys(k.memory_key for k in keys)))
     return MemoryKeysOutput(keys=keys, truncated=len(rows) > input.limit)
+
+
+async def memory_tally(org: str, namespace: str) -> tuple[int, datetime | None]:
+    """How many live memory rows the namespace holds inside the request's read scope,
+    and the newest write."""
+    from server.memory.store import reads
+
+    return await reads.live_tally(org, namespace, scope=request_scope())
+
+
+async def identity_tally(
+    org: str, namespace: str, column: str, *, limit: int
+) -> tuple[int, list[tuple[str, int]]]:
+    """Distinct agents, actors or users on live rows inside the request's read scope,
+    and the `limit` with the most rows."""
+    from server.memory.store import reads
+
+    return await reads.identity_tally(org, namespace, column, scope=request_scope(), limit=limit)

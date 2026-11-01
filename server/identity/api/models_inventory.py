@@ -14,10 +14,12 @@ ReadScope = Literal["namespace", "own_user", "own_session"]
 
 
 class NamespaceInventoryInput(BaseModel):
-    """What one namespace holds: live counts and newest write per plane (memories,
-    records, documents, runs, integrations), the registered member count, and the
-    agents, authors and subjects observed on live memory rows. A section the caller
-    cannot read, or that failed, says so with `complete: false` and a reason."""
+    """What one namespace holds and who appears in it, with what was not counted.
+
+    Live counts and newest write per plane (memories, records, documents, runs,
+    integrations), the member count, and the agents, authors and subjects observed on
+    live memory rows. A section the caller cannot read, or that failed, says so with
+    `complete: false` and a reason."""
 
     org: str
     namespace: str
@@ -61,7 +63,9 @@ class InventoryIdentity(BaseModel):
 
 
 class InventoryPopulation(BaseModel):
-    """One population. `members` are the people holding an active grant; `agents`, `authors` and
+    """One population: the namespace's members, or identities observed on its rows.
+
+    `members` are the people holding an active grant; `agents`, `authors` and
     `subjects` are identities observed on live memory rows, never a directory."""
 
     population: Literal["members"] | ObservedPopulation

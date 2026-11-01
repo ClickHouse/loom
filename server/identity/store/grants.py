@@ -14,6 +14,7 @@ from typing import Any
 from server.core import grant_cache
 from server.core.datetimes import to_naive_utc
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT, grant_rank_sql, has_aliases_sql
+from server.core.principals import AGENT, EVERYONE, GROUP, SERVICE_ACCOUNT
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.grants import GrantPerson, GrantState, PendingGrant
 
@@ -239,13 +240,16 @@ async def people_page(
     return [GrantPerson.from_row(r) for r in rows]
 
 
-# A grant subject that is not one person: the org (`everyone`, `*`), a group, an agent or
-# a service account. `user:<id>` is an end user, so a person.
-_NOT_A_PERSON = (
-    "subject IN ('everyone', '*') OR startsWith(subject, 'group:') "
-    "OR startsWith(subject, 'agent:') OR startsWith(subject, 'sa:')"
+# Grants that open the namespace to more people than they name: the org (`everyone`,
+# `*`) and groups. With agents and service accounts, they are the subjects that are not
+# one person; `user:<id>` is an end user, so a person.
+_SHARED_WIDER = (
+    f"lowerUTF8(subject) IN ('{EVERYONE}', '*') OR startsWith(lowerUTF8(subject), '{GROUP}')"
 )
-_SHARED_WIDER = "subject IN ('everyone', '*') OR startsWith(subject, 'group:')"
+_NOT_A_PERSON = (
+    f"{_SHARED_WIDER} OR startsWith(lowerUTF8(subject), '{AGENT}') "
+    f"OR startsWith(lowerUTF8(subject), '{SERVICE_ACCOUNT}')"
+)
 
 
 async def member_count(org: str, namespace: str, *, ch: _CHClient | None = None) -> tuple[int, int]:

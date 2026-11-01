@@ -196,7 +196,7 @@ Save a new revision of the namespace's guide after you change one of its convent
 
 ## `namespace.inventory`
 
-What one namespace holds: live counts and newest write per plane (memories, records, documents, runs, integrations), the registered member count, and the agents, authors and subjects observed on…
+What one namespace holds and who appears in it, with what was not counted.
 
 `POST /v1/namespace.inventory` · MCP `loom_namespace_inventory` · role `viewer` · read · not listed under the MCP `all` toolset
 

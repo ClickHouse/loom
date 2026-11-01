@@ -1243,3 +1243,53 @@ def _with_usage(row: MemoryRow, totals: dict[str, Any] | None) -> MemoryRow:
     if usage_last_recalled:
         updates["last_recalled_at"] = usage_last_recalled
     return row.model_copy(update=updates) if updates else row
+
+
+async def live_tally(
+    org: str, namespace: str, *, scope: ReadFilters, ch: _CHClient | None = None
+) -> tuple[int, datetime | None]:
+    """Live rows of the namespace inside `scope`, and the newest write among them."""
+    ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace}
+    row = await ch.query_one(
+        "SELECT count() AS n, if(n = 0, NULL, max(updated_at)) AS latest FROM loom.memory FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL"
+        + scope_and(scope, params),
+        params,
+    )
+    return (int(row["n"]), row["latest"]) if row else (0, None)
+
+
+# Identity column → the rows that name one. `user_id` '-' is the unset identity, never
+# a user; `actor` '' is a row written before it was stamped.
+_NAMED = {
+    "agent": "agent != ''",
+    "actor": "actor != ''",
+    "user_id": "user_id NOT IN ('', '-')",
+}
+
+
+async def identity_tally(
+    org: str,
+    namespace: str,
+    column: str,
+    *,
+    scope: ReadFilters,
+    limit: int,
+    ch: _CHClient | None = None,
+) -> tuple[int, list[tuple[str, int]]]:
+    """Distinct values of `column` (agent, actor or user_id) on live rows inside `scope`,
+    and the `limit` that carry the most rows."""
+    ch = ch or _default_client()
+    # The total rides on the listed rows, so at least one is read.
+    params: dict[str, Any] = {"org": org, "ns": namespace, "lim": max(1, limit)}
+    rows = await ch.query_all(
+        f"SELECT {column} AS name, count() AS n, count() OVER () AS total "
+        "FROM loom.memory FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL "
+        f"AND {_NAMED[column]}{scope_and(scope, params)} "
+        f"GROUP BY {column} ORDER BY n DESC, name LIMIT {{lim:UInt32}}",
+        params,
+    )
+    total = int(rows[0]["total"]) if rows else 0
+    return total, [(str(r["name"]), int(r["n"])) for r in rows][:limit]
