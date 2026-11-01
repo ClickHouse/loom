@@ -355,6 +355,6 @@ async def handle_webhook_deliveries(input: WebhookDeliveriesInput) -> WebhookDel
     )
 
 
-async def namespace_webhook_count(org: str, namespace: str) -> tuple[int, datetime | None]:
+async def webhook_tally(org: str, namespace: str) -> tuple[int, datetime | None]:
     """How many live webhooks the namespace has registered, and the newest registration."""
     return await store.webhook_tally(org, namespace)

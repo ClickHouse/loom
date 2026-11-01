@@ -280,6 +280,14 @@ def test_a_request_narrowed_to_one_user_counts_that_user(seeded: Any) -> None:
     assert pops["subjects"]["total"] == 1
 
 
+def test_a_population_past_its_limit_keeps_its_total(seeded: Any) -> None:
+    c, org, ns, wide = seeded
+    body = {"org": org, "namespace": ns, "population_limit": 1}
+    out = _call(c, wide, "namespace.inventory", body)
+    (subjects,) = [p for p in out["populations"] if p["population"] == "subjects"]
+    assert subjects["total"] == 2 and subjects["top"] == [{"name": "u1", "rows": 2}]
+
+
 def test_an_empty_namespace_reports_no_write_time(control_plane_url: str) -> None:
     org, ns = unique_org("inventory-empty"), "inventory-empty"
     with httpx.Client(base_url=control_plane_url, timeout=60.0) as c:

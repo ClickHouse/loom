@@ -39,11 +39,11 @@ from server.identity.api.models_inventory import (
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
 from server.identity.store import grants as grants_repo
-from server.knowledge.app.document_reads import current_document_count
+from server.knowledge.app.document_reads import document_tally
 from server.llm.client import llm_is_fake
 from server.memory.app.query import identity_tally, memory_tally
 from server.memory.app.records import record_tally
-from server.memory.app.webhooks import namespace_webhook_count
+from server.memory.app.webhooks import webhook_tally
 from server.memory.domain.identity_columns import IdentityColumn
 from server.operations.base import Role
 from server.tasks.app.run import run_tally
@@ -67,7 +67,7 @@ async def handle_namespace_inventory(input: NamespaceInventoryInput) -> Namespac
         _section("memories", memory_tally(org, ns)),
         _records(org, ns, scope),
         # Documents are the namespace's under any scope, as `knowledge.*` reads them.
-        _section("documents", current_document_count(org, ns)),
+        _section("documents", document_tally(org, ns)),
         _section("runs", run_tally(org, ns)),
         _integrations(org, ns, scope),
     ]
@@ -133,7 +133,7 @@ async def _integrations(org: str, ns: str, scope: ReadFilters) -> InventorySecti
         # The grant read failed: the request is the server's failure, as in row_in_scope.
         note_answered_unverified()
         return _missing("integrations", _failed("integrations", e))
-    return await _section("integrations", namespace_webhook_count(org, ns))
+    return await _section("integrations", webhook_tally(org, ns))
 
 
 def _missing(plane: InventoryPlane, reason: str) -> InventorySection:

@@ -129,7 +129,7 @@ def serves_original(row: DocumentRow | None) -> bool:
     )
 
 
-async def count_current(
+async def current_document_tally(
     org: str, namespace: str, *, ch: _CHClient | None = None
 ) -> tuple[int, datetime | None]:
     """Current documents of the namespace (superseded versions left out), and the
