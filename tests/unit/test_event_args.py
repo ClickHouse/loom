@@ -227,3 +227,18 @@ def test_every_memory_ask_identifier_key_reaches_the_row() -> None:
         projected["out_source"] == "synthesized" and projected["out_route_reason"] == "weak_top_hit"
     )
     assert "out_timeline_rows" in projected and "out_summary_hits" in projected
+
+
+def test_a_sectioned_search_records_its_hits_across_sections() -> None:
+    from server.memory.api.models_loom_search import SearchOutput
+    from server.observability.event_args import project_result
+
+    answered = SearchOutput(
+        memory={"results": [{"memory_key": "a"}, {"memory_key": "b"}]},
+        knowledge={"results": [{"source_uri": "doc.md"}]},
+        conversations={"error": "timeout", "results": []},
+    )
+    assert project_result(answered)["out_section_hits"] == "3"
+    assert project_result(SearchOutput(memory={"results": []}))["out_section_hits"] == "0"
+    # A result with no sections records nothing.
+    assert "out_section_hits" not in project_result({"results": [1, 2]})

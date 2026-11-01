@@ -479,22 +479,26 @@ async def call_evidence(
     ch: _CHClient | None = None,
 ) -> dict[str, Any]:
     """What the agent's calls in the window show, from the call ledger: attempts,
-    successes, `memory.set` calls that stored a row, reads that answered, and the oldest
-    call the ledger still holds. The dashboard's traffic and the mentor's own reads are
-    left out: neither is the agent using Loom."""
+    successes, `memory.set` calls that stored a row (a dry run answers `noop` too), reads
+    that answered, and the oldest call the ledger still holds. Only request rows count (not
+    a deferred verdict a call left behind); the dashboard's traffic and the mentor's own
+    reads are left out: neither is the agent using Loom."""
     ch = ch or _default_client()
     row = await ch.query_one(
         f"""
         SELECT count() AS attempts,
                countIf(success) AS successes,
-               countIf(success AND operation = 'memory.set' AND args['out_noop'] != 'true'
-                       AND args['dry_run'] != 'true') AS committed_writes,
+               countIf(success AND operation = 'memory.set'
+                       AND args['out_noop'] != 'true') AS committed_writes,
                countIf(success AND (
                    (operation IN {_in(searches)} AND args['out_abstain'] != 'true')
+                   OR (operation = 'search.query'
+                       AND toUInt64OrZero(args['out_section_hits']) > 0)
                    OR (operation IN {_in(gets)} AND (args['out_found'] = 'true'
                        OR toUInt64OrZero(args['out_found_n']) > 0)))) AS returned_hits,
                if(attempts = 0, NULL, min(ts)) AS oldest_call
-        {_LEDGER_AGENT} AND consumer != 'loom-ui' AND NOT startsWith(operation, 'mentor.')
+        {_LEDGER_AGENT} AND kind = 'request' AND consumer != 'loom-ui'
+          AND NOT startsWith(operation, 'mentor.')
         """,
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
@@ -504,8 +508,9 @@ async def call_evidence(
 async def indexed_writes(
     org: str, namespace: str, agent: str, window_seconds: int, *, ch: _CHClient | None = None
 ) -> int:
-    """The agent's rows written in the window that have a search vector now (a row still
-    waiting for the embedder has `embedding_dim = 0`)."""
+    """Memory keys the agent first created in the window, by any write op, that have a
+    search vector now (an embedding row keeps its first `created_at` across versions; a
+    row still waiting for the embedder has `embedding_dim = 0`)."""
     ch = ch or _default_client()
     row = await ch.query_one(
         f"""

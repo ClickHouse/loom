@@ -175,10 +175,14 @@ _RUNG_MEANING: dict[EvidenceRung, str] = {
         "`memory.set` calls that stored a row (not a no-op or a dry run); other write ops "
         "do not say on the ledger whether they stored one, so they are not counted"
     ),
-    "indexed_write": "the agent's rows written in the window that now have a search vector",
+    "indexed_write": (
+        "memory keys the agent first created in the window, by any write op, that now "
+        "have a search vector"
+    ),
     "returned_hit": (
-        "reads that answered: a search or ask that did not abstain, a get that found its "
-        "key; whether the answer reached the model or changed its work is not recorded"
+        "reads that answered: a `memory.search` or `memory.ask` that did not abstain, a "
+        "`search.query` with a hit, a get that found its key; whether the answer reached "
+        "the model or changed its work is not recorded"
     ),
     "client_acknowledged": (
         "distinct memory keys the agent's runs reported relying on (`run.complete` "

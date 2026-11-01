@@ -612,13 +612,18 @@ def request_work_stage_columns(work: Any) -> dict[str, str]:
     return _retrieval_work_columns({"stage_ms": part})
 
 
+# The plane sections of a sectioned search's answer (`search.query`).
+_SEARCH_SECTIONS = ("memory", "knowledge", "profile", "conversations")
+
+
 def _read_outcome_columns(result: dict[str, Any]) -> dict[str, str]:
     """Whether a read ANSWERED, not just whether it ran. A `memory.get`
     that misses and a `bulk_get` whose keys are not there both return 200 and
     land as `success = 1`, so the ledger alone cannot show misses. `out_found` (true/false) rides a
     single-row read; `out_found_n` / `out_missing_n` ride a bulk read, so a
-    found rate per operation per agent is one aggregate over the ledger.
-    Counts only — the keys themselves stay in the response."""
+    found rate per operation per agent is one aggregate over the ledger;
+    `out_section_hits` rides a sectioned search. Counts only — the keys themselves stay
+    in the response."""
     out: dict[str, str] = {}
     found = result.get("found")
     if isinstance(found, bool):
@@ -628,6 +633,16 @@ def _read_outcome_columns(result: dict[str, Any]) -> dict[str, str]:
     if isinstance(missing, list) and isinstance(results, dict):
         out[RESULT_PREFIX + "found_n"] = str(len(results))
         out[RESULT_PREFIX + "missing_n"] = str(len(missing))
+    # A sectioned search (`search.query`) answers with a hit list per plane and no top-level
+    # `abstain`: the hits across its sections say whether it answered.
+    sections = [result.get(k) for k in _SEARCH_SECTIONS]
+    if any(isinstance(sec, dict) and "results" in sec for sec in sections):
+        hits = sum(
+            len(sec["results"])
+            for sec in sections
+            if isinstance(sec, dict) and isinstance(sec.get("results"), list)
+        )
+        out[RESULT_PREFIX + "section_hits"] = str(hits)
     return out
 
 

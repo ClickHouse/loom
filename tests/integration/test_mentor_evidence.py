@@ -8,6 +8,7 @@ Skips without LOOM_BASE_URL (tests/integration/conftest.py).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -24,7 +25,7 @@ def _call(c: httpx.Client, op: str, body: dict[str, Any]) -> Any:
     return r.json()
 
 
-def test_the_ladder_counts_what_the_calls_show(control_plane_url: str) -> None:
+def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client: Any) -> None:
     org, ns = unique_org("evidence"), "evidence"
     ident = {"org": org, "namespace": ns, "agent": AGENT}
     fact = {**ident, "memory_key": "pref/report", "value": "Reports go out on Fridays"}
@@ -39,6 +40,17 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str) -> None:
         _call(c, "memory.get", {**ident, "memory_key": "pref/absent"})
         abstained = _call(c, "memory.search", {**ident, "query": "zebra migration in Kenya"})
         assert abstained["abstain"] is True, abstained
+        # `loom_search` (search.query) answers with hits per plane: one here.
+        searched = _call(c, "search.query", {**ident, "query": "when do reports go out"})
+        assert searched["memory"]["results"], searched
+        asked = _call(c, "memory.ask", {**ident, "query": "When do reports go out?"})
+        # A deferred consistency verdict lands under the asking agent; it is not a call the
+        # agent made (here one whose judge failed).
+        ch_client.insert(
+            "loom.agent_events",
+            [[datetime.now(UTC), org, ns, AGENT, "memory.ask.consistency", "verdict", 0]],
+            column_names=["ts", "org", "namespace", "agent", "operation", "kind", "success"],
+        )
         # The dashboard reading under the agent's name is not the agent's use.
         _call(c, "memory.get", {**ident, "memory_key": "pref/report", "consumer": "loom-ui"})
         # The agent reports what it relied on when its run completes.
@@ -51,16 +63,17 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str) -> None:
             body = {"org": org, "namespace": ns, "agent": AGENT}
             out = _call(c, "mentor.brief", body)
             ladder = {e["rung"]: e for e in out["evidence"]}
-            return (out, ladder) if ladder["attempt"]["count"] == 8 else None
+            return (out, ladder) if ladder["attempt"]["count"] == 10 else None
 
-        out, ladder = wait_until(brief, max_wait=30.0, description="eight calls in the ledger")
+        out, ladder = wait_until(brief, max_wait=30.0, description="ten calls in the ledger")
     counts = {rung: e["count"] for rung, e in ladder.items()}
-    assert counts["success"] == 8
+    assert counts["success"] == 10
     # The write stored a row; the restatement and the dry run did not.
     assert counts["committed_write"] == 1
     assert counts["indexed_write"] == 1
-    # The get that found its key answered; the miss and the abstaining search did not.
-    assert counts["returned_hit"] == 1
+    # The get that found its key and the search with a hit answered, and the ask when it
+    # did not abstain; the miss and the abstaining search did not.
+    assert counts["returned_hit"] == 2 + (0 if asked["abstain"] else 1)
     # One key reported relied on, as the client's own word.
     assert (counts["client_acknowledged"], ladder["client_acknowledged"]["source"]) == (
         1,

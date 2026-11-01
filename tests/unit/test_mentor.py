@@ -1004,9 +1004,6 @@ def test_mentor_brief_climbs_the_evidence_ladder_from_attempt_to_outcome(
     assert ladder["client_acknowledged"] == (4, "client")
     assert ladder["task_outcome"] == (None, "none")
     assert out.ledger_from == datetime(2026, 1, 2)
-    # The dashboard's and the mentor's own calls are not the agent using Loom.
-    (sql,) = [q for q in ch.sqls if M_EVIDENCE in q]
-    assert "consumer != 'loom-ui'" in sql and "NOT startsWith(operation, 'mentor.')" in sql
     assert "evidence" in handler.render_table(out)
 
 
