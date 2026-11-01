@@ -229,7 +229,8 @@ lock and pin guards, the blacklist, the sensitivity rule, inline embedding and t
 conflict verdict. Every entry gets the conflict check, whatever
 `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` caps a `memory.bulk_set` at. In a namespace on
 `newest_wins` that verdict can retire a live memory the imported item updates, as any write
-there does; such an entry answers `written` (`refines`).
+there does; such an entry answers `written` (`refines`). The value-update linker of the
+extraction path (`LOOM_MEMORY_EXTRACT_VALUE_UPDATES`) never runs for an import.
 
 - **The key comes from the text:** `import:` and the first 24 hex characters of the SHA-256
   of the text as given. The same text always lands on the same key, so a re-run writes
@@ -250,19 +251,20 @@ there does; such an entry answers `written` (`refines`).
   stays comparable with the imported one; a key of any other shape keeps its suffix.
   Only the first 1,200 characters of an item are embedded and indexed, so split a longer
   item into several.
-- **A key that was deleted, retired or rejected stays so:** before the write, the import reads
-  each key's newest version in every session of the identity that the token may read (only
-  its own session for an `own_session` token), tombstones and rows of every status
-  included. A key its owner deleted comes back `skipped` (`deleted`), one a newer
-  fact retired `skipped` (`superseded`) and one marked wrong (`memory.reject`) `skipped`
+- **A key that was deleted, retired or rejected stays so:** before the write, the import
+  reads each key's newest version in every session of the identity that the token may read
+  (only its own session for an `own_session` token), tombstones and rows of every status
+  included. A key its owner deleted comes back `skipped` (`deleted`), one a newer fact
+  retired `skipped` (`superseded`) and one marked wrong (`memory.reject`) `skipped`
   (`rejected`); none is written again. A key holding a proposal comes back `skipped`
   (`proposed`): only `memory.proposal_decide` moves a fact out of its trial. A live key
-  holding other text was corrected (`memory.set`, `memory.update_by_id`, a pin) and comes
-  back `skipped` (`revised`), before the bulk write's own pin and lock guards. A status the
-  import does not recognise leaves the key as it is too, as `skipped` (`unknown`). The read
-  and the write are not atomic: a delete that lands between them is written over.
-  Text deleted, retired or rejected under another key is imported again under its
-  `import:` key: the bulk write's dedup sees live rows only.
+  holding other text was corrected (`memory.set`, `memory.update_by_id`, a pin) or
+  anonymized by an expiry (`on_expire=anonymize`) and comes back `skipped` (`revised`),
+  before the bulk write's own pin and lock guards. A status the import does not recognise
+  leaves the key as it is too, as `skipped` (`unknown`). The read and the write are not
+  atomic: a delete that lands between them is written over. Text deleted, retired or
+  rejected under another key is imported again under its `import:` key: the bulk write's
+  dedup sees live rows only.
 - **A tombstone has no way back through the import:** `memory.delete`, `memory.clear` and
   an expiry with `on_expire=tombstone` all write one, so clearing an agent and importing
   from the source again answers `skipped` (`deleted`) for every such item. Bring the keys
@@ -281,20 +283,20 @@ there does; such an entry answers `written` (`refines`).
   `category_not_linked` (the key does not hold the fact) or `category_rescinded`. Either way
   the fact is still imported.
 - **`dry_run=true`** makes every check and writes no memory row, embedding, category link,
-  audit row or usage event. It still pays for the embedding of each entry it sends to the bulk write, since the conflict
-  check reads the vectors, and counts a blacklist pattern's hit. A `conflicted` or `refines`
-  entry is previewed before a real write settles its peers, so it may land without the flag
-  or the retirement if its peers change first.
+  audit row or usage event. It still pays for the embedding of each entry it sends to the
+  bulk write, since the conflict check reads the vectors, and counts a blacklist pattern's
+  hit. A `conflicted` or `refines` entry is previewed before a real write settles its peers,
+  so it may land without the flag or the retirement if its peers change first.
 
 Each result carries the entry's `index`, its `key`, an `outcome` and, when the entry was
 not plainly written, a `reason`:
 
-| `outcome` | `reason`                                                                                                                                                                                                                                                                                                                                 |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `written` | Empty, `duplicate` or `conflicted` (the status the conflict check stored the row with), or `refines`: under `newest_wins` the item retired the live memories it updates.                                                                                                                                                                 |
-| `held`    | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key, named in `held_by`); nothing is written or reinforced.                                                                                                                                                                          |
-| `skipped` | `unchanged` (the key holds the fact already, in this session or another), `deleted`, `superseded`, `rejected` or `proposed` (the key's newest version), `revised` (the key holds other text), `repeated` (an earlier entry of the request with the same text was written) or `unknown` (logged: a status the import does not recognise). |
-| `refused` | `blacklist`, `pinned` or `locked` (only when the key is pinned or locked between the import's read and its write) or `pinned_peer` (too close to a pinned memory).                                                                                                                                                                       |
+| `outcome` | `reason`                                                                                                                                                                                                                                                                                                                                                                           |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `written` | Empty, `duplicate` or `conflicted` (the status the conflict check stored the row with), or `refines`: under `newest_wins` the item retired the live memories it updates.                                                                                                                                                                                                           |
+| `held`    | `merge` (the same fact after canonicalisation) or `identity_duplicate` (the same text under another key, named in `held_by`); nothing is written or reinforced.                                                                                                                                                                                                                    |
+| `skipped` | `unchanged` (the key holds the fact already, in this session or another), `deleted`, `superseded`, `rejected` or `proposed` (the key's newest version), `revised` (the key holds other text: a correction, or an expiry anonymized it), `repeated` (an earlier entry of the request with the same text was written) or `unknown` (logged: a status the import does not recognise). |
+| `refused` | `blacklist`, `pinned` or `locked` (only when the key is pinned or locked between the import's read and its write) or `pinned_peer` (too close to a pinned memory).                                                                                                                                                                                                                 |
 
 Under `newest_wins`, two entries of one request that state the same attribute differently
 keep only the newer: a dated entry over an undated one, then the later `valid_at`, then the

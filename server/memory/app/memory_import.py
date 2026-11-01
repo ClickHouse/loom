@@ -163,6 +163,8 @@ def _bulk_input(
         user_id=input.user_id,
         session_id=input.session_id,
         run_id=input.run_id,
+        # The source already distilled these facts; the conflict verdict judges updates.
+        detect_updates=False,
         entries=[
             _BulkSetEntry(
                 memory_key=key,

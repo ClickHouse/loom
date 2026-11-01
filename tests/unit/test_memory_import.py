@@ -858,6 +858,26 @@ async def test_a_bulk_set_handler_keeps_the_later_dated_statement(harness, monke
 
 
 @pytest.mark.asyncio
+async def test_an_import_never_runs_the_value_update_linker(harness, monkeypatch) -> None:
+    """The extraction path's linker may retire a live memory one value token away; an
+    import leaves updates to its conflict verdict, whatever the setting says."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_extract_value_updates", True)
+    linked: list[Any] = []
+
+    async def _link(**kw: Any) -> Any:
+        linked.append(kw)
+        return SimpleNamespace(links=[])
+
+    monkeypatch.setattr("server.memory.app.value_updates.link_value_updates", _link)
+    ch = _StoreCH()
+    harness(ch)
+    out = await handle_memory_import(_input({"value": "Dog is Biscuit."}))
+    assert _outcomes(out) == [("written", "")] and linked == []
+
+
+@pytest.mark.asyncio
 async def test_the_sensitivity_rule_applies_to_an_imported_item(harness) -> None:
     ch = _StoreCH()
     rec = harness(ch)

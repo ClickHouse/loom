@@ -423,8 +423,9 @@ text from `key_axis_text`, whichever write stores it, so the row is embedded and
 indexed by its value alone. The key is a digest of the text, so a guessable text can be
 confirmed from its key wherever keys are shown.
 
-The import passes `conflict_check_cap` as the number of entries it writes, so the conflict
-check reaches every entry whatever `bulk_conflict_check_max_entries` says, and
+The import passes `detect_updates=False`, so the value-update linker never retires a live
+memory on its behalf, and `conflict_check_cap` as the number of entries it writes, so the
+conflict check reaches every entry whatever `bulk_conflict_check_max_entries` says, and
 `reinforce=False`, so no restatement, merge or identity duplicate records an `evidence`
 event and a re-run reinforces nothing. Its dry run passes `dry_run=True`, and the bulk write
 returns once the verdicts are in: every check has run, and nothing is written but a
