@@ -11,7 +11,7 @@ from dataclasses import replace
 from typing import Any, NamedTuple
 
 from server.memory.domain.search_parsing import _iso_date
-from server.memory.domain.search_sql import VECTOR_PREDICATES, _build_where, exclude_pooled
+from server.memory.domain.search_sql import _build_where, exclude_pooled
 from server.memory.domain.search_types import (
     RowIdentity,
     SearchHit,
@@ -130,6 +130,21 @@ def _folded_fields(row: Any, chunk: Any) -> dict[str, Any]:
     }
 
 
+def _fold_keys(identity: RowIdentity | None, memory_key: str) -> list[tuple[str, ...]]:
+    # a fact is found by its row, by its writer and key, and by its key
+    keys: list[tuple[str, ...]] = [("key", memory_key)]
+    if identity:
+        keys[:0] = [(*identity, memory_key), ("writer", *identity[:2], memory_key)]
+    return keys
+
+
+class SetChunkRow(NamedTuple):
+    """The row a memory.set chunk was cut from, and its vector's version."""
+
+    identity: RowIdentity
+    version: int
+
+
 def fold_set_chunks(
     hits: list[SearchHit], rows: Mapping[tuple[str, str, str], SetChunkRow] | None
 ) -> list[SearchHit]:
@@ -143,15 +158,13 @@ def fold_set_chunks(
     (`_folded_fields`); conversation chunks pass through untouched."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
-    by_row: dict[tuple[str, ...], SearchHit] = {}
-    out: list[SearchHit] = []
-    for h in hits:
-        if not _is_set_chunk(h):
-            out.append(h)
-            if (getattr(h, "source", "") or "fact") != "chunk":
-                if h.identity:
-                    by_row.setdefault((*h.identity, h.memory_key), h)
-                by_row.setdefault((h.memory_key,), h)
+    out = [h for h in hits if not _is_set_chunk(h)]
+    # each pooled fact's position, by its row, by its writer and key, and by its key
+    at: dict[tuple[str, ...], int] = {}
+    for pos, h in enumerate(out):
+        if (getattr(h, "source", "") or "fact") != "chunk":
+            for key in _fold_keys(h.identity, str(h.memory_key)):
+                at.setdefault(key, pos)
     for h in hits:
         if not _is_set_chunk(h):
             continue
@@ -161,40 +174,40 @@ def fold_set_chunks(
             found = rows.get((h.identity[0], h.identity[1], parent_key))
             if found is None:
                 continue  # its row is not served: neither is the chunk
-        row_key = (*found.identity, parent_key) if found else (parent_key,)
-        parent = by_row.get(row_key)
-        if parent is None:
-            idx_s = str(h.memory_key).rpartition(":")[2]
-            converted = replace(
-                h,
-                memory_key=parent_key,
-                source="fact",
-                parent_memory_key="",
-                identity=found.identity if found else None,
-                session_id=found.identity[2] if found else "",
-                version=found.version if found else h.version,
-                score_components={
-                    **dict(h.score_components or {}),
-                    "folded_chunks": 1.0,
-                    "folded_from_chunk": float(idx_s) if idx_s.isdigit() else -1.0,
-                    # the score is the chunk's: no fact-only boost may be added
-                    # downstream (asserted tie-break) — the chunk never had it
-                    "folded_lift": 1.0,
-                },
-            )
-            by_row[row_key] = converted
-            out.append(converted)
+        target: tuple[str, ...]
+        if found:
+            target = (*found.identity, parent_key)
+        elif h.identity and ("writer", *h.identity[:2], parent_key) in at:
+            target = ("writer", *h.identity[:2], parent_key)  # no rows read: its writer's fact
+        else:
+            target = ("key", parent_key)
+        if target in at:
+            parent = out[at[target]]
+            out[at[target]] = replace(parent, **_folded_fields(parent, h))
             continue
-        merged = replace(parent, **_folded_fields(parent, h))
-        by_row[row_key] = merged
-        out[out.index(parent)] = merged
+        idx_s = str(h.memory_key).rpartition(":")[2]
+        converted = replace(
+            h,
+            memory_key=parent_key,
+            source="fact",
+            parent_memory_key="",
+            identity=found.identity if found else None,
+            session_id=found.identity[2] if found else "",
+            version=found.version if found else h.version,
+            score_components={
+                **dict(h.score_components or {}),
+                "folded_chunks": 1.0,
+                "folded_from_chunk": float(idx_s) if idx_s.isdigit() else -1.0,
+                # the score is the chunk's: no fact-only boost may be added
+                # downstream (asserted tie-break) — the chunk never had it
+                "folded_lift": 1.0,
+            },
+        )
+        for key in (target, *_fold_keys(converted.identity, parent_key)):
+            at.setdefault(key, len(out))
+        out.append(converted)
     out.sort(key=hit_sort_key)
     return out
-
-
-class SetChunkRow(NamedTuple):
-    identity: RowIdentity
-    version: int
 
 
 async def _set_chunk_rows(
@@ -202,10 +215,10 @@ async def _set_chunk_rows(
 ) -> dict[tuple[str, str, str], SetChunkRow] | None:
     """(agent, user_id, memory_key) -> the row each set chunk of the pool was cut from,
     when the fact leg would serve it: a key's chunks hold their writer's latest value
-    write, so the writer's live row whose current value was written last
-    (`_value_written`); a deleted row's chunks go with it.
-    Two keyed reads, only when a private-scope pool holds a set chunk; None under shared
-    scope, where the writer's private row is never served, and when a read fails."""
+    write (a value too short to chunk retires them), so the writer's live row whose
+    current value was written last (`_value_written`). Two reads keyed by the chunks'
+    (agent, user_id, key), only when a private-scope pool holds a set chunk; None under
+    shared scope, where the writer's private row is never served, and when a read fails."""
     wanted = sorted(
         {
             (h.identity[0], h.identity[1], str(h.parent_memory_key))
@@ -217,18 +230,17 @@ async def _set_chunk_rows(
         return {}
     if q.scope != "private":
         return None
-    where, params = _build_where(q)
     # served whatever its vector: a row whose embedding is still pending has its chunks
-    served = " AND ".join(w for w in where if w not in VECTOR_PREDICATES)
-    # the vector predicates' params stay home, the query vector above all
-    params = {k: v for k, v in params.items() if k not in ("q", "model", "top_k")}
+    where, params = _build_where(q, ranked=False)
+    served = " AND ".join(where)
     params["set_rows"] = wanted
     try:
         live = await ch.query_all(
             f"""
             SELECT e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id,
                    e.memory_key AS memory_key, max(e.version) AS version,
-                   any(e.content_sha256) AS content_sha256, max({served}) AS served
+                   argMax(e.content_sha256, e.version) AS content_sha256,
+                   argMax({served}, e.version) AS served
             FROM loom.memory_embeddings AS e FINAL
             WHERE e.org = {{org:String}}
               AND e.namespace = {{ns:String}}
@@ -239,7 +251,7 @@ async def _set_chunk_rows(
             """,
             params=params,
         )
-        written = await _value_written(ch, q, live)
+        written = await _value_written(ch, q, wanted, live)
     except Exception as e:  # noqa: BLE001 — naming a chunk's row never fails a search
         log.warning("set chunk rows read failed (fail-open): %s", e)
         return None
@@ -260,16 +272,18 @@ def _row_of(r: Mapping[str, Any]) -> tuple[str, str, str, str]:
 
 
 async def _value_written(
-    ch: _CHClient, q: SearchQuery, live: list[dict[str, Any]]
+    ch: _CHClient,
+    q: SearchQuery,
+    keys: list[tuple[str, str, str]],
+    live: list[dict[str, Any]],
 ) -> dict[tuple[str, str, str, str], int]:
-    """When each row's current value was written: the first version of the run of its
+    """When each live row's current value was written: the first version of the run of its
     history that holds its current hash, so a status change or a metadata copy does not
     move it and a value that came back counts from its return. A row with no history
     counts from its vector's version."""
-    rows = sorted({_row_of(r) for r in live})
     current = {_row_of(r): str(r["content_sha256"]) for r in live}
     out = {_row_of(r): int(r["version"]) for r in live}
-    if not rows:
+    if not live:
         return out
     history = await ch.query_all(
         """
@@ -278,17 +292,21 @@ async def _value_written(
         FROM loom.memory_versions
         WHERE org = {org:String}
           AND namespace = {ns:String}
-          AND (agent, user_id, session_id, memory_key)
-              IN {rows:Array(Tuple(String, String, String, String))}
+          AND (agent, user_id, memory_key) IN {keys:Array(Tuple(String, String, String))}
         GROUP BY agent, user_id, session_id, memory_key
         """,
-        params={"org": q.org, "ns": q.namespace, "rows": rows},
+        params={"org": q.org, "ns": q.namespace, "keys": keys},
     )
     for h in history:
         row = _row_of(h)
+        if row not in current:
+            continue  # a deleted row's history
         start = None
         for version, sha in h["run"]:
-            start = (start or int(version)) if sha == current[row] else None
+            if sha != current[row]:
+                start = None
+            elif start is None:
+                start = int(version)
         if start is not None:
             out[row] = start
     return out

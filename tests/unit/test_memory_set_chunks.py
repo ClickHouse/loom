@@ -243,7 +243,11 @@ async def test_a_5kb_episodic_value_writes_no_chunks() -> None:
         embedder=emb,
     )
     assert n == 0 and ch.inserts == [] and emb.batches == []
-    assert ch.query_all_sqls == [], "a non-searchable type does not even read prior chunks"
+    # nothing to embed; the key's earlier chunks are read to retire them (none here)
+    assert [
+        sql for sql in ch.query_all_sqls if "FROM loom.memory_chunks FINAL" in sql
+    ] == ch.query_all_sqls
+    assert len(ch.query_all_sqls) == 1
 
 
 @pytest.mark.asyncio
@@ -254,7 +258,30 @@ async def test_a_900_char_value_writes_no_chunks() -> None:
     n = await sc.write_set_chunks(
         _input(short), memory_type="semantic", limit=_LIMIT, ch=ch, embedder=emb
     )
-    assert n == 0 and ch.inserts == [] and emb.batches == [] and ch.query_all_sqls == []
+    assert n == 0 and ch.inserts == [] and emb.batches == []
+    assert len(ch.query_all_sqls) == 1  # the key's earlier chunks, to retire them
+
+
+@pytest.mark.asyncio
+async def test_a_reset_too_short_to_chunk_retires_the_long_values_chunks() -> None:
+    # the chunks of the earlier long value no longer hold the key's value
+    first = _CH()
+    await sc.write_set_chunks(
+        _input(_NOTE_5KB), memory_type="semantic", limit=_LIMIT, ch=first, embedder=_BatchEmbedder()
+    )
+    prior = first.rows_for("loom.memory_chunks")
+    live = [_live_row(r["chunk_index"], r["content"]) for r in prior]
+    ch = _CH(routes=[("FROM loom.memory_chunks FINAL", live)])
+    n = await sc.write_set_chunks(
+        _input("A short value now."),
+        memory_type="semantic",
+        limit=_LIMIT,
+        ch=ch,
+        embedder=_BatchEmbedder(),
+    )
+    tombstones = ch.rows_for("loom.memory_chunks")
+    assert n == 0 and len(tombstones) == len(prior)
+    assert all(r["tombstoned_at"] is not None for r in tombstones)
 
 
 @pytest.mark.asyncio
