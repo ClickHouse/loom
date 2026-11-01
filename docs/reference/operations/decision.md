@@ -103,6 +103,6 @@ Record a DECISION as a first-class object — call it whenever you choose betwee
 | `record_id` | `str` | The id of the `decision` record version written; "" after a merge. |
 | `superseded_prior` | `bool` | True when an active decision for the same category + scenario existed and is now superseded by this one. |
 | `edges_written` | `int` | How many `caused` / `influenced` edges were written; a failed link is skipped. |
-| `next` | `str` | Plain-text hint naming the follow-up operations. |
+| `next` | `str` | Plain-text hint naming the follow-up operations, or why nothing was written after a merge. |
 
 <!-- prettier-ignore-end -->
