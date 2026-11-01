@@ -171,10 +171,10 @@ async def _adoption(profile: mentor_rules.MentorProfile) -> list[MentorAdoption]
 _RUNG_MEANING: dict[EvidenceRung, str] = {
     "attempt": (
         "calls the ledger records under this agent, answered or not (the dashboard's calls "
-        "and the briefs about the agent left out). Not counted: a call that names no agent "
-        "(a read by id), and over MCP a cross-agent read (`memory.search`, `memory.list`, "
-        "`memory.history`, `memory.related`, `memory.search_trace`) or a `memory.update` "
-        "that names no other agent, which the ledger records under `*` or none"
+        "and the briefs about the agent left out). Not counted: a call that reads across "
+        "agents (`agent: *`, as the SDKs' `memory.search` and `memory.ask` and MCP's "
+        "cross-agent reads send it) or names no agent (a read by id, an MCP "
+        "`memory.update`), which the ledger records under `*` or none"
     ),
     "success": "of those, calls that returned without an error; a read that found nothing counts",
     "committed_write": (
@@ -186,7 +186,8 @@ _RUNG_MEANING: dict[EvidenceRung, str] = {
         "vector from the current embedder, in a served status and not expired"
     ),
     "returned_hit": (
-        "reads that answered: a `memory.search` or `memory.ask` that did not abstain, a "
+        "reads under this agent that answered: a `memory.search` or `memory.ask` that did "
+        "not abstain, a "
         "`search.query` with a memory, document or conversation hit (not a profile match or "
         "a duplicate-check verdict), a get that found its key; whether the answer reached the "
         "model or changed its work is not recorded"

@@ -510,7 +510,7 @@ async def call_evidence(
         """,
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
-    return dict(row) if row else {}
+    return dict(row)
 
 
 async def indexed_writes(
@@ -543,11 +543,11 @@ async def indexed_writes(
             "model": model,
         },
     )
-    return int(row["n"]) if row else 0
+    return int(row["n"])
 
 
 async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
-    """The namespace's own `retention_days` (0 when it sets none)."""
+    """The namespace's own `retention_days` (0 when it sets none or is not registered)."""
     ch = ch or _default_client()
     row = await ch.query_one(
         f"SELECT retention_days FROM loom.namespaces FINAL WHERE {_SCOPE} LIMIT 1",
@@ -566,4 +566,4 @@ async def reported_keys(
         f"SELECT uniqExact(k) AS n FROM ({_CREDITED_KEYS}) WHERE NOT startsWith(k, 'chunk:')",
         params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
-    return int(row["n"]) if row else 0
+    return int(row["n"])

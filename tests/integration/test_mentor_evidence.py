@@ -52,6 +52,9 @@ def test_the_ladder_counts_what_the_calls_show(control_plane_url: str, ch_client
         # agent's call, nor a returned hit.
         by_id = {"org": org, "memory_id": stored["memory_id"]}
         assert _call(c, "memory.get_by_id", by_id)["found"] is True
+        # A search across agents (`agent: *`, the SDKs' default) is recorded under `*`:
+        # not this agent's call.
+        _call(c, "memory.search", {**ident, "agent": "*", "query": "when do reports go out"})
         abstained = _call(c, "memory.search", {**ident, "query": "zebra migration in Kenya"})
         assert abstained["abstain"] is True, abstained
         # Over MCP: a get that found its key, and `loom_search` (search.query) with a hit.
