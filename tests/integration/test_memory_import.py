@@ -10,6 +10,7 @@ a gateway calls with the identity its token carries."""
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -69,7 +70,9 @@ async def test_each_item_is_written_under_its_text_key_as_imported(
     assert out["totals"] == {"written": 2, "held": 0, "skipped": 0, "refused": 0}, out
     assert [r["key"] for r in out["results"]] == [_key(dog), _key(deploys)]
     assert got["found"] is True and got["value"] == dog
-    assert got["source_class"] == "imported" and "pets" in got["tags"]
+    assert got["source_class"] == "imported" and got["tags"] == ["pets"]
+    assert (got["agent"], got["user_id"], got["session_id"]) == (AGENT, "-", "-")
+    assert got["content_sha256"] == hashlib.sha256(json.dumps(dog).encode()).hexdigest()
     assert (got["status"], got["memory_type"], got["sensitivity"]) == ("active", "semantic", "")
     assert str(got["valid_at"]).startswith("2021-03-04T05:06:07")
     assert not str(got["created_at"]).startswith("2021-03-04")
