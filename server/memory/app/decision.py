@@ -490,7 +490,5 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         except Exception as e:  # noqa: BLE001 — credit is additive
             log.warning("decision.outcome: run credit skipped for %s: %s", run_id, e)
     return DecisionOutcomeOutput(
-        memory_key=input.memory_key,
-        updated=True,
-        memories_credited=credited,
+        memory_key=input.memory_key, updated=True, memories_credited=credited
     )
