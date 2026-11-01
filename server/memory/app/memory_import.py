@@ -86,7 +86,8 @@ async def handle_memory_import(input: MemoryImportInput) -> MemoryImportOutput:
         input.org, input.namespace, input.agent, input.user_id, list(first), scope=scope
     )
     content_shas = {key: sha256_value(input.entries[i].value) for key, i in first.items()}
-    answers = await _write(input, keys, first, skip_reasons(heads, content_shas))
+    sensitivities = {key: input.entries[i].sensitivity for key, i in first.items()}
+    answers = await _write(input, keys, first, skip_reasons(heads, content_shas, sensitivities))
     results: list[_MemoryImportResult] = []
     for i, key in enumerate(keys):
         outcome, reason, held_by = answers[key]

@@ -417,8 +417,10 @@ Each item's key is `import:` and 24 hex characters of the SHA-256 of its text (`
 in `memory/domain/import_keys.py`), and each entry declares `source_class=imported`. A key
 of exactly that shape (`is_import_key`) gets no `(#key)` suffix from `build_excerpt` and no
 text from `key_axis_text`, whichever write stores it, so the row is embedded and lexically
-indexed by its value alone. The key is a digest of the text, so a guessable text can be
-confirmed from its key wherever keys are shown.
+indexed by its value alone; a row written before (an older build, or a write under such a
+key) keeps its stored excerpt through `loom reembed` until its next write. The key is a
+digest of the text, so a guessable text can be confirmed from its key wherever keys are
+shown.
 
 The import passes three options to the bulk write. `detect_updates=False`: the value-update
 linker never retires a live memory on its behalf. `conflict_check_cap` set to the number of

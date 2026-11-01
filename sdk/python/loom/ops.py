@@ -12032,6 +12032,7 @@ class MemoryImportResult(TypedDict, total=False):
             "rejected",
             "proposed",
             "revised",
+            "sensitivity_kept",
             "repeated",
             "unknown",
             "duplicate",

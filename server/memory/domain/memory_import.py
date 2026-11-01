@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, Final, Literal
 
+from server.core.hashing import hash_text
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 
 Outcome = Literal["written", "held", "skipped", "refused"]
@@ -28,6 +29,7 @@ Reason = Literal[
     "rejected",
     "proposed",
     "revised",
+    "sensitivity_kept",
     "repeated",
     "unknown",
     "duplicate",
@@ -50,12 +52,15 @@ _LEFT_AS_IS: Final[dict[str, Reason]] = {
 
 
 def skip_reasons(
-    heads: Iterable[Mapping[str, Any]], content_shas: Mapping[str, str]
+    heads: Iterable[Mapping[str, Any]],
+    content_shas: Mapping[str, str],
+    sensitivities: Mapping[str, str],
 ) -> dict[str, Reason]:
     """Key → why the import leaves it as it is, from its newest version across sessions
-    (rows with `memory_key`, `deleted`, `head_status` and `head_sha256`) and the
-    `content_sha256` the bulk write would store for its item (`content_shas`, not the
-    key's digest). A key with no stored version is absent and is written."""
+    (rows with `memory_key`, `deleted`, `head_status`, `head_sha256` and
+    `head_sensitivity`), the `content_sha256` the bulk write would store for its item
+    (`content_shas`, not the key's digest) and the sensitivity the item names ('' none).
+    A key with no stored version is absent and is written."""
     out: dict[str, Reason] = {}
     for row in heads:
         key = str(row["memory_key"])
@@ -64,7 +69,12 @@ def skip_reasons(
         if row["deleted"]:
             reason = "deleted"
         elif status in LIVE_STATUSES:  # holds its fact: the item's text, or other text
-            reason = "unchanged" if row["head_sha256"] == content_shas[key] else "revised"
+            if hash_text(row["head_sha256"]) != content_shas[key]:
+                reason = "revised"
+            elif sensitivities.get(key) and sensitivities[key] != row["head_sensitivity"]:
+                reason = "sensitivity_kept"  # the stored level stands; memory.set changes it
+            else:
+                reason = "unchanged"
         else:
             reason = _LEFT_AS_IS.get(status, "unknown")
         out[key] = reason
@@ -81,7 +91,8 @@ def repeat_outcome(outcome: Outcome, reason: Reason) -> tuple[Outcome, Reason]:
 def holds_item(outcome: Outcome, reason: Reason) -> bool:
     """Whether an entry's key holds its item once the write is done: written now, there
     already, or written by an earlier entry of the request."""
-    return outcome == "written" or (outcome == "skipped" and reason in ("unchanged", "repeated"))
+    held = ("unchanged", "sensitivity_kept", "repeated")
+    return outcome == "written" or (outcome == "skipped" and reason in held)
 
 
 def category_note(

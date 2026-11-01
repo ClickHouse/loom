@@ -149,6 +149,7 @@ class _StoreCH(StubCH):
                 "deleted": r["tombstoned_at"] is not None,
                 "head_status": r["status"],
                 "head_sha256": r["content_sha256"],
+                "head_sensitivity": r.get("sensitivity", ""),
             }
             for r in _newest(asked, lambda r: r["memory_key"])
         ]
@@ -421,12 +422,29 @@ async def test_a_rerun_keeps_the_stored_labels(harness) -> None:
     ch = _StoreCH()
     harness(ch)
     await handle_memory_import(_input({"value": value, "tags": ["pets"]}))
-    again = await handle_memory_import(
-        _input({"value": value, "tags": ["animals"], "sensitivity": "high"})
-    )
+    again = await handle_memory_import(_input({"value": value, "tags": ["animals"]}))
     assert _outcomes(again) == [("skipped", "unchanged")]
     (row,) = ch.rows_for("loom.memory")
     assert "pets" in row["tags"] and "animals" not in row["tags"]
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_naming_another_sensitivity_says_the_stored_level_stands(harness) -> None:
+    """The stored row keeps its level, and the entry says so rather than `unchanged`."""
+    value = "Dog is Biscuit."
+    ch = _StoreCH(registry={"pets": "cat-1"})
+    harness(ch)
+    await handle_memory_import(_input({"value": value, "sensitivity": "low"}))
+    again = await handle_memory_import(
+        _input({"value": value, "sensitivity": "high", "category": "pets"})
+    )
+    assert [(r.outcome, r.reason, r.note) for r in again.results] == [
+        ("skipped", "sensitivity_kept", "")
+    ]
+    (row,) = ch.rows_for("loom.memory")
+    assert row["sensitivity"] == "low"
+    same = await handle_memory_import(_input({"value": value, "sensitivity": "low"}))
+    assert _outcomes(same) == [("skipped", "unchanged")]
 
 
 @pytest.mark.asyncio

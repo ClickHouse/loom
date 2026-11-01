@@ -107,6 +107,14 @@ async def test_an_import_key_rebuilds_only_the_key_vector_it_holds(target):
 
 
 @pytest.mark.asyncio
+async def test_a_key_with_no_axis_text_and_a_vector_still_fails(target):
+    """Only an import key gets its stale key vector rebuilt from the raw key."""
+    row = {**row_for("memory_embeddings"), "memory_key": "___"}
+    with pytest.raises(RebuildBatchError, match="source_text_missing"):
+        await rebuild_batch("memory_embeddings", [row], target)
+
+
+@pytest.mark.asyncio
 async def test_code_uses_context_and_falls_back_to_content(target):
     contextual = row_for("code_chunks")
     raw = {**contextual, "context_text": ""}

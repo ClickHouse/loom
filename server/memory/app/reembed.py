@@ -79,8 +79,8 @@ def where_sql(
     exclude_orgs: frozenset[str] = frozenset(),
 ) -> tuple[str, dict[str, Any]]:
     """Pure: the row filter of a re-embed. Default selects off-model rows;
-    `key_only` selects every live row of the scope regardless of model, but an
-    import key with no key vector — the value vectors stay, only the key axis is
+    `key_only` selects every live row of the scope regardless of model, except an
+    import key with no key vector; the value vectors stay and only the key axis is
     rebuilt. `exclude_orgs` (orgs
     whose model calls are switched off) leaves their rows for a later run."""
     where = [] if key_only else [f"embedding_model != '{model}'"]

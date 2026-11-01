@@ -27,16 +27,13 @@ MAX_IMPORT_CATEGORY_CHARS = 256  # not a setting: a wire bound
 
 
 class _MemoryImportEntry(BaseModel):
-    # The item's text, stored verbatim; at least one character that is not whitespace.
-    # Its key is `import:` and the first 24 hex characters of the text's SHA-256, so the
-    # same text always lands on the same key.
+    # The item's text, stored verbatim (at least one non-whitespace character).
     value: str = Field(..., max_length=MAX_IMPORT_VALUE_CHARS, pattern=r"\S")
     # Labels stored with the item, filterable at recall.
     tags: list[Annotated[str, Field(max_length=MAX_IMPORT_TAG_CHARS)]] = Field(
         default_factory=list, max_length=MAX_IMPORT_TAGS
     )
-    # When the source system first knew the item, stored as `valid_at`; the row's
-    # `created_at` is the time of the import. None = unknown.
+    # When the source system first knew the item, stored as `valid_at`; None = unknown.
     valid_at: datetime | None = None
     # The item's id or path in the source system; '' stores its key instead.
     source_trace: str = Field(default="", max_length=MAX_IMPORT_TRACE_CHARS)
@@ -56,11 +53,10 @@ class MemoryImportInput(_Identity):
     """Import items another memory system distilled, through every check a write makes.
 
     The checks are dedupe, conflict, blacklist, pin and lock, and the items land in the
-    caller's namespace. Each item is stored under a key derived
-    from its text (`import:` and 24 hex characters of its SHA-256), as
-    `source_class=imported`, so a re-run of the same import writes nothing new. The
-    entries share the caller's identity tuple. A dry run makes every check and answers
-    the outcome each entry would have.
+    caller's namespace. Each item is stored under a key derived from its text (`import:`
+    and 24 hex characters of its SHA-256), as `source_class=imported`, so a re-run of
+    the same import writes nothing new. The entries share the caller's identity tuple. A
+    dry run makes every check and answers the outcome each entry would have.
     """
 
     # The items to import, 1 to 200: each one's text, and optionally its tags, the time

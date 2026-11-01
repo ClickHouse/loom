@@ -340,8 +340,8 @@ async def key_heads_across_sessions(
 ) -> list[dict[str, Any]]:
     """The newest version of each of `memory_keys` across the sessions of the identity
     `(org, namespace, agent, user_id)` that `scope` may read, tombstones and every status
-    included: `memory_key`, `deleted`, `head_status`, `head_sha256`. Sequentially
-    consistent, since a write decides on the answer."""
+    included: `memory_key`, `deleted`, `head_status`, `head_sha256`, `head_sensitivity`.
+    Sequentially consistent, since a write decides on the answer."""
     if not memory_keys:
         return []
     ch = ch or _default_client()
@@ -358,7 +358,8 @@ async def key_heads_across_sessions(
         SELECT memory_key,
                argMax(tombstoned_at IS NOT NULL, version) AS deleted,
                argMax(status, version) AS head_status,
-               toString(argMax(content_sha256, version)) AS head_sha256
+               argMax(content_sha256, version) AS head_sha256,
+               argMax(sensitivity, version) AS head_sensitivity
         FROM loom.memory
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
