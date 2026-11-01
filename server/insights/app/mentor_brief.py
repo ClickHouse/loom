@@ -12,12 +12,14 @@ from server.insights.api.models_mentor import (
     MentorAdoption,
     MentorBriefInput,
     MentorBriefOutput,
+    MentorEvidence,
     MentorHint,
     MentorPlane,
 )
 from server.insights.app import mentor as svc
 from server.insights.app import mentor_rules
 from server.insights.store import mentor as mentor_store
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -160,6 +162,86 @@ async def _adoption(profile: mentor_rules.MentorProfile) -> list[MentorAdoption]
     ]
 
 
+# What each rung counts, and what it does not show.
+_RUNG_MEANING: dict[str, str] = {
+    "attempt": "calls the agent made, answered or not",
+    "success": "calls that returned without an error; a read that found nothing counts",
+    "committed_write": "memory writes that stored a row (not a no-op or a dry run)",
+    "indexed_write": "the agent's rows written in the window that now have a search vector",
+    "returned_hit": (
+        "reads that answered: a search or ask that did not abstain, a get that found its "
+        "key; whether the answer reached the model or changed its work is not recorded"
+    ),
+    "client_acknowledged": (
+        "memory keys the agent's runs reported relying on (`run.complete` "
+        "`memories_used`): the client's own report, not verified"
+    ),
+    "task_outcome": "not observed: Loom records no task outcome",
+}
+
+
+def _rung(rung: Any, count: int | None, source: Any) -> MentorEvidence:
+    return MentorEvidence(rung=rung, count=count, source=source, meaning=_RUNG_MEANING[rung])
+
+
+async def _evidence(
+    profile: mentor_rules.MentorProfile,
+) -> tuple[list[MentorEvidence], datetime | None, int | None, list[str]]:
+    """The evidence ladder, the oldest call the ledger holds in the window, how long the
+    ledger keeps this namespace's rows, and the reads that failed ("step: reason"). Read
+    at each brief, not from the cached profile; each read stands alone: a failed one
+    leaves its rungs without a count."""
+    ch = get_client()
+    who = (profile.org, profile.namespace, profile.agent, int(profile.window_seconds))
+    failed: list[str] = []
+    calls: dict[str, Any] = {}
+    try:
+        calls = await mentor_store.call_evidence(
+            *who,
+            sets=mentor_rules.SETS,
+            gets=mentor_rules.GETS,
+            searches=mentor_rules.SEARCHES,
+            ch=ch,
+        )
+    except Exception as exc:  # noqa: BLE001 — the ledger rungs read as uncounted
+        log.warning("mentor evidence read failed: %s", exc)
+        failed.append(f"evidence: {type(exc).__name__}")
+    indexed: int | None = None
+    try:
+        indexed = await mentor_store.indexed_writes(*who, ch=ch)
+    except Exception as exc:  # noqa: BLE001 — the indexed rung reads as uncounted
+        log.warning("mentor indexed-writes read failed: %s", exc)
+        failed.append(f"indexed_writes: {type(exc).__name__}")
+    reported: int | None = None
+    try:
+        reported = await mentor_store.reported_keys(*who, ch=ch)
+    except Exception as exc:  # noqa: BLE001 — the acknowledged rung reads as uncounted
+        log.warning("mentor reported-keys read failed: %s", exc)
+        failed.append(f"reported_keys: {type(exc).__name__}")
+    retention: int | None = None
+    try:
+        own = await mentor_store.namespace_retention_days(profile.org, profile.namespace, ch=ch)
+        # A namespace's own retention wins over the table's global one.
+        retention = own or int(settings.retention_agent_events_days)
+    except Exception as exc:  # noqa: BLE001 — the brief omits the retention
+        log.warning("mentor retention read failed: %s", exc)
+        failed.append(f"retention: {type(exc).__name__}")
+
+    def counted(key: str) -> int | None:
+        return int(calls[key]) if key in calls else None
+
+    rungs = [
+        _rung("attempt", counted("attempts"), "server"),
+        _rung("success", counted("successes"), "server"),
+        _rung("committed_write", counted("committed_writes"), "server"),
+        _rung("indexed_write", indexed, "server"),
+        _rung("returned_hit", counted("returned_hits"), "server"),
+        _rung("client_acknowledged", reported, "client"),
+        _rung("task_outcome", None, "none"),
+    ]
+    return rungs, calls.get("oldest_call"), retention, failed
+
+
 async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
     agent, writers, defaulted = await _resolve_agent(inp)
     profile = await svc.mentor_profile(
@@ -180,6 +262,7 @@ async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
             skipped=["profile: unavailable"],
             healthy=True,
         )
+    evidence, ledger_from, retention, evidence_failed = await _evidence(profile)
     hints = [
         MentorHint(
             code=h.code,
@@ -201,9 +284,12 @@ async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
         planes=_planes(profile),
         hints=hints,
         adoption=await _adoption(profile),
+        evidence=evidence,
+        ledger_from=ledger_from,
+        ledger_retention_days=retention,
         agents=writers,
         agent_defaulted=defaulted,
-        skipped=list(profile.skipped),
+        skipped=[*profile.skipped, *evidence_failed],
         healthy=not any(h.severity in ("warning", "critical") for h in profile.hints),
     )
 
@@ -245,6 +331,14 @@ def render_table(out: MentorBriefOutput) -> str:
         lines.append("adoption (sessions shown → followed)")
         for a in out.adoption:
             lines.append(f"  {a.code:<25} {a.shown_sessions:>4} → {a.followed_sessions}")
+    if out.evidence:
+        lines.append("")
+        lines.append("evidence             count  source  meaning")
+        for e in out.evidence:
+            n = "-" if e.count is None else str(e.count)
+            lines.append(f"{e.rung:<20} {n:>5}  {e.source:<6}  {e.meaning}")
+        if out.ledger_retention_days:
+            lines.append(f"the call ledger keeps {out.ledger_retention_days}d of rows")
     if out.skipped:
         lines.append("")
         lines.append("skipped: " + "; ".join(out.skipped))

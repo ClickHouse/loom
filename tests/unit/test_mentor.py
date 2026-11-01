@@ -11,6 +11,7 @@ Everything here runs against a fake store: no ClickHouse.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -946,6 +947,94 @@ def test_mentor_brief_returns_the_profile_planes_and_adoption(
     assert "session_id NOT IN ('', '-', '*')" in shown_sql and "max(ts) AS last_ts" in later_sql
     table = handler.render_table(out)
     assert "code_index_unused" in table and "adoption" in table and "code index" in table
+
+
+M_EVIDENCE = "AS returned_hits"
+M_INDEXED = "FROM loom.memory_embeddings FINAL"
+M_RETENTION = "SELECT retention_days FROM loom.namespaces"
+M_REPORTED = "SELECT count() AS n FROM (SELECT arrayJoin(memories_used)"
+
+
+def _brief(monkeypatch: pytest.MonkeyPatch, ch: _CH, **facts: Any) -> Any:
+    from server.insights.api.models_mentor import MentorBriefInput
+
+    async def _p(*a: Any, **k: Any) -> Any:
+        return _fake_profile(facts=facts)
+
+    monkeypatch.setattr(m, "mentor_profile", _p)
+    monkeypatch.setattr(handler, "get_client", lambda: ch)
+    return asyncio.run(
+        handler.handle_mentor_brief(MentorBriefInput(org="o", namespace="ns", agent="a"))
+    )
+
+
+def test_mentor_brief_climbs_the_evidence_ladder_from_attempt_to_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {
+        "attempts": 40,
+        "successes": 37,
+        "committed_writes": 12,
+        "returned_hits": 9,
+        "oldest_call": datetime(2026, 1, 2),
+    }
+    ch = _CH(
+        {
+            M_EVIDENCE: [calls],
+            M_INDEXED: [{"n": 11}],
+            M_REPORTED: [{"n": 4}],
+            M_RETENTION: [{"retention_days": 0}],
+        }
+    )
+    # The cached profile's own count is not what the ladder reports: it reads live.
+    out = _brief(monkeypatch, ch, credited_keys=99)
+    ladder = {e.rung: (e.count, e.source) for e in out.evidence}
+    assert list(ladder) == [
+        "attempt",
+        "success",
+        "committed_write",
+        "indexed_write",
+        "returned_hit",
+        "client_acknowledged",
+        "task_outcome",
+    ]
+    assert ladder["attempt"] == (40, "server") and ladder["returned_hit"] == (9, "server")
+    assert ladder["indexed_write"] == (11, "server")
+    # What the agent said it relied on is its own report; a task outcome is never observed.
+    assert ladder["client_acknowledged"] == (4, "client")
+    assert ladder["task_outcome"] == (None, "none")
+    assert out.ledger_from == datetime(2026, 1, 2)
+    # The dashboard's traffic and dry runs are not the agent's use; a no-op stored nothing.
+    (sql,) = [q for q in ch.sqls if M_EVIDENCE in q]
+    assert "consumer != 'loom-ui'" in sql and "args['out_noop'] != 'true'" in sql
+    assert "args['out_abstain'] != 'true'" in sql and "args['dry_run'] != 'true'" in sql
+    assert "evidence" in handler.render_table(out)
+
+
+def test_the_namespace_retention_wins_over_the_ledger_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "retention_agent_events_days", 30)
+    ch = _CH({M_RETENTION: [{"retention_days": 7}]})
+    assert _brief(monkeypatch, ch).ledger_retention_days == 7
+    ch = _CH({M_RETENTION: [{"retention_days": 0}]})
+    out = _brief(monkeypatch, ch)
+    assert out.ledger_retention_days == 30
+    assert "the call ledger keeps 30d of rows" in handler.render_table(out)
+
+
+def test_a_failed_evidence_read_leaves_its_rungs_uncounted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _CH(
+        {M_EVIDENCE: RuntimeError("down"), M_INDEXED: [{"n": 3}], M_REPORTED: RuntimeError("x")}
+    )
+    out = _brief(monkeypatch, ch)
+    ladder = {e.rung: e.count for e in out.evidence}
+    assert ladder["attempt"] is None and ladder["returned_hit"] is None
+    assert ladder["indexed_write"] == 3 and ladder["client_acknowledged"] is None
+    assert "evidence: RuntimeError" in out.skipped and "reported_keys: RuntimeError" in out.skipped
+    assert out.ledger_from is None
 
 
 def test_mentor_brief_when_the_mentor_is_off_is_an_honest_empty_brief(

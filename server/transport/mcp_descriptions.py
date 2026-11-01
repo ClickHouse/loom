@@ -352,7 +352,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "(code index, tracker source, documents, records, graph…) with a "
         "one-line when, and every hint the mentor would give — the plane not "
         "used, the op to call, the counts it fired on — plus how often past "
-        "hints were followed. Read-only. Call it when a response carried a "
+        "hints were followed and what the calls show, from a call made to a "
+        "read that answered (a task outcome is never observed). Read-only. "
+        "Call it when a response carried a "
         "`hint`, when a session starts in an unfamiliar namespace, or to ask "
         "'am I using loom well here?'. `agent` defaults to the caller."
     ),

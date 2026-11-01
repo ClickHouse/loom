@@ -40,6 +40,15 @@ _SEARCHABLE_ROW = (
 )
 
 
+# The memory keys the agent's runs in the window reported relying on (`run.complete`
+# `memories_used`), one row per key credited.
+_CREDITED_KEYS = (
+    "SELECT arrayJoin(memories_used) AS k FROM loom.agent_runs FINAL "
+    f"WHERE {_SCOPE} AND agent = {{agent:String}} "
+    "AND started_at >= now() - INTERVAL {win:UInt32} SECOND"
+)
+
+
 def _in(ops: tuple[str, ...]) -> str:
     return "(" + ", ".join(f"'{o}'" for o in ops) + ")"
 
@@ -180,12 +189,7 @@ class ProfileReads:
         how many, how many chunk ids, how many no live row answers."""
         r = await self._one(
             f"""
-            WITH credited AS (
-                SELECT arrayJoin(memories_used) AS k
-                FROM loom.agent_runs FINAL
-                WHERE {_SCOPE} AND agent = {{agent:String}}
-                  AND started_at >= now() - INTERVAL {{win:UInt32}} SECOND
-            )
+            WITH credited AS ({_CREDITED_KEYS})
             SELECT count() AS credited_keys,
                    countIf(startsWith(k, 'chunk:')) AS credited_chunk_keys,
                    countIf(NOT startsWith(k, 'chunk:') AND k NOT IN (
@@ -462,3 +466,75 @@ async def last_calls(
             },
         )
     )
+
+
+async def call_evidence(
+    org: str,
+    namespace: str,
+    agent: str,
+    window_seconds: int,
+    *,
+    sets: tuple[str, ...],
+    gets: tuple[str, ...],
+    searches: tuple[str, ...],
+    ch: _CHClient | None = None,
+) -> dict[str, Any]:
+    """What the agent's calls in the window show, from the call ledger: attempts,
+    successes, writes that stored a row, reads that answered, and the oldest call the
+    ledger still holds. The dashboard's own traffic is left out."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        f"""
+        SELECT count() AS attempts,
+               countIf(success) AS successes,
+               countIf(success AND operation IN {_in(sets)} AND args['out_noop'] != 'true'
+                       AND args['dry_run'] != 'true') AS committed_writes,
+               countIf(success AND (
+                   (operation IN {_in(searches)} AND args['out_abstain'] != 'true')
+                   OR (operation IN {_in(gets)} AND (args['out_found'] = 'true'
+                       OR toUInt64OrZero(args['out_found_n']) > 0)))) AS returned_hits,
+               if(attempts = 0, NULL, min(ts)) AS oldest_call
+        {_LEDGER_AGENT} AND consumer != 'loom-ui'
+        """,
+        params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
+    )
+    return dict(row) if row else {}
+
+
+async def indexed_writes(
+    org: str, namespace: str, agent: str, window_seconds: int, *, ch: _CHClient | None = None
+) -> int:
+    """The agent's rows written in the window that have a search vector now (a row still
+    waiting for the embedder has `embedding_dim = 0`)."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        f"""
+        SELECT uniqExact(memory_key) AS n FROM loom.memory_embeddings FINAL
+        WHERE {_SCOPE} AND agent = {{agent:String}} AND tombstoned_at IS NULL
+          AND created_at >= now() - INTERVAL {{win:UInt32}} SECOND AND embedding_dim > 0
+        """,
+        params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
+    )
+    return int(row["n"]) if row else 0
+
+
+async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
+    """The namespace's own `retention_days` (0 when it sets none)."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        f"SELECT retention_days FROM loom.namespaces FINAL WHERE {_SCOPE} LIMIT 1",
+        params={"org": org, "ns": namespace},
+    )
+    return int(row["retention_days"] or 0) if row else 0
+
+
+async def reported_keys(
+    org: str, namespace: str, agent: str, window_seconds: int, *, ch: _CHClient | None = None
+) -> int:
+    """How many memory keys the agent's runs in the window reported relying on."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        f"SELECT count() AS n FROM ({_CREDITED_KEYS})",
+        params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
+    )
+    return int(row["n"]) if row else 0

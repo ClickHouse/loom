@@ -61,6 +61,31 @@ class MentorAdoption(BaseModel):
     followed_sessions: int = 0
 
 
+EvidenceRung = Literal[
+    "attempt",
+    "success",
+    "committed_write",
+    "indexed_write",
+    "returned_hit",
+    "client_acknowledged",
+    "task_outcome",
+]
+
+
+class MentorEvidence(BaseModel):
+    """One rung of what the agent's use of Loom shows, weakest claim first: a call made
+    is not a call that answered, and an answer returned is not an answer used."""
+
+    rung: EvidenceRung
+    # How many in the window; None when Loom does not observe it or the read failed.
+    count: int | None = None
+    # Who recorded it: `server` (Loom saw it happen), `client` (the agent reported it,
+    # unverified) or `none` (not observed).
+    source: Literal["server", "client", "none"]
+    # What the count is, and what it does not show.
+    meaning: str
+
+
 class MentorBriefOutput(BaseModel):
     org: str
     namespace: str
@@ -81,6 +106,14 @@ class MentorBriefOutput(BaseModel):
     # Per hint code, sessions it was shown in and followed in, most shown first; empty when
     # no hint reached the agent or the read failed.
     adoption: list[MentorAdoption] = Field(default_factory=list)
+    # The agent's use of Loom in the window, one rung each from a call made to a task
+    # outcome (never observed); a rung whose read failed has no count and is in `skipped`.
+    evidence: list[MentorEvidence] = Field(default_factory=list)
+    # Oldest call of this agent the ledger holds in the window; None when it holds none.
+    ledger_from: datetime | None = None
+    # Days the call ledger keeps this namespace's rows (0: until deleted). When the window
+    # is longer, its oldest part is gone and every count above covers less than the window.
+    ledger_retention_days: int | None = None
     # The namespace's writers in the window, most active first; the brief
     # defaults to the first when the caller has no agent name of its own
     # (the dashboard) — `agent_defaulted` says so.
