@@ -444,7 +444,7 @@ Fields for every `memory` op: [operations/memory.md](operations/memory.md).
 | [`memory.get_by_id`](operations/memory.md#memoryget_by_id) | Fetch a memory by its UUID (not memory_key). | viewer | read | yes |  |
 | [`memory.health`](operations/memory.md#memoryhealth) | Knowledge-base health for (org, namespace): how much of what is stored is ever recalled, what is silent, what earns its keep. agent + user_id are sentinels — the report aggregates across them. | viewer | read | yes |  |
 | [`memory.history`](operations/memory.md#memoryhistory) | Enumerate the version history of one memory_key. | viewer | read | yes |  |
-| [`memory.import`](operations/memory.md#memoryimport) | Import items another memory system distilled, through every memory.bulk_set check. | writer | idempotent | no |  |
+| [`memory.import`](operations/memory.md#memoryimport) | Import items another memory system distilled, through every check a write makes. | writer | idempotent | no |  |
 | [`memory.import_curated`](operations/memory.md#memoryimport_curated) | Split a curated markdown doc into sections, write each via handle_memory_set, returning per-section verdicts. | writer | write | no | yes |
 | [`memory.import_evidence`](operations/memory.md#memoryimport_evidence) | Write exported evidence chunks and digests into a namespace, re-embedded here and linked to their memory keys. | writer | write | yes | yes |
 | [`memory.keys`](operations/memory.md#memorykeys) | Every live row's identity and key in one read: a set an exporter can check its paged listing against, since a row that moves while pages are read can be skipped. | viewer | read | no |  |

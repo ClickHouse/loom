@@ -6011,7 +6011,7 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "Rebuild only the key-axis vector of every live row in scope, from the current key-axis text; value vectors are kept",
+       "help": "Rebuild only the key-axis vectors in scope, from the current key-axis text; value vectors are kept",
        "metavar": null
       },
       {

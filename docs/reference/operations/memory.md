@@ -992,7 +992,7 @@ Enumerate the version history of one memory_key.
 
 ## `memory.import`
 
-Import items another memory system distilled, through every memory.bulk_set check.
+Import items another memory system distilled, through every check a write makes.
 
 `POST /v1/memory.import` · MCP `loom_memory_import` · role `writer` · idempotent · not listed under the MCP `all` toolset
 

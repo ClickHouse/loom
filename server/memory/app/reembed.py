@@ -79,13 +79,14 @@ def where_sql(
     exclude_orgs: frozenset[str] = frozenset(),
 ) -> tuple[str, dict[str, Any]]:
     """Pure: the row filter of a re-embed. Default selects off-model rows;
-    `key_only` selects every live row of the scope regardless of model — the
-    value vectors stay, only the key axis is rebuilt. `exclude_orgs` (orgs
+    `key_only` selects every live row of the scope regardless of model, but an
+    import key with no key vector — the value vectors stay, only the key axis is
+    rebuilt. `exclude_orgs` (orgs
     whose model calls are switched off) leaves their rows for a later run."""
     where = [] if key_only else [f"embedding_model != '{model}'"]
-    if key_only and "memory_key" in cols:
-        # An import key without a key vector has nothing to rebuild; one with a stale
-        # vector (written by a build before the import) is selected and cleared.
+    if key_only:
+        # Only memory_embeddings has a key axis. An import key without a key vector has
+        # nothing to rebuild; one with a stale vector from an older build is cleared.
         where.append(f"NOT ({_is_import_sql('memory_key')} AND memory_key_embedding_dim = 0)")
     where.append("embedding_dim > 0")
     params: dict[str, Any] = {}
@@ -281,9 +282,9 @@ async def reembed_table(
     Pages of `batch` rows in sort-key order; `start_after` (a resume token's
     key) continues after that row. `left_orgs` collects the orgs switched off
     during the run whose rows were left unwritten.
-    `key_only`: every live row of the scope gets its key-axis vector rebuilt
-    from `key_axis_text` (the value vector is kept); tables without a key
-    axis are skipped."""
+    `key_only`: every live row of the scope but an import key with no key
+    vector gets its key-axis vector rebuilt from `key_axis_text` (the value
+    vector is kept); tables without a key axis are skipped."""
     cfg = _TABLES[table]
     if key_only and not cfg.get("key_text"):
         return 0

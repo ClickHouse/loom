@@ -11966,7 +11966,7 @@ class MemoryHistoryRow(TypedDict, total=False):
 
 
 class MemoryImportInput(TypedDict, total=False):
-    "Import items another memory system distilled, through every memory.bulk_set check."
+    "Import items another memory system distilled, through every check a write makes."
 
     org: Required[str]
     namespace: Required[str]
@@ -11988,7 +11988,7 @@ class MemoryImportEntry(TypedDict, total=False):
 
 
 class MemoryImportBody(TypedDict, total=False):
-    "Import items another memory system distilled, through every memory.bulk_set check."
+    "Import items another memory system distilled, through every check a write makes."
 
     org: NotRequired[str]
     namespace: NotRequired[str]

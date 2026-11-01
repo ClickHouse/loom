@@ -53,9 +53,10 @@ class _MemoryImportEntry(BaseModel):
 
 
 class MemoryImportInput(_Identity):
-    """Import items another memory system distilled, through every memory.bulk_set check.
+    """Import items another memory system distilled, through every check a write makes.
 
-    The items land in the caller's namespace. Each item is stored under a key derived
+    The checks are dedupe, conflict, blacklist, pin and lock, and the items land in the
+    caller's namespace. Each item is stored under a key derived
     from its text (`import:` and 24 hex characters of its SHA-256), as
     `source_class=imported`, so a re-run of the same import writes nothing new. The
     entries share the caller's identity tuple. A dry run makes every check and answers
