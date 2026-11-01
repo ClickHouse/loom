@@ -420,7 +420,8 @@ text from `key_axis_text`, whichever write stores it, so the row is embedded and
 indexed by its value alone; a row written before (an older build, or a write under such a
 key) keeps its stored excerpt through `loom reembed` until its next write. The key is a
 digest of the text, so a guessable text can be confirmed from its key wherever keys are
-shown.
+shown. The key axis's automatic probe of key reuse (`key_axis_auto`) leaves import keys out,
+so a large import does not turn the axis off for the namespace's own keys.
 
 The import passes three options to the bulk write. `detect_updates=False`: the value-update
 linker never retires a live memory on its behalf. `conflict_check_cap` set to the number of

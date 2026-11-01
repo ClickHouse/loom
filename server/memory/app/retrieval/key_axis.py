@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.memory.domain.import_keys import IMPORT_KEY_PATTERN
 from server.memory.domain.search_types import SearchQuery
 
 log = logging.getLogger("server.memory.app.retrieval")
@@ -49,7 +50,7 @@ async def key_axis_auto(
 ) -> bool:
     """Decide the key axis for one namespace from its key reuse, cached for
     memory_search_key_axis_auto_ttl_seconds. One GROUP BY over the
-    namespace's keys; a failed probe reads as off (the cheaper side)."""
+    namespace's keys but import keys; a failed probe reads as off (the cheaper side)."""
     import time as _time
 
     from server.settings import settings as _default_settings
@@ -71,10 +72,13 @@ async def key_axis_auto(
                 FROM loom.memory_embeddings FINAL
                 WHERE org = {org:String} AND namespace = {ns:String}
                   AND tombstoned_at IS NULL
+                  AND NOT match(memory_key, {import_key:String})
                 GROUP BY memory_key
             )
             """,
-            {"org": str(org), "ns": str(namespace)},
+            # An import key is written once and has no key vector: it says nothing
+            # about how a namespace reuses its own keys.
+            {"org": str(org), "ns": str(namespace), "import_key": f"^{IMPORT_KEY_PATTERN}$"},
         )
         if rows:
             share = float((rows[0] or {}).get("reused_share") or 0.0)

@@ -138,3 +138,20 @@ def test_a_share_outside_zero_to_one_or_a_ttl_under_a_second_is_refused(
 ) -> None:
     with pytest.raises(ValidationError):
         Settings(_env_file=None, **values)  # type: ignore[call-arg]
+
+
+@pytest.mark.asyncio
+async def test_the_reuse_probe_leaves_import_keys_out() -> None:
+    """Each imported item lands once under its own `import:` key with no key vector; a
+    large import must not dilute the namespace's share of reused keys."""
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    class _Recording:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            seen.append((sql, params))
+            return [{"reused_share": 0.5}]
+
+    assert await key_axis_auto("o", "ns", ch=_Recording(), settings_obj=Settings())
+    ((sql, params),) = seen
+    assert "AND NOT match(memory_key, {import_key:String})" in sql
+    assert params["import_key"] == "^import:[0-9a-f]{24}$"
