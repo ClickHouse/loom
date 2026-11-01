@@ -33,6 +33,7 @@ from server.identity.api.models_inventory import (
     NamespaceInventoryInput,
     NamespaceInventoryOutput,
     ObservedPopulation,
+    Population,
     ReadScope,
 )
 from server.identity.app.request_scope import request_scope
@@ -43,6 +44,7 @@ from server.llm.client import llm_is_fake
 from server.memory.app.query import identity_tally, memory_tally
 from server.memory.app.records import record_tally
 from server.memory.app.webhooks import namespace_webhook_count
+from server.memory.domain.identity_columns import IdentityColumn
 from server.operations.base import Role
 from server.tasks.app.run import run_tally
 
@@ -53,7 +55,7 @@ _NARROWED = "not counted under a read scope bound to one user or session"
 # not answered as a successful report of empty sections.
 _NOT_NOW = (BackendUnavailableError, BackendTimeoutError, OverloadedError)
 # Observed population → the memory column that names it.
-_COLUMN: dict[ObservedPopulation, str] = {
+_COLUMN: dict[ObservedPopulation, IdentityColumn] = {
     "agents": "agent",
     "authors": "actor",
     "subjects": "user_id",
@@ -130,13 +132,10 @@ def _missing(plane: InventoryPlane, reason: str) -> InventorySection:
 
 async def _members(org: str, ns: str, scope: ReadFilters) -> InventoryPopulation:
     if scope.narrowed:
-        return InventoryPopulation(
-            population="members", total=None, complete=False, reason=_NARROWED
-        )
+        return _not_counted("members", _NARROWED)
     if sharing.is_personal(ns):
         # A personal collection takes no grant: its owner reaches it by name.
-        reason = "a personal collection: its owner holds no grant"
-        return InventoryPopulation(population="members", total=None, complete=False, reason=reason)
+        return _not_counted("members", "a personal collection: its owner holds no grant")
     try:
         people, shared = await grants_repo.member_count(org, ns)
         # Only a collection inherits: a parent's grants reach every child.
@@ -144,8 +143,7 @@ async def _members(org: str, ns: str, scope: ReadFilters) -> InventoryPopulation
     except _NOT_NOW:
         raise
     except Exception as e:  # noqa: BLE001 — one population's failure leaves the others standing
-        reason = _failed("members", e)
-        return InventoryPopulation(population="members", total=None, complete=False, reason=reason)
+        return _not_counted("members", _failed("members", e))
     wider = []
     if shared:
         wider.append("shared with everyone or a group")
@@ -167,14 +165,17 @@ async def _observed(
     except _NOT_NOW:
         raise
     except Exception as e:  # noqa: BLE001 — one population's failure leaves the others standing
-        reason = _failed(population, e)
-        return InventoryPopulation(population=population, total=None, complete=False, reason=reason)
+        return _not_counted(population, _failed(population, e))
     return InventoryPopulation(
         population=population,
         total=total,
         top=[InventoryIdentity(name=name, rows=n) for name, n in top],
         complete=True,
     )
+
+
+def _not_counted(population: Population, reason: str) -> InventoryPopulation:
+    return InventoryPopulation(population=population, total=None, complete=False, reason=reason)
 
 
 def _failed(what: str, e: Exception) -> str:

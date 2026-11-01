@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 InventoryPlane = Literal["memories", "records", "documents", "runs", "integrations"]
 ObservedPopulation = Literal["agents", "authors", "subjects"]
+Population = Literal["members", "agents", "authors", "subjects"]
 ReadScope = Literal["namespace", "own_user", "own_session"]
 
 
@@ -68,7 +69,7 @@ class InventoryPopulation(BaseModel):
     `members` are the people holding an active grant; `agents`, `authors` and
     `subjects` are identities observed on live memory rows, never a directory."""
 
-    population: Literal["members"] | ObservedPopulation
+    population: Population
     # Distinct identities in the population; None when it did not run.
     total: int | None
     # The largest by row count (members: none listed here, page them with `grants.list`).
@@ -89,7 +90,8 @@ class NamespaceInventoryOutput(BaseModel):
     sections: list[InventorySection]
     # Members, then the agents, authors and subjects observed on live memory rows.
     populations: list[InventoryPopulation]
-    # Whether a real model and a real embedder are configured on this deployment.
+    # Whether a real model and a real embedder serve this process (a keyed model without
+    # its key is served by the fake).
     capabilities: list[InventoryCapability]
     # When the reads started.
     computed_at: datetime

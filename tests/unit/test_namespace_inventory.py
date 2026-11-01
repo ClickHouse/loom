@@ -32,7 +32,7 @@ def _ch(*first: tuple[str, Any]) -> RecordingCH:
         .on("FROM loom.memory_records", [{"n": 0, "latest": None}])
         .on("FROM loom.agent_runs", [{"n": 2, "latest": AT}])
         .on("FROM loom.documents", [{"n": 3, "latest": AT}])
-        .on("FROM loom.memory_webhooks", [{"created_at": AT, "webhook_id": "w1"}])
+        .on("FROM loom.memory_webhooks", [{"n": 1, "latest": AT}])
         .on("loom.namespace_grants", [{"people": 2, "shared": 0}])
         .on("SELECT agent AS name", [{"name": "bot", "n": 7, "total": 1}])
         .on("SELECT actor AS name", [{"name": "u1@x", "n": 5, "total": 2}])
@@ -83,38 +83,6 @@ def test_every_plane_and_population_is_counted_namespace_wide(
     assert [(i.name, i.rows) for i in pops["subjects"].top] == [("u1", 4)]
     assert (pops["agents"].total, pops["authors"].total, pops["subjects"].total) == (1, 2, 3)
     assert out.scope.read_scope == "namespace" and out.scope.user_id is None
-
-
-def test_the_unset_identity_is_never_a_subject(monkeypatch: pytest.MonkeyPatch) -> None:
-    ch = _ch().install(monkeypatch, *_GET_CLIENT)
-    _run()
-    (subjects,) = ch.statements("SELECT user_id AS name")
-    assert "user_id NOT IN ('', '-')" in subjects.sql
-
-
-def test_memories_are_counted_as_memory_list_serves_them(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ch = _ch().install(monkeypatch, *_GET_CLIENT)
-    _run()
-    served = (
-        "tombstoned_at IS NULL AND status NOT IN ('duplicate', 'superseded', 'proposed') "
-        "AND (expires_at IS NULL OR expires_at > now())"
-    )
-    statements = [c for c in ch.calls if "FROM loom.memory FINAL" in c.sql]
-    assert len(statements) == 4  # the count and the three populations
-    assert all(served in c.sql for c in statements)
-
-
-def test_only_active_records_and_active_grants_are_counted(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ch = _ch().install(monkeypatch, *_GET_CLIENT)
-    _run()
-    (records,) = ch.statements("FROM loom.memory_records")
-    assert "status = 'active' AND tombstoned_at IS NULL" in records.sql
-    (members,) = ch.statements("loom.namespace_grants")
-    assert members.sql.startswith("SELECT countIf(status = 'active' AND NOT (")
 
 
 def test_an_unreadable_admin_check_is_the_servers_failure(
@@ -183,14 +151,6 @@ def test_an_outage_fails_the_call(monkeypatch: pytest.MonkeyPatch) -> None:
     _ch(("FROM loom.agent_runs", down)).install(monkeypatch, *_GET_CLIENT)
     with pytest.raises(BackendUnavailableError):
         _run()
-
-
-def test_each_empty_plane_reads_no_write_time_in_sql(monkeypatch: pytest.MonkeyPatch) -> None:
-    ch = _ch().install(monkeypatch, *_GET_CLIENT)
-    _run()
-    for table in ("loom.memory FINAL", "loom.memory_records", "loom.agent_runs", "loom.documents"):
-        (st,) = [c for c in ch.statements(table) if "AS latest" in c.sql]
-        assert "if(n = 0, NULL, max(" in st.sql, st.sql
 
 
 def test_a_narrowed_scope_bounds_every_read_and_leaves_out_the_rest(

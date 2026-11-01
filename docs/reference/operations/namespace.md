@@ -214,7 +214,7 @@ What one namespace holds and who appears in it, with what was not counted.
 | `scope` | `InventoryScope` | The boundary every count was read under. |
 | `sections` | `list[InventorySection]` | One per plane, in a fixed order: memories, records, documents, runs, integrations. |
 | `populations` | `list[InventoryPopulation]` | Members, then the agents, authors and subjects observed on live memory rows. |
-| `capabilities` | `list[InventoryCapability]` | Whether a real model and a real embedder are configured on this deployment. |
+| `capabilities` | `list[InventoryCapability]` | Whether a real model and a real embedder serve this process (a keyed model without its key is served by the fake). |
 | `computed_at` | `datetime` | When the reads started. |
 
 ## `namespace.join`

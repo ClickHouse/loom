@@ -42,6 +42,7 @@ from server.memory.app.provenance import writer_actor
 from server.memory.app.served_superseded import ServedFlags, shown_successors
 from server.memory.domain import trust as _trust
 from server.memory.domain.entity_sentinels import public_entities
+from server.memory.domain.identity_columns import IdentityColumn
 from server.memory.store.rows import MemoryRow
 from server.observability import audit as _audit
 from server.observability.budget_shape import note_budget_shape
@@ -928,7 +929,7 @@ async def memory_tally(org: str, namespace: str) -> tuple[int, datetime | None]:
 
 
 async def identity_tally(
-    org: str, namespace: str, column: str, *, limit: int
+    org: str, namespace: str, column: IdentityColumn, *, limit: int
 ) -> tuple[int, list[tuple[str, int]]]:
     """Distinct agents, actors or users on live rows inside the request's read scope,
     and the `limit` with the most rows."""

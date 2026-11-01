@@ -14659,7 +14659,7 @@ class InventorySection(TypedDict, total=False):
 class InventoryPopulation(TypedDict, total=False):
     "One population: the namespace's members, or identities observed on its rows."
 
-    population: Required[Union[Literal["members"], Literal["agents", "authors", "subjects"]]]
+    population: Required[Literal["members", "agents", "authors", "subjects"]]
     total: Required[Optional[int]]
     top: NotRequired[list["InventoryIdentity"]]
     complete: Required[bool]
