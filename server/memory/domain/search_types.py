@@ -363,14 +363,9 @@ RANK_SCORE_PRE_RERANK = "rank_score_pre_rerank"
 
 
 def hit_sort_key(h: Any) -> tuple[float, float, str, str, str, str, str]:
-    """The ONE ordering every ranked list of hits uses: best
-    rank_score first, then nearest distance, then memory_key, then the row's namespace,
-    writer and session. Two hits with equal scores (about half of top-2 pairs are within 0.01) would
-    otherwise fall wherever the ClickHouse threads and Python's stable sort left them,
-    so the same query on unchanged data would return the same top-5 set only
-    about half the time; one key holds a row per writer and session, so the key alone
-    does not settle it. With the row as the last terms the order is a function of the
-    hits, not of the read."""
+    """The one order every ranked list uses: best rank_score, nearest distance, then the
+    row (memory_key, namespace, agent, user_id, session_id). Equal scores are common, so
+    without the row terms the window would depend on read order, not on the hits."""
     row = hit_row_key(h)
     return (
         -float(getattr(h, "rank_score", 0.0) or 0.0),
