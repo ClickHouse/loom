@@ -115,7 +115,8 @@ def fold(prior: dict[str, Any], incoming: dict[str, Any]) -> FoldResult:
 
 def restate(prior: dict[str, Any], incoming: dict[str, Any]) -> FoldResult:
     """`incoming` as the whole record: nothing is kept from `prior`. Reports what agreed,
-    was added or changed, like `fold`."""
+    was added or changed among the fields `incoming` states; a field it leaves empty is
+    dropped without a report."""
     out = FoldResult(merged=dict(incoming))
     for name, i in incoming.items():
         p = prior.get(name)

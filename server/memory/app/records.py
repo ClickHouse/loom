@@ -325,11 +325,6 @@ def _record_key(
     return memory_key, key_source
 
 
-# A decision is one writer's statement, and the record it supersedes may be another
-# writer's: keeping that record's fields would serve them past their writer's delete.
-_STATED_WHOLE = frozenset({SCHEMA_NAME})
-
-
 async def _fold_onto_active_record(
     ch: CHClient,
     input: MemoryRecordWriteInput,
@@ -342,8 +337,8 @@ async def _fold_onto_active_record(
 ) -> _RecordFold:
     """Field-level fold onto the active record for this key: an empty incoming field keeps
     the survivor's value, spelling variants are agreement, and a real disagreement is
-    recorded with both values before the incoming one wins. A record of a schema in
-    `_STATED_WHOLE` keeps nothing of the survivor."""
+    recorded with both values before the incoming one wins. A decision record keeps
+    nothing of the survivor."""
     fold_out: dict[str, Any] = {}
     superseded_id = ""
     conflict_rows: list[dict[str, Any]] = []
@@ -359,7 +354,9 @@ async def _fold_onto_active_record(
                 prior_json = json.loads(prior_row.record_json or "{}")
             except json.JSONDecodeError:
                 prior_json = {}
-            combine = restate if input.schema_name in _STATED_WHOLE else fold
+            # A decision is one writer's statement, and the survivor may be another
+            # writer's: keeping its fields would serve them past their writer's delete.
+            combine = restate if input.schema_name == SCHEMA_NAME else fold
             result = combine(prior_json, record_json)
             record_json = result.merged
             filled_fields = list(result.filled_from_prior)
@@ -484,8 +481,9 @@ async def _carry_folded_fields(
     return rows
 
 
-async def handle_memory_record_write(input: MemoryRecordWriteInput) -> MemoryRecordWriteOutput:
-    """Write one typed record."""
+async def handle_memory_record_write(
+    input: MemoryRecordWriteInput,
+) -> MemoryRecordWriteOutput:
     schema = await _schema_by_name(input.org, input.namespace, input.schema_name)
     if not schema or str(schema.get("status")) != "active":
         raise HTTPException(
@@ -513,13 +511,7 @@ async def handle_memory_record_write(input: MemoryRecordWriteInput) -> MemoryRec
         for name, field in input.fields.items()
     }
     fold = await _fold_onto_active_record(
-        ch,
-        input,
-        memory_key,
-        record_json,
-        record_id=record_id,
-        version=version,
-        now=now,
+        ch, input, memory_key, record_json, record_id=record_id, version=version, now=now
     )
     record_json = fold.record_json
     # Supersede prior active state for this logical key before inserting: every

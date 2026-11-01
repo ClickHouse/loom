@@ -136,16 +136,18 @@ async def _write_decision(
     tags: list[str],
     valid_at: datetime | None,
     if_match_sha256: str = "",
-) -> str:
-    """Memory row + record under one key. Returns the record_id. The row goes first: a
-    delete keeps the record only while its writer's row is live, so that row must exist
-    before the record does. `if_match_sha256` makes the row write conditional on the live
-    row's hash (memory.set answers 409 PRECONDITION_FAILED otherwise)."""
+) -> tuple[str, str]:
+    """Memory row + record under one key. Returns the key the decision is under and the
+    record_id, "" when memory.set merged the row into another decision key that already
+    states it. The row goes first: a delete keeps the record only while its writer's row is
+    live, so that row must exist before the record does. `if_match_sha256` makes the row
+    write conditional on the live row's hash (memory.set answers 409 PRECONDITION_FAILED
+    otherwise)."""
     from server.memory.app.records import handle_memory_record_write
     from server.memory.app.write import handle_memory_set
 
     conf = payload.get("confidence")
-    await handle_memory_set(
+    set_out = await handle_memory_set(
         MemorySetInput(
             org=org,
             namespace=namespace,
@@ -163,6 +165,9 @@ async def _write_decision(
             if_match_sha256=if_match_sha256,
         )
     )
+    if set_out.conflict_verdict == "merge":
+        # No row under the writer, so a record here would be retired at once.
+        return set_out.merged_into_key or key, ""
     rec_out = await handle_memory_record_write(
         MemoryRecordWriteInput(
             org=org,
@@ -183,7 +188,7 @@ async def _write_decision(
         )
     except Exception as e:  # noqa: BLE001 — the decision is written
         log.warning("decision: closing record check failed for %s: %s", key, e)
-    return str(rec_out.record_id)
+    return key, str(rec_out.record_id)
 
 
 async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOutput:
@@ -210,7 +215,7 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         f"decision:category:{payload['category'].lower()}",
         *[t for t in input.tags if t],
     ]
-    record_id = await _write_decision(
+    key, record_id = await _write_decision(
         org=input.org,
         namespace=input.namespace,
         agent=input.agent,
@@ -247,16 +252,17 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
             except Exception as e:  # noqa: BLE001 — an edge never fails the record
                 log.warning("decision.record: edge %s -%s-> %s failed: %s", src, rel, key, e)
 
+    done = "recorded" if record_id else "already states this; nothing written"
     return DecisionRecordOutput(
         memory_key=key,
         record_id=record_id,
-        superseded_prior=key in prior,
+        superseded_prior=bool(record_id) and key in prior,
         edges_written=edges,
         next=(
-            f"decision {key} recorded. When the outcome is known, call "
-            "decision.outcome(memory_key, realized_outcome, success) — it also credits "
-            "the memories the run relied on. Before a similar decision, call "
-            "decision.precedents."
+            f"decision {key} {done}. "
+            "When the outcome is known, call decision.outcome(memory_key, realized_outcome, "
+            "success) — it also credits the memories the run relied on. Before a similar "
+            "decision, call decision.precedents."
         ),
     )
 
@@ -396,7 +402,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         raise _no_active_decision(input)
     # Conditional on the row read with the record, so a delete since then is not written back.
     try:
-        await _write_decision(
+        _, record_id = await _write_decision(
             org=input.org,
             namespace=input.namespace,
             agent=writer.agent,
@@ -410,7 +416,8 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             if_match_sha256=stored_sha256(row),
         )
     except HTTPException as e:
-        # memory.set's hash mismatch; the lease's busy PreconditionFailedError passes through.
+        # memory.set's hash mismatch, or its write fence finding the key deleted since the
+        # check; the lease's busy PreconditionFailedError passes through.
         if not (isinstance(e.detail, dict) and e.detail.get("code") == "PRECONDITION_FAILED"):
             raise
         if await read_row() is None:
@@ -452,5 +459,5 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         except Exception as e:  # noqa: BLE001 — credit is additive
             log.warning("decision.outcome: run credit skipped for %s: %s", run_id, e)
     return DecisionOutcomeOutput(
-        memory_key=input.memory_key, updated=True, memories_credited=credited
+        memory_key=input.memory_key, updated=bool(record_id), memories_credited=credited
     )

@@ -147,7 +147,7 @@ def env(monkeypatch):
         calls["schema"].append(inp)
         return SimpleNamespace(schema_id="sid")
 
-    async def fake_record_write(inp, **_kw):
+    async def fake_record_write(inp):
         calls["record"].append(inp)
         ch.records[inp.memory_key] = {
             k: (v.value if hasattr(v, "value") else v.get("value")) for k, v in inp.fields.items()
@@ -156,7 +156,7 @@ def env(monkeypatch):
 
     async def fake_set(inp):
         calls["set"].append(inp)
-        return SimpleNamespace(version=1)
+        return SimpleNamespace(version=1, conflict_verdict="clear")
 
     async def fake_link(inp):
         calls["link"].append(inp)
@@ -341,6 +341,8 @@ def test_outcome_revises_the_record_and_credits_the_run(env) -> None:
 
 
 def test_the_writer_read_and_the_tombstone_are_sequential() -> None:
+    # Pinned by text: a single-node engine treats the setting as a no-op, so no local
+    # test can show a replica missing the delete's tombstone.
     from server.memory.store import records
 
     sequential = "SETTINGS select_sequential_consistency = 1"

@@ -97,7 +97,7 @@ def _set_into(ch: KeptCH, monkeypatch: pytest.MonkeyPatch, before: Any = None) -
             value=json.dumps(inp.value),
         )
         await ch.insert("loom.memory", [row])
-        return SimpleNamespace(version=row["version"])
+        return SimpleNamespace(version=row["version"], conflict_verdict="clear")
 
     monkeypatch.setattr("server.memory.app.write.handle_memory_set", _set)
     return seen
@@ -530,7 +530,7 @@ async def test_a_delete_between_the_row_and_the_record_leaves_the_new_record_tom
     async def _set_then_delete(inp: Any) -> Any:
         await local.insert("loom.memory", [_memory_row(inp.agent, inp.memory_type, time.time_ns())])
         await _delete(inp.agent)
-        return SimpleNamespace(version=0)
+        return SimpleNamespace(version=0, conflict_verdict="clear")
 
     monkeypatch.setattr("server.memory.app.write.handle_memory_set", _set_then_delete)
     out = await h.handle_decision_record(
@@ -892,4 +892,42 @@ async def test_a_busy_key_lease_refuses_the_outcome_as_it_is(
             DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
         )
     assert len(seen) == 1
+    assert await _history() == ["active"]
+
+
+@pytest.mark.asyncio
+async def test_a_decision_merged_into_another_key_writes_no_record(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # memory.set found the same decision under another key and stored no row: a record here
+    # would have no live writer row, so none is written and the other key is answered.
+    from server.memory.app import decision as h
+
+    async def _merge(_inp: Any) -> Any:
+        return SimpleNamespace(version=0, conflict_verdict="merge", merged_into_key="decision:peer")
+
+    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _merge)
+    out = await h.handle_decision_record(_record_input(caused_by=[], influenced_by=[]))
+    assert (out.memory_key, out.record_id, out.superseded_prior) == ("decision:peer", "", False)
+    assert "nothing written" in out.next
+    assert await local.query_all("SELECT 1 FROM loom.memory_records") == []
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_merged_into_another_key_answers_not_updated(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    await _write_decision_rows(local, "claude")
+
+    async def _merge(_inp: Any) -> Any:
+        return SimpleNamespace(version=0, conflict_verdict="merge", merged_into_key="decision:peer")
+
+    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _merge)
+    out = await h.handle_decision_outcome(
+        DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+    )
+    assert out.updated is False
     assert await _history() == ["active"]
