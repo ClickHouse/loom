@@ -117,9 +117,9 @@ holds no grant, so its members are not counted (`total` is null). A section that
 or that the caller may not read, says so with `complete: false` and a reason: the
 integrations count is for namespace admins, and under a read scope bound to one user
 (`read_scope=own_user` or `own_session`, or a token pinned to a user) the memory and run
-counts are that user's, documents and members are counted namespace-wide as `knowledge.*`
-and `grants.list` read them, and records (one per key, whoever wrote it last) and
-integrations are not counted.
+counts and the observed agents, authors and subjects are that user's, documents and
+members are counted namespace-wide as `knowledge.*` and `grants.list` read them, and
+records (one per key, whoever wrote it last) and integrations are not counted.
 
 `loom audit-namespace` runs `namespace.audit` from the shell; the
 [optimize a namespace guide](../guides/optimize-namespace.md) turns its findings into a
