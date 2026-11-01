@@ -355,3 +355,10 @@ async def test_a_vectorless_winner_retires_the_vector_an_earlier_entry_embedded(
     assert winner["value"] == f'"{b}"' and winner["sensitivity"] != "high"
     assert [e["memory_key"] for e in plan.embedding_rows] == ["k"]
     assert "k" in _vectors_to_retire(state)
+
+
+def test_a_refused_outcome_is_its_results_verdict() -> None:
+    from server.memory.api.models_bulk import LOCKED, PINNED
+    from server.memory.app.bulk_rows import Outcome
+
+    assert (Outcome.PINNED, Outcome.LOCKED) == (PINNED, LOCKED)

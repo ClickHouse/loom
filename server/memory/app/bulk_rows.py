@@ -77,8 +77,9 @@ class Outcome(StrEnum):
     LAND = "land"
     RELABEL = "relabel"  # lands: the same bytes with a new label, still a restatement
     UNCHANGED = "unchanged"
-    PINNED = PINNED  # refused: the key holds a pinned value
-    LOCKED = LOCKED  # refused: it would change a locked row's expiry
+    # refused; each value is its result's conflict_verdict
+    PINNED = "pinned"  # the key holds a pinned value
+    LOCKED = "locked"  # it would change a locked row's expiry
     KEPT_OUT = "kept_out"  # its verdict (`NOT_LANDING`: merge, rejected) keeps it out
     COPY = "copy"  # a repeat answering the merge or rejection of the entry it repeats
 
@@ -608,16 +609,16 @@ def write_step_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
         if step.outcome in (Outcome.UNCHANGED, Outcome.RELABEL):
             # The same bytes again: a restatement, whether or not it changes a label.
             _note_restatement(state, str(row["memory_id"]))
-        if step.outcome == Outcome.UNCHANGED:
+        if step.outcome is Outcome.UNCHANGED:
             state.skipped_unchanged += 1
-        elif step.outcome == Outcome.PINNED:
+        elif step.outcome is Outcome.PINNED:
             res.conflict_verdict = PINNED
             res.pinned_blocker_id = str(row["memory_id"])
             state.skipped_pinned.append(res.memory_key)
-        elif step.outcome == Outcome.LOCKED:
+        elif step.outcome is Outcome.LOCKED:
             res.conflict_verdict = LOCKED
             state.skipped_locked.append(res.memory_key)
-        elif step.outcome == Outcome.COPY:
+        elif step.outcome is Outcome.COPY:
             _copy_verdict(state, plan, step)
 
 

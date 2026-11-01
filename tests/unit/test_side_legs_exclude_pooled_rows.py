@@ -37,7 +37,7 @@ def test_nothing_pooled_adds_no_predicate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_unmatched_leg_admits_another_sessions_row_of_a_pooled_key() -> None:
+async def test_the_unmatched_leg_binds_the_pooled_rows_not_their_keys() -> None:
     from server.memory.app.retrieval.side_legs import _fetch_unmatched_candidates
     from tests.unit.test_memory_search_service import StubCH, _q
 
