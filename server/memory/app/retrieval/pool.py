@@ -104,12 +104,6 @@ async def _recency_backfill(
 _SET_CHUNK_PREFIX = "chunk:memory.set:"
 
 
-def _writer_key(h: SearchHit, memory_key: str) -> tuple[str, str, str, str]:
-    """(namespace, agent, user_id, memory_key): the session left out."""
-    r = hit_row_key(h)
-    return r.namespace, r.agent, r.user_id, memory_key
-
-
 def _is_set_chunk(h: Any) -> bool:
     return (
         (getattr(h, "source", "") or "") == "chunk"
@@ -147,23 +141,23 @@ def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
         if not _is_set_chunk(h):
             out.append(h)
             if (getattr(h, "source", "") or "fact") != "chunk":
-                by_row.setdefault(_writer_key(h, h.memory_key), h)
+                by_row.setdefault(hit_row_key(h).writer_key(), h)
     for h in hits:
         if not _is_set_chunk(h):
             continue
         parent_key = str(h.parent_memory_key)
-        parent_row = _writer_key(h, parent_key)
+        parent_row = hit_row_key(h)._replace(memory_key=parent_key).writer_key()
         parent = by_row.get(parent_row)
         if parent is None:
             idx_s = str(h.memory_key).rpartition(":")[2]
-            # its writer, with no session: the chunk's session is not its row's
-            writer = (h.identity[0], h.identity[1], "") if h.identity else None
+            # the chunk's session is not its row's: the hit keeps only its writer
             converted = replace(
                 h,
                 memory_key=parent_key,
                 source="fact",
                 parent_memory_key="",
-                identity=writer,
+                identity=None,
+                writer=h.identity[:2] if h.identity else None,
                 session_id="",
                 score_components={
                     **dict(h.score_components or {}),

@@ -7,7 +7,7 @@ cycle.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, NamedTuple, Protocol
@@ -290,10 +290,12 @@ class SearchHit:
     # rows and uses their text to mask the sentences that restate them.
     status: str = ""
     version: int = 0
-    # The stored row's (agent, user_id, session_id) for a fact or chunk row. A folded set
-    # chunk knows only its writer: (agent, user_id, ""), which names no row but covers the
-    # writer's rows of the key. None for a record and every other plane. Not on the wire.
+    # The stored row's (agent, user_id, session_id) for a fact or chunk row; None for a
+    # record and every other plane. Not on the wire.
     identity: RowIdentity | None = None
+    # (agent, user_id) of a folded set chunk whose row is not pooled: it names no row but
+    # covers its writer's rows of the key. Not on the wire.
+    writer: tuple[str, str] | None = None
 
 
 def row_identity(row: Mapping[str, Any]) -> RowIdentity | None:
@@ -330,31 +332,36 @@ def _identity(hit: Any) -> RowIdentity | None:
 
 
 def names_row(hit: Any) -> bool:
-    """Whether a hit names its stored row: its leg read the row's identity, session
-    included. A folded set chunk knows its writer but not its row's session."""
-    identity = _identity(hit)
-    return bool(identity and identity[2])
+    """Whether a hit's leg read the identity of its stored row."""
+    return _identity(hit) is not None
 
 
-def names_writer_only(hit: Any) -> bool:
-    """Whether a hit knows its writer but not its row (a folded set chunk)."""
-    identity = _identity(hit)
-    return bool(identity and not identity[2])
+def hit_writer(hit: Any) -> tuple[str, str] | None:
+    """(agent, user_id) of a hit that knows its writer but not its row (a folded set
+    chunk); None otherwise."""
+    return getattr(hit, "_row_writer", None) or getattr(hit, "writer", None)
 
 
-def writers_covered(hits: Any, namespace: str = "") -> set[tuple[str, str, str, str]]:
-    """The writer keys of the hits that know only their writer: each covers its writer's
-    rows of the key, so a later leg adds none of them."""
-    return {hit_row_key(h, namespace).writer_key() for h in hits if names_writer_only(h)}
+def writers_covered(hits: Iterable[Any], namespace: str = "") -> set[tuple[str, str, str, str]]:
+    """(namespace, agent, user_id, memory_key) of each hit that knows only its writer: it
+    covers that writer's rows of the key, so a later leg adds none of them."""
+    return {
+        (str(getattr(h, "namespace", "") or namespace), *writer, str(h.memory_key))
+        for h in hits
+        if (writer := hit_writer(h))
+    }
 
 
 def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
     """(namespace, agent, user_id, session_id, memory_key) of the stored row a hit is: one
     key holds a row for each writer and session, so a key alone does not name one row.
-    For a `SearchHit` or a wire hit alike. A hit whose leg read no identity has only its
-    session."""
-    identity = _identity(hit)
-    agent, user_id, session_id = identity or ("", "", str(getattr(hit, "session_id", "") or ""))
+    For a `SearchHit` or a wire hit alike. A folded set chunk has its writer and no
+    session; a hit whose leg read no identity has only its session."""
+    writer = hit_writer(hit)
+    identity = _identity(hit) or (
+        (*writer, "") if writer else ("", "", str(getattr(hit, "session_id", "") or ""))
+    )
+    agent, user_id, session_id = identity
     return RowKey(
         str(getattr(hit, "namespace", "") or namespace),
         agent,

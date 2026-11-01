@@ -13,6 +13,7 @@ from server.identity.app.request_scope import request_scope
 from server.memory.app.search.request import _apply_explain_default
 from server.memory.app.search.tiers import _reader_user_id
 from server.memory.app.search_tag_filter import read_row_tags as _read_row_tags
+from server.memory.domain.search_types import hit_writer
 from server.memory.domain.sensitivity import reads_high
 from server.memory.store.shared import SHARED_AGENT
 
@@ -277,9 +278,11 @@ async def _expand_unit_bodies(
         # Read under the row the hit names, or its writer in any session; a shared row (no
         # row of loom.memory) and any other hit are read under the caller's identity.
         ns = str(getattr(h, "namespace", "") or input.namespace)
-        agent, user_id, session_id = getattr(h, "_row_identity", None) or ("", "", "")
-        if agent and agent != SHARED_AGENT:
-            return (ns, agent, user_id, session_id or "*")
+        who = getattr(h, "_row_identity", None)
+        if who and who[0] != SHARED_AGENT:
+            return (ns, *who)
+        if writer := hit_writer(h):
+            return (ns, *writer, "*")
         return (ns, str(getattr(input, "agent", "*") or "*"), _reader_user_id(input), _sid(h))
 
     by_writer: dict[tuple[str, str, str, str], list[Any]] = {}

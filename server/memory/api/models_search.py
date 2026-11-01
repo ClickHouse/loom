@@ -514,6 +514,8 @@ class _MemorySearchHit(BaseModel):
     # The stored memory's (agent, user_id, session_id) as the leg read them, private and
     # never on the wire: the code annotation reads that memory's links. None = not read.
     _row_identity: tuple[str, str, str] | None = None
+    # A folded set chunk's (agent, user_id) when no row of it is named: see SearchHit.writer.
+    _row_writer: tuple[str, str] | None = None
     # The hit's code links in repositories the caller may read, as the search's code
     # annotation read them; None = not read (memory.ask reads them itself then).
     _code_links: list[dict[str, Any]] | None = None

@@ -23,7 +23,7 @@ from typing import Any
 
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
-from server.memory.domain.search_types import RowKey, hit_row_key, names_row
+from server.memory.domain.search_types import RowKey, hit_row_key, hit_writer, names_row
 from server.memory.store.dedup import CanonicalRow, DuplicateStatus
 
 log = logging.getLogger(__name__)
@@ -144,8 +144,9 @@ async def hide_pool_duplicates(ctx: Any) -> None:
     ns_default = str(input.namespace)
     scope = request_scope()
     try:
+        # every fact leg reads its row's identity; a folded set chunk knows its writer
         named = [hit_row_key(h, ns_default) for h in facts if names_row(h)]
-        unnamed = [hit_row_key(h, ns_default) for h in facts if not names_row(h)]
+        unnamed = [hit_row_key(h, ns_default) for h in facts if hit_writer(h)]
         truth = await _truth(input.org, named, unnamed, scope)
     except Exception as e:  # noqa: BLE001 — hiding is a filter, never a failure
         log.warning("memory.search: duplicate status read failed: %s", e)

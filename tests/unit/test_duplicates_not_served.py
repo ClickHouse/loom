@@ -250,7 +250,9 @@ async def test_a_hit_naming_only_its_writer_takes_its_writers_key_status(
     # a folded set chunk knows its writer but not its row: the writer's key status decides it
     truth.status = {"dup_a": _dup("c-1"), "b": _ACTIVE}
     named = _hit("b", rank=0.8, session="s1", who=("a", "u", "s1"))
-    ctx = _ctx([_hit("dup_a", rank=0.9, session="", who=("a", "-", "")), named])
+    chunk = _hit("dup_a", rank=0.9, session="", who=None)
+    chunk._row_writer = ("a", "-")
+    ctx = _ctx([chunk, named])
     await sd.hide_pool_duplicates(ctx)
     assert [h.memory_key for h in ctx.all_hits] == ["b"]
 

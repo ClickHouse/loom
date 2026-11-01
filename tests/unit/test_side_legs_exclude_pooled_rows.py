@@ -9,7 +9,12 @@ from server.memory.domain.search_sql import exclude_pooled
 from server.memory.domain.search_types import SearchHit
 
 
-def _hit(key: str, identity: tuple[str, str, str] | None, source: str = "fact") -> SearchHit:
+def _hit(
+    key: str,
+    identity: tuple[str, str, str] | None,
+    source: str = "fact",
+    writer: tuple[str, str] | None = None,
+) -> SearchHit:
     return SearchHit(
         memory_key=key,
         memory_type="semantic",
@@ -17,23 +22,23 @@ def _hit(key: str, identity: tuple[str, str, str] | None, source: str = "fact") 
         distance=0.5,
         identity=identity,
         source=source,
+        writer=writer,
     )
 
 
 def test_a_pooled_row_leaves_out_only_itself() -> None:
     where: list[str] = []
     params: dict = {}
-    exclude_pooled(where, params, [_hit("k", ("a", "u", "s1")), _hit("j", None)])
-    assert params["pooled_rows"] == [("a", "u", "s1", "k")]
-    # a hit whose leg read no identity names no row: its whole key stays out
-    assert params["pooled_keys"] == ["j"]
-    assert len(where) == 2
+    # a row stored with an empty session is still that row
+    exclude_pooled(where, params, [_hit("k", ("a", "u", "s1")), _hit("k", ("b", "u", ""))])
+    assert params == {"pooled_rows": [("a", "u", "s1", "k"), ("b", "u", "", "k")]}
+    assert len(where) == 1
 
 
 def test_a_writer_only_hit_leaves_out_its_writers_rows_of_the_key() -> None:
     where: list[str] = []
     params: dict = {}
-    exclude_pooled(where, params, [_hit("k", ("a", "u", ""))])  # a folded set chunk
+    exclude_pooled(where, params, [_hit("k", None, writer=("a", "u"))])  # a folded set chunk
     assert params == {"pooled_writers": [("a", "u", "k")]}
     assert where == [
         "(e.agent, e.user_id, e.memory_key) NOT IN {pooled_writers:Array(Tuple(String, String, String))}"
@@ -65,4 +70,14 @@ async def test_the_unmatched_leg_binds_the_pooled_rows_not_their_keys() -> None:
     sql, params = ch.query_all_calls[0]
     assert "(e.agent, e.user_id, e.session_id, e.memory_key) NOT IN" in sql
     assert params["pooled_rows"] == [("a", "u", "s1", "k")]
-    assert "pooled_keys" not in params
+    assert "pooled_writers" not in params
+
+
+def test_a_writer_only_hit_covers_its_writers_rows_and_keeps_its_own_row_key() -> None:
+    from server.memory.domain.search_types import hit_row_key, names_row, writers_covered
+
+    chunk = _hit("k", None, writer=("a", "u"))
+    row = _hit("k", ("a", "u", ""))  # a row stored with an empty session names its row
+    assert (names_row(chunk), names_row(row)) == (False, True)
+    assert writers_covered([chunk, row], "n") == {("n", "a", "u", "k")}
+    assert hit_row_key(chunk, "n") == ("n", "a", "u", "", "k")

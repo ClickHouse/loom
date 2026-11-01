@@ -494,7 +494,7 @@ async def test_a_writer_only_hit_keeps_its_writers_rows_of_the_key_out(monkeypat
         content_excerpt="t",
         rank_score=0.5,
         score_components={"rank_score_raw": 0.5},
-        identity=("a", "u", ""),
+        writer=("a", "u"),
     )
     inp = MemorySearchInput(
         org="o", namespace="n", agent="a", query="task worktree", top_k=5, key_match_mode="always"

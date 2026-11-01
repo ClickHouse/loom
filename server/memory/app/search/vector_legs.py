@@ -298,4 +298,6 @@ def _stamp_leg_tags[HitT](leg_hit: Any, wire_hit: HitT) -> HitT:
         _stamp_row_tags(wire_hit, getattr(leg_hit, "tags", None))
     if (identity := getattr(leg_hit, "identity", None)) is not None:
         wire_hit._row_identity = identity  # type: ignore[attr-defined]
+    if (writer := getattr(leg_hit, "writer", None)) is not None:
+        wire_hit._row_writer = writer  # type: ignore[attr-defined]
     return wire_hit

@@ -17,7 +17,6 @@ import pytest
 from server.memory.app.retrieval import SearchHit, fusion
 from server.memory.app.retrieval import pool as S
 from server.memory.app.retrieval.pool import fold_set_chunks
-from server.memory.domain.search_types import names_row
 
 
 def _hit(
@@ -230,5 +229,4 @@ def test_a_chunk_without_its_row_in_the_pool_becomes_a_hit_of_its_writer_and_no_
     )
     (hit,) = fold_set_chunks([chunk])
     assert (hit.memory_key, hit.source) == ("lesson_a", "fact")
-    assert (hit.identity, hit.session_id) == (("a", "u2", ""), "")
-    assert not names_row(hit)
+    assert (hit.identity, hit.writer, hit.session_id) == (None, ("a", "u2"), "")

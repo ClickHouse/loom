@@ -179,6 +179,6 @@ async def test_a_folded_set_chunk_is_read_under_its_writer_in_any_session(monkey
 
     monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
     h = _hit("k", session_id="")
-    h._row_identity = ("a", "u2", "")  # the writer, not the row
+    h._row_writer = ("a", "u2")  # the writer, not the row
     await _expand_unit_bodies([h], _input(agent="*", user_id="-"))
     assert reads == [("a", "u2", "*")] and h.content_excerpt == "u2's body"
