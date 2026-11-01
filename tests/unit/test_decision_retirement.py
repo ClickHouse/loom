@@ -957,7 +957,11 @@ async def test_an_outcome_merged_into_another_key_writes_and_credits_nothing(
         )
     )
     assert (out.updated, out.memories_credited, credited) == (False, 0, [])
-    hint = "decision:peer, which has the same text" if merged_into else "decision.outcome again"
+    hint = (
+        "decision:peer, which has the same text; nothing was written under this key."
+        if merged_into
+        else "Call decision.outcome again"
+    )
     assert hint in out.next
     assert await _history() == ["active"]
 
