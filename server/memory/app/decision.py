@@ -202,7 +202,10 @@ async def _write_decision(
     async def check_revised() -> None:
         if revises is None:
             return
-        if await live_writer_record(org, namespace, key, ch=get_client()) != revises:
+        live = await live_writer_record(org, namespace, key, ch=get_client())
+        if live is None:
+            raise _no_active_decision(org, namespace, key)
+        if live != revises:
             raise _decision_changed()
 
     await check_revised()
@@ -478,11 +481,8 @@ def _decision_changed() -> PreconditionFailedError:
     )
 
 
-def _no_active_decision(input: DecisionOutcomeInput) -> NotFoundError:
-    return NotFoundError(
-        f"no active decision {input.memory_key!r} in {input.org}/{input.namespace}",
-        memory_key=input.memory_key,
-    )
+def _no_active_decision(org: str, namespace: str, key: str) -> NotFoundError:
+    return NotFoundError(f"no active decision {key!r} in {org}/{namespace}", memory_key=key)
 
 
 async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcomeOutput:
@@ -493,7 +493,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     # Only the record's live writer revises it; record and writer come from one read.
     writer = await live_writer_record(input.org, input.namespace, input.memory_key, ch=ch)
     if writer is None:
-        raise _no_active_decision(input)
+        raise _no_active_decision(input.org, input.namespace, input.memory_key)
     payload = _outcome_payload(input, writer)
     identity = Identity(
         org=input.org,
@@ -510,7 +510,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
 
     row = await read_row()
     if row is None:
-        raise _no_active_decision(input)
+        raise _no_active_decision(input.org, input.namespace, input.memory_key)
     # Conditional on the row read with the record, so a delete since then is not written back.
     try:
         await _write_decision(
@@ -540,7 +540,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
         if not mismatch and _pin_refusal(e) is None:
             raise
         if await read_row() is None:
-            raise _no_active_decision(input) from None
+            raise _no_active_decision(input.org, input.namespace, input.memory_key) from None
         raise _decision_changed() from None
 
     # Close the loop: the memories the deciding run relied on earn (or lose)

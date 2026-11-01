@@ -815,12 +815,12 @@ async def test_an_outcome_after_a_re_record_before_its_write_writes_nothing(
     await h.handle_decision_record(record_input(**scenario, caused_by=[], influenced_by=[]))
     checked = h._checked_statement
 
-    async def _re_record_then_check(*args: Any) -> Any:
-        if "realized_outcome" in args[2] and args[2]["realized_outcome"]:
+    async def _re_record_then_check(org: str, namespace: str, payload: Any, tags: Any) -> Any:
+        if payload.get("realized_outcome"):
             await h.handle_decision_record(
                 record_input(**scenario, run_id="r2", caused_by=[], influenced_by=[])
             )
-        return await checked(*args)
+        return await checked(org, namespace, payload, tags)
 
     monkeypatch.setattr(h, "_checked_statement", _re_record_then_check)
     with pytest.raises(PreconditionFailedError):
@@ -831,6 +831,39 @@ async def test_an_outcome_after_a_re_record_before_its_write_writes_nothing(
     row = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
     assert row is not None and "Realized" not in row.value
     assert (await _seed_decision()).run_id == "r2"
+
+
+@pytest.mark.asyncio
+async def test_a_delete_before_the_outcome_writes_answers_not_found(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The writer deletes its row after the outcome read it and before the outcome writes.
+    from server.core.errors import NotFoundError
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    _set_into(local, monkeypatch)
+    await h.handle_decision_record(
+        record_input(
+            category="deploy",
+            scenario="Roll back or hotfix the image?",
+            caused_by=[],
+            influenced_by=[],
+        )
+    )
+    checked = h._checked_statement
+
+    async def _delete_then_check(org: str, namespace: str, payload: Any, tags: Any) -> Any:
+        if payload.get("realized_outcome"):
+            await _delete("claude")
+        return await checked(org, namespace, payload, tags)
+
+    monkeypatch.setattr(h, "_checked_statement", _delete_then_check)
+    with pytest.raises(NotFoundError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    assert await _seed_decision() is None
 
 
 @pytest.mark.asyncio
