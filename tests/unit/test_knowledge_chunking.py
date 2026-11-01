@@ -4,6 +4,7 @@ sections, breadcrumb into the embed text; unstructured text unchanged."""
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -256,8 +257,6 @@ def test_a_heading_line_with_a_long_run_of_blanks_is_read_whole() -> None:
 
 
 def test_hostile_markdown_lines_chunk_in_bounded_time() -> None:
-    import time
-
     for line in (
         "`" * 1_000_000 + "a`",  # a 1 MB backtick run with a trailing backtick
         "# a" + " " * 200_000 + "b",  # a heading's blanks before its closing run
