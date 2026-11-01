@@ -42,8 +42,9 @@ def _drop_excluded_keys(ctx: SearchContext) -> None:
 def fold_writer_hits(hits: list[_MemorySearchHit], namespace: str) -> list[_MemorySearchHit]:
     """Fold each set chunk that names only its writer onto that writer's newest pooled row
     of the key, as `fold_set_chunks` folds a chunk onto a pooled parent, at the earlier of
-    the two positions. A key's chunks hold the writer's newest value; when that row is not
-    pooled, an older pooled row of the writer takes the passage."""
+    the two positions; with no such row, onto the first such chunk of its writer and key.
+    A key's chunks hold the writer's newest value; when that row is not pooled, an older
+    pooled row of the writer takes the passage."""
     if not any(hit_writer(h) for h in hits):
         return hits
     rows: dict[tuple[str, str, str, str], _MemorySearchHit] = {}
@@ -54,8 +55,10 @@ def fold_writer_hits(hits: list[_MemorySearchHit], namespace: str) -> list[_Memo
     out: list[_MemorySearchHit] = []
     placed: set[int] = set()
     for h in hits:
-        row = rows.get(hit_row_key(h, namespace).writer_key()) if hit_writer(h) else None
-        if row is not None:
+        row = None
+        if hit_writer(h):
+            row = rows.setdefault(hit_row_key(h, namespace).writer_key(), h)
+        if row is not None and row is not h:
             fields = folded_fields(row, h)
             for name, value in fields.items():
                 setattr(row, name, value)

@@ -107,6 +107,7 @@ def anchor_pool_sql(where_sql: str) -> str:
                        e.tags AS tags,
                        e.agent AS agent,
                        e.user_id AS user_id,
+                       e.version AS version,
                        e.scope AS scope
                 FROM loom.memory_embeddings AS e FINAL
                 WHERE {where_sql}

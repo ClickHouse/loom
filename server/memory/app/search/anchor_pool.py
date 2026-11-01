@@ -142,6 +142,7 @@ async def _run_anchor_pool(ctx: SearchContext) -> None:
                     _MemorySearchHit(
                         memory_key=mk,
                         memory_type=str(row.get("memory_type") or "semantic"),
+                        version=int(row.get("version") or 0),
                         content_excerpt=excerpt,
                         distance=1.0 - sim,
                         similarity=sim,

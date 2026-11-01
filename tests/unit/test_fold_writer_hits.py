@@ -62,6 +62,15 @@ def test_a_chunk_whose_row_is_not_pooled_stays() -> None:
     assert fold_writer_hits([chunk, theirs], "n") == [chunk, theirs]
 
 
+def test_two_chunks_of_one_writer_and_key_from_separate_legs_are_one_hit() -> None:
+    # each supplemental leg folds its own chunk; with no row pooled, the first stands for both
+    first = _wire("k", 0.6, "one passage", writer=("a", "u"))
+    second = _wire("k", 0.8, "another passage", writer=("a", "u"))
+    theirs = _wire("k", 0.4, "u2's chunk", writer=("a", "u2"))
+    assert fold_writer_hits([first, theirs, second], "n") == [first, theirs]
+    assert (first.rank_score, first.content_excerpt) == (0.8, "another passage")
+
+
 @pytest.mark.asyncio
 async def test_the_chunk_folds_before_the_duplicates_are_read(monkeypatch) -> None:
     from server.memory.app.search import assemble

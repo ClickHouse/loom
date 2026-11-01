@@ -360,7 +360,8 @@ def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
     if identity := _identity(hit):
         agent, user_id, session_id = identity
     elif writer := hit_writer(hit):
-        (agent, user_id), session_id = writer, ""
+        agent, user_id = writer
+        session_id = ""
     else:
         agent, user_id, session_id = "", "", str(getattr(hit, "session_id", "") or "")
     return RowKey(
