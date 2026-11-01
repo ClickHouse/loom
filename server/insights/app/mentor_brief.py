@@ -1,5 +1,5 @@
-"""mentor.brief handler: the profile, the planes, the hints with evidence, and adoption —
-hints shown vs followed per code."""
+"""mentor.brief handler: the profile, the planes, the hints and the counts that fired
+them, adoption (hints shown vs followed per code), and the usage evidence ladder."""
 
 from __future__ import annotations
 
@@ -316,7 +316,7 @@ async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
         planes=_planes(profile),
         hints=hints,
         adoption=await _adoption(profile),
-        evidence=evidence,
+        usage_evidence=evidence,
         ledger_from=ledger_from,
         ledger_retention_days=retention,
         agents=writers,
@@ -334,7 +334,7 @@ def _defaulted_note(out: MentorBriefOutput) -> str:
 
 
 def render_table(out: MentorBriefOutput) -> str:
-    """The CLI's view: usage, planes, hints, adoption."""
+    """The CLI's view: usage, planes, hints, adoption, the usage evidence ladder."""
     lines = [
         f"mentor.brief {out.org}/{out.namespace} agent={out.agent}"
         f"{_defaulted_note(out)} "
@@ -363,16 +363,16 @@ def render_table(out: MentorBriefOutput) -> str:
         lines.append("adoption (sessions shown → followed)")
         for a in out.adoption:
             lines.append(f"  {a.code:<25} {a.shown_sessions:>4} → {a.followed_sessions}")
-    if out.evidence:
+    if out.usage_evidence:
         lines.append("")
         lines.append("evidence             count  source")
-        for e in out.evidence:
+        for e in out.usage_evidence:
             n = "-" if e.count is None else str(e.count)
             lines.append(f"{e.rung:<20} {n:>5}  {e.source}")
         if out.ledger_retention_days:
             lines.append(f"the call ledger keeps {out.ledger_retention_days}d of rows")
         lines.append("")
-        lines.extend(f"{e.rung}: {e.meaning}" for e in out.evidence)
+        lines.extend(f"{e.rung}: {e.meaning}" for e in out.usage_evidence)
     if out.skipped:
         lines.append("")
         lines.append("skipped: " + "; ".join(out.skipped))

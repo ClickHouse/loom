@@ -6367,7 +6367,7 @@ export interface MentorBriefOutput {
   planes?: MentorPlane[];
   hints?: MentorHint[];
   adoption?: MentorAdoption[];
-  evidence?: MentorEvidence[];
+  usage_evidence?: MentorEvidence[];
   ledger_from?: string | null;
   ledger_retention_days?: number | null;
   agents?: string[];

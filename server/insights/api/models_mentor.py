@@ -111,7 +111,7 @@ class MentorBriefOutput(BaseModel):
     adoption: list[MentorAdoption] = Field(default_factory=list)
     # The agent's use of Loom in the window, one rung each from a call made to a graded
     # task; empty for no agent in particular, and a rung whose read failed has no count.
-    evidence: list[MentorEvidence] = Field(default_factory=list)
+    usage_evidence: list[MentorEvidence] = Field(default_factory=list)
     # Oldest ledger row of this agent in the window, of any kind; None when it holds none.
     ledger_from: datetime | None = None
     # Days the configured retention keeps this namespace's call ledger rows; 0 keeps them

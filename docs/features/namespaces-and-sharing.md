@@ -192,7 +192,7 @@ at session start, and a successful response carries at most one (`hint` on MCP, 
 `LOOM_MENTOR_MAX_HINTS_PER_SESSION`. `loom mentor --org … --namespace … --agent …` prints the whole brief. See the
 [mentor ops](../reference/operations/mentor.md).
 
-A brief's `evidence` lists what the agent's use of Loom shows, one rung each, with who
+A brief's `usage_evidence` lists what the agent's use of Loom shows, one rung each, with who
 recorded it (`server`: Loom saw it; `client`: a caller reported it, unverified). The rungs
 are read at each brief, not from the cached profile. Those read from the call ledger
 (`attempt`, `success`, `committed_write`, `returned_hit` and the `memory.outcome` labels)

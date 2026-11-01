@@ -577,7 +577,8 @@ async def reported_keys(
             UNION ALL
             SELECT args['memory_key'] AS k {labels} AND args['memory_id'] = ''
             UNION ALL
-            SELECT memory_key AS k FROM loom.memory FINAL
+            -- A memory's key never changes across its versions, so any version answers.
+            SELECT memory_key AS k FROM loom.memory
             WHERE {_SCOPE} AND memory_id IN (
                 SELECT toUUIDOrZero(args['memory_id']) {labels} AND args['memory_id'] != ''
             )

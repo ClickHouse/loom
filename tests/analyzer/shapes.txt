@@ -95,7 +95,6 @@
 0d0074d068cf	SELECT queue_id, agent, user_id, session_id, status, attempts, message_count, content_chars, written, last_error, enqueued_at, updated_at FROM loom.memory_extraction_queue FINAL PREWHERE org = {org:St
 0d4ffd898820	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.session_id AS session_
 0d722791e395	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
-0d75e9650d8b	SELECT uniqExact(k) AS n FROM ( SELECT k FROM (SELECT arrayJoin(memories_used) AS k FROM loom.agent_runs FINAL WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND start
 0d8bcca925ff	SELECT sum(upstream_cost_usd) AS spent FROM loom.agent_events WHERE org = {org:String} AND namespace = {ns:String} AND ts > now() - INTERVAL ? DAY
 0df388be7e18	SELECT count() AS n FROM loom.memory_projection_failures WHERE org = {org:String} AND (JSONExtractString(payload, ?) = {uid:String} OR arrayExists(e -> JSONExtractString(e, ?) = {uid:String}, JSONExtr
 0df8d59119a4	SELECT org, namespace, policy_id, effect, description, actions, condition, enabled, mode, created_by, created_at, updated_at, tombstoned_at FROM loom.namespace_policies FINAL WHERE org = {org:String}
@@ -377,6 +376,7 @@
 34e802c88a30	SELECT count() AS n FROM loom.events WHERE org = {org:String} AND namespace = {ns:String}
 34eadcb6f3af	SELECT count() AS n FROM loom.delete_version_checks WHERE org = {org:String} AND user_id = {uid:String}
 3511c7e369c0	SELECT concat(?, session_id, ?, toString(chunk_index)) AS memory_key, ? AS memory_type, content AS content_excerpt, toString(created_at) AS created_at, toString(created_at) AS valid_at FROM loom.memor
+353e81ce9a7a	SELECT uniqExact(k) AS n FROM ( SELECT k FROM (SELECT arrayJoin(memories_used) AS k FROM loom.agent_runs FINAL WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND start
 3552d7151a86	SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, memory_type, value, ? AS value_truncated, confidence, version, pinned, char_limit, created_at, updated_at, expires_at, valid_a
 3556360a339b	SELECT m.org, m.namespace, m.agent, m.user_id, m.session_id, m.memory_key, m.memory_type, m.value AS content_excerpt, m.run_id, m.entities, m.tags, m.files, m.concepts, m.valid_at, m.valid_to, m.expir
 3590afdb142b	UPDATE loom.memory_embeddings SET status = ? WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND user_id = {uid:String} AND memory_key = {key:String} AND tombstoned_at

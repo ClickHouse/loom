@@ -14419,7 +14419,7 @@ class MentorBriefOutput(TypedDict, total=False):
     planes: NotRequired[list["MentorPlane"]]
     hints: NotRequired[list["MentorHint"]]
     adoption: NotRequired[list["MentorAdoption"]]
-    evidence: NotRequired[list["MentorEvidence"]]
+    usage_evidence: NotRequired[list["MentorEvidence"]]
     ledger_from: NotRequired[Optional[str]]
     ledger_retention_days: NotRequired[Optional[int]]
     agents: NotRequired[list[str]]

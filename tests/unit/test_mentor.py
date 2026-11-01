@@ -997,7 +997,7 @@ def test_mentor_brief_climbs_the_evidence_ladder_from_attempt_to_outcome(
     )
     # The cached profile's own count is not what the ladder reports: it reads live.
     out = _brief(monkeypatch, ch, credited_keys=99)
-    ladder = {e.rung: (e.count, e.source) for e in out.evidence}
+    ladder = {e.rung: (e.count, e.source) for e in out.usage_evidence}
     assert list(ladder) == [
         "attempt",
         "success",
@@ -1049,7 +1049,7 @@ def test_an_embedder_that_fails_leaves_only_the_indexed_rung_uncounted(
     monkeypatch.setattr(handler, "get_embedder", broken)
     ch = _CH({**_EVIDENCE_ROWS, M_RETENTION: [{"retention_days": 0}]})
     out = _brief(monkeypatch, ch)
-    ladder = {e.rung: e.count for e in out.evidence}
+    ladder = {e.rung: e.count for e in out.usage_evidence}
     assert ladder["indexed_write"] is None and ladder["attempt"] == 1
     assert out.skipped == ["indexed_writes: RuntimeError"]
 
@@ -1068,7 +1068,7 @@ def test_a_brief_about_no_agent_in_particular_has_no_ladder(
     out = asyncio.run(
         handler.handle_mentor_brief(MentorBriefInput(org="o", namespace="ns", agent="-"))
     )
-    assert out.evidence == [] and not [q for q in ch.sqls if M_EVIDENCE in q]
+    assert out.usage_evidence == [] and not [q for q in ch.sqls if M_EVIDENCE in q]
 
 
 def test_a_failed_evidence_read_leaves_its_rungs_uncounted(
@@ -1078,7 +1078,7 @@ def test_a_failed_evidence_read_leaves_its_rungs_uncounted(
         {M_EVIDENCE: RuntimeError("down"), M_INDEXED: [{"n": 3}], M_REPORTED: RuntimeError("x")}
     )
     out = _brief(monkeypatch, ch)
-    ladder = {e.rung: e.count for e in out.evidence}
+    ladder = {e.rung: e.count for e in out.usage_evidence}
     assert ladder["attempt"] is None and ladder["returned_hit"] is None
     assert ladder["indexed_write"] == 3 and ladder["client_acknowledged"] is None
     assert "evidence: RuntimeError" in out.skipped and "reported_keys: RuntimeError" in out.skipped
