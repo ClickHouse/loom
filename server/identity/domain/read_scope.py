@@ -296,6 +296,9 @@ SCOPED_OPS = frozenset(
         "memory.stack",
         "memory.statuses",
         "memory.timeline",
+        # Planes without a user (documents, webhooks) and the member directory are
+        # left out under a narrowed scope.
+        "namespace.inventory",
         "procedure.list",
         "procedure.match",
         "profile.render",

@@ -194,6 +194,29 @@ Save a new revision of the namespace's guide after you change one of its convent
 | `revision` | `int` | The current revision after the call (the one written, or the one that refused it), which the next edit passes as `expected_revision`. |
 | `current` | `NamespaceGuideGetOutput \| None` | On a conflict, the current guide; otherwise None. |
 
+## `namespace.inventory`
+
+What one namespace holds: live counts and newest write per plane (memories, records, documents, runs, integrations), the registered member count, and the agents, authors and subjects observed on…
+
+`POST /v1/namespace.inventory` · MCP `loom_namespace_inventory` · role `viewer` · read
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `read_scope` | `Literal['namespace', 'own_user', 'own_session']` | `'namespace'` | `own_user` / `own_session` bound every count to `user_id` (and `session_id`); a token's own bound narrows further, never wider. |
+| `user_id` | `str \| None` | `None` | The end user the row belongs to; `'-'` for none. |
+| `session_id` | `str \| None` | `None` | The session or conversation the row belongs to; `'-'` for none. |
+| `population_limit` | `int` | `20` | At most this many entries in each observed population (most rows first). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `scope` | `InventoryScope` |  |
+| `sections` | `list[InventorySection]` |  |
+| `populations` | `list[InventoryPopulation]` |  |
+| `capabilities` | `list[InventoryCapability]` |  |
+| `computed_at` | `datetime` | When the reads started. |
+
 ## `namespace.join`
 
 Self-add as a viewer on a public namespace.

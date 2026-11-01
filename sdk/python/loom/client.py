@@ -2142,6 +2142,15 @@ class NamespaceOps:
             await self._agent.call("namespace.guide_set", body, **options),
         )
 
+    async def inventory(
+        self, body: _ops.NamespaceInventoryBody | None = None, /, **options: Any
+    ) -> _ops.NamespaceInventoryOutput:
+        """`namespace.inventory`."""
+        return cast(
+            "_ops.NamespaceInventoryOutput",
+            await self._agent.call("namespace.inventory", body, **options),
+        )
+
     async def join(
         self, body: _ops.NamespaceJoinBody | None = None, /, **options: Any
     ) -> _ops.NamespaceJoinOutput:

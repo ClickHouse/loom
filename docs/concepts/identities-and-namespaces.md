@@ -280,6 +280,8 @@ than `namespace`:
 - `code.search` breaks ties with the scope's own user's recent files, whatever
   `user_id` the body names.
 - A leg whose rows carry no user (conversations, runs) answers nothing.
+- `namespace.inventory` counts memories, records and runs inside the scope, and lists
+  documents, integrations and the member count as not counted (`complete: false`).
 - A blacklist pattern refuses every user's writes but records no user (its
   `created_by` is the token subject, which every per-user token of one backend
   shares), so every `blacklist.*` op is refused with `AUTH_INSUFFICIENT`: patterns
