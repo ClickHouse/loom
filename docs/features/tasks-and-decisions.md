@@ -476,8 +476,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   - **No record under the key**: of the `LOOM_MEMORY_DECISION_EXTRACT_RESTATEMENT_TOP_K` (default 20) decision keys
     closest to the candidate (cosine only), a confirmed one under another key that reads the same at or above the
     namespace's conflict threshold skips the candidate: `already recorded by <agent> under <key>`. Otherwise the
-    decision is recorded. The search behind it fetches at most 500 rows, so above 500 /
-    `LOOM_MEMORY_SEARCH_PER_KEY_CAP` keys it may read fewer.
+    decision is recorded. The fetch is capped at 500 rows, so a large value or `LOOM_MEMORY_SEARCH_PER_KEY_CAP=0`
+    can read fewer keys.
 - **The tag write**: `memory.update_by_id` by the row's `memory_id`, tags only, conditional on the value read: a value
   changed since, by `decision.outcome` or a re-record, is left alone and reported as a race. It is a new version by
   the extractor: the row's pin, value and attestation stay (the value's hash does not change, so the attestation still
@@ -511,9 +511,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   run read it is reported as such, a race the next run settles. Either way the run goes on with the next candidate and
   the retire step.
 - **Limits**: `--max-per-section` is at least 1 and `--window-chars` at least 500; a smaller value is refused. A reply
-  cut at the model's token limit is reported as such, with the advice to lower either; a window's first model call, or
-  its second after an empty reply, that fails (a provider error, a timeout) loses that window only; a failed second read
-  for a joined reason loses nothing, its first reply's decisions recorded.
+  cut at the model's token limit is reported as such, with the advice to lower either or raise `decision_extract` in
+  `LOOM_LLM_MAX_TOKENS_OVERRIDES` (default 4000); a window's first model call, or its second after an empty reply,
+  that fails (a provider error, a timeout) loses that window only; a failed second read for a joined reason loses
+  nothing, its first reply's decisions recorded.
 - **Model and exit code**: the run refuses before any model call when it would read the document with the fake model,
   whose decisions pass the verbatim check by construction: a keyed provider (`LOOM_LLM_PROVIDER=openai` or `anthropic`)
   with no API key set, or no provider configured at all. `LOOM_LLM_PROVIDER=fake` set explicitly runs on it on purpose.

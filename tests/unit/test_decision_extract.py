@@ -1221,12 +1221,18 @@ async def test_the_restatement_search_makes_no_model_call(monkeypatch) -> None:
     assert world.recorded
 
 
+_CUT = (
+    "reply cut at the token limit (4000); lower --window-chars or --max-per-section, or raise "
+    "decision_extract in LOOM_LLM_MAX_TOKENS_OVERRIDES"
+)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stop", "reason"),
     [
-        ("length", "reply cut at the token limit; lower --window-chars or --max-per-section"),
-        ("max_tokens", "reply cut at the token limit; lower --window-chars or --max-per-section"),
+        ("length", _CUT),
+        ("max_tokens", _CUT),
         (
             "content_filter",
             "the model's reply is not the JSON asked for (stop reason: content_filter)",
@@ -1442,12 +1448,18 @@ def test_a_long_outcome_is_shortened_and_marked_in_the_prompt() -> None:
     assert "an outcome ending in … is shortened" in prompt
 
 
-def test_the_prompt_lists_at_most_the_configured_known_decisions(monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_the_prompt_lists_at_most_the_configured_known_decisions(monkeypatch) -> None:
     from server.settings import settings
 
-    own = [(None, {"category": f"design:{i}", "scenario": "s", "outcome": "o"}) for i in range(3)]
+    world = _World(monkeypatch, [])
+    for i in range(3):
+        fields = {"category": "design", "scenario": f"known {i}", "outcome": "o"}
+        world.record(f"decision:known-{i}", fields)
     monkeypatch.setattr(settings, "memory_decision_extract_known_max", 2)
-    assert [c for c, _, _ in de._known_decisions(own)] == ["design:0", "design:1"]  # type: ignore[arg-type]
+    await _run()
+    listed = world.prompts[0][0].split("outcome as far as it is shown:\n", 1)[1]
+    assert listed.count("\n- ") + 1 == 2 and "known 2" not in listed
 
 
 def test_clean_alternatives_can_keep_them_uncut() -> None:

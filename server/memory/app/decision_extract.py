@@ -217,7 +217,11 @@ async def cites_document(org: str, resource_id: str, namespace: str, source_uri:
 def _unread_reply(stop_reason: str) -> str:
     """Why a model reply could not be read as the candidates' JSON."""
     if stop_reason in ("length", "max_tokens"):
-        return "reply cut at the token limit; lower --window-chars or --max-per-section"
+        return (
+            f"reply cut at the token limit ({llm_max_tokens('decision_extract')}); lower "
+            "--window-chars or --max-per-section, or raise decision_extract in "
+            "LOOM_LLM_MAX_TOKENS_OVERRIDES"
+        )
     reason = "the model's reply is not the JSON asked for"
     return f"{reason} (stop reason: {stop_reason})" if stop_reason else reason
 
