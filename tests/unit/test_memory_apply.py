@@ -309,7 +309,7 @@ async def test_search_target_touches_only_the_callers_identity(
 
     async def _search(inp: Any) -> Any:
         asked.append(inp)
-        return SimpleNamespace(results=hits)
+        return SimpleNamespace(results=hits, top_k_ceiling=0)
 
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
     reads: list[tuple[str, str, str, str]] = []
@@ -354,35 +354,23 @@ async def test_search_target_touches_only_the_callers_identity(
     assert asked[0].top_k == 2 and out.truncated is True
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("other_rows", "min_score", "truncated"),
-    [(32, None, True), (31, None, False), (32, 0.95, False)],  # a floor past the weakest hit
-)
-async def test_a_full_search_window_may_hold_more_of_the_callers_rows(
-    monkeypatch: pytest.MonkeyPatch, other_rows: int, min_score: float | None, truncated: bool
-) -> None:
-    # limit 10 asks for 33 hits; a full window of other owners' rows says more may be past it
+def _search_hit(key: str, agent: str, similarity: float = 0.9) -> Any:
     from server.memory.api.models_search import _MemorySearchHit
 
-    def hit(key: str, agent: str, similarity: float) -> Any:
-        h = _MemorySearchHit(
-            memory_key=key,
-            memory_type="semantic",
-            content_excerpt=key,
-            distance=1 - similarity,
-            similarity=similarity,
-        )
-        h._row_identity = (agent, "-", "-")
-        return h
+    h = _MemorySearchHit(
+        memory_key=key,
+        memory_type="semantic",
+        content_excerpt=key,
+        distance=1 - similarity,
+        similarity=similarity,
+    )
+    h._row_identity = (agent, "-", "-")
+    return h
 
-    hits = [
-        hit("mine", "cursor", 1.0),
-        *(hit(f"k{i}", "other-agent", 0.9) for i in range(other_rows)),
-    ]
 
+async def _apply_search(monkeypatch: pytest.MonkeyPatch, hits: list[Any], **search: Any) -> Any:
     async def _search(_: Any) -> Any:
-        return SimpleNamespace(results=hits)
+        return SimpleNamespace(results=hits, top_k_ceiling=search.pop("ceiling", 0))
 
     async def _get_by_key(identity: Any, key: str, **_: Any) -> MemoryRow | None:
         return _row(key, agent=identity.agent)
@@ -390,16 +378,37 @@ async def test_a_full_search_window_may_hold_more_of_the_callers_rows(
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
     monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
-    out = await handle_memory_apply(
+    return await handle_memory_apply(
         MemoryApplyInput(
             **_ID,
-            target={"search": {"query": "q", "min_score": min_score}},
+            target={"search": {"query": "q", **search}},
             action="delete",
             reason="r",
             limit=10,
         )
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("other_rows", "ceiling", "truncated"),
+    [(32, 0, True), (31, 0, False), (19, 20, True)],  # 20: a token's top_k ceiling
+)
+async def test_a_full_search_window_may_hold_more_of_the_callers_rows(
+    monkeypatch: pytest.MonkeyPatch, other_rows: int, ceiling: int, truncated: bool
+) -> None:
+    # limit 10 asks for 33 hits at the per-key cap of 3, or as many as the ceiling serves
+    monkeypatch.setattr(settings, "memory_search_per_key_cap", 3)
+    hits = [_search_hit("mine", "cursor"), *(_search_hit(f"k{i}", "x") for i in range(other_rows))]
+    out = await _apply_search(monkeypatch, hits, ceiling=ceiling)
     assert [r.memory_key for r in out.rows] == ["mine"] and out.truncated is truncated
+
+
+@pytest.mark.asyncio
+async def test_min_score_is_a_hits_least_similarity(monkeypatch: pytest.MonkeyPatch) -> None:
+    hits = [_search_hit("close", "cursor", 0.8), _search_hit("far", "cursor", 0.6)]
+    out = await _apply_search(monkeypatch, hits, min_score=0.7)
+    assert [r.memory_key for r in out.rows] == ["close"]
 
 
 def test_apply_op_is_a_writer_op_and_audited() -> None:

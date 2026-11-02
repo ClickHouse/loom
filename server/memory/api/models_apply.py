@@ -54,6 +54,7 @@ class ApplyFilter(BaseModel):
 
 class ApplySearch(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
+    # the least `similarity` (1 - cosine distance) a hit needs to be acted on
     min_score: float | None = Field(default=None, ge=0.0, le=1.0)
 
 

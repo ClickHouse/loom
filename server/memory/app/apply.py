@@ -185,8 +185,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
     seen: set[str] = set()
     mine = (input.agent, input.user_id, input.session_id)
     for hit in out.results:
-        score = float(hit.similarity)
-        if target.search.min_score is not None and score < target.search.min_score:
+        if target.search.min_score is not None and hit.similarity < target.search.min_score:
             continue
         key = hit.memory_key
         if key in seen:
@@ -204,12 +203,9 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             rows.append(row)
             if len(rows) > limit:  # one row past `limit`: more matched
                 return rows[:limit], True
-    # a full window may hold back rows of the caller's past it, unless its weakest hit
-    # already fell below `min_score` (hits come best first)
-    full = len(out.results) >= top_k
-    floor = target.search.min_score
-    weakest = float(out.results[-1].similarity) if out.results else 0.0
-    return rows, full and (floor is None or weakest >= floor)
+    # a full window, as large as the search served it, may hold back rows of the caller's
+    window = min(top_k, out.top_k_ceiling or top_k)
+    return rows, len(out.results) >= window
 
 
 # ---------------------------------------------------------------- execute
