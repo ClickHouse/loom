@@ -13,6 +13,12 @@ OUTCOME_KNOWN_TAG = "decision:outcome-known"
 SUCCESS_TAG = "decision:success"
 FAILURE_TAG = "decision:failure"
 
+
+def is_decision(memory_type: str, tags: list[str]) -> bool:
+    """A row typed `decision`, or tagged so."""
+    return memory_type == SCHEMA_NAME or DECISION_TAG in tags
+
+
 # category + scenario identify a decision: re-deciding the same scenario supersedes the
 # earlier record (history keeps it), which is what "what is our current decision on X"
 # needs; precedent search still sees every decision row because memory.search reads the

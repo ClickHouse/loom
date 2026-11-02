@@ -19,7 +19,7 @@ from server.memory.api.models_for_file import (
     _MemoryForFileHit,
 )
 from server.memory.domain.code_change import STATE_RANK, worst
-from server.memory.domain.decision_schema import FAILURE_TAG
+from server.memory.domain.decision_schema import FAILURE_TAG, is_decision
 from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import CONFIRMED_STATES, row_verification
 
@@ -94,7 +94,9 @@ def _readable(hit: dict[str, Any]) -> str:
         except ValueError:
             continue
         # A cut between the two escapes of a surrogate pair leaves half of one.
-        return _encodable(text[:-1] if text and "\ud800" <= text[-1] <= "\udbff" else text)
+        text = text[:-1] if text and "\ud800" <= text[-1] <= "\udbff" else text
+        # Escaped text decodes to far fewer characters than the line holds: mark the cut.
+        return _encodable(text.rstrip()) + "…"
     return raw
 
 
@@ -137,8 +139,7 @@ def _is_team(hit: dict[str, Any], home: str) -> bool:
 
 
 def _is_decision(hit: dict[str, Any]) -> bool:
-    """Typed `decision`, or tagged so."""
-    return hit.get("memory_type") == "decision" or "decision" in (hit.get("tags") or [])
+    return is_decision(str(hit.get("memory_type") or ""), list(hit.get("tags") or []))
 
 
 def _body(hit: dict[str, Any]) -> str:
@@ -160,7 +161,7 @@ def _status_notes(hit: dict[str, Any]) -> str:
         out = " (pinned)"
     elif _is_decision(hit) and hit.get("verification") not in CONFIRMED_STATES:
         out = " (unconfirmed)"
-    if FAILURE_TAG in (hit.get("tags") or []):
+    if _is_decision(hit) and FAILURE_TAG in (hit.get("tags") or []):
         out += " (outcome: failed)"
     return out + _CODE_NOTES.get(str(hit.get("code_state") or ""), "")
 

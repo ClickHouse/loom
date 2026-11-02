@@ -479,3 +479,15 @@ def test_a_lone_surrogate_in_a_whole_value_is_printed_encodable() -> None:
     hit = _decision("design/s", "a\ud800b")
     line = _lines([hit])[1]
     assert line.encode("utf-8") and ": a?b" in line
+
+
+def test_a_cut_value_shorter_than_the_line_still_ends_in_an_ellipsis() -> None:
+    # Escaped CJK fills 600 stored bytes with about 99 characters, well under the line's cap.
+    cut = _decision("design/zh", value_truncated=True) | {"value": json.dumps("决定" * 100)[:600]}
+    body = _lines([cut])[1].split("(pinned): ", 1)[1]
+    assert body.startswith("决定") and body.split(" — source:")[0].endswith("…")
+
+
+def test_a_rule_tagged_with_a_failure_is_not_a_failed_decision() -> None:
+    rule = _row("rules/r", json.dumps("Keep it."), tags=["constraint", "decision:failure"])
+    assert "(outcome: failed)" not in _lines([rule])[1]

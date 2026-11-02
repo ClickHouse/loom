@@ -386,3 +386,22 @@ async def test_the_refusal_names_a_decision_and_its_one_step(
     message = e.value.detail["message"]
     assert "the team decision 'rules/join/bucket_count' was written by alice" in message
     assert message.endswith(e.value.detail["hint"]["next"][0] + ".")
+
+
+@pytest.mark.asyncio
+async def test_a_row_tagged_decision_is_named_a_decision_with_the_rule_steps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The pre-edit block calls it a decision; a newer rule supersedes it, so the steps stay.
+    from server.memory.app import handlers as mem_handlers
+
+    _wire(monkeypatch, _row("human:alice", tags=["decision"]))
+    await _authorize("bob", "memory.delete", "code-clickhouse")
+    with pytest.raises(HTTPException) as e:
+        await mem_handlers.handle_memory_delete(_delete_input())
+    hint = e.value.detail["hint"]
+    assert hint["kind"] == "decision" and len(hint["next"]) == 2
+    assert "corrected rule" in hint["next"][0]
+    assert e.value.detail["message"].startswith(
+        "memory.delete: the team decision 'rules/join/bucket_count' was written by alice"
+    )

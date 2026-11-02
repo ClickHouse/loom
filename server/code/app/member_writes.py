@@ -21,6 +21,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from server.auth.fail_closed import marks_unverified
+from server.memory.domain.decision_schema import SCHEMA_NAME, is_decision
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
@@ -104,8 +105,9 @@ def refusal_hint(existing: Any, *, op: str) -> dict[str, Any]:
     key = str(getattr(existing, "memory_key", "") or "")
     ns = str(getattr(existing, "namespace", "") or "")
     author = _author(str(getattr(existing, "actor", "") or "")) or "another member"
-    typed_decision = getattr(existing, "memory_type", "") == "decision"
-    tagged = "decision" in (getattr(existing, "tags", None) or [])
+    memory_type = str(getattr(existing, "memory_type", "") or "")
+    typed_decision = memory_type == SCHEMA_NAME
+    decision = is_decision(memory_type, list(getattr(existing, "tags", None) or []))
     if typed_decision:
         # A member cannot call decision.record, and no rule is shown above a typed decision.
         steps = [
@@ -120,7 +122,7 @@ def refusal_hint(existing: Any, *, op: str) -> dict[str, Any]:
         ]
     return {
         "code": "TEAM_RULE_NOT_YOURS",
-        "kind": "decision" if typed_decision or tagged else "rule",
+        "kind": "decision" if decision else "rule",
         "author": author,
         "memory_key": key,
         "namespace": ns,
@@ -148,8 +150,8 @@ def assert_own_row(existing: Any, *, op: str) -> None:
         detail={
             "code": "AUTH_INSUFFICIENT",
             "message": (
-                f"{op}: the team {hint['kind']} {hint['memory_key']!r} was written by "
-                f"{hint['author']}; "
+                f"{op}: the team {hint['kind']} {hint['memory_key']!r} "
+                f"was written by {hint['author']}; "
                 "a member of this code namespace may change only the rows they wrote. "
                 f"Instead: {'; or '.join(hint['next'])}."
             ),
