@@ -985,7 +985,7 @@ async def _set_source_changed(row: MemoryRow, on: bool) -> str:
     as any, so a key two identities hold would be ambiguous there."""
     from server.memory.api.models_crud import MemoryUpdateByIdInput
     from server.memory.app.update import handle_memory_update_by_id
-    from server.memory.app.write import stored_sha256
+    from server.memory.app.write import served_sha256
 
     tags = [t for t in row.tags if t != SOURCE_CHANGED_TAG]
     # Conditional on the value read, so a value changed since is not tagged from the old one;
@@ -997,7 +997,7 @@ async def _set_source_changed(row: MemoryRow, on: bool) -> str:
                 memory_id=row.memory_id,
                 tags=[*tags, SOURCE_CHANGED_TAG] if on else tags,
                 char_limit=row.char_limit,  # None would drop the row's cap
-                if_match_sha256=stored_sha256(row),
+                if_match_sha256=served_sha256(row),
             )
         )
     except HTTPException as e:
