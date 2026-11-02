@@ -42,7 +42,7 @@ class MemoryForFileInput(BaseModel):
     # At most this many rows, across every namespace read.
     top_k: int = Field(default=8, ge=1, le=50)
     # Cap on the rendered block; the hook injects `rendered` verbatim. Its header,
-    # removal footer and "… more" line always print, so a budget smaller than those is exceeded.
+    # removal footer and "… more" line always print, so a budget smaller than those can be exceeded.
     token_budget: int = Field(default=300, ge=50, le=4000)
     # Conflicted rows are still live facts a reader should see; duplicates,
     # superseded and rejected rows are not.
