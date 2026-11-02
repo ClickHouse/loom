@@ -477,37 +477,37 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
     rows = await _merged_rows(input, path, base)
 
     hits: list[_MemoryForFileHit] = []
+    # The ids are not on the wire; render_block needs them to leave a superseded row out
+    # with its superseder.
+    shown: list[dict[str, Any]] = []
     for r in rows:
-        hits.append(
-            _MemoryForFileHit(
-                memory_key=str(r["memory_key"]),
-                memory_type=str(r.get("memory_type") or "semantic"),
-                value=str(r.get("value") or ""),
-                value_truncated=bool(r.get("value_truncated")),
-                tags=[str(t) for t in (r.get("tags") or [])],
-                confidence=float(conf) if (conf := r.get("confidence")) is not None else 1.0,
-                pinned=bool(r.get("pinned")),
-                status=str(r.get("status_text") or "active"),
-                agent=str(r.get("agent") or ""),
-                updated_at=r.get("updated_at"),
-                namespace=str(r.get("namespace") or input.namespace),
-                actor=str(r.get("actor") or ""),
-                supersedes_key=str(r.get("supersedes_key") or ""),
-                supersedes=str(r.get("supersedes") or ""),
-                supersedes_kind=r.get("supersedes_kind") or "",
-                matched_files=[str(f) for f in (r.get("matched_files") or [])],
-                source_resource_id=str(r.get("source_resource_id") or ""),
-                verification=row_verification(r),
-                code_state=r.get("code_state", ""),
-            )
+        hit = _MemoryForFileHit(
+            memory_key=str(r["memory_key"]),
+            memory_type=str(r.get("memory_type") or "semantic"),
+            value=str(r.get("value") or ""),
+            value_truncated=bool(r.get("value_truncated")),
+            tags=[str(t) for t in (r.get("tags") or [])],
+            confidence=float(conf) if (conf := r.get("confidence")) is not None else 1.0,
+            pinned=bool(r.get("pinned")),
+            status=str(r.get("status_text") or "active"),
+            agent=str(r.get("agent") or ""),
+            updated_at=r.get("updated_at"),
+            namespace=str(r.get("namespace") or input.namespace),
+            actor=str(r.get("actor") or ""),
+            supersedes_key=str(r.get("supersedes_key") or ""),
+            supersedes=str(r.get("supersedes") or ""),
+            supersedes_kind=r.get("supersedes_kind") or "",
+            matched_files=[str(f) for f in (r.get("matched_files") or [])],
+            source_resource_id=str(r.get("source_resource_id") or ""),
+            verification=row_verification(r),
+            code_state=r.get("code_state", ""),
+        )
+        hits.append(hit)
+        shown.append(
+            hit.model_dump()
+            | {"memory_id": r.get("memory_id"), "supersedes_id": r.get("supersedes_id")}
         )
 
-    # The ids are not on the wire, but render_block needs them to leave a superseded row
-    # out with its superseder; `hits` was built from `rows` one to one, in order.
-    shown = [
-        h.model_dump() | {"memory_id": r.get("memory_id"), "supersedes_id": r.get("supersedes_id")}
-        for h, r in zip(hits, rows, strict=True)
-    ]
     rendered, tokens, truncated = render_block(
         path, shown, input.token_budget, home=input.namespace
     )
