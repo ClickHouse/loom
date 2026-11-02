@@ -224,7 +224,6 @@ async def test_clear_star_user_tombstones_without_a_user_filter(
     assert "uid" not in memory_alter.params
 
 
-# (agent, user_id, session_id, memory_key, lock_mode) rows; the first is always locked.
 def _setup(rows: list[tuple[str, str, str, str, str]]) -> list[str]:
     """The memory and embedding rows of `rows` ((agent, user, session, key, lock_mode))."""
     cols = "org, namespace, agent, user_id, session_id, memory_key, version"
@@ -246,6 +245,7 @@ def _setup(rows: list[tuple[str, str, str, str, str]]) -> list[str]:
     ]
 
 
+# (agent, user_id, session_id, memory_key, lock_mode) rows; the first is always locked.
 _STAR_AGENT_ROWS = [
     ("A", "u1", "-", "K", "read_only"),
     ("B", "u1", "-", "K", ""),

@@ -252,7 +252,8 @@ class SearchHit:
     # session_id). Provenance for the caller: a bench scores source recall
     # against gold evidence sessions, an agent groups hits by the
     # conversation they came from. "" for rows without one and for the
-    # summary / derived / code planes; a chunk or record hit carries its row's.
+    # summary / derived / code planes; a chunk hit carries its row's session, a
+    # record hit its own.
     # Surfaced on the wire model.
     session_id: str = ""
     # Who said it: the `speaker:<name>` tag the extractor writes on a fact
@@ -266,8 +267,8 @@ class SearchHit:
     # The row's tags (loom.memory_embeddings.tags), read by the dense fact leg
     # for `speaker` / `about_other` and kept here so a caller that asks
     # (`include_tags`) gets them without a memory.get per hit.
-    # Empty for the lexical leg, chunks, summaries and derived rows; the
-    # handler point-reads the gaps only when the request asked.
+    # Empty for conversation chunks, summaries and derived rows; a set-chunk hit
+    # under private scope carries its row's.
     tags: list[str] = field(default_factory=list)
     # For a digest hit (source="summary"): the memory keys the digest
     # compressed (`session_summaries.derived_from`). Lets the reader drop a

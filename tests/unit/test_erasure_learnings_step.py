@@ -258,10 +258,10 @@ def test_a_rerun_binds_the_same_delete_slices_whatever_order_it_reads(monkeypatc
 
     ids = [f"00000000-0000-0000-0000-{i:012d}" for i in range(40)]
     latest = [_candidate(c, "pending" if i % 2 else "approved", "", 1) for i, c in enumerate(ids)]
-    bound: list[list[Any]] = []
+    bound: list[Any] = []
 
     async def record(table: str, *, params: dict[str, Any], **_: Any) -> int:
-        bound.append([params.get("cids") or params.get("decided")])
+        bound.append(params.get("cids") or params.get("decided"))
         return 0
 
     class _Reads:
