@@ -184,16 +184,18 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
     rows = []
     seen: set[str] = set()
     mine = (input.agent, input.user_id, input.session_id)
+
+    def is_mine(hit: Any) -> bool:
+        # the caller's own row; a hit that names none (a record) reads its key under the
+        # caller's identity
+        owner = hit_row_key(hit, input.namespace)
+        return not names_row(hit) or (owner.agent, owner.user_id, owner.session_id) == mine
+
     for hit in out.results:
         if target.search.min_score is not None and hit.similarity < target.search.min_score:
             continue
         key = hit.memory_key
-        if key in seen:
-            continue
-        # act only on the caller's own row; a hit that names none (a record) reads its key
-        # under the caller's identity
-        owner = hit_row_key(hit, input.namespace)
-        if names_row(hit) and (owner.agent, owner.user_id, owner.session_id) != mine:
+        if key in seen or not is_mine(hit):
             continue
         seen.add(key)
         row = await memory_repo.get_by_key(
@@ -203,9 +205,9 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             rows.append(row)
             if len(rows) > limit:  # one row past `limit`: more matched
                 return rows[:limit], True
-    # a window the search filled to its size may have cut off more of the caller's rows
+    # a full window whose last hit is the caller's may have cut off more of their rows
     window = out.top_k_ceiling or top_k
-    return rows, len(out.results) >= window
+    return rows, len(out.results) >= window and is_mine(out.results[-1])
 
 
 # ---------------------------------------------------------------- execute

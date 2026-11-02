@@ -24,10 +24,9 @@ async def search_repo_decisions(
     mem_input: MemorySearchInput, repo_namespace: str
 ) -> tuple[MemorySearchOutput, MemorySearchInput] | None:
     """The decision memories in `repo_namespace` that match `mem_input`'s
-    query, with the input the search settled on, its `top_k` reset to the
-    caller's; None when there is nothing to add, when the search abstains, or
-    on any failure. The read scope the token allows is pinned inside the
-    search, as for the base search."""
+    query, with the input the search settled on; None when there is nothing to
+    add, when the search abstains, or on any failure. The read scope the token
+    allows is pinned inside the search, as for the base search."""
     from server.memory.app.search import handle_memory_search
     from server.memory.app.search.scoring import one_per_key, per_key_fetch
 
@@ -88,8 +87,7 @@ async def search_repo_decisions(
         # Another namespace's row, as the fan-out marks one.
         h.score_components["foreign"] = 1.0
     out.results = decisions
-    # Credited with the window the caller asked for, not the over-fetch.
-    return out, settled.model_copy(update={"top_k": mem_input.top_k})
+    return out, settled
 
 
 def merge_memory_hits(
@@ -148,10 +146,12 @@ async def memory_with_repo_decisions(
     hits, added = merge_memory_hits(base.results, decisions.results, mem_input.namespace)
     if not added:
         return base
-    # Credited as the base search credits its own: for the hits it hands on,
-    # before the section's floors and answer-first rules.
-    await credit_merged_hits(settled, added)
-    _apply_explain_default(added, base._settled_input or mem_input)
+    # Credited and elided as the base search credits and elides its own: for the hits
+    # it hands on, before the section's floors and answer-first rules, in its window
+    # (the settled top_k, not the decision pass's over-fetch).
+    home = base._settled_input or mem_input
+    await credit_merged_hits(settled.model_copy(update={"top_k": home.top_k}), added)
+    _apply_explain_default(added, home)
     update: dict[str, Any] = {
         "results": hits,
         "candidates_total": base.candidates_total + len(added),

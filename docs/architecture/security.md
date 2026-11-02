@@ -783,11 +783,10 @@ value that opens with `/`, a segment, then `/` (`/etc/key1`), or one opening `~/
 reference, since a webhook or a presigned URL is the secret itself, so a URL that only names
 where a secret lives reads `high`, as does an ARN that names one (its `secret:` part reads
 as an assignment). A relative path without one of those prefixes (`src/app1`) still reads
-as a secret. A quote, comma or
-semicolon in the value does not cut it short. So `{"db": {"password": "hunter2xyz"}}` and
-`{"password": "admin:Passw0rd"}` are `high`, and `{"password": "required"}`, `{"password":
-"********"}`, `{"api_key": "YOUR_API_KEY"}` and `{"api_key": "env:OPENAI_API_KEY"}` are
-not. Any other key labels nothing. `reads_high` reads the same pairs in raw JSON text,
+as a secret. A quote, comma or semicolon in the value does not cut it short. So
+`{"db": {"password": "hunter2xyz"}}` and `{"password": "admin:Passw0rd"}` are `high`, and
+`{"password": "required"}`, `{"password": "********"}`, `{"api_key": "YOUR_API_KEY"}` and
+`{"api_key": "env:OPENAI_API_KEY"}` are not. Any other key labels nothing. `reads_high` reads the same pairs in raw JSON text,
 such as a chunk of an object value, when the value is one quoted token or digits and
 dashes. The sweep's prefilter is a superset of this key rule, not a copy: it selects a key
 that ends in a label or a credential word, so it may select a few non-secret rows (`spin`,

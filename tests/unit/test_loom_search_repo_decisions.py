@@ -910,8 +910,8 @@ async def test_merged_decisions_explain_as_the_home_search_does(
 
 @pytest.mark.asyncio
 async def test_merged_decisions_follow_the_home_searchs_settled_top_k(monkeypatch) -> None:
-    # a role ceiling settles the home search at 10: its hits are explained, so are the
-    # decisions merged into them, though the request asked for 20
+    # a role ceiling settles the home search at 10: its hits are explained and credited
+    # at 10, so are the decisions merged into them, though the request asked for 20
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_search_excerpt_bodies_k", 15)
@@ -923,8 +923,14 @@ async def test_merged_decisions_follow_the_home_searchs_settled_top_k(monkeypatc
             out._settled_input = inp.model_copy(update={"top_k": 10})
         return out
 
+    credited: list[int] = []
+
+    async def credit(inp: MemorySearchInput, hits: list[_MemorySearchHit]) -> None:
+        credited.append(inp.top_k)
+
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", capped)
+    monkeypatch.setattr("server.memory.app.search.telemetry.credit_merged_hits", credit)
     inp = BASE.model_copy(update={"top_k": 20})
     out = await repo_decisions.memory_with_repo_decisions(inp, repo_namespace=TRUNK)
     (decision,) = [h for h in out.results if h.memory_key == "decision:evict"]
-    assert not getattr(decision, "_elide", frozenset())
+    assert not getattr(decision, "_elide", frozenset()) and credited == [10]
