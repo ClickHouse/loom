@@ -353,18 +353,15 @@ def test_a_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:
 
 
 def test_another_writers_row_under_the_superseded_key_still_prints() -> None:
-    # Keys are unique per writer: only the row the newer one supersedes is left out with it.
-    bobs = _row("rules/build", json.dumps("Use make."), namespace="code-repo", actor="human:bob")
-    carols = _row(
-        "rules/build", json.dumps("Use ninja."), namespace="code-repo", actor="human:carol"
-    )
+    # Keys are unique per writer, and the caller's own namespace can return two writers'
+    # rows under one key: only the row the newer one supersedes is left out with it.
+    bobs = _row("rules/build", json.dumps("Use make."), namespace="me", agent="bob")
+    carols = _row("rules/build", json.dumps("Use ninja."), namespace="me", agent="carol")
     carols["memory_id"] = "id-carol-build"
-    newer = _superseding("rules/x", bobs, "n" * 200, "code-repo", actor="human:alice")
-    text, _, truncated = mff.render_block(
-        "src/a.cpp", [newer, bobs, carols], 120, home="me", now=_NOW
-    )
+    newer = _superseding("rules/x", bobs, "n" * 300, "me")
+    text, _, truncated = mff.render_block("src/a.cpp", [newer, bobs, carols], 60, home="me")
     assert truncated is True and "Use make." not in text and "Use ninja." in text
-    assert '- … 2 more; memory.for_file(path="src/a.cpp") lists them.' in text.splitlines()
+    assert text.splitlines()[-1] == '- … 2 more; memory.for_file(path="src/a.cpp") lists them.'
 
 
 def test_an_own_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:
