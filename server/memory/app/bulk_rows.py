@@ -75,7 +75,7 @@ class StepOutcome(StrEnum):
     """What a step comes to once the batch is replayed (`settle_steps`)."""
 
     LAND = "land"
-    RELABEL = "relabel"  # lands: the same bytes with a new label, still a restatement
+    RELABEL = "relabel"  # lands: the same bytes with a new label or status, a restatement
     UNCHANGED = "unchanged"
     PINNED = "pinned"  # refused: the key holds a pinned value
     LOCKED = "locked"  # refused: it would change a locked row's expiry
@@ -350,11 +350,6 @@ def _bulk_skip_gate(
     return False
 
 
-# A restatement writes a row in one of these back as active, as memory.set does. A
-# `proposed` row stays on trial: promoting it is not a re-extraction's call.
-_WRITTEN_BACK_ACTIVE = frozenset({"rejected", "superseded", "conflicted"})
-
-
 def _restates_stored_row(state: _BulkWriteState, entry: Any) -> bool:
     """Whether an entry repeating the stored value also keeps its status, sensitivity and
     pin and sets no expiry, so the skip gate counts it unchanged. The other fields
@@ -367,7 +362,8 @@ def _restates_stored_row(state: _BulkWriteState, entry: Any) -> bool:
         entry.memory_key
     )
     return (
-        str(getattr(live, "status", "") or "") not in _WRITTEN_BACK_ACTIVE
+        # a restatement writes any other status back as active, as memory.set does
+        str(getattr(live, "status", "") or "active") == "active"
         and named_level in ("", stored_level)
         and not adds_pin
         and getattr(entry, "ttl_seconds", None) is None
@@ -541,7 +537,7 @@ def _settle_step(
     if (
         same_bytes
         and same_expiry
-        and held.status not in _WRITTEN_BACK_ACTIVE
+        and held.status == "active"
         and level == held.level
         and bool(row["pinned"]) == held.pinned
     ):
