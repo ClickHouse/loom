@@ -3662,7 +3662,7 @@
           "default": 20,
           "minimum": 1,
           "type": "integer",
-          "description": "Closest decision keys a candidate is checked against for a confirmed row under another key that already states it (cosine only). The fetch is capped at 500 rows, so a large value or memory_search_per_key_cap = 0 can read fewer keys."
+          "description": "Closest decision keys a candidate is checked against for a confirmed restatement under another key (cosine only); the fetch caps at 500 rows."
         },
         "memory_durability_verifier_max_facts_per_call": {
           "default": 60,

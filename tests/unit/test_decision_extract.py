@@ -1481,7 +1481,7 @@ async def test_the_prompt_lists_at_most_the_configured_known_decisions(monkeypat
     monkeypatch.setattr(settings, "memory_decision_extract_known_max", 2)
     await _run()
     listed = world.prompts[0][0].split("outcome as far as it is shown:\n", 1)[1]
-    assert listed.count("\n- ") + 1 == 2 and "known 2" not in listed
+    assert len(listed.splitlines()) == 2 and "known 2" not in listed
 
 
 def test_clean_alternatives_can_keep_them_uncut() -> None:
@@ -2067,11 +2067,11 @@ def test_a_refused_candidate_or_retire_write_exits_2(dropped, refused, code) -> 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("top_k", "blocked"), [(7, True), (5, False)])
+@pytest.mark.parametrize(("top_k", "blocked"), [(6, True), (5, False)])
 async def test_a_confirmed_restatement_below_five_closer_hits_blocks_within_top_k(
     monkeypatch, top_k, blocked
 ) -> None:
-    """The confirmed key is the sixth closest: a top_k of 7 reaches it, 5 stops before it
+    """The confirmed key is the sixth closest: a top_k of 6 reaches it, 5 stops before it
     though the fetch (5 keys times a per-key cap of 3) still serves it."""
     from server.memory.app import search
     from server.settings import settings
