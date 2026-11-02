@@ -43,7 +43,7 @@ from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_decision import DecisionRecordInput
 from server.memory.app import decisions as svc
 from server.memory.domain import decision_extract as dx
-from server.memory.domain.corpus_synthesis import Window, windows
+from server.memory.domain.corpus_synthesis import CorpusChunk, Window, windows
 from server.memory.domain.decision_schema import SOURCE_CHANGED_TAG
 from server.memory.domain.decision_statement import alternatives, collapse_ws, memory_value
 from server.memory.domain.files import detect_value_files, normalize_files
@@ -301,14 +301,18 @@ async def extract_document(
     report.image_only = dx.image_only_sections(doc.content or "")
     # An image-only section, or a chunk with no words, carries no rationale to read. The
     # caption rule is judged on whole sections: a long section's last chunk may hold an
-    # image and a short tail of its text.
+    # image and a short tail of its text. A chunk with no section path is judged on its
+    # own text as well: a chunker that saw no heading stores every chunk with that path.
     skipped = set(report.image_only)
-    sent = [
-        c
-        for c in chunks
-        if dx.breadcrumb(c.section_path) not in skipped and not dx.no_words(c.text)
-    ]
-    wins = windows(sent, window_chars=window_chars)
+
+    def sent(c: CorpusChunk) -> bool:
+        if dx.no_words(c.text):
+            return False
+        if dx.breadcrumb(c.section_path) not in skipped:
+            return True
+        return not c.section_path and not dx.image_only(c.text)
+
+    wins = windows([c for c in chunks if sent(c)], window_chars=window_chars)
     report.windows = len(wins)
     # One scan of the extractor's rows on this document and their records, for the prompt
     # and the retire step; rows this run writes are skipped by the retire step.

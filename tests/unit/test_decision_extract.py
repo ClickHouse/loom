@@ -2398,6 +2398,8 @@ async def test_a_parent_sections_captioned_picture_is_not_sent(monkeypatch) -> N
         ("[images]", True),
         ("[pictures]", True),
         ("[image tiles](tiles.md)", False),
+        ("[image][1]", False),
+        ("[image]: x.png", False),
         ("[imagine the merge]", False),
     ],
 )
@@ -2441,3 +2443,28 @@ async def test_a_badge_and_caption_preamble_is_not_sent_and_is_reported(
     assert report.image_only == ["", "Spilling > Architecture"]
     cli.print_report(report)
     assert "image-only, rationale not extracted: (untitled)" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_chunks_stored_with_no_section_path_are_judged_on_their_own_text(
+    monkeypatch,
+) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    badge = "![build](badge.svg)\n\nBuild status for the spill code."
+    doc = f"{badge}\n\n{DOC}"
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        # Chunked when no heading was seen: every chunk has the preamble's empty path.
+        return [CorpusChunk(uri, 0, badge, ()), CorpusChunk(uri, 1, BODY, ())]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (prompt,) = world.prompts
+    assert "Build status" not in prompt[1] and BODY in prompt[1]
+    assert report.image_only == ["", "Spilling > Architecture"]

@@ -43,9 +43,8 @@ _CAMEL_RE = re.compile(r"\b[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+\b")
 
 
 def _decisions_from_sections(user: str) -> dict[str, object]:
-    """One decision per section of two sentences or more: the first as the outcome, the
-    second as its reasoning, both copied as they are, so the extractor's verbatim and
-    restatement checks pass on what the fake returns."""
+    """One decision per section of two sentences or lines or more: the first sentence or
+    line as the outcome, the next as the reasoning, both copied as they are."""
     out: list[dict[str, object]] = []
     for m in _SECTION_RE.finditer(user):
         body = m["body"].strip()

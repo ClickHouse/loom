@@ -24,9 +24,10 @@ from server.memory.domain.decision_statement import collapse_ws
 REJECTED = " — rejected: "
 # A Markdown image, an HTML image tag, or a slide export's image placeholder.
 # A placeholder is `[image]`, `[Image 3]`, `[image: ...]`, `[image_1]` or `[pictures]`,
-# never followed by a link target: `[image tiles](tiles.md)` is a link, `[imagine]` a word.
+# never followed by a link target: `[image tiles](tiles.md)`, `[image][1]` and
+# `[image]: x.png` are links, `[imagine]` a word.
 _IMAGE_MARKUP = re.compile(
-    r"!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>|\[(?:image|picture)s?(?:[\s:_\d][^\]]*)?\](?!\()",
+    r"!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>|\[(?:image|picture)s?(?:[\s:_\d][^\]]*)?\](?![(\[:])",
     re.I,
 )
 _LETTER = re.compile(r"[^\W\d_]")
@@ -158,7 +159,7 @@ def _alternative(item: Any) -> tuple[str, str] | None:
     if not isinstance(item, dict):
         return None
     option, reason = _text(item.get("option")), _text(item.get("reason"))
-    return (option, reason) if option and reason.strip() else None
+    return (option, reason) if option and reason else None
 
 
 def parse_candidates(reply: str) -> list[Candidate] | None:
@@ -188,7 +189,7 @@ def parse_candidates(reply: str) -> list[Candidate] | None:
             is_constraint=item.get("is_constraint") is True,
             mentions=mentions,
         )
-        if cand.category and cand.scenario and cand.outcome and cand.reasoning.strip():
+        if cand.category and cand.scenario and cand.outcome and cand.reasoning:
             out.append(cand)
     return out
 
@@ -277,12 +278,12 @@ def _stem(word: str) -> str:
     return word
 
 
-def _content_words(text: str) -> set[str]:
-    return {_stem(w) for w in _WORD.findall(text.lower())} - _FILLER_STEMS
-
-
 # Compared as stems, so every form of a filler word is one: `deciding`, `chooses`, `used`.
 _FILLER_STEMS = frozenset(_stem(w) for w in _FILLER_WORDS.split())
+
+
+def _content_words(text: str) -> set[str]:
+    return {_stem(w) for w in _WORD.findall(text.lower())} - _FILLER_STEMS
 
 
 def restates_outcome(cand: Candidate) -> bool:
