@@ -1089,7 +1089,7 @@ def test_a_failed_evidence_read_leaves_its_rungs_uncounted(
     assert ladder["client_acknowledged"] is None
     # The other reads still answer.
     assert ladder["indexed_write"] == 3 and ladder["task_outcome"] == 0
-    assert out.skipped == ["evidence: RuntimeError", "reported_keys: RuntimeError"]
+    assert out.skipped == ["calls: RuntimeError", "reported_keys: RuntimeError"]
     assert out.ledger_from is None and out.ledger_retention_days == 0
 
 

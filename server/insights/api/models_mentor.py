@@ -61,7 +61,7 @@ class MentorAdoption(BaseModel):
     followed_sessions: int = 0
 
 
-EvidenceRung = Literal[
+UsageRungName = Literal[
     "attempt",
     "success",
     "committed_write",
@@ -70,7 +70,7 @@ EvidenceRung = Literal[
     "client_acknowledged",
     "task_outcome",
 ]
-EvidenceSource = Literal["server", "client"]
+UsageSource = Literal["server", "client"]
 
 
 class UsageRung(BaseModel):
@@ -79,12 +79,12 @@ class UsageRung(BaseModel):
     A call made is not a call that answered, and an answer returned is not an answer
     used."""
 
-    rung: EvidenceRung
+    rung: UsageRungName
     # How many in the window; None when the read failed.
     count: int | None = None
     # Who recorded it: `server` (Loom saw it happen) or `client` (a caller reported it,
     # unverified).
-    source: EvidenceSource
+    source: UsageSource
     # What the count is, and what it does not show.
     meaning: str
 

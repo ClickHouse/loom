@@ -564,7 +564,8 @@ async def reported_keys(
     `run.complete` `memories_used` (`chunk:` ids, which name a passage rather than a
     memory, left out) and its `memory.outcome` calls that said `used` or `positive` and
     landed on a row, by id when the call named one (as the handler resolves it) and by key
-    otherwise."""
+    otherwise. A label on a key longer than the ledger keeps (200 characters) matches no
+    row and is not counted."""
     ch = ch or _default_client()
     labels = (
         f"FROM loom.agent_events WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN} "
@@ -576,12 +577,15 @@ async def reported_keys(
         SELECT uniqExact(k) AS n FROM (
             SELECT k FROM ({_CREDITED_KEYS}) WHERE NOT startsWith(k, 'chunk:')
             UNION ALL
-            SELECT args['memory_key'] AS k {labels} AND args['memory_id'] = ''
-            UNION ALL
-            -- A memory's key never changes across its versions, so any version answers.
+            -- Each label resolves to the row it landed on, so the key is the stored one, not
+            -- the ledger's copy (cut at 200 characters). A memory's key never changes across
+            -- its versions, so any version answers.
             SELECT memory_key AS k FROM loom.memory
-            WHERE {_SCOPE} AND memory_id IN (
-                SELECT toUUIDOrZero(args['memory_id']) {labels} AND args['memory_id'] != ''
+            WHERE {_SCOPE} AND (
+                memory_id IN (
+                    SELECT toUUIDOrZero(args['memory_id']) {labels} AND args['memory_id'] != ''
+                )
+                OR memory_key IN (SELECT args['memory_key'] {labels} AND args['memory_id'] = '')
             )
         )
         """,
