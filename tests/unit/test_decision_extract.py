@@ -2289,3 +2289,101 @@ async def test_a_pinned_row_whose_document_only_rewrapped_is_not_flagged(monkeyp
     report = await _run()
     assert [r.action for r in report.records] == ["unchanged"]
     assert world.updates == [] and world.recorded == [] and report.flagged == []
+
+
+_WRAPPED_REASONING = "We spill into sorted\nruns like ORDER BY."
+
+
+@pytest.mark.asyncio
+async def test_an_unpinned_own_row_whose_reasoning_only_rewrapped_is_unchanged(
+    monkeypatch,
+) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "reasoning": _WRAPPED_REASONING}, files=[HEADER])
+    report = await _run()
+    assert [r.action for r in report.records] == ["unchanged"]
+    assert world.recorded == [] and world.updates == [] and world.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_a_row_with_an_outcome_whose_reasoning_only_rewrapped_is_not_tagged(
+    monkeypatch,
+) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    fields = {**_same_fields(c), "reasoning": _WRAPPED_REASONING, "realized_outcome": "no gaps"}
+    # Its files are stale, so the row is not unchanged; the decision itself is.
+    world.record(_key(c), fields, files=[])
+    report = await _run()
+    assert [r.action for r in report.records] == ["outcome_known"]
+    assert world.recorded == [] and world.updates == [] and report.flagged == []
+
+
+@pytest.mark.asyncio
+async def test_one_reasoning_wrapped_apart_in_two_windows_is_written_once(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+    from server.llm import client as llm_client
+
+    first = _candidate()
+    second = _candidate(scenario="spilling the final DISTINCT")
+    world = _World(monkeypatch, [])
+    replies = [[first], [second]]
+
+    class _TwoWindows:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            return SimpleNamespace(text=json.dumps({"decisions": replies.pop(0)}), stop_reason="")
+
+    async def chunks(org, ns, uri):
+        wrapped = BODY.replace("sorted runs", "sorted\nruns")
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT")),
+            CorpusChunk(uri, 1, wrapped, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _TwoWindows())
+    report = await _run(window_chars=len(BODY) + 1)
+    assert report.windows == 2
+    assert [d.reason for d in report.dropped] == ["same decision as an earlier candidate"]
+    assert len(world.recorded) == 1
+
+
+def test_a_parent_section_over_a_captioned_picture_is_image_only() -> None:
+    doc = (
+        "# Spilling\n\n![flow](flow.png)\n\nFigure 1: the spill path.\n\n"
+        "## Final DISTINCT\n\n" + BODY + "\n\n"
+        "# Merging\n\n## Runs\n\n" + BODY + "\n"
+    )
+    # The parent with a picture is reported; a heading alone over subsections is not.
+    assert dx.image_only_sections(doc) == ["Spilling"]
+
+
+@pytest.mark.asyncio
+async def test_a_parent_sections_captioned_picture_is_not_sent(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    caption = "![flow](flow.png)\n\nFigure 1: the spill path."
+    doc = f"# Spilling\n\n{caption}\n\n## Final DISTINCT\n\n{BODY}\n"
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, caption, ("Spilling",)),
+            CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (prompt,) = world.prompts
+    assert "Figure 1" not in prompt[1] and "[section: Spilling > Final DISTINCT]" in prompt[1]
+    assert report.image_only == ["Spilling"]
+
+
+def test_a_link_named_like_an_image_placeholder_is_text() -> None:
+    assert not dx.image_only("[image tiles](tiles.md)")
+    assert dx.image_only("[image: the spill path]")

@@ -18,11 +18,15 @@ from typing import Any
 from server.code.domain.anchor import mentions as code_mentions
 from server.knowledge.domain.chunking import SEPARATOR, detect_sections
 from server.memory.domain.corpus_synthesis import Window
+from server.memory.domain.decision_statement import collapse_ws
 
 # How a rejected option is stored: `<option> — rejected: <reason>`.
 REJECTED = " — rejected: "
 # A Markdown image, an HTML image tag, or a slide export's image placeholder.
-_IMAGE_MARKUP = re.compile(r"!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>|\[(?:image|picture)[^\]]*\]", re.I)
+# The placeholder stands alone: `[image tiles](tiles.md)` is a link.
+_IMAGE_MARKUP = re.compile(
+    r"!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>|\[(?:image|picture)\b[^\]]*\](?!\()", re.I
+)
 _LETTER = re.compile(r"[^\W\d_]")
 _PR_NUMBER = re.compile(r"^(?:#|PR\s*#?)\d+$", re.I)
 _SETTING_NAME = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")
@@ -75,10 +79,10 @@ def system_prompt(max_per_section: int, known: Sequence[tuple[str, str, str]] = 
         return prompt
     lines = []
     for category, scenario, outcome in known[:MAX_KNOWN_DECISIONS]:
-        outcome = " ".join(outcome.split())
+        outcome = collapse_ws(outcome)
         if len(outcome) > _KNOWN_OUTCOME_CHARS:
             outcome = outcome[: _KNOWN_OUTCOME_CHARS - 1].rstrip() + "…"
-        lines.append(" | ".join((" ".join(category.split()), " ".join(scenario.split()), outcome)))
+        lines.append(" | ".join((collapse_ws(category), collapse_ws(scenario), outcome)))
     return (
         prompt + "\nDecisions already recorded from this document, as category | scenario | "
         "outcome; an outcome ending in … is shortened. When the part still states one, reuse "
@@ -118,7 +122,7 @@ def image_only(body: str) -> bool:
     a caption."""
     if no_words(body):
         return True
-    text = " ".join(_IMAGE_MARKUP.sub(" ", body).split())
+    text = collapse_ws(_IMAGE_MARKUP.sub(" ", body))
     return bool(_IMAGE_MARKUP.search(body)) and len(text) <= CAPTION_MAX_CHARS
 
 
@@ -221,7 +225,7 @@ def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
 
     def short(span: str) -> bool:
         # Measured as the document's span reads, whitespace runs one space.
-        return len(" ".join(span.split())) < MIN_SPAN_CHARS
+        return len(collapse_ws(span)) < MIN_SPAN_CHARS
 
     if short(cand.quote):
         return "quote too short to rest a decision on"
@@ -341,15 +345,18 @@ def definition_path(definitions: list[tuple[str, str]]) -> str:
 
 
 def image_only_sections(content: str) -> list[str]:
-    """The breadcrumbs of the document's leaf sections whose rationale no text carries: a
+    """The breadcrumbs of the document's sections whose own text carries no rationale: a
     heading alone, over a picture, or over a picture and a caption of up to
-    CAPTION_MAX_CHARS. A heading with subsections is not one."""
+    CAPTION_MAX_CHARS. A heading alone over its subsections is not one; a heading over a
+    picture and then subsections is. The run neither sends nor reads these sections."""
     sections = detect_sections(content)
     out: list[str] = []
     for i, sec in enumerate(sections):
         nxt = sections[i + 1].path if i + 1 < len(sections) else ()
         has_children = len(nxt) > len(sec.path) and nxt[: len(sec.path)] == sec.path
-        if sec.path and not has_children and image_only("\n".join(sec.lines)):
+        body = "\n".join(sec.lines)
+        has_image = bool(_IMAGE_MARKUP.search(body))
+        if sec.path and image_only(body) and (has_image or not has_children):
             out.append(breadcrumb(sec.path))
     return out
 
