@@ -170,7 +170,10 @@ async def _adoption(profile: mentor_rules.MentorProfile) -> list[MentorAdoption]
 # What each rung counts, and what it does not show; the attribution rules are in
 # docs/features/namespaces-and-sharing.md#the-mentor.
 _RUNG_MEANING: dict[UsageRungName, str] = {
-    "attempt": "calls the ledger records under this agent, answered or not",
+    "attempt": (
+        "calls the ledger records under this agent, answered or not; not calls that name no "
+        "agent or read across agents (`*`), as an MCP `memory.search` does by default"
+    ),
     "success": "of those, calls without an error; a read that found nothing counts",
     "committed_write": "`memory.set` calls that stored a row (not a no-op, dry run or replay)",
     "indexed_write": "memories first written in the window that have a current vector",
