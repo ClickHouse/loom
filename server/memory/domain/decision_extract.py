@@ -19,6 +19,7 @@ from server.code.domain.anchor import mentions as code_mentions
 from server.knowledge.domain.chunking import SEPARATOR, Section, detect_sections
 from server.memory.domain.corpus_synthesis import Window
 from server.memory.domain.decision_statement import collapse_ws
+from server.memory.domain.lemmatize import snowball_stem_tokens
 
 # How a rejected option is stored: `<option> — rejected: <reason>`.
 REJECTED = " — rejected: "
@@ -131,13 +132,17 @@ def no_words(body: str) -> bool:
 _HTML_TAG = re.compile(r"</?[a-z][a-z0-9-]*(?=[\s/>])[^<>\n]*>")
 _LINK_TARGET = re.compile(r"\]\([^)]*\)|\]\[[^\]]*\]")
 _URL = re.compile(r"https?://\S+")
+# What a link around an image leaves once the image is gone: `[ ]`.
+_EMPTY_BRACKETS = re.compile(r"\[\s*\]")
 
 
 def caption_text(body: str) -> str:
     """The text a reader sees beside the images: images, HTML tags, link targets and
-    reference labels, and bare URLs removed, so a badge wrapped in a link is no text."""
+    reference labels, the brackets a link around an image leaves, and bare URLs removed,
+    so a badge wrapped in a link is no text."""
     text = _HTML_TAG.sub(" ", _IMAGE_MARKUP.sub(" ", body))
-    return collapse_ws(_URL.sub(" ", _LINK_TARGET.sub("]", text)))
+    text = _EMPTY_BRACKETS.sub(" ", _LINK_TARGET.sub("]", text))
+    return collapse_ws(_URL.sub(" ", text))
 
 
 def image_only(body: str) -> bool:
@@ -282,27 +287,13 @@ _WORD = re.compile(r"\w+")
 RESTATED = "reasoning only restates the outcome: it has no word the outcome lacks"
 
 
-def _stem(word: str) -> str:
-    """`spilling`, `spills` and `spilled` read as one stem, as do `store` and `stored`, and
-    `run` and `running`: an ending cut, then a final `e` dropped and a final double
-    consonant undoubled."""
-    for suffix in ("ing", "ed", "es", "s"):
-        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
-            word = word[: -len(suffix)]
-            break
-    if len(word) > 3 and word.endswith("e"):
-        word = word[:-1]
-    if len(word) > 3 and word[-1] == word[-2] and word[-1] not in "aeiou":
-        word = word[:-1]
-    return word
-
-
-# Compared as stems, so every form of a filler word is one: `deciding`, `chooses`, `used`.
-_FILLER_STEMS = frozenset(_stem(w) for w in _FILLER_WORDS.split())
+# Compared as Snowball stems, so `spilling` meets `spill`, `stored` meets `store`, and
+# every form of a filler word is one: `deciding`, `chooses`, `used`.
+_FILLER_STEMS = frozenset(snowball_stem_tokens(_FILLER_WORDS.split()))
 
 
 def _content_words(text: str) -> set[str]:
-    return {_stem(w) for w in _WORD.findall(text.lower())} - _FILLER_STEMS
+    return set(snowball_stem_tokens(_WORD.findall(text.lower()))) - _FILLER_STEMS
 
 
 def restates_outcome(cand: Candidate) -> bool:

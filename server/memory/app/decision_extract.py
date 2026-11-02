@@ -299,8 +299,8 @@ async def extract_document(
         return report
     live_texts = [doc.content or "", *(c.text for c in chunks)]
     report.image_only = dx.image_only_sections(doc.content or "")
-    # A section judged image-only is not sent; on the empty path (a document with no
-    # heading) each chunk is judged on its own text.
+    # A section judged image-only is not sent; on the empty path (the text above the first
+    # heading, or a document with no heading) each chunk is judged on its own text.
     skipped = set(report.image_only)
 
     def sent(c: CorpusChunk) -> bool:
@@ -460,7 +460,8 @@ async def _candidates(
                 cand = dx.document_spans(cand, texts)
                 if dx.restates_outcome(cand):
                     reason = dx.RESTATED
-            section = dx.quote_section(w, cand.quote)
+            # The quote as the chunk writes it, so a re-wrapped one still names its section.
+            section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
             try:
                 key = svc.decision_key(cand.category, cand.scenario)
             except ValueError:

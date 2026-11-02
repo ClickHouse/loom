@@ -2104,6 +2104,7 @@ def test_every_printed_action_has_its_line() -> None:
         ("store offsets", "Offsets are stored.", True),
         ("run the merge per part", "Running the merge per part.", True),
         ("process each part", "Each part processes.", True),
+        ("store strings as offsets", "Offsets are stored as a string.", True),
         ("sorted runs for the spill", "Sorted runs were chosen for the spill.", True),
         ("spill into sorted runs", "We are choosing sorted runs for spilling.", True),
         ("spill into sorted runs", "A plain set on disk costs random reads.", False),
@@ -2583,3 +2584,35 @@ async def test_a_rejected_reason_the_document_rewrapped_is_no_change(monkeypatch
     report = await _run()
     assert [r.action for r in report.records] == ["unchanged"]
     assert world.recorded == [] and world.updates == [] and world.deletes == []
+
+
+def test_a_preamble_of_linked_badges_and_a_caption_is_image_only() -> None:
+    badges = " ".join(f"[![b{i}](b{i}.svg)]({_CI_URL}/{i})" for i in range(8))
+    caption = "Build, lint, docs and release status for the spill."
+    assert len(caption) == 51
+    assert dx.image_only_sections(f"{badges}\n\n{caption}\n\n# Spilling\n\n{BODY}\n") == [""]
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_candidate_with_a_rewrapped_quote_names_the_quotes_section(
+    monkeypatch,
+) -> None:
+    from server.knowledge.app import document_reads
+
+    # The quote is the second section's, re-wrapped; the reasoning is in no chunk.
+    cand = _candidate(
+        quote="A plain set on disk costs random reads.", reasoning="Sorted runs are faster."
+    )
+    world = _World(monkeypatch, [cand])
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, "We spill into sorted runs like ORDER BY.", ("Spilling", "One")),
+            CorpusChunk(uri, 1, "A plain set on disk\ncosts random reads.", ("Spilling", "Two")),
+        ]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    assert world.recorded == []
+    (d,) = report.dropped
+    assert (d.section, d.reason) == ("Spilling > Two", "reasoning is not in the document text")
