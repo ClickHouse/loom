@@ -812,7 +812,7 @@ What Loom knows about ONE file, shaped for the moment before an edit: memories w
 | `top_k` | `int` | `8` | At most this many rows, across every namespace read. |
 | `token_budget` | `int` | `300` | Cap on the rendered block; the hook injects `rendered` verbatim. |
 | `include_conflicted` | `bool` | `True` | Conflicted rows are still live facts a reader should see; duplicates, superseded and rejected rows are not. |
-| `extra_namespaces` | `list[str]` | *(computed)* | The repository's primary code namespace (its team file rules), read beside `namespace`. |
+| `extra_namespaces` | `list[str]` | *(computed)* | The repository's primary code namespace (its team file rules and design decisions), read beside `namespace`. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

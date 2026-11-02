@@ -1,0 +1,85 @@
+"""memory.for_file against a live server: a decision row written through memory.set is
+rendered in the pre-edit block with its head, its confirmation state and its source."""
+
+from __future__ import annotations
+
+import time
+from typing import Any
+
+import httpx
+
+from tests.integration._resources import unique_org
+
+ORG = unique_org("for-file-decisions")
+SOURCE = "knowledge:design-docs/spilling.pdf#Slide 2"
+
+
+def _post(base: str, op: str, token: str, body: dict[str, Any]) -> dict[str, Any]:
+    r = httpx.post(
+        f"{base}/v1/{op}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=10.0
+    )
+    assert r.status_code == 200, f"{op} {r.status_code}: {r.text}"
+    return r.json()
+
+
+def test_decision_rows_name_their_source_and_whether_they_are_confirmed(
+    control_plane_url: str, mint_test_token: Any
+) -> None:
+    token = mint_test_token(org=ORG, namespaces=["*"], roles=["writer"])
+    own, team = "dev", "team-rules"
+    base = {"org": ORG, "agent": "claude-code", "memory_type": "decision", "files": ["src/a.cpp"]}
+    # pinned the way a maintainer confirms a decision: memory.pin
+    _post(
+        control_plane_url,
+        "memory.pin",
+        token,
+        base
+        | {
+            "namespace": team,
+            "memory_key": "design/spill",
+            "value": "Decided to spill the final distinct because memory is bounded.",
+            "tags": ["decision"],
+            "source_resource_id": SOURCE,
+        },
+    )
+    _post(
+        control_plane_url,
+        "memory.set",
+        token,
+        base
+        | {"namespace": own, "memory_key": "design/draft", "value": "Decided to keep one pass."},
+    )
+    request = {"org": ORG, "namespace": own, "path": "src/a.cpp", "extra_namespaces": [team]}
+    out: dict[str, Any] = {}
+    for _ in range(50):
+        out = _post(control_plane_url, "memory.for_file", token, request)
+        if out["total"] == 2:
+            break
+        time.sleep(0.2)
+    assert out["total"] == 2, out
+    lines = out["rendered"].splitlines()
+    # mint_test_token's default subject is the author
+    assert lines[1].startswith("- Decision (by test-suite, ")
+    assert ") (pinned): " in lines[1]
+    assert "bounded" in lines[1]
+    assert lines[1].endswith(f" — source: {SOURCE} [id: design/spill]")
+    assert (
+        lines[2].startswith("- design/draft [decision] (unconfirmed): ")
+        and "source:" not in lines[2]
+    )
+    assert [h["source_resource_id"] for h in out["hits"]] == [SOURCE, ""]
+
+    # an attestation through memory.verify confirms the unpinned decision
+    _post(
+        control_plane_url,
+        "memory.verify",
+        token,
+        {"org": ORG, "namespace": own, "agent": "claude-code", "memory_key": "design/draft"},
+    )
+    for _ in range(50):
+        out = _post(control_plane_url, "memory.for_file", token, request)
+        if out["hits"][1]["verification"] == "process":
+            break
+        time.sleep(0.2)
+    assert out["hits"][1]["verification"] == "process", out
+    assert out["rendered"].splitlines()[2].startswith("- design/draft [decision]: ")

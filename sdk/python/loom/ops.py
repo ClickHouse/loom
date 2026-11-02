@@ -11753,7 +11753,10 @@ class MemoryForFileHit(TypedDict, total=False):
     actor: NotRequired[str]
     supersedes_key: NotRequired[str]
     supersedes: NotRequired[str]
+    supersedes_kind: NotRequired[Literal["rule", "decision", ""]]
     matched_files: NotRequired[list[str]]
+    source_resource_id: NotRequired[str]
+    verification: NotRequired[Literal["human", "process", "stale", "none"]]
     code_state: NotRequired[
         Union[Literal["fresh", "moved", "changed", "unresolved", "missing"], Literal[""]]
     ]

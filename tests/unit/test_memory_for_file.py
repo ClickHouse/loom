@@ -75,6 +75,10 @@ async def test_path_and_basename_are_bound_and_both_shapes_are_matched(
     # an expired row is never served, and a credential is never pushed into a prompt
     assert "(expires_at IS NULL OR expires_at > now())" in ch.sql
     assert "sensitivity != 'high'" in ch.sql
+    # the attestation columns and the cut flag the verification state is derived from
+    for column in ("verified_by", "verified_sha256", "content_sha256"):
+        assert column in ch.sql
+    assert f"value_len > {mff._VALUE_BYTES} AS value_truncated" in ch.sql
 
 
 @pytest.mark.asyncio
@@ -196,3 +200,226 @@ async def test_a_link_read_that_fails_leaves_the_file_match_standing(
     monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda org, ns: "code-a")
     request = MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", extra_namespaces=["x"])
     assert await mff._linked(request, "src/a.cpp", ["ns"]) == {}
+
+
+# --- decision rows ------------------------------------------------------------
+
+_NOW = datetime(2026, 9, 25, 12, 0)
+_SOURCE = "knowledge:design-docs/spilling.pdf#Slide 2 > Final distinct"
+
+
+def _decision(key: str, value: str = "Decided X because Y.", **over: Any) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "memory_type": "decision",
+        "tags": ["decision"],
+        "pinned": True,
+        "namespace": "code-repo",
+        "actor": "human:alice",
+        "updated_at": datetime(2026, 9, 22, 12, 0),
+        "source_resource_id": _SOURCE,
+    }
+    return _row(key, value, **(fields | over))
+
+
+def _lines(hits: list[dict[str, Any]]) -> list[str]:
+    text, _, _ = mff.render_block("src/a.cpp", hits, 10_000, home="me", now=_NOW)
+    return text.splitlines()
+
+
+def test_a_team_decision_is_headed_decision_and_names_its_source() -> None:
+    assert _lines([_decision("design/spill")])[1] == (
+        "- Decision (by alice, 3 days ago) (pinned): Decided X because Y."
+        f" — source: {_SOURCE} [id: design/spill]"
+    )
+
+
+def test_a_decisions_source_survives_the_value_cap() -> None:
+    line = _lines([_decision("design/long", "z" * 900)])[1]
+    assert f"… — source: {_SOURCE} [id: design/long]" in line
+    assert line.count("z") == mff._LINE_CHARS - 1
+
+
+def test_a_decision_without_a_source_has_no_suffix() -> None:
+    line = _lines([_decision("design/bare", source_resource_id="")])[1]
+    assert line.endswith("Decided X because Y. [id: design/bare]") and "source:" not in line
+
+
+def test_an_unpinned_decision_is_unconfirmed_in_either_namespace() -> None:
+    team, own = _lines(
+        [_decision("design/a", pinned=False), _decision("design/b", pinned=0, namespace="me")]
+    )[1:3]
+    assert team.startswith("- Decision (by alice, 3 days ago) (unconfirmed): ")
+    assert own == f"- design/b [decision] (unconfirmed): Decided X because Y. — source: {_SOURCE}"
+
+
+def test_a_row_that_is_not_a_decision_renders_as_before() -> None:
+    rule = _decision("rules/r", "Keep 64.", memory_type="semantic", tags=["constraint"])
+    note = _row("note", "Mine.", source_resource_id=_SOURCE, namespace="me")
+    assert _lines([rule, note])[1:3] == [
+        "- Team rule (by alice, 3 days ago) [constraint] (pinned): Keep 64. [id: rules/r]",
+        "- note: Mine.",
+    ]
+
+
+def test_decision_lines_stay_inside_the_token_budget() -> None:
+    hits = [_decision(f"design/{i}", "w" * 300) for i in range(6)]
+    text, _, truncated = mff.render_block("src/a.cpp", hits, 200, home="me", now=_NOW)
+    rows = [ln for ln in text.splitlines() if ln.startswith("- Decision")]
+    assert truncated is True and 0 < len(rows) < len(hits)
+    # a row that does not fit is left out whole, never printed without its source
+    assert all(
+        ln.endswith(f"source: {_SOURCE} [id: {h['memory_key']}]")
+        for ln, h in zip(rows, hits[: len(rows)], strict=True)
+    )
+    # everything but the "… more" tail fits the budget
+    kept = [ln for ln in text.splitlines() if not ln.startswith("- … ")]
+    assert len("\n".join(kept)) <= 200 * mff._CHARS_PER_TOKEN
+
+
+def test_a_long_decision_and_a_constraint_fit_the_default_budget() -> None:
+    source = "knowledge:design-docs/" + "s" * 300
+    hits = [
+        _row("rules/r", "Keep 64 buckets.", tags=["constraint"], namespace="code-repo"),
+        _decision("design/long", "v" * 900, source_resource_id=source),
+    ]
+    budget = MemoryForFileInput(org="o", namespace="me", path="a").token_budget
+    text, _, truncated = mff.render_block("src/a.cpp", hits, budget, home="me", now=_NOW)
+    lines = text.splitlines()
+    assert truncated is False and budget == 300
+    assert lines[1].startswith("- Team rule (") and lines[1].endswith("[id: rules/r]")
+    capped = source[: mff._SOURCE_CHARS - 1] + "…"
+    assert lines[2].endswith(f"— source: {capped} [id: design/long]")
+
+
+@pytest.mark.asyncio
+async def test_the_source_is_read_into_the_hit_and_the_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _CH([_decision("design/spill", namespace=None)])
+    monkeypatch.setattr(mff, "get_client", lambda: ch)
+    out = await mff.handle_memory_for_file(
+        MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
+    )
+    assert out.rendered.splitlines()[1] == (
+        f"- design/spill [decision] (pinned): Decided X because Y. — source: {_SOURCE}"
+    )
+    assert out.hits[0].source_resource_id == _SOURCE
+
+
+def test_a_row_tagged_decision_is_a_decision() -> None:
+    tagged = _decision("design/t", "v", memory_type="semantic", pinned=False)
+    assert _lines([tagged])[1] == (
+        f"- Decision (by alice, 3 days ago) (unconfirmed): v — source: {_SOURCE} [id: design/t]"
+    )
+
+
+def _conflicting(newer: dict[str, Any], older: dict[str, Any]) -> list[dict[str, Any]]:
+    """The pair as the conflict check leaves it, ordered by `_supersede_order`."""
+    older["updated_at"] = datetime(2026, 9, 20, 12, 0)
+    newer["conflict_with"] = [older["memory_id"]]
+    return mff._supersede_order([older, newer])
+
+
+def test_a_decision_superseding_a_decision_says_decision() -> None:
+    rows = _conflicting(_decision("design/new", "New."), _decision("design/old", actor="human:bob"))
+    assert rows[0]["supersedes_kind"] == "decision"
+    assert _lines(rows)[1].startswith(
+        "- Decision (by alice, 3 days ago; supersedes decision by bob) (pinned): New."
+    )
+
+
+def test_a_block_of_team_decisions_has_a_neutral_removal_footer() -> None:
+    footer = _lines([_decision("design/a"), _decision("design/b")])[-1]
+    assert footer == (
+        '- A team rule or decision wrong or outdated? memory.delete(namespace="code-repo", '
+        "memory_key=<id>) removes it if you wrote it or are an admin; otherwise write a "
+        "corrected one for the file and tell its author."
+    )
+
+
+def test_a_typed_decision_without_the_tag_is_marked_in_its_own_namespace() -> None:
+    own = _decision("design/own", "v", tags=[], namespace="me", source_resource_id="")
+    assert _lines([own])[1] == "- design/own [decision] (pinned): v"
+
+
+def test_a_verified_decision_is_confirmed_and_a_stale_one_is_not() -> None:
+    verified = _decision("design/v", pinned=False, verification="human")
+    stale = _decision("design/s", pinned=False, verification="stale")
+    first, second = _lines([verified, stale])[1:3]
+    assert first.startswith("- Decision (by alice, 3 days ago): Decided X because Y.")
+    assert second.startswith("- Decision (by alice, 3 days ago) (unconfirmed): ")
+
+
+def test_an_unconfirmed_decision_whose_code_changed_notes_both() -> None:
+    line = _lines([_decision("design/c", pinned=False, code_state="changed")])[1]
+    assert line.startswith(
+        "- Decision (by alice, 3 days ago) (unconfirmed) (its code changed since it was "
+        "written: check before relying on it): Decided X because Y."
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_attestation_is_read_and_a_stale_one_leaves_a_decision_unconfirmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core.hashing import sha256_value_json
+
+    value = '"Decided X because Y."'
+    good = sha256_value_json(value)
+    rows = [
+        _decision(
+            "design/v",
+            value,
+            pinned=0,
+            namespace=None,
+            verified_by="human:carol",
+            verified_sha256=good,
+            content_sha256=good,
+        ),
+        _decision(
+            "design/s",
+            value,
+            pinned=0,
+            namespace=None,
+            verified_by="human:carol",
+            verified_sha256="f" * 64,
+            content_sha256=good,
+        ),
+    ]
+    monkeypatch.setattr(mff, "get_client", lambda: _CH(rows))
+    out = await mff.handle_memory_for_file(
+        MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
+    )
+    assert [h.verification for h in out.hits] == ["human", "stale"]
+    first, second = out.rendered.splitlines()[1:3]
+    assert "(unconfirmed)" not in first and "(unconfirmed)" in second
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [('"short"', "human"), ('"' + "x" * 599 + '"', "stale")],
+)
+@pytest.mark.asyncio
+async def test_without_a_stored_hash_only_an_uncut_value_confirms(
+    monkeypatch: pytest.MonkeyPatch, value: str, expected: str
+) -> None:
+    from server.core.hashing import sha256_value_json
+
+    row = _decision(
+        "design/h",
+        value,
+        pinned=0,
+        namespace=None,
+        verified_by="human:carol",
+        verified_sha256=sha256_value_json(value),
+        content_sha256="",
+    )
+    # the select cuts the value at 600 bytes and flags it
+    row["value_truncated"] = len(value) > mff._VALUE_BYTES
+    row["value"] = value[: mff._VALUE_BYTES]
+    monkeypatch.setattr(mff, "get_client", lambda: _CH([row]))
+    out = await mff.handle_memory_for_file(
+        MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
+    )
+    assert out.hits[0].verification == expected
+    assert ("(unconfirmed)" in out.rendered) is (expected == "stale")

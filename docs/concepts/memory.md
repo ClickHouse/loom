@@ -268,6 +268,16 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
 - `files` are repository paths the memory is about; `memory.for_file` serves them before
   an edit of those files.
 
+`memory.for_file` renders one line per memory, within its token budget. A memory from an
+extra namespace (the repository's code namespace) is headed `Team rule (by <author>,
+<age>)`, or `Decision (by <author>, <age>)` for a decision (`memory_type` `decision` or
+the tag `decision`). A line lists its `constraint`, `gotcha` and `decision` kinds in one
+bracket (`[constraint, decision]`; a line headed `Decision` leaves out `decision`). It
+carries `(pinned)` for a pinned row, `(unconfirmed)` for a decision nobody has pinned or
+verified in its current form, and a note when its linked code changed or went. A
+decision with a source carries ` — source: <source_resource_id>` after its value; the
+value's cut does not reach it, and the source has its own shorter cap.
+
 ## Memories linked to code
 
 A memory about code is linked to the definitions and files it names, and the links

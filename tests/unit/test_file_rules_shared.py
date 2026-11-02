@@ -407,8 +407,46 @@ async def test_a_newer_conflicting_rule_is_shown_above_the_older_one(
     ]
     assert out.hits[0].supersedes_key == "rules/join/buckets_v1"
     assert out.hits[0].supersedes == "alice"
+    assert out.hits[0].supersedes_kind == "rule"
     assert out.rendered.splitlines()[1].startswith(
         "- Team rule (by bob, 2 hours ago; supersedes rule by alice) [constraint]: Keep 64"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_rule_contradicting_an_older_decision_names_it_a_decision(
+    monkeypatch: pytest.MonkeyPatch,
+    fixed_now: None,
+) -> None:
+    from server.auth import authz
+
+    old = _row(
+        "design/join/buckets",
+        "Decided 32 buckets.",
+        memory_type="decision",
+        updated_at=datetime(2026, 9, 20, 12, 0),
+        memory_id="u-old",
+    )
+    new = _row(
+        "rules/join/buckets",
+        "Keep 64 buckets.",
+        tags=["constraint"],
+        updated_at=datetime(2026, 9, 25, 10, 0),
+        actor="human:bob",
+        memory_id="u-new",
+        conflict_with=["u-old"],
+    )
+    monkeypatch.setattr(mff, "get_client", lambda: _NsCH({"me": [], "code-clickhouse": [old, new]}))
+    monkeypatch.setattr(authz, "row_in_scope", _allow({"code-clickhouse"}))
+    out = await mff.handle_memory_for_file(
+        MemoryForFileInput(
+            org="o", namespace="me", path="src/a.cpp", extra_namespaces=["code-clickhouse"]
+        )
+    )
+    assert [h.memory_key for h in out.hits] == ["rules/join/buckets", "design/join/buckets"]
+    assert out.hits[0].supersedes_kind == "decision" and out.hits[1].supersedes_kind == ""
+    assert out.rendered.splitlines()[1].startswith(
+        "- Team rule (by bob, 2 hours ago; supersedes decision by alice) [constraint]: Keep 64"
     )
 
 

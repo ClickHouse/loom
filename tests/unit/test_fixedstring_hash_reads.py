@@ -142,7 +142,7 @@ def test_row_model_list_verification_and_pipeline_dedup_read_bytes_as_hex() -> N
     from server.memory import store as memory_repo
     from server.memory.app import pipeline as mp
     from server.memory.app import pipeline_state as pipeline_state
-    from server.memory.app import query as mq
+    from server.memory.domain import trust
 
     h = sha256_value("v")
     from datetime import UTC, datetime
@@ -167,7 +167,7 @@ def test_row_model_list_verification_and_pipeline_dedup_read_bytes_as_hex() -> N
     }
     assert memory_repo._hydrate(row).content_sha256 == h
     # memory.list verification: a bytes hash equal to the verified hash is not "stale"
-    verified = mq._list_verification(
+    verified = trust.row_verification(
         {
             "content_sha256": h.encode(),
             "verified_by": "alice",
@@ -175,7 +175,7 @@ def test_row_model_list_verification_and_pipeline_dedup_read_bytes_as_hex() -> N
             "value": "v",
         }
     )
-    unverified = mq._list_verification(
+    unverified = trust.row_verification(
         {
             "content_sha256": h.encode(),
             "verified_by": "alice",
@@ -192,3 +192,13 @@ def test_row_model_list_verification_and_pipeline_dedup_read_bytes_as_hex() -> N
     st.extracted_facts = [{"value": "v"}, {"value": "other"}]
     out = asyncio.run(mp._step_hash_dedup(st, {}))
     assert [f["value"] for f in out.extracted_facts] == ["other"] and out.skipped_dedup == 1
+
+
+def test_a_stored_hash_wins_without_encoding_the_value() -> None:
+    from server.memory.domain import trust
+
+    def refuse(_: object) -> str:
+        raise AssertionError("the value must not be encoded when a hash is stored")
+
+    stored = "a" * 64
+    assert trust.live_sha256(stored, object(), truncated=False, to_json=refuse) == stored
