@@ -298,7 +298,7 @@ def _newer_key(r: dict[str, Any]) -> tuple[float, str]:
 
 
 def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Contradicting team rows (rules or decisions), reusing the conflict machinery: two rows
+    """Contradicting rows (rules or decisions), reusing the conflict machinery: two rows
     of one namespace cross-linked by `conflict_with` are an older row and a newer one that
     contradicts it. The newer is placed above every older row it supersedes, newest first
     along a chain, and carries `supersedes_key` / `supersedes` / `supersedes_kind` (the first
@@ -489,7 +489,7 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
     hits: list[_MemoryForFileHit] = []
     # The ids are not on the wire; render_block needs them to leave a superseded row out
     # with its superseder.
-    shown: list[dict[str, Any]] = []
+    to_render: list[dict[str, Any]] = []
     for r in rows:
         hit = _MemoryForFileHit(
             memory_key=str(r["memory_key"]),
@@ -513,13 +513,13 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
             code_state=r.get("code_state", ""),
         )
         hits.append(hit)
-        shown.append(
+        to_render.append(
             hit.model_dump()
             | {"memory_id": r.get("memory_id"), "supersedes_ids": r.get("supersedes_ids") or []}
         )
 
     rendered, tokens, truncated = render_block(
-        path, shown, input.token_budget, home=input.namespace
+        path, to_render, input.token_budget, home=input.namespace
     )
     return MemoryForFileOutput(
         path=path,

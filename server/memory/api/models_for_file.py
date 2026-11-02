@@ -80,7 +80,7 @@ class _MemoryForFileHit(BaseModel):
     # Set when this row and an older one of the same namespace
     # are cross-linked by the conflict check (`conflict_with`): the older's
     # key, author and kind (`decision`, or `rule` for any row that is not a decision).
-    # This row is placed directly above it.
+    # This row is placed above it.
     supersedes_key: str = ""
     supersedes: str = ""
     supersedes_kind: Literal["rule", "decision", ""] = ""
