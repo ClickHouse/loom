@@ -77,8 +77,9 @@ def _output(
     return [json.loads(line) for line in out.stdout.splitlines() if line.strip()]
 
 
-# one embedding at the codec's declared width
+# one embedding at the codec's declared width, and the setup its table needs
 VECTOR = "[" + ",".join(["0.1"] * 3072) + "]"
+EMBEDDINGS = ("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
 
 
 class LocalCH:

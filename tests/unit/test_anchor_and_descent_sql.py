@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from server.memory.app.search.sql import anchor_pool_sql, digest_descent_sql
-from tests.unit.clickhouse_local import CLICKHOUSE, VECTOR, ddl, run
+from tests.unit.clickhouse_local import CLICKHOUSE, EMBEDDINGS, VECTOR, run
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 
@@ -23,7 +23,7 @@ def _row(user: str, session: str, key: str = "user_city", scope: str = "private"
 
 
 def _setup(*rows: str) -> list[str]:
-    return ["SET enable_quantized_codec = 1", ddl("memory_embeddings"), *rows]
+    return [*EMBEDDINGS, *rows]
 
 
 def test_the_anchor_pool_takes_tied_rows_in_row_order() -> None:

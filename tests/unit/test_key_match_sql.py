@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from server.memory.app.search.sql import key_match_sql
-from tests.unit.clickhouse_local import CLICKHOUSE, VECTOR, ddl, run
+from tests.unit.clickhouse_local import CLICKHOUSE, EMBEDDINGS, VECTOR, run
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 
@@ -37,7 +37,7 @@ def _params(**kw: int) -> dict[str, object]:
 
 
 def _setup(*rows: str) -> list[str]:
-    return ["SET enable_quantized_codec = 1", ddl("memory_embeddings"), *rows]
+    return [*EMBEDDINGS, *rows]
 
 
 def test_rows_of_one_key_that_tie_keep_one_order() -> None:

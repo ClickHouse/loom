@@ -13,7 +13,7 @@ from server.core.ch_params import FIELD_BYTES, chunks
 from server.memory.app.retrieval.pool import SetChunkRow, _set_chunk_rows
 from server.memory.app.set_chunks import plan_set_chunks, set_chunk_identities
 from server.memory.domain.search_types import SearchHit
-from tests.unit.clickhouse_local import CLICKHOUSE, VECTOR, LocalCH, ddl
+from tests.unit.clickhouse_local import CLICKHOUSE, EMBEDDINGS, VECTOR, LocalCH, ddl
 from tests.unit.test_memory_search_service import _q
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
@@ -47,8 +47,7 @@ def _row(
 
 
 def _local_ch(*rows: list[str]) -> LocalCH:
-    schema = ("SET enable_quantized_codec = 1", ddl("memory_embeddings"), ddl("memory"))
-    return LocalCH(*schema, *(statement for row in rows for statement in row))
+    return LocalCH(*EMBEDDINGS, ddl("memory"), *(statement for row in rows for statement in row))
 
 
 def _chunk(user: str, value: str, index: int = 0) -> SearchHit:

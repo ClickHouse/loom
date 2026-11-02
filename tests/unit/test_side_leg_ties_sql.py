@@ -11,7 +11,7 @@ from server.memory.app.retrieval.side_legs import (
     _fetch_unmatched_candidates,
     _lexical_recall_fallback,
 )
-from tests.unit.clickhouse_local import CLICKHOUSE, VECTOR, LocalCH, ddl
+from tests.unit.clickhouse_local import CLICKHOUSE, EMBEDDINGS, VECTOR, LocalCH
 from tests.unit.test_memory_search_service import _q
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
@@ -32,7 +32,7 @@ def _row(session: str) -> str:
 
 
 def _local_ch(*rows: str) -> LocalCH:
-    return LocalCH("SET enable_quantized_codec = 1", ddl("memory_embeddings"), *rows)
+    return LocalCH(*EMBEDDINGS, *rows)
 
 
 @pytest.mark.asyncio

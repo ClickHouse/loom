@@ -336,7 +336,8 @@ async def delete_learnings_queue_by_user(
         f"WHERE org = {{org:String}} AND {ORPHAN_LEARNINGS}",
         params={"org": org},
     )
-    cids = [str(r["candidate_id"]) for r in rows]
+    # sorted, so a re-run cuts the same slices and finds its own pending mutations
+    cids = sorted(str(r["candidate_id"]) for r in rows)
     if not cids:
         return n
     latest: list[dict[str, Any]] = []
@@ -346,7 +347,7 @@ async def delete_learnings_queue_by_user(
             "WHERE org = {org:String} AND candidate_id IN {cids:Array(UUID)}",
             params={"org": org, "cids": part},
         )
-    pending = [str(r["candidate_id"]) for r in latest if r["status"] == "pending"]
+    pending = sorted(str(r["candidate_id"]) for r in latest if r["status"] == "pending")
     decided = [r for r in latest if r["status"] != "pending"]
     blank = [
         {**r, "proposed_value": "", "version": int(r["version"]) + 1}
@@ -373,7 +374,7 @@ async def delete_learnings_queue_by_user(
                 params={"cids": unbacked},
                 ch=ch,
             )
-    decided_versions = [(str(r["candidate_id"]), int(r["version"])) for r in decided]
+    decided_versions = sorted((str(r["candidate_id"]), int(r["version"])) for r in decided)
     for versions in chunks(decided_versions):
         n += await delete_scoped(
             "loom.learnings_queue",
