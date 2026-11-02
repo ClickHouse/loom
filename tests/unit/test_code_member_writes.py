@@ -361,7 +361,9 @@ def test_outside_the_member_rule_the_check_is_a_no_op() -> None:
     cmw.assert_own_row(None, op="memory.set")  # a new rule: nothing to own yet
 
 
-def test_a_refused_member_is_told_to_record_a_decision_again() -> None:
+@pytest.mark.asyncio
+async def test_a_refused_member_is_sent_to_the_decisions_author() -> None:
+    # A member cannot call decision.record, so the hint names who can.
     from types import SimpleNamespace
 
     from server.code.app.member_writes import refusal_hint
@@ -372,5 +374,9 @@ def test_a_refused_member_is_told_to_record_a_decision_again() -> None:
         actor="human:alice",
         memory_type="decision",
     )
-    first = refusal_hint(row, op="memory.delete")["next"][0]
-    assert "decision.record" in first and "shown above" not in first
+    (step,) = refusal_hint(row, op="memory.delete")["next"]
+    assert step.startswith("ask alice or a maintainer of 'code-clickhouse'")
+    assert "decision.record" in step and "memory.set" not in step
+    assert not await cmw.code_member_may_write(
+        _auth("bob"), "decision.record", ORG, "code-clickhouse"
+    )

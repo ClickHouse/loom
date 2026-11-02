@@ -60,6 +60,8 @@ class _MemoryForFileHit(BaseModel):
     # The stored JSON text, cut at 600 bytes; `rendered` prints it decoded. The full row is a
     # memory.get away.
     value: str
+    # True when `value` was cut.
+    value_truncated: bool = False
     tags: list[str] = Field(default_factory=list)
     confidence: float = 1.0
     pinned: bool = False

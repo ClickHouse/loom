@@ -81,7 +81,9 @@ def _readable(hit: dict[str, Any]) -> str:
             value = json.loads(raw)
         except ValueError:
             return raw  # a value not stored as JSON (memory.set always encodes one)
-        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        return _encodable(
+            value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        )
     if not raw.startswith('"'):
         return raw
     # An escape the cut split (`\u00e9` cut after `\u0`) leaves the text undecodable; drop
@@ -92,8 +94,13 @@ def _readable(hit: dict[str, Any]) -> str:
         except ValueError:
             continue
         # A cut between the two escapes of a surrogate pair leaves half of one.
-        return text[:-1] if text and "\ud800" <= text[-1] <= "\udbff" else text
+        return _encodable(text[:-1] if text and "\ud800" <= text[-1] <= "\udbff" else text)
     return raw
+
+
+def _encodable(text: str) -> str:
+    """`text` with any lone surrogate (JSON can hold one; UTF-8 cannot) as `?`."""
+    return text.encode("utf-8", "replace").decode("utf-8")
 
 
 def _one_line(text: str, limit: int) -> str:
@@ -193,10 +200,15 @@ def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
     ns = str(team[0].get("namespace") or "")
     has_decision = any(_is_decision(h) for h in team)
     what = "rule or decision" if has_decision else "rule"
+    instead = (
+        "write a corrected rule for the file, or ask a decision's author or a maintainer to "
+        "record it again"
+        if has_decision
+        else "write a corrected rule for the file and tell its author"
+    )
     return (
         f'- A team {what} wrong or outdated? memory.delete(namespace="{ns}", memory_key=<id>) '
-        "removes it if you wrote it or are an admin; otherwise write a corrected one "
-        "for the file and tell its author."
+        f"removes it if you wrote it or are an admin; otherwise {instead}."
     )
 
 
@@ -422,12 +434,13 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
     rows = await _merged_rows(input, path, base)
 
     hits: list[_MemoryForFileHit] = []
-    for r in rows or []:
+    for r in rows:
         hits.append(
             _MemoryForFileHit(
                 memory_key=str(r["memory_key"]),
                 memory_type=str(r.get("memory_type") or "semantic"),
                 value=str(r.get("value") or ""),
+                value_truncated=bool(r.get("value_truncated")),
                 tags=[str(t) for t in (r.get("tags") or [])],
                 confidence=float(conf) if (conf := r.get("confidence")) is not None else 1.0,
                 pinned=bool(r.get("pinned")),
@@ -446,13 +459,8 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
             )
         )
 
-    # The renderer decodes a value it knows was cut; the hit does not carry that flag.
-    rows_out = [
-        h.model_dump() | {"value_truncated": bool(r.get("value_truncated"))}
-        for h, r in zip(hits, rows or [], strict=True)
-    ]
     rendered, tokens, truncated = render_block(
-        path, rows_out, input.token_budget, home=input.namespace
+        path, [h.model_dump() for h in hits], input.token_budget, home=input.namespace
     )
     return MemoryForFileOutput(
         path=path,

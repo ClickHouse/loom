@@ -95,20 +95,6 @@ def _author(actor: str) -> str:
     return actor
 
 
-def _correction(existing: Any, ns: str) -> str:
-    """How a member corrects someone else's row: a decision by recording it again, a rule by
-    writing a newer one that is shown above it."""
-    if getattr(existing, "memory_type", "") == "decision":
-        return (
-            f"record the corrected decision with decision.record in {ns!r} (the same category "
-            "and scenario): its record replaces this one's"
-        )
-    return (
-        f"write a corrected rule for the same file with memory.set in {ns!r} (a new key, "
-        "files set, tag constraint): it is shown above this one for everyone"
-    )
-
-
 def refusal_hint(existing: Any, *, op: str) -> dict[str, Any]:
     """The structured `hint` a refused member write carries (the refusal says how to
     make it right), so any client can show who wrote the rule and what a member can do
@@ -116,15 +102,24 @@ def refusal_hint(existing: Any, *, op: str) -> dict[str, Any]:
     key = str(getattr(existing, "memory_key", "") or "")
     ns = str(getattr(existing, "namespace", "") or "")
     author = _author(str(getattr(existing, "actor", "") or "")) or "another member"
+    if getattr(existing, "memory_type", "") == "decision":
+        # A member cannot call decision.record, and no rule is shown above a decision.
+        steps = [
+            f"ask {author} or a maintainer of {ns!r}: they can record the corrected decision "
+            f"with decision.record or memory.delete {key!r}"
+        ]
+    else:
+        steps = [
+            f"write a corrected rule for the same file with memory.set in {ns!r} (a new key, "
+            "files set, tag constraint): it is shown above this one for everyone",
+            f"tell {author} or a maintainer of {ns!r}: they can memory.delete {key!r}",
+        ]
     return {
         "code": "TEAM_RULE_NOT_YOURS",
         "author": author,
         "memory_key": key,
         "namespace": ns,
-        "next": [
-            _correction(existing, ns),
-            f"tell {author} or a maintainer of {ns!r}: they can memory.delete {key!r}",
-        ],
+        "next": steps,
     }
 
 
@@ -143,14 +138,15 @@ def assert_own_row(existing: Any, *, op: str) -> None:
     if mine and str(getattr(existing, "actor", "") or "") == mine:
         return
     hint = refusal_hint(existing, op=op)
+    kind = "decision" if getattr(existing, "memory_type", "") == "decision" else "rule"
     raise HTTPException(
         status_code=403,
         detail={
             "code": "AUTH_INSUFFICIENT",
             "message": (
-                f"{op}: the team rule {hint['memory_key']!r} was written by {hint['author']}; "
-                "a member of this code namespace may change only the rules they wrote. "
-                f"Instead: {hint['next'][0]}; or {hint['next'][1]}."
+                f"{op}: the team {kind} {hint['memory_key']!r} was written by {hint['author']}; "
+                "a member of this code namespace may change only the rows they wrote. "
+                f"Instead: {'; or '.join(hint['next'])}."
             ),
             "hint": hint,
         },

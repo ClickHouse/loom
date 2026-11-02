@@ -340,12 +340,13 @@ def test_two_cross_linked_typed_decisions_are_two_decisions() -> None:
     assert not any(r.get("supersedes_key") for r in rows)
 
 
-def test_a_block_of_team_decisions_has_a_neutral_removal_footer() -> None:
+def test_a_block_with_team_decisions_says_how_to_correct_one() -> None:
     footer = _lines([_decision("design/a"), _decision("design/b")])[-1]
     assert footer == (
         '- A team rule or decision wrong or outdated? memory.delete(namespace="code-repo", '
         "memory_key=<id>) removes it if you wrote it or are an admin; otherwise write a "
-        "corrected one for the file and tell its author."
+        "corrected rule for the file, or ask a decision's author or a maintainer to record "
+        "it again."
     )
 
 
@@ -376,8 +377,8 @@ async def test_the_attestation_is_read_and_a_stale_one_leaves_a_decision_unconfi
 ) -> None:
     from server.core.hashing import sha256_value_json
 
-    value = '"Decided X because Y."'
-    good = sha256_value_json(value)
+    value = "Decided X because Y."
+    good = sha256_value_json(json.dumps(value))
     rows = [
         _decision(
             "design/v",
@@ -457,6 +458,7 @@ def test_a_decision_whose_outcome_failed_says_so() -> None:
     )
 
 
+@pytest.mark.asyncio
 async def test_a_value_cut_by_the_select_is_printed_as_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -476,5 +478,11 @@ def test_a_cut_inside_a_surrogate_pair_leaves_no_half_of_it(cut: int) -> None:
     stored = json.dumps("a" * 10 + "😀" * 5)
     hit = _decision("design/e", value_truncated=True) | {"value": stored[: len(stored) - 1 - cut]}
     line = _lines([hit])[1]
-    line.encode("utf-8")
+    assert line.encode("utf-8")  # raises on a lone surrogate
     assert ": aaaaaaaaaa" in line
+
+
+def test_a_lone_surrogate_in_a_whole_value_is_printed_encodable() -> None:
+    hit = _decision("design/s", "a\ud800b")
+    line = _lines([hit])[1]
+    assert line.encode("utf-8") and ": a?b" in line

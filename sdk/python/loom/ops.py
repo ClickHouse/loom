@@ -11743,6 +11743,7 @@ class MemoryForFileHit(TypedDict, total=False):
     memory_key: Required[str]
     memory_type: Required[str]
     value: Required[str]
+    value_truncated: NotRequired[bool]
     tags: NotRequired[list[str]]
     confidence: NotRequired[float]
     pinned: NotRequired[bool]

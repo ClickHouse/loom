@@ -4609,6 +4609,7 @@ export interface MemoryForFileHit {
   memory_key: string;
   memory_type: string;
   value: string;
+  value_truncated?: boolean;
   tags?: string[];
   confidence?: number;
   pinned?: boolean;
