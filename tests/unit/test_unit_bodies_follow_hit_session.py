@@ -95,3 +95,75 @@ async def test_a_high_row_is_never_a_search_body(monkeypatch):
     h = _hit("k1")
     await _expand_unit_bodies([h], _input())
     assert h.content_excerpt == CLIP and "vault" not in h.content_excerpt
+
+
+@pytest.mark.asyncio
+async def test_two_writers_of_one_key_in_one_session_each_get_their_own_body(monkeypatch):
+    # Each hit is read under the row it names, so neither writer's body hides the other's.
+    bodies = {("a", "u1", "s1"): "the first user's body", ("a", "u2", "s1"): "the second's"}
+    reads = []
+
+    async def fake_get_many(identity, keys, **_):
+        who = (identity.agent, identity.user_id, identity.session_id)
+        reads.append(who)
+        return [SimpleNamespace(memory_key="k", value=bodies[who], sensitivity="")]
+
+    monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
+    hits = [_hit("k", session_id="s1"), _hit("k", session_id="s1")]
+    hits[0]._row_identity, hits[1]._row_identity = ("a", "u1", "s1"), ("a", "u2", "s1")
+    returned, elided, _ = await _expand_unit_bodies(hits, _input())
+    assert sorted(reads) == sorted(bodies)
+    assert [h.content_excerpt for h in hits] == ["the first user's body", "the second's"]
+    assert (returned, elided) == (2, 0)
+
+
+@pytest.mark.asyncio
+async def test_an_own_user_read_never_serves_another_users_body(monkeypatch):
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory.app.search import payload
+
+    # The store answers a read only for the user its scope allows.
+    async def fake_get_many(identity, keys, *, scope, **_):
+        if scope.user_id != identity.user_id:
+            return []
+        return [SimpleNamespace(memory_key=k, value="u2's body", sensitivity="") for k in keys]
+
+    monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
+    only_u1 = ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    monkeypatch.setattr(payload, "request_scope", lambda: only_u1)
+    h = _hit("k", session_id="s1")
+    h._row_identity = ("a", "u2", "s1")
+    await _expand_unit_bodies([h], _input())
+    assert h.content_excerpt == CLIP and h.body_truncated is True
+
+
+@pytest.mark.asyncio
+async def test_a_shared_row_is_read_under_the_callers_identity(monkeypatch):
+    # a promoted row's embedding names the `_shared` agent, which no loom.memory row has
+    reads = []
+
+    async def fake_get_many(identity, keys, **_):
+        reads.append(identity.agent)
+        return [SimpleNamespace(memory_key=k, value="the body", sensitivity="") for k in keys]
+
+    monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
+    h = _hit("k", session_id="-")
+    h._row_identity = ("_shared", "-", "-")
+    await _expand_unit_bodies([h], _input())
+    assert reads == ["*"] and h.content_excerpt == "the body"
+
+
+@pytest.mark.asyncio
+async def test_a_record_body_is_read_under_the_callers_session(monkeypatch):
+    # a record keeps its own session as provenance; its parent fact may live in another
+    sessions = []
+
+    async def fake_get_many(identity, keys, **_):
+        sessions.append(identity.session_id)
+        return [SimpleNamespace(memory_key=k, value="the fact", sensitivity="") for k in keys]
+
+    monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
+    h = _hit("k", session_id="s2")
+    h.source = "record"
+    await _expand_unit_bodies([h], _input(session_id="s1"))
+    assert sessions == ["s1"] and h.content_excerpt == "the fact"

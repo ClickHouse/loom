@@ -1,9 +1,9 @@
 """A memory search is a function of its inputs.
 
-Every ranked list of hits sorts by (−rank_score, distance, memory_key); the
-non-vector SQL legs carry a key tie-breaker after their score; the two vector
-legs keep the bare `ORDER BY distance` shape the codes-first read requires and
-leave determinism to the Python sort over their over-fetched candidates.
+Every ranked list of hits sorts by (−rank_score, distance, memory_key) and then the row's
+namespace, agent, user and session; the non-vector SQL legs carry a key tie-breaker after
+their score; the two vector legs keep the bare `ORDER BY distance` shape the codes-first
+read requires and leave determinism to the Python sort over their over-fetched candidates.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from server.memory.api.models_search import _MemorySearchHit
 from server.memory.domain.search_types import hit_sort_key
 from tests.unit.test_memory_search_service import StubCH, _q
 
@@ -31,10 +32,14 @@ def test_sort_key_breaks_score_ties_by_distance_then_key() -> None:
 
 
 def test_sort_key_tolerates_missing_fields() -> None:
-    assert hit_sort_key(SimpleNamespace(memory_key="k")) == (-0.0, 0.0, "k")
+    assert hit_sort_key(SimpleNamespace(memory_key="k")) == (-0.0, 0.0, "k", "", "", "", "")
     assert hit_sort_key(SimpleNamespace(rank_score=None, distance=None, memory_key=None)) == (
         -0.0,
         0.0,
+        "",
+        "",
+        "",
+        "",
         "",
     )
 
@@ -46,7 +51,7 @@ async def test_lexical_union_and_trace_legs_carry_a_key_tie_breaker() -> None:
 
     ch = StubCH()
     ch.query_all_returns.append([])
-    await _lexical_recall_fallback(ch, _q(query_text="deploy window"), set())
+    await _lexical_recall_fallback(ch, _q(query_text="deploy window"))
     sql, _ = ch.query_all_calls[0]
     assert "ORDER BY lex_score DESC, distance ASC, e.memory_key ASC" in sql
 
@@ -140,3 +145,45 @@ def test_bench_helpers_score_agreement() -> None:
     assert rep.results[2].mean_jaccard == round(1 / 3, 4)
     j: dict[str, Any] = rep.to_json()
     assert j["queries"] == 3 and len(j["unstable"]) == 1
+
+
+def test_two_rows_of_one_key_with_equal_scores_sort_by_their_writer() -> None:
+    # one key holds a row per writer and session: the row settles the tie
+    def row(user: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            memory_key="k", rank_score=0.5, distance=0.5, identity=("a", user, "s1")
+        )
+
+    first, second = row("u1"), row("u2")
+    assert sorted([second, first], key=hit_sort_key) == [first, second]
+
+
+def test_two_sessions_of_one_wire_hit_key_sort_by_their_session() -> None:
+    # extraction writes one key per session; a wire hit carries its row in `_row_identity`
+    def hit(session: str) -> _MemorySearchHit:
+        h = _MemorySearchHit(
+            memory_key="k",
+            memory_type="semantic",
+            content_excerpt="x",
+            distance=0.5,
+            similarity=0.5,
+        )
+        h._row_identity = ("a", "u", session)
+        return h
+
+    s1, s2 = hit("s1"), hit("s2")
+    assert sorted([s2, s1], key=hit_sort_key) == [s1, s2]
+
+
+def test_one_row_identity_in_two_namespaces_sorts_by_its_namespace() -> None:
+    def row(namespace: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            memory_key="k",
+            rank_score=0.5,
+            distance=0.5,
+            namespace=namespace,
+            identity=("a", "u", "s1"),
+        )
+
+    n1, n2 = row("n1"), row("n2")
+    assert sorted([n2, n1], key=hit_sort_key) == [n1, n2]

@@ -19,10 +19,10 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from server.core.ch_params import chunks
 from server.core.ch_writes import async_insert_settings, committed_insert_settings
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.core.hashing import sha256_value
-from server.core.repo_base import param_slices
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app import conflicts as _conflicts
 from server.memory.app import graph_write_marks
@@ -946,12 +946,12 @@ async def close_triples(
     """Close open (subject, relation, object) intervals at each one's own
     valid_to — one UPDATE per table, two when only some closes carry an
     invalid_at (transaction time), each a parameter's worth of triples at a time
-    (`param_slices`: long names make a long list). Returns the number of mutations
+    (`chunks`: long names make a long list). Returns the number of mutations
     issued."""
     issued = 0
     for with_invalid_at in (True, False):
         group = [c for c in closes if (c[4] is not None) is with_invalid_at]
-        for part in param_slices(group):
+        for part in chunks(group):
             set_cols = f"valid_to = {_CLOSED_VALID_TO}"
             # Built per slice: indexOf finds each row's own entry in the same slice.
             params: dict[str, Any] = {
@@ -999,7 +999,7 @@ async def reopen_triples(
     at the same valid_to is undone with it."""
     if not closes:
         return
-    for part in param_slices(closes):
+    for part in chunks(closes):
         await ch.execute(
             f"""
             ALTER TABLE loom.entity_triples
@@ -1036,7 +1036,7 @@ async def end_triples_now(
     `stated_ends_only`, a later end a close gave (it stamps `invalid_at`) is kept. One
     read, and an UPDATE only when one does, a parameter's worth of triples at a time."""
     now = naive_utc_now().replace(microsecond=0)  # as the DateTime columns store it
-    for part in param_slices(triples):
+    for part in chunks(triples):
         await _end_triples_slice(
             ch,
             org=org,
@@ -1244,7 +1244,7 @@ async def end_edges(
     the values `skip_versions` hold nothing while their row is 'high'. The UPDATE stamps
     what it ends with the close's id, and the ids come back for `reopen_closed_by`."""
     close_ids = []
-    for part in param_slices(ends):
+    for part in chunks(ends):
         close_id = await _end_edges_slice(
             ch,
             org=org,
@@ -1377,7 +1377,7 @@ async def reopen_closed_by(
     or a start another row gave the pair stays as it was."""
     if not close_ids or not pairs:
         return
-    for part in param_slices(pairs):
+    for part in chunks(pairs):
         await ch.execute(
             """
             ALTER TABLE loom.entity_edges

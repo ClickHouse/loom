@@ -18,7 +18,8 @@ concepts](../../concepts/memory.md).
 compare the new value with the active rows of the same `memory_type` in the namespace:
 
 - A canonical-form match is a **merge**: nothing is written.
-- Cosine at or above the duplicate threshold is a **duplicate**.
+- Cosine at or above the duplicate threshold, with the same content words and no
+  differing values, is a **duplicate**; a value update falls through to the conflict check.
 - Cosine at or above the conflict threshold with a different value is a **conflict**:
   the new row and each peer get `status='conflicted'` and are cross-linked through
   `conflict_with`.

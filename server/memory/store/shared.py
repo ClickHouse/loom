@@ -18,6 +18,9 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.core.rmt_carry import register
 
+# The agent of a promoted row's embedding: shared rows are not agent-scoped.
+SHARED_AGENT = "_shared"
+
 # Every persisted column of loom.shared, in DDL order. `ch.insert` takes its
 # column list from the row, and FINAL serves the DDL default of a column the
 # newest version omits over the value the promotion wrote.

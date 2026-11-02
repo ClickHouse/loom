@@ -144,7 +144,7 @@ def _lexical_leg(ch):
     from server.memory.app.retrieval.side_legs import _lexical_recall_fallback
     from tests.unit.test_memory_search_service import _q
 
-    return _lexical_recall_fallback(ch, _q(query_text="deploy window"), set())
+    return _lexical_recall_fallback(ch, _q(query_text="deploy window"))
 
 
 def _records_leg(ch):

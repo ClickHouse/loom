@@ -19,7 +19,8 @@ tagged q3-migration" or "lock every runbook I wrote last week".
 
 Resolution is one primary-key-pinned read (org, namespace, agent[, user,
 session]) with the filters and `LIMIT n + 1` so truncation is reported,
-or one search call capped at `limit`. Execution goes through the same
+or one search call, over-fetched per key, read up to one past `limit` of
+the caller's rows. Execution goes through the same
 handlers a single-row call uses — delete, touch, lock — so every guard
 (locks, policy, blacklist) fires per row; a 423 becomes a `refused` row,
 never a failed batch. Label and demote are the two writes loom had no
@@ -51,6 +52,7 @@ from server.memory.api.models_crud import MemoryDeleteInput, MemoryTouchInput
 from server.memory.api.models_lock import MemoryLockInput
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.domain import lock as _lock
+from server.memory.domain.search_types import hit_row_key, names_row
 from server.memory.store.inserts import insert_memory_versions
 
 log = logging.getLogger(__name__)
@@ -104,6 +106,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             if row is not None:
                 rows.append(row)
         return rows, False
+    limit = int(input.limit)
     if target.filter:
         f = target.filter
         where = [
@@ -120,7 +123,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             "agent": input.agent,
             "uid": input.user_id,
             "sid": input.session_id,
-            "lim": int(input.limit) + 1,
+            "lim": limit + 1,
         }
         if f.memory_type:
             where.append("memory_type = {mt:String}")
@@ -157,12 +160,16 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             params=params,
         )
         rows = [memory_repo._hydrate(r) for r in raw]
-        truncated = len(rows) > int(input.limit)
-        return rows[: int(input.limit)], truncated
+        truncated = len(rows) > limit
+        return rows[:limit], truncated
     # search
     from server.memory.app.search import handle_memory_search
+    from server.memory.app.search.scoring import per_key_fetch
 
     assert target.search is not None
+    # No `session_id`: a session filter would leave out a long value's set chunks. One row
+    # past `limit` says `truncated`.
+    top_k = per_key_fetch(limit + 1)
     out = await handle_memory_search(
         MemorySearchInput(
             org=input.org,
@@ -170,39 +177,38 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             agent=input.agent,
             user_id=input.user_id,
             query=target.search.query,
-            top_k=int(input.limit),
+            top_k=top_k,
             namespace_scope="this",
         )
     )
     rows = []
     seen: set[str] = set()
+    mine = (input.agent, input.user_id, input.session_id)
+
+    def is_mine(hit: Any) -> bool:
+        # the caller's own row; a hit that names none (a record) reads its key under the
+        # caller's identity
+        owner = hit_row_key(hit, input.namespace)
+        return not names_row(hit) or (owner.agent, owner.user_id, owner.session_id) == mine
+
     for hit in out.results:
-        score = float(getattr(hit, "score", 0.0) or 0.0)
-        if target.search.min_score is not None and score < target.search.min_score:
+        if target.search.min_score is not None and hit.similarity < target.search.min_score:
             continue
         key = hit.memory_key
-        if key in seen:
+        if key in seen or not is_mine(hit):
             continue
         seen.add(key)
-        # The search reads across sessions (and, for `-`, users and agents);
-        # the write stays on the caller's identity tuple, as keys and filter
-        # do. A hit that names another owner is skipped, not re-pointed at a
-        # same-key row of the caller's.
-        if any(
-            owner and owner != mine
-            for owner, mine in (
-                (getattr(hit, "_row_agent", None), input.agent),
-                (hit.user_id, input.user_id),
-                (hit.session_id, input.session_id),
-            )
-        ):
-            continue
         row = await memory_repo.get_by_key(
             identity, key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
         )
         if row is not None:
             rows.append(row)
-    return rows[: int(input.limit)], False
+            if len(rows) > limit:  # one row past `limit`: more matched
+                return rows[:limit], True
+    # the search does not filter by writer: a window it filled may have cut off more of
+    # the caller's rows, whoever holds its last hits
+    window = out.top_k_ceiling or top_k
+    return rows, len(out.results) >= window
 
 
 # ---------------------------------------------------------------- execute

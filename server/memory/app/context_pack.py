@@ -43,6 +43,8 @@ from server.memory.domain.context_layout import (
 )
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
 from server.memory.domain.memory_types import excluded_from_unfiltered_search
+from server.memory.domain.search_types import hit_row_key, names_row
+from server.memory.store.shared import SHARED_AGENT
 
 log = logging.getLogger(__name__)
 
@@ -427,7 +429,7 @@ async def _pack_startup_recall(st: _PackState) -> None:
     )
 
 
-def _hit_row_key(input: ContextPackInput, h: Any) -> tuple[str, str]:
+def _hit_ns_key(input: ContextPackInput, h: Any) -> tuple[str, str]:
     """The (namespace, memory_key) of the stored row a hit came from: a chunk's parent."""
     key = getattr(h, "parent_memory_key", "") or h.memory_key
     return (getattr(h, "namespace", "") or input.namespace, str(key))
@@ -441,12 +443,22 @@ def _hit_author(actors: _KeyWriters, input: ContextPackInput, h: Any) -> str:
     identity the hit carries (user, session, agent, where the leg read them); when the rows
     left were written by more than one actor the label says `unknown`, never a writer whose
     row this may not be."""
-    rows = actors.get(_hit_row_key(input, h)) or []
-    for col, value in (
-        ("user_id", getattr(h, "user_id", "")),
-        ("session_id", getattr(h, "session_id", "")),
-        ("agent", getattr(h, "_row_agent", None)),
-    ):
+    rows = actors.get(_hit_ns_key(input, h)) or []
+    is_fact_row = names_row(h) and getattr(h, "source", "fact") != "chunk"
+    row = hit_row_key(h, input.namespace) if is_fact_row else None
+    # A fact hit names its memory row. A chunk's identity is its chunk row's, and a shared
+    # hit's the promoted row's, which has no actor here: both narrow by the hit's own
+    # user, session and agent fields.
+    narrow: list[tuple[str, Any]]
+    if row is not None and row.agent != SHARED_AGENT:
+        narrow = [("agent", row.agent), ("user_id", row.user_id), ("session_id", row.session_id)]
+    else:
+        narrow = [
+            ("user_id", getattr(h, "user_id", "")),
+            ("session_id", getattr(h, "session_id", "")),
+            ("agent", getattr(h, "_row_agent", None)),
+        ]
+    for col, value in narrow:
         if value:
             rows = [r for r in rows if r[col] == value]
     names = {r["actor"] for r in rows}
@@ -461,7 +473,7 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
     try:
         return await memory_repo.actors_by_key(
             input.org,
-            [_hit_row_key(input, h) for h in hits],
+            [_hit_ns_key(input, h) for h in hits],
             scope=request_scope(),
         )
     except Exception as e:  # noqa: BLE001 — authorship labels are best-effort; lines say by=unknown
@@ -476,7 +488,11 @@ async def _pack_decisions_from_hits(
     own tagged section with the structured record (scenario, outcome,
     realized outcome). One search, two planes on the wire: the reader
     sees which plane each line came from."""
+    from server.memory.app.search.scoring import one_per_key
+
     input = st.input
+    # a decision recorded in several sessions is one line
+    decision_hits = one_per_key(decision_hits, input.namespace)
     keys = [str(h.memory_key) for h in decision_hits]
     records: dict[str, dict[str, Any]] = {}
     # The records are read by key alone, across users: a bounded read keeps the hit's excerpt.

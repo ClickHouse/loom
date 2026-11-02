@@ -15,11 +15,14 @@ from server.memory.app.search.digest_descent import (
     _run_digest_descent,
     digest_descent_enabled,
 )
+from server.memory.app.search.scoring import rows_per_key
 from server.memory.app.search.telemetry import _staged
 from server.memory.app.search.vector_legs import _plane_fields, _stamp_leg_tags
 from server.memory.app.search_tag_filter import enforce_hard_tag_filter as _enforce_hard_tag_filter
+from server.memory.app.search_tag_filter import stamp_row_tags
 from server.memory.app.served_duplicates import hide_pool_duplicates
 from server.memory.app.served_superseded import annotate_pool_superseded
+from server.memory.domain.search_types import RowKey, hit_row_key, names_row
 
 log = logging.getLogger(__package__)
 
@@ -36,13 +39,43 @@ def _drop_excluded_keys(ctx: SearchContext) -> None:
     ctx.actual_work["excluded_keys_dropped"] = before - len(ctx.all_hits)
 
 
+def collapse_rows(hits: list[_MemorySearchHit], namespace: str) -> list[_MemorySearchHit]:
+    """One hit per stored row, the higher-ranked at the earlier position: a sub-query or
+    set-expansion leg folds its own set chunk onto a row the main pool holds by its head,
+    and the two excerpts differ."""
+    out: list[_MemorySearchHit] = []
+    slot: dict[RowKey, int] = {}
+    for h in hits:
+        if not names_row(h):
+            out.append(h)
+            continue
+        key = hit_row_key(h, namespace)
+        if key not in slot:
+            slot[key] = len(out)
+            out.append(h)
+        else:
+            kept = out[slot[key]]
+            winner, other = (h, kept) if h.rank_score > kept.rank_score else (kept, h)
+            # one row has one set of tags: an empty one is filled from the row's other hit
+            if not winner._row_tags and other._row_tags is not None:
+                stamp_row_tags(winner, other._row_tags)
+            out[slot[key]] = winner
+    return out
+
+
 async def _drop_excluded_and_duplicates(ctx: SearchContext) -> None:
-    """The pool trims that run after every leg folded in and before the window is cut: the
-    caller's `exclude_keys`, the `duplicate` rows and their canonicals, then the hard tag belt —
-    last, because the canonical a duplicate is exchanged for entered the pool through no leg's
-    WHERE and is the row the belt exists to judge; on the whole fused pool, so a dropped row
-    leaves no hole in top_k and a parked page's tail is as clean as the first page."""
+    """The pool trims that run after every leg folded in and before the window is cut:
+    the caller's `exclude_keys`, one hit per row (`collapse_rows`), the quality filter when
+    asked, the `duplicate` rows and their canonicals, then the hard tag belt — last, because
+    the canonical a duplicate is exchanged for entered the pool through no leg's WHERE and is
+    the row the belt exists to judge — then the agent-scope drop and the code-removed note.
+    On the whole fused pool, so a dropped row leaves no hole in top_k and a parked page's
+    tail is as clean as the first page."""
     _drop_excluded_keys(ctx)
+    pooled = len(ctx.all_hits)
+    ctx.all_hits = collapse_rows(ctx.all_hits, ctx.input.namespace)
+    if collapsed := pooled - len(ctx.all_hits):
+        ctx.actual_work["rows_collapsed"] = collapsed
     if getattr(ctx.input, "quality_filter", False):
         from server.memory.domain.fact_quality import drop_junk_and_restatements
 
@@ -170,12 +203,7 @@ async def _assemble_final_hits(
 
     from server.settings import settings as _asm_settings
 
-    # Per-key diversity: the same key once per session means one attribute can fill the whole
-    # top ten. Aggregational and temporal-difference shapes want every row of the key and take
-    # no cap.
-    per_key_cap = int(_asm_settings.memory_search_per_key_cap)
-    if ctx.query_shape in ("aggregational", "temporal_diff"):
-        per_key_cap = 0
+    per_key_cap = rows_per_key(ctx.query_shape)
     # Per-speaker quota (retrieve per conversation participant), per request; 0 = off.
     per_speaker_quota = int(getattr(input, "per_speaker_quota", None) or 0)
     # Per-session cap, per request; aggregational shapes want every row and take no cap.

@@ -23,6 +23,7 @@ class _StubCH:
     def __init__(self, counts: list[int]) -> None:
         self.counts = counts
         self.query_one_calls: list[tuple[str, dict[str, Any]]] = []
+        self.read_calls: list[tuple[str, dict[str, Any]]] = []
         self.execute_calls: list[tuple[str, dict[str, Any]]] = []
 
     async def query_one(self, sql, params=None):
@@ -33,6 +34,9 @@ class _StubCH:
         self.execute_calls.append((sql, params or {}))
 
     async def query_all(self, sql, params=None):
+        if "system.mutations" not in sql:  # the user's memory keys
+            self.read_calls.append((sql, params or {}))
+            return [{"namespace": "ns-a", "memory_key": "user_employer"}]
         return [
             {
                 "mutation_id": "mutation_1.txt",
@@ -69,30 +73,37 @@ def test_memory_chunks_user_scope_walks_parent_keys() -> None:
     ch = _StubCH([5])
     n = asyncio.run(memory_steps.tombstone_memory_chunks_by_user("o", "alice", ch=ch))
     assert n == 5
+    ((read_sql, read_params),) = ch.read_calls
+    assert "FROM (SELECT namespace, memory_key FROM loom.memory" in read_sql
+    assert read_params == {"org": "o", "uid": "alice"}
     sql, params = ch.execute_calls[0]
     assert "loom.memory_chunks" in sql
-    assert "UPDATE tombstoned_at" in sql
-    assert "FROM loom.memory" in sql
+    assert "UPDATE tombstoned_at" in sql and "SELECT" not in sql
     assert params["uid"] == "alice" and "now" in params
+    assert params["keys"] == [("ns-a", "user_employer")]
 
 
 def test_memory_chunks_user_scope_is_namespace_qualified() -> None:
     """Extractor keys (`user_employer`) repeat across namespaces: alice's
     `user_employer` in ns A must not tombstone another user's chunks of
     `user_employer` in ns B. The step and the census match the
-    (namespace, parent_memory_key) pair, and on the same predicate, so the
-    census finds exactly what the step erases."""
+    (namespace, parent_memory_key) pair: the census through the user's keys
+    subquery, the step through the pairs that subquery returns, so the census
+    finds exactly what the step erases."""
     ch = _StubCH([1])
     asyncio.run(memory_steps.tombstone_memory_chunks_by_user("o", "alice", ch=ch))
-    pair = "(namespace, parent_memory_key) IN (SELECT namespace, memory_key FROM loom.memory"
     count_sql, _ = ch.query_one_calls[0]
     mutate_sql, _ = ch.execute_calls[0]
     for sql in (count_sql, mutate_sql):
-        assert pair in sql
-        assert "parent_memory_key IN (SELECT memory_key" not in sql
+        assert erasure_predicates.CHUNK_KEYS_IN in sql
+    ((read_sql, _),) = ch.read_calls
+    assert erasure_predicates.USER_KEYS_SUBQ in read_sql
     (chunks,) = [s for s in erasure_census._CENSUS if s.table == "loom.memory_chunks"]
     assert chunks.user_pred == erasure_predicates.USER_CHUNKS
-    assert chunks.user_pred in mutate_sql
+    assert erasure_predicates.USER_CHUNKS == (
+        "(user_id = {uid:String} OR (namespace, parent_memory_key) IN "
+        f"{erasure_predicates.USER_KEYS_SUBQ})"
+    )
 
 
 def test_memory_chunks_namespace_scope() -> None:

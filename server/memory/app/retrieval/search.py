@@ -34,10 +34,12 @@ from server.memory.app.retrieval.side_legs import (
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_sql import _build_where, _plane_enabled
 from server.memory.domain.search_types import (
+    RowKey,
     SearchHit,
     SearchQuery,
     SearchTraceHit,
     _CHClient,
+    hit_row_key,
     row_identity,
 )
 
@@ -196,7 +198,7 @@ async def _gather_legs(
         # a second FINAL scan of the namespace's vectors.
         _spanned(
             "ch.query.memory_embeddings.lexical",
-            _lexical_recall_fallback(ch, q, set(), limit=50, max_distance=0.9),
+            _lexical_recall_fallback(ch, q, limit=50, max_distance=0.9),
         )
         if _plane_enabled(q, "lexical") and q.search_mode != "rrf"
         else None
@@ -289,6 +291,13 @@ def _fact_rows_to_hits(
     return hits
 
 
+def _writer_prefix(h: SearchHit, scope: str) -> tuple[tuple[str, ...], str]:
+    # a chunk is redundant only beside a fact of its own writer; a shared fact is the
+    # promoted row, whose writer no chunk carries, so there the opening alone decides
+    owner = h.identity[:2] if scope == "private" and h.identity is not None else ()
+    return owner, h.content_excerpt[:60]
+
+
 async def _merge_leg_hits(
     ch: _CHClient,
     q: SearchQuery,
@@ -301,31 +310,27 @@ async def _merge_leg_hits(
     into the fact hits, dedup across planes, and append the unmatched
     candidates when asked."""
     if chunk_hits:
-        # Drop chunks whose first 60 chars match a fact's prefix — the fact
-        # carries the structured signal, the chunk would be redundant.
-        fact_prefixes = {h.content_excerpt[:60] for h in hits if h.source == "fact"}
-        chunk_hits = [c for c in chunk_hits if c.content_excerpt[:60] not in fact_prefixes]
+        # Drop a chunk whose first 60 chars match a fact of its writer (`_writer_prefix`):
+        # the fact carries the structured signal.
+        fact_prefixes = {_writer_prefix(h, q.scope) for h in hits if h.source == "fact"}
+        chunk_hits = [c for c in chunk_hits if _writer_prefix(c, q.scope) not in fact_prefixes]
         hits.extend(chunk_hits)
 
-    # Merge the BM25-only union (from the gather), deduped against ANN/chunk
-    # keys here rather than during fetch.
-    existing_keys = {h.memory_key for h in hits}
+    # Merge the BM25-only union (from the gather), deduped against the rows the ANN and
+    # chunk legs found here rather than during fetch.
+    existing_rows = {hit_row_key(h) for h in hits}
     if lexical_pool:
-        lexical_hits = [h for h in lexical_pool if h.memory_key not in existing_keys]
-        if lexical_hits:
-            hits.extend(lexical_hits)
+        hits.extend(h for h in lexical_pool if hit_row_key(h) not in existing_rows)
 
     if record_hits:
         hits.extend(record_hits)
 
-    # Content-aware dedup keyed on (memory_key, content_excerpt): distinct
-    # facts can share a key (multi-event questions), so keying on memory_key
-    # alone would hide all but the strongest. Same-content duplicates across
-    # planes still collapse to the strongest candidate.
+    # A row seen by several planes with the same excerpt collapses to its strongest hit;
+    # distinct rows of a key stay, even when their excerpts open alike.
     if hits:
-        deduped: dict[tuple[str, str], SearchHit] = {}
+        deduped: dict[tuple[RowKey, str], SearchHit] = {}
         for hit in hits:
-            dk = (hit.memory_key, hit.content_excerpt)
+            dk = (hit_row_key(hit), hit.content_excerpt)
             prior = deduped.get(dk)
             if prior is None or (hit.rank_score, -hit.distance) > (
                 prior.rank_score,
@@ -333,7 +338,8 @@ async def _merge_leg_hits(
             ):
                 deduped[dk] = hit
         # A record row is a projection of its parent fact: drop it when a
-        # stronger fact row exists for the same key.
+        # stronger fact row exists for the same key. A record names no memory row,
+        # so any writer's fact of the key counts.
         best_fact: dict[str, SearchHit] = {}
         for h in deduped.values():
             if h.source == "fact":
@@ -348,21 +354,16 @@ async def _merge_leg_hits(
             for h in deduped.values()
             if not (
                 h.source == "record"
-                and h.memory_key in best_fact
-                and (
-                    best_fact[h.memory_key].rank_score,
-                    -best_fact[h.memory_key].distance,
-                )
-                > (h.rank_score, -h.distance)
+                and (fact := best_fact.get(h.memory_key)) is not None
+                and (fact.rank_score, -fact.distance) > (h.rank_score, -h.distance)
             )
         ]
 
     if q.include_top_n_unmatched > 0 and _plane_enabled(q, "unmatched"):
-        existing_keys = {h.memory_key for h in hits}
         unmatched_hits = await _fetch_unmatched_candidates(
             ch,
             q,
-            existing_keys,
+            hits,
             limit=int(q.include_top_n_unmatched),
         )
         if unmatched_hits:

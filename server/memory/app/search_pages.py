@@ -30,35 +30,29 @@ from datetime import timedelta
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.memory.domain.search_types import RowKey, hit_row_key
 from server.settings import settings
 
 PAGE_PREFIX = "page/"
 PAGE_VERSION = 1
 
 
-def hit_key(h: Any) -> tuple[str, str]:
-    return (
-        str(getattr(h, "namespace", "") or ""),
-        str(getattr(h, "memory_key", "") or ""),
-    )
-
-
 def split_tail(pool: list[Any], final: list[Any]) -> tuple[int, list[Any]]:
     """(distinct candidates in the pool, the ranked tail not served).
 
-    The pool may hold the same key more than once (several legs found it);
-    the count is by distinct key so "20 of 124" means 124 memories. The tail
-    is every pool key absent from the served block, best rank first."""
-    served = {hit_key(h) for h in final}
-    seen: set[tuple[str, str]] = set()
+    The pool may hold the same row more than once (several legs found it);
+    the count is by distinct row so "20 of 124" means 124 memories. The tail
+    is every pool row absent from the served block, best rank first."""
+    served = {hit_row_key(h) for h in final}
+    seen: set[RowKey] = set()
     distinct: list[Any] = []
     for h in sorted(pool, key=lambda x: float(getattr(x, "rank_score", 0.0) or 0.0), reverse=True):
-        k = hit_key(h)
+        k = hit_row_key(h)
         if k in seen:
             continue
         seen.add(k)
         distinct.append(h)
-    tail = [h for h in distinct if hit_key(h) not in served]
+    tail = [h for h in distinct if hit_row_key(h) not in served]
     return len(seen | served), tail
 
 

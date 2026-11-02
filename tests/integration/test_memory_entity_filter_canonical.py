@@ -346,3 +346,36 @@ async def test_a_name_whose_article_hides_a_dot_keeps_its_boost_and_graph_path(
 
         path = await eventually(_path, description=f"a graph path from {seed!r}")
         assert path.path == ["net service", "latency"], seed
+
+
+async def test_a_name_too_long_to_bind_is_dropped_on_write_and_search(ch_client) -> None:
+    # Over 128 KiB, a name cannot be sent as a query parameter: neither side keeps it.
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.search.handler import handle_memory_search
+    from server.memory.app.write import handle_memory_set
+
+    await _connected()
+    ns = f"agent-entcanon-{os.urandom(3).hex()}"
+    huge = "Zed" + "x" * 200_000
+    await handle_memory_set(
+        MemorySetInput(
+            org=ORG,
+            namespace=ns,
+            agent="a",
+            memory_key="huge",
+            value=f"{huge} met Bob Lane",
+            entities=[huge, "Bob Lane"],
+        )
+    )
+    stored = ch_client.query(
+        "SELECT entities FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String}",
+        parameters={"org": ORG, "ns": ns},
+    ).result_rows
+    assert stored == [(["bob lane"],)]
+    out = await handle_memory_search(
+        MemorySearchInput(
+            org=ORG, namespace=ns, agent="*", query="Bob Lane", entity_filter=[huge, "Bob Lane"]
+        )
+    )
+    assert "huge" in {h.memory_key for h in out.results}

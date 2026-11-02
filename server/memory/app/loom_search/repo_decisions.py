@@ -24,10 +24,11 @@ async def search_repo_decisions(
     mem_input: MemorySearchInput, repo_namespace: str
 ) -> tuple[MemorySearchOutput, MemorySearchInput] | None:
     """The decision memories in `repo_namespace` that match `mem_input`'s
-    query, with the input the search settled on; None when there is nothing
-    to add, when the search abstains, or on any failure. The read scope the
-    token allows is pinned inside the search, as for the base search."""
+    query, with the input the search settled on; None when there is nothing to
+    add, when the search abstains, or on any failure. The read scope the token
+    allows is pinned inside the search, as for the base search."""
     from server.memory.app.search import handle_memory_search
+    from server.memory.app.search.scoring import one_per_key, per_key_fetch
 
     # The base search already reads its own namespace.
     if repo_namespace == mem_input.namespace or not mem_input.query.strip():
@@ -41,7 +42,10 @@ async def search_repo_decisions(
         # The fact legs only: session digests do not filter on memory_type.
         legs=["memory"],
         query=mem_input.query,
-        top_k=mem_input.top_k,
+        # One item per decision key: ask for enough rows that `top_k` keys survive the trim.
+        top_k=per_key_fetch(mem_input.top_k),
+        # Kept whole here: the merge elides them as the home search elides its own.
+        explain=True,
         tags=mem_input.tags,
         # A recorded statement fits the stored clip, and its reason comes last: an
         # excerpt would cut it. bodies="none" still serves keys only.
@@ -73,6 +77,7 @@ async def search_repo_decisions(
         return None
     # Only decision rows: no computed row, digest or entity summary from this pass.
     decisions = [h for h in out.results if h.memory_type == "decision" and h.source == "fact"]
+    decisions = one_per_key(decisions, repo_namespace, mem_input.top_k)
     settled = out._settled_input
     if out.abstain or not decisions or settled is None:
         return None
@@ -91,9 +96,11 @@ def merge_memory_hits(
     """One memory list and the `extra` hits added to it. `base` keeps its
     own order (rank order, not always falling similarity); each `extra` hit
     goes after the last base hit whose similarity is at least its own (the
-    rank scores of two searches do not compare). One hit per (namespace,
-    memory_key). Nothing is cut: the extra hits are bounded by their own
-    search's `top_k`, and a base hit pushed out would be served on no page."""
+    rank scores of two searches do not compare). An `extra` hit whose
+    (namespace, memory_key) the base or an earlier extra hit holds is left
+    out. Nothing is cut: the extra hits are bounded by the caller's
+    `top_k` (`search_repo_decisions` keeps one per key), and a base hit pushed
+    out would be served on no page."""
     seen = {(h.namespace or home_ns, h.memory_key) for h in base}
     # slots[i]: the extra hits that go after the first i base hits
     slots: list[list[_MemorySearchHit]] = [[] for _ in range(len(base) + 1)]
@@ -121,6 +128,7 @@ async def memory_with_repo_decisions(
     decisions, merged into the one section. Raises only what the base search
     raises."""
     from server.memory.app.search import handle_memory_search
+    from server.memory.app.search.request import apply_explain_default
     from server.memory.app.search.telemetry import credit_merged_hits
 
     if not repo_namespace:
@@ -138,10 +146,12 @@ async def memory_with_repo_decisions(
     hits, added = merge_memory_hits(base.results, decisions.results, mem_input.namespace)
     if not added:
         return base
-    # Credited as the base search credits its own: for the hits it hands on,
-    # before the section's floors and answer-first rules, with the input the
-    # decision pass ran.
-    await credit_merged_hits(settled, added)
+    # Credited and elided as the base search credits and elides its own: for the hits
+    # it hands on, before the section's floors and answer-first rules, in its window
+    # (the settled top_k, not the decision pass's over-fetch).
+    home = base._settled_input or mem_input
+    await credit_merged_hits(settled.model_copy(update={"top_k": home.top_k}), added)
+    apply_explain_default(added, home)
     update: dict[str, Any] = {
         "results": hits,
         "candidates_total": base.candidates_total + len(added),

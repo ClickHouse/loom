@@ -4249,7 +4249,7 @@
         "memory_search_per_key_cap": {
           "default": 3,
           "type": "integer",
-          "description": "Rows per memory_key in the final block (0 = no cap), freeing slots taken by one key re-extracted per session (38 of 60 questions on one eval). Skipped for aggregational / temporal_diff shapes."
+          "description": "Rows of one memory_key kept by the final block, key-match and the entity follow (0 = no cap; the first two keep all for aggregational/temporal_diff), and one-per-key callers' over-fetch."
         },
         "memory_search_pool_multiplier_deep": {
           "default": 5,
@@ -4317,6 +4317,12 @@
           "default": 0.1,
           "type": "number",
           "description": "Additive penalty on rows tagged `sensitivity:medium|high` unless the query has contact intent. 0.0 disables."
+        },
+        "memory_search_set_chunk_rows": {
+          "default": 64,
+          "minimum": 1,
+          "type": "integer",
+          "description": "How many of a writer's served rows of one key, those with the newest vectors, a pooled memory.set chunk is matched against, by value, to find the row it was cut from."
         },
         "memory_search_set_expansion_leg_top_k": {
           "default": 2,

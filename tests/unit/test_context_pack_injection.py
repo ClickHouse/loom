@@ -259,6 +259,19 @@ def test_each_hit_is_labelled_with_the_writer_of_its_own_row() -> None:
     assert _hit_author(actors, inp, hit(user_id="alice")) == " by=human:alice@example.com"
     assert _hit_author(actors, inp, hit()) == " by=unknown"
     assert _hit_author({}, inp, hit(session_id="s-m")) == " by=unknown"
+    # a hit that names its row is narrowed by that row, as every fact leg stamps it
+    named = hit()
+    named._row_identity = ("a", "alice", "s-a")
+    assert _hit_author(actors, inp, named) == " by=human:alice@example.com"
+    # a chunk's identity is its chunk row's, whose agent need not be the fact row's: it
+    # narrows by the hit's own fields
+    chunk = hit(session_id="s-m", source="chunk")
+    chunk._row_identity = ("transcript-agent", "mallory", "s-m")
+    assert _hit_author(actors, inp, chunk) == " by=human:mallory@example.com"
+    # a shared hit names the promoted row, which has no actor: it narrows by its own fields
+    shared = hit(session_id="s-m")
+    shared._row_identity = ("_shared", "-", "-")
+    assert _hit_author(actors, inp, shared) == " by=human:mallory@example.com"
 
 
 def test_the_runs_manifest_says_who_wrote_a_session_and_what_its_digest_compressed() -> None:

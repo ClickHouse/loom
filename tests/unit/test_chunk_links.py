@@ -117,6 +117,8 @@ class _ErasureCH:
         self.execute_calls.append(" ".join(sql.split()))
 
     async def query_all(self, sql, params=None):
+        if "system.mutations" not in sql:  # the user's memory keys
+            return [{"namespace": "ns", "memory_key": "k"}]
         return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
 
 

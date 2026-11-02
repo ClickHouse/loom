@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from server.memory.api.models_search import MemorySearchInput
+from server.memory.api.models_search import SEARCH_TOP_K_MAX, MemorySearchInput
 from server.memory.domain.search_types import RANK_SCORE_PRE_RERANK
+from server.settings import settings
 
 
 def _effective_ann_boosts(hits: list[Any], *, rrf_pool: bool) -> dict[int, float]:
@@ -174,3 +175,36 @@ def _score_explanation(input: MemorySearchInput) -> str:
     if input.tags:
         bits.append("tags=filtered")
     return ", ".join(bits)
+
+
+def rows_per_key(query_shape: str) -> int:
+    """How many rows of one key the final block keeps; 0 = every one. Extraction writes a
+    key once per session, so one attribute could fill the window; an aggregational or
+    temporal-difference query wants every row of the key."""
+    if query_shape in ("aggregational", "temporal_diff"):
+        return 0
+    return int(settings.memory_search_per_key_cap)
+
+
+def one_per_key(hits: list[Any], namespace: str, top_k: int | None = None) -> list[Any]:
+    """The first hit of each (namespace, memory_key) in the order given (callers pass a
+    ranked list), at most `top_k` of them, for a caller that reads one item per key: the
+    search serves a row per writer and session."""
+    seen: set[tuple[str, str]] = set()
+    out: list[Any] = []
+    for h in hits:
+        if top_k is not None and len(out) >= top_k:
+            break
+        key = (str(getattr(h, "namespace", "") or namespace), str(h.memory_key))
+        if key not in seen:
+            seen.add(key)
+            out.append(h)
+    return out
+
+
+def per_key_fetch(top_k: int) -> int:
+    """How many hits to ask for so `one_per_key` can still return `top_k` keys. It holds
+    under a positive per-key cap; with no cap, or for an aggregational query, one key can
+    fill more of the window."""
+    cap = max(1, int(settings.memory_search_per_key_cap))
+    return min(SEARCH_TOP_K_MAX, top_k * cap)

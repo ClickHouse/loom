@@ -327,3 +327,12 @@ def test_classify_and_relation_helpers() -> None:
     assert code_facet_relation("error", ["saw"]) == "causes"
     # The closed-class code relations are all present.
     assert {"imports", "modifies", "fixes", "causes", "blocked_by"} <= CODE_EDGE_RELATIONS
+
+
+def test_a_facet_too_long_to_be_a_name_mints_no_node() -> None:
+    from server.memory.domain.graph_quality import MAX_ENTITY_CHARS, facet_triples
+
+    huge = "x" * (MAX_ENTITY_CHARS + 1)
+    triples = list(facet_triples("bot", [], [huge], [huge, "src/app.py"], [huge, "billing"]))
+    assert triples and all(len(t[2]) <= MAX_ENTITY_CHARS for t in triples)
+    assert [t[2] for t in triples] == ["src/app.py", "billing"]

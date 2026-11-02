@@ -10,7 +10,7 @@ from typing import Any
 
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app.search.context import SearchContext
-from server.memory.app.search.scoring import _anchor_rank_score
+from server.memory.app.search.scoring import _anchor_rank_score, rows_per_key
 from server.memory.app.search.sql import (
     _key_match_where,
     key_match_component_sql,
@@ -18,7 +18,7 @@ from server.memory.app.search.sql import (
     key_match_sql,
 )
 from server.memory.app.search_tag_filter import stamp_row_tags as _stamp_row_tags
-from server.memory.domain.search_types import row_identity
+from server.memory.domain.search_types import hit_row_key, row_identity, row_key_of
 
 log = logging.getLogger(__package__)
 
@@ -236,8 +236,6 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
     component_only = False
     if mode == "gated":
         # Skip the read when it cannot change the served window.
-        from server.settings import settings as _gate_settings
-
         reason = key_match_gate(
             query=str(input.query or ""),
             stems=stems,
@@ -252,7 +250,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                 )
                 for h in ctx.all_hits
             ],
-            per_key_cap=int(_gate_settings.memory_search_per_key_cap),
+            per_key_cap=rows_per_key(ctx.query_shape),
             top_k=int(input.top_k),
         )
         ctx.actual_work["key_match_gate"] = reason or "skip"
@@ -266,6 +264,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
     seen: dict[tuple[str, str], list[Any]] = {}
     for h in ctx.all_hits:
         seen.setdefault((h.namespace or input.namespace, h.memory_key), []).append(h)
+    pooled = {hit_row_key(h, input.namespace) for h in ctx.all_hits}
     _pool_floor = min(
         (float(h.score_components.get("rank_score_raw", h.rank_score)) for h in ctx.all_hits),
         default=0.0,
@@ -283,6 +282,8 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                 "ns": ns,
                 "stems": stems,
                 "limit": limit,
+                # a key holds a row per writer and session: as many as the window keeps
+                "per_key": rows_per_key(ctx.query_shape) or limit,
                 "qv": ctx.query_vec,
                 "model": ctx.embedder.model_name,
                 "min_strength": float(_settings_km.memory_search_key_match_min_strength),
@@ -339,19 +340,20 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                 # idf-weighted share of the query's stems the key covers,
                 # computed in ClickHouse against the namespace's own keys.
                 strength = max(0.0, min(1.0, float(row.get("strength") or 0.0)))
-                existing = seen.get((ns, mk))
-                if existing:
-                    for eh in existing:
-                        eh.score_components["key_match"] = max(
-                            float(eh.score_components.get("key_match", 0.0)), strength
-                        )
-                    continue
+                for eh in seen.get((ns, mk), []):
+                    eh.score_components["key_match"] = max(
+                        float(eh.score_components.get("key_match", 0.0)), strength
+                    )
                 if component_only:
-                    continue  # the statement is keyed to the pool; nothing to add
+                    continue  # the statement only scores the pooled keys
+                row_key = row_key_of(ns, row)
+                if row_key in pooled:
+                    continue
                 sim = float(row.get("similarity") or 0.0)
                 hit = _MemorySearchHit(
                     memory_key=mk,
                     memory_type=str(row.get("memory_type") or "semantic"),
+                    version=int(row.get("version") or 0),
                     content_excerpt=str(row.get("content_excerpt") or ""),
                     distance=1.0 - sim,
                     similarity=sim,
@@ -368,7 +370,8 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                 )
                 _stamp_row_tags(hit, row.get("tags"))
                 hit._row_identity = row_identity(row)
-                seen[(ns, mk)] = [hit]
+                seen.setdefault((ns, mk), []).append(hit)
+                pooled.add(row_key)
                 ctx.all_hits.append(hit)
                 added += 1
         ctx.actual_work["key_match_added"] = added

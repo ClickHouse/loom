@@ -17,6 +17,7 @@ from server.memory.api.models_crud import MemoryGetInput, MemoryGetOutput, Memor
 from server.memory.api.models_graph import MemoryDedupCollapseInput
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app import served_duplicates as sd
+from server.memory.domain.search_types import RowKey
 from server.memory.domain.temporal_sql import served_status_sql, status_predicate
 from server.memory.store.dedup import CanonicalRow, DuplicatePair, DuplicateStatus
 
@@ -69,8 +70,17 @@ def test_hide_duplicates_follows_the_call() -> None:
 # ---------------------------------------------------------------- search pool
 
 
-def _hit(key: str, *, rank: float, source: str = "fact", ns: str = "", tags: Any = None) -> Any:
-    return _MemorySearchHit(
+def _hit(
+    key: str,
+    *,
+    rank: float,
+    source: str = "fact",
+    ns: str = "",
+    tags: Any = None,
+    session: str = "s1",
+    who: tuple[str, str, str] | None = ("a", "-", "s1"),  # a fact leg names its row
+) -> Any:
+    hit = _MemorySearchHit(
         memory_key=key,
         memory_type="semantic",
         content_excerpt=f"about {key}",
@@ -81,7 +91,10 @@ def _hit(key: str, *, rank: float, source: str = "fact", ns: str = "", tags: Any
         status="active",
         namespace=ns,
         tags=tags,
+        session_id=session,
     )
+    hit._row_identity = who
+    return hit
 
 
 def _ctx(hits: list[Any], **input_kw: Any) -> SimpleNamespace:
@@ -97,17 +110,15 @@ def truth(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 
     env = SimpleNamespace(status={}, canon={}, status_calls=0, canon_calls=0)
 
-    async def status_by_keys(
-        org: str, nss: list[str], keys: list[str], *, scope: Any = None, ch: Any = None
+    async def status_by_rows(
+        org: str, rows: list[tuple[str, ...]], *, scope: Any = None, ch: Any = None
     ) -> list[DuplicateStatus]:
         env.status_calls += 1
+        # as loom.memory: a key named without its row's session matches no stored row
         return [
-            DuplicateStatus.from_row(x)
-            for x in [
-                {"namespace": nss[0], "memory_key": k, **env.status[k]}
-                for k in keys
-                if k in env.status
-            ]
+            _status(row, **env.status[row.memory_key])
+            for row in rows
+            if row.memory_key in env.status and row.session_id == "s1"
         ]
 
     async def canonical_rows_by_ids(
@@ -121,19 +132,28 @@ def truth(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
             ]
         ]
 
-    monkeypatch.setattr(memory_repo, "status_by_keys", status_by_keys)
+    monkeypatch.setattr(memory_repo, "status_by_rows", status_by_rows)
     monkeypatch.setattr(memory_repo, "canonical_rows_by_ids", canonical_rows_by_ids)
     return env
 
 
+def _status(row: tuple[str, ...], **fields: Any) -> DuplicateStatus:
+    names = ("namespace", "agent", "user_id", "session_id", "memory_key")
+    return DuplicateStatus.from_row({**dict(zip(names, row, strict=True)), **fields})
+
+
 def _dup(cid: str) -> dict[str, Any]:
-    return {"served_rows": 0, "duplicate_rows": 1, "canonical_id": cid}
+    return {"row_status": "duplicate", "canonical_id": cid}
+
+
+_ACTIVE = {"row_status": "active", "canonical_id": ""}
 
 
 def _canon(key: str, value: Any = "the canonical text") -> dict[str, Any]:
     return {
         "memory_key": key,
         "memory_type": "semantic",
+        "agent": "a",
         "value": json.dumps(value),
         "tags": ["kind:lesson"],
         "version": 7,
@@ -149,7 +169,7 @@ def _canon(key: str, value: Any = "the canonical text") -> dict[str, Any]:
 async def test_duplicate_is_replaced_by_its_canonical_in_its_slot(truth: SimpleNamespace) -> None:
     truth.status = {
         "dup_a": _dup("c-1"),
-        "b": {"served_rows": 1, "duplicate_rows": 0, "canonical_id": ""},
+        "b": _ACTIVE,
     }
     truth.canon = {"c-1": _canon("canon_a")}
     ctx = _ctx(
@@ -175,10 +195,16 @@ async def test_duplicate_whose_canonical_is_already_in_the_pool_is_dropped(
 ) -> None:
     truth.status = {
         "dup_a": _dup("c-1"),
-        "canon_a": {"served_rows": 1, "duplicate_rows": 0, "canonical_id": ""},
+        "canon_a": _ACTIVE,
     }
     truth.canon = {"c-1": _canon("canon_a")}
-    ctx = _ctx([_hit("canon_a", rank=0.95), _hit("dup_a", rank=0.9), _hit("z", rank=0.5)])
+    ctx = _ctx(
+        [
+            _hit("canon_a", rank=0.95, who=("a", "-", "s1")),
+            _hit("dup_a", rank=0.9),
+            _hit("z", rank=0.5),
+        ]
+    )
     await sd.hide_pool_duplicates(ctx)
     assert [h.memory_key for h in ctx.all_hits] == ["canon_a", "z"]
     assert ctx.all_hits[0].resolved_from is None
@@ -207,10 +233,8 @@ async def test_duplicate_with_no_live_canonical_is_hidden_without_substitute(
 
 
 @pytest.mark.asyncio
-async def test_a_key_with_an_active_row_elsewhere_is_served(truth: SimpleNamespace) -> None:
-    """A store that writes one row per session may hold an active and a
-    duplicate row under one key: the active row answers, nothing is hidden."""
-    truth.status = {"k": {"served_rows": 1, "duplicate_rows": 3, "canonical_id": "c-1"}}
+async def test_an_active_row_is_served(truth: SimpleNamespace) -> None:
+    truth.status = {"k": _ACTIVE}
     ctx = _ctx([_hit("k", rank=0.9)])
     await sd.hide_pool_duplicates(ctx)
     assert [h.memory_key for h in ctx.all_hits] == ["k"] and ctx.actual_work == {}
@@ -239,7 +263,7 @@ async def test_include_duplicates_and_as_of_and_failures(
     async def boom(*a: Any, **kw: Any) -> list[dict]:
         raise RuntimeError("ch down")
 
-    monkeypatch.setattr(memory_repo, "status_by_keys", boom)
+    monkeypatch.setattr(memory_repo, "status_by_rows", boom)
     ctx = _ctx([_hit("dup_a", rank=0.9)])
     await sd.hide_pool_duplicates(ctx)
     assert [h.memory_key for h in ctx.all_hits] == ["dup_a"] and ctx.actual_work == {}
@@ -251,14 +275,11 @@ async def test_cross_namespace_pool_keys_the_truth_per_namespace(
 ) -> None:
     from server.memory import store as memory_repo
 
-    async def status_by_keys(
-        org: str, nss: list[str], keys: list[str], *, scope: Any = None, ch: Any = None
+    async def status_by_rows(
+        org: str, rows: list[tuple[str, ...]], *, scope: Any = None, ch: Any = None
     ) -> list[DuplicateStatus]:
-        assert nss == ["ns", "other"]
-        return [
-            DuplicateStatus.from_row(x)
-            for x in [{"namespace": "other", "memory_key": "k", **_dup("c-9")}]
-        ]
+        assert sorted({row[0] for row in rows}) == ["ns", "other"]
+        return [_status(row, **_dup("c-9")) for row in rows if row[0] == "other"]
 
     async def canonical_rows_by_ids(
         org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
@@ -269,7 +290,7 @@ async def test_cross_namespace_pool_keys_the_truth_per_namespace(
             for x in [dict(_canon("canon_k"), namespace="other", canonical_id="c-9")]
         ]
 
-    monkeypatch.setattr(memory_repo, "status_by_keys", status_by_keys)
+    monkeypatch.setattr(memory_repo, "status_by_rows", status_by_rows)
     monkeypatch.setattr(memory_repo, "canonical_rows_by_ids", canonical_rows_by_ids)
     ctx = _ctx([_hit("k", rank=0.9, ns="other"), _hit("k", rank=0.8, ns="ns")])
     await sd.hide_pool_duplicates(ctx)
@@ -623,11 +644,11 @@ async def test_a_canonical_outside_the_read_scope_is_never_seated(
     only_u = ReadFilters(scope="own_user", user_id="u", session_id=None)
     seen: list[Any] = []
 
-    async def status_by_keys(
-        org: str, nss: list[str], keys: list[str], *, scope: Any = None, ch: Any = None
+    async def status_by_rows(
+        org: str, rows: list[tuple[str, ...]], *, scope: Any = None, ch: Any = None
     ) -> list[DuplicateStatus]:
         seen.append(scope)
-        return [DuplicateStatus.from_row({"namespace": nss[0], "memory_key": "k", **_dup("c-v")})]
+        return [_status(row, **_dup("c-v")) for row in rows if row[4] == "k"]
 
     async def canonical_rows_by_ids(
         org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
@@ -639,7 +660,7 @@ async def test_a_canonical_outside_the_read_scope_is_never_seated(
             return []
         return [CanonicalRow.from_row(row)]
 
-    monkeypatch.setattr(memory_repo, "status_by_keys", status_by_keys)
+    monkeypatch.setattr(memory_repo, "status_by_rows", status_by_rows)
     monkeypatch.setattr(memory_repo, "canonical_rows_by_ids", canonical_rows_by_ids)
     monkeypatch.setattr(sd, "request_scope", lambda: only_u)
     ctx = _ctx([_hit("k", rank=0.9), _hit("b", rank=0.5)])
@@ -664,7 +685,9 @@ async def test_repo_duplicate_reads_carry_the_read_scope() -> None:
 
     one_session = ReadFilters(scope="own_session", user_id="u", session_id="s")
     cid = "11111111-1111-1111-1111-111111111111"
-    await memory_repo.status_by_keys("o", ["n"], ["k"], scope=one_session, ch=_CH())
+    await memory_repo.status_by_rows(
+        "o", [RowKey("n", "a", "u", "s", "k")], scope=one_session, ch=_CH()
+    )
     await memory_repo.canonical_rows_by_ids("o", ["n"], [cid], scope=one_session, ch=_CH())
     for sql, params in sqls:
         assert "user_id = {scope_uid:String}" in sql and "session_id = {scope_sid:String}" in sql
@@ -687,7 +710,10 @@ async def test_repo_readers_never_alias_an_aggregate_to_its_source_column() -> N
 
     ch = _CH()
     whole = WHOLE_NAMESPACE
-    await memory_repo.status_by_keys("o", ["n"], ["k2", "k1", "k1", ""], scope=whole, ch=ch)
+    rows = [RowKey("n", "a", "-", "-", k) for k in ("k2", "k1", "k1")]
+    await memory_repo.status_by_rows(
+        "o", [*rows, RowKey("n", "a", "-", "-", "")], scope=whole, ch=ch
+    )
     await memory_repo.canonical_rows_by_ids(
         "o", ["n"], ["not-a-uuid", "11111111-1111-1111-1111-111111111111"], scope=whole, ch=ch
     )
@@ -695,7 +721,7 @@ async def test_repo_readers_never_alias_an_aggregate_to_its_source_column() -> N
     await memory_repo.find_duplicate_pairs("o", "n", key_prefix="lesson_", ch=ch)
     await memory_repo.embedding_mirror_for_keys("o", "n", ["k"], ch=ch)
     assert len(sqls) == 4
-    assert sqls[0][1]["keys"] == ["k1", "k2"] and "AS canonical_id" in sqls[0][0]
+    assert sqls[0][1]["rows"] == sorted(set(rows)) and "AS canonical_id" in sqls[0][0]
     assert (
         sqls[1][1]["ids"] == ["11111111-1111-1111-1111-111111111111"]
         and "status = 'active'" in sqls[1][0]
@@ -706,3 +732,35 @@ async def test_repo_readers_never_alias_an_aggregate_to_its_source_column() -> N
     # the two search-path reads never pay the read-your-writes Keeper round-trip
     assert all("select_sequential_consistency = 0" in sqls[i][0] for i in (0, 1))
     assert await memory_repo.restamp_embedding_rows([], status="duplicate", version=1, ch=ch) == 0
+
+
+@pytest.mark.parametrize(
+    "dup_row, live_row",
+    [
+        (("a", "u", "s1"), ("a", "u", "s2")),  # two sessions of one user
+        (("a", "u1", "-"), ("a", "u2", "-")),  # two users, no session
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_duplicate_is_hidden_though_another_writer_holds_its_key_active(
+    truth: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    dup_row: tuple[str, str, str],
+    live_row: tuple[str, str, str],
+) -> None:
+    from server.memory import store as memory_repo
+
+    async def status_by_rows(
+        org: str, rows: list[tuple[str, ...]], *, scope: Any = None, ch: Any = None
+    ) -> list[DuplicateStatus]:
+        return [
+            _status(("ns", *dup_row, "k"), **_dup("c-1")),
+            _status(("ns", *live_row, "k"), **_ACTIVE),
+        ]
+
+    monkeypatch.setattr(memory_repo, "status_by_rows", status_by_rows)
+    truth.canon = {"c-1": _canon("canon_a")}
+    ctx = _ctx([_hit("k", rank=0.9, who=dup_row), _hit("k", rank=0.8, who=live_row)])
+    await sd.hide_pool_duplicates(ctx)
+    assert [h.memory_key for h in ctx.all_hits] == ["canon_a", "k"]
+    assert ctx.all_hits[1]._row_identity == live_row

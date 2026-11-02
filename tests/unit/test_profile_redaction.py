@@ -162,7 +162,7 @@ async def test_redact_scrubs_every_profile_version_built_from_the_memory(monkeyp
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.asyncio
 async def test_redact_scrubs_more_profile_versions_than_one_parameter_holds(monkeypatch) -> None:
-    from server.core.repo_base import _PARAM_BYTES, param_slices
+    from server.core.ch_params import FIELD_BYTES, chunks
     from server.memory.api.models_crud import MemoryRedactInput
     from server.memory.app import curation
 
@@ -170,7 +170,7 @@ async def test_redact_scrubs_more_profile_versions_than_one_parameter_holds(monk
     # Versions 5..3004 were built from the secret memory too: listed as
     # (memory_id, version) pairs, they would not fit in one bound parameter.
     newest = 3004
-    assert len(param_slices([(_PROFILE, v) for v in range(5, newest + 1)])) > 1
+    assert len(list(chunks([(_PROFILE, v) for v in range(5, newest + 1)]))) > 1
     trace = f"profile.fold:structured_profile:{_OTHER},{_SECRET}"
     for table in ("memory", "memory_versions"):
         ch.setup.append(
@@ -195,7 +195,7 @@ async def test_redact_scrubs_more_profile_versions_than_one_parameter_holds(monk
 
     assert out.redacted
     assert sum(1 for sql in ch.executed if "UPDATE" in sql and "redacted_at" in sql) == 2
-    assert max(len(v) for v in ch.bound) < _PARAM_BYTES
+    assert max(len(v) for v in ch.bound) < FIELD_BYTES
     rows = await ch.query_all(
         "SELECT version FROM loom.memory_versions "
         "WHERE memory_key = 'structured_profile' AND redacted_at IS NULL"

@@ -1,10 +1,14 @@
 """The scope predicates the erasure steps and the residue census share.
 
-A step's mutation and the census count of the same table read one predicate
-here, so the census can never count rows the step's scope did not reach. The
-user scope reaches tables without a user_id column through the subject's
-memory keys, tombstoned rows included: the memory step runs first and these
-must follow it, not escape it.
+A step and the census count of the same table read one predicate here, so the
+census can never count rows the step's scope did not reach. The user scope
+reaches tables without a user_id column through the subject's memory keys,
+tombstoned rows included: the memory step runs first and these must follow it,
+not escape it.
+
+A predicate that holds a subquery is for reads only: ClickHouse refuses a mutation
+with a subquery on a replicated table. Its step reads the subquery
+(`scope_reads`) and mutates by the bound form beside it.
 """
 
 from __future__ import annotations
@@ -28,24 +32,30 @@ USER_KEYS_SUBQ = (
     "WHERE org = {org:String} AND user_id = {uid:String})"
 )
 USER_PARENT_KEYS = f"(namespace, memory_key) IN {USER_KEYS_SUBQ}"
+PARENT_KEYS_IN = "(namespace, memory_key) IN {keys:Array(Tuple(String, String))}"
 # loom.memory_chunks names its parent `parent_memory_key`; same pair, same
 # reason. A chunk also carries its writer's `user_id` ('-' when it has
 # none), which reaches the chunks no parent key names — a
-# conversation's transcript chunks. The saga step and the census both read
-# this one predicate.
+# conversation's transcript chunks.
 USER_CHUNKS = f"(user_id = {{uid:String}} OR (namespace, parent_memory_key) IN {USER_KEYS_SUBQ})"
-USER_RECORD_IDS = (
-    "record_id IN (SELECT record_id FROM loom.memory_records "
+CHUNK_KEYS_IN = (
+    "(user_id = {uid:String} OR (namespace, parent_memory_key) IN "
+    "{keys:Array(Tuple(String, String))})"
+)
+USER_RECORDS_SUBQ = (
+    "(SELECT record_id FROM loom.memory_records "
     "WHERE org = {org:String} AND user_id = {uid:String})"
 )
+USER_RECORD_IDS = f"record_id IN {USER_RECORDS_SUBQ}"
+RECORD_IDS_IN = "record_id IN {ids:Array(UUID)}"
 # memory_record_conflicts has no record_id: it pairs a prior and an incoming
 # record. A conflict belongs to the user when either side
 # does. The table has no `record_id` column to filter on.
 USER_CONFLICT_RECORD_IDS = (
-    "(prior_record_id IN (SELECT record_id FROM loom.memory_records "
-    "WHERE org = {org:String} AND user_id = {uid:String}) "
-    "OR incoming_record_id IN (SELECT record_id FROM loom.memory_records "
-    "WHERE org = {org:String} AND user_id = {uid:String}))"
+    f"(prior_record_id IN {USER_RECORDS_SUBQ} OR incoming_record_id IN {USER_RECORDS_SUBQ})"
+)
+CONFLICT_RECORD_IDS_IN = (
+    "(prior_record_id IN {ids:Array(UUID)} OR incoming_record_id IN {ids:Array(UUID)})"
 )
 
 
@@ -67,6 +77,8 @@ USER_KEY_LIST = (
 )
 USER_WINDOW_KEYS = f"hasAny(window_keys, {USER_KEY_LIST})"
 USER_PRECEDENT_KEYS = f"hasAny(arrayConcat(window_keys, cited_keys), {USER_KEY_LIST})"
+WINDOW_KEYS_IN = "hasAny(window_keys, {keys:Array(String)})"
+PRECEDENT_KEYS_IN = "hasAny(arrayConcat(window_keys, cited_keys), {keys:Array(String)})"
 # A cached answer belongs to the user when the user asked it
 # (`user_id`, the request's) or when its pool quoted any of the user's keys.
 # A community row names an entity (and a label — the highest-degree member of
@@ -90,6 +102,11 @@ USER_COMMUNITY_ENTITIES = (
 USER_COMMUNITY_ROWS = (
     f"((namespace, entity) IN {USER_COMMUNITY_ENTITIES} "
     f"OR (namespace, label) IN {USER_COMMUNITY_ENTITIES})"
+)
+# The entities by `cityHash64(namespace, entity)`: a stored name can outgrow a form field.
+COMMUNITY_ROWS_IN = (
+    "(cityHash64(namespace, entity) IN {entities:Array(UInt64)} "
+    "OR cityHash64(namespace, label) IN {entities:Array(UInt64)})"
 )
 
 

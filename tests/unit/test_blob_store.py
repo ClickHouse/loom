@@ -27,6 +27,8 @@ class _CH:
 
     async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
         self.seen.append((sql, params))
+        if "AS cutoff_ms" in sql:  # the ClickHouse clock, less the age
+            return {"cutoff_ms": 1_000_000 - params["age"] * 1000}
         data = self.rows.get((params["org"], params["ns"], params["sha"]))
         return None if data is None else {"size": len(data)}
 
@@ -109,8 +111,10 @@ def test_a_delete_with_a_min_age_spares_a_fresh_row_and_counts_what_went() -> No
 
     ch.execute = spare  # type: ignore[method-assign]
     assert asyncio.run(blobs.delete("o", "ns", ["a"], min_age_s=3600, ch=ch)) == 0
-    aged, p = ch.seen[0]
-    assert "created_at < now64(3) - INTERVAL {age:UInt32} SECOND" in aged and p["age"] == 3600
+    (clock, _), (aged, p) = ch.seen[:2]
+    assert "now64(3)" in clock and "now64" not in aged  # a replicated table refuses it
+    assert "created_at < fromUnixTimestamp64Milli({cutoff_ms:Int64})" in aged
+    assert p["cutoff_ms"] == 1_000_000 - 3_600_000
     assert not any("blob_uploads" in sql for sql, _ in ch.seen), "a spared one keeps its record"
     assert asyncio.run(blobs.delete("o", "ns", [], min_age_s=3600, ch=ch)) == 0
 

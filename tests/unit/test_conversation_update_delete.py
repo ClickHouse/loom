@@ -267,7 +267,7 @@ async def test_delete_op_registered_with_admin_role_and_audit() -> None:
 
 @pytest.mark.asyncio
 async def test_named_turns_are_tombstoned_in_byte_bounded_slices() -> None:
-    """Compaction binds its msg_ids a byte-bounded slice at a time (`param_slices`), so
+    """Compaction binds its msg_ids a byte-bounded slice at a time (`chunks`), so
     long ids cannot push one statement past the server's form-field cap, and every id
     is still named."""
     from server.knowledge.store import conversations as repo

@@ -13,7 +13,13 @@ from server.core.vectors.search_settings import vector_search_settings
 from server.memory.app.retrieval.retry import _call_retrying_empty_block
 from server.memory.domain.passage_trim import trim_chunk_excerpt
 from server.memory.domain.search_parsing import _iso_date
-from server.memory.domain.search_types import SearchHit, SearchQuery, _CHClient, hit_sort_key
+from server.memory.domain.search_types import (
+    SearchHit,
+    SearchQuery,
+    _CHClient,
+    hit_sort_key,
+    row_identity,
+)
 from server.memory.domain.sensitivity import reads_high
 
 log = logging.getLogger("server.memory.app.retrieval")
@@ -349,6 +355,8 @@ def _chunk_stage2_one_trip_sql(
                 {chunk_agent_pred}"""
     cand_branch = f"""
             (SELECT
+                c.agent AS agent,
+                c.user_id AS user_id,
                 c.session_id AS session_id,
                 c.chunk_index AS chunk_index,
                 c.content_sha256 AS content_sha256,
@@ -370,6 +378,8 @@ def _chunk_stage2_one_trip_sql(
         nb_branch = f"""
             UNION ALL
             (SELECT
+                c.agent AS agent,
+                c.user_id AS user_id,
                 c.session_id AS session_id,
                 c.chunk_index AS chunk_index,
                 c.content_sha256 AS content_sha256,
@@ -389,6 +399,8 @@ def _chunk_stage2_one_trip_sql(
             'episodic' AS memory_type,
             substring(c.content, 1, 1200) AS content_excerpt,
             c.content AS content_full,
+            c.agent AS agent,
+            c.user_id AS user_id,
             c.session_id AS session_id,
             c.chunk_index AS chunk_index,
             c.content_sha256 AS content_sha256,
@@ -565,6 +577,9 @@ def _chunk_primary_hit(
         valid_at=_iso_date(str(r.get("valid_at", ""))),
         source="chunk",
         parent_memory_key=str(r.get("parent_memory_key") or ""),
+        session_id=str(r.get("session_id") or ""),
+        identity=row_identity(r),
+        chunk_sha256=_chunk_row_sha(r),
         score_components={
             "semantic": max(0.0, 1.0 - distance),
             "chunk_parent_boost": float(boost),
@@ -638,6 +653,9 @@ def _chunk_neighbor_hit(r: dict[str, Any], q: SearchQuery, q_tokens: set[str]) -
         valid_at=_iso_date(str(r.get("valid_at", ""))),
         source="chunk",
         parent_memory_key=str(r.get("parent_memory_key") or ""),
+        session_id=str(r.get("session_id") or ""),
+        identity=row_identity(r),
+        chunk_sha256=_chunk_row_sha(r),
         score_components={
             "semantic": max(0.0, 1.0 - distance),
             "token_density": float(density_bonus),
@@ -896,6 +914,11 @@ def _chunk_neighbor_sql(
                 substring(c.content, 1, 1200) AS content_excerpt,
                 c.content AS content_full,
                 cosineDistance(c.embedding, {{q:Array(Float32)}}) AS distance,
+                c.agent AS agent,
+                c.user_id AS user_id,
+                c.session_id AS session_id,
+                c.parent_memory_key AS parent_memory_key,
+                c.content_sha256 AS content_sha256,
                 {date_select}
             FROM loom.memory_chunks AS c FINAL
             {date_join}

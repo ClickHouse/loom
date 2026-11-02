@@ -10,7 +10,8 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from server.core.repo_base import _CHClient, _default_client
+from server.core.ch_params import chunks
+from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
 from server.erasure.store.predicates import (
@@ -322,9 +323,10 @@ async def delete_learnings_queue_by_user(
     survives (holding the rule) and the census's residue reopens this step to blank
     it: a pending candidate loses only its `pending` rows, a decided one only its
     rows that hold the rule at a version no newer than the one it read for that
-    candidate. A pending candidate a supporter backed after the read is kept: the
-    delete re-checks for supporter rows, and a filing writes its supporter row before
-    its candidate row."""
+    candidate. A pending candidate a supporter backed after the read is kept: each
+    slice re-reads the supporter rows right before its delete, and a filing writes its
+    supporter row before its candidate row. Only a supporter landing between that read
+    and its delete can still lose its candidate."""
     ch = ch or _default_client()
     n = await delete_scoped(
         "loom.learnings_supporters", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
@@ -337,12 +339,16 @@ async def delete_learnings_queue_by_user(
     cids = [str(r["candidate_id"]) for r in rows]
     if not cids:
         return n
-    latest = await ch.query_all(
+    latest = await query_all_sliced(
+        ch,
         "SELECT * FROM loom.learnings_queue FINAL "
         "WHERE org = {org:String} AND candidate_id IN {cids:Array(UUID)}",
-        params={"org": org, "cids": cids},
+        {"org": org, "cids": cids},
+        "cids",
     )
-    pending = [str(r["candidate_id"]) for r in latest if r["status"] == "pending"]
+    # the delete slices are cut sorted, so a re-run cuts the same ones and finds its own
+    # pending mutations
+    pending = sorted(str(r["candidate_id"]) for r in latest if r["status"] == "pending")
     decided = [r for r in latest if r["status"] != "pending"]
     blank = [
         {**r, "proposed_value": "", "version": int(r["version"]) + 1}
@@ -353,27 +359,33 @@ async def delete_learnings_queue_by_user(
         await ch.insert(
             "loom.learnings_queue", blank, settings={"async_insert": 0, "wait_for_async_insert": 1}
         )
-    if pending:
-        n += await delete_scoped(
-            "loom.learnings_queue",
-            org=org,
-            scope_where=(
-                "candidate_id IN {cids:Array(UUID)} AND status = 'pending' "
-                f"AND candidate_id NOT IN {SUPPORTED_LEARNINGS}"
-            ),
-            params={"cids": pending},
-            ch=ch,
+    for part in chunks(pending):
+        # read right before the delete, which names its ids: a mutation takes no subquery
+        backed = await ch.query_all(
+            f"SELECT DISTINCT toString(candidate_id) AS id FROM {SUPPORTED_LEARNINGS} "
+            "WHERE candidate_id IN {cids:Array(UUID)}",
+            params={"org": org, "cids": part},
         )
-    if decided:
+        unbacked = sorted(set(part) - {str(r["id"]) for r in backed})
+        if unbacked:
+            n += await delete_scoped(
+                "loom.learnings_queue",
+                org=org,
+                scope_where="candidate_id IN {cids:Array(UUID)} AND status = 'pending'",
+                params={"cids": unbacked},
+                ch=ch,
+            )
+    decided_versions = sorted((str(r["candidate_id"]), int(r["version"])) for r in decided)
+    for versions in chunks(decided_versions):
         n += await delete_scoped(
             "loom.learnings_queue",
             org=org,
             # Each candidate is bounded by its own version read, never another's.
             scope_where=(
                 "proposed_value != '' AND arrayExists(r -> r.1 = candidate_id "
-                "AND version <= r.2, {read:Array(Tuple(UUID, UInt64))})"
+                "AND version <= r.2, {decided:Array(Tuple(UUID, UInt64))})"
             ),
-            params={"read": [(str(r["candidate_id"]), int(r["version"])) for r in decided]},
+            params={"decided": versions},
             ch=ch,
         )
     return n

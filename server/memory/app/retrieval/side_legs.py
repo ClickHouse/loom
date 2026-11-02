@@ -6,21 +6,46 @@ recall pool, the records leg over loom.memory_records, and the
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
+from server.core.ch_params import fitting
 from server.memory.app.retrieval.retry import _call_retrying_empty_block
 from server.memory.domain.search_parsing import _iso_date, _record_excerpt, _record_query_tokens
 from server.memory.domain.search_sql import _build_where
 from server.memory.domain.search_text import _GENERIC_ENTITY_FILTER
-from server.memory.domain.search_types import SearchHit, SearchQuery, _CHClient, row_identity
+from server.memory.domain.search_types import (
+    SearchHit,
+    SearchQuery,
+    _CHClient,
+    hit_row_key,
+    names_row,
+    row_identity,
+)
 
 log = logging.getLogger("server.memory.app.retrieval")
+
+
+def exclude_pooled(where: list[str], params: dict[str, Any], hits: Sequence[SearchHit]) -> None:
+    """Leave the rows `hits` already pooled out of a leg over `loom.memory_embeddings AS e`.
+    A key holds a row per writer and session, so a fact hit leaves out the row it names.
+    Chunks and records leave out nothing."""
+    rows = sorted(
+        (r.agent, r.user_id, r.session_id, r.memory_key)
+        for r in {hit_row_key(h) for h in hits if names_row(h) and h.source != "chunk"}
+    )
+    if rows:
+        where.append(
+            "(e.agent, e.user_id, e.session_id, e.memory_key)"
+            " NOT IN {pooled_rows:Array(Tuple(String, String, String, String))}"
+        )
+        # one form field: a pooled row past it may come back, and assembly collapses it
+        params["pooled_rows"] = fitting(rows)
 
 
 async def _lexical_recall_fallback(
     ch: _CHClient,
     q: SearchQuery,
-    existing_keys: set[str],
     *,
     limit: int = 50,
     max_distance: float = 0.9,
@@ -103,7 +128,8 @@ async def _lexical_recall_fallback(
             e.tags AS tags
         FROM loom.memory_embeddings AS e FINAL
         WHERE {where_sql}
-        ORDER BY lex_score DESC, distance ASC, e.memory_key ASC
+        -- rows that tie are taken in row order
+        ORDER BY lex_score DESC, distance ASC, e.memory_key ASC, e.agent, e.user_id, e.session_id
         LIMIT {{limit:UInt32}}
         SETTINGS query_plan_direct_read_from_text_index = 0
     """
@@ -119,8 +145,6 @@ async def _lexical_recall_fallback(
     n_tokens = max(1, len(tokens))
     for r in rows:
         mk = r["memory_key"]
-        if mk in existing_keys:
-            continue
         # Normalize lex to [0,1] by token count, same scale as cosine.
         lex_norm = float(r.get("lex_score", 0) or 0) / n_tokens
         distance = float(r["distance"])
@@ -144,6 +168,7 @@ async def _lexical_recall_fallback(
                 verified=bool(int(r.get("verified") or 0)),
                 session_id=str(r.get("session_id") or ""),
                 identity=row_identity(r),
+                version=int(r.get("version") or 0),
                 # The row's tags ride so the post-fusion belt
                 # can check the hard filter without a second read.
                 tags=[str(t) for t in (r.get("tags") or []) if t],
@@ -251,6 +276,7 @@ async def _search_memory_records(
         SELECT
             record_id,
             parent_memory_key,
+            session_id,
             schema_name,
             record_json,
             field_text,
@@ -272,6 +298,7 @@ async def _search_memory_records(
             SELECT
                 record_id,
                 parent_memory_key,
+                session_id,
                 schema_name,
                 record_json,
                 field_text,
@@ -288,6 +315,7 @@ async def _search_memory_records(
                 SELECT
                     toString(r.record_id) AS record_id,
                     ifNull(r.memory_key, '') AS parent_memory_key,
+                    r.session_id AS session_id,
                     toString(r.schema_name) AS schema_name,
                     r.record_json AS record_json,
                     r.valid_at AS valid_at,
@@ -324,6 +352,7 @@ async def _search_memory_records(
                 GROUP BY
                     r.record_id,
                     r.memory_key,
+                    r.session_id,
                     r.schema_name,
                     r.record_json,
                     r.valid_at,
@@ -342,6 +371,11 @@ async def _search_memory_records(
         log.warning("_search_memory_records failed (fail-open): %s", e)
         return []
 
+    return _record_hits(rows)
+
+
+def _record_hits(rows: list[dict[str, Any]]) -> list[SearchHit]:
+    """The record leg's rows as hits, keyed by their parent memory when they have one."""
     out: list[SearchHit] = []
     for row in rows:
         record_id = str(row.get("record_id") or "")
@@ -368,6 +402,8 @@ async def _search_memory_records(
                 valid_at=_iso_date(str(row.get("valid_at_iso", ""))),
                 source="record",
                 source_resource_id=record_id,
+                # no identity: a record names no loom.memory row; its session is provenance
+                session_id=str(row.get("session_id") or ""),
                 score_components={
                     "record_lexical": float(row.get("lexical_score") or 0.0),
                     "rank_score": rank_score,
@@ -380,7 +416,7 @@ async def _search_memory_records(
 async def _fetch_unmatched_candidates(
     ch: _CHClient,
     q: SearchQuery,
-    existing_keys: set[str],
+    pooled: Sequence[SearchHit],
     *,
     limit: int,
 ) -> list[SearchHit]:
@@ -397,9 +433,7 @@ async def _fetch_unmatched_candidates(
 
     where, params = _build_where(q)
     params["unmatched_limit"] = int(limit)
-    if existing_keys:
-        where.append("e.memory_key NOT IN {existing_keys:Array(String)}")
-        params["existing_keys"] = list(existing_keys)
+    exclude_pooled(where, params, pooled)
 
     where_sql = " WHERE " + " AND ".join(where)
     sql = f"""
@@ -425,7 +459,9 @@ async def _fetch_unmatched_candidates(
             e.tags AS tags
         FROM loom.memory_embeddings AS e FINAL
         {where_sql}
-        ORDER BY reinforcement_count DESC, confidence DESC, freshness DESC
+        -- rows that tie are taken in row order
+        ORDER BY reinforcement_count DESC, confidence DESC, freshness DESC,
+                 e.memory_key, e.agent, e.user_id, e.session_id
         LIMIT {{unmatched_limit:UInt32}}
     """
     try:
@@ -456,7 +492,9 @@ async def _fetch_unmatched_candidates(
                 source_resource_id=str(r.get("source_resource_id") or ""),
                 source_class=str(r.get("source_class") or ""),
                 verified=bool(int(r.get("verified") or 0)),
+                session_id=str(r.get("session_id") or ""),
                 identity=row_identity(r),
+                version=int(r.get("version") or 0),
                 tags=[str(t) for t in (r.get("tags") or []) if t],
                 score_components={
                     "unmatched_confidence": 0.05 * confidence,

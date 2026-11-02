@@ -3177,10 +3177,12 @@ class MemorySearchSettings(BaseModel):
     # served window: rrf/rerank pool, pool short of top_k, an under-covered
     # identifier, or a pooled key already matching), "off".
     memory_search_key_match_mode: Annotated[Literal["always", "gated", "off"], LIVE] = "gated"
-    # Rows per memory_key in the final block (0 = no cap), freeing slots taken
-    # by one key re-extracted per session (38 of 60 questions on one eval).
-    # Skipped for aggregational / temporal_diff shapes.
+    # Rows of one memory_key kept by the final block, key-match and the entity follow (0 = no cap;
+    # the first two keep all for aggregational/temporal_diff), and one-per-key callers' over-fetch.
     memory_search_per_key_cap: Annotated[int, LIVE] = 3
+    # How many of a writer's served rows of one key, those with the newest vectors, a pooled
+    # memory.set chunk is matched against, by value, to find the row it was cut from.
+    memory_search_set_chunk_rows: Annotated[int, LIVE] = Field(default=64, ge=1)
     # How memory.search dates a chunk: "session" by its conversation's digest, "parent" by
     # the session's first fact anchor.
     memory_search_chunk_date_source: Annotated[Literal["session", "parent"], LIVE] = "session"

@@ -87,7 +87,7 @@ One scope grammar for every write that can touch more than one row.
 | `refused` | `int` | locks, policy, preconditions |
 | `noop` | `int` | Rows already in the asked state: nothing was written for them. |
 | `failed` | `int` | Rows whose write raised; each row's `detail` says why. |
-| `truncated` | `bool` | the filter matched more than `limit` |
+| `truncated` | `bool` | more of the caller's rows may match than `limit` |
 | `rows` | `list[ApplyRow]` | One entry per matched row: its identity, status, new version and detail. |
 
 ## `memory.ask`

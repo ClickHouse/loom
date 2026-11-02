@@ -6,19 +6,29 @@ chunk-share cap and floor on the window.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from typing import Any
+from typing import Any, NamedTuple
 
+from server.core.ch_params import fitting
+from server.core.repo_base import query_all_sliced
+from server.memory.app.retrieval.side_legs import exclude_pooled
+from server.memory.app.set_chunks import set_chunk_identities
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_sql import _build_where
 from server.memory.domain.search_types import (
+    RowIdentity,
+    RowKey,
     SearchHit,
     SearchQuery,
     _CHClient,
     hit_sort_key,
     row_identity,
+    row_key_of,
 )
+from server.memory.store.rows import parse_memory_value
+from server.memory.store.shared import SHARED_AGENT
+from server.settings import settings
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -33,8 +43,8 @@ async def _recency_backfill(
     rows, not the newest — the re-rank can only order what the legs
     fetched, so the newest run never reaches it. The scope is the subject here, so the newest rows in
     it are candidates by construction; without a hard tag the read is left
-    alone. Rows already in the pool are excluded; the new rows enter at the
-    pool's lowest rank score — in scope, so as good as the weakest candidate
+    alone. Rows already in the pool are excluded, up to one form field of them; the new
+    rows enter at the pool's lowest rank score — in scope, so as good as the weakest candidate
     — and win only through the recency boost. Fail-open."""
     weight = float(q.recency_pool_weight)
     if not (q.recency_intent and weight > 0.0 and int(q.top_k) > 0):
@@ -44,10 +54,7 @@ async def _recency_backfill(
     if not hard_tag_filter(q.tags, q.tags_soft):
         return hits
     where, params = _build_where(q)
-    existing = sorted({h.memory_key for h in hits})
-    if existing:
-        where.append("e.memory_key NOT IN {existing_keys:Array(String)}")
-        params["existing_keys"] = existing
+    exclude_pooled(where, params, hits)
     params["newest_limit"] = int(q.top_k)
     sql = f"""
         SELECT
@@ -65,10 +72,13 @@ async def _recency_backfill(
             e.agent AS agent,
             e.user_id AS user_id,
             e.session_id AS session_id,
+            e.version AS version,
             e.tags AS tags
         FROM loom.memory_embeddings AS e FINAL
         WHERE {" AND ".join(where)}
-        ORDER BY coalesce(e.valid_at, e.temporal_anchor, e.created_at) DESC, e.memory_key ASC
+        -- rows that tie are taken in row order
+        ORDER BY coalesce(e.valid_at, e.temporal_anchor, e.created_at) DESC,
+                 e.memory_key ASC, e.agent, e.user_id, e.session_id
         LIMIT {{newest_limit:UInt32}}
     """
     try:
@@ -96,6 +106,7 @@ async def _recency_backfill(
                 verified=bool(int(r.get("verified") or 0)),
                 session_id=str(r.get("session_id") or ""),
                 identity=row_identity(r),
+                version=int(r.get("version") or 0),
                 tags=[str(t) for t in (r.get("tags") or []) if t],
                 score_components={"recency_backfill": 1.0, "rank_score": float(floor)},
             )
@@ -114,75 +125,207 @@ def _is_set_chunk(h: Any) -> bool:
     )
 
 
-def fold_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
-    """Fold the verbatim chunks of long memory.set values onto
-    their parent fact, so a fact-only namespace never sees a chunk id.
+def _folded_fields(row: SearchHit, chunk: SearchHit) -> dict[str, Any]:
+    """The fields a row takes when a chunk of its value folds onto it: one more folded
+    chunk and, when the chunk out-scored it, the chunk's score, distance and passage."""
+    components = dict(row.score_components or {})
+    components["folded_chunks"] = float(components.get("folded_chunks", 0.0)) + 1.0
+    if float(chunk.rank_score or 0.0) <= float(row.rank_score or 0.0):
+        return {"score_components": components}
+    components["folded_lift"] = 1.0
+    return {
+        "score_components": components,
+        "rank_score": float(chunk.rank_score),
+        "distance": min(float(row.distance), float(chunk.distance)),
+        "content_excerpt": chunk.content_excerpt or row.content_excerpt,
+    }
 
-    A chunk whose parent is already in the pool gives the parent the better of
-    the two scores and, when the chunk out-scored the parent, its passage as
-    the excerpt — the parent's stored excerpt is only the value's head, and
-    the passage that matched must survive the fold for memory.ask's window.
-    A chunk whose parent is not in the pool becomes the parent's hit: keyed
-    by the parent, `source="fact"`, the chunk's passage, scores and dates,
-    tags empty (the handler's tag point-read fills fact hits by key when the
-    request asks). Several chunks of one parent collapse to one row. Order is
-    re-established by `hit_sort_key`. Conversation chunks (no memory.set
-    session) pass through untouched.
-    `score_components` records the fold: `folded_chunks` (count), for a
-    converted hit `folded_from_chunk` (the chunk index), and `folded_lift`
-    when the row's score is a chunk's — downstream fact-only boosts (the
-    asserted tie-break) skip such a row, so the fold is
-    rank-neutral: a folded parent sits exactly where its chunk sat."""
+
+class SetChunkRow(NamedTuple):
+    """The row a memory.set chunk was cut from, its vector's version and tags."""
+
+    identity: RowIdentity
+    version: int
+    tags: tuple[str, ...]
+
+
+# the key's promoted row: tags unknown, so alone it fails a hard tag filter
+_SHARED_SET_CHUNK_ROW = SetChunkRow((SHARED_AGENT, "-", "-"), 0, ())
+
+
+class ChunkId(NamedTuple):
+    """A pooled set chunk: its writer, its parent key, and its own index and hash."""
+
+    agent: str
+    user_id: str
+    memory_key: str
+    chunk_index: int
+    sha: str
+
+
+def fold_set_chunks(hits: list[SearchHit], rows: Mapping[ChunkId, SetChunkRow]) -> list[SearchHit]:
+    """Under private scope, fold the verbatim chunks of long memory.set values onto the rows
+    `rows` names (`_set_chunk_rows`): onto the row when it is pooled, as its hit when it is
+    not. A chunk `rows` names no row for is dropped: no served row's value cuts it."""
+
+    def named(h: SearchHit) -> SetChunkRow | None:
+        cid = _chunk_id(h)
+        return rows.get(cid) if cid is not None else None
+
+    return _fold(hits, named, _row_place)
+
+
+def _row_place(who: RowIdentity | None, key: str) -> tuple[str, ...]:
+    # a pooled fact that names no row keys as `(key,)`, which no named row matches
+    return (key,) if who is None else (*who, key)
+
+
+def fold_shared_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
+    """Under shared scope, where the writer's private row is never served, a chunk folds onto
+    a pooled fact of its key, or becomes the hit of the key's promoted row."""
+    return _fold(hits, lambda h: _SHARED_SET_CHUNK_ROW, lambda who, key: (key,))
+
+
+def _fold(
+    hits: list[SearchHit],
+    named: Callable[[SearchHit], SetChunkRow | None],
+    place: Callable[[RowIdentity | None, str], tuple[str, ...]],
+) -> list[SearchHit]:
+    """Fold each set chunk onto the pooled hit of the row `named` gives it, or add it as
+    that row's hit (a chunk `named` gives none is dropped). `place` keys a row, pooled or
+    named, by its identity and key, so a chunk meets its pooled row."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
-    by_key: dict[str, SearchHit] = {}
-    out: list[SearchHit] = []
+    out = [h for h in hits if not _is_set_chunk(h)]
+    at: dict[tuple[str, ...], int] = {}
+    for pos, h in enumerate(out):
+        if h.source != "chunk":
+            at.setdefault(place(h.identity, h.memory_key), pos)
     for h in hits:
-        if not _is_set_chunk(h):
-            out.append(h)
-            if (getattr(h, "source", "") or "fact") != "chunk":
-                by_key.setdefault(str(h.memory_key), h)
-    for h in hits:
-        if not _is_set_chunk(h):
+        if not _is_set_chunk(h) or (row := named(h)) is None:
             continue
-        parent_key = str(h.parent_memory_key)
-        parent = by_key.get(parent_key)
-        if parent is None:
-            idx_s = str(h.memory_key).rpartition(":")[2]
-            converted = replace(
-                h,
-                memory_key=parent_key,
-                source="fact",
-                parent_memory_key="",
-                score_components={
-                    **dict(h.score_components or {}),
-                    "folded_chunks": 1.0,
-                    "folded_from_chunk": float(idx_s) if idx_s.isdigit() else -1.0,
-                    # the score is the chunk's: no fact-only boost may be added
-                    # downstream (asserted tie-break) — the chunk never had it
-                    "folded_lift": 1.0,
-                },
-            )
-            by_key[parent_key] = converted
-            out.append(converted)
+        target = place(row.identity, str(h.parent_memory_key))
+        if target in at:
+            parent = out[at[target]]
+            out[at[target]] = replace(parent, **_folded_fields(parent, h))
             continue
-        components = dict(parent.score_components or {})
-        components["folded_chunks"] = float(components.get("folded_chunks", 0.0)) + 1.0
-        if float(h.rank_score or 0.0) > float(parent.rank_score or 0.0):
-            components["folded_lift"] = 1.0
-            merged = replace(
-                parent,
-                rank_score=float(h.rank_score),
-                distance=min(float(parent.distance), float(h.distance)),
-                content_excerpt=h.content_excerpt or parent.content_excerpt,
-                score_components=components,
-            )
-        else:
-            merged = replace(parent, score_components=components)
-        by_key[parent_key] = merged
-        out[out.index(parent)] = merged
+        index = _chunk_index(h)
+        _, _, session = row.identity
+        converted = replace(
+            h,
+            memory_key=str(h.parent_memory_key),
+            source="fact",
+            parent_memory_key="",
+            identity=row.identity,
+            session_id=session,
+            version=row.version,
+            tags=list(row.tags),
+            score_components={
+                **dict(h.score_components or {}),
+                "folded_chunks": 1.0,
+                "folded_from_chunk": float(index) if index is not None else -1.0,
+                # the score is the chunk's: no fact-only boost may be added
+                # downstream (asserted tie-break) — the chunk never had it
+                "folded_lift": 1.0,
+            },
+        )
+        at[target] = len(out)
+        out.append(converted)
     out.sort(key=hit_sort_key)
     return out
+
+
+def _chunk_index(h: SearchHit) -> int | None:
+    # `chunk:memory.set:<key>:<index>`
+    index = str(h.memory_key).rpartition(":")[2]
+    return int(index) if index.isdigit() else None
+
+
+def _chunk_id(h: SearchHit) -> ChunkId | None:
+    index = _chunk_index(h)
+    if h.identity is None or index is None:
+        return None
+    return ChunkId(h.identity[0], h.identity[1], str(h.parent_memory_key), index, h.chunk_sha256)
+
+
+async def _set_chunk_rows(
+    ch: _CHClient, q: SearchQuery, hits: list[SearchHit]
+) -> dict[ChunkId, SetChunkRow]:
+    """The served row each pooled set chunk was cut from: of the writer's served rows of the
+    key with the newest vectors (`memory_search_set_chunk_rows` of them; a status change
+    re-writes a vector too), the first whose current value cuts that chunk
+    (`set_chunk_identities`). A chunk none of them cuts, or every chunk when a
+    read fails, names none. Two writers whose values cut one chunk share its `memory_chunks`
+    row, stamped with the last of them, so the chunk names that writer's memory row. Private
+    scope only (`fold_shared_set_chunks` reads no row)."""
+    pooled = {cid for h in hits if _is_set_chunk(h) and (cid := _chunk_id(h)) is not None}
+    if not pooled:
+        return {}
+    # served whatever its vector: a row whose embedding is still pending has its chunks
+    where, params = _build_where(q, ranked=False)
+    # one form field: a chunk of a writer and key past it names no row and drops
+    params["set_rows"] = fitting(sorted({(c.agent, c.user_id, c.memory_key) for c in pooled}))
+    params["per_key"] = int(settings.memory_search_set_chunk_rows)
+    try:
+        served = await ch.query_all(
+            f"""
+            SELECT e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id,
+                   e.memory_key AS memory_key, max(e.version) AS version,
+                   argMax(e.tags, e.version) AS tags
+            FROM loom.memory_embeddings AS e FINAL
+            WHERE e.org = {{org:String}}
+              AND e.namespace = {{ns:String}}
+              AND (e.agent, e.user_id, e.memory_key)
+                  IN {{set_rows:Array(Tuple(String, String, String))}}
+            GROUP BY e.agent, e.user_id, e.session_id, e.memory_key
+            HAVING argMax({" AND ".join(where)}, e.version)
+            ORDER BY version DESC, agent, user_id, session_id  -- ties keep one order
+            LIMIT {{per_key:UInt32}} BY agent, user_id, memory_key
+            """,
+            params=params,
+        )
+        values = await _row_values(ch, q, served)
+    except Exception as e:  # noqa: BLE001 — naming a chunk's row never fails a search
+        log.warning("set chunk rows read failed; this pool's set chunks are dropped: %s", e)
+        return {}
+    by_writer: dict[tuple[str, str, str], list[ChunkId]] = {}
+    for c in pooled:
+        by_writer.setdefault((c.agent, c.user_id, c.memory_key), []).append(c)
+    out: dict[ChunkId, SetChunkRow] = {}
+    # rows of a key written in many sessions often hold one value: chunk it once
+    cuts_of: dict[tuple[str, str], frozenset[tuple[int, str]]] = {}
+    for r in served:  # newest first: the first row whose value cuts a chunk names it
+        row = row_key_of(q.namespace, r)
+        if row not in values:
+            continue
+        text, memory_type = values[row]
+        if (text, memory_type) not in cuts_of:
+            cuts_of[text, memory_type] = set_chunk_identities(parse_memory_value(text), memory_type)
+        cuts = cuts_of[text, memory_type]
+        for c in by_writer.get((row.agent, row.user_id, row.memory_key), []):
+            if (c.chunk_index, c.sha) in cuts:
+                identity = (row.agent, row.user_id, row.session_id)
+                out.setdefault(c, SetChunkRow(identity, int(r["version"]), tuple(r["tags"])))
+    return out
+
+
+async def _row_values(
+    ch: _CHClient, q: SearchQuery, rows: list[dict[str, Any]]
+) -> dict[RowKey, tuple[str, str]]:
+    """The current stored value text and memory_type of each live row, read by
+    `loom.memory`'s sort-key prefix a form field at a time."""
+    sql = """
+        SELECT agent, user_id, session_id, memory_key, memory_type, value
+        FROM loom.memory FINAL
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND (agent, user_id, session_id, memory_key)
+              IN {rows:Array(Tuple(String, String, String, String))}
+          AND tombstoned_at IS NULL
+    """
+    keys = sorted({(r["agent"], r["user_id"], r["session_id"], r["memory_key"]) for r in rows})
+    found = await query_all_sliced(ch, sql, {"org": q.org, "ns": q.namespace, "rows": keys}, "rows")
+    return {row_key_of(q.namespace, r): (str(r["value"]), str(r["memory_type"])) for r in found}
 
 
 async def _finish_pool(ch: _CHClient, hits: list[SearchHit], q: SearchQuery) -> list[SearchHit]:
@@ -193,19 +336,20 @@ async def _finish_pool(ch: _CHClient, hits: list[SearchHit], q: SearchQuery) -> 
     tips ties between days, not months — then the chunk share cap and floor
     and the window cut. No LLM rerank here: it runs
     once, in the handler, on the cross-namespace pool."""
-    hits = fold_set_chunks(hits)
+    if q.scope == "private":
+        hits = fold_set_chunks(hits, await _set_chunk_rows(ch, q, hits))
+    else:
+        hits = fold_shared_set_chunks(hits)
     hits = await _recency_backfill(ch, q, hits)
     if q.recency_intent and float(q.recency_pool_weight) > 0.0:
         hits = rerank_by_recency_pool(hits, weight=float(q.recency_pool_weight))
-    from server.settings import settings as _cap_settings
-
     # The request's (or namespace's) chunk share cap; unset = no cap.
     share = 1.0 if q.chunk_max_share is None else float(q.chunk_max_share)
     hits = cap_chunk_share(hits, int(q.top_k), share)
     hits = floor_chunk_share(
         hits,
         int(q.top_k),
-        effective_chunk_floor(float(_cap_settings.memory_search_chunk_min_share), share),
+        effective_chunk_floor(float(settings.memory_search_chunk_min_share), share),
     )
     return hits[: int(q.top_k)]
 

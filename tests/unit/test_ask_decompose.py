@@ -201,3 +201,42 @@ def test_decompose_failed_and_pool_k_ride_the_ledger() -> None:
     assert projected["out_decompose_failed"] == "2"
     assert projected["out_pool_k"] == "30"
     assert MemoryAskOutput(answer="", source="abstained").decompose_failed == 0
+
+
+@pytest.mark.asyncio
+async def test_a_part_adds_another_sessions_row_of_a_pooled_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # a key holds a row per session: a part that finds the other session's row adds it
+    from types import SimpleNamespace
+
+    def row(session: str) -> Any:
+        hit = SimpleNamespace(memory_key="k", session_id=session, similarity=0.5)
+        hit._row_identity = ("a", "u", session)
+        return hit
+
+    async def _search(inp: Any) -> Any:
+        return SimpleNamespace(results=[row("s1"), row("s2")])
+
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
+    q = "How long after Caroline adopted her dog did she move to Boston?"
+    _, merged = await retrieval_legs.decomposed_retrieval(
+        _SearchInput(query=q), q, [row("s1")], llm=_LLM("part one\npart two"), mode="always"
+    )
+    assert [h.session_id for h in merged] == ["s1", "s2"]
+
+
+def test_the_pool_takes_a_new_row_but_not_a_record_of_a_pooled_key() -> None:
+    from types import SimpleNamespace
+
+    def hit(key: str, identity: Any = None) -> Any:
+        h = SimpleNamespace(memory_key=key, session_id="")
+        h._row_identity = identity
+        return h
+
+    pooled = retrieval_legs.PooledRows([hit("k", ("a", "u", "s1"))], "n")
+    assert pooled.add(hit("k", ("a", "u", "s2")))  # another session's row of the key
+    assert not pooled.add(hit("k", ("a", "u", "s1")))  # the same row again
+    assert not pooled.add(hit("k"))  # a record of a pooled key names no row
+    assert pooled.add(hit("j"))  # a key the pool does not hold
+    assert not pooled.add(hit("j"))

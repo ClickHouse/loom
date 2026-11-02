@@ -10,10 +10,11 @@ from typing import Any
 
 from server.core.ch import get_client
 from server.identity.app.request_scope import request_scope
-from server.memory.app.search.request import _apply_explain_default
+from server.memory.app.search.request import apply_explain_default
 from server.memory.app.search.tiers import _reader_user_id
 from server.memory.app.search_tag_filter import read_row_tags as _read_row_tags
 from server.memory.domain.sensitivity import reads_high
+from server.memory.store.shared import SHARED_AGENT
 
 log = logging.getLogger(__package__)
 
@@ -268,25 +269,29 @@ async def _expand_unit_bodies(
         # The body lives under the session the row was WRITTEN in (the hit carries it). Search
         # fans out across sessions, so a point read under the caller's session misses every row
         # another session wrote — and silently: no body returned, no flag.
+        if getattr(h, "source", "") == "record":
+            return read_sid  # a record's session is its own, not its parent fact's
         return str(getattr(h, "session_id", "") or "") or read_sid
 
-    by_scope: dict[tuple[str, str], list[Any]] = {}
-    for h in hits:
-        if str(getattr(h, "source", "fact") or "fact") not in ("fact", "memory", "record"):
-            continue
+    def _writer(h: Any) -> tuple[str, str, str, str]:
+        # Read under the row the hit names; a shared row (no row of loom.memory) and any
+        # other hit are read under the caller's identity.
         ns = str(getattr(h, "namespace", "") or input.namespace)
-        by_scope.setdefault((ns, _sid(h)), []).append(h)
+        who = getattr(h, "_row_identity", None)
+        if who is not None and who[0] != SHARED_AGENT:
+            return (ns, *who)
+        return (ns, str(getattr(input, "agent", "*") or "*"), _reader_user_id(input), _sid(h))
 
-    async def _read(ns: str, sid: str, group: list[Any]) -> list[Any]:
+    by_writer: dict[tuple[str, str, str, str], list[Any]] = {}
+    for h in hits:
+        if str(getattr(h, "source", "fact") or "fact") in ("fact", "memory", "record"):
+            by_writer.setdefault(_writer(h), []).append(h)
+
+    async def _read(writer: tuple[str, str, str, str], group: list[Any]) -> list[Any]:
+        ns, agent, user_id, sid = writer
         try:
             return await get_many_by_keys(
-                Identity(
-                    org=input.org,
-                    namespace=ns,
-                    agent=str(getattr(input, "agent", "*") or "*"),
-                    user_id=_reader_user_id(input),
-                    session_id=sid,
-                ),
+                Identity(org=input.org, namespace=ns, agent=agent, user_id=user_id, session_id=sid),
                 [str(h.memory_key) for h in group],
                 scope=request_scope(),
                 exclude_high_sensitivity=True,
@@ -295,15 +300,17 @@ async def _expand_unit_bodies(
             log.debug("unit bodies read failed for %s/%s: %s", ns, sid, e)
             return []
 
-    # one read per (namespace, session) the hits span, overlapped
-    reads = await asyncio.gather(*(_read(ns, sid, group) for (ns, sid), group in by_scope.items()))
-    # The read leaves 'high' rows out before it picks one per key, so the plain row the
-    # search matched answers.
-    values: dict[tuple[str, str], Any] = {
-        (ns, str(r.memory_key)): r.value
-        for (ns, _), rows in zip(by_scope, reads, strict=True)
+    # one read per writer the hits span, overlapped
+    reads = await asyncio.gather(*(_read(w, group) for w, group in by_writer.items()))
+    stored: dict[tuple[str, ...], Any] = {
+        (*writer, str(r.memory_key)): r
+        for writer, rows in zip(by_writer, reads, strict=True)
         for r in rows
     }
+
+    def _body_row(h: Any) -> Any:
+        return stored.get((*_writer(h), str(h.memory_key)))
+
     returned = elided = tokens = 0
     spent = 0
     # When the query names entities, the budget buys one whole
@@ -325,8 +332,8 @@ async def _expand_unit_bodies(
     for h in order:
         if str(getattr(h, "source", "fact") or "fact") not in ("fact", "memory", "record"):
             continue
-        ns = str(getattr(h, "namespace", "") or input.namespace)
-        if (ns, str(h.memory_key)) not in values:
+        body_row = _body_row(h)
+        if body_row is None:
             # The row was not readable under any session we could name: say so. A clip that
             # claims to be the whole body is an invisible failure; body_truncated + next make it
             # visible and give the caller the one call that fetches it.
@@ -338,7 +345,7 @@ async def _expand_unit_bodies(
             except Exception:  # noqa: BLE001
                 pass
             continue
-        v = values[(ns, str(h.memory_key))]
+        v = body_row.value
         text = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
         cost = max(1, len(text) // 4)
         if spent + cost <= budget:
@@ -513,7 +520,7 @@ def _apply_bodies(hits: list[Any], input: Any) -> None:
     untouched, so a caller can still cite and memory.get what it needs. The wire tier of the
     per-hit explanation is decided here too — both are "what a hit carries", on the main and
     the read-your-writes path alike."""
-    _apply_explain_default(hits, input)
+    apply_explain_default(hits, input)
     bodies = getattr(input, "bodies", "full") or "full"
     if bodies in ("full", "unit", "source") or not hits:
         return

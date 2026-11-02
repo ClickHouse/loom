@@ -107,10 +107,13 @@ def anchor_pool_sql(where_sql: str) -> str:
                        e.tags AS tags,
                        e.agent AS agent,
                        e.user_id AS user_id,
+                       e.version AS version,
                        e.scope AS scope
                 FROM loom.memory_embeddings AS e FINAL
                 WHERE {where_sql}
-                ORDER BY cosineDistance(e.embedding, {{qv:Array(Float32)}}) ASC
+                -- rows that hold one value tie on distance: take them in row order
+                ORDER BY cosineDistance(e.embedding, {{qv:Array(Float32)}}) ASC,
+                         e.agent, e.user_id, e.session_id, e.memory_key
                 LIMIT {{limit:UInt32}}
             """
 
@@ -182,6 +185,7 @@ def key_match_sql(where_sql: str) -> str:
                e.agent AS agent,
                e.user_id AS user_id,
                e.session_id AS session_id,
+               e.version AS version,
                ifNull(e.source_resource_id, '') AS source_resource_id,
                toString(e.created_at) AS created_at,
                e.tags AS tags,
@@ -205,8 +209,10 @@ def key_match_sql(where_sql: str) -> str:
         WHERE {where_sql}
           AND (matched >= 2 OR (matched >= 1 AND matched = key_parts))
           AND strength >= {{min_strength:Float64}}
-        ORDER BY strength DESC, cosineDistance(e.embedding, {{qv:Array(Float32)}}) ASC
-        LIMIT 1 BY e.memory_key
+        -- the rows of a key tie on strength, and on distance when they hold one value
+        ORDER BY strength DESC, cosineDistance(e.embedding, {{qv:Array(Float32)}}) ASC,
+                 e.agent, e.user_id, e.session_id, e.memory_key
+        LIMIT {{per_key:UInt32}} BY e.memory_key
         LIMIT {{limit:UInt32}}
     """
 
@@ -327,7 +333,7 @@ def _digest_descent_where(input: Any, params: dict[str, Any]) -> list[str]:
 
 
 def digest_descent_sql(where_sql: str) -> str:
-    """The descent's statement: one session's facts nearest the query, the newest version per
+    """The descent's statement: one session's facts nearest the query, one row per writer and
     key, tags selected."""
     return f"""
                 SELECT memory_key, memory_type, content_excerpt,
@@ -337,10 +343,12 @@ def digest_descent_sql(where_sql: str) -> str:
                        toString(coalesce(valid_at, toDateTime(0))) AS valid_at,
                        ifNull(source_resource_id, '') AS source_resource_id,
                        toString(created_at) AS created_at,
-                       tags, agent, user_id, session_id
+                       tags, agent, user_id, session_id, version
                 FROM loom.memory_embeddings FINAL
                 WHERE {where_sql}
-                ORDER BY cosineDistance(embedding, {{qv:Array(Float32)}}) ASC
-                LIMIT 1 BY memory_key
+                -- rows that hold one value tie on distance: take them in row order
+                ORDER BY cosineDistance(embedding, {{qv:Array(Float32)}}) ASC,
+                         agent, user_id, memory_key
+                LIMIT 1 BY agent, user_id, memory_key
                 LIMIT {{k:UInt32}}
             """

@@ -18,6 +18,7 @@ from server.memory.api.models_crud import MemoryListInput
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app import served_superseded as ss
 from server.memory.app.ask import prompts, rendering, supersession
+from server.memory.domain.search_types import RowKey
 from server.memory.domain.temporal_sql import served_status_sql, served_statuses, status_predicate
 from server.memory.store.dedup import SupersededSuccessor
 
@@ -111,8 +112,11 @@ def test_served_flags_names_both_widenings() -> None:
 # ---------------------------------------------------------------- the pool
 
 
+_WRITER = ("a", "u", "-")
+
+
 def _hit(key: str, *, rank: float, status: str = "active", source: str = "fact") -> Any:
-    return _MemorySearchHit(
+    hit = _MemorySearchHit(
         memory_key=key,
         memory_type="semantic",
         content_excerpt=f"about {key}",
@@ -122,6 +126,8 @@ def _hit(key: str, *, rank: float, status: str = "active", source: str = "fact")
         source=source,
         status=status,
     )
+    hit._row_identity = _WRITER  # as the leg that pooled it read its row
+    return hit
 
 
 def _ctx(hits: list[Any], **input_kw: Any) -> SimpleNamespace:
@@ -137,14 +143,15 @@ def successors(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     env = SimpleNamespace(rows=[], calls=0, fail=False)
 
     async def superseded_successors(
-        org: str, nss: list[str], keys: list[str], *, scope: Any = None, ch: Any = None
+        org: str, rows: list[tuple[str, ...]], *, scope: Any = None, ch: Any = None
     ) -> list[SupersededSuccessor]:
         env.calls += 1
-        env.last = (org, nss, keys)
+        env.last = (org, rows)
         env.scope = scope
         if env.fail:
             raise RuntimeError("boom")
-        return [SupersededSuccessor.from_row(x) for x in list(env.rows)]
+        writer = dict(zip(("agent", "user_id", "session_id"), _WRITER, strict=True))
+        return [SupersededSuccessor.from_row(writer | x) for x in list(env.rows)]
 
     monkeypatch.setattr(memory_repo, "superseded_successors", superseded_successors)
     return env
@@ -182,8 +189,7 @@ async def test_annotation_names_the_successor_and_counts_only_when_asked(
     await ss.annotate_pool_superseded(ctx)
     assert successors.calls == 1 and successors.last == (
         "o",
-        ["ns"],
-        ["deploy_window", "db_engine"],
+        [("ns", *_WRITER, "deploy_window"), ("ns", *_WRITER, "db_engine")],
     )
     a, b, c, d = ctx.all_hits
     assert (a.superseded_by, a.superseded_at) == ("deploy_window", "2026-09-10 12:00:00")
@@ -193,6 +199,29 @@ async def test_annotation_names_the_successor_and_counts_only_when_asked(
     )  # successor gone: the id
     assert c.superseded_by is None and d.superseded_by is None
     assert ctx.actual_work == {"superseded_served": 2}
+
+
+@pytest.mark.asyncio
+async def test_each_writers_superseded_row_names_its_own_successor(
+    successors: SimpleNamespace,
+) -> None:
+    def row(user_id: str, successor: str) -> dict[str, str]:
+        return {
+            "namespace": "ns",
+            "agent": "a",
+            "user_id": user_id,
+            "session_id": "-",
+            "memory_key": "k",
+            "superseded_by": successor,
+            "successor_key": successor,
+            "superseded_at": "2026-09-10 12:00:00",
+        }
+
+    successors.rows = [row("u1", "k_u1"), row("u2", "k_u2")]
+    hits = [_hit("k", rank=0.9, status="superseded"), _hit("k", rank=0.8, status="superseded")]
+    hits[0]._row_identity, hits[1]._row_identity = ("a", "u2", "-"), ("a", "u1", "-")
+    await ss.annotate_pool_superseded(_ctx(hits, include_superseded=True))
+    assert [h.superseded_by for h in hits] == ["k_u2", "k_u1"]
 
 
 @pytest.mark.asyncio
@@ -233,7 +262,9 @@ async def test_successor_statement_scopes_both_reads() -> None:
             return []
 
     one_session = ReadFilters(scope="own_session", user_id="u", session_id="s")
-    await memory_repo.superseded_successors("o", ["n"], ["k"], scope=one_session, ch=_CH())
+    await memory_repo.superseded_successors(
+        "o", [RowKey("n", "a", "u", "s", "k")], scope=one_session, ch=_CH()
+    )
     [(sql, params)] = sqls
     # once in the superseded-row read, once in the successor join
     assert sql.count("user_id = {scope_uid:String}") == 2
@@ -251,6 +282,16 @@ async def test_annotation_is_a_no_op_without_the_flag_or_without_a_superseded_hi
     ctx = _ctx([_hit("k", rank=0.9)], include_superseded=True)
     await ss.annotate_pool_superseded(ctx)
     assert successors.calls == 0 and ctx.actual_work == {}
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_hit_that_names_no_row_is_not_read(successors: SimpleNamespace) -> None:
+    # no stored row has an empty writer, so the read could never name its successor
+    unnamed = _hit("deploy_window", rank=0.9, status="superseded")
+    unnamed._row_identity = None
+    ctx = _ctx([unnamed], include_superseded=True)
+    await ss.annotate_pool_superseded(ctx)
+    assert successors.calls == 0 and unnamed.superseded_by is None
 
 
 @pytest.mark.asyncio

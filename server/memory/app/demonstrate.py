@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from server.memory.api.models_demonstrate import (
     DemonstrationRow,
     MemoryDemonstrateInput,
@@ -14,20 +12,23 @@ from server.memory.api.models_search import MemorySearchInput
 
 async def handle_memory_demonstrate(input: MemoryDemonstrateInput) -> MemoryDemonstrateOutput:
     """Nearest memories tagged as examples → labels from their tags → a
-    similarity-weighted vote and a few-shot block. One search (semantic,
-    tag-filtered, over-fetched 2x so unlabelled examples do not starve the
-    vote) under `include_tags`, so each hit carries its own row's tags, read in
-    the namespace it came from (`all_mine` spans several)."""
+    similarity-weighted vote and a few-shot block. One search (semantic, tag-filtered,
+    twice `k` examples so unlabelled ones do not starve the vote, one hit per example)
+    under `include_tags`, so each hit carries its own row's tags, read in the namespace
+    it came from (`all_mine` spans several)."""
     from server.memory.app.search import handle_memory_search
+    from server.memory.app.search.scoring import one_per_key, per_key_fetch
     from server.memory.domain import demonstrations as svc
 
+    want = min(200, input.k * 2)
     search = await handle_memory_search(
         MemorySearchInput(
             org=input.org,
             namespace=input.namespace,
             agent=input.agent,
             query=input.query,
-            top_k=min(200, input.k * 2),
+            top_k=per_key_fetch(want),
+            bodies="full",  # the over-fetch must not drop the examples to excerpts
             tags=[input.example_tag],
             search_mode="semantic",
             namespace_scope=input.namespace_scope,
@@ -35,7 +36,8 @@ async def handle_memory_demonstrate(input: MemoryDemonstrateInput) -> MemoryDemo
             include_tags=True,
         )
     )
-    hits: list[Any] = list(getattr(search, "results", None) or [])
+    # one vote per example, however many sessions it was written in
+    hits = one_per_key(list(search.results or []), input.namespace, want)
     if not hits:
         return MemoryDemonstrateOutput(
             query=input.query,

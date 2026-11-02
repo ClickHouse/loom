@@ -50,8 +50,9 @@ def _supporter(cid: str, user_id: str) -> dict[str, Any]:
 class _LocalCH:
     """A client over one clickhouse-local database kept in `path`: the step's statements
     run on real tables, in order. `late` rows ({table: rows}) land after everything the
-    step read and wrote and before its first delete of loom.learnings_queue, the window
-    a review or a filing can race into."""
+    step read and wrote and before it re-reads the supporters of its pending candidates
+    or first deletes from loom.learnings_queue, the window a review or a filing can race
+    into."""
 
     def __init__(self, path, rows: dict[str, list[dict[str, Any]]], late=None) -> None:
         self.path, self.late = path, late or {}
@@ -75,16 +76,21 @@ class _LocalCH:
         rows = await self.query_all(sql, params)
         return rows[0] if rows else None
 
+    def _land_late(self) -> None:
+        for table, rows in self.late.items():
+            self._write(table, rows)
+        self.late = {}
+
     async def query_all(self, sql, params=None):
         if "system.mutations" in sql:  # execute ran each mutation to the end
             return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
+        if "FROM loom.learnings_supporters" in sql and "{cids:Array(UUID)}" in sql:
+            self._land_late()
         return run([], sql, params, path=self.path)
 
     async def execute(self, sql, params=None):
         if "ALTER TABLE loom.learnings_queue" in sql:
-            for table, rows in self.late.items():
-                self._write(table, rows)
-            self.late = {}
+            self._land_late()
         self.statements.append(sql)
         # The step waits for its mutation; a synchronous one is the same wait.
         sync = sql.replace("mutations_sync = 0", "mutations_sync = 2")
@@ -189,8 +195,8 @@ def test_a_candidate_a_supporter_backed_after_the_read_survives_the_pending_dele
     tmp_path,
 ) -> None:
     """The step read a pending candidate with no supporter; a filing then wrote its
-    supporter row before the delete was submitted. The delete re-checks for
-    supporter rows, so the candidate stays."""
+    supporter row before the delete. The step re-reads the supporter rows right before
+    the delete, so the candidate stays."""
     filed = _candidate(_CANDIDATE, "pending", '"r"', 1)
     ch = _LocalCH(
         tmp_path,
@@ -244,3 +250,37 @@ def test_a_late_review_on_the_older_of_two_decided_candidates_survives(tmp_path)
         (b, "rejected", "", 101),
         (b, "promoted", '"s"', 150),
     ]
+
+
+def test_a_rerun_binds_the_same_delete_slices_whatever_order_it_reads(monkeypatch) -> None:
+    # the mutation tag hashes the bound values, so a resumed step finds its own mutations
+    from server.core.ch_params import chunks
+
+    ids = [f"00000000-0000-0000-0000-{i:012d}" for i in range(40)]
+    latest = [_candidate(c, "pending" if i % 2 else "approved", "", 1) for i, c in enumerate(ids)]
+    bound: list[Any] = []
+
+    async def record(table: str, *, params: dict[str, Any], **_: Any) -> int:
+        bound.append(params.get("cids") or params.get("decided"))
+        return 0
+
+    class _Reads:
+        def __init__(self, order: list[dict[str, Any]]) -> None:
+            self.order = order
+
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            if "SELECT DISTINCT candidate_id" in sql:
+                return [{"candidate_id": r["candidate_id"]} for r in self.order]
+            return self.order if "SELECT * FROM loom.learnings_queue" in sql else []
+
+        async def insert(self, *a: Any, **k: Any) -> None:
+            return None
+
+    monkeypatch.setattr(ledger_steps, "delete_scoped", record)
+    monkeypatch.setattr(ledger_steps, "chunks", lambda v: chunks(v, limit=400))  # several slices
+    runs = []
+    for order in (latest, latest[::-1]):
+        bound.clear()
+        asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=_Reads(order)))
+        runs.append(list(bound))
+    assert len(runs[0]) > 3 and runs[0] == runs[1]

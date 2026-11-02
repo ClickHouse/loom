@@ -77,6 +77,22 @@ def _output(
     return [json.loads(line) for line in out.stdout.splitlines() if line.strip()]
 
 
+# one embedding at the codec's declared width, and the setup its table needs
+VECTOR = "[" + ",".join(["0.1"] * 3072) + "]"
+EMBEDDINGS = ("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
+
+
+class LocalCH:
+    """A ClickHouse client over clickhouse-local that runs the `setup` statements before
+    each read, so a test's rows are the whole database."""
+
+    def __init__(self, *setup: str) -> None:
+        self.setup = list(setup)
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> Any:
+        return run(self.setup, sql, params)
+
+
 _CREATED = re.compile(r"\bCREATE TABLE (?:IF NOT EXISTS )?([\w.]+)")
 # Side tables a write path inserts into and no KeptCH test reads back.
 _UNREAD = {"loom.audit_log", "loom.memory_projection_failures"}

@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -830,3 +831,47 @@ async def test_a_failed_head_read_retires_the_chunks_it_just_wrote(
         await sc.write_set_chunks(inp, ch=_CH(), embedder=_Embedder())
     retire = calls[-1]
     assert retire["only"] and retire["strong"] is True
+
+
+@pytest.fixture
+def stubbed_after_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`set_commit`'s after-write projections stubbed, for the chunk step alone."""
+
+    async def nothing(*_: Any, **__: Any) -> None:
+        return None
+
+    monkeypatch.setattr(set_commit, "_set_post_insert", nothing)
+    monkeypatch.setattr(set_commit, "project_stated_relations", nothing)
+    monkeypatch.setattr(set_commit, "follow_beside_response", lambda **_: None)
+    monkeypatch.setattr(set_commit, "peer_id_in_read_scope", lambda *_: "")
+
+
+async def _after_write(duplicate_of: str) -> list[dict[str, Any]]:
+    # one memory.set's after-write step over a key that holds a long value's chunks
+    served = [_live_row(0, "the served long value's first passage")]
+    ch = _CH(routes=[("FROM loom.memory_chunks FINAL", served)])
+    w = set_commit._SetWrite(
+        input=_input(_NOTE_5KB), version=1, retyped_from="", existing=None, expires_at=None
+    )
+    w.memory_row = {"status": "duplicate" if duplicate_of else "active"}
+    w.embedder = _BatchEmbedder()
+    await set_commit._set_after_write(
+        w, ch, None, SimpleNamespace(verdict="clear"), duplicate_of, []
+    )
+    return ch.rows_for("loom.memory_chunks")
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_leaves_the_keys_chunks_to_the_served_value(
+    stubbed_after_write: None,
+) -> None:
+    assert await _after_write("canonical-id") == []
+
+
+@pytest.mark.asyncio
+async def test_an_active_write_replaces_the_keys_chunks_with_its_own(
+    stubbed_after_write: None,
+) -> None:
+    written = await _after_write("")
+    assert any(r["tombstoned_at"] is not None for r in written)
+    assert any(r["tombstoned_at"] is None for r in written)

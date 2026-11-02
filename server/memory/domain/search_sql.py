@@ -47,14 +47,17 @@ def agent_or_shared_predicate(alias: str = "e") -> str:
     return f"({agent_col} = {{agent:String}} OR {scope_col} = 'shared')"
 
 
-def _build_where(q: SearchQuery) -> tuple[list[str], dict[str, Any]]:
+def _build_where(q: SearchQuery, *, ranked: bool = True) -> tuple[list[str], dict[str, Any]]:
+    """The fact leg's WHERE over `loom.memory_embeddings AS e` and its params. `ranked`
+    False leaves out what only ranking a vector needs (its model and dimension, the query
+    vector): the rows the leg would serve, whatever their vectors."""
     replaying = q.as_of is not None
+    vector = ("e.embedding_model = {model:String}", "e.embedding_dim > 0") if ranked else ()
     where = [
         "e.org = {org:String}",
         "e.namespace = {ns:String}",
         "e.scope = {scope:String}",
-        "e.embedding_model = {model:String}",
-        "e.embedding_dim > 0",
+        *vector,
         # Deleted rows are gone — except under knowledge_time replay, where a
         # row deleted AFTER the anchor was still known at the anchor.
         tombstone_predicate(q.as_of_basis, alias="e", replaying=replaying),
@@ -77,14 +80,9 @@ def _build_where(q: SearchQuery) -> tuple[list[str], dict[str, Any]]:
             include_proposed=bool(getattr(q, "include_proposed", False)),
         ),
     ]
-    params: dict[str, Any] = {
-        "org": q.org,
-        "ns": q.namespace,
-        "scope": q.scope,
-        "model": q.embedding_model,
-        "q": q.query_vec,
-        "top_k": int(q.top_k),
-    }
+    params: dict[str, Any] = {"org": q.org, "ns": q.namespace, "scope": q.scope}
+    if ranked:
+        params.update(model=q.embedding_model, q=q.query_vec, top_k=int(q.top_k))
     # Private is per-agent; shared rows carry sentinel agent='_shared', so the
     # scope filter alone is right for shared reads. Wildcard `*` AND the `-`
     # identity sentinel (the default when no agent is set) both drop the

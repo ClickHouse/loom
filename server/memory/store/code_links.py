@@ -10,8 +10,9 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, TypedDict, cast, get_origin, get_type_hints
 
+from server.core.ch_params import chunks
 from server.core.datetimes import naive_utc_now
-from server.core.repo_base import _CHClient, _default_client, param_slices, query_all_sliced
+from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY, QueuePosition
 
 TABLE = "loom.memory_code_links"
@@ -221,7 +222,7 @@ async def _purge_tombstones(ch: _CHClient, keys: list[tuple[Any, ...]]) -> None:
         for r in rows
         if r["version"] <= last[key := tuple(r[c] for c in _KEY_COLUMNS)]
     ]
-    for part in param_slices(under):
+    for part in chunks(under):
         await ch.execute(
             f"DELETE FROM {TABLE} WHERE ({_KEY}, version) IN {{rows:{_ROW_TUPLES}}} "
             "SETTINGS lightweight_deletes_sync = 2",
@@ -249,7 +250,7 @@ async def _drop_gone(ch: _CHClient, by_org: dict[str, set[str]]) -> int:
             "ids",
         )
         gone = sorted(ids - {str(r["mid"]) for r in live})
-        for part in param_slices(gone):
+        for part in chunks(gone):
             await ch.execute(
                 f"DELETE FROM {TABLE} WHERE org = {{org:String}} "
                 "AND memory_id IN {ids:Array(UUID)} AND version < {before:UInt64} "

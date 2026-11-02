@@ -83,7 +83,7 @@ def _apply_k_defaults(input: Any) -> tuple[Any, int]:
     return _apply_large_k_body_default(input), ceiling
 
 
-def _apply_explain_default(hits: list[Any], input: Any) -> None:
+def apply_explain_default(hits: list[Any], input: Any) -> None:
     """Above the excerpt k, `explanation` and
     `score_components` leave the wire unless the caller pinned
     `explain: true`; `explain: false` drops them at any k. In-process readers

@@ -1,14 +1,107 @@
-"""Mutations on the row-link tables, and the drop's undo of its edge ends, name their rows
-by bound parameters only: ClickHouse refuses a mutation with a subquery on a replicated
-table (code 36)."""
+"""Mutations name their rows by bound parameters only: ClickHouse refuses a mutation with
+a subquery or a non-deterministic function (now(), now64(), rand()) on a replicated table
+(code 36). Every erasure saga step, the row-link deletes, the drop's undo of its edge ends
+and `memory.clear` are held to it."""
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
+from server.core.leases import LOCK_TABLE
+from tests.unit.erasure_saga_stub import ns_list as _ns_list
+from tests.unit.erasure_saga_stub import saga_runner
+
 _ROW = "00000000-0000-0000-0000-0000000000a1"
+_MUTATION = re.compile(r"^\s*(?:ALTER TABLE\s+(\S+)\s+(?:UPDATE|DELETE)\b|DELETE FROM\s+(\S+))")
+_NONDETERMINISTIC = re.compile(r"\b(?:now|now64|today|rand\w*|generateUUID\w*)\(")
+_SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "schema.sql"
+# A KeeperMap mutation is a key write Keeper applies at once, not a replicated part rewrite.
+_KEEPER_MAP = {
+    LOCK_TABLE,  # created by the lease code, not a migration
+    *re.findall(
+        r"CREATE TABLE IF NOT EXISTS (\S+)\s*\([^;]*?ENGINE = KeeperMap", _SCHEMA.read_text()
+    ),
+}
+
+
+@pytest.fixture
+def run(monkeypatch: pytest.MonkeyPatch) -> Any:
+    return saga_runner(monkeypatch)
+
+
+def _refused(statements: list[str]) -> list[str]:
+    """The mutations a replicated table would refuse."""
+    out = []
+    for sql in statements:
+        m = _MUTATION.match(sql)
+        if not m:
+            continue
+        table = m.group(1) or m.group(2)
+        if "SELECT" in sql or (table not in _KEEPER_MAP and _NONDETERMINISTIC.search(sql)):
+            out.append(" ".join(sql.split()))
+    return out
+
+
+@pytest.mark.parametrize("purge", [False, True])
+async def test_every_user_erasure_step_mutates_by_bound_parameters_only(
+    run: Any,
+    purge: bool,
+) -> None:
+    """The user saga end to end: every read answers one row, so every step reaches every
+    mutation it can issue, each slice of it included."""
+    await run("user_id", "alice", purge=purge)
+    mutations = [sql for sql in run.ch.executed if _MUTATION.match(sql)]
+    assert len(mutations) > 40  # the stub's rows took every step to its mutations
+    assert _refused(mutations) == []
+
+
+@pytest.mark.parametrize(
+    ("scope_type", "scope_value"),
+    [("namespace", "a"), ("namespace_list", _ns_list(purge=True, external=False))],
+)
+async def test_every_namespace_erasure_step_mutates_by_bound_parameters_only(
+    run: Any,
+    scope_type: str,
+    scope_value: str,
+) -> None:
+    await run(scope_type, scope_value)
+    assert _refused(run.ch.executed) == []
+
+
+def test_the_check_catches_a_subquery_and_now() -> None:
+    assert _refused(
+        [
+            "ALTER TABLE loom.memory DELETE WHERE k IN (SELECT k FROM loom.memory)",
+            "DELETE FROM loom.memory WHERE lock_until <= now()",
+            "ALTER TABLE loom.blacklist UPDATE last_hit_at = now() WHERE 1",
+            "ALTER TABLE loom.memory DELETE WHERE k IN {keys:Array(String)}",
+        ]
+    ) == [
+        "ALTER TABLE loom.memory DELETE WHERE k IN (SELECT k FROM loom.memory)",
+        "DELETE FROM loom.memory WHERE lock_until <= now()",
+        "ALTER TABLE loom.blacklist UPDATE last_hit_at = now() WHERE 1",
+    ]
+    assert "loom._migration_lock" in _KEEPER_MAP
+
+
+@pytest.mark.parametrize("locked", [0, 1])
+async def test_a_clear_mutates_by_bound_parameters_only(locked: int) -> None:
+    from server.memory.store.lifecycle import bulk_tombstone_scope
+
+    class _ClearCH(_CH):
+        async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
+            return {"n": locked if "lock_mode != ''" in sql else 1}
+
+    ch = _ClearCH([{"h": 1}])  # the locked identities, read as hashes
+    counts = await bulk_tombstone_scope(org="o", namespace="ns", user_id="u", ch=ch)
+    assert counts["loom.memory"] == 1 and counts["loom.memory_embeddings"] == 1
+    assert len(ch.executed) == 2 and _refused(ch.executed) == []
 
 
 class _CH:

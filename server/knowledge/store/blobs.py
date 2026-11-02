@@ -106,8 +106,16 @@ async def delete(
     where = "org = {org:String} AND namespace = {ns:String} AND sha256 IN {shas:Array(String)}"
     params: dict[str, object] = {"org": org, "ns": namespace, "shas": shas}
     if min_age_s > 0:
-        where += " AND created_at < now64(3) - INTERVAL {age:UInt32} SECOND"
-        params["age"] = int(min_age_s)
+        # The cutoff is read first and bound: a replicated table refuses now64() in a
+        # mutation.
+        row = await ch.query_one(
+            "SELECT toUnixTimestamp64Milli(now64(3)) - {age:UInt32} * 1000 AS cutoff_ms",
+            params={"age": int(min_age_s)},
+        )
+        if row is None:
+            raise RuntimeError("SELECT without FROM returned no row")
+        where += " AND created_at < fromUnixTimestamp64Milli({cutoff_ms:Int64})"
+        params["cutoff_ms"] = int(row["cutoff_ms"])
     await ch.execute(f"DELETE FROM {TABLE} WHERE {where}", params=params)
     rows = await ch.query_all(
         f"SELECT DISTINCT toString(sha256) AS sha FROM {TABLE} "

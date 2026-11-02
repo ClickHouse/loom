@@ -278,13 +278,19 @@ def test_finish_pool_with_a_zero_cap_serves_no_chunks(monkeypatch: pytest.Monkey
 
     hits = [hit(f"chunk:memory.set:l{i}:0", 0.9 - i * 0.01, "chunk") for i in range(6)]
     hits += [hit(f"lesson_{i}", 0.6 - i * 0.01, "fact") for i in range(6)]
-    q = SimpleNamespace(top_k=5, recency_intent=False, recency_pool_weight=0.0, chunk_max_share=0.0)
+    q = SimpleNamespace(
+        top_k=5, recency_intent=False, recency_pool_weight=0.0, chunk_max_share=0.0, scope="private"
+    )
     window = asyncio.run(S._finish_pool(None, list(hits), q))  # type: ignore[arg-type]
     assert [h.memory_key for h in window] == [f"lesson_{i}" for i in range(5)]
 
     # and with no cap set the deployment floor still applies as before
     q2 = SimpleNamespace(
-        top_k=5, recency_intent=False, recency_pool_weight=0.0, chunk_max_share=None
+        top_k=5,
+        recency_intent=False,
+        recency_pool_weight=0.0,
+        chunk_max_share=None,
+        scope="private",
     )
     window2 = asyncio.run(S._finish_pool(None, list(hits), q2))  # type: ignore[arg-type]
     assert sum(1 for h in window2 if h.source == "chunk") >= 2

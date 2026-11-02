@@ -23,6 +23,7 @@ from server.memory.domain.sensitivity import (
     contact_intent,
     detect_sensitivity,
     detector_text,
+    high_spans,
     reads_high,
     resolve_sensitivity,
     value_reads_high,
@@ -339,6 +340,8 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
         {"password": "********"},
         {"api_key": "env:OPENAI_API_KEY"},
         {"pwd": "/home/alice/repo"},
+        {"PWD": "/workspace1"},  # an environment's working directory, not a password
+        {"pwd": "build/out1"},
         {"env": {"PWD": "/opt/app/server"}},
         {"password_hint": "first pet"},
         {"token_count": 123456789},
@@ -346,6 +349,16 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
         # two scalars never read as one: a form label then the next key, or a number list
         {"label": "Password:", "placeholder": "Enter your password"},
         {"label": "Secret:", "required": True},
+        {"api_key": "YOUR_API_KEY"},
+        {"password": "not_set_yet"},
+        {"client_secret": "<redacted>"},
+        {"password": "[REDACTED]"},
+        {"password": "${DB_PASSWORD}"},
+        {"password": "vault:kv/db/password1"},
+        {"password": "/etc/key1x"},
+        {"client_secret": "/q8Zt/R3mKp9x"},  # two /-segments read as a path: a known miss
+        {"password": "../secrets/db1"},
+        {"password": "$DB_PASS1"},
         {"batch_sizes": [256, 512, 1024]},
     ],
 )
@@ -353,6 +366,57 @@ def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
     # Each key and scalar is its own line, joined by a separator no pattern crosses: a config
     # object reads as the stored JSON always did, neither high nor medium.
     assert detect_sensitivity(detector_text(value)) == ""
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"password": "hunter2xyz123"},
+        {"db": {"password": "Tr0ub4dor&3"}},
+        {"dbPassword": "hunter2xyz123"},
+        {"client_secret": "9f8e7d6c5b4a3210ffee"},
+        {"api.key": "abcd1234efgh"},
+        {"password": "admin:Passw0rd"},
+        {"password": "$ecr3tPass"},
+        {"password": "ab\\cd1234"},
+        {"password": "abc\bdef12"},
+        {"client_secret": "/q8ZtR3mKp9x"},  # base64 may open with `/`; a path has two segments
+        {"client_secret": "//q8ZtR3mKp9x"},  # no segment between the slashes: not a path
+        {"password": "Abc;12345678"},
+        {"db_password": "p@ss,w0rd99"},
+        {"password": 'ab"cd12345'},
+        {"password": "config/db/pass1"},  # a relative path is not a reference
+        {"db_pwd": "hunter2xyz9"},
+        {"db_password": "postgres://app:s3cretPw@db/main"},
+        {"webhook_secret": "https://hooks.example/services/T000/B000/XXXXabc123"},
+        # a URL that only names where the secret lives reads high too: a known false positive
+        {"db_password": "https://vault.example/v1/secret/db1"},
+        # an ARN's `secret:` part reads as an assignment: a known false positive
+        {"client_secret": "arn:aws:secretsmanager:eu-west-1:123456789012:secret:prod/db-AbCd12"},
+    ],
+)
+def test_a_credential_under_a_credential_key_reads_high(value: object) -> None:
+    stored = json.dumps(value)
+    assert value_reads_high(value)
+    assert reads_high(stored)  # a raw chunk of the stored object
+    assert high_spans(stored)
+
+
+def test_a_working_directory_as_free_text_still_reads_high() -> None:
+    # a known false positive: the assignment pattern takes `PWD=` as a password, though the
+    # same line under a JSON `PWD` key is a working directory and stays unlabelled
+    assert detect_sensitivity("PWD=/workspace1") == "high"
+    assert detect_sensitivity(detector_text({"PWD": "/workspace1"})) == ""
+
+
+@pytest.mark.parametrize(
+    ("raw", "high"),
+    [(r'{"password": "\/etc\/key1x"}', False), (r'{"password": "ab\/cd1234"}', True)],
+)
+def test_a_raw_pair_reads_its_value_decoded(raw: str, high: bool) -> None:
+    # JSON may escape a slash: the raw text and the decoded value agree on a path.
+    assert reads_high(raw) is high
+    assert value_reads_high(json.loads(raw)) is high
 
 
 @pytest.mark.asyncio
@@ -786,6 +850,10 @@ def test_a_question_for_a_bank_account_is_contact_intent() -> None:
 
 _PREFILTER_OBJECTS = [
     {"pin": "4471"},
+    {"password": "Abc;12345678"},
+    {"db_password": "p@ss,w0rd99"},
+    {"password": 'ab"cd12345'},
+    {"password": "config/db/pass1"},
     {"badge_pin": " 4471"},
     {"badgePin": 9087},
     {"pin_number": "908712"},
@@ -838,6 +906,14 @@ _PREFILTER_OBJECTS = [
     {"note": "pin 128 rows"},
     {"note": "deploy:\npassword=hunter2222"},  # written `\npassword`
     {"note": "api_key = abcdefgh12345678"},
+    {"password": "hunter2xyz123"},
+    {"db": {"password": "Tr0ub4dor&3"}},
+    {"dbPassword": "hunter2xyz123"},
+    {"api.key": "abcd1234efgh"},
+    {"password": "required"},  # a form field, not a credential
+    {"password": "ab\\cd1234"},  # written `ab\\cd1234`
+    {"password": "p\u00e4ss1234"},  # written `p\u00e4ss1234`
+    {"password": "abc\bdef12"},  # written `abc\bdef12`
     {"card": 4111111111111111},  # a lone card number
     {"note": "call 415\n555\n0123"},  # written `415\n555\n0123`
     {"note": "415\u00a0555\u00a00123"},  # written `415\u00a0555\u00a00123`
@@ -924,4 +1000,5 @@ def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -
         '{"unpin": "1234"}',
         '{"Spin": 1200}',
         '{"ATMPIN": "4471"}',
+        '{"password": "required"}',
     }

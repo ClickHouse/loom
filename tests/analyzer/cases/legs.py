@@ -11,6 +11,7 @@ from typing import Any
 
 from server.core.tag_sql import TagFilter
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+from server.memory.domain.search_types import RowKey
 from tests.analyzer.cases._common import AGENT, MODEL, NS, ORG, VEC, chunk_cand, rows_by_substring
 from tests.analyzer.cases.search import _q
 from tests.analyzer.corpus import Case, RecordingCH
@@ -63,9 +64,7 @@ async def _lexical(ch: RecordingCH, c: dict[str, Any]) -> None:
         user_id="alice" if c["user_id"] else None,
         tags=["kind:lesson"] if c["tags"] else [],
     )
-    await _lexical_recall_fallback(
-        ch, q, {"k9"} if c["existing"] else set(), limit=50, max_distance=0.9
-    )
+    await _lexical_recall_fallback(ch, q, limit=50, max_distance=0.9)
 
 
 def _leg_input(c: dict[str, Any]) -> Any:
@@ -396,11 +395,12 @@ async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
         if c["user_id"]
         else WHOLE_NAMESPACE
     )
-    await M.status_by_keys(ORG, [NS], ["k1", "k2"], scope=dup_scope, ch=ch)
+    rows = [RowKey(NS, "a", "-", "-", "k1"), RowKey(NS, "a", "-", "-", "k2")]
+    await M.status_by_rows(ORG, rows, scope=dup_scope, ch=ch)
     await M.canonical_rows_by_ids(
         ORG, [NS], ["00000000-0000-0000-0000-000000000001"], scope=dup_scope, ch=ch
     )
-    await M.superseded_successors(ORG, [NS], ["k1"], scope=dup_scope, ch=ch)
+    await M.superseded_successors(ORG, rows[:1], scope=dup_scope, ch=ch)
     await M.live_ids_in_scope(
         ORG, [NS], ["00000000-0000-0000-0000-000000000001"], scope=dup_scope, ch=ch
     )
@@ -572,7 +572,6 @@ def cases() -> list[Case]:
                 "scope": ("private", "shared"),
                 "memory_type": (False, True),
                 "user_id": (False, True),
-                "existing": (False,),
                 "tags": (False, True),
             },
         ),

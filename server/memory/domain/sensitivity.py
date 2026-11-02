@@ -60,12 +60,28 @@ _PRIVATE_KEY_BLOCK = re.compile(
     r"|(?:Proc-Type:[^\n]*|DEK-Info:[^\n]*|[A-Za-z0-9+/=\r\n])*)",
     re.S,
 )
-# The words a `password=…` style assignment starts with. The sweep's prefilter is built from
-# the same list.
-ASSIGNMENT_WORDS = (
-    r"password|passwd|pwd|api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|"
-    r"auth[_-]?token|bearer|client[_-]?secret|private[_-]?key"
+# The keys a `password=…` style assignment starts with, as words. The sweep's prefilter is
+# built from the same tuples.
+ASSIGNMENT_KEYS: tuple[tuple[str, ...], ...] = (
+    ("password",),
+    ("passwd",),
+    ("pwd",),
+    ("api", "key"),
+    ("secret", "key"),
+    ("secret",),
+    ("access", "token"),
+    ("auth", "token"),
+    ("bearer",),
+    ("client", "secret"),
+    ("private", "key"),
 )
+ASSIGNMENT_WORDS = "|".join("[_-]?".join(words) for words in ASSIGNMENT_KEYS)
+
+# besides whitespace, the characters that end an assignment's value; `_keyed_credential`
+# replaces them in what it states
+_ASSIGNMENT_STOP_CHARS = "\"',;"
+_ASSIGNMENT_VALUE_CHAR = rf"[^\s{re.escape(_ASSIGNMENT_STOP_CHARS)}]"
+_ASSIGNMENT_STOPS = str.maketrans(_ASSIGNMENT_STOP_CHARS, "_" * len(_ASSIGNMENT_STOP_CHARS))
 
 _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsk-(?:proj-|ant-|lf-)?[A-Za-z0-9_-]{20,}"),  # OpenAI / Anthropic / Langfuse
@@ -77,9 +93,9 @@ _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     _PRIVATE_KEY_BLOCK,
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),  # JWT
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),  # Google API key
-    # `password=…`, `api_key: …`, `secret := …`, `token = …` followed by a
-    # token-shaped value of 8+ non-space characters.
-    re.compile(rf"(?i)\b(?:{ASSIGNMENT_WORDS})\b\s*[:=]\s*[\"']?[^\s\"',;]{{8,}}"),
+    # `password=…`, `api_key: …`, `secret := …`, `access_token = …` followed by a token-shaped
+    # value of 8+ characters; a space, quote, comma or semicolon ends it.
+    re.compile(rf"(?i)\b(?:{ASSIGNMENT_WORDS})\b\s*[:=]\s*[\"']?{_ASSIGNMENT_VALUE_CHAR}{{8,}}"),
 )
 
 _MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -424,12 +440,42 @@ _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")  # `PIN`, `badge`, `
 _KEY_CAPS_WORDS = re.compile(r"[A-Z]{2,}|[A-Z]?[a-z0-9]+")
 
 
+_ASSIGNMENT_KEY = re.compile(rf"(?i)(?:{ASSIGNMENT_WORDS})")
+# A value that names where a secret lives rather than holding it: `env:OPENAI_API_KEY`,
+# `vault:kv/db`, `${DB_PASSWORD}`, `$DB_PASSWORD`, a path. A URL is not one: a webhook or a
+# presigned URL is the secret itself.
+_SECRET_REFERENCE = re.compile(
+    # a path: ~/, ./, ../ or two /-segments (a base64 secret may open with one /)
+    r"(?i)(?:env|vault|secret|ref):|\$\{|(?-i:\$[A-Z_][A-Z0-9_]*$)|~/|/[^/]+/|\.\.?/"
+)
+
+
+def _keyed_credential(key: str, value: str) -> str:
+    """`password: <value>` for a token-shaped string under a key that ends in a credential
+    word (`password`, `dbPassword`, `client_secret`), for the assignment pattern to read; ''
+    otherwise. The value holds a letter and a digit, so a form field (`"required"`), a mask
+    (`"********"`) or a placeholder (`"YOUR_API_KEY"`, `"<redacted>"`) is not a credential."""
+    words = [w.lower() for w in _KEY_WORDS.findall(key)]
+    if words == ["pwd"]:
+        return ""  # an environment's working directory, not a password
+    if not any(_ASSIGNMENT_KEY.fullmatch("_".join(words[-n:])) for n in (1, 2) if len(words) >= n):
+        return ""
+    v = value.strip()
+    if len(v) < 8 or any(c.isspace() for c in v) or _SECRET_REFERENCE.match(v):
+        return ""
+    if not (any(c.isalpha() for c in v) and any(c.isdigit() for c in v)):
+        return ""
+    return "password: " + v.translate(_ASSIGNMENT_STOPS)
+
+
 def _keyed_secret(key: str, value: Any) -> str:
     """The stated form of a secret held under a key that names it ("pin is 4471" for
-    `{"badge_pin": "4471"}`, "cvv is 123" for `{"cvv_2": "123"}`), for the detector to read;
-    '' when the key names none."""
+    `{"badge_pin": "4471"}`, "cvv is 123" for `{"cvv_2": "123"}`, "password: hunter2xyz" for
+    `{"db_password": "hunter2xyz"}`), for the detector to read; '' when the key names none."""
     if not isinstance(value, str | int) or isinstance(value, bool):
         return ""
+    if isinstance(value, str) and (credential := _keyed_credential(key, value)):
+        return credential
     # the last one, two and three words of both splits, lowercased
     tails = [
         tuple(w.lower() for w in words[-n:])
@@ -450,13 +496,19 @@ def _keyed_secret(key: str, value: Any) -> str:
 
 
 # A `"key": value` pair in raw JSON text, for `reads_high`. A quoted value must be the
-# whole string and a bare number must end at its digits; a key reads at most 200
+# whole string, one token of at most 1024 characters (a longer one is read decoded only,
+# by `detector_text`), and a bare number must end at its digits; a key reads at most 200
 # characters, so the scan stays linear.
 _KEYED_PAIR = re.compile(
     r'"((?:[^"\\]|\\.){1,200})"\s*:\s*'
-    r'(?:"\s*([0-9][0-9-]{0,15})\s*"|([0-9][0-9-]{0,15})(?![\w.-]))',
+    r'(?:"\s*((?:[^"\\\s]|\\.){1,1024})\s*"|([0-9][0-9-]{0,15})(?![\w.-]))',
     re.ASCII,
 )
+
+
+def _pair_secret(key: str, quoted: str | None, bare: str | None) -> str:
+    """`_keyed_secret` of a raw pair, its quoted value decoded as `detector_text` reads it."""
+    return _keyed_secret(key, _JSON_ESCAPE.sub(_json_unescape, quoted) if quoted else bare or "")
 
 
 def detector_text(value: Any) -> str:
@@ -464,9 +516,9 @@ def detector_text(value: Any) -> str:
     and scalar is its own line, so a token after a newline keeps its word boundary. The lines
     are joined by `_SCALAR_SEP`, which no pattern crosses, so two scalars never read as one
     (`Password:` then the next key, or `256`, `512`, `1024` as a phone number). A key that
-    names a PIN-like secret or an SSN adds its value's stated form (`_keyed_secret`), so
-    `{"pin": "4471"}` reads as `pin is 4471` does; other keys label nothing. Iterative, so a
-    deeply nested value cannot stop a worker pass."""
+    names a PIN-like secret, an SSN or a credential adds its value's stated form
+    (`_keyed_secret`), so `{"pin": "4471"}` reads as `pin is 4471` does; other keys label
+    nothing. Iterative, so a deeply nested value cannot stop a worker pass."""
     if isinstance(value, str):
         text = value
         try:
@@ -518,13 +570,13 @@ def reads_high(text: str) -> bool:
     chunk), which has no label of its own or carries one a later sweep may not have set
     yet. Text holding JSON (a chunk of an object value) is read with its string escapes
     undone too, where a token after `\\n` or a quoted password keeps its word boundary, and
-    its `"key": value` pairs with a digits-and-dashes value are read as `detector_text`
-    reads them (`{"badge_pin": "4471"}`)."""
+    its `"key": value` pairs are read as `detector_text` reads them (`{"badge_pin": "4471"}`,
+    `{"password": "hunter2xyz"}`)."""
     texts = {text, _JSON_ESCAPE.sub(_json_unescape, text)}
     if any(_reads_high_text(t) for t in texts):
         return True
     return any(
-        _reads_high_text(_keyed_secret(k, quoted or bare))
+        _reads_high_text(_pair_secret(k, quoted, bare))
         for t in texts
         for k, quoted, bare in _KEYED_PAIR.findall(t)
     )
@@ -538,7 +590,7 @@ def _high_text_spans(text: str) -> list[tuple[int, int]]:
     spans += [
         m.span()
         for m in _KEYED_PAIR.finditer(text)
-        if _reads_high_text(_keyed_secret(m.group(1), m.group(2) or m.group(3)))
+        if _reads_high_text(_pair_secret(m.group(1), m.group(2), m.group(3)))
     ]
     return spans
 

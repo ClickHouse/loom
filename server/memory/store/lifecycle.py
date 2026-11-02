@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from typing import Any
@@ -374,34 +375,51 @@ async def bulk_tombstone_scope(
     # The skipped rows are counted under `locked_skipped`.
     from server.memory.domain.lock import locked_predicate, unlocked_predicate
 
+    # One timestamp for the whole clear, so the rows it tombstoned can be read back; and a
+    # bound one, as a mutation on a replicated table refuses now().
+    params["at"] = naive_utc_now_seconds()
+    locked = locked_predicate(now="{at:DateTime}")
     locked_row = await ch.query_one(
-        f"SELECT count() AS n FROM loom.memory FINAL WHERE {scope_sql} AND {locked_predicate()}",
+        f"SELECT count() AS n FROM loom.memory FINAL WHERE {scope_sql} AND {locked}",
         params=params,
     )
     locked_n = int((locked_row or {}).get("n", 0) or 0)
-    where_by_table = {
-        "loom.memory": f"{scope_sql} AND {unlocked_predicate()}",
-        "loom.memory_embeddings": scope_sql,
+    counts = {
+        "loom.memory": await _tombstone_where(
+            "loom.memory",
+            f"{scope_sql} AND {unlocked_predicate(now='{at:DateTime}')}",
+            params,
+            ch=ch,
+        )
     }
-    if locked_n:
-        where_by_table["loom.memory_embeddings"] = (
-            f"{scope_sql} AND (agent, user_id, session_id, memory_key) NOT IN "
-            "(SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL "
-            f"WHERE {scope_sql} AND {locked_predicate()})"
+    # Announced before the embeddings step, so a failure there cannot lose
+    # the events: a retry finds no live memory rows and announces nothing.
+    if on_tombstoned is not None and counts["loom.memory"]:
+        try:
+            await _page_tombstoned(" AND ".join(scope), params, on_tombstoned, ch=ch)
+        except Exception as e:  # noqa: BLE001 — the rows are tombstoned; the clear must not fail
+            degradations.note("memory.webhook", "not_announced", e)
+    parts = (
+        await _unlocked_parts(scope_sql, locked, params, ch=ch) if locked_n else [(scope_sql, {})]
+    )
+    counts["loom.memory_embeddings"] = 0
+    for where_sql, extra in parts:
+        counts["loom.memory_embeddings"] += await _tombstone_where(
+            "loom.memory_embeddings", where_sql, {**params, **extra}, ch=ch
         )
-    # One timestamp for the whole clear, so the rows it tombstoned can be read back.
-    params["at"] = naive_utc_now_seconds()
-    counts: dict[str, int] = {}
-    for table in ("loom.memory", "loom.memory_embeddings"):
-        where_sql = where_by_table[table]
-        count_row = await ch.query_one(
-            f"SELECT count() AS n FROM {table} FINAL WHERE {where_sql}",
-            params=params,
-        )
-        n = int((count_row or {}).get("n", 0) or 0)
-        counts[table] = n
-        if n == 0:
-            continue
+    counts["locked_skipped"] = locked_n
+    return counts
+
+
+async def _tombstone_where(
+    table: str, where_sql: str, params: dict[str, Any], *, ch: _CHClient
+) -> int:
+    """Tombstone the live rows of `table` that match, and return how many there were."""
+    row = await ch.query_one(
+        f"SELECT count() AS n FROM {table} FINAL WHERE {where_sql}", params=params
+    )
+    n = int((row or {}).get("n", 0) or 0)
+    if n:
         await ch.execute(
             f"""
             ALTER TABLE {table}
@@ -411,15 +429,39 @@ async def bulk_tombstone_scope(
             """,
             params=params,
         )
-        # Announced before the embeddings step, so a failure there cannot lose
-        # the events: a retry finds no live memory rows and announces nothing.
-        if table == "loom.memory" and on_tombstoned is not None:
-            try:
-                await _page_tombstoned(" AND ".join(scope), params, on_tombstoned, ch=ch)
-            except Exception as e:  # noqa: BLE001 — the rows are tombstoned; the clear must not fail
-                degradations.note("memory.webhook", "not_announced", e)
-    counts["locked_skipped"] = locked_n
-    return counts
+    return n
+
+
+# ~21 bytes per rendered hash: a bucket's list stays well inside one 128 KiB field
+# and small in Keeper.
+_LOCKED_PER_MUTATION = 2_500  # not a setting: a bound of the ClickHouse form field
+_IDENTITY_HASH = "cityHash64(agent, user_id, session_id, memory_key)"
+
+
+async def _unlocked_parts(
+    scope_sql: str, locked: str, params: dict[str, Any], *, ch: _CHClient
+) -> list[tuple[str, dict[str, Any]]]:
+    """Predicates, with their params, that together cover the embedding rows whose identity
+    no locked memory row in scope shares. A mutation takes no subquery, so the locked
+    identities are read first and named by hash; past `_LOCKED_PER_MUTATION` the scope is
+    split into hash buckets, each naming only its own locked identities."""
+    rows = await ch.query_all(
+        f"SELECT DISTINCT {_IDENTITY_HASH} AS h FROM loom.memory FINAL"
+        f" WHERE {scope_sql} AND {locked}",
+        params=params,
+    )
+    hashes = sorted({int(r["h"]) for r in rows})
+    buckets = max(1, math.ceil(len(hashes) / _LOCKED_PER_MUTATION))
+    unlocked = f"{scope_sql} AND {_IDENTITY_HASH} NOT IN {{locked:Array(UInt64)}}"
+    parts = []
+    for b in range(buckets):
+        where = unlocked
+        extra: dict[str, Any] = {"locked": [h for h in hashes if h % buckets == b]}
+        if buckets > 1:
+            where += f" AND {_IDENTITY_HASH} % {{buckets:UInt32}} = {{bucket:UInt32}}"
+            extra |= {"buckets": buckets, "bucket": b}
+        parts.append((where, extra))
+    return parts
 
 
 async def _page_tombstoned(

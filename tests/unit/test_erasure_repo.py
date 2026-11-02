@@ -18,6 +18,9 @@ class StubCH:
         self.query_one_returns: list[dict[str, Any] | None] = []
         self.execute_calls: list[tuple[str, dict[str, Any]]] = []
         self.insert_calls: list[tuple[str, list[dict[str, Any]], dict[str, Any]]] = []
+        # (needle, rows): the rows a read whose SQL holds the needle gets
+        self.reads: list[tuple[str, list[dict[str, Any]]]] = []
+        self.read_calls: list[tuple[str, dict[str, Any]]] = []
 
     async def query_one(self, sql, params=None):
         self.query_one_calls.append((sql, params or {}))
@@ -27,6 +30,9 @@ class StubCH:
         self.execute_calls.append((sql, params or {}))
 
     async def query_all(self, sql, params=None):
+        if "system.mutations" not in sql:
+            self.read_calls.append((sql, params or {}))
+            return next((rows for needle, rows in self.reads if needle in sql), [])
         # system.mutations poll: the mutation is done.
         return [
             {
@@ -270,23 +276,25 @@ async def test_tombstone_shared_by_user_zero_count_short_circuits() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tombstone_shared_embeddings_by_user_joins_via_subquery() -> None:
+async def test_tombstone_shared_embeddings_by_user_reads_the_shared_keys_first() -> None:
     """Shared embeddings don't carry user_id directly (sentinel
-    agent='_shared'); the cascade must JOIN against loom.shared via
-    a memory_key IN (subquery) filter."""
+    agent='_shared'); the cascade reads the keys of the shared rows promoted from
+    the user, then tombstones the shared embeddings of those keys."""
     ch = StubCH()
+    ch.reads.append(("FROM loom.shared FINAL", [{"memory_key": "k1"}]))
     ch.query_one_returns.append({"n": 2})
     await memory_steps.tombstone_shared_embeddings_by_user(
         "clickhouse",
         "alice",
         ch=ch,
     )
+    ((read_sql, read_params),) = ch.read_calls[:1]
+    assert "splitByChar('/', x)[4]" in read_sql and read_params["uid"] == "alice"
     sel_sql, _ = ch.query_one_calls[0]
     assert "FROM loom.memory_embeddings FINAL" in sel_sql
-    assert "scope = 'shared'" in sel_sql
-    assert "memory_key IN (" in sel_sql
-    assert "FROM loom.shared FINAL" in sel_sql
-    assert "splitByChar('/', x)[4]" in sel_sql
+    assert "scope = 'shared' AND memory_key IN {keys:Array(String)}" in sel_sql
+    ((mut_sql, mut_params),) = ch.execute_calls
+    assert "SELECT" not in mut_sql and mut_params["keys"] == ["k1"]
 
 
 @pytest.mark.asyncio
@@ -296,19 +304,27 @@ async def test_consolidated_dependents_of_an_erased_user_are_tombstoned_in_both_
     per-user tombstone never reaches it. The step retires any summary whose
     sources overlap the erased keys, on loom.memory AND loom.memory_embeddings,
     and deletes its code links (a suggestion rewrites its text)."""
+    topic = "00000000-0000-0000-0000-0000000000c1"
     ch = StubCH()
-    ch.query_one_returns.extend([{"n": 2}, {"n": 2}, {"n": 1}])
+    ch.reads.append(("toString(memory_id) AS id FROM loom.memory", [{"id": topic}]))
+    ch.query_one_returns.extend([{"keys": ["k1"]}, {"n": 2}, {"n": 2}, {"n": 1}])
     n = await graph_steps.tombstone_consolidated_dependents_by_user("o", "alice", ch=ch)
     assert n == 5
+    keys_sql, keys_params = ch.query_one_calls[0]
+    assert "groupUniqArray(memory_key) FROM loom.memory" in keys_sql
+    assert keys_params == {"org": "o", "uid": "alice"}
     tables = [sql.split("ALTER TABLE ")[1].split()[0] for sql, _ in ch.execute_calls]
     assert tables == ["loom.memory", "loom.memory_embeddings", "loom.memory_code_links"]
-    for sql, params in ch.execute_calls:
-        assert "has(tags, 'consolidated')" in sql
-        assert "hasAny(tags, (SELECT groupArray(concat('src:', memory_key)) FROM loom.memory" in sql
-        assert "user_id = {uid:String}" in sql and params["uid"] == "alice"
-    *tombstones, links = (sql for sql, _ in ch.execute_calls)
-    assert "DELETE" in links and "memory_id IN (SELECT memory_id FROM loom.memory" in links
-    assert all("UPDATE tombstoned_at = {now:DateTime}" in sql for sql in tombstones)
+    *tombstones, (links, link_params) = ch.execute_calls
+    for sql, params in tombstones:
+        assert "has(tags, 'consolidated') AND hasAny(tags, {src:Array(String)})" in sql
+        assert params["src"] == ["src:k1"] and "UPDATE tombstoned_at = {now:DateTime}" in sql
+    # the topic rows' ids are read after the tombstones, then bound
+    ((ids_sql, ids_params),) = ch.read_calls
+    assert "has(tags, 'consolidated')" in ids_sql and ids_params["src"] == ["src:k1"]
+    assert "DELETE" in links and "memory_id IN {ids:Array(UUID)}" in links
+    assert link_params["ids"] == [topic]
+    assert not [sql for sql, _ in ch.execute_calls if "SELECT" in sql]
 
 
 @pytest.mark.asyncio

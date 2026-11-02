@@ -8,8 +8,11 @@ import logging
 import re
 from typing import Any
 
+from server.core.tag_sql import tag_predicate
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.ask.identity import memory_identity_where
+from server.memory.app.search_tag_filter import request_hard_tags, stamp_row_tags
+from server.memory.domain.search_types import row_identity
 
 logger = logging.getLogger(__name__)
 
@@ -56,15 +59,19 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
     if len(slug) < 4 or identity is None:
         return []
     where, params = identity
+    if hard_tags := request_hard_tags(search_input):
+        # the hard tags, as the fact legs carry them: an off-tag row must not stand in for
+        # the semantic follow
+        where, params = [*where, tag_predicate("")], {**params, "tags": hard_tags}
     try:
         from server.core.ch import get_client
-        from server.memory.api.models_search import _MemorySearchHit
+        from server.settings import settings
 
         ch = get_client()
         rows = await ch.query_all(
             f"""
-            SELECT memory_key, memory_type, value, status, version,
-                   toString(created_at) AS created_at, toString(valid_at) AS valid_at
+            SELECT agent, user_id, session_id, memory_key, memory_type, value, status, tags,
+                   version, toString(created_at) AS created_at, toString(valid_at) AS valid_at
             FROM loom.memory FINAL
             WHERE {" AND ".join(where)}
               AND status = 'active'
@@ -72,29 +79,38 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
               -- a high value is readable by key only, not as an answer's excerpt
               AND sensitivity != 'high'
               AND memory_key LIKE {{pat:String}}
-            ORDER BY version DESC
+            ORDER BY version DESC, agent, user_id, session_id, memory_key  -- ties keep one order
+            -- one attribute written in many sessions leaves room for the bridge's others
+            LIMIT {{per_key:UInt32}} BY memory_key
             LIMIT {{lim:UInt32}}
             """,
-            params={**params, "pat": f"%{slug}%", "lim": int(top_k)},
+            params={
+                **params,
+                "pat": f"%{slug}%",
+                "per_key": int(settings.memory_search_per_key_cap) or int(top_k),
+                "lim": int(top_k),
+            },
         )
         out: list[Any] = []
         for r in rows:
-            out.append(
-                _MemorySearchHit(
-                    memory_key=str(r.get("memory_key") or ""),
-                    memory_type=str(r.get("memory_type") or "fact"),
-                    content_excerpt=str(r.get("value") or "").strip('"'),
-                    distance=0.0,
-                    similarity=1.0,
-                    rank_score=0.0,
-                    valid_at=str(r.get("valid_at") or "")[:10],
-                    created_at=str(r.get("created_at") or "")[:10],
-                    status=str(r.get("status") or ""),
-                    version=int(r.get("version") or 0),
-                    source="fact",
-                    explanation=f"bridge:{bridge}",
-                )
+            hit = _MemorySearchHit(
+                memory_key=str(r.get("memory_key") or ""),
+                memory_type=str(r.get("memory_type") or "fact"),
+                content_excerpt=str(r.get("value") or "").strip('"'),
+                distance=0.0,
+                similarity=1.0,
+                rank_score=0.0,
+                valid_at=str(r.get("valid_at") or "")[:10],
+                created_at=str(r.get("created_at") or "")[:10],
+                status=str(r.get("status") or ""),
+                version=int(r.get("version") or 0),
+                source="fact",
+                session_id=str(r.get("session_id") or ""),
+                explanation=f"bridge:{bridge}",
             )
+            hit._row_identity = row_identity(r)  # so the pool knows the row it already holds
+            stamp_row_tags(hit, r.get("tags"))  # so the hard tag belt judges this row
+            out.append(hit)
         return out
     except Exception as e:  # noqa: BLE001 — additive, never fatal
         logger.warning("memory.ask bridge key read failed (open): %s", e)

@@ -106,8 +106,8 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     check. In order:
     - canonical-form match: `merge`, no insert (`_set_merge`);
     - pinned peer: `rejected` (409);
-    - peer at or above `LOOM_DUPLICATE_THRESHOLD` with the same content words:
-      `duplicate`;
+    - peer at or above `LOOM_DUPLICATE_THRESHOLD` with the same content words, unless
+      each side states a value the other lacks (`values_differ`): `duplicate`;
     - any other close peer: `conflict`.
 
     A `decision` row (`KEY_IDENTIFIED_TYPES`) is identified by its key: a close peer in
@@ -404,6 +404,12 @@ Versions are nanosecond stamps, so last-writer-wins holds per key inside a batch
 blacklisted entry is skipped, not raised; pinned and locked keys come back in
 `skipped_pinned` and `skipped_locked`. One hash-only `memory.bulk_set` audit row records
 the write.
+
+An entry that repeats a key's stored bytes writes a version only when it names a new
+sensitivity, adds a pin or sets `ttl_seconds`; otherwise it counts in `skipped_unchanged`.
+Other fields, status among them, are not compared: a replayed extraction batch must not
+revive a superseded, rejected or proposed row over the write that retired it. An entry that
+does change the level, the pin or the expiry writes the row as active, as `memory.set` does.
 
 `memory.import` (`handle_memory_import` in `memory/app/memory_import.py`) writes through
 `handle_memory_bulk_set`, so an imported item meets every check above. The bulk write's
@@ -774,15 +780,17 @@ often that row is undone.
 A close is an `ALTER UPDATE`, so the retirement's closes may still be pending when the
 Undo weighs its facts: it reads with `apply_mutations_on_fly`, which applies them (their
 expressions are deterministic), rather than waiting on `system.mutations`. ClickHouse
-refuses that read for the whole table while any pending mutation on it has a subquery
-(another tenant's erasure delete does). The Undo then writes nothing to the graph: the
-memory row is restored at once, the refusal is recorded as a `triples_reconcile` failure
-dated at the restore, and `projection_repair` replays it once that mutation has landed
-and the read works again (until then each pass fails it again and it stays active). A
-follow's repair of its successors and the repair of the values an Undo states again read
-the same way: the follow's own closes are queued just before, and a value they close
-read as still open would be taken for a newer one ("I live in London", undated, over
-Berlin from May 1), closing the successor as it starts.
+refuses that read for the whole table while any pending mutation on it has a subquery.
+This build's erasure, `memory.clear`, and triple and edge closes bind their values, so such
+a mutation comes from elsewhere, such as an older build's erasure during an upgrade. The
+Undo then writes nothing to the graph: the memory row is restored at once,
+the refusal is recorded as a `triples_reconcile` failure dated at the restore, and
+`projection_repair` replays it once that mutation has landed and the read works again
+(until then each pass fails it again and it stays active). A follow's repair of its
+successors and the repair of the values an Undo states again read the same way: the
+follow's own closes are queued just before, and a value they close read as still open
+would be taken for a newer one ("I live in London", undated, over Berlin from May 1),
+closing the successor as it starts.
 
 Its facts then go through the interval repair by the usual rule, as values seen at their
 markers: the retirement it undoes arrived earlier, so its value closes and its row stays
@@ -971,6 +979,18 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    | lexical and BM25 | `lexical.py`, `side_legs.py` | `hasAnyTokens` over the lowercase, stem and lemma columns; Okapi BM25 from `memory_term_freq` / `memory_doc_stats` plus rows newer than the refresh mark.                                                 |
    | verbatim chunks  | `chunks.py`                  | `memory_chunks`: a stage-1 candidate read, then one keyed stage 2 with neighbour windows.                                                                                                                 |
    | records          | `side_legs.py`               | `memory_records`.                                                                                                                                                                                         |
+
+   A pooled chunk of a long `memory.set` value folds onto the row whose current value cuts
+   it (`pool.py`, `fold_set_chunks`): one read of the writer's served rows of the key with
+   the newest vectors over `memory_embeddings` (`memory_search_set_chunk_rows` of them),
+   then keyed reads of their values over `memory`, a form field at a time, only when a
+   private-scope pool holds such a chunk. A chunk none of those rows' values cuts is
+   dropped, and so is every chunk of the pool when the read fails. Under shared scope
+   (`fold_shared_set_chunks`) a chunk folds onto a pooled fact of its key, or becomes the
+   hit of the key's promoted row `(_shared, -, -)`. The match recomputes a row's chunks
+   with the running build's chunker (`set_chunks.py`): a change to its geometry leaves
+   stored chunks unmatched until their keys are re-set, and lowering the chunk cap leaves
+   the chunks past the new cap unmatched.
 
    Additive pools follow: sub-queries, set expansion, the entity and date anchor pool
    (`anchor_pool.py`) and the key-match arm (`key_match.py`). The assembler folds in the
@@ -1213,6 +1233,19 @@ resumed saga re-runs the owning step of any table the last census found rows in.
 polled to completion. `tests/unit/test_every_table_is_classified.py` fails on a table in
 none of the three lists.
 
+A user-scope step reaches a table with no `user_id` column through a predicate that holds
+a subquery: the user's memory keys, record ids or shared keys, or the graph keys and
+entities only the user's memories link (`server/erasure/store/predicates.py`). The census
+counts with that predicate as written. A replicated table refuses a mutation with a
+subquery or with `now()`, so the step reads the subquery first and mutates by what it
+returned, bound as an array a slice at a time (`server/erasure/store/scope_reads.py`), and
+binds the time it stamps. A key that holds stored free text (a triple, an edge, a
+community's entity or label, a document's `source_uri`) is bound as its `cityHash64`,
+computed by ClickHouse on both sides: nothing bounds a stored name, and one name can be
+longer than the form field a bound value travels in. A slice's mutation tag hashes its
+bound values but not the stamp, so each slice waits for its own mutation, and a step
+re-run after a crash re-reads its slices and waits for any of its own still pending.
+
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no
 namespace or user, and hold vectors, never text. It is a derived cache, so deleting more
@@ -1228,11 +1261,12 @@ bot the rule was said to, so it names that bot without its candidate. A user era
 `assistant_turn` candidate left with no supporter. A pending one is deleted. A decided
 one keeps its decision on a new version with the rule blanked, so a rejected rule never
 comes back as pending. Both deletes are bounded to the rows the step read, so a review
-or a supporter that lands meanwhile survives, and the census reopens the step for
-whatever still holds the rule. A candidate carries no `user_id`, and once a user's
-supporter rows are gone nothing ties an unsupported candidate to that user, so the
-census counts every unsupported candidate that still holds its rule in the org,
-whichever erasure left it.
+that lands meanwhile survives, and the census reopens the step for whatever still holds
+the rule. A pending candidate's supporters are re-read right before its delete, so only a
+supporter that lands between that read and the delete can lose its candidate. A candidate
+carries no `user_id`, and once a user's supporter rows are gone nothing ties an
+unsupported candidate to that user, so the census counts every unsupported candidate that
+still holds its rule in the org, whichever erasure left it.
 
 ## Audit rows
 
@@ -1246,17 +1280,20 @@ hash, source class and verdict. The row hash and the checkpoint chain are descri
 After a write path's rows are in, it calls `announce` (`server/memory/app/webhooks.py`)
 with the event (`memory.written`, `memory.revised`, `memory.tombstoned`,
 `memory.restored`, `memory.redacted`; the erasure saga sends `memory.erased` after its
-census, which does not count those rows as residue). For each webhook of the namespace that takes the event it inserts one
-`loom.memory_webhook_outbox` row holding ids and the identity tuple, never content, and
-nothing rewrites it. Which namespaces have webhooks is a per-process copy of
-`loom.memory_webhooks`, read again every `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`: a
-namespace with no webhook pays no insert, and the first write after each interval waits
-for one registry read (`server/core/polled_copy.py`). A failed read keeps the last copy. A
-write on a cold copy waits for the first read; if that read fails, writes announce nothing
-(noted as a degradation) until a read lands. `memory.clear` tombstones with one mutation
-per table and, only when a webhook of the namespace takes `memory.tombstoned`, reads back
-the rows that mutation stamped in one streamed read in sort-key order, so the scope is
-scanned once, with one outbox insert per 1000 rows.
+census, which does not count those rows as residue). For each webhook of the namespace
+that takes the event it inserts one `loom.memory_webhook_outbox` row holding ids and the
+identity tuple, never content, and nothing rewrites it. Which namespaces have webhooks is
+a per-process copy of `loom.memory_webhooks`, read again every
+`LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`: a namespace with no webhook pays no insert, and the
+first write after each interval waits for one registry read
+(`server/core/polled_copy.py`). A failed read keeps the last copy. A write on a cold copy
+waits for the first read; if that read fails, writes announce nothing (noted as a
+degradation) until a read lands. `memory.clear` tombstones with one mutation per table
+(when a lock keeps some rows, the embeddings one names the hashes of the locked identities
+it read; past 2,500 of them the scope is split into hash buckets, one mutation each, so a
+mutation's command stays small in Keeper) and, only when a webhook of the namespace takes
+`memory.tombstoned`, reads back the rows that mutation stamped in one streamed read in
+sort-key order, so the scope is scanned once, with one outbox insert per 1000 rows.
 
 The `memory_webhook_deliver` worker reads the registry, marks dead in one statement each
 the events of webhooks removed in the last `memory_webhook_removal_window_leases` lease

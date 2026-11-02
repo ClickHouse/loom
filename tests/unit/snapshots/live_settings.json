@@ -263,6 +263,7 @@
  "memory_search_reinforcement_weight",
  "memory_search_rerank_timeout_s",
  "memory_search_sensitivity_demote",
+ "memory_search_set_chunk_rows",
  "memory_search_set_expansion_leg_top_k",
  "memory_search_set_expansion_max_added",
  "memory_search_set_expansion_min_similarity",

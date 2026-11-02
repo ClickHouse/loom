@@ -532,13 +532,14 @@ async def test_inside_a_saga_the_tag_is_deterministic_and_a_pending_mutation_is_
     monkeypatch,
 ) -> None:
     _no_sleep(monkeypatch)
+    where = "org = {org:String}"
     with erasure_mutations.saga_scope("e-123"):
-        t1 = erasure_mutations.mutation_tag("loom.memory", "DELETE", "org = {org:String}")
-        t2 = erasure_mutations.mutation_tag("loom.memory", "DELETE", "org = {org:String}")
-        t3 = erasure_mutations.mutation_tag(
-            "loom.memory_embeddings", "DELETE", "org = {org:String}"
-        )
+        t1 = erasure_mutations.mutation_tag("loom.memory", "DELETE", where, {"org": "o"})
+        t2 = erasure_mutations.mutation_tag("loom.memory", "DELETE", where, {"org": "o"})
+        t3 = erasure_mutations.mutation_tag("loom.memory_embeddings", "DELETE", where, {"org": "o"})
         assert t1 == t2 and t1 != t3 and t1.startswith("erasure:e-123:")
+        # two slices of one step bind different values: each waits for its own mutation
+        assert t1 != erasure_mutations.mutation_tag("loom.memory", "DELETE", where, {"org": "p"})
         ch = _CH()
         # first poll = the pending-mutation probe finds one running; then it finishes
         ch.poll_rows = [
@@ -551,7 +552,8 @@ async def test_inside_a_saga_the_tag_is_deterministic_and_a_pending_mutation_is_
         assert ch.commands == []  # nothing resubmitted
         assert row is not None and row["is_done"] == 1
         assert "is_done = 0" in ch.polls[0][0] and ch.polls[0][1]["pat"] == f"%{t1}%"
-        # no pending mutation → submit as usual, with the same deterministic tag
+        # no pending mutation → submit as usual, with the same deterministic tag; the
+        # stamp a re-run binds is a later time and stays out of the tag
         ch2 = _CH()
         ch2.poll_rows = [
             [],
@@ -562,9 +564,11 @@ async def test_inside_a_saga_the_tag_is_deterministic_and_a_pending_mutation_is_
             mutation="DELETE",
             where="org = {org:String}",
             params={"org": "o"},
+            stamp={"now": "a later time"},
             ch=ch2,
         )
-        assert len(ch2.commands) == 1 and ch2.commands[0][1]["erasure_mutation_tag"] == t1
+        ((_, sent),) = ch2.commands
+        assert sent["erasure_mutation_tag"] == t1 and sent["now"] == "a later time"
     # outside a saga: unique per call, no pending probe
     assert erasure_mutations.mutation_tag(
         "loom.memory", "DELETE", "x"

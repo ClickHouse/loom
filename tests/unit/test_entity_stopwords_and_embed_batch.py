@@ -509,3 +509,29 @@ def test_a_korean_pronoun_or_time_word_is_not_an_entity(
     ents = _candidate_entities_from_value(text)
     assert all(canonical_entity_text(n) in ents for n in names), ents
     assert not {canonical_entity_text(j) for j in junk} & set(ents), ents
+
+
+def test_text_longer_than_a_name_is_no_entity() -> None:
+    # A read binds names as query parameters, which ClickHouse caps at 128 KiB each.
+    from server.memory.app.set_entities import declared_entities
+    from server.memory.domain.graph_quality import MAX_ENTITY_CHARS
+
+    longest = "Rome" + "x" * (MAX_ENTITY_CHARS - 4)
+    huge = "Zed" + "x" * 200_000
+    assert canonical_entity_text(longest) == longest.lower()
+    assert canonical_entity_text(longest + "x") == ""
+    assert declared_entities([huge, "Bob Lane"]) == ["bob lane"]
+    mined = _candidate_entities_from_value(f"{huge} met Bob Lane")
+    assert "bob lane" in mined and max(map(len, mined)) <= MAX_ENTITY_CHARS
+
+
+def test_an_entity_filter_of_only_long_names_falls_back_to_the_parsed_entities() -> None:
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.search.scope import _entity_filter
+    from server.memory.domain.graph_quality import MAX_ENTITY_CHARS
+
+    long = "x" * (MAX_ENTITY_CHARS + 1)
+    own = MemorySearchInput(org="o", namespace="n", query="q", entity_filter=[long, "Ann"])
+    assert _entity_filter(own, ["Bob"]) == ["Ann"]
+    only_long = MemorySearchInput(org="o", namespace="n", query="q", entity_filter=[long])
+    assert _entity_filter(only_long, ["Bob", long]) == ["Bob"]

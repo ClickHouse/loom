@@ -127,14 +127,59 @@ def strip_parentheticals(text: str) -> str:
     return _PARENTHETICAL_RE.sub("", text or "").strip()
 
 
+# Value tokens: clock times (27:12, 5:30pm), money, percentages, plain numbers with an
+# optional unit (5k, 10km).
+_VALUE_RE = re.compile(
+    r"(?<![A-Za-z])(?:\$|€|£)?\d+(?:[.,:]\d+)*(?:\s?(?:%|am|pm|k|km|kg|lb|lbs|mi|hrs?|min|s))?(?![A-Za-z])",
+    re.IGNORECASE,
+)
+# a comma before exactly three digits: "1,000" is 1000
+_THOUSANDS = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
+
+
+def value_tokens(text: str) -> set[str]:
+    """Normalised value tokens in `text` ("27:12", "25:50", "$40", "5k")."""
+    out: set[str] = set()
+    for m in _VALUE_RE.finditer(text or ""):
+        # "5 k" reads as "5k"
+        token = "".join(m.group(0).split()).lower()
+        out.add(_THOUSANDS.sub("", token))
+    return out
+
+
+_DATE_IN_TEXT_RE = re.compile(r"\b(20\d\d)-(\d\d)-(\d\d)\b")
+
+
+def date_tokens(text: str) -> set[str]:
+    """The value tokens that are only the pieces of an ISO day written into
+    the text ("2023", "05", "15" of "on 2023-05-15"). An event's date is its
+    anchor, not the value of an attribute."""
+    out: set[str] = set()
+    for m in _DATE_IN_TEXT_RE.finditer(text or ""):
+        out.update(m.groups())
+    return out
+
+
+def values_differ(a: str, b: str) -> bool:
+    """True when both texts state values and each holds one the other lacks ("27:10" /
+    "26:30"). One side restating the other's value plus more ("27:12" / "27:12 in the 5k")
+    does not differ, and the day written into a text is not a value."""
+    va, vb = value_tokens(a) - date_tokens(a), value_tokens(b) - date_tokens(b)
+    return bool(va and vb) and not (va <= vb or vb <= va)
+
+
 def same_content_words(a: str, b: str) -> bool:
     """True when two values carry the same content words, one side possibly
     adding to the other (canonical form, function words dropped,
     singular/plural and -ing/-ed tails ignored).
     Cosine above the duplicate gate says "about the same thing"; this says
     "saying the same thing" — the difference between a restatement and a
-    one-word update, which the duplicate step must not swallow."""
+    one-word update, which the duplicate step must not swallow. Two values that
+    differ make an update however the words around them changed ("my PB is 27:10" /
+    "beat my PB, 26:30")."""
     a, b = strip_parentheticals(a), strip_parentheticals(b)
+    if values_differ(a, b):
+        return False
 
     def words(t: str) -> set[str]:
         out: set[str] = set()

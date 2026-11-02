@@ -801,7 +801,7 @@ async def test_lexical_fallback_applies_caller_filters() -> None:
     ch = StubCH()
     ch.query_all_returns = [[]]
     q = _q(tags=["polarity:negative"], query_text="flaky mergetree test")
-    await _lexical_recall_fallback(ch, q, set(), limit=20)
+    await _lexical_recall_fallback(ch, q, limit=20)
 
     assert ch.query_all_calls, "expected a lexical query"
     sql, params = ch.query_all_calls[0]
@@ -827,7 +827,7 @@ async def test_lexical_fallback_matches_the_three_text_columns() -> None:
 
     ch = _StubCH()
     q = _q(query_text="flaky mergetree test")
-    await ms._lexical_recall_fallback(ch, q, set(), limit=20)
+    await ms._lexical_recall_fallback(ch, q, limit=20)
     sql, params = ch.query_all_calls[0]
     assert "hasAnyTokens(e.content_excerpt_lc" in sql
     assert "hasAnyTokens(e.content_excerpt_stem" in sql
@@ -1238,3 +1238,105 @@ async def test_graph_mode_sorts_the_fused_pool_by_rank(monkeypatch) -> None:
     )
     hits = await vector_search(q, ch=ch)
     assert [h.memory_key for h in hits] == ["high", "mid"]
+
+
+@pytest.mark.asyncio
+async def test_a_record_gives_way_to_a_stronger_fact_of_its_key_whoever_wrote_it() -> None:
+    # a record's identity is what memory.record_write was given, never the fact row's
+    ch = StubCH()
+    fact = {
+        **_hit(),
+        "memory_key": "profile_theme",
+        "distance": 0.05,
+        "agent": "bot",
+        "user_id": "u",
+        "session_id": "s1",
+    }
+    ch.query_all_returns.extend(
+        [
+            [fact],
+            [
+                {
+                    "record_id": "11111111-2222-3333-4444-555555555555",
+                    "parent_memory_key": "profile_theme",
+                    "schema_name": "preference",
+                    "record_json": '{"theme": "dark"}',
+                    "field_text": "theme: dark",
+                    "lexical_score": 1.0,
+                    "rank_score": 0.3,
+                    "session_id": "-",
+                }
+            ],
+        ]
+    )
+    out = await vector_search(
+        _q(query_text="what theme do I use", execution_planes=["fact", "record"]), ch=ch
+    )
+    assert [(h.memory_key, h.source) for h in out] == [("profile_theme", "fact")]
+
+
+def test_a_record_hit_names_no_memory_row() -> None:
+    from server.memory.app.retrieval.side_legs import _record_hits
+
+    (hit,) = _record_hits(
+        [
+            {
+                "record_id": "r1",
+                "parent_memory_key": "k",
+                "session_id": "s1",
+            }
+        ]
+    )
+    # read and keyed like any hit that names no row; its session stays as provenance
+    assert (hit.identity, hit.session_id) == (None, "s1")
+
+
+@pytest.mark.asyncio
+async def test_two_writers_rows_of_a_key_whose_excerpts_open_alike_both_stay() -> None:
+    ch = StubCH()
+    row = {**_hit(), "session_id": "s1"}
+    ch.query_all_returns.append(
+        [{**row, "agent": "a", "user_id": "u1"}, {**row, "agent": "a", "user_id": "u2"}]
+    )
+    out = await vector_search(_q(), ch=ch)
+    assert sorted(h.identity for h in out) == [("a", "u1", "s1"), ("a", "u2", "s1")]
+
+
+@pytest.mark.asyncio
+async def test_under_private_scope_a_chunk_is_dropped_only_for_a_fact_of_its_own_writer() -> None:
+    from dataclasses import replace
+
+    from server.memory.app.retrieval.search import _merge_leg_hits
+    from server.memory.domain.search_types import SearchHit
+
+    text = "the same long value both users stored under one key " * 3
+    fact = SearchHit(
+        memory_key="k",
+        memory_type="semantic",
+        content_excerpt=text,
+        distance=0.2,
+        identity=("a", "u1", "s1"),
+    )
+    chunk = replace(fact, memory_key="chunk:s9:0", source="chunk", identity=("a", "u2", "s9"))
+    own = replace(chunk, memory_key="chunk:s8:0", identity=("a", "u1", "s8"))
+    out = await _merge_leg_hits(StubCH(), _q(), [fact], [chunk, own], [], [])
+    assert [h.memory_key for h in out] == ["k", "chunk:s9:0"]
+
+
+@pytest.mark.asyncio
+async def test_under_shared_scope_a_chunk_that_opens_like_a_fact_drops() -> None:
+    from dataclasses import replace
+
+    from server.memory.app.retrieval.search import _merge_leg_hits
+    from server.memory.domain.search_types import SearchHit
+
+    shared = SearchHit(
+        memory_key="k",
+        memory_type="semantic",
+        content_excerpt="the same long value a user stored and promoted to shared " * 3,
+        distance=0.2,
+        identity=("_shared", "-", "-"),  # the promoted row, whose writer no chunk carries
+    )
+    chunk = replace(shared, memory_key="chunk:s9:0", source="chunk", identity=("a", "u2", "s9"))
+    out = await _merge_leg_hits(StubCH(), _q(scope="shared"), [shared], [chunk], [], [])
+    assert [h.memory_key for h in out] == ["k"]

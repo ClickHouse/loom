@@ -25,6 +25,7 @@ import logging
 from typing import Any, TypedDict
 
 from server.identity.app.request_scope import request_scope
+from server.memory.domain.search_types import hit_row_key, names_row, record_row_key
 
 log = logging.getLogger(__name__)
 
@@ -80,15 +81,15 @@ def superseded_label(m: Any) -> str:
 
 
 async def annotate_pool_superseded(ctx: Any) -> None:
-    """Name the successor on every superseded hit in the pool (one keyed
-    statement over `loom.memory`, only when the call asked for superseded
-    rows and one is in the pool) and count them in `retrieval_work` as
-    `superseded_served`. Fail-open: a failed read leaves the hits with their
+    """Name the successor on every superseded hit in the pool that names its row (one
+    keyed statement over `loom.memory`, only when the call asked for superseded rows and
+    one is in the pool) and count them in `retrieval_work` as `superseded_served`. A hit
+    that names no row could match none. Fail-open: a failed read leaves the hits with their
     `status` and nothing else."""
     input = ctx.input
     if hide_superseded(input):
         return
-    old = [h for h in ctx.all_hits if _is_superseded_fact(h)]
+    old = [h for h in ctx.all_hits if _is_superseded_fact(h) and names_row(h)]
     if not old:
         return
     ctx.actual_work["superseded_served"] = len(old)
@@ -98,17 +99,14 @@ async def annotate_pool_superseded(ctx: Any) -> None:
         import server.memory.store as memory_repo
 
         rows = await memory_repo.superseded_successors(
-            input.org,
-            sorted({str(getattr(h, "namespace", "") or ns_default) for h in old}),
-            [str(h.memory_key) for h in old],
-            scope=scope,
+            input.org, [hit_row_key(h, ns_default) for h in old], scope=scope
         )
     except Exception as e:  # noqa: BLE001 — naming the successor never fails a search
         log.warning("memory.search: superseded successor read failed: %s", e)
         return
-    by_key = {(r.namespace, r.memory_key): r for r in rows}
+    by_row = {record_row_key(r): r for r in rows}
     for h in old:
-        r = by_key.get((str(getattr(h, "namespace", "") or ns_default), str(h.memory_key)))
+        r = by_row.get(hit_row_key(h, ns_default))
         if r is None:
             continue
         # A bounded read sees the raw id only when the successor resolved inside

@@ -24,6 +24,7 @@ from server.memory.domain.code_change import CodeState
 from server.memory.domain.delete_marks import caller_trace
 from server.memory.domain.expire_reasons import caller_reason
 from server.memory.domain.graph_quality import (
+    MAX_ENTITY_CHARS,
     MAX_TRIPLES_PER_ROW,
     canonical_entity_text,
     canonical_relation,
@@ -263,7 +264,7 @@ def _relation_verb(raw: str) -> str:
 _ENTITY_DROPS = "articles, possessives and punctuation"
 _FactSubject = Annotated[
     str,
-    Field(max_length=256),
+    Field(max_length=MAX_ENTITY_CHARS),
     _canonical_at_least(
         2,
         canonical_entity_text,
@@ -283,7 +284,7 @@ _FactRelation = Annotated[
 ]
 _FactObject = Annotated[
     str,
-    Field(max_length=256),
+    Field(max_length=MAX_ENTITY_CHARS),
     _canonical_at_least(
         1, canonical_entity_text, _ENTITY_DROPS, "an object needs at least 1 character"
     ),

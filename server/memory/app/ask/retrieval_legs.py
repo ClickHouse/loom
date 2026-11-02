@@ -11,6 +11,7 @@ from typing import Any
 from server.memory.app.ask.question_shapes import (
     looks_multihop,
 )
+from server.memory.domain.search_types import hit_row_key, names_row
 from server.settings.budgets import llm_max_tokens
 
 logger = logging.getLogger(__name__)
@@ -193,6 +194,31 @@ async def decompose_question(llm: Any, question: str, *, max_parts: int = 4) -> 
         return []
 
 
+class PooledRows:
+    """The rows an ask pool holds, for merging more hits into it: a hit that names its row
+    is new when that row is not pooled, and one that names none (a record, a digest) when
+    no hit of its key is."""
+
+    def __init__(self, hits: list[Any], namespace: str) -> None:
+        self.namespace = namespace
+        self.rows = {hit_row_key(h, namespace) for h in hits}
+        self.keys = {(r.namespace, r.memory_key) for r in self.rows}
+
+    def add(self, hit: Any) -> bool:
+        """Note `hit` and say whether it was new."""
+        row = hit_row_key(hit, self.namespace)
+        if not row.memory_key:
+            return False
+        new = (
+            row not in self.rows
+            if names_row(hit)
+            else (row.namespace, row.memory_key) not in self.keys
+        )
+        self.rows.add(row)
+        self.keys.add((row.namespace, row.memory_key))
+        return new
+
+
 async def decomposed_retrieval(
     search_input: Any,
     question: str,
@@ -206,7 +232,7 @@ async def decomposed_retrieval(
 ) -> tuple[list[str], list[Any]]:
     """Retrieve each sub-question on its own and union the
     hits into `ranked` (whole-question hits first, then per part in order,
-    deduplicated by memory_key). Returns (sub_questions, merged). A part
+    merged by row through `PooledRows`). Returns (sub_questions, merged). A part
     whose retrieval raises is skipped (fail-open) and counted in
     `stats["failed"]` — the count rides the response and the
     ledger, so a lever that stops working is a number, not a log line."""
@@ -218,7 +244,7 @@ async def decomposed_retrieval(
     if not parts:
         return [], ranked
     merged = list(ranked)
-    have = {getattr(h, "memory_key", "") for h in merged}
+    pooled = PooledRows(merged, str(search_input.namespace))
     for part in parts:
         try:
             sub = await handle_memory_search(
@@ -229,11 +255,7 @@ async def decomposed_retrieval(
             if stats is not None:
                 stats["failed"] = int(stats.get("failed", 0)) + 1
             continue
-        for h in sub.results or []:
-            k = getattr(h, "memory_key", "")
-            if k and k not in have:
-                have.add(k)
-                merged.append(h)
+        merged.extend(h for h in sub.results or [] if pooled.add(h))
     return parts, merged
 
 

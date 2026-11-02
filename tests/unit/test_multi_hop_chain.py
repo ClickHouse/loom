@@ -4,6 +4,9 @@ second retrieval; value-suffixed keys collapse onto the attribute's key."""
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
+
+import pytest
 
 from server.memory.app.ask.completion import bridge_entities
 from server.memory.app.ask.prompts import _CHAIN_NOTE
@@ -130,3 +133,73 @@ def test_bridges_come_from_fact_rows_before_chunks() -> None:
         ),
     ]
     assert bridge_entities(hits, q, limit=2)[0] == "Bernard Arnault"
+
+
+@pytest.mark.asyncio
+async def test_a_bridge_row_the_pool_holds_is_not_added_twice(monkeypatch) -> None:
+    # each session's row of a key names its row, and one key cannot fill the read
+    from server.memory.app.ask import completion
+    from server.memory.app.ask.retrieval_legs import PooledRows
+    from server.settings import settings
+
+    asked: dict[str, Any] = {}
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            assert "LIMIT {per_key:UInt32} BY memory_key" in sql
+            asked.update(params)
+            return [
+                {"agent": "a", "user_id": "u", "session_id": s, "memory_key": "k", "value": "v"}
+                for s in ("s1", "s2")
+            ]
+
+    monkeypatch.setattr(settings, "memory_search_per_key_cap", 3)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+    inp = SimpleNamespace(org="o", namespace="n", agent="a", user_id="u", session_id=None)
+    hits = await completion.bridge_rows_by_key(inp, "Bernard Arnault")
+    assert (asked["per_key"], asked["lim"]) == (3, 6)
+    pooled_hit = SimpleNamespace(memory_key="k", session_id="s1")
+    pooled_hit._row_identity = ("a", "u", "s1")
+    pooled = PooledRows([pooled_hit], "n")
+    assert [h.session_id for h in hits if pooled.add(h)] == ["s2"]
+
+
+@pytest.mark.asyncio
+async def test_the_belt_judges_each_bridge_row_by_its_stamped_tags(monkeypatch) -> None:
+    # two sessions' rows of one bridge key, one tagged; the bridge input has no tags, so both
+    # rows reach the belt, which judges each by its own tags and reads none by key
+    from server.memory.app import search_tag_filter as belt
+    from server.memory.app.ask import completion
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return [
+                {
+                    "agent": "a",
+                    "user_id": "u",
+                    "session_id": "s1",
+                    "memory_key": "k",
+                    "value": "France",
+                    "tags": ["project:x"],
+                },
+                {
+                    "agent": "a",
+                    "user_id": "u",
+                    "session_id": "s2",
+                    "memory_key": "k",
+                    "value": "Belgium",
+                    "tags": [],
+                },
+            ]
+
+    async def _no_key_read(*a: Any, **k: Any) -> dict[Any, Any]:
+        raise AssertionError("each bridge row carries its own tags")
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+    monkeypatch.setattr(belt, "read_row_tags", _no_key_read)
+    inp = SimpleNamespace(org="o", namespace="n", agent="a", user_id="u", session_id=None)
+    hits = await completion.bridge_rows_by_key(inp, "Bernard Arnault")
+    req = SimpleNamespace(org="o", namespace="n", tags=["project:x"], tags_soft=False)
+    work: dict[str, Any] = {}
+    kept = await belt.enforce_hard_tag_filter(hits, req, work, ["n"])
+    assert [h.content_excerpt for h in kept] == ["France"] and work == {"tag_filter_dropped": 1}

@@ -269,7 +269,7 @@ def _vec_state(entries: list[tuple[str, int]], *, lookup_ok: bool = True) -> Any
         row = {**ident, "memory_key": "k", "memory_type": "semantic"}
         state.memory_rows.append({**row, "sensitivity": sensitivity, "version": version})
         if sensitivity != "high":
-            state.embedding_rows.append({**row, "content_excerpt": "plain"})
+            state.embedding_rows.append({**row, "version": version, "content_excerpt": "plain"})
     return state
 
 

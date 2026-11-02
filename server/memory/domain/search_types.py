@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 
 class _CHClient(Protocol):
@@ -252,7 +252,8 @@ class SearchHit:
     # session_id). Provenance for the caller: a bench scores source recall
     # against gold evidence sessions, an agent groups hits by the
     # conversation they came from. "" for rows without one and for the
-    # summary / chunk / derived / code planes. Surfaced on the wire model.
+    # summary / derived / code planes; a chunk hit carries its row's session, a
+    # record hit its own. Surfaced on the wire model.
     session_id: str = ""
     # Who said it: the `speaker:<name>` tag the extractor writes on a fact
     # whose cited turns all come from one named speaker; "" when the fact is
@@ -265,8 +266,8 @@ class SearchHit:
     # The row's tags (loom.memory_embeddings.tags), read by the dense fact leg
     # for `speaker` / `about_other` and kept here so a caller that asks
     # (`include_tags`) gets them without a memory.get per hit.
-    # Empty for the lexical leg, chunks, summaries and derived rows; the
-    # handler point-reads the gaps only when the request asked.
+    # Empty for conversation chunks, summaries and derived rows; a set-chunk hit
+    # under private scope carries its row's.
     tags: list[str] = field(default_factory=list)
     # For a digest hit (source="summary"): the memory keys the digest
     # compressed (`session_summaries.derived_from`). Lets the reader drop a
@@ -289,9 +290,11 @@ class SearchHit:
     # rows and uses their text to mask the sentences that restate them.
     status: str = ""
     version: int = 0
-    # The stored memory's (agent, user_id, session_id) for a fact row; None for every
-    # other plane. Not on the wire.
+    # The stored row's (agent, user_id, session_id) for a fact or chunk row; None for a
+    # record and every other plane. Not on the wire.
     identity: RowIdentity | None = None
+    # A chunk row's own `content_sha256`: with its index, which value cut it. Not on the wire.
+    chunk_sha256: str = ""
 
 
 def row_identity(row: Mapping[str, Any]) -> RowIdentity | None:
@@ -300,6 +303,70 @@ def row_identity(row: Mapping[str, Any]) -> RowIdentity | None:
     if any(c not in row for c in ("agent", "user_id", "session_id")):
         return None
     return str(row["agent"]), str(row["user_id"]), str(row["session_id"])
+
+
+class RowKey(NamedTuple):
+    """One stored row: it binds as a tuple of the five columns."""
+
+    namespace: str
+    agent: str
+    user_id: str
+    session_id: str
+    memory_key: str
+
+
+class IdentityRecord(Protocol):
+    """A record read with the five identity columns (frozen dataclasses fit)."""
+
+    @property
+    def namespace(self) -> str: ...
+    @property
+    def agent(self) -> str: ...
+    @property
+    def user_id(self) -> str: ...
+    @property
+    def session_id(self) -> str: ...
+    @property
+    def memory_key(self) -> str: ...
+
+
+def record_row_key(rec: IdentityRecord) -> RowKey:
+    return RowKey(rec.namespace, rec.agent, rec.user_id, rec.session_id, rec.memory_key)
+
+
+def row_key_of(namespace: str, row: Mapping[str, Any]) -> RowKey:
+    """The RowKey of a result row (a mapping) that read the identity columns."""
+    agent, user_id, session_id = (str(row[c]) for c in ("agent", "user_id", "session_id"))
+    return RowKey(namespace, agent, user_id, session_id, str(row["memory_key"]))
+
+
+def _identity(hit: Any) -> RowIdentity | None:
+    # `identity` on a SearchHit, the private `_row_identity` on a wire hit
+    who = getattr(hit, "_row_identity", None)
+    return who if who is not None else getattr(hit, "identity", None)
+
+
+def names_row(hit: Any) -> bool:
+    """Whether a hit's leg read the identity of its stored row."""
+    return _identity(hit) is not None
+
+
+def hit_row_key(hit: Any, namespace: str = "") -> RowKey:
+    """(namespace, agent, user_id, session_id, memory_key) of the stored row a hit is: one
+    key holds a row for each writer and session, so a key alone does not name one row.
+    For a `SearchHit` or a wire hit alike. A hit whose leg read no identity has only its
+    session."""
+    identity = _identity(hit)
+    if identity is None:
+        identity = ("", "", str(getattr(hit, "session_id", "") or ""))
+    agent, user_id, session_id = identity
+    return RowKey(
+        str(getattr(hit, "namespace", "") or namespace),
+        agent,
+        user_id,
+        session_id,
+        str(getattr(hit, "memory_key", "") or ""),
+    )
 
 
 @dataclass(frozen=True)
@@ -317,16 +384,17 @@ class SearchTraceHit(SearchHit):
 RANK_SCORE_PRE_RERANK = "rank_score_pre_rerank"
 
 
-def hit_sort_key(h: Any) -> tuple[float, float, str]:
-    """The ONE ordering every ranked list of hits uses: best
-    rank_score first, then nearest distance, then memory_key. Two hits with
-    equal scores (about half of top-2 pairs are within 0.01) would otherwise
-    fall wherever the ClickHouse threads and Python's stable sort left them,
-    so the same query on unchanged data would return the same top-5 set only
-    about half the time. With the key as the last term the order is a function of
-    the hits, not of the read."""
+def hit_sort_key(h: Any) -> tuple[float, float, str, str, str, str, str]:
+    """The one order every ranked list uses: best rank_score, nearest distance, then the
+    row (memory_key, namespace, agent, user_id, session_id). Equal scores are common, so
+    without the row terms the window would depend on read order, not on the hits."""
+    row = hit_row_key(h)
     return (
         -float(getattr(h, "rank_score", 0.0) or 0.0),
         float(getattr(h, "distance", 0.0) or 0.0),
-        str(getattr(h, "memory_key", "") or ""),
+        row.memory_key,
+        row.namespace,
+        row.agent,
+        row.user_id,
+        row.session_id,
     )

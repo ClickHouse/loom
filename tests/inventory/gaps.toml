@@ -216,7 +216,6 @@
 "setting:memory_search_hyde_fallback_threshold" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_key_match_boost_scale" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_key_match_min_strength" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_search_per_key_cap" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_pool_multiplier_deep" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_pool_multiplier_rerank" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_pool_multiplier_standard" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }

@@ -422,7 +422,7 @@ def test_explanation_leaves_the_wire_above_k_unless_explain(monkeypatch) -> None
 
     def dumped(inp: MemorySearchInput) -> dict[str, Any]:
         hits = [_hit("a")]
-        S._apply_explain_default(hits, inp)
+        S.apply_explain_default(hits, inp)
         out = MemorySearchOutput(results=hits, embedding_model="m")
         return out.model_dump(mode="json")["results"][0]
 
@@ -437,7 +437,7 @@ def test_explanation_leaves_the_wire_above_k_unless_explain(monkeypatch) -> None
     assert "explanation" not in dropped_small
     # in-process readers keep the attribute
     hits = [_hit("a")]
-    S._apply_explain_default(hits, _inp(top_k=30))
+    S.apply_explain_default(hits, _inp(top_k=30))
     assert hits[0].explanation == "dense leg, rank 1"
 
 

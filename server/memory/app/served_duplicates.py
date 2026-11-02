@@ -23,6 +23,7 @@ from typing import Any
 
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
+from server.memory.domain.search_types import RowKey, hit_row_key, names_row, record_row_key
 from server.memory.store.dedup import CanonicalRow, DuplicateStatus
 
 log = logging.getLogger(__name__)
@@ -86,15 +87,8 @@ def _substitute(h: Any, row: CanonicalRow, ns: str) -> Any:
     return out
 
 
-_Truth = dict[tuple[str, str], DuplicateStatus]
+_Truth = dict[RowKey, DuplicateStatus]
 _Canon = dict[tuple[str, str], CanonicalRow]
-
-
-async def _truth(org: str, namespaces: list[str], keys: list[str], scope: ReadFilters) -> _Truth:
-    import server.memory.store as memory_repo
-
-    rows = await memory_repo.status_by_keys(org, namespaces, keys, scope=scope)
-    return {(r.namespace, r.memory_key): r for r in rows}
 
 
 async def _canonicals(
@@ -107,18 +101,14 @@ async def _canonicals(
     return {(r.namespace, r.canonical_id): r for r in rows if r.sensitivity != "high"}
 
 
-def _duplicate_only(t: DuplicateStatus | None) -> bool:
-    """A key whose live rows are all duplicates. A key with an active or
-    conflicted row anywhere under it is served by that row."""
-    if not t:
-        return False
-    return t.served_rows == 0 and t.duplicate_rows > 0
+def _is_duplicate(t: DuplicateStatus | None) -> bool:
+    return t is not None and t.status == "duplicate"
 
 
 async def hide_pool_duplicates(ctx: Any) -> None:
     """Drop the pool's duplicate rows and seat their canonicals before the
     window is cut (after `exclude_keys`), so the window stays
-    `top_k` long. One statement over the served keys; a second, over the
+    `top_k` long. One read of the pooled rows; a second, over the
     canonical ids, only when a duplicate was in the pool. Fail-open: a failed
     read leaves the pool as the legs ranked it. Under `as_of` a duplicate is
     hidden but not substituted — the canonical's own validity window was not
@@ -132,23 +122,21 @@ async def hide_pool_duplicates(ctx: Any) -> None:
     ns_default = str(input.namespace)
     scope = request_scope()
     try:
-        truth = await _truth(
-            input.org,
-            sorted({_hit_ns(h, ns_default) for h in facts}),
-            [str(h.memory_key) for h in facts],
-            scope,
-        )
+        import server.memory.store as memory_repo
+
+        # a fact hit whose leg read no identity is not judged
+        rows = [hit_row_key(h, ns_default) for h in facts if names_row(h)]
+        found = await memory_repo.status_by_rows(input.org, rows, scope=scope)
+        truth: _Truth = {record_row_key(r): r for r in found}
     except Exception as e:  # noqa: BLE001 — hiding is a filter, never a failure
         log.warning("memory.search: duplicate status read failed: %s", e)
         return
-    dups = [
-        h for h in facts if _duplicate_only(truth.get((_hit_ns(h, ns_default), str(h.memory_key))))
-    ]
+    dups = [h for h in facts if _is_duplicate(truth.get(hit_row_key(h, ns_default)))]
     if not dups:
         return
     canon: _Canon = {}
     if getattr(input, "as_of", None) is None:
-        ids = [truth[(_hit_ns(h, ns_default), str(h.memory_key))].canonical_id for h in dups]
+        ids = [truth[hit_row_key(h, ns_default)].canonical_id for h in dups]
         try:
             canon = await _canonicals(
                 input.org, sorted({_hit_ns(h, ns_default) for h in dups}), ids, scope
@@ -167,7 +155,7 @@ def _rewrite_pool(
     work: dict[str, Any],
 ) -> list[Any]:
     dup_ids = {id(h) for h in dups}
-    present = {(_hit_ns(h, ns_default), str(h.memory_key)) for h in hits if id(h) not in dup_ids}
+    present = {hit_row_key(h, ns_default) for h in hits if id(h) not in dup_ids}
     out: list[Any] = []
     resolved = 0
     for h in hits:
@@ -175,11 +163,14 @@ def _rewrite_pool(
             out.append(h)
             continue
         ns = _hit_ns(h, ns_default)
-        cid = truth[(ns, str(h.memory_key))].canonical_id
+        cid = truth[hit_row_key(h, ns_default)].canonical_id
         row = canon.get((ns, cid))
-        if row is None or (ns, row.memory_key) in present:
+        if row is None:
             continue
-        present.add((ns, row.memory_key))
+        canonical = record_row_key(row)
+        if canonical in present:
+            continue
+        present.add(canonical)
         out.append(_substitute(h, row, ns))
         resolved += 1
     work["duplicates_hidden"] = len(dups)

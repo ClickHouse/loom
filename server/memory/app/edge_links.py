@@ -10,7 +10,8 @@ from types import SimpleNamespace
 from typing import Any
 
 from server.core.ch import get_client
-from server.core.repo_base import param_slices, query_all_sliced
+from server.core.ch_params import chunks
+from server.core.repo_base import query_all_sliced
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app import graph_holders, projections, set_entities
 from server.memory.app.edge_repair import end_overtaken_edges
@@ -207,7 +208,7 @@ async def _drop_links_of(
         for memory_id, sha, a, b in drop
         if memory_id in high and not {a, b} <= high[memory_id]
     ]
-    for part in param_slices(deleted):
+    for part in chunks(deleted):
         await ch.execute(
             """
             DELETE FROM loom.entity_edge_rows

@@ -123,12 +123,13 @@ def assert_unlocked(row: Any, action: LockAction, *, op: str, now: datetime | No
         raise refusal(row, action, op=op, mode=mode)
 
 
-def locked_predicate(alias: str = "") -> str:
-    """SQL: the row carries a lock that is in force. `alias` prefixes columns."""
+def locked_predicate(alias: str = "", now: str = "now()") -> str:
+    """SQL: the row carries a lock that is in force at `now`. `alias` prefixes columns.
+    A mutation passes a bound parameter: a replicated table refuses now() in one."""
     a = f"{alias}." if alias else ""
-    return f"({a}lock_mode != '' AND ({a}lock_until IS NULL OR {a}lock_until > now()))"
+    return f"({a}lock_mode != '' AND ({a}lock_until IS NULL OR {a}lock_until > {now}))"
 
 
-def unlocked_predicate(alias: str = "") -> str:
+def unlocked_predicate(alias: str = "", now: str = "now()") -> str:
     a = f"{alias}." if alias else ""
-    return f"({a}lock_mode = '' OR ({a}lock_until IS NOT NULL AND {a}lock_until <= now()))"
+    return f"({a}lock_mode = '' OR ({a}lock_until IS NOT NULL AND {a}lock_until <= {now}))"

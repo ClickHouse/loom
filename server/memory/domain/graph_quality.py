@@ -239,6 +239,9 @@ _FIRST_PERSON_FORMS = frozenset(
 SELF_SUBJECT = "user"
 # The most triples one memory row states; the triple writer keeps the first ones.
 MAX_TRIPLES_PER_ROW = 8  # not a setting: a wire bound of `relations`
+# The longest entity name kept, as written. Longer text is not a name, and a read binds
+# names as query parameters, which ClickHouse caps at 128 KiB each.
+MAX_ENTITY_CHARS = 256  # not a setting: a wire bound of a triple's subject and object
 
 # Singularize the head noun so distinct-thing COUNTs don't split on
 # plural/singular surface forms ("data breach" vs "data breaches", "kit" vs
@@ -441,9 +444,12 @@ def canonical_entity(raw: str) -> CanonicalEntity:
 
     Collapses first-person forms (i / me / user / ...) to "user" to match the
     read side (graph seeds and query triples use `canonical_entity_text`); the original
-    surface form is preserved in `aliases` for provenance and recall."""
+    surface form is preserved in `aliases` for provenance and recall. Text longer than
+    `MAX_ENTITY_CHARS` is no entity: its text is empty."""
 
     original = str(raw or "").strip()
+    if len(original) > MAX_ENTITY_CHARS:
+        return CanonicalEntity(text="", entity_id="")
     text = _normalise(original.lower())
     entity_id = text.replace(" ", "_")
     return CanonicalEntity(text=text, entity_id=entity_id, aliases=[original] if original else [])
@@ -756,20 +762,26 @@ def restates_current(
     return [r.old_object for r in verdict] == [repair.new_object]
 
 
+def names_only(values: list[str]) -> list[str]:
+    """`values` without the text too long to be an entity name."""
+    return [v for v in values if len(v.strip()) <= MAX_ENTITY_CHARS]
+
+
 def facet_triples(
     agent: str, fact_verbs: list[str], files: list[str], concepts: list[str], topics: list[str]
 ) -> Iterator[tuple[str, str, str]]:
     """The facet triples Loom mints for one entry, about its actor (the agent).
     Files and concepts become code nodes, so facts.traverse answers "what touches
-    this file"; topics hang off `about`, so a topic never passes for a library."""
+    this file"; topics hang off `about`, so a topic never passes for a library. An item too
+    long to be a name (`MAX_ENTITY_CHARS`) mints no node."""
     subject = canonical_entity_text(agent or "user") or "user"
-    for path in files:
+    for path in names_only(files):
         yield (
             subject,
             code_facet_relation("file", fact_verbs),
             canonical_entity_text(path) or path.lower(),
         )
-    for concept in concepts:
+    for concept in names_only(concepts):
         lowered = concept.lower()
         node = (
             lowered
@@ -777,5 +789,5 @@ def facet_triples(
             else (canonical_entity_text(concept) or lowered)
         )
         yield subject, code_facet_relation(classify_code_concept(concept), fact_verbs), node
-    for topic in topics:
+    for topic in names_only(topics):
         yield subject, "about", canonical_entity_text(topic) or topic.lower()

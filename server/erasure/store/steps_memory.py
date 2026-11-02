@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
 
+from server.core.ch_params import chunks
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.mutations import (
@@ -17,7 +19,8 @@ from server.erasure.store.mutations import (
     purge_mode,
     tombstone_scoped,
 )
-from server.erasure.store.predicates import NS_EQ, ORG_NS, ORG_UID, UID, USER_CHUNKS
+from server.erasure.store.predicates import CHUNK_KEYS_IN, NS_EQ, ORG_NS, ORG_UID, UID
+from server.erasure.store.scope_reads import hashes, slices_or_one_empty, user_key_pairs
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
 
@@ -208,20 +211,25 @@ async def tombstone_shared_embeddings_by_user(
     memory whose source includes this user_id.
 
     Shared embeddings don't directly carry user_id (sentinel
-    agent='_shared'), so join against loom.shared on memory_key + the
-    same promoted_from predicate.
+    agent='_shared'), so the keys of the loom.shared rows the same
+    promoted_from predicate matches are read first, then named.
     """
-    return await tombstone_scoped(
-        "loom.memory_embeddings",
-        org=org,
-        scope_where=(
-            "scope = 'shared' AND memory_key IN ("
-            "SELECT memory_key FROM loom.shared FINAL "
-            f"WHERE org = {{org:String}} AND {_PROMOTED_FROM_USER})"
-        ),
-        params={"uid": user_id},
-        ch=ch,
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT DISTINCT memory_key FROM loom.shared FINAL "
+        f"WHERE org = {{org:String}} AND {_PROMOTED_FROM_USER}",
+        params={"org": org, "uid": user_id},
     )
+    total = 0
+    for part in chunks(sorted(str(r["memory_key"]) for r in rows)):
+        total += await tombstone_scoped(
+            "loom.memory_embeddings",
+            org=org,
+            scope_where="scope = 'shared' AND memory_key IN {keys:Array(String)}",
+            params={"keys": part},
+            ch=ch,
+        )
+    return total
 
 
 async def tombstone_memory_by_namespace(
@@ -540,9 +548,17 @@ async def tombstone_memory_chunks_by_user(
     user, and the chunks whose parent memories' (namespace, key) pairs are the
     user's, read from loom.memory (tombstoned rows included — the memory step
     runs first and the chunks must follow it, not escape it)."""
-    return await tombstone_scoped(
-        "loom.memory_chunks", org=org, scope_where=USER_CHUNKS, params={"uid": user_id}, ch=ch
-    )
+    ch = ch or _default_client()
+    total = 0
+    for part in slices_or_one_empty(await user_key_pairs(org, user_id, ch=ch)):
+        total += await tombstone_scoped(
+            "loom.memory_chunks",
+            org=org,
+            scope_where=CHUNK_KEYS_IN,
+            params={"uid": user_id, "keys": part},
+            ch=ch,
+        )
+    return total
 
 
 async def tombstone_memory_chunks_by_namespace(
@@ -780,12 +796,16 @@ async def tombstone_documents_by_namespace(
 
 
 # Another writer's live versions of a document whose newest version is the user's:
-# what deleting the user's rows would otherwise bring back.
+# what deleting the user's rows would otherwise bring back. `docs` holds the
+# documents read before the user's rows are deleted, each as
+# `cityHash64(namespace, source_uri)`: nothing bounds a stored URI.
+_USERS_DOCUMENTS = (
+    "SELECT DISTINCT cityHash64(namespace, source_uri) AS h FROM loom.documents FINAL"
+    " WHERE org = {org:String} AND user_id = {uid:String}"
+)
 _REPLACED_BY_USER = (
     "org = {org:String} AND user_id != {uid:String} AND superseded_at IS NULL"
-    " AND (namespace, source_uri) IN ("
-    " SELECT namespace, source_uri FROM loom.documents FINAL"
-    " WHERE org = {org:String} AND user_id = {uid:String})"
+    " AND cityHash64(namespace, source_uri) IN {docs:Array(UInt64)}"
 )
 
 
@@ -798,16 +818,19 @@ async def tombstone_documents_by_user(
     """Supersede the documents the user wrote, in any namespace of the org; a
     purge deletes every version of theirs instead, after superseding another
     writer's versions that one of theirs replaced, so none reads as live again."""
+    ch = ch or _default_client()
     if purge_mode():
-        await count_then_mutate(
-            "loom.documents",
-            count_where=_REPLACED_BY_USER,
-            mutation="UPDATE superseded_at = {now:DateTime}",
-            mutation_where=_REPLACED_BY_USER,
-            params={"org": org, "uid": user_id},
-            final=False,  # those versions are hidden under FINAL until the delete
-            ch=ch,
-        )
+        rows = await ch.query_all(_USERS_DOCUMENTS, params={"org": org, "uid": user_id})
+        for part in chunks(hashes(rows)):
+            await count_then_mutate(
+                "loom.documents",
+                count_where=_REPLACED_BY_USER,
+                mutation="UPDATE superseded_at = {now:DateTime}",
+                mutation_where=_REPLACED_BY_USER,
+                params={"org": org, "uid": user_id, "docs": part},
+                final=False,  # those versions are hidden under FINAL until the delete
+                ch=ch,
+            )
         return await count_then_mutate(
             "loom.documents",
             count_where=ORG_UID,
@@ -831,7 +854,7 @@ async def tombstone_documents_by_user(
 # The originals the user uploaded (`loom.blob_uploads`: a document version
 # naming one may since have been replaced and merged away), or that a version
 # of their documents still names, that no other writer's live document shares
-# (two documents with the same bytes share one row).
+# (two documents with the same bytes share one row). Read, then deleted by name.
 _USERS_OWN_BLOBS = (
     "org = {org:String} AND (namespace, toString(sha256)) IN ("
     " SELECT namespace, toString(sha256) FROM loom.blob_uploads"
@@ -844,21 +867,46 @@ _USERS_OWN_BLOBS = (
     " AND superseded_at IS NULL)"
 )
 _USERS_UNERASED = ORG_UID + " AND blob_path != '' AND blob_erased_at IS NULL"
+_BLOBS_IN = "(namespace, toString(sha256)) IN {blobs:Array(Tuple(String, String))}"
+
+
+async def _users_own_blobs(
+    org: str, user_id: str, ch: _CHClient, among: list[tuple[str, str]] | None = None
+) -> list[tuple[str, str]]:
+    """The (namespace, sha256) of the originals `_USERS_OWN_BLOBS` names, of `among`
+    when given."""
+    where = _USERS_OWN_BLOBS
+    params: dict[str, Any] = {"org": org, "uid": user_id}
+    if among is not None:
+        where += f" AND {_BLOBS_IN}"
+        params["blobs"] = among
+    rows = await ch.query_all(
+        "SELECT DISTINCT namespace, toString(sha256) AS sha "
+        f"FROM loom.document_blobs WHERE {where}",
+        params=params,
+    )
+    return sorted({(str(r["namespace"]), str(r["sha"])) for r in rows})
 
 
 async def erase_blobs_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
     """Delete the user's uploaded originals no other writer shares, stamp
     `blob_erased_at` on every document of the user's that had one, then delete
-    the record of their uploads. Returns the originals deleted."""
-    n = await count_then_mutate(
-        "loom.document_blobs",
-        count_where=_USERS_OWN_BLOBS,
-        mutation="DELETE",
-        mutation_where=_USERS_OWN_BLOBS,
-        params={"org": org, "uid": user_id},
-        final=False,
-        ch=ch,
-    )
+    the record of their uploads. Returns the originals deleted.
+
+    Each slice of originals is read again right before its DELETE, so an original that
+    another writer's document named since the first read stays."""
+    ch = ch or _default_client()
+    n = 0
+    for part in chunks(await _users_own_blobs(org, user_id, ch)):
+        still_own = await _users_own_blobs(org, user_id, ch, part)
+        if still_own:
+            n += await delete_scoped(
+                "loom.document_blobs",
+                org=org,
+                scope_where=_BLOBS_IN,
+                params={"blobs": still_own},
+                ch=ch,
+            )
     await count_then_mutate(
         "loom.documents",
         count_where=_USERS_UNERASED,

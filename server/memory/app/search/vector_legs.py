@@ -292,7 +292,7 @@ def _wire_hit(
 def _stamp_leg_tags[HitT](leg_hit: Any, wire_hit: HitT) -> HitT:
     """A service-layer hit from a fact-table leg (fact, lexical union, unmatched, query
     neighbour) read the row's `tags`; keep them on the wire hit privately. Chunk / summary /
-    record hits read none and stay unstamped (the belt does not judge them). A fact row's
+    record hits read none and stay unstamped (the belt does not judge them). The row's
     stored identity rides along the same way."""
     if _tagged_row_hit(wire_hit):
         _stamp_row_tags(wire_hit, getattr(leg_hit, "tags", None))

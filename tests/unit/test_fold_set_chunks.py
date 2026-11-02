@@ -9,13 +9,21 @@ with chunk ids; folded, a chunk is a path to its fact, not a result.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from server.memory.app.retrieval import SearchHit, fusion
 from server.memory.app.retrieval import pool as S
-from server.memory.app.retrieval.pool import fold_set_chunks
+from server.memory.app.retrieval.pool import (
+    ChunkId,
+    SetChunkRow,
+    fold_set_chunks,
+    fold_shared_set_chunks,
+)
+from server.memory.domain.search_types import hit_row_key, row_key_of
 
 
 def _hit(
@@ -44,14 +52,14 @@ def _set_chunk(parent: str, idx: int, score: float, excerpt: str = "") -> Search
 
 def test_a_pool_without_set_chunks_is_returned_as_is() -> None:
     hits = [_hit("a", 0.9), _hit("chunk:sess-1:0", 0.8, "chunk"), _hit("b", 0.7)]
-    assert fold_set_chunks(hits) is hits
+    assert fold_shared_set_chunks(hits) is hits
 
 
 def test_chunk_with_parent_in_pool_merges_and_lifts_the_parent() -> None:
     parent = _hit("lesson_a", 0.60, excerpt="head of the value")
     chunk = _set_chunk("lesson_a", 2, 0.85, excerpt="the matching passage")
     other = _hit("lesson_b", 0.70)
-    out = fold_set_chunks([chunk, other, parent])
+    out = fold_shared_set_chunks([chunk, other, parent])
     assert [h.memory_key for h in out] == ["lesson_a", "lesson_b"]
     folded = out[0]
     assert folded.source == "fact"
@@ -64,7 +72,7 @@ def test_chunk_with_parent_in_pool_merges_and_lifts_the_parent() -> None:
 def test_a_lower_scored_chunk_keeps_the_parents_excerpt_and_score() -> None:
     parent = _hit("lesson_a", 0.90, excerpt="head")
     chunk = _set_chunk("lesson_a", 0, 0.40, excerpt="tail passage")
-    out = fold_set_chunks([parent, chunk])
+    out = fold_shared_set_chunks([parent, chunk])
     assert [h.memory_key for h in out] == ["lesson_a"]
     assert out[0].rank_score == pytest.approx(0.90)
     assert out[0].content_excerpt == "head"
@@ -73,7 +81,7 @@ def test_a_lower_scored_chunk_keeps_the_parents_excerpt_and_score() -> None:
 
 def test_chunk_without_parent_in_pool_becomes_the_parent_hit() -> None:
     chunk = _set_chunk("lesson_z", 3, 0.75, excerpt="only the tail matched")
-    out = fold_set_chunks([_hit("lesson_b", 0.8), chunk])
+    out = fold_shared_set_chunks([_hit("lesson_b", 0.8), chunk])
     assert [h.memory_key for h in out] == ["lesson_b", "lesson_z"]
     z = out[1]
     assert z.source == "fact" and z.parent_memory_key == ""
@@ -84,7 +92,7 @@ def test_chunk_without_parent_in_pool_becomes_the_parent_hit() -> None:
 
 
 def test_several_chunks_of_one_absent_parent_collapse_to_one_row() -> None:
-    out = fold_set_chunks(
+    out = fold_shared_set_chunks(
         [
             _set_chunk("lesson_z", 0, 0.70),
             _set_chunk("lesson_z", 4, 0.80),
@@ -100,7 +108,7 @@ def test_several_chunks_of_one_absent_parent_collapse_to_one_row() -> None:
 def test_conversation_chunks_and_chunks_without_a_parent_pass_through() -> None:
     conv = _hit("chunk:sess-9:2", 0.9, "chunk")
     orphan = _hit("chunk:memory.set:lesson_q:0", 0.8, "chunk")  # no parent_memory_key
-    out = fold_set_chunks([conv, orphan, _hit("lesson_a", 0.5)])
+    out = fold_shared_set_chunks([conv, orphan, _hit("lesson_a", 0.5)])
     assert [h.memory_key for h in out] == [
         "chunk:sess-9:2",
         "chunk:memory.set:lesson_q:0",
@@ -109,24 +117,29 @@ def test_conversation_chunks_and_chunks_without_a_parent_pass_through() -> None:
 
 
 def test_order_is_reestablished_by_the_shared_sort_key() -> None:
-    out = fold_set_chunks(
+    out = fold_shared_set_chunks(
         [_hit("lesson_b", 0.70), _set_chunk("lesson_a", 0, 0.95), _hit("lesson_c", 0.80)]
     )
     assert [h.memory_key for h in out] == ["lesson_a", "lesson_c", "lesson_b"]
 
 
 def test_finish_pool_folds_before_the_chunk_cap_and_floor(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With the fold on, a fact-only namespace under the deployment floor sees
-    no chunk ids at all; with it off, the old behaviour stands."""
+    """The fold runs before the chunk cap and floor: a fact-only namespace under the
+    deployment floor sees no chunk ids at all."""
     from server.settings import settings
 
     async def no_backfill(ch, q, hits):
         return hits
 
+    async def no_row_read(*a, **k):
+        raise AssertionError("shared scope reads no set-chunk row")
+
     monkeypatch.setattr(S, "_recency_backfill", no_backfill)
+    monkeypatch.setattr(S, "_set_chunk_rows", no_row_read)
     monkeypatch.setattr(settings, "memory_search_chunk_min_share", 0.4)
+    # shared scope folds the chunks by key: the order of fold and cap is the subject
     q = SimpleNamespace(
-        top_k=5, recency_intent=False, recency_pool_weight=0.0, chunk_max_share=None
+        scope="shared", top_k=5, recency_intent=False, recency_pool_weight=0.0, chunk_max_share=None
     )
     pool = [_set_chunk(f"lesson_{i}", 0, 0.9 - i * 0.01) for i in range(4)]
     pool += [_hit(f"fact_{i}", 0.6 - i * 0.01) for i in range(6)]
@@ -165,7 +178,7 @@ def test_the_floor_keeps_a_folded_parents_seat_but_the_cap_does_not_count_it(
     from server.memory.app.retrieval.pool import cap_chunk_share, floor_chunk_share
 
     facts = [_hit(f"fact_{i}", 0.9 - i * 0.01) for i in range(6)]
-    folded = fold_set_chunks([_set_chunk("lesson_z", 0, 0.30, excerpt="passage")])[0]
+    folded = fold_shared_set_chunks([_set_chunk("lesson_z", 0, 0.30, excerpt="passage")])[0]
     assert folded.source == "fact" and folded.score_components["folded_chunks"] == 1.0
     pool = facts + [folded]  # folded parent ranks last on score
     window = floor_chunk_share(list(pool), 5, 0.4)[:5]
@@ -183,16 +196,16 @@ def test_a_folded_row_is_rank_neutral_no_asserted_tiebreak() -> None:
     from server.memory.app.search.scoring import asserted_component
 
     converted = replace(
-        fold_set_chunks([_set_chunk("lesson_z", 0, 0.7)])[0], source_class="asserted"
+        fold_shared_set_chunks([_set_chunk("lesson_z", 0, 0.7)])[0], source_class="asserted"
     )
     assert converted.score_components["folded_lift"] == 1.0
     lifted = replace(
-        fold_set_chunks([_hit("lesson_a", 0.5), _set_chunk("lesson_a", 1, 0.8)])[0],
+        fold_shared_set_chunks([_hit("lesson_a", 0.5), _set_chunk("lesson_a", 1, 0.8)])[0],
         source_class="asserted",
     )
     assert lifted.score_components["folded_lift"] == 1.0
     kept = replace(
-        fold_set_chunks([_hit("lesson_b", 0.9), _set_chunk("lesson_b", 1, 0.4)])[0],
+        fold_shared_set_chunks([_hit("lesson_b", 0.9), _set_chunk("lesson_b", 1, 0.4)])[0],
         source_class="asserted",
     )
     assert "folded_lift" not in kept.score_components  # the parent's own score stood
@@ -202,3 +215,107 @@ def test_a_folded_row_is_rank_neutral_no_asserted_tiebreak() -> None:
     assert "asserted" not in converted.score_components
     assert "asserted" not in lifted.score_components
     assert kept.score_components["asserted"] == 1.0 and plain.score_components["asserted"] == 1.0
+
+
+_SHA = "5" * 64  # a chunk row's own content_sha256
+
+
+def _writer_chunk(user: str, excerpt: str = "") -> SearchHit:
+    # a set chunk is written under `memory.set:<key>`, never its row's session
+    return replace(
+        _set_chunk("lesson_a", 0, 0.9, excerpt),
+        identity=("a", user, "memory.set:lesson_a"),
+        session_id="memory.set:lesson_a",
+        chunk_sha256=_SHA,
+    )
+
+
+def test_a_chunk_folds_onto_the_row_it_was_cut_from() -> None:
+    mine = replace(_hit("lesson_a", 0.5), identity=("a", "u1", "s1"))
+    theirs = replace(_hit("lesson_a", 0.4), identity=("a", "u2", "s2"))
+    rows = {ChunkId("a", "u2", "lesson_a", 0, _SHA): SetChunkRow(("a", "u2", "s2"), 7, ())}
+    out = fold_set_chunks([mine, theirs, _writer_chunk("u2")], rows)
+    by_writer = {h.identity: h for h in out}
+    assert len(out) == 2
+    assert by_writer[("a", "u2", "s2")].rank_score == 0.9  # lifted by its own chunk
+    assert by_writer[("a", "u1", "s1")].rank_score == 0.5
+
+
+def test_a_chunk_of_a_newer_value_leaves_an_older_session_row_alone() -> None:
+    # the chunks hold the writer's newest value (s2); only the s1 row is pooled
+    older = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
+    rows = {ChunkId("a", "u", "lesson_a", 0, _SHA): SetChunkRow(("a", "u", "s2"), 7, ())}
+    out = fold_set_chunks([older, _writer_chunk("u", "the s2 passage")], rows)
+    by_session = {h.identity[2]: h for h in out}
+    assert by_session["s1"].content_excerpt == "lesson_a"
+    assert by_session["s2"].content_excerpt == "the s2 passage"
+    assert (by_session["s2"].session_id, by_session["s2"].version) == ("s2", 7)
+
+
+def test_a_hit_made_from_a_chunk_carries_its_rows_tags() -> None:
+    rows = {ChunkId("a", "u", "lesson_a", 0, _SHA): SetChunkRow(("a", "u", "s2"), 7, ("t",))}
+    (hit,) = fold_set_chunks([_writer_chunk("u")], rows)
+    assert hit.tags == ["t"]
+
+
+def test_a_named_chunk_never_folds_onto_a_fact_that_names_no_row() -> None:
+    bare = _hit("lesson_a", 0.5)  # a leg that read no identity
+    rows = {ChunkId("a", "u", "lesson_a", 0, _SHA): SetChunkRow(("a", "u", "s2"), 7, ())}
+    out = fold_set_chunks([bare, _writer_chunk("u")], rows)
+    assert {h.identity for h in out} == {None, ("a", "u", "s2")}
+
+
+def test_under_shared_scope_a_chunk_folds_onto_a_fact_of_its_key() -> None:
+    # no row is read (the writer's private row is never served there)
+    shared = replace(_hit("lesson_a", 0.5), identity=("_shared", "-", "-"))
+    (folded,) = fold_shared_set_chunks([shared, _writer_chunk("u", "the passage")])
+    assert (folded.identity, folded.content_excerpt) == (("_shared", "-", "-"), "the passage")
+
+
+def test_a_chunk_no_row_is_named_for_is_dropped() -> None:
+    # the read found no served row whose value cuts it, or the read failed
+    pooled = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
+    assert fold_set_chunks([pooled, _writer_chunk("u", "a stale passage")], {}) == [pooled]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_row_read_names_no_row_and_its_chunks_drop() -> None:
+    from server.memory.app.retrieval.pool import _set_chunk_rows
+    from server.memory.domain.search_types import SearchQuery
+
+    class _Down:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            raise RuntimeError("ClickHouse is unreachable")
+
+    chunk = _writer_chunk("u", "a passage")
+    q = SearchQuery(
+        org="o",
+        namespace="n",
+        scope="private",
+        agent="a",
+        embedding_model="m",
+        query_vec=[0.1],
+        top_k=5,
+    )
+    rows = await _set_chunk_rows(_Down(), q, [chunk])
+    assert rows == {}
+    pooled = replace(_hit("lesson_a", 0.5), identity=("a", "u", "s1"))
+    assert fold_set_chunks([pooled, chunk], rows) == [pooled]
+
+
+def test_under_shared_scope_a_converted_chunk_names_the_promoted_row() -> None:
+    # the chunk names its private writer; the hit made from it is the key's shared row
+    chunk = replace(
+        _set_chunk("lesson_z", 0, 0.7, "a passage"),
+        identity=("a", "u", "memory.set:lesson_z"),
+        session_id="memory.set:lesson_z",
+    )
+    (hit,) = fold_shared_set_chunks([chunk])
+    assert (hit.memory_key, hit.identity, hit.session_id) == (
+        "lesson_z",
+        ("_shared", "-", "-"),
+        "-",
+    )
+    # so a later leg that reads that row (key-match, digest descent) finds it pooled
+    promoted = {"agent": "_shared", "user_id": "-", "session_id": "-", "memory_key": "lesson_z"}
+    assert hit_row_key(hit, "ns") == row_key_of("ns", promoted)

@@ -19,9 +19,11 @@ from pydantic import BaseModel, ConfigDict
 from server.core import bm25
 from server.core.ch import caller_shaped, own_write_reads, sequential_reads
 from server.core.ch_errors import WIDTH_MISMATCH_CODE, error_code
+from server.core.ch_params import chunks
 from server.core.ch_writes import batched_insert_settings, committed_insert_settings
+from server.core.datetimes import naive_utc_now
 from server.core.errors import OverloadedError
-from server.core.repo_base import _CHClient, _default_client, param_slices
+from server.core.repo_base import _CHClient, _default_client
 from server.core.vectors import codes_state
 from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.knowledge.domain.conversations import (
@@ -442,7 +444,7 @@ async def mark_message_saved(
         f"""
         ALTER TABLE {table}
         UPDATE is_saved = true, user_id = {{uid:String}},
-               saved_at = coalesce(saved_at, now64(3))
+               saved_at = coalesce(saved_at, {{at:DateTime64(3, 'UTC')}})
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND agent = {{agent:String}} AND thread_id = {{tid:String}}
           AND msg_id = {{mid:String}} AND tombstoned_at IS NULL
@@ -457,6 +459,8 @@ async def mark_message_saved(
             "tid": thread_id,
             "mid": msg_id,
             "uid": user_id,
+            # bound: a replicated table refuses now64() in a mutation
+            "at": naive_utc_now(),
         },
     )
 
@@ -1336,7 +1340,7 @@ async def tombstone_messages(
     second pass closes the race `tombstone_embedding_if_message_gone` describes."""
     ch = ch or _default_client()
     await tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
-    for part in param_slices(msg_ids):
+    for part in chunks(msg_ids):
         await ch.execute(
             """
             ALTER TABLE loom.conversations
@@ -1547,10 +1551,10 @@ async def tombstone_embeddings(
             )
             turns = "(embedding_model, msg_id) IN {keys:Array(Tuple(String, String))}"
             keys = [(str(r["embedding_model"]), str(r["msg_id"])) for r in rows]
-            parts = [{**params, "keys": p} for p in param_slices(keys)]
+            parts = [{**params, "keys": p} for p in chunks(keys)]
         else:
             turns = "msg_id IN {ids:Array(String)}"
-            parts = [{**params, "ids": p} for p in param_slices(msg_ids)]
+            parts = [{**params, "ids": p} for p in chunks(msg_ids)]
         for bound in parts:
             # A reconcile can read a peer's copy as live and land after that peer's whole
             # delete. So it repeats until a read taken after its last write finds no

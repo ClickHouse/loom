@@ -3820,10 +3820,15 @@ settings:
   # already matching), "off". [live]
   # memory_search_key_match_mode: "gated"
 
-  # Rows per memory_key in the final block (0 = no cap), freeing slots taken by one key
-  # re-extracted per session (38 of 60 questions on one eval). Skipped for aggregational
-  # / temporal_diff shapes. [live]
+  # Rows of one memory_key kept by the final block, key-match and the entity follow (0 =
+  # no cap; the first two keep all for aggregational/temporal_diff), and one-per-key
+  # callers' over-fetch. [live]
   # memory_search_per_key_cap: 3
+
+  # How many of a writer's served rows of one key, those with the newest vectors, a
+  # pooled memory.set chunk is matched against, by value, to find the row it was cut
+  # from. [live]
+  # memory_search_set_chunk_rows: 64
 
   # How memory.search dates a chunk: "session" by its conversation's digest, "parent" by
   # the session's first fact anchor. [live]

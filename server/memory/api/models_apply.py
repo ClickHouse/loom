@@ -54,6 +54,7 @@ class ApplyFilter(BaseModel):
 
 class ApplySearch(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
+    # the least `similarity` (1 - cosine distance) a hit needs to be acted on
     min_score: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
@@ -201,6 +202,6 @@ class MemoryApplyOutput(BaseModel):
     noop: int = 0
     # Rows whose write raised; each row's `detail` says why.
     failed: int = 0
-    truncated: bool = False  # the filter matched more than `limit`
+    truncated: bool = False  # more of the caller's rows may match than `limit`
     # One entry per matched row: its identity, status, new version and detail.
     rows: list[ApplyRow] = Field(default_factory=list)

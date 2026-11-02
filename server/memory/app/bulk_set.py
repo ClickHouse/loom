@@ -8,7 +8,6 @@ import asyncio
 import logging
 from collections import Counter
 from contextvars import ContextVar
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
@@ -27,13 +26,12 @@ from server.memory.api.models_bulk import (
 from server.memory.app import after_write, webhooks
 from server.memory.app.bulk_rows import (
     _BULK_CARRIED_COLS,
+    StepOutcome,
     _bulk_build_rows,
     _bulk_embed_rows,
     _BulkWriteState,
-    copy_restated_verdicts,
-    drop_built_rows,
-    land_restated_merges,
-    settle_batch_rows,
+    settle_steps,
+    write_step_results,
 )
 from server.memory.app.bulk_verdicts import (
     BulkVerdictPlan,
@@ -275,24 +273,40 @@ async def _bulk_verdicts(
 def _apply_verdicts(
     state: _BulkWriteState, emb_idx_of: list[int], verdicts: dict[int, Any]
 ) -> BulkVerdictPlan:
-    """Settle which batch rows land now that the verdicts are known (a row an earlier
-    entry's landed pin refuses, or one its key already holds, is dropped), then fold the
-    verdicts into the rows that are left."""
-    replay = settle_batch_rows(state, verdicts)
-    emb_idx_of, verdicts = drop_built_rows(state, emb_idx_of, verdicts, replay.drop)
-    # Verdicts are keyed by row; skipped entries have results but no row.
-    row_results = [state.results[i] for i in state.row_results]
-    plan = apply_bulk_verdicts(
-        state.memory_rows,
-        state.embedding_rows,
-        emb_idx_of,
-        row_results,
-        verdicts,
-        stale_rows=replay.stale,
-        landed_rows=replay.landed,
+    """Replay the batch now that the verdicts are known (a row an earlier entry's landed
+    pin or a lock refuses, or one its key already holds, is dropped), fold the verdicts into the
+    rows that land or that a verdict keeps out, then write every entry's result."""
+    built = [s for s in state.steps if s.repeats is None]  # one per row, in row order
+    for i, step in enumerate(built):
+        step.verdict = verdicts.get(i)
+    for pos, i in enumerate(emb_idx_of):
+        built[i].embedding = state.embedding_rows[pos]
+    settle_steps(state)
+    # In built-row order, so a repeat that lands an earlier row's copy takes that row's
+    # place in `plan.memory_rows`, and the copy keeps that row's version: under
+    # `newest_wins` it reads as older than the rows written between the two entries.
+    position = {step: i for i, step in enumerate(built)}
+    judged = sorted(
+        (
+            s
+            for s in state.steps
+            if s.outcome in (StepOutcome.LAND, StepOutcome.RELABEL, StepOutcome.KEPT_OUT)
+        ),
+        key=lambda s: position[s.repeats or s],
     )
-    land_restated_merges(state, plan, replay, verdicts)
-    copy_restated_verdicts(state, plan, replay.copies)
+    plan = apply_bulk_verdicts(
+        [s.row for s in judged],
+        [s.embedding for s in judged if s.embedding is not None],
+        [i for i, s in enumerate(judged) if s.embedding is not None],
+        [s.result for s in judged],
+        # A repeat landing an earlier row has no verdict of its own: it answers clear.
+        {i: s.verdict for i, s in enumerate(judged) if s.verdict is not None},
+        stale_rows={id(s.row) for s in judged if s.stale},
+        landed_rows={
+            id(s.row) for s in judged if s.outcome in (StepOutcome.LAND, StepOutcome.RELABEL)
+        },
+    )
+    write_step_results(state, plan)
     state.memory_rows = plan.memory_rows
     state.embedding_rows = plan.embedding_rows
     return plan
@@ -491,12 +505,18 @@ def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
     """memory_key -> (identity key, version) of each key whose winning row (the
     highest version in the batch) lands unembedded and may have a live vector: the
     batch embedded an earlier entry of it, the replaced version was embedded, or the
-    lookup failed and nobody knows."""
+    lookup failed and nobody knows. A row the replay left without the vector its level
+    takes lands unembedded too."""
     winners = kept_versions(state.memory_rows)
     batch_embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
+    # an earlier entry's vector is not the winner's: match the row by its version
+    batch_vectors = {(str(r.get("memory_key")), int(r["version"])) for r in state.embedding_rows}
     out: dict[str, tuple[Any, int]] = {}
     for key, r in winners.items():
-        if is_embedded(str(r.get("memory_type")), str(r.get("sensitivity") or "")):
+        vectorless = key in state.vectorless_keys and (key, int(r["version"])) not in batch_vectors
+        if not vectorless and is_embedded(
+            str(r.get("memory_type")), str(r.get("sensitivity") or "")
+        ):
             continue
         prev = state.existing_rows.get(key)
         prev_embedded = prev is not None and is_embedded(
@@ -970,16 +990,12 @@ async def handle_memory_bulk_set(
     - `reinforce=False`: no `evidence` event for a restatement, merge or identity duplicate."""
     ch = get_client()
     embedder = get_embedder()
-    now_utc = datetime.now(UTC)
     # The write names its phases on the response.
     from server.memory.app.search.clock import StageClock
 
     _bulk_work: dict[str, Any] = {}
     _bulk_clock = StageClock(_bulk_work)
-    state = _BulkWriteState(
-        conflict_check_cap=conflict_check_cap,
-        reinforce=reinforce,
-    )
+    state = _BulkWriteState(conflict_check_cap=conflict_check_cap, reinforce=reinforce)
     await _bulk_existing_lookup(ch, input, state)
 
     identity_dupes = await _bulk_identity_dupes(ch, input)
@@ -988,13 +1004,13 @@ async def handle_memory_bulk_set(
     entity_resolution = await _bulk_resolve_entities(ch, input)
 
     _bulk_clock.mark("entity_resolution")
-    await _bulk_build_rows(input, state, identity_dupes, entity_resolution, now_utc)
+    await _bulk_build_rows(input, state, identity_dupes, entity_resolution)
     if state.pending:
         # Before the calls it pays for: a vector the coded table cannot take fails the batch.
         await codes_state.refuse_width("memory_embeddings", embedder.dim)
 
     emb_idx_of, value_vectors, entity_embeddings = await _bulk_embed_rows(
-        input, state, embedder, entity_resolution, _bulk_clock, now_utc
+        input, state, embedder, entity_resolution, _bulk_clock
     )
 
     plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)

@@ -315,6 +315,29 @@ def test_precedents_search_decisions_and_join_records(env) -> None:
     assert none.precedents == []  # no realized outcomes yet
 
 
+def test_a_decision_served_in_two_sessions_is_one_precedent(env, monkeypatch) -> None:
+    import server.memory.app.search as msearch
+    from server.memory.api.models_decision import DecisionPrecedentsInput
+
+    ch, calls, h = env
+    asyncio.run(h.handle_decision_record(record_input()))
+    (key,) = ch.records
+
+    asked: list[int] = []
+
+    async def two_rows(inp):
+        asked.append(inp.top_k)
+        hits = [SimpleNamespace(memory_key=key, similarity=s) for s in (0.9, 0.8)]
+        return SimpleNamespace(results=hits, embedding_model="fake")
+
+    monkeypatch.setattr(msearch, "handle_memory_search", two_rows)
+    out = asyncio.run(
+        h.handle_decision_precedents(DecisionPrecedentsInput(org="o", namespace="n", query="q"))
+    )
+    assert [p.similarity for p in out.precedents] == [pytest.approx(0.9)]
+    assert asked == [30]  # ten precedents at three rows each
+
+
 def test_chain_walks_authored_edges_and_attaches_decisions(env) -> None:
     from server.memory.api.models_decision import DecisionChainInput
 

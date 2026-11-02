@@ -19,6 +19,7 @@ import pytest
 import server.memory.app.search_tag_filter as tag_belt
 from server.core.tag_sql import TagFilter, tag_predicate
 from server.memory.api.models_search import _MemorySearchHit
+from server.memory.app.retrieval.pool import ChunkId, SetChunkRow, fold_set_chunks
 from server.memory.app.search import assemble, payload
 from server.memory.app.search.assemble import _drop_excluded_and_duplicates
 from server.memory.app.search.payload import _fill_hit_tags
@@ -35,7 +36,7 @@ from server.memory.app.search.tiers import _prepend_anchor, _prepend_recent
 from server.memory.app.search.vector_legs import _stamp_leg_tags
 from server.memory.app.search_tag_filter import stamp_row_tags, tagged_row_hit
 from server.memory.domain.search_sql import _build_where, hard_tag_filter
-from server.memory.domain.search_types import SearchQuery
+from server.memory.domain.search_types import SearchHit, SearchQuery
 
 TAG = "hasAny(e.tags, {tags:Array(String)})"
 
@@ -171,7 +172,7 @@ async def test_lexical_union_pool_selects_the_rows_tags(monkeypatch: pytest.Monk
         query_text="grace hash join",
         tags=["subsystem:SQL"],
     )
-    hits = await ms._lexical_recall_fallback(ch, q, set(), limit=50, max_distance=0.9)
+    hits = await ms._lexical_recall_fallback(ch, q, limit=50, max_distance=0.9)
     assert "e.tags AS tags" in ch.sql and TAG in ch.sql
     assert hits[0].tags == ["subsystem:SQL"]
 
@@ -455,3 +456,31 @@ async def test_ask_injection_legs_are_held_to_the_hard_filter(
     assert fill.index("_tag_belt(") > fill.index("_inject_named_evidence(")
     assert "abstention flows through" in inspect.getsource(abstain._early_answer)
     assert src.index("_fill_pool(") < src.index("_early_answer(")
+
+
+def _made_from_set_chunk(row_tags: tuple[str, ...]) -> _MemorySearchHit:
+    chunk = SearchHit(
+        memory_key="chunk:memory.set:k:0",
+        memory_type="episodic",
+        content_excerpt="a passage",
+        distance=0.2,
+        source="chunk",
+        parent_memory_key="k",
+        identity=("a", "u", "memory.set:k"),
+        chunk_sha256="sha",
+    )
+    rows = {ChunkId("a", "u", "k", 0, "sha"): SetChunkRow(("a", "u", "s1"), 3, row_tags)}
+    (made,) = fold_set_chunks([chunk], rows)
+    return _stamp_leg_tags(made, _hit("k"))
+
+
+@pytest.mark.asyncio
+async def test_a_hit_made_from_a_set_chunk_is_judged_by_its_own_row() -> None:
+    # fold -> stamp -> belt: the row's tags ride from the set-chunk read, so no key read
+    tagged, untagged = _made_from_set_chunk(("kind:lesson",)), _made_from_set_chunk(())
+    assert tagged._row_tags == ("kind:lesson",)
+    work: dict[str, Any] = {}
+    kept = await tag_belt.enforce_hard_tag_filter(
+        [tagged, untagged], _inp(tags=["kind:lesson"]), work, ["ns"]
+    )
+    assert kept == [tagged] and work == {"tag_filter_dropped": 1}
