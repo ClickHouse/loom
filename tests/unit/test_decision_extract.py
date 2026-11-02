@@ -1531,3 +1531,11 @@ async def test_a_dry_run_leaves_no_audit_row(monkeypatch) -> None:
     world.record("decision:gone", {"reasoning": "gone"})
     await _run(dry_run=True)
     assert world.audits == []
+
+
+def test_the_audited_ops_declare_an_audit_row_with_the_input_as_subject() -> None:
+    from server.memory.api.ops_crud import memory_delete_version
+    from server.memory.api.ops_decision import decision_record
+
+    for op in (decision_record, memory_delete_version):
+        assert op.audit and op.audit_subject is None

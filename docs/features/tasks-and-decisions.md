@@ -390,21 +390,23 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   marks `(unconfirmed)` by. The key's active record has the same verbatim fields and the extractor's row carries the
   same `files`, `source_resource_id` and `constraint` tag: no write. A verbatim field differs, or only those row
   fields do (a file that resolves once the code is indexed, a renamed heading), and the row is the extractor's,
-  unconfirmed and from this document: recorded again (the record is superseded, history keeps it). A verbatim field
-  differs and the row is confirmed and cites this document: no write; the full `decision.record` body is printed with
-  the row's agent, user and session, and the row is tagged `source-changed` by its `memory_id` (`memory.update_by_id`,
-  tags only, conditional on the value read: a value changed since, by `decision.outcome` or a re-record, is refused
-  and reported), unless it already carries the tag. The tag write is a new version by the extractor: the row's pin,
-  value and attestation stay (the value's hash does not change, so the attestation still binds it), and its actor and
-  age move to it, so the pre-edit line reads `by cli:decisions, just now`. To accept the body, a maintainer unpins a
-  pinned row with `memory.unpin` (`decision.record` on a pinned writer row answers 409 `PINNED_CONFLICT`) and sends
-  it; an attested row takes the body, and its attestation then reads stale until `memory.verify` binds it again. A
-  confirmed row is tagged whoever wrote it, as long as it cites this document. A row from another document, or another
-  identity's unconfirmed row, is neither revised nor tagged; its body is printed. Nor is a decision whose outcome
-  `decision.outcome` recorded: `decision.record` would rebuild it without the outcome. When a verbatim field of such a
-  decision differs, its row is tagged `source-changed` as a confirmed row is. With no record under the key, a
-  confirmed (pinned or attested) decision row under another key that reads the same at or above the namespace's
-  conflict threshold skips the candidate: `already recorded by <agent> under <key>`.
+  unconfirmed and from this document: recorded again (the record is superseded, history keeps it). `decision.record`
+  takes no precondition, so a `decision.outcome` that lands between the run's read and its re-record is replaced with
+  the rest of the record; the tag write's precondition likewise covers the value, not a tags-only change in the gap. A
+  verbatim field differs and the row is confirmed and cites this document: no write; the full `decision.record` body
+  is printed with the row's agent, user and session, and the row is tagged `source-changed` by its `memory_id`
+  (`memory.update_by_id`, tags only, conditional on the value read: a value changed since, by `decision.outcome` or a
+  re-record, is refused and reported), unless it already carries the tag. The tag write is a new version by the
+  extractor: the row's pin, value and attestation stay (the value's hash does not change, so the attestation still
+  binds it), and its actor and age move to it, so the pre-edit line reads `by cli:decisions, just now`. To accept the
+  body, a maintainer unpins a pinned row with `memory.unpin` (`decision.record` on a pinned writer row answers 409
+  `PINNED_CONFLICT`) and sends it; an attested row takes the body, and its attestation then reads stale until
+  `memory.verify` binds it again. A confirmed row is tagged whoever wrote it, as long as it cites this document. A row
+  from another document, or another identity's unconfirmed row, is neither revised nor tagged; its body is printed.
+  Nor is a decision whose outcome `decision.outcome` recorded: `decision.record` would rebuild it without the outcome.
+  When a verbatim field of such a decision differs, its row is tagged `source-changed` as a confirmed row is. With no
+  record under the key, a confirmed (pinned or attested) decision row under another key that reads the same at or
+  above the namespace's conflict threshold skips the candidate: `already recorded by <agent> under <key>`.
 - **Retire**: an unconfirmed `loom-decisions` row citing the document whose reasoning is no longer in the document's
   text is deleted with `memory.delete_version`, which also retires its record; a confirmed one, or one whose outcome
   `decision.outcome` recorded, is tagged `source-changed` instead. The reasoning read is the extractor's own record: a

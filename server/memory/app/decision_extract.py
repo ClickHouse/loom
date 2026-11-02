@@ -521,11 +521,12 @@ async def _reconcile(
         rec.action = "revised"
     rec.holds = True
     if not dry_run:
-        from server.memory.api.ops_decision import decision_record
         from server.memory.app.decision import handle_decision_record
 
-        out = await handle_decision_record(inp)
-        await _audit(decision_record, inp, out)
+        # decision.record takes no precondition: a decision.outcome that lands between the
+        # read above and this write is replaced by the new record, outcome and all.
+        await handle_decision_record(inp)
+        await _audit("decision.record", inp)
     return rec
 
 
@@ -689,22 +690,20 @@ async def _set_source_changed(row: MemoryRow, on: bool) -> bool:
     return bool(out.updated)
 
 
-async def _audit(op: Any, inp: Any, out: Any) -> None:
-    """The audit row the transport writes for `op` after a successful call (an op that
-    declares `audit`), written here since an in-process call has no transport: the op's
-    name, the writer actor (`process:cli:decisions`), the op's audit subject or else the
-    input. Best effort, as there."""
+async def _audit(op_name: str, inp: Any) -> None:
+    """The audit row the transport writes after a successful call of an op declaring
+    `audit` with no `audit_subject` (decision.record, memory.delete_version), written here
+    since an in-process call has no transport: the op's name, the writer actor
+    (`process:cli:decisions`) and the input. Best effort, as there."""
     from server.memory.app.provenance import writer_actor
     from server.observability import audit
 
-    if not op.audit:
-        return
-    try:
-        subject = op.audit_subject(inp, out) if op.audit_subject else inp.model_dump(mode="json")
-    except Exception:  # noqa: BLE001 — a subject that cannot be built still gets an audit row
-        subject = {}
     await audit.emit(
-        op.name, org=inp.org, namespace=inp.namespace, actor=writer_actor("-"), subject=subject
+        op_name,
+        org=inp.org,
+        namespace=inp.namespace,
+        actor=writer_actor("-"),
+        subject=inp.model_dump(mode="json"),
     )
 
 
@@ -803,8 +802,6 @@ async def _delete_row(report: ExtractReport, row: MemoryRow) -> bool:
 
     if report.dry_run:
         return True
-    from server.memory.api.ops_crud import memory_delete_version
-
     inp = MemoryDeleteVersionInput(
         org=row.org,
         namespace=row.namespace,
@@ -814,8 +811,8 @@ async def _delete_row(report: ExtractReport, row: MemoryRow) -> bool:
     )
     out = await handle_memory_delete_version(inp)
     if out.tombstoned:
-        await _audit(memory_delete_version, inp, out)
-    if not out.tombstoned:
+        await _audit("memory.delete_version", inp)
+    else:
         # Rewritten since it was read: the next run judges the new version.
         report.refused.append(f"{row.memory_key}: changed while the run read it")
     return bool(out.tombstoned)
