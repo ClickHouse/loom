@@ -98,6 +98,23 @@ async def test_the_assistant_reads_without_writing_or_recording_usage(
         # The full output: the identity the trimmed shape drops is there to cite.
         assert hit["session_id"] == "s-1" and hit["version"]
 
+        # An ask that names no agent reads the writer's row, not the client's own (empty).
+        asked = await _rpc(
+            c,
+            token,
+            "tools/call",
+            {
+                "name": "loom_memory_ask",
+                "arguments": {
+                    "namespace": ns,
+                    "session_id": "s-1",
+                    "query": "Tuesdays",
+                    "allow_synthesis": False,
+                },
+            },
+        )
+        assert "deploy/window" in asked["structuredContent"]["memory_keys"], asked
+
         # The same search over HTTP, from a named reader in a session (a read recall credit
         # counts), records recall usage; once it shows, the assistant's earlier search
         # would have too.

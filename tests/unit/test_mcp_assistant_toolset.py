@@ -485,3 +485,43 @@ def test_every_field_an_assistant_description_names_is_served() -> None:
             _model_fields(op.output_model, served, set())
         named = set(re.findall(r"`([a-z_0-9]+)", text)) - {"true", "false"}
         assert named <= served, (name, named - served)
+
+
+@pytest.mark.parametrize(
+    ("op_name", "on_assistant", "agent"),
+    [
+        # The assistant's own client holds no rows: an ask reads across agents and a
+        # brief is about the namespace's top writer.
+        ("memory.ask", True, "*"),
+        ("mentor.brief", True, ""),
+        # Elsewhere the client's agent fills in, as before.
+        ("memory.ask", False, "claude-code"),
+        ("mentor.brief", False, "claude-code"),
+    ],
+)
+def test_an_assistant_read_naming_no_agent_keeps_the_ops_default(
+    monkeypatch: pytest.MonkeyPatch, op_name: str, on_assistant: bool, agent: str
+) -> None:
+    from server.transport.assistant_call import set_assistant_call
+
+    async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
+        return {"org": "o", "namespace": "ns", "agent": "claude-code", "user_id": "-"}
+
+    monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
+    arguments: dict[str, Any] = {"query": "when is the deploy window?"}
+    set_assistant_call(on_assistant)
+    try:
+        asyncio.run(
+            mcp_call._bind_caller_identity(OPERATIONS_BY_NAME[op_name], arguments, None, None)
+        )
+    finally:
+        set_assistant_call(False)
+    assert arguments["agent"] == agent
+    # An agent the model names is kept on any connection.
+    named: dict[str, Any] = {"query": "q", "agent": "writer"}
+    set_assistant_call(True)
+    try:
+        asyncio.run(mcp_call._bind_caller_identity(OPERATIONS_BY_NAME[op_name], named, None, None))
+    finally:
+        set_assistant_call(False)
+    assert named["agent"] == "writer"
