@@ -6349,7 +6349,7 @@ export interface MentorAdoption {
   followed_sessions?: number;
 }
 
-export interface MentorEvidence {
+export interface UsageRung {
   rung: "attempt" | "success" | "committed_write" | "indexed_write" | "returned_hit" | "client_acknowledged" | "task_outcome";
   count?: number | null;
   source: "server" | "client";
@@ -6367,7 +6367,7 @@ export interface MentorBriefOutput {
   planes?: MentorPlane[];
   hints?: MentorHint[];
   adoption?: MentorAdoption[];
-  usage_evidence?: MentorEvidence[];
+  usage_evidence?: UsageRung[];
   ledger_from?: string | null;
   ledger_retention_days?: number | null;
   agents?: string[];

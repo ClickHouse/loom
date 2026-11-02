@@ -567,7 +567,8 @@ async def reported_keys(
     otherwise."""
     ch = ch or _default_client()
     labels = (
-        f"{_LEDGER_AGENT} AND {_COUNTED_CALL} AND success AND operation = 'memory.outcome' "
+        f"FROM loom.agent_events WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN} "
+        f"AND {_COUNTED_CALL} AND success AND operation = 'memory.outcome' "
         "AND args['outcome'] IN ('used', 'positive') AND args['out_recorded'] = 'true'"
     )
     (row,) = await ch.query_all(

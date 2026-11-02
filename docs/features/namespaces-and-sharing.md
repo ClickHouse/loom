@@ -199,8 +199,9 @@ are read at each brief, not from the cached profile. Those read from the call le
 count only the rows it records under the agent: a call whose body names no agent (a read
 by id, an MCP `memory.update`, the Python SDK's `memory.update` by default) or that reads
 across agents and is recorded under `*` (`memory.search` and `memory.ask` from the SDKs,
-MCP's cross-agent reads, a `memory.outcome` that names no agent) is not counted. A brief
-about no agent in particular has no ladder.
+MCP's cross-agent reads, a `memory.outcome` that names no agent) is not counted. The ladder
+reads no profile, so it answers when the mentor is off too; a brief about no agent in
+particular has no ladder.
 
 | Rung                  | Source   | Counts                                                                                                                                                                                                                                               |
 | --------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

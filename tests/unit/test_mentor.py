@@ -1099,10 +1099,14 @@ def test_mentor_brief_when_the_mentor_is_off_is_an_honest_empty_brief(
     from server.insights.api.models_mentor import MentorBriefInput
 
     monkeypatch.setattr(settings, "mentor_ttl_seconds", 0, raising=False)
+    ch = _CH({**_EVIDENCE_ROWS, M_RETENTION: [{"retention_days": 0}]})
+    monkeypatch.setattr(handler, "get_client", lambda: ch)
     out = asyncio.run(
         handler.handle_mentor_brief(MentorBriefInput(org="o", namespace="ns", agent="a"))
     )
     assert out.healthy is True and out.hints == [] and out.skipped == ["profile: unavailable"]
+    # The ladder reads no profile, so it still answers.
+    assert {e.rung: e.count for e in out.usage_evidence}["attempt"] == 1
 
 
 def test_planes_cover_every_registered_op_prefix() -> None:

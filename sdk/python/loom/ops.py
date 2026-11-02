@@ -14419,7 +14419,7 @@ class MentorBriefOutput(TypedDict, total=False):
     planes: NotRequired[list["MentorPlane"]]
     hints: NotRequired[list["MentorHint"]]
     adoption: NotRequired[list["MentorAdoption"]]
-    usage_evidence: NotRequired[list["MentorEvidence"]]
+    usage_evidence: NotRequired[list["UsageRung"]]
     ledger_from: NotRequired[Optional[str]]
     ledger_retention_days: NotRequired[Optional[int]]
     agents: NotRequired[list[str]]
@@ -14450,7 +14450,7 @@ class MentorAdoption(TypedDict, total=False):
     followed_sessions: NotRequired[int]
 
 
-class MentorEvidence(TypedDict, total=False):
+class UsageRung(TypedDict, total=False):
     "One rung of what the agent's use of Loom shows, weakest claim first."
 
     rung: Required[
