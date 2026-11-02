@@ -4,6 +4,7 @@ value cuts that chunk."""
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from typing import Any
 
@@ -219,20 +220,17 @@ async def test_rows_holding_one_value_chunk_it_once(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
-async def test_one_text_under_two_types_is_chunked_twice(monkeypatch: pytest.MonkeyPatch) -> None:
-    # the chunks follow the type, so a memo keyed on the text alone would merge these rows
-    from server.memory.app.retrieval import pool
-
-    calls: list[str] = []
-    real = pool.set_chunk_identities
-
-    def counting(value: Any, memory_type: str) -> Any:
-        calls.append(memory_type)
-        return real(value, memory_type)
-
-    monkeypatch.setattr(pool, "set_chunk_identities", counting)
-    ch = _local_ch(
-        _row("u", "s1", 1, LONG_V1, memory_type="procedural"), _row("u", "s2", 2, LONG_V1)
-    )
-    await _set_chunk_rows(ch, _q(), [_chunk("u", LONG_V1)])
-    assert sorted(calls) == ["procedural", "semantic"]
+async def test_one_text_under_two_types_is_cut_by_each_type() -> None:
+    # a procedure chunks from its steps, any other type from its JSON: the newer procedural
+    # row does not cut the chunk the older semantic row's text does
+    procedure = {
+        "name": "release",
+        "situation": "a release goes out",
+        "steps": [f"step {i}: check the replica lag and the merge queue" for i in range(120)],
+    }
+    text = json.dumps(procedure)
+    ch = _local_ch(_row("u", "s1", 1, text), _row("u", "s2", 2, text, memory_type="procedural"))
+    passage = plan_set_chunks(procedure, "semantic")[0][0][0]
+    (sha,) = {s for i, s in set_chunk_identities(procedure, "semantic") if i == 0}
+    chunk = replace(_chunk("u", LONG_V1), content_excerpt=passage, chunk_sha256=sha)
+    assert await _set_chunk_rows(ch, _q(), [chunk]) == _named(chunk, "s1", 1)
