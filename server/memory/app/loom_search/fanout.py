@@ -158,7 +158,7 @@ def drop_flagged_hits(memory: dict[str, Any]) -> dict[str, Any]:
     calibration are two thresholds: `drop` removes rows under the similarity floor,
     while the calibration flags rows under its own, higher bar — the reader is told to
     ignore those, so the agent surface does not serve them. The reader block loses their
-    paragraphs when `_rerender_memory_block` renders the block from the final rows. When
+    paragraphs when `search_sections` renders the block from the final rows. When
     every row is flagged the section is left as is: an abstain-shaped answer keeps its
     evidence."""
     hits = memory.get("results")
@@ -169,22 +169,6 @@ def drop_flagged_hits(memory: dict[str, Any]) -> dict[str, Any]:
         return memory
     kept = [h for h in hits if not (isinstance(h, dict) and h.get("below_threshold"))]
     return {**memory, "results": kept, "below_threshold_dropped": len(flagged)}
-
-
-def _rerender_memory_block(
-    payload: dict[str, Any],
-    models: dict[int, _MemorySearchHit],
-    question: str,
-    label_namespace: str,
-) -> None:
-    """Render the memory section's reader block from the rows the calibration
-    flags, answer_first and the precision floor left, through their search
-    models (`models`, by the id of each dumped row): the agent reads the
-    block, so a removed row must leave it, and the models still carry the
-    scoring the restatement notes read."""
-    mem = payload["memory"]
-    served = [models[id(h)] for h in mem.get("results") or []]
-    mem["reader_block"] = render_reader_block(served, question, label_namespace=label_namespace)
 
 
 async def _conversation_leg(conv_input: Any, scope: ReadFilters) -> Any:
@@ -279,7 +263,9 @@ async def search_sections(
     # The QA verdict leads when the question is a defect report.
     payload: dict[str, Any] = {"tracker": t_section} if isinstance(t_section, dict) else {}
     payload["namespaces_skipped"] = skipped
-    models: dict[int, _MemorySearchHit] = {}  # each dumped row's search model, by the row's id
+    # Each dumped row and its search model, by the row's id. Holding the row keeps its
+    # id from being reused, so a step that copied a row would fail the lookup.
+    models: dict[int, tuple[dict[str, Any], _MemorySearchHit]] = {}
     # The input the memory search ran (the block renders with its sanitized query,
     # as memory.search does); None for a parked page, which searched nothing.
     settled: MemorySearchInput | None = None
@@ -287,7 +273,7 @@ async def search_sections(
         payload["memory"] = {"error": _leg_error(mem_result), "results": []}
     else:
         memory = mem_result.model_dump()
-        models = {id(d): m for d, m in zip(memory["results"], mem_result.results, strict=True)}
+        models = {id(d): (d, m) for d, m in zip(memory["results"], mem_result.results, strict=True)}
         settled = mem_result._settled_input
         payload["memory"] = drop_flagged_hits(memory)
     if isinstance(know_result, Exception):
@@ -323,14 +309,15 @@ async def search_sections(
         conv_dump.pop("hits", None)
         payload["conversations"] = {**conv_dump, "results": conv_hits}
 
-    # drop_flagged_hits, answer_first and its floor filter the row dicts they are given
-    # and never copy them, and `memory` holds every dumped row until the block is
-    # rendered (so the ids stay unique): each served row still maps to its model by id.
     payload = answer_first(payload, namespace, explain=explain)
     if settled is not None:
-        # The repository's rows are labelled, unless the search is addressed to it.
+        # The block is rendered from the rows left after trimming, through their models:
+        # the dumps hide the score_components the restatement notes read. The
+        # repository's rows are labelled, unless the search is addressed to it.
+        mem = payload["memory"]
+        served = [models[id(h)][1] for h in mem["results"]]
         label = "" if repo_namespace == namespace else repo_namespace
-        _rerender_memory_block(payload, models, settled.query, label)
+        mem["reader_block"] = render_reader_block(served, settled.query, label_namespace=label)
     return payload
 
 

@@ -431,11 +431,8 @@ class MemorySearchInput(BaseModel):
     # Internal: 1 inside a pass memory.search re-entered itself (the iterative retry, a
     # read-your-writes re-read after the first pass); such a pass never re-enters again.
     _pass_depth: int = 0
-    # Internal: this pass's hits are merged into a parent that serves them (the
-    # iterative retry, or loom_search's repository decisions pass), so this pass
-    # writes no recall credit, trace log or exposure of its own: the iterative
-    # retry's parent records them once, and the decisions pass is credited through
-    # credit_merged_hits after the merge.
+    # Internal: this pass's hits are served by a parent (the iterative retry,
+    # loom_search's decisions pass), which writes the credit, trace and exposure.
     _merged_into_parent: bool = False
     # Shared cascade budget (_memory_search.SearchBudget) threaded through the
     # recursive fallback legs (iterative retry) so they share one

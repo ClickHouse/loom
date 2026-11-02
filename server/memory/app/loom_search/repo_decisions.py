@@ -137,14 +137,13 @@ async def memory_with_repo_decisions(
         return base
     # Credited as the base search credits its own: for the hits it hands on,
     # before the section's floors and answer-first rules, with the input the
-    # decision pass ran (a pass that searched always carries it).
+    # decision pass ran (_finish_search_output sets it on every pass that searched).
     assert decisions._settled_input is not None
     await credit_merged_hits(decisions._settled_input, added)
     update: dict[str, Any] = {
         "results": hits,
         "candidates_total": base.candidates_total + len(added),
         "namespaces_searched": list(dict.fromkeys([*base.namespaces_searched, repo_namespace])),
-        "reader_block": "",
     }
     if base.abstain:
         # The decisions answer where the home search could not: the section
