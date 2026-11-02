@@ -143,7 +143,7 @@ def _is_decision(hit: dict[str, Any]) -> bool:
     return is_decision(str(hit.get("memory_type") or ""), hit.get("tags") or [])
 
 
-def _body(hit: dict[str, Any], decision: bool) -> str:
+def _body(hit: dict[str, Any], *, decision: bool) -> str:
     """The value on one capped line; a decision's source follows it with its own cap,
     so the value's cut never reaches it."""
     text = _one_line(_readable(hit), _LINE_CHARS)
@@ -153,7 +153,7 @@ def _body(hit: dict[str, Any], decision: bool) -> str:
     return text
 
 
-def _status_notes(hit: dict[str, Any], decision: bool) -> str:
+def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
     """`(pinned)` for a pinned row, `(unconfirmed)` for a decision not pinned or attested
     (a stale attestation does not count), `(outcome: failed)` for a decision whose recorded
     outcome failed, and a note when its linked code changed or went."""
@@ -176,7 +176,7 @@ def _marker(hit: dict[str, Any], *, show_decision: bool) -> str:
     return f" [{', '.join(kinds)}]" if kinds else ""
 
 
-def _team_line(hit: dict[str, Any], now: datetime, decision: bool) -> str:
+def _team_line(hit: dict[str, Any], now: datetime, *, decision: bool) -> str:
     """`- Team rule (by alice, 3 days ago) [constraint]: … [id: key]`
     — who wrote it and when, so a wrong rule is attributable and removable;
     a newer rule that contradicts an older one says which it supersedes.
@@ -189,8 +189,8 @@ def _team_line(hit: dict[str, Any], now: datetime, decision: bool) -> str:
         who = f"{who}; {sup}" if who else sup
     label = "Decision" if decision else "Team rule"
     head = f"{label} ({who})" if who else label
-    marks = _marker(hit, show_decision=False) + _status_notes(hit, decision)
-    return f"- {head}{marks}: {_body(hit, decision)} [id: {hit['memory_key']}]"
+    marks = _marker(hit, show_decision=False) + _status_notes(hit, decision=decision)
+    return f"- {head}{marks}: {_body(hit, decision=decision)} [id: {hit['memory_key']}]"
 
 
 def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
@@ -199,17 +199,18 @@ def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
     if not team:
         return ""
     ns = str(team[0].get("namespace") or "")
-    # A newer rule supersedes a rule or a tagged decision, never a typed one.
+    # A newer rule supersedes any row but a key-identified one; decision.record corrects
+    # a typed decision.
+    steps = []
+    if not all(h.get("memory_type") in KEY_IDENTIFIED_TYPES for h in team):
+        steps.append("write a corrected rule for the file and tell its author")
     typed = [h.get("memory_type") == SCHEMA_NAME for h in team]
+    if any(typed):
+        steps.append("ask a decision's author or a maintainer to record the corrected decision")
     if all(typed):
         what = "decision"
     else:
         what = "rule or decision" if any(_is_decision(h) for h in team) else "rule"
-    steps = []
-    if not all(typed):
-        steps.append("write a corrected rule for the file and tell its author")
-    if any(typed):
-        steps.append("ask a decision's author or a maintainer to record the corrected decision")
     return (
         f'- A team {what} wrong or outdated? memory.delete(namespace="{ns}", memory_key=<id>) '
         f"removes it if you wrote it or are a maintainer; otherwise {'; or '.join(steps)}."
@@ -239,10 +240,10 @@ def render_block(
     for h in hits:
         decision = _is_decision(h)
         if _is_team(h, home):
-            line = _team_line(h, now, decision)
+            line = _team_line(h, now, decision=decision)
         else:
-            marks = _marker(h, show_decision=decision) + _status_notes(h, decision)
-            line = f"- {h['memory_key']}{marks}: {_body(h, decision)}"
+            marks = _marker(h, show_decision=decision) + _status_notes(h, decision=decision)
+            line = f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}"
         if used + len(line) + 1 > budget_chars:
             truncated = True
             break
@@ -269,7 +270,7 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     of one namespace cross-linked by `conflict_with` are an older row and a newer one that
     contradicts it. The newer is placed directly above the older and carries `supersedes_key` /
     `supersedes` / `supersedes_kind` (the older's key, author and kind). No new state: both
-    stay live until the older's author or an admin removes it, or a verdict retires it. Two
+    stay live until the older's author or a maintainer removes it, or a verdict retires it. Two
     typed decisions never pair: a decision's key is its identity, so one cross-linked to
     another is a second decision, not a newer version."""
     by_id = {str(r.get("memory_id")): r for r in rows if r.get("memory_id")}

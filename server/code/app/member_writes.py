@@ -110,8 +110,7 @@ def refusal_hint(existing: Any, *, op: str) -> dict[str, Any]:
     decision = is_decision(memory_type, getattr(existing, "tags", None) or [])
     if typed_decision:
         # A member cannot call decision.record, and no rule is shown above a typed decision.
-        # memory.update changes the row and not the decision's record, which the next
-        # decision.outcome writes back, so only a recorded decision corrects it.
+        # memory.update would not change the decision's record; decision.record does.
         steps = [
             f"ask {author} (who can memory.delete {key!r}) or a maintainer of {ns!r} (who "
             "can record the corrected decision with decision.record and delete this one)"
@@ -136,7 +135,7 @@ def assert_own_row(existing: Any, *, op: str) -> None:
     """The second check: under the member rule, a row written by another principal (its
     server-stamped `actor`) is refused 403 — a member revises and deletes only their own
     rows — with a `hint` naming the author, the key and what the member can do instead.
-    A no-op for a call the ordinary gate admitted (an admin), or when there is no row."""
+    A no-op for a call the ordinary gate admitted (a maintainer), or when there is no row."""
     if existing is None or not _member_write.get():
         return
     from fastapi import HTTPException

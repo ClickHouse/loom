@@ -354,6 +354,13 @@ def test_a_block_of_typed_decisions_says_only_how_to_correct_a_decision() -> Non
     assert footer == _FOOTER.format(what="decision", steps=_DECISION_STEP)
 
 
+def test_a_block_of_rules_and_tagged_decisions_says_only_the_rule_step() -> None:
+    rule = _decision("rules/r", "Keep 64.", memory_type="semantic", tags=["constraint"])
+    tagged = _decision("design/t", memory_type="semantic")
+    footer = _lines([rule, tagged])[-1]
+    assert footer == _FOOTER.format(what="rule or decision", steps=_RULE_STEP)
+
+
 def test_a_block_of_rules_and_decisions_says_both() -> None:
     rule = _decision("rules/r", "Keep 64.", memory_type="semantic", tags=["constraint"])
     footer = _lines([rule, _decision("design/a")])[-1]
