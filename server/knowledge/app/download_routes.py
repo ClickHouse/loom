@@ -106,7 +106,8 @@ _BUFFER_MAX_BYTES = 4 * 1024 * 1024
 async def _original_response(
     org: str, namespace: str, doc: documents_repo.DocumentRow, *, inline: bool
 ) -> Response | None:
-    """The answer carrying `doc`'s original, or None when no row holds it."""
+    """The answer carrying `doc`'s original, or None when no row or object holds it
+    whole."""
     from server.knowledge.store import blobs
 
     sha = doc.blob_path
@@ -229,9 +230,9 @@ async def _blob_response(
 ) -> StreamingResponse | None:
     """Stream an original from ClickHouse or the bucket without holding it in
     memory. The first chunks are read before the answer starts, so a failed
-    read is a plain error, a row deleted since its size was read is None, and
-    the preview type sees the file's opening bytes; the stream closes when the
-    body is sent or the client goes away."""
+    read is a plain error, a row or object deleted since its size was read is
+    None, and the preview type sees the file's opening bytes; the stream closes
+    when the body is sent or the client goes away."""
     stack = AsyncExitStack()
     try:
         chunks = await stack.enter_async_context(opened)
