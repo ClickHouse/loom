@@ -206,6 +206,7 @@
  "memory_proposals_policy_ttl_s",
  "memory_proposals_scan_cap",
  "memory_query_nodes_enabled",
+ "memory_repo_decisions_timeout_s",
  "memory_rrf_code_shape_hi",
  "memory_rrf_code_shape_lo",
  "memory_rrf_lexical_weight_floor",

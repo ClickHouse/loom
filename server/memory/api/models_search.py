@@ -8,7 +8,6 @@ from typing import Any, Literal
 from pydantic import (
     BaseModel,
     Field,
-    PrivateAttr,
     SerializerFunctionWrapHandler,
     model_serializer,
 )
@@ -432,9 +431,11 @@ class MemorySearchInput(BaseModel):
     # Internal: 1 inside a pass memory.search re-entered itself (the iterative retry, a
     # read-your-writes re-read after the first pass); such a pass never re-enters again.
     _pass_depth: int = 0
-    # Internal: this pass's hits are merged into a parent pass that serves them (the
-    # iterative retry), so the parent records recall credit, the trace log and exposure
-    # once, for what it serves.
+    # Internal: this pass's hits are merged into a parent that serves them (the
+    # iterative retry, or loom_search's repository decisions pass), so this pass
+    # writes no recall credit, trace log or exposure of its own: the iterative
+    # retry's parent records them once, and the decisions pass is credited through
+    # credit_merged_hits after the merge.
     _merged_into_parent: bool = False
     # Shared cascade budget (_memory_search.SearchBudget) threaded through the
     # recursive fallback legs (iterative retry) so they share one
@@ -660,7 +661,7 @@ class MemorySearchOutput(BaseModel):
         return data
 
     # The settled input this search ran (None for a parked page); private, never on the wire.
-    _settled_input: MemorySearchInput | None = PrivateAttr(default=None)
+    _settled_input: MemorySearchInput | None = None
     # The ranked hits, best first; empty when nothing passed the noise floor.
     results: list[_MemorySearchHit]
     # render="reader" only: the results as one prompt block ("[date] [key]

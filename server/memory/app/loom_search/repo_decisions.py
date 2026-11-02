@@ -43,10 +43,13 @@ async def search_repo_decisions(
         query=mem_input.query,
         top_k=mem_input.top_k,
         tags=mem_input.tags,
-        # An excerpt each, as loom_search serves; memory.get reads a whole body.
-        bodies="excerpt",
+        # A recorded statement fits the stored clip, and its reason comes last: an
+        # excerpt would cut it. bodies="none" still serves keys only.
+        bodies="none" if mem_input.bodies == "none" else "full",
         floor_mode=mem_input.floor_mode,
-        quality_filter=mem_input.quality_filter,
+        # The junk classifier targets captured session rows; a decision is authored,
+        # and two decisions under different keys are two decisions however alike.
+        quality_filter=False,
         # Hits are placed by similarity: one embedding, no model call. Pinned
         # here so the namespace's retrieval defaults and rerank config cannot
         # turn them back on.
@@ -60,7 +63,7 @@ async def search_repo_decisions(
     decision_input._merged_into_parent = True
     try:
         out = await asyncio.wait_for(
-            handle_memory_search(decision_input), timeout=settings.knowledge_repo_docs_timeout_s
+            handle_memory_search(decision_input), timeout=settings.memory_repo_decisions_timeout_s
         )
     except Exception as e:  # noqa: BLE001 — an additive leg never fails the caller
         log.info(
@@ -135,9 +138,13 @@ async def memory_with_repo_decisions(
 
     if not repo_namespace:
         return await handle_memory_search(mem_input)
-    base, decisions = await asyncio.gather(
-        handle_memory_search(mem_input), search_repo_decisions(mem_input, repo_namespace)
-    )
+    extra = asyncio.ensure_future(search_repo_decisions(mem_input, repo_namespace))
+    try:
+        base = await handle_memory_search(mem_input)
+    except BaseException:
+        extra.cancel()
+        raise
+    decisions = await extra
     if decisions is None:
         return base
     # The role ceiling the base search applied bounds the merged list too.

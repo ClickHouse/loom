@@ -222,7 +222,8 @@ async def test_the_repositorys_decisions_join_the_memory_section_by_similarity(
         ["repo:kj"],
     )
     assert extra.retrieval_budget == "fast" and extra._merged_into_parent
-    assert extra.bodies == "excerpt"
+    # the stored clip, so the reason the statement ends with is served
+    assert extra.bodies == "full" and extra.quality_filter is False
     decision = next(h for h in out.results if h.namespace == TRUNK)
     assert decision.score_components["foreign"] == 1.0
     assert out.namespaces_searched == ["me", TRUNK]
@@ -268,6 +269,44 @@ async def test_no_repository_runs_only_the_base_search(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_the_decision_pass_serves_keys_only_when_the_caller_asks_for_none(
+    monkeypatch,
+) -> None:
+    calls: list[MemorySearchInput] = []
+    await _leg(monkeypatch, TRUNK, calls, inp=BASE.model_copy(update={"bodies": "none"}))
+    assert next(c for c in calls if c.namespace == TRUNK).bodies == "none"
+
+
+@pytest.mark.asyncio
+async def test_the_junk_filter_does_not_run_over_the_repositorys_decisions(monkeypatch) -> None:
+    calls: list[MemorySearchInput] = []
+    await _leg(monkeypatch, TRUNK, calls, inp=BASE.model_copy(update={"quality_filter": True}))
+    by_ns = {c.namespace: c.quality_filter for c in calls}
+    assert by_ns == {"me": True, TRUNK: False}
+
+
+@pytest.mark.asyncio
+async def test_a_failing_base_search_cancels_the_decision_pass(monkeypatch) -> None:
+    cancelled = asyncio.Event()
+
+    async def handle_memory_search(inp: MemorySearchInput) -> MemorySearchOutput:
+        if inp.namespace != TRUNK:
+            await asyncio.sleep(0)
+            raise RuntimeError("base failed")
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        raise AssertionError("not cancelled")
+
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", handle_memory_search)
+    with pytest.raises(RuntimeError, match="base failed"):
+        await repo_decisions.memory_with_repo_decisions(BASE, repo_namespace=TRUNK)
+    await asyncio.wait_for(cancelled.wait(), 1.0)
+
+
+@pytest.mark.asyncio
 async def test_a_failing_slow_or_abstaining_decision_search_leaves_the_base(
     monkeypatch,
 ) -> None:
@@ -285,7 +324,7 @@ async def test_a_failing_slow_or_abstaining_decision_search_leaves_the_base(
     # the decision search does not answer in time
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "knowledge_repo_docs_timeout_s", 0.01)
+    monkeypatch.setattr(settings, "memory_repo_decisions_timeout_s", 0.01)
     monkeypatch.setattr(
         "server.memory.app.search.handle_memory_search", _search(PLANES, [], delay=0.05)
     )

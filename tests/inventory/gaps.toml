@@ -152,6 +152,7 @@
 "setting:insights_agents_connected_ttl_s" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:knowledge_bm25_corpus_ttl_s" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:knowledge_repo_docs_list_ttl_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
+"setting:knowledge_repo_docs_timeout_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:llm_rerank_skip_above" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:mcp_loom_search_knowledge_min_similarity" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_ask_aggregational_window" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }

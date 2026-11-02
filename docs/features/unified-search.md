@@ -87,7 +87,8 @@ that sends no session id).
 - `memory.candidates_total` counts the matches, and is at least the rows served; decisions merged in may push home
   rows out. When `memory.next_page` is set and the answer needs every match (a list, a count), call again with `page`
   = `memory.next_page`; later pages continue the home search alone. An expired handle abstains with `page_expired`.
-- Repository decisions are served as excerpts. `bodies_returned`, `bodies_elided` and `tokens_returned` count the home
+- Repository decisions are served at the stored clip (a recorded statement fits it, reason included), or as keys
+  only under `bodies=none`. `bodies_returned`, `bodies_elided` and `tokens_returned` count the home
   search's hits only.
 - The home search's trace row, exposure record and recall credit describe its own results before the merge; the
   decisions merged in get one exposure record and recall credit of their own.

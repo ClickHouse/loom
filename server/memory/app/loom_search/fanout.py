@@ -183,7 +183,7 @@ def _rerender_memory_block(
     block, so a removed row must leave it, and the models still carry the
     scoring the restatement notes read."""
     mem = payload["memory"]
-    served = [models[id(h)] for h in mem.get("results") or [] if id(h) in models]
+    served = [models[id(h)] for h in mem.get("results") or []]
     mem["reader_block"] = render_reader_block(served, question, label_namespace=label_namespace)
 
 

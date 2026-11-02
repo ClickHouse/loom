@@ -1993,8 +1993,7 @@ class KnowledgeSettings(BaseModel):
     knowledge_chunk_stride: Annotated[int, LIVE] = 1230
 
     # ---- timeouts, budgets and caches ----
-    # Seconds a read of the scoped repository's documents or decisions may take (the
-    # docs section of a brief, and loom_search's repository docs and decisions legs).
+    # Seconds the repository-docs read for a brief may take.
     knowledge_repo_docs_timeout_s: Annotated[float, LIVE] = Field(default=1.5, gt=0)
     # Seconds the BM25 corpus statistics of a knowledge namespace are cached.
     knowledge_bm25_corpus_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
@@ -3146,6 +3145,9 @@ class MemorySearchSettings(BaseModel):
     # per-hit explanation / score_components ride only under `explain: true`.
     # Keys, order and scores are unchanged. 0 = never.
     memory_search_excerpt_bodies_k: Annotated[int, LIVE] = 15
+    # Seconds loom_search's read of the scoped repository's decisions may take; a slower
+    # read adds nothing and the memory section serves the home search alone.
+    memory_repo_decisions_timeout_s: Annotated[float, LIVE] = Field(default=1.5, gt=0)
 
     # Visibility-ordered private-first fallback (non-scoped tokens): the best
     # private-namespace similarity that skips the public pass. "Private" is

@@ -707,6 +707,7 @@
  "memory_query_nodes_enabled": false,
  "memory_reinforcement_closer_cache_seconds": 300,
  "memory_reinforcement_closer_window_days": 14,
+ "memory_repo_decisions_timeout_s": 1.5,
  "memory_retrieval_empty_block_retries": 3,
  "memory_retrieval_empty_block_retry_sleep_s": 0.2,
  "memory_rrf_code_shape_hi": 0.3,

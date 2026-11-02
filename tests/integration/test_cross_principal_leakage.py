@@ -1840,32 +1840,31 @@ class _CodeDecision:
 @pytest.fixture
 def code_decision(control_plane_url: str, mint_test_token) -> typing.Iterator[_CodeDecision]:
     """A decision canary in the deployment's code namespace (its own trunk:
-    one configured branch), written by a writer on that namespace and
-    deleted afterwards."""
+    one configured branch), recorded through decision.record by a writer on
+    that namespace and deleted afterwards (which retires its record)."""
     org = os.environ.get("LOOM_CODE_ORG") or pytest.skip("LOOM_CODE_ORG unset: no code repo")
     ns = os.environ.get("LOOM_CODE_NAMESPACE") or pytest.skip("LOOM_CODE_NAMESPACE unset")
-    # The topic word keeps the question on this test's row.
-    d = _CodeDecision(
-        org,
-        ns,
-        f"decision_canary_{uuid.uuid4().hex[:6]}",
-        _canary(),
-        f"zqtopic{uuid.uuid4().hex[:8]}",
-    )
+    nonce, topic = _canary(), f"zqtopic{uuid.uuid4().hex[:8]}"
     tok = mint_test_token(org=org, namespaces=[ns], roles=["writer"], subject="maintainer")
-    ident = {"org": org, "namespace": ns, "agent": "maintainer", "memory_key": d.key}
     r = _post(
         control_plane_url,
         tok,
-        "memory.set",
+        "decision.record",
         {
-            **ident,
-            "value": f"We evict the {d.topic} cache entries early because {d.nonce} said so.",
-            "memory_type": "decision",
+            "org": org,
+            "namespace": ns,
+            "agent": "maintainer",
+            "category": "cache",
+            # The topic word keeps the question on this test's row.
+            "scenario": f"Evict the {topic} cache entries early?",
+            "outcome": "evict them early",
+            "reasoning": f"{nonce} measured the memory bound",
         },
     )
     assert r.status_code == 200, r.text
+    d = _CodeDecision(org, ns, r.json()["memory_key"], nonce, topic)
     yield d
+    ident = {"org": org, "namespace": ns, "agent": "maintainer", "memory_key": d.key}
     r = _post(control_plane_url, tok, "memory.delete", ident)
     assert r.status_code == 200, r.text
 
@@ -1943,16 +1942,15 @@ def test_loom_search_under_a_code_scope_serves_no_decision_to_a_non_reader(
         org=org, namespaces=[f"tenant-b-{uuid.uuid4().hex[:6]}"], roles=["writer"], subject=who
     )
     if who == "same_org":
-        # A deployment may make its code namespaces readable by the whole org;
-        # then this principal is a reader, not the case under test.
+        # The case needs a code namespace not readable org-wide (the default,
+        # LOOM_CODE_ORG_READABLE off, as CI runs it).
         r = _post(
             control_plane_url,
             tok,
             "memory.get",
             {"org": d.org, "namespace": d.namespace, "agent": "maintainer", "memory_key": d.key},
         )
-        if r.status_code == 200 and r.json().get("found"):
-            pytest.skip("the code namespace is readable by every principal of its org here")
+        assert r.status_code == 403 or not r.json().get("found"), r.text
     r = _loom_search_in_checkout(control_plane_url, tok, d)
     assert r.status_code == 200, r.text
     assert d.nonce not in r.text, f"{who} read the repository's decision"

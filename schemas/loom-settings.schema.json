@@ -2704,7 +2704,7 @@
           "default": 1.5,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds a read of the scoped repository's documents or decisions may take (the docs section of a brief, and loom_search's repository docs and decisions legs)."
+          "description": "Seconds the repository-docs read for a brief may take."
         },
         "knowledge_search_fanout_kinds": {
           "default": "memory,collection,personal",
@@ -3920,6 +3920,12 @@
           "default": 14,
           "type": "integer",
           "description": "Days a consumer's closer keeps its run-less reads credited."
+        },
+        "memory_repo_decisions_timeout_s": {
+          "default": 1.5,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds loom_search's read of the scoped repository's decisions may take; a slower read adds nothing and the memory section serves the home search alone."
         },
         "memory_retrieval_empty_block_retries": {
           "default": 3,

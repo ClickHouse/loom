@@ -829,7 +829,7 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_KNOWLEDGE_REPO_DOCS_TIMEOUT_S` | `float` | `1.5` | live | Seconds a read of the scoped repository's documents or decisions may take (the docs section of a brief, and loom_search's repository docs and decisions legs). |
+| `LOOM_KNOWLEDGE_REPO_DOCS_TIMEOUT_S` | `float` | `1.5` | live | Seconds the repository-docs read for a brief may take. |
 | `LOOM_KNOWLEDGE_BM25_CORPUS_TTL_S` | `float` | `300.0` | live | Seconds the BM25 corpus statistics of a knowledge namespace are cached. |
 | `LOOM_KNOWLEDGE_REPO_DOCS_LIST_TTL_S` | `float` | `60.0` | live | Seconds a repository's document list is cached for the docs section of a brief. |
 
@@ -1267,6 +1267,7 @@ memory.search: legs, fusion, ranking and gates.
 | `LOOM_MEMORY_SEARCH_QUERY_SPELLING_MAX_WORDS` | `int` | `6` | live | A query of at most this many words embeds each all-lowercase word of 4+ letters in the identifier spelling the caller's rows in the addressed namespace use most ("datalakecatalog" -> "DataLakeCatalog"; never "what" -> "What"). One read of the namespace beside the embed (100-300 ms for 40k rows), reused for a minute; fail-open. 0 = off. |
 | `LOOM_MEMORY_SEARCH_EXCERPT_CHARS` | `int` | `200` | live | Body length (chars) for bodies="excerpt" (the MCP search default). |
 | `LOOM_MEMORY_SEARCH_EXCERPT_BODIES_K` | `int` | `15` | live | Above this top_k a search that pinned no `bodies` serves excerpts, and per-hit explanation / score_components ride only under `explain: true`. Keys, order and scores are unchanged. 0 = never. |
+| `LOOM_MEMORY_REPO_DECISIONS_TIMEOUT_S` | `float` | `1.5` | live | Seconds loom_search's read of the scoped repository's decisions may take; a slower read adds nothing and the memory section serves the home search alone. |
 | `LOOM_MEMORY_SEARCH_PRIVATE_FIRST_STOP_SIMILARITY` | `float` | `0.3` | live | Visibility-ordered private-first fallback (non-scoped tokens): the best private-namespace similarity that skips the public pass. "Private" is namespace visibility, not the caller's role; scoped tokens use their priority order instead. |
 | `LOOM_MEMORY_SEARCH_TIER_STOP_SIMILARITY` | `float` | `0.4` | live | Tier waterfall stop: a per-tier best similarity at or above this stops the search before lower-priority tiers. A control cutoff, not a return filter (memory_search_min_similarity still gates rows); keep it above the noise band (~0.10-0.25) or a middling hit hides a stronger one. |
 | `LOOM_MEMORY_SEARCH_KEY_MATCH_MIN_STRENGTH` | `float` | `0.5` | live | A key matches when it covers at least this share of the query's idf-weighted stems (idf over the namespace's own keys). |
