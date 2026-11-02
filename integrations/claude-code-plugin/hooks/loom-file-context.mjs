@@ -11,9 +11,10 @@
 // abort), never a permission decision — this hook only ADDS context. One
 // lookup per (session, file) within LOOM_FILE_CONTEXT_TTL_MIN (default 30);
 // the tenth edit of the same file costs nothing. The same
-// request reads the repository's primary code namespace (team file rules,
-// marked "Team rule (by <author>, <age>)") when the checkout's cached repo
-// entry names one (a fresh cache: the primer and the shunt write it).
+// request reads the repository's primary code namespace (team file rules and
+// design decisions, marked "Team rule (by …)" or "Decision (by …)") when the
+// checkout's cached repo entry names one (a fresh cache: the primer and the
+// shunt write it).
 //
 //   LOOM_FILE_CONTEXT=off             disable
 //   LOOM_FILE_CONTEXT_TOKENS=300      budget for the injected block

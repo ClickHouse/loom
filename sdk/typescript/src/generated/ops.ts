@@ -4609,6 +4609,7 @@ export interface MemoryForFileHit {
   memory_key: string;
   memory_type: string;
   value: string;
+  value_truncated?: boolean;
   tags?: string[];
   confidence?: number;
   pinned?: boolean;
@@ -4619,7 +4620,10 @@ export interface MemoryForFileHit {
   actor?: string;
   supersedes_key?: string;
   supersedes?: string;
+  supersedes_kind?: "rule" | "decision" | "";
   matched_files?: string[];
+  source_resource_id?: string;
+  verification?: "human" | "process" | "stale" | "none";
   code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "";
 }
 

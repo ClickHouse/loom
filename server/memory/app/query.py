@@ -14,8 +14,6 @@ from fastapi import HTTPException
 from server.auth.context import current_auth
 from server.core.ch import caller_shaped, get_client
 from server.core.datetimes import naive_utc_now
-from server.core.hashing import hash_text
-from server.core.hashing import sha256_value_json as _sha256_value_json
 from server.core.tag_sql import TagFilter, list_tag_filter, tag_where
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_where
@@ -56,37 +54,11 @@ def _wants_usage(keep: frozenset[str] | None) -> bool:
 
 
 def _row_content_sha256(row: Any) -> str:
-    """Canonical hash of a MemoryRow's value; '' when there is no value.
-
-    The stored `content_sha256` wins when set (a list row carries the 2 KB preview, not the
-    value, so hashing it would read a verified row as stale); a whole, un-truncated value hashes
-    exactly; a truncated one without a stored hash cannot be confirmed."""
-    stored = hash_text(getattr(row, "content_sha256", None))
-    if _trust.hash_is_set(stored):
-        return stored
-    if getattr(row, "value", None) is None or getattr(row, "value_truncated", False):
-        return ""
-    return _sha256_value_json(json.dumps(row.value, default=str))
-
-
-def _list_verification(r: dict[str, Any]) -> str:
-    """Verification state for a fast-list row.
-
-    The list query selects a 2 KB value preview, so the live hash comes from
-    the stored `content_sha256` column when populated; a preview that was not
-    truncated hashes exactly; anything else cannot be confirmed and derives
-    as `stale` (an attestation that cannot be confirmed confers nothing).
-    """
-    stored = hash_text(r.get("content_sha256"))
-    if _trust.hash_is_set(stored):
-        current = stored
-    elif not r.get("value_truncated") and r.get("value") is not None:
-        current = _sha256_value_json(str(r.get("value")))
-    else:
-        current = ""
-    return _trust.verification_state(
-        r.get("verified_by") or "", r.get("verified_sha256") or "", current
-    )
+    """A MemoryRow's live hash; its `value` is decoded, so it is re-encoded."""
+    value = getattr(row, "value", None)
+    whole = value is not None and not getattr(row, "value_truncated", False)
+    value_json = json.dumps(value, default=str) if whole else None
+    return _trust.live_sha256(getattr(row, "content_sha256", None), value_json)
 
 
 def _preview_for_list(row: MemoryRow, max_chars: int) -> tuple[Any, bool]:
@@ -577,7 +549,7 @@ def _score_entry(r: dict[str, Any]) -> _MemoryListEntry:
         value=None if high else _decode_value(r.get("value")),
         value_truncated=high or bool(r.get("value_truncated")),
         verified_by=r.get("verified_by") or "",
-        verification=_list_verification(r),
+        verification=_trust.row_verification(r),
         sensitivity=r.get("sensitivity") or "",
     )
 

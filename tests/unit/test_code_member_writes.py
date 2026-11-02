@@ -359,3 +359,49 @@ def test_outside_the_member_rule_the_check_is_a_no_op() -> None:
     cmw.assert_own_row(_row("human:alice"), op="memory.delete")  # admin / ordinary writer
     cmw._member_write.set(True)
     cmw.assert_own_row(None, op="memory.set")  # a new rule: nothing to own yet
+
+
+@pytest.mark.asyncio
+async def test_a_refused_member_is_sent_to_the_decisions_author() -> None:
+    # A member cannot call decision.record, so the hint names who can.
+    row = _row("human:alice", memory_type="decision", memory_key="decision:k")
+    (step,) = cmw.refusal_hint(row, op="memory.delete")["next"]
+    assert step.startswith("ask alice (who can memory.delete 'decision:k') or a maintainer")
+    assert "decision.record" in step and "memory.update" not in step
+    assert not await cmw.code_member_may_write(
+        _auth("bob"), "decision.record", ORG, "code-clickhouse"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_names_a_decision_and_its_one_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import handlers as mem_handlers
+
+    _wire(monkeypatch, _row("human:alice", memory_type="decision"))
+    await _authorize("bob", "memory.delete", "code-clickhouse")
+    with pytest.raises(HTTPException) as e:
+        await mem_handlers.handle_memory_delete(_delete_input())
+    message = e.value.detail["message"]
+    assert "the team decision 'rules/join/bucket_count' was written by alice" in message
+    assert message.endswith(e.value.detail["hint"]["next"][0] + ".")
+
+
+@pytest.mark.asyncio
+async def test_a_row_tagged_decision_is_named_a_decision_with_the_rule_steps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The pre-edit block calls it a decision; a newer rule supersedes it, so the steps stay.
+    from server.memory.app import handlers as mem_handlers
+
+    _wire(monkeypatch, _row("human:alice", tags=["decision"]))
+    await _authorize("bob", "memory.delete", "code-clickhouse")
+    with pytest.raises(HTTPException) as e:
+        await mem_handlers.handle_memory_delete(_delete_input())
+    hint = e.value.detail["hint"]
+    assert hint["kind"] == "decision" and len(hint["next"]) == 2
+    assert "corrected rule" in hint["next"][0]
+    assert e.value.detail["message"].startswith(
+        "memory.delete: the team decision 'rules/join/bucket_count' was written by alice"
+    )

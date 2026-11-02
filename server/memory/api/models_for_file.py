@@ -13,8 +13,10 @@ or through a link to code in it (`server.memory.app.code_links`).
 Read-only, VIEWER. Rows tagged `constraint` sort first, then
 pinned, then confidence. `rendered` is cut at `token_budget` so the hook
 never pays more than it asked for. `extra_namespaces` (a repository's primary code
-namespace, where its team file rules live) runs the same query per readable namespace,
-merged in the same order, team rows marked with their author.
+namespace, where its team file rules and design decisions live) runs the same query per
+readable namespace, merged in the same order, team rows marked with their author. Each
+hit carries its `source_resource_id` and its `verification` state; a decision's rendered line
+carries the source after its value.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from server.memory.domain.code_change import CodeState
+from server.memory.domain.trust import VerificationState
 
 
 class MemoryForFileInput(BaseModel):
@@ -42,20 +45,23 @@ class MemoryForFileInput(BaseModel):
     # Conflicted rows are still live facts a reader should see; duplicates,
     # superseded and rejected rows are not.
     include_conflicted: bool = True
-    # The repository's primary code namespace (its team file
-    # rules), read beside `namespace`. Each is checked for read access like
-    # `namespace` would be and skipped silently when unreadable; its rows
-    # carry `namespace` and render as "Team rule (by <actor>):". The tag
-    # filter applies to `namespace` only — a code namespace is already the
-    # repository's.
+    # The repository's primary code namespace (its team file rules and design decisions),
+    # read beside `namespace`. Each is checked for read access like `namespace` would be
+    # and skipped silently when unreadable; its rows carry `namespace` and render as
+    # "Team rule (by <actor>):", or "Decision (by <actor>):" for a decision, which carries
+    # its source. The tag filter applies to `namespace` only — a code namespace is
+    # already the repository's.
     extra_namespaces: list[str] = Field(default_factory=list, max_length=2)
 
 
 class _MemoryForFileHit(BaseModel):
     memory_key: str
     memory_type: str
-    # First 600 chars of the value; the full row is a memory.get away.
+    # The stored JSON text, cut at 600 bytes; `rendered` prints it decoded. The full row is a
+    # memory.get away.
     value: str
+    # True when `value` was cut.
+    value_truncated: bool = False
     tags: list[str] = Field(default_factory=list)
     confidence: float = 1.0
     pinned: bool = False
@@ -66,14 +72,21 @@ class _MemoryForFileHit(BaseModel):
     # its extra_namespaces.
     namespace: str = ""
     # Who wrote the row (`human:<subject>` / `process:<subject>`);
-    # a team rule renders with it.
+    # a team row (rule or decision) renders with it.
     actor: str = ""
     # Set when this row and an older one of the same namespace
     # are cross-linked by the conflict check (`conflict_with`): the older's
-    # key and author. This row is placed directly above it.
+    # key, author and kind (`decision`, or `rule` for any row that is not a decision).
+    # This row is placed directly above it.
     supersedes_key: str = ""
     supersedes: str = ""
+    supersedes_kind: Literal["rule", "decision", ""] = ""
     matched_files: list[str] = Field(default_factory=list)
+    # Where the row was cited from (a document section, a file, a URL); '' when unset.
+    source_resource_id: str = ""
+    # The row's attestation (`memory.verify`), as on memory.get; an attested row whose value
+    # was cut and has no stored hash reads stale.
+    verification: VerificationState = "none"
     # The worst state of the row's links to code in the file ('' when it only names the
     # file in `files`): `fresh`, `moved`, `changed` (that code changed since the row was
     # written), `unresolved` (renamed or removed and not followed) or `missing` (gone).

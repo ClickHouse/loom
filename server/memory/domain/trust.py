@@ -20,11 +20,15 @@ agent cannot promote its own write to `human:`.
 from __future__ import annotations
 
 import re
-from typing import Literal
+from collections.abc import Mapping
+from typing import Any, Literal
 
+from server.core.hashing import hash_text, sha256_value_json
 from server.memory.domain.provenance import is_pipeline_actor
 
 VerificationState = Literal["human", "process", "stale", "none"]
+# The states in which an attestation binds the row's current content.
+CONFIRMED_STATES: frozenset[VerificationState] = frozenset({"human", "process"})
 
 HUMAN_PREFIX = "human:"
 PROCESS_PREFIX = "process:"
@@ -68,7 +72,7 @@ def attests(
     actor and no attested hash does not: memory.verify, the only writer of an
     attestation, always writes the hash with the actor, so an empty one binds
     nothing. The SQL form is `memory_repo.sql.attested_sql`."""
-    return verification_state(verified_by, verified_sha256, current_sha256) in ("human", "process")
+    return verification_state(verified_by, verified_sha256, current_sha256) in CONFIRMED_STATES
 
 
 def verification_state(
@@ -86,3 +90,21 @@ def verification_state(
     ):
         return "human" if verified_by.startswith(HUMAN_PREFIX) else "process"
     return "stale"
+
+
+def row_verification(r: Mapping[str, Any]) -> VerificationState:
+    """Verification state of a selected row; `value` is the stored JSON text, so it is
+    hashed as selected."""
+    whole = r.get("value") is not None and not r.get("value_truncated")
+    current = live_sha256(r.get("content_sha256"), str(r["value"]) if whole else None)
+    return verification_state(r.get("verified_by") or "", r.get("verified_sha256") or "", current)
+
+
+def live_sha256(stored: str | bytes | None, value_json: str | None) -> str:
+    """The row's live content hash: the stored column when set, else the hash of the value's
+    JSON text when it was read whole (None when missing or cut), else '' (cannot be
+    confirmed)."""
+    column = hash_text(stored)
+    if hash_is_set(column):
+        return column
+    return "" if value_json is None else sha256_value_json(value_json)

@@ -2,9 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
 SCHEMA_NAME = "decision"
+
+# The tags a decision's memory row carries: its marker, and after decision.outcome the
+# outcome-known mark and its success or failure.
+DECISION_TAG = "decision"
+OUTCOME_KNOWN_TAG = "decision:outcome-known"
+SUCCESS_TAG = "decision:success"
+FAILURE_TAG = "decision:failure"
+
+
+def is_decision(memory_type: str, tags: Collection[str]) -> bool:
+    """A row typed `decision`, or tagged so."""
+    return memory_type == SCHEMA_NAME or DECISION_TAG in tags
+
 
 # category + scenario identify a decision: re-deciding the same scenario supersedes the
 # earlier record (history keeps it), which is what "what is our current decision on X"

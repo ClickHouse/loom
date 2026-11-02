@@ -42,7 +42,14 @@ from server.memory.api.models_records import (
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app import decisions as svc
 from server.memory.app.set_commit import count_attribute_tags, count_write
-from server.memory.domain.decision_schema import SCHEMA_FIELDS, SCHEMA_NAME
+from server.memory.domain.decision_schema import (
+    DECISION_TAG,
+    FAILURE_TAG,
+    OUTCOME_KNOWN_TAG,
+    SCHEMA_FIELDS,
+    SCHEMA_NAME,
+    SUCCESS_TAG,
+)
 from server.memory.domain.decision_statement import alternatives, memory_value
 from server.memory.domain.provenance import DeclaredSourceClass, is_declarable
 from server.memory.domain.sensitivity import (
@@ -134,11 +141,7 @@ def _row(key: str, rec: dict[str, Any], similarity: float = 0.0) -> Any:
 
 # The tags a decision's memory row is written with (`_decision_tags`); on an outcome's
 # rewrite these are rebuilt, with the server's labels, and every other tag is the caller's.
-_DECISION_TAG = "decision"
-_OUTCOME_KNOWN = "decision:outcome-known"
-_SUCCESS = "decision:success"
-_FAILURE = "decision:failure"
-_REBUILT_TAGS = (_DECISION_TAG, _OUTCOME_KNOWN, _SUCCESS, _FAILURE)
+_REBUILT_TAGS = (DECISION_TAG, OUTCOME_KNOWN_TAG, SUCCESS_TAG, FAILURE_TAG)
 
 
 def _category_tag(category: str) -> str:
@@ -150,11 +153,11 @@ def _decision_tags(
 ) -> list[str]:
     """The `decision` tags of a decision's memory row: the marker and the category, and
     after `decision.outcome` the outcome-known mark and its success or failure."""
-    tags = [_DECISION_TAG, _category_tag(category)]
+    tags = [DECISION_TAG, _category_tag(category)]
     if outcome_known:
-        tags.append(_OUTCOME_KNOWN)
+        tags.append(OUTCOME_KNOWN_TAG)
         if success is not None:
-            tags.append(_SUCCESS if success else _FAILURE)
+            tags.append(SUCCESS_TAG if success else FAILURE_TAG)
     return tags
 
 
