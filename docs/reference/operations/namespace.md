@@ -25,11 +25,12 @@ Usage report for one namespace: is it being used as a memory, or as an object st
 | --- | --- | --- |
 | `org` | `str` | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | The namespace the op reads or writes. |
-| `computed_at` | `datetime` | When the report was computed (UTC). |
+| `computed_at` | `datetime` | When the report started (UTC, to the second): a cited revision updated at or after it may have changed mid-report. |
 | `window_seconds` | `int` | The ledger window the counts cover, in seconds (echoes the request). |
 | `summary` | `NamespaceAuditSummary` | Size and access totals of the namespace the findings are measured against. |
 | `findings` | `list[NamespaceAuditFinding]` | One entry per check that ran; a clean check is an `info` finding with count 0. |
-| `skipped` | `list[str]` | Checks that could not run, as "code: reason". |
+| `skipped` | `list[str]` | Rules that could not run (checks, summary reads, the evidence read), as "name: reason". |
+| `coverage` | `ReportCoverage` | Which rules ran and which were skipped: checks, summary reads, the evidence read. |
 | `healthy` | `bool` | No critical finding. |
 | `criticals` | `int` | Findings graded `critical`. |
 | `warnings` | `int` | Findings graded `warning`. |
@@ -581,7 +582,7 @@ Integrity report for one namespace, in one call, shaped for the agent that just 
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `sample_limit` | `int` | `5` | Sample rows per finding, 0 to 50; each count rides its sample rows, so 0 also reports every count as 0. |
+| `sample_limit` | `int` | `5` | Sample rows per finding, 0 to 50; 0 lists none and still counts every finding. |
 | `conflict_age_seconds` | `int` | `604800` | A conflicted row older than this is a review that never happened. |
 | `confidence_floor` | `float` | `0.5` | Rows below this confidence with no source pointer are the agent's own unqualified inferences — reported as info, not error. |
 | `embed_grace_seconds` | `int` | `600` | A memory without a vector younger than this is the embedding worker's normal lag, not a finding. |
@@ -597,8 +598,9 @@ Integrity report for one namespace, in one call, shaped for the agent that just 
 | `warnings` | `int` | Rows flagged by warning-severity checks, summed across findings. |
 | `infos` | `int` | Rows flagged by info-severity checks, summed across findings. |
 | `findings` | `list[_NamespaceValidateFinding]` | One entry per check that ran, including checks whose count is 0. |
-| `skipped` | `list[str]` | Checks that could not run, as "check: reason". |
+| `skipped` | `list[str]` | Rules that could not run (checks, the evidence read), as "name: reason". |
 | `keys_scoped` | `int` | How many keys the report was scoped to (0 = whole namespace), so a caller can tell a per-task report from a full one. |
-| `checked_at` | `datetime` | When the report was computed (UTC). |
+| `coverage` | `ReportCoverage` | Which rules ran and which were skipped: the checks and the evidence read. |
+| `checked_at` | `datetime` | When the report started (UTC, to the second): a cited revision updated at or after it may have changed mid-report. |
 
 <!-- prettier-ignore-end -->

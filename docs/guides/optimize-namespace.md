@@ -23,9 +23,13 @@ The `loom-optimize` skill in the [Claude Code](../features/integrations/claude-c
 It returns `summary` (`live_rows`, `live_bytes`, `excerpt_bytes`, `version_rows`,
 `version_bytes`, `unembedded_rows`, `gets`, `searches`, `sets`, `get_search_ratio`),
 `findings[]` (`code`, `severity`, `count`, `share`, `bytes`, `samples[]`, `detail`,
-`remedy`), `skipped` (checks that failed to run; the rest still return), `healthy` ("no
-critical finding"), and the `criticals` / `warnings` / `infos` counts. Samples carry keys
-and counts, never a value.
+`remedy`), `skipped` (rules that could not run: checks, summary reads, the evidence
+read; the rest still return), `coverage`, `healthy` ("no critical finding"), and the
+`criticals` / `warnings` / `infos` counts. Samples carry keys, row ids, identity columns
+and counts, never a value. Each finding also carries the [evidence
+fields](../features/namespaces-and-sharing.md#reading-a-namespaces-health); a plan reads
+`kind` (a usage heuristic is not proof of misuse), `samples_complete` and `evidence[]`,
+the live `version` and `content_sha256` of each sampled row.
 
 **`memory.move`** (`POST /v1/memory.move`, MCP `loom_memory_move`).
 
@@ -51,7 +55,7 @@ loom audit-namespace --org <org> --namespace <ns> --window-days 7 --samples 5
 ```
 
 The CLI runs on the server (it reads ClickHouse directly). It prints a table (code, severity,
-count, share, first sample), or the output model with `--json`, and exits 1 when the
+kind, count, share, first sample), or the output model with `--json`, and exits 1 when the
 namespace is not healthy. From anywhere else, call `namespace.audit` over HTTP or MCP.
 
 Read `summary` first:

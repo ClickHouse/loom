@@ -4072,6 +4072,10 @@ settings:
   # above it that check is skipped and says so. [live]
   # namespace_audit_index_row_scan_cap: 20000
 
+  # Largest value (bytes) namespace.audit and namespace.validate read to cite a row's
+  # content hash; a larger row is cited with none. 0 = cite no hash. [live]
+  # namespace_report_hash_max_bytes: 65536
+
   # Seconds a namespace's relation cardinalities (one or many) are cached for the triple
   # writer. [live]
   # namespace_ontology_cardinality_ttl_s: 60.0

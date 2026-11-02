@@ -492,7 +492,7 @@ def _no_active_decision(org: str, namespace: str, key: str) -> NotFoundError:
 
 
 async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcomeOutput:
-    from server.memory.app.write import stored_sha256
+    from server.memory.app.write import served_sha256
 
     ch = get_client()
 
@@ -535,7 +535,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
             files=row.files,
             source_class=row.source_class if is_declarable(row.source_class) else None,
             source_resource_id=row.source_resource_id,
-            if_match_sha256=stored_sha256(row),
+            if_match_sha256=served_sha256(row),
             pinned=row.pinned,
             revises=writer,
         )

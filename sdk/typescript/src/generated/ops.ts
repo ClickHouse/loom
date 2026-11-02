@@ -6412,6 +6412,16 @@ export interface NamespaceAuditSummary {
 }
 
 export interface NamespaceAuditFinding {
+  kind: "contract_violation" | "usage_heuristic";
+  rule_version: number;
+  source_op: string;
+  window_seconds?: number | null;
+  population?: number | null;
+  sample_limit: number;
+  samples_complete: boolean;
+  evidence?: FindingEvidence[];
+  exceptions?: string;
+  uncertainty?: string;
   code: string;
   severity: "info" | "warning" | "critical";
   count: number;
@@ -6422,6 +6432,25 @@ export interface NamespaceAuditFinding {
   remedy: string;
 }
 
+export interface FindingEvidence {
+  memory_key: string;
+  memory_id: string;
+  version: number;
+  content_sha256: string;
+  agent: string;
+  user_id: string;
+  session_id: string;
+  memory_type: string;
+  source_class: string;
+  updated_at: string; // date-time
+}
+
+export interface ReportCoverage {
+  rules_run?: string[];
+  rules_skipped?: string[];
+  complete: boolean;
+}
+
 export interface NamespaceAuditOutput {
   org: string;
   namespace: string;
@@ -6430,6 +6459,7 @@ export interface NamespaceAuditOutput {
   summary: NamespaceAuditSummary;
   findings: NamespaceAuditFinding[];
   skipped?: string[];
+  coverage: ReportCoverage;
   healthy: boolean;
   criticals: number;
   warnings: number;
@@ -7086,6 +7116,16 @@ export interface NamespaceValidateInput {
 }
 
 export interface NamespaceValidateFinding {
+  kind: "contract_violation" | "usage_heuristic";
+  rule_version: number;
+  source_op: string;
+  window_seconds?: number | null;
+  population?: number | null;
+  sample_limit: number;
+  samples_complete: boolean;
+  evidence?: FindingEvidence[];
+  exceptions?: string;
+  uncertainty?: string;
   check: string;
   severity: "error" | "warning" | "info";
   count: number;
@@ -7103,6 +7143,7 @@ export interface NamespaceValidateOutput {
   findings: NamespaceValidateFinding[];
   skipped?: string[];
   keys_scoped?: number;
+  coverage: ReportCoverage;
   checked_at: string; // date-time
 }
 

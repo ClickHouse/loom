@@ -103,7 +103,7 @@ def _add_audit_namespace_parser(sub: Any) -> None:
         help="How a namespace is being used (namespace.audit): exact-key "
         "reads vs searches, hash keys, double-encoded and oversized "
         "values, hand-rolled index rows, leases stored as memories, version churn. "
-        "Read-only; prints a table (code, severity, count, share, first sample) or "
+        "Read-only; prints a table (code, severity, kind, count, share, first sample) or "
         "--json. Exit 1 on a critical finding.",
     )
     p_an.add_argument("--org", required=True)

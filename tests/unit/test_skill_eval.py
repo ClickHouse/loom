@@ -4,9 +4,11 @@ Both replay fixtures run through `bench/skill_eval.py` against a fake loom
 over `httpx.MockTransport`. The fake's `namespace.audit` computes its findings
 from the rows and the ledger it received with the REAL classifier helpers of
 `server/identity/app/namespace_audit.py` (the hash-key regex, `is_hash_shaped_query`,
-`count_index_rows`, the grading thresholds) plus the double-encoded predicate
-ported from its SQL. The bad agent fails with the expected finding codes;
-the good agent passes. No server, no LLM, no network.
+`index_rows`, the grading thresholds) plus the double-encoded predicate
+ported from its SQL. Of the evidence contract it fills only what the output model
+requires (kind, rule_version, source_op, sample_limit, samples_complete, coverage); populations,
+exceptions and citations are left out. The bad agent fails with the expected
+finding codes; the good agent passes. No server, no LLM, no network.
 """
 
 from __future__ import annotations
@@ -205,6 +207,7 @@ class FakeLoom:
             bytes_: int = 0,
         ) -> None:
             detail, remedy = na._TEXT[code]
+            kept = samples[: b.get("sample_limit", 5)]
             findings.append(
                 {
                     "code": code,
@@ -212,9 +215,14 @@ class FakeLoom:
                     "count": count,
                     "share": min(1.0, max(0.0, share)),
                     "bytes": bytes_,
-                    "samples": samples[: b.get("sample_limit", 5)],
+                    "samples": kept,
                     "detail": detail,
                     "remedy": remedy,
+                    "kind": na._CONTRACT[code].kind,
+                    "rule_version": na._CONTRACT[code].version,
+                    "source_op": "namespace.audit",
+                    "samples_complete": count <= len(kept),
+                    "sample_limit": b.get("sample_limit", 5),
                 }
             )
 
@@ -242,14 +250,19 @@ class FakeLoom:
         # No `hash_shaped_queries`: the ledger keeps no query text (every
         # free-text arg is a sha256 shape), so such a check would read 100 % on
         # every namespace. The fake audit follows the real one.
-        idx = na.count_index_rows([(k, v[: na.INDEX_ROW_VALUE_CLIP]) for k, v in stored.items()])
+        idx = na.index_rows(
+            [
+                {"memory_key": k, "memory_id": "", "value": v[: na.INDEX_ROW_VALUE_CLIP]}
+                for k, v in stored.items()
+            ]
+        )
         share = na._share(len(idx), live)
         add(
             "hand_rolled_index_rows",
             na._grade(len(idx), share, warning_any=True),
             len(idx),
             share,
-            [{"memory_key": k, "keys_named": n} for k, n in idx],
+            idx,
         )
         value_check(
             "double_encoded_values",
@@ -333,6 +346,12 @@ class FakeLoom:
             },
             findings=findings,
             skipped=[],
+            coverage={
+                # The real report's order: summary reads, checks, then the evidence read.
+                "rules_run": [*na._SUMMARY_STEPS, *(f["code"] for f in findings), "evidence"],
+                "rules_skipped": [],
+                "complete": True,
+            },
             healthy=crit == 0,
             criticals=crit,
             warnings=warn,

@@ -1414,6 +1414,7 @@ Namespace registration, write marks and bench-namespace GC.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_NAMESPACE_AUDIT_INDEX_ROW_SCAN_CAP` | `int` | `20000` | live | Most live rows the namespace audit's value scan reads (it is O(total value bytes)); above it that check is skipped and says so. |
+| `LOOM_NAMESPACE_REPORT_HASH_MAX_BYTES` | `int` | `65536` | live | Largest value (bytes) namespace.audit and namespace.validate read to cite a row's content hash; a larger row is cited with none. 0 = cite no hash. |
 | `LOOM_NAMESPACE_ONTOLOGY_CARDINALITY_TTL_S` | `float` | `60.0` | live | Seconds a namespace's relation cardinalities (one or many) are cached for the triple writer. |
 | `LOOM_NAMESPACE_TAXONOMY_TTL_S` | `float` | `300.0` | live | Seconds a namespace's taxonomy is reused: one is four FINAL scans of the namespace (about 20 MB per open on a large namespace) and changes only when the namespace does. |
 

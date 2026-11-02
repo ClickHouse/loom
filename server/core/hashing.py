@@ -1,13 +1,13 @@
 """Canonical SHA-256 helpers for memory value hashes.
 
-Two call sites need a hash of a memory value:
-- The handler that writes / reads memory rows (hash of a Python value).
-- The conflict resolver (hash of an already-serialized JSON string).
+- `sha256_value`: the hash of a Python value.
+- `sha256_value_json`: the hash of an already-serialized JSON string.
+- `served_content_sha256`: the hash memory.get serves for a decoded value, which every
+  read, write precondition and citation compares.
 
-Both must agree byte-for-byte — they're compared on the wire as the
-`if_match_sha256` / `content_sha256` precondition. Canonicalization
-(`sort_keys=True`, compact separators) lives here so the two sides
-can't drift.
+They agree byte-for-byte: `if_match_sha256` and `content_sha256` are compared on the
+wire, and the canonical form (`sort_keys=True`, compact separators) lives here so no
+caller can drift.
 """
 
 from __future__ import annotations
@@ -41,6 +41,11 @@ def sha256_value_json(value_json: str) -> str:
         return sha256_value(json.loads(value_json))
     except json.JSONDecodeError:
         return hashlib.sha256(value_json.encode("utf-8")).hexdigest()
+
+
+def served_content_sha256(value: Any) -> str:
+    """The content hash memory.get serves for a decoded value: '' for none."""
+    return "" if value is None else sha256_value_json(json.dumps(value, default=str))
 
 
 def canonical_document_text(text: str) -> str:

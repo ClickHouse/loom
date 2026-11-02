@@ -38,6 +38,33 @@ export interface NamespaceAuditFinding {
   samples: Array<Record<string, unknown>>;
   detail: string;
   remedy: string;
+  // A broken stored invariant, or a pattern that may still be a legitimate design.
+  // Absent from a server one release older, like every field below it.
+  kind?: "contract_violation" | "usage_heuristic";
+  rule_version?: number;
+  source_op?: string;
+  // Null for a rule that reads current state rather than the ledger window.
+  window_seconds?: number | null;
+  population?: number | null;
+  sample_limit?: number;
+  // False when the cap cut the samples or they cannot name every match (hot keys
+  // against all gets).
+  samples_complete?: boolean;
+  // The live revision of each row the samples name: identifiers only, never a value.
+  evidence?: Array<{
+    memory_key: string;
+    memory_id: string;
+    version: number;
+    content_sha256: string;
+    agent: string;
+    user_id: string;
+    session_id: string;
+    memory_type: string;
+    source_class: string;
+    updated_at: string;
+  }>;
+  exceptions?: string;
+  uncertainty?: string;
 }
 
 /** Mirrors `NamespaceAuditOutput`. */
@@ -48,8 +75,10 @@ export interface NamespaceAuditResult {
   window_seconds: number;
   summary: NamespaceAuditSummary;
   findings: NamespaceAuditFinding[];
-  // Checks that could not run, as "code: reason".
+  // Rules that could not run (checks, summary reads, the evidence read), as "name: reason".
   skipped: string[];
+  // The rules that ran and were skipped; absent from a server one release older.
+  coverage?: { rules_run: string[]; rules_skipped: string[]; complete: boolean };
   // No critical finding.
   healthy: boolean;
   criticals: number;

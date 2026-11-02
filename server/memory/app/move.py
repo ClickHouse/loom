@@ -20,7 +20,7 @@ from fastapi import HTTPException
 import server.memory.store as memory_repo
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
-from server.core.hashing import sha256_value_json as _content_sha256_of_stored
+from server.core.hashing import served_content_sha256
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import MemoryDeleteInput, MemorySetInput
 from server.memory.api.models_move import MemoryMoveInput, MemoryMoveOutput
@@ -48,14 +48,6 @@ def _refuse(status: int, code: str, message: str, **extra: Any) -> HTTPException
 
 def _value_text(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, default=str)
-
-
-def _row_sha(row: MemoryRow) -> str:
-    return (
-        _content_sha256_of_stored(json.dumps(row.value, default=str))
-        if row.value is not None
-        else ""
-    )
 
 
 async def _load_source(input: MemoryMoveInput) -> MemoryRow:
@@ -86,7 +78,7 @@ async def _load_source(input: MemoryMoveInput) -> MemoryRow:
             duplicate_of=str(source.duplicate_of or ""),
         )
     if input.if_match_sha256:
-        current = _row_sha(source)
+        current = served_content_sha256(source.value)
         if current != input.if_match_sha256:
             raise _refuse(
                 409,

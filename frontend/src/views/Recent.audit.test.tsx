@@ -53,6 +53,16 @@ const AUDIT: NamespaceAuditResult = {
       samples: [{ memory_key: "sre/case/1", versions: 41 }],
       detail: "Version rows outnumber live rows 4×.",
       remedy: "Write less often; memory.update on change.",
+      kind: "usage_heuristic" as const,
+      rule_version: 1,
+      source_op: "namespace.audit",
+      window_seconds: null,
+      population: 100,
+      sample_limit: 5,
+      samples_complete: false,
+      evidence: [],
+      exceptions: "",
+      uncertainty: "A legitimate design matches too.",
     },
     {
       code: "oversized_values",
@@ -60,9 +70,21 @@ const AUDIT: NamespaceAuditResult = {
       count: 3,
       share: 0.02,
       bytes: 3_000_000,
-      samples: [{ memory_key: "sre/case/1/notes", value_chars: 40_000 }],
+      samples: [
+        { memory_key: "sre/case/1/notes", memory_id: "00000000-0000-0000-0000-000000000001", value_chars: 40_000 },
+      ],
       detail: "Three values past the advisory.",
       remedy: "knowledge.upsert for documents.",
+      kind: "usage_heuristic" as const,
+      rule_version: 1,
+      source_op: "namespace.audit",
+      window_seconds: null,
+      population: 100,
+      sample_limit: 5,
+      samples_complete: false,
+      evidence: [],
+      exceptions: "",
+      uncertainty: "A legitimate design matches too.",
     },
     {
       code: "exact_key_store",
@@ -76,6 +98,16 @@ const AUDIT: NamespaceAuditResult = {
       ],
       detail: "6606 gets against 52 searches.",
       remedy: "Use memory.search for recall; keep leases out of memory.",
+      kind: "usage_heuristic" as const,
+      rule_version: 1,
+      source_op: "namespace.audit",
+      window_seconds: 7 * 86_400,
+      population: 100,
+      sample_limit: 5,
+      samples_complete: false,
+      evidence: [],
+      exceptions: "",
+      uncertainty: "A legitimate design matches too.",
     },
   ],
   skipped: ["hand_rolled_index_rows: 24,000 rows exceed the 20k scan cap"],
@@ -214,10 +246,21 @@ describe("Memories: usage audit panel", () => {
     expect(within(detail).getByRole("button", { name: "Open memory sre/lease/main" })).toBeInTheDocument();
     expect(within(detail).getByRole("button", { name: "Open memory sre/index/cases" })).toBeInTheDocument();
     expect(detail).toHaveTextContent("reads 116");
+    expect(detail).toHaveTextContent("not every match is listed");
+    expect(within(detail).getByTestId("audit-finding-kind")).toHaveTextContent(
+      "Usage heuristic: a hit is not proof of misuse · rule v1 · May still be fine: A legitimate design matches too.",
+    );
     expect(within(rows[0]).getByRole("button", { name: "Hide details for Exact-key store" })).toHaveAttribute(
       "aria-expanded",
       "true",
     );
+
+    // A sample's memory_id joins it to its evidence entry; the detail does not print it.
+    await userEvent.click(within(rows[0]).getByRole("button", { name: "Hide details for Exact-key store" }));
+    await userEvent.click(within(rows[1]).getByRole("button", { name: /Show details for/ }));
+    const oversized = await screen.findByTestId("audit-finding-detail");
+    expect(oversized).toHaveTextContent("value_chars 40000");
+    expect(oversized).not.toHaveTextContent("00000000-0000-0000-0000-000000000001");
   });
 
   it("no findings → the empty copy; a healthy summary", async () => {
@@ -244,6 +287,42 @@ describe("Memories: usage audit panel", () => {
     await userEvent.click(screen.getByRole("button", { name: /Run audit/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Audit failed");
     expect(screen.getByRole("button", { name: /Run audit/ })).toBeEnabled();
+  });
+
+  it("joins the kind line with separators, and an older server's finding shows none of it", async () => {
+    const [churn, oversized, exact] = AUDIT.findings;
+    vi.mocked(auditNamespace).mockResolvedValueOnce({
+      ...AUDIT,
+      findings: [
+        { ...exact, kind: "contract_violation", uncertainty: "", exceptions: "Non-searchable types are not checked." },
+        // A finding from a server one release older carries none of the evidence fields.
+        {
+          code: oversized.code,
+          severity: oversized.severity,
+          count: oversized.count,
+          share: oversized.share,
+          bytes: oversized.bytes,
+          samples: oversized.samples,
+          detail: oversized.detail,
+          remedy: oversized.remedy,
+        },
+        churn,
+      ],
+    });
+    await openMemories();
+    await userEvent.click(screen.getByRole("button", { name: /Run audit/ }));
+    const rows = await screen.findAllByTestId("audit-finding");
+
+    await userEvent.click(within(rows[0]).getByRole("button", { name: "Show details for Exact-key store" }));
+    expect(screen.getByTestId("audit-finding-kind")).toHaveTextContent(
+      "Contract violation · rule v1 · Scope: Non-searchable types are not checked.",
+    );
+    await userEvent.click(within(rows[0]).getByRole("button", { name: "Hide details for Exact-key store" }));
+
+    await userEvent.click(within(rows[1]).getByRole("button", { name: /Show details for/ }));
+    const detail = await screen.findByTestId("audit-finding-detail");
+    expect(within(detail).queryByTestId("audit-finding-kind")).toBeNull();
+    expect(detail).not.toHaveTextContent("not every match is listed");
   });
 
   it("an unknown role on the namespace shows no panel and sends nothing", async () => {

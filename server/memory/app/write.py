@@ -13,8 +13,8 @@ from fastapi import HTTPException
 from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.hashing import served_content_sha256
 from server.core.hashing import sha256_value as _content_sha256
-from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
@@ -71,11 +71,9 @@ _WRITE_OUTCOME_BY_ERROR_CODE: dict[str, str] = {
 _WRITE_OUTCOME_UNMAPPED = "error"
 
 
-def stored_sha256(row: Any) -> str:
-    """The hash `if_match_sha256` is checked against: of the row's stored value."""
-    if row is None or row.value is None:
-        return ""
-    return _content_sha256_of_stored(json.dumps(row.value, default=str))
+def served_sha256(row: Any) -> str:
+    """The hash `if_match_sha256` is checked against: the one memory.get serves for the row."""
+    return "" if row is None else served_content_sha256(row.value)
 
 
 def _guard_existing_row(
@@ -94,7 +92,7 @@ def _guard_existing_row(
     assert_own_row(existing, op="memory.set")  # a code-namespace member's own rows
     if existing is None:
         return False, None
-    existing_sha = getattr(existing, "content_sha256", "") or stored_sha256(existing)
+    existing_sha = getattr(existing, "content_sha256", "") or served_sha256(existing)
     restated = _content_sha256(input.value) == existing_sha
     if not restated:
         _lock.assert_unlocked(existing, "value", op="memory.set")
@@ -469,7 +467,7 @@ async def _set_check_if_match(w: _SetWrite) -> None:
             strong=True,
             scope=request_scope(),
         )
-        current_sha = stored_sha256(existing)
+        current_sha = served_sha256(existing)
         if current_sha != input.if_match_sha256:
             raise HTTPException(
                 status_code=409,

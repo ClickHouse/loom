@@ -4684,6 +4684,13 @@
           "type": "number",
           "description": "Seconds a namespace's relation cardinalities (one or many) are cached for the triple writer."
         },
+        "namespace_report_hash_max_bytes": {
+          "default": 65536,
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Largest value (bytes) namespace.audit and namespace.validate read to cite a row's content hash; a larger row is cited with none. 0 = cite no hash."
+        },
         "namespace_taxonomy_ttl_s": {
           "default": 300.0,
           "exclusiveMinimum": 0,

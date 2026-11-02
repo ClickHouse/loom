@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
+from server.core.hashing import served_content_sha256
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.core.tag_sql import TagFilter, tag_where
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
@@ -17,11 +18,12 @@ from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 from server.memory.domain.identity_columns import IdentityColumn
 from server.memory.domain.temporal_sql import as_of_predicate, served_status_sql
 from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL
-from server.memory.store.rows import Identity, MemoryRow, _hydrate
+from server.memory.store.rows import Identity, MemoryRow, _hydrate, parse_memory_value
 from server.memory.store.sql import (
     _IDENTITY_KEY_TUPLE,
     _MEMORY_FINAL_PROJECTION,
     _SEQUENTIAL,
+    SERVED_VALUE,
     _identity_key,
     _is_full_row,
     read_your_writes_enabled,
@@ -1347,3 +1349,100 @@ async def identity_tally(
     )
     total = int(rows[0]["total"]) if rows else 0
     return total, [(str(r["name"]), int(r["n"])) for r in rows][:limit]
+
+
+# A memory row within its namespace: (agent, user_id, session_id, memory_key).
+RowKey = tuple[str, str, str, str]
+# One revision of a row: its RowKey and version.
+RevisionKey = tuple[str, str, str, str, int]
+
+
+async def live_revisions(
+    org: str,
+    namespace: str,
+    *,
+    scope: ReadFilters,
+    memory_ids: Sequence[str],
+    identities: Sequence[RowKey],
+    hash_max_bytes: int,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """The live heads of the rows named by `memory_ids` or by full identity
+    (agent, user_id, session_id, memory_key), with the identifiers a citation needs
+    (memory_id, version, content hash) and no content, inside the caller's read `scope`.
+    The hash is the one memory.get serves (`_served_hashes`), for a row whose value is at
+    most `hash_max_bytes`. A high-sensitivity row gets none: a short secret's hash can be
+    guessed, and these reports are unaudited reads, so it is left out as memory.list
+    leaves it out."""
+    if not memory_ids and not identities:
+        return []
+    ch = ch or _default_client()
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "ids": list(memory_ids),
+        "identities": list(identities),
+        # Each id and identity names one row.
+        "cap": len(memory_ids) + len(identities),
+    }
+    # The id is selected under another name: an alias named memory_id would shadow the
+    # column in WHERE.
+    rows = await ch.query_all(
+        f"""
+        SELECT memory_key, toString(memory_id) AS id, version, sensitivity, value_len,
+               agent, user_id, session_id, memory_type, source_class, updated_at
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND tombstoned_at IS NULL
+          AND (memory_id IN {{ids:Array(UUID)}}
+               OR (agent, user_id, session_id, memory_key)
+                  IN {{identities:Array(Tuple(String, String, String, String))}})
+          {scope_and(scope, params)}
+        LIMIT {{cap:UInt32}}
+        """,
+        params=params,
+    )
+    # 0 cites no hash; otherwise every row but a high one or one over the bound.
+    hashable = (
+        []
+        if hash_max_bytes <= 0
+        else [
+            r for r in rows if r["sensitivity"] != "high" and int(r["value_len"]) <= hash_max_bytes
+        ]
+    )
+    hashes = await _served_hashes(org, namespace, hashable, hash_max_bytes, ch)
+    for r in rows:
+        r["memory_id"] = r.pop("id")
+        del r["sensitivity"], r["value_len"]
+        r["content_sha256"] = hashes.get(_revision_key(r), "")
+    return rows
+
+
+def _revision_key(r: dict[str, Any]) -> RevisionKey:
+    return (r["agent"], r["user_id"], r["session_id"], r["memory_key"], r["version"])
+
+
+async def _served_hashes(
+    org: str, namespace: str, revisions: list[dict[str, Any]], max_bytes: int, ch: _CHClient
+) -> dict[RevisionKey, str]:
+    """The hash memory.get serves for each revision, by its row key and version: the hash
+    of the value it serves, not the stored column, which can differ for an object (the
+    JSON column drops a null field). The value is read by each row's whole sorting key
+    (the primary index prunes to their granules), hashed here and never returned. A row
+    revised between the two reads gets none rather than another revision's."""
+    if not revisions:
+        return {}
+    keys = [(r["agent"], r["user_id"], r["session_id"], r["memory_key"]) for r in revisions]
+    rows = await ch.query_all(
+        f"""
+        SELECT agent, user_id, session_id, memory_key, version, {SERVED_VALUE} AS value
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND tombstoned_at IS NULL
+          AND (agent, user_id, session_id, memory_key)
+              IN {{keys:Array(Tuple(String, String, String, String))}}
+          AND value_len <= {{max:UInt32}}
+        LIMIT {{cap:UInt32}}
+        """,
+        params={"org": org, "ns": namespace, "keys": keys, "cap": len(keys), "max": max_bytes},
+    )
+    # Decoded as memory.get decodes it: a string value is stored raw, not as JSON.
+    return {_revision_key(r): served_content_sha256(parse_memory_value(r["value"])) for r in rows}

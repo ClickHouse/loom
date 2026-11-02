@@ -8,12 +8,16 @@ critical"; shares are bounded; samples never carry a value.
 from __future__ import annotations
 
 import inspect
+import uuid
+from datetime import datetime
 from typing import Any
 
 import pytest
 
+from server.core.hashing import sha256_value_json
 from server.identity.api.models_namespace_catalog import NamespaceAuditInput, NamespaceAuditOutput
 from server.identity.app import namespace_audit as na
+from server.identity.domain.read_scope import honours_read_scope
 from server.operations import toolsets
 from server.transport import mcp_descriptions
 
@@ -55,7 +59,7 @@ class _CH:
 M_LIVE = "countIf(memory_type = 'episodic') AS episodic_rows"
 M_EMB = "AS excerpt_bytes"
 M_LEDGER = "AS sets"
-M_HOT = "HAVING reads >="
+M_HOT = "reads >= {hot:UInt32}"
 M_INDEX = "substring(value, 1, {index_clip:UInt32})"
 M_DOUBLE = "AND JSONType(value) = 'String' AND JSONType(JSONExtractString(value))"
 M_PREFIX = "length(value) > {clip:UInt32}"
@@ -65,6 +69,9 @@ M_HASHKEY = "match(memory_key, {hash_key_re:String})"
 M_COORD = "hasAny(splitByChar('/', lower(m.memory_key))"
 M_EPI = "length(value) > {episodic_chars:UInt32}"
 M_VER = "FROM loom.memory_versions FINAL"
+# The one read after the checks: the live revision of every sampled row.
+M_CITE = "IN {identities:Array(Tuple(String, String, String, String))}"
+M_VALUE = "IN {keys:Array(Tuple(String, String, String, String))}"
 
 
 def _inp(**kw: Any) -> NamespaceAuditInput:
@@ -96,9 +103,28 @@ def _live(
     }
 
 
+def _hot(rows: list[dict[str, Any]], window_gets: int | None = None) -> list[dict[str, Any]]:
+    """Hot-key rows as the read returns them: the window's gets and the hot keys' reads
+    ride every row. `window_gets` defaults to the hot keys' own reads (no cold key)."""
+    total = sum(int(r["reads"]) for r in rows)
+    gets = total if window_gets is None else window_gets
+    return [{**r, "hot_reads": total, "window_gets": gets} for r in rows]
+
+
+def _mid(key: str) -> str:
+    """A stable memory_id for a fixture key."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, key))
+
+
 def _value_rows(total: int, total_bytes: int, keys: list[str]) -> list[dict[str, Any]]:
     return [
-        {"total": total, "total_bytes": total_bytes, "memory_key": k, "value_chars": 900}
+        {
+            "total": total,
+            "total_bytes": total_bytes,
+            "memory_key": k,
+            "memory_id": _mid(k),
+            "value_chars": 900,
+        }
         for k in keys
     ]
 
@@ -148,7 +174,7 @@ async def test_exact_key_store_fires_on_the_measured_namespace(
         monkeypatch,
         {
             M_LEDGER: {"gets": 6606, "searches": 52, "sets": 1687},
-            M_HOT: hot,
+            M_HOT: _hot(hot, 6606),
         },
     )
     f = _finding(out, "exact_key_store")
@@ -191,27 +217,30 @@ async def test_exact_key_store_thresholds(
 # ---------------------------------------------------------------------------
 
 
-def test_count_index_rows_counts_other_keys_named_as_tokens() -> None:
-    keys = [f"sre/v1/evidence/case-1/{i:02d}" for i in range(10)]
-    index_value = '{"current": [' + ", ".join(f'"{k}"' for k in keys) + "]}"
-    rows = [(k, f"a claim about {k}") for k in keys] + [("sre/v1/current/index", index_value)]
+def test_keys_named_counts_other_keys_named_as_tokens() -> None:
+    keys = {f"sre/v1/evidence/case-1/{i:02d}" for i in range(10)}
+    index_value = '{"current": [' + ", ".join(f'"{k}"' for k in sorted(keys)) + "]}"
+    every = keys | {"sre/v1/current/index"}
     # the index row names 10 other keys; a claim naming itself does not count
-    assert na.count_index_rows(rows) == [("sre/v1/current/index", 10)]
+    assert na.keys_named("sre/v1/current/index", index_value, every) == 10
+    own = "sre/v1/evidence/case-1/00"
+    assert na.keys_named(own, f"a claim about {own}", every) == 0
     # a list of seven is under the threshold
-    seven = " ".join(keys[:7])
-    assert na.count_index_rows(rows + [("sre/v1/short", seven)]) == [("sre/v1/current/index", 10)]
+    seven = na.keys_named("sre/v1/short", " ".join(sorted(keys)[:7]), every)
+    assert seven == 7
+    assert seven < na.INDEX_ROW_MIN_KEYS
 
 
 @pytest.mark.asyncio
 async def test_hand_rolled_index_rows_finding_and_scan_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     keys = [f"k/{i}" for i in range(8)]
-    rows = [{"memory_key": k, "value": "claim"} for k in keys] + [
-        {"memory_key": "idx", "value": ",".join(keys)},
+    rows = [{"memory_key": k, "memory_id": _mid(k), "value": "claim"} for k in keys] + [
+        {"memory_key": "idx", "memory_id": _mid("idx"), "value": ",".join(keys)},
     ]
     out, _ = await _run(monkeypatch, {M_LIVE: _live(9, 900), M_INDEX: rows})
     f = _finding(out, "hand_rolled_index_rows")
     assert f.count == 1 and f.severity == "warning" and f.share == pytest.approx(1 / 9)
-    assert f.samples == [{"memory_key": "idx", "keys_named": 8}]
+    assert f.samples == [{"memory_key": "idx", "memory_id": _mid("idx"), "keys_named": 8}]
     assert "memory.list prefix" in f.remedy and "supersedes" in f.remedy
 
     # above the cap the check is skipped and says so; nothing is fetched
@@ -240,7 +269,11 @@ async def test_double_encoded_values_critical_share_and_bytes(
     f = _finding(out, "double_encoded_values")
     assert f.severity == "critical" and f.count == 760 and f.bytes == 20_000_000
     assert f.share == pytest.approx(760 / 786)
-    assert f.samples[0] == {"memory_key": "sre/v1/evidence/a", "value_chars": 900}
+    assert f.samples[0] == {
+        "memory_key": "sre/v1/evidence/a",
+        "memory_id": _mid("sre/v1/evidence/a"),
+        "value_chars": 900,
+    }
     assert "double-encoded value" in f.remedy
     assert out.healthy is False
 
@@ -288,7 +321,8 @@ async def test_oversized_values_uses_the_advisory_setting(monkeypatch: pytest.Mo
     )
     f = _finding(out, "oversized_values")
     assert f.severity == "warning" and f.count == 3 and f.bytes == 3_000_000
-    assert all(p["advisory"] == settings.memory_value_advisory_chars for p in ch.params)
+    audit_params = [p for sql, p in zip(ch.sqls, ch.params, strict=True) if M_CITE not in sql]
+    assert all(p["advisory"] == settings.memory_value_advisory_chars for p in audit_params)
     assert "knowledge.upsert" in f.remedy
 
 
@@ -363,7 +397,7 @@ async def test_coordination_as_memory_joins_the_hot_keys(monkeypatch: pytest.Mon
     assert f.samples[0] == {"memory_key": "sre/v1/leases/worker", "value_chars": 59, "reads": 116}
     assert "working_memory" in f.remedy and "never embedded" in f.remedy
     sql = next(s for s in ch.sqls if M_COORD in s)
-    assert "LEFT JOIN" in sql and "HAVING reads >= {hot:UInt32}" in sql
+    assert "LEFT JOIN" in sql and "HAVING memory_key != '' AND reads >= {hot:UInt32}" in sql
     assert ch.params[0]["coord_segs"] == list(na.COORDINATION_SEGMENTS)
     # A short value is a lease only when it is also FEW WORDS — a
     # 158-char lesson in prose read 32× by key is a memory, not a pointer.
@@ -493,7 +527,7 @@ async def test_samples_never_carry_values_and_are_capped(monkeypatch: pytest.Mon
         M_EPI: value_rows,
         M_COORD: [dict(r, reads=30) for r in value_rows],
         M_INDEX: [{"memory_key": k, "value": secret} for k in keys],
-        M_HOT: [{"memory_key": k, "reads": 25} for k in keys],
+        M_HOT: _hot([{"memory_key": k, "reads": 25} for k in keys]),
         M_VER: [
             {"total": 30, "total_bytes": 3, "memory_key": k, "versions": 3, "bytes": 1}
             for k in keys
@@ -528,9 +562,9 @@ def test_split_drops_aggregates_and_any_value_bearing_column() -> None:
 
 @pytest.mark.asyncio
 async def test_no_sample_read_selects_the_value_column(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The value-shape reads select `length(value)`, never `value`; the only
-    read that fetches values is the index scan, whose rows never leave the
-    handler."""
+    """The value-shape reads select `length(value)`, never `value`; the reads that
+    fetch values are the index scan and the citation's value read (which hashes
+    them), and neither returns a value."""
     import re
 
     _out, ch = await _run(monkeypatch, {})
@@ -601,8 +635,6 @@ def test_registered_read_only_for_viewers_and_kept_off_the_curated_toolsets() ->
 
 
 def _sample_output() -> NamespaceAuditOutput:
-    from datetime import datetime
-
     from server.identity.api.models_namespace_catalog import (
         NamespaceAuditFinding,
         NamespaceAuditSummary,
@@ -632,9 +664,17 @@ def _sample_output() -> NamespaceAuditOutput:
                 severity="critical",
                 count=6606,
                 share=0.992,
-                samples=[{"memory_key": "sre/v1/leases/worker", "reads": 116}],
+                # The join column is not printed.
+                samples=[
+                    {"memory_key": "sre/v1/leases/worker", "memory_id": _mid("w"), "reads": 116}
+                ],
                 detail=detail,
                 remedy=remedy,
+                kind="usage_heuristic",
+                rule_version=1,
+                source_op="namespace.audit",
+                sample_limit=5,
+                samples_complete=False,
             ),
             NamespaceAuditFinding(
                 code="double_encoded_values",
@@ -645,9 +685,15 @@ def _sample_output() -> NamespaceAuditOutput:
                 samples=[],
                 detail=detail,
                 remedy=remedy,
+                kind="usage_heuristic",
+                rule_version=1,
+                source_op="namespace.audit",
+                sample_limit=5,
+                samples_complete=False,
             ),
         ],
         skipped=["version_churn: TimeoutError"],
+        coverage={"rules_run": [], "rules_skipped": ["version_churn"], "complete": False},
         healthy=False,
         criticals=2,
         warnings=0,
@@ -664,9 +710,9 @@ def test_cli_table_renders_from_a_sample_output() -> None:
     assert "gets 6606 / searches 52 / sets 1687 (ratio 127.04)" in lines[1]
     assert "live 786 rows / 21,500,000 B; versions 1687 rows / 51,400,000 B" in lines[1]
     header = next(line for line in lines if line.strip().startswith("code"))
-    assert header.split() == ["code", "severity", "count", "share", "first", "sample"]
+    assert header.split() == ["code", "severity", "kind", "count", "share", "first", "sample"]
     row = next(line for line in lines if "exact_key_store" in line)
-    assert row.split()[:4] == ["exact_key_store", "critical", "6606", "99%"]
+    assert row.split()[:5] == ["exact_key_store", "critical", "heuristic", "6606", "99%"]
     assert row.endswith("memory_key=sre/v1/leases/worker, reads=116")
     row2 = next(line for line in lines if "double_encoded_values" in line)
     assert row2.rstrip().endswith("-")  # no sample
@@ -723,3 +769,429 @@ def test_cli_command_prints_the_table_or_json_and_exits_on_criticals(
     parsed = json.loads(capsys.readouterr().out)
     assert parsed["healthy"] is False and parsed["summary"]["gets"] == 6606
     assert [f["code"] for f in parsed["findings"]] == ["exact_key_store", "double_encoded_values"]
+
+
+# ---------------------------------------------------------------------------
+# The evidence contract every finding carries.
+# ---------------------------------------------------------------------------
+
+
+def _revision(key: str, version: int, *, agent: str = "writer", mid: str = "") -> dict[str, Any]:
+    # As the citation read returns it: the id under `id`.
+    return {
+        "memory_key": key,
+        "id": mid or _mid(key),
+        "version": version,
+        "sensitivity": "",
+        "value_len": 10,
+        "agent": agent,
+        "user_id": "-",
+        "session_id": "-",
+        "memory_type": "semantic",
+        "source_class": "tool",
+        "updated_at": datetime(2026, 1, 1),
+    }
+
+
+def test_every_code_declares_its_kind_version_and_uncertainty() -> None:
+    assert set(na._CONTRACT) == set(na.FINDING_CODES)
+    # Every heuristic says why a hit may still be a legitimate design.
+    assert all(r.uncertainty for r in na._CONTRACT.values() if r.kind == "usage_heuristic")
+
+
+@pytest.mark.asyncio
+async def test_findings_carry_the_contract_and_cite_the_live_revisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out, ch = await _run(
+        monkeypatch,
+        {
+            M_LIVE: _live(10, 1),
+            M_OVER: _value_rows(3, 3_000_000, ["a", "b"]),
+            M_CITE: [_revision("a", 1), _revision("b", 2)],
+        },
+        sample_limit=2,
+    )
+    f = _finding(out, "oversized_values")
+    assert f.kind == "usage_heuristic" and f.rule_version == 1
+    assert f.source_op == "namespace.audit"
+    assert f.population == 10 and f.sample_limit == 2
+    # Three rows match and two are sampled: the listing is not complete.
+    assert f.samples_complete is False
+    assert [(e.memory_key, e.version) for e in f.evidence] == [("a", 1), ("b", 2)]
+    # Current-state checks have no window; the ledger checks carry the request's.
+    assert f.window_seconds is None
+    assert _finding(out, "exact_key_store").window_seconds == out.window_seconds
+    # One citation read for the whole report, bound to the sampled rows' ids only.
+    cites = [p for sql, p in zip(ch.sqls, ch.params, strict=True) if M_CITE in sql]
+    assert len(cites) == 1 and cites[0]["ids"] == sorted([_mid("a"), _mid("b")])
+    assert cites[0]["identities"] == []
+    # Summary reads are rules the findings depend on.
+    assert out.coverage.complete
+    assert out.coverage.rules_run == [*na._SUMMARY_STEPS, *na.FINDING_CODES, "evidence"]
+
+
+@pytest.mark.asyncio
+async def test_a_key_under_two_identities_cites_only_the_row_that_matched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    matched = _revision("deploy", 3, agent="a")
+    other = _revision("deploy", 9, agent="b", mid="00000000-0000-0000-0000-0000000000bb")
+    out, _ = await _run(
+        monkeypatch,
+        {
+            M_LIVE: _live(2, 1),
+            M_OVER: _value_rows(1, 900, ["deploy"]),
+            # The read returns every row it was asked about; only the sampled id is cited.
+            M_CITE: [matched, other],
+        },
+    )
+    f = _finding(out, "oversized_values")
+    assert [(e.agent, e.version) for e in f.evidence] == [("a", 3)]
+
+
+@pytest.mark.asyncio
+async def test_samples_that_name_no_single_row_are_not_cited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out, ch = await _run(
+        monkeypatch,
+        {
+            M_LIVE: _live(2, 1),
+            M_HOT: _hot([{"memory_key": "lease", "reads": 40}]),
+            M_VER: [{"total": 9, "total_bytes": 90, "memory_key": "k", "versions": 9, "bytes": 90}],
+        },
+    )
+    assert _finding(out, "exact_key_store").evidence == []
+    assert _finding(out, "version_churn").evidence == []
+    assert not any(M_CITE in sql for sql in ch.sqls)
+
+
+@pytest.mark.asyncio
+async def test_version_churn_measures_its_count_against_the_version_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out, _ = await _run(
+        monkeypatch,
+        {
+            M_LIVE: _live(2, 1),
+            M_VER: [{"total": 9, "total_bytes": 90, "memory_key": "k", "versions": 9, "bytes": 90}],
+        },
+    )
+    f = _finding(out, "version_churn")
+    assert f.count == 9 and f.population == 9
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sample_limit", "returned", "complete"),
+    # The read asks for one row past the cap: a full page is complete, one more is cut.
+    [(5, 5, True), (5, 6, False), (0, 0, True), (0, 1, False)],
+)
+async def test_hot_key_samples_are_complete_only_when_the_read_returned_fewer_than_asked(
+    monkeypatch: pytest.MonkeyPatch, sample_limit: int, returned: int, complete: bool
+) -> None:
+    hot = _hot([{"memory_key": f"k{i}", "reads": 30} for i in range(returned)])
+    ledger = {"gets": 30 * returned}
+    out, _ = await _run(
+        monkeypatch, {M_LIVE: _live(1, 1), M_LEDGER: ledger, M_HOT: hot}, sample_limit=sample_limit
+    )
+    assert _finding(out, "exact_key_store").samples_complete is complete
+
+
+@pytest.mark.asyncio
+async def test_a_failed_citation_read_leaves_findings_uncited_and_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out, _ = await _run(
+        monkeypatch,
+        {
+            M_LIVE: _live(10, 1),
+            M_OVER: _value_rows(1, 900, ["a"]),
+            M_CITE: TimeoutError("boom"),
+        },
+    )
+    assert _finding(out, "oversized_values").evidence == []
+    assert "evidence: TimeoutError" in out.skipped
+    assert out.coverage.complete is False and out.coverage.rules_skipped == ["evidence"]
+
+
+@pytest.mark.asyncio
+async def test_coverage_names_a_skipped_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    out, _ = await _run(monkeypatch, {M_LIVE: _live(1, 1), M_VER: TimeoutError("slow")})
+    assert out.coverage.rules_skipped == ["version_churn"]
+    assert "version_churn" not in out.coverage.rules_run
+
+    out, _ = await _run(monkeypatch, {M_LIVE: TimeoutError("slow")})
+    assert out.coverage.rules_skipped == ["summary_live"]
+    assert "summary_live" not in out.coverage.rules_run
+    assert out.coverage.complete is False
+
+
+@pytest.mark.asyncio
+async def test_a_population_whose_summary_read_was_skipped_is_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hashed = [{"total": 3, "memory_key": "a", "memory_id": _mid("a")}]
+    out, _ = await _run(monkeypatch, {M_LIVE: TimeoutError("slow"), M_HASHKEY: hashed})
+    # A count against a denominator never read is not a measurement.
+    assert _finding(out, "hash_keys").population is None
+    out, _ = await _run(monkeypatch, {M_LIVE: _live(10, 900), M_HASHKEY: hashed})
+    assert _finding(out, "hash_keys").population == 10
+
+
+@pytest.mark.asyncio
+async def test_an_index_row_is_judged_and_cited_per_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    keys = [f"k/{i}" for i in range(8)]
+    plain, index = "00000000-0000-0000-0000-0000000000aa", "00000000-0000-0000-0000-0000000000bb"
+    rows = [{"memory_key": k, "memory_id": _mid(k), "value": "claim"} for k in keys] + [
+        # The same key under two identities: a plain claim first, the index second.
+        {"memory_key": "idx", "memory_id": plain, "value": "a claim"},
+        {"memory_key": "idx", "memory_id": index, "value": ",".join(keys)},
+    ]
+    cited = _revision("idx", 2, agent="b", mid=index)
+    out, ch = await _run(monkeypatch, {M_LIVE: _live(10, 900), M_INDEX: rows, M_CITE: [cited]})
+    f = _finding(out, "hand_rolled_index_rows")
+    # The citation read is asked for the index row alone; the sample joins it by id.
+    assert next(p for sql, p in zip(ch.sqls, ch.params, strict=True) if M_CITE in sql)["ids"] == [
+        index
+    ]
+    assert [e.memory_id for e in f.evidence] == [index]
+    assert f.samples == [{"memory_key": "idx", "memory_id": index, "keys_named": 8}]
+
+
+@pytest.mark.asyncio
+async def test_exact_key_samples_are_incomplete_when_cold_keys_add_to_the_gets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hot = [{"memory_key": "lease", "reads": 40}]
+    out, _ = await _run(
+        monkeypatch,
+        {
+            M_LIVE: _live(1, 1),
+            M_LEDGER: {"gets": 52, "searches": 0, "sets": 0},
+            M_HOT: _hot(hot, 52),
+        },
+    )
+    assert _finding(out, "exact_key_store").samples_complete is False
+    out, _ = await _run(
+        monkeypatch,
+        {M_LIVE: _live(1, 1), M_LEDGER: {"gets": 40, "searches": 0, "sets": 0}, M_HOT: _hot(hot)},
+    )
+    assert _finding(out, "exact_key_store").samples_complete is True
+
+
+@pytest.mark.asyncio
+async def test_a_row_behind_two_samples_is_cited_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    # One memory row, two embedding rows (two embedders during a model change).
+    identity = {"memory_key": "k", "agent": "writer", "user_id": "-", "session_id": "-"}
+    unembedded = [{"total": 2, **identity, "error_class": "TooLong"}] * 2
+    out, _ = await _run(
+        monkeypatch,
+        {M_LIVE: _live(1, 1), M_UNEMB: unembedded, M_CITE: [_revision("k", 4)]},
+    )
+    f = _finding(out, "unembedded_rows")
+    assert len(f.samples) == 2 and [e.version for e in f.evidence] == [4]
+
+
+@pytest.mark.asyncio
+async def test_a_row_is_cited_with_the_hash_of_the_value_memory_get_serves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # memory.get hashes the value it serves, decoded: an object from the JSON column, and
+    # a string value, which is stored raw (not JSON).
+    ident = {"agent": "writer", "user_id": "-", "session_id": "-"}
+    out, ch = await _run(
+        monkeypatch,
+        {
+            M_LIVE: _live(2, 2),
+            M_OVER: _value_rows(2, 900, ["a", "b"]),
+            M_CITE: [_revision("a", 1), _revision("b", 1)],
+            M_VALUE: [
+                {**ident, "memory_key": "a", "version": 1, "value": '{"b": 1}'},
+                {**ident, "memory_key": "b", "version": 1, "value": "Tuesdays."},
+            ],
+        },
+    )
+    cited = {e.memory_key: e.content_sha256 for e in _finding(out, "oversized_values").evidence}
+    assert cited == {"a": sha256_value_json('{"b": 1}'), "b": sha256_value_json('"Tuesdays."')}
+    # The values are read in one statement, by each row's sorting key.
+    reads = [p for sql, p in zip(ch.sqls, ch.params, strict=True) if M_VALUE in sql]
+    assert [sorted(r["keys"]) for r in reads] == [
+        [("writer", "-", "-", "a"), ("writer", "-", "-", "b")]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_value_over_the_hash_bound_is_cited_without_reading_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "namespace_report_hash_max_bytes", 100)
+    big = {**_revision("big", 1), "value_len": 3_000_000}
+    out, ch = await _run(
+        monkeypatch,
+        {M_LIVE: _live(1, 1), M_OVER: _value_rows(1, 3_000_000, ["big"]), M_CITE: [big]},
+    )
+    # The citation names the revision; the value is never read to hash it.
+    [evidence] = _finding(out, "oversized_values").evidence
+    assert (evidence.version, evidence.content_sha256) == (1, "")
+    assert not any(M_VALUE in sql for sql in ch.sqls)
+    # A value exactly at the bound is hashed, and the value read carries the bound too.
+    at = {**_revision("at", 1), "value_len": 100}
+    ident = {"agent": "writer", "user_id": "-", "session_id": "-", "memory_key": "at"}
+    out, ch = await _run(
+        monkeypatch,
+        {
+            M_LIVE: _live(1, 1),
+            M_OVER: _value_rows(1, 100, ["at"]),
+            M_CITE: [at],
+            M_VALUE: [{**ident, "version": 1, "value": '"x"'}],
+        },
+    )
+    assert [e.content_sha256 for e in _finding(out, "oversized_values").evidence] == [
+        sha256_value_json('"x"')
+    ]
+    assert (
+        next(p for sql, p in zip(ch.sqls, ch.params, strict=True) if M_VALUE in sql)["max"] == 100
+    )
+    # 0 cites no hash: not even an empty value is read.
+    monkeypatch.setattr(settings, "namespace_report_hash_max_bytes", 0)
+    empty = {**_revision("empty", 1), "value_len": 0}
+    out, ch = await _run(
+        monkeypatch,
+        {M_LIVE: _live(1, 1), M_OVER: _value_rows(1, 0, ["empty"]), M_CITE: [empty]},
+    )
+    assert [e.content_sha256 for e in _finding(out, "oversized_values").evidence] == [""]
+    assert not any(M_VALUE in sql for sql in ch.sqls)
+
+
+@pytest.mark.asyncio
+async def test_a_high_sensitivity_row_is_cited_without_its_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out, ch = await _run(
+        monkeypatch,
+        {
+            M_LIVE: _live(1, 1),
+            M_OVER: _value_rows(1, 900, ["pin"]),
+            M_CITE: [{**_revision("pin", 1), "sensitivity": "high"}],
+        },
+    )
+    # A short secret's hash can be guessed: none is served, and no value is read.
+    cited = [(e.memory_key, e.content_sha256) for e in _finding(out, "oversized_values").evidence]
+    assert cited == [("pin", "")]
+    assert not any(M_VALUE in sql for sql in ch.sqls)
+
+
+@pytest.mark.asyncio
+async def test_a_row_revised_between_the_two_reads_is_cited_without_a_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    newer = {"agent": "writer", "user_id": "-", "session_id": "-", "memory_key": "a"}
+    out, _ = await _run(
+        monkeypatch,
+        {
+            M_LIVE: _live(1, 1),
+            M_OVER: _value_rows(1, 900, ["a"]),
+            M_CITE: [_revision("a", 1)],
+            M_VALUE: [{**newer, "version": 2, "value": '"latte"'}],
+        },
+    )
+    # Version 1 is cited: version 2's value is not its hash, so none is given.
+    [evidence] = _finding(out, "oversized_values").evidence
+    assert (evidence.version, evidence.content_sha256) == (1, "")
+
+
+@pytest.mark.asyncio
+async def test_exact_key_samples_are_not_complete_when_the_ledger_summary_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hot = _hot([{"memory_key": "k", "reads": 30}])
+    out, _ = await _run(
+        monkeypatch, {M_LIVE: _live(1, 1), M_LEDGER: TimeoutError("slow"), M_HOT: hot}
+    )
+    assert "summary_ledger" in out.coverage.rules_skipped
+    # Hot keys or none, a listing against a count the summary never read is not complete.
+    assert _finding(out, "exact_key_store").samples_complete is False
+
+
+@pytest.mark.asyncio
+async def test_hot_key_completeness_compares_counts_of_one_statement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hot = [{"memory_key": "lease", "reads": 40, "hot_reads": 40, "window_gets": 41}]
+    # The summary saw fewer gets than the hot-key read: a later get must not make it whole.
+    out, _ = await _run(monkeypatch, {M_LIVE: _live(1, 1), M_LEDGER: {"gets": 30}, M_HOT: hot})
+    assert _finding(out, "exact_key_store").samples_complete is False
+
+
+# A reminder, not enforcement: a threshold edit fails here, beside the version that must
+# rise with it.
+# code: (rule version, its built-in thresholds now, the thresholds at that version)
+_THRESHOLDS = {
+    "exact_key_store": (
+        1,
+        (na.EXACT_KEY_STORE_RATIO, na.EXACT_KEY_STORE_MIN_GETS, na.HOT_KEY_READS),
+        (20.0, 200, 20),
+    ),
+    "hand_rolled_index_rows": (
+        1,
+        (na.INDEX_ROW_MIN_KEYS, na.INDEX_ROW_VALUE_CLIP, na._TOKEN_SPLIT_RE.pattern),
+        (8, 65_536, r"""[\s"',\[\]{}()<>\\]+"""),
+    ),
+    "double_encoded_values": (1, (na.DOUBLE_ENCODED_CRITICAL_SHARE,), (0.25,)),
+    "json_prefix_excerpts": (
+        1,
+        (
+            na.JSON_PREFIX_WARNING_SHARE,
+            na.EXCERPT_LIMIT,
+            tuple(sorted(na.STRUCTURED_TYPES)),
+            tuple(sorted(na.NON_SEARCHABLE_TYPES)),
+        ),
+        (0.10, 1200, ("procedural",), ("episodic", "profile")),
+    ),
+    "oversized_values": (
+        1,
+        (tuple(sorted(na.STRUCTURED_TYPES)), tuple(sorted(na.NON_SEARCHABLE_TYPES))),
+        (("procedural",), ("episodic", "profile")),
+    ),
+    "unembedded_rows": (1, (tuple(sorted(na.NON_SEARCHABLE_TYPES)),), (("episodic", "profile"),)),
+    "hash_keys": (
+        1,
+        (na.HASH_KEY_WARNING_SHARE, na._HASH_KEY_SEGMENT_RE),
+        (0.25, r"(^|[/:])[0-9a-fA-F]{24,}$|(^|[/:])[0-9a-fA-F]{40,}([/:]|$)"),
+    ),
+    "coordination_as_memory": (
+        1,
+        (
+            na.HOT_KEY_READS,
+            na.COORDINATION_VALUE_CHARS,
+            na.COORDINATION_MAX_WORDS,
+            na.COORDINATION_SEGMENTS,
+        ),
+        (20, 160, 8, ("lease", "leases", "lock", "locks", "freeze", "freezes")),
+    ),
+    "episodic_blobs": (1, (na.EPISODIC_BLOB_CHARS,), (50_000,)),
+    "version_churn": (
+        1,
+        (na.VERSION_CHURN_ROWS_RATIO, na.VERSION_CHURN_BYTES_RATIO),
+        (3.0, 2.0),
+    ),
+}
+
+
+def test_a_threshold_change_raises_its_rule_version() -> None:
+    for code, (version, now, pinned) in _THRESHOLDS.items():
+        assert na._CONTRACT[code].version == version, f"{code}: update the pin with the version"
+        assert now == pinned, f"{code}: a threshold changed; raise its rule_version"
+
+
+def test_a_token_narrowed_below_the_namespace_cannot_call_either_report() -> None:
+    """Both reports read the whole namespace, identities included, so a token narrowed
+    below it is refused before either runs."""
+    assert not honours_read_scope("namespace.audit")
+    assert not honours_read_scope("namespace.validate")
