@@ -2726,8 +2726,6 @@ async def test_an_empty_reply_over_a_caption_of_text_is_not_read_again(monkeypat
 
 @pytest.mark.asyncio
 async def test_a_failed_second_read_loses_the_window(monkeypatch) -> None:
-    import httpx
-
     world = _World(monkeypatch, [])
     world.replies = [[], httpx.ConnectError("down")]
     report = await _run()
@@ -2838,7 +2836,7 @@ def _ban(**over: Any) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
-    ("quote", "is_constraint", "ban"),
+    ("reasoning", "is_constraint", "ban"),
     [
         (_BAN, True, True),
         ("Reads must never block on a merge.", True, True),
@@ -2849,8 +2847,8 @@ def _ban(**over: Any) -> dict[str, Any]:
         (_BAN, False, False),
     ],
 )
-def test_a_ban_is_a_constraint_whose_quote_says_so(quote, is_constraint, ban) -> None:
-    cand = _cand(quote=quote, is_constraint=is_constraint)
+def test_a_ban_is_a_constraint_whose_reasoning_says_so(reasoning, is_constraint, ban) -> None:
+    cand = _cand(reasoning=reasoning, is_constraint=is_constraint)
     assert dx.states_a_ban(cand) is ban
 
 
@@ -2868,7 +2866,14 @@ async def test_a_ban_stated_with_no_reason_is_kept_as_one(monkeypatch) -> None:
     assert statement == f"Decided {_BAN}"
 
 
-@pytest.mark.parametrize("over", [{"is_constraint": False}, {"quote": "Client-side retries."}])
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"is_constraint": False},
+        # The quote holds the ban word, the stored reasoning does not.
+        {"reasoning": "Client-side retries"},
+    ],
+)
 @pytest.mark.asyncio
 async def test_a_restatement_that_is_no_ban_is_still_dropped(monkeypatch, over) -> None:
     world = _World(monkeypatch, [_ban(**over)])
@@ -2886,7 +2891,7 @@ async def test_a_restatement_that_is_no_ban_is_still_dropped(monkeypatch, over) 
     [
         ("Design > Recap", True),
         ("Background > Final DISTINCT", True),
-        ("Spilling > A quick recall of v1", True),
+        ("Search > Improving recall in hybrid search", False),
         ("SUMMARY", True),
         ("Spilling > Final DISTINCT", False),
         ("Recalling spilled blocks", False),
@@ -2923,6 +2928,16 @@ async def test_a_recap_quote_is_dropped_and_its_text_still_gives_a_reason(monkey
     (inp,) = world.recorded
     assert inp.reasoning == reason and inp.source_resource_id.endswith("Spilling > Merge")
     assert "[section: Spilling > Recap]" in world.prompts[0][1]
+
+
+@pytest.mark.asyncio
+async def test_a_recap_candidate_with_a_missing_reasoning_is_not_read_again(monkeypatch) -> None:
+    recap = "We spill into sorted runs like ORDER BY."
+    world = _World(monkeypatch, [_candidate(quote=recap, reasoning=_STITCHED_REASONING)])
+    _chunks(monkeypatch, (f"{recap} A plain set on disk costs random reads.", ("Recap",)))
+    report = await _run()
+    assert len(world.prompts) == 1 and report.retried == []
+    assert [d.reason for d in report.dropped] == ["reasoning is not in the document text"]
 
 
 # ------------------------------------------------------------------ inverted alternatives

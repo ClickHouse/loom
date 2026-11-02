@@ -260,14 +260,13 @@ A decision recorded in a repository's trunk code namespace also reaches MCP `loo
 repository, for a caller who may read the namespace ([unified search](unified-search.md#reading-the-memory-section)).
 
 The memory row's value is one statement, `Category: <category>. Scenario: <scenario>. Decided <outcome> because
-<reasoning>. Rejected: <alternative>; …`, then `Realized: …` once `decision.outcome` has recorded one. A reasoning
-that is the outcome word for word (case and whitespace aside) records a ban or an invariant stated with no reason: the
+<reasoning>. Rejected: <alternative>; …`, then `Realized: …` once `decision.outcome` has recorded one. A reasoning that
+is the outcome word for word (case and whitespace aside) records a ban or an invariant stated with no reason: the
 statement reads `Decided <outcome>.`, the outcome keeping the reasoning's room as well, and `context.pack` gives no
-`because`. Search embeds
-and excerpts it and `memory.for_file` shows it. Each part is shortened to fit the embedded excerpt, the scenario
-most, because the pre-edit line shows the start of the statement and must reach the outcome. The excerpt is
-measured as the value is stored, JSON-encoded, where a non-ASCII character takes six or more, so a Cyrillic or CJK
-part keeps about a sixth as many characters as an ASCII one. The record keeps every field in full except the
+`because`. Search embeds and excerpts it and `memory.for_file` shows it. Each part is shortened to fit the embedded
+excerpt, the scenario most, because the pre-edit line shows the start of the statement and must reach the outcome. The
+excerpt is measured as the value is stored, JSON-encoded, where a non-ASCII character takes six or more, so a Cyrillic
+or CJK part keeps about a sixth as many characters as an ASCII one. The record keeps every field in full except the
 alternatives, each kept to its first 300 characters.
 
 - **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the
@@ -401,29 +400,28 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   are kept per section. A candidate whose category or scenario holds no letter or digit from a-z, 0-9 has no key and is
   dropped. Of two candidates with one key, or with one outcome and reasoning (overlapping chunks give two windows the
   same text), the first is kept.
-- **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
-  `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
-  punctuation, as their English (Snowball) stems, so `stored` meets `store` and `running` meets `run`. Filler words
-  (`we`, `the`, `will`, `decided`, `chose`, `use`, `instead`, `because` and the like) are skipped in any form: "We
-  decided on spilling into sorted runs." restates the outcome `spill into sorted runs`; "Sorted runs avoid random reads
-  on disk." gives a reason. An outcome that carries its own reason leaves the reasoning nothing to add, so the candidate
-  is dropped, which is why the prompt asks for the outcome without its reason. One exception: a ban stated with no
-  reason ("Client-side retries only; no server retry setting."), a candidate the model marks `is_constraint` whose
-  quote holds `only`, `no`, `never`, `must`, `not`, `always`, `at most` or `at least` as a word, is kept with its
-  reasoning as its outcome, so it is recorded with the `constraint` tag and reads `Decided <outcome>.` with no reason.
-  The flag alone is not enough: models mark plain descriptions as constraints too.
-- **Recaps**: a candidate whose quote is in a section with `recap`, `recall`, `summary` or `background` as a word of
-  a heading at any level of its breadcrumb is dropped with the line
-  `the quote is in a recap, summary or background section`. The section stays in the window, since its text may give a
-  later decision's reason.
+- **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line `reasoning
+only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without punctuation,
+  as their English (Snowball) stems, so `stored` meets `store` and `running` meets `run`. Filler words (`we`, `the`,
+  `will`, `decided`, `chose`, `use`, `instead`, `because` and the like) are skipped in any form: "We decided on spilling
+  into sorted runs." restates the outcome `spill into sorted runs`; "Sorted runs avoid random reads on disk." gives a
+  reason. An outcome that carries its own reason leaves the reasoning nothing to add, so the candidate is dropped, which
+  is why the prompt asks for the outcome without its reason. One exception: a ban stated with no reason ("Client-side
+  retries only; no server retry setting."), a candidate the model marks `is_constraint` whose reasoning holds `only`,
+  `no`, `never`, `must`, `not`, `always`, `at most` or `at least` as a word, is kept with its reasoning as its outcome,
+  so it is recorded with the `constraint` tag and reads `Decided <outcome>.` with no reason. The flag alone is not
+  enough: models mark plain descriptions as constraints too.
+- **Recaps**: a candidate whose quote is in a section with `recap`, `summary` or `background` as a word of a heading at
+  any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. The
+  section stays in the window, since its text may give a later decision's reason.
 - **Inverted alternatives**: a rejected option the text states as part of the choice is left out of the record and
   reported (`rejected option '<option>' left out: the text states it as part of the choice`); the decision is kept. An
-  option is such when every word of it, as the restatement check compares words, is in one sentence of the window (a sentence ends at `.`, `!` or `?`
-  before whitespace, at a blank line or before a list item; a single line break does not end one) and
-  that sentence holds none of `not`, `no`, `never`, `cannot`, `can't`, `instead`, `rather`, `without`, `fail`,
-  `fails`, `reject`, `rejected`, `than`, `avoid`, `slow`. The sentence that holds the option's own rejection reason is
-  not read: it is the rejection. "Sharding by tenant is deferred to v2." states "Defer sharding by tenant"; "so v1
-  cannot evict it" still rejects "evict the largest job".
+  option is such when every word of it, as the restatement check compares words, is in one sentence of the window (a
+  sentence ends at `.`, `!` or `?` before whitespace, at a blank line or before a list item; a single line break does
+  not end one) and that sentence holds none of `not`, `no`, `never`, `cannot`, `can't`, `instead`, `rather`, `without`,
+  `fail`, `fails`, `reject`, `rejected`, `than`, `avoid`, `slow`. The sentence that holds the option's own rejection
+  reason is not read: it is the rejection. "Sharding by tenant is deferred to v2." states "Defer sharding by tenant";
+  "so v1 cannot evict it" still rejects "evict the largest job".
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.

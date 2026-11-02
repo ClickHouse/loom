@@ -360,10 +360,11 @@ _BAN_MARKER = re.compile(r"\b(?:only|no|never|must|not|always|at\s+most|at\s+lea
 
 
 def states_a_ban(cand: Candidate) -> bool:
-    """A constraint whose quote says only, no, never, must, not, always, at most or at
-    least: kept with no reason when its reasoning restates it. The model's constraint
-    flag alone is not enough: it marks plain descriptions as constraints too."""
-    return cand.is_constraint and bool(_BAN_MARKER.search(cand.quote))
+    """A constraint whose reasoning, the span that is stored, says only, no, never, must,
+    not, always, at most or at least: kept with no reason when that reasoning restates
+    it. The model's constraint flag alone is not enough: it marks plain descriptions as
+    constraints too."""
+    return cand.is_constraint and bool(_BAN_MARKER.search(cand.reasoning))
 
 
 def without_reason(cand: Candidate) -> Candidate:
@@ -374,7 +375,7 @@ def without_reason(cand: Candidate) -> Candidate:
 
 # A section that restates others: its quote is no decision, though its text stays in the
 # window as a later decision's reason.
-_RECAP_HEADING = re.compile(r"\b(?:recap|recall|summary|background)\b", re.I)
+_RECAP_HEADING = re.compile(r"\b(?:recap|summary|background)\b", re.I)
 RECAP = "the quote is in a recap, summary or background section"
 
 
