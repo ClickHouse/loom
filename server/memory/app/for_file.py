@@ -199,12 +199,12 @@ def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
     if not team:
         return ""
     ns = str(team[0].get("namespace") or "")
-    # A newer rule supersedes any row but a key-identified one; decision.record corrects
-    # a typed decision.
-    steps = []
-    if not all(h.get("memory_type") in KEY_IDENTIFIED_TYPES for h in team):
-        steps.append("write a corrected rule for the file and tell its author")
+    # A newer rule supersedes a rule or a tagged decision; decision.record corrects a typed
+    # decision. One flag decides both, so a block always gets a step.
     typed = [h.get("memory_type") == SCHEMA_NAME for h in team]
+    steps = []
+    if not all(typed):
+        steps.append("write a corrected rule for the file and tell its author")
     if any(typed):
         steps.append("ask a decision's author or a maintainer to record the corrected decision")
     if all(typed):
