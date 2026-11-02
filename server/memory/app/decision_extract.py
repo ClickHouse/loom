@@ -76,9 +76,9 @@ _PAGE = 500
 @dataclass
 class RecordReport:
     memory_key: str
-    # written | revised | unchanged | flagged | already_flagged | not_ours | outcome_known |
-    # already_recorded (a tag write that found its row gone or moved on, row_changed, goes
-    # to `races`)
+    # written | revised | unchanged | flagged | already_flagged | row_changed | not_ours |
+    # outcome_known | already_recorded. row_changed (a tag write found its row gone or moved
+    # on) is reported in `races`; the caller keeps it out of `records`.
     action: str
     # The decision.record body, with the identity the write goes (or would go) under.
     body: dict[str, Any]
@@ -201,6 +201,13 @@ _FAKE_ANSWER = (
 )
 
 
+def _fake_chosen() -> bool:
+    """LOOM_LLM_PROVIDER names the fake model: the run reads with it on purpose."""
+    from server.settings import settings
+
+    return settings.llm_provider == "fake" and not settings.llm_provider_inferred()
+
+
 def _no_model_error() -> str:
     """Why the run must not start: it would read the document with the fake model, whose
     decisions pass the verbatim check by construction and would be recorded as the
@@ -217,7 +224,7 @@ def _no_model_error() -> str:
             "document with the fake model; set the key, or LOOM_LLM_PROVIDER=fake to run on "
             "it on purpose"
         )
-    if provider == "fake" and settings.llm_provider_inferred():
+    if provider == "fake" and not _fake_chosen():
         return (
             "no LLM provider is configured, so the run would read the document with the "
             "fake model; set LOOM_LLM_PROVIDER and its key, or LOOM_LLM_PROVIDER=fake to run "
@@ -226,10 +233,11 @@ def _no_model_error() -> str:
     return ""
 
 
-# What a write may raise and the run reports per candidate or row: a server refusal, or
-# the embedding provider's own error (memory.set and memory.search embed in-process and
-# let an HTTP error or a timeout through as raised).
-_WRITE_ERRORS = (HTTPException, LoomServerError, httpx.HTTPError, TimeoutError)
+# What a read or write the run makes may raise, reported per candidate or row (or as the
+# run's error before any model call): a server refusal, or the embedding provider's own
+# error (memory.set and memory.search embed in-process and let an HTTP error or a timeout
+# through as raised).
+_REPORTED_ERRORS = (HTTPException, LoomServerError, httpx.HTTPError, TimeoutError)
 
 
 def _refusal(e: BaseException) -> str:
@@ -283,7 +291,7 @@ async def extract_document(
     try:
         own_rows = await _extractor_rows(org, namespace, source_uri)
         known = await _known_decisions(org, namespace, own_rows)
-    except _WRITE_ERRORS as e:
+    except _REPORTED_ERRORS as e:
         # Before any model call: a run that cannot see its own rows reads nothing.
         report.error = f"could not read the extractor's rows: {_refusal(e)}"
         return report
@@ -302,7 +310,7 @@ async def extract_document(
     for cand, section, texts in kept:
         try:
             rec = await _reconcile(org, namespace, source_uri, cand, section, texts, dry_run)
-        except _WRITE_ERRORS as e:
+        except _REPORTED_ERRORS as e:
             # A blacklisted or newly pinned decision, a busy key, a store that timed out:
             # the other candidates and the retire step still run, and a re-run does not
             # stop at the same place.
@@ -391,10 +399,9 @@ async def _candidates(
     that passes the verbatim check, at most `max_per_section` per section; and how many
     windows the model answered with a readable reply."""
     from server.llm.client import get_llm_client
-    from server.settings import settings
 
     llm = get_llm_client()
-    fake_chosen = settings.llm_provider == "fake" and not settings.llm_provider_inferred()
+    fake_chosen = _fake_chosen()
     system = dx.system_prompt(max_per_section, known)
     kept: list[tuple[dx.Candidate, str, list[str]]] = []
     answered = 0
@@ -884,7 +891,7 @@ async def _retire(
             continue
         try:
             await _retire_one(report, row, live_texts, held)
-        except _WRITE_ERRORS as e:
+        except _REPORTED_ERRORS as e:
             report.refused.append(f"{row.memory_key}: {_refusal(e)}")
 
 
