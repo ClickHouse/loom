@@ -559,3 +559,22 @@ def test_the_summary_keeps_a_dashboard_change_to_a_memory_and_no_read() -> None:
     assert {"memory.set", "memory.delete", "memory.pin", "memory.update"} <= changes
     # An admin's read, and anything outside memory (the dashboard's page-view vitals).
     assert not {"memory.dedup_list", "memory.exposure_summary", "ui.vitals"} & changes
+
+
+def test_every_argument_an_assistant_description_asks_for_is_listed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.transport.mcp_descriptions import ASSISTANT_TOOL_DESCRIPTIONS
+
+    monkeypatch.setattr(settings, "mcp_code_tools", True)
+    listed = {d["name"]: d for d in asyncio.run(mcp._tools_descriptor(toolset="assistant"))}
+    for name, text in ASSISTANT_TOOL_DESCRIPTIONS.items():
+        op = OPERATIONS_BY_NAME[name]
+        if op.mcp_tool_name not in listed:
+            continue
+        props = listed[op.mcp_tool_name]["inputSchema"]["properties"]
+        inputs = set(re.findall(r"`([a-z_0-9]+)", text)) & set(op.input_model.model_fields)
+        # A strict client sends only listed properties: an argument the text asks for
+        # (the writer's `agent` on an aggregate) must be one it can send.
+        assert inputs <= set(props), (name, inputs - set(props))
+    assert "agent" in listed["loom_memory_aggregate"]["inputSchema"]["properties"]

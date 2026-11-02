@@ -294,6 +294,22 @@ def resolve_toolset(requested: str | None, configured: str | None) -> str:
     return requested_l if requested_l and is_toolset(requested_l) else configured_l
 
 
+def _with_agent(schema: dict[str, Any], op: Any) -> dict[str, Any]:
+    """`schema` with the op's `agent` argument listed again: the other toolsets hide it
+    (the caller's own agent fills in), but an assistant read names the writer it reads
+    (`memory.aggregate`, `memory.provenance`) or the agent it describes (`mentor.brief`)."""
+    field = op.input_model.model_fields.get("agent")
+    props = schema.get("properties")
+    if field is None or not isinstance(props, dict):
+        return schema
+    agent: dict[str, Any] = {
+        "type": "string",
+        "description": field.description
+        or "The agent whose rows the read covers: a search hit's `agent` names its writer.",
+    }
+    return {**schema, "properties": {**props, "agent": agent}}
+
+
 def _without_forced(schema: dict[str, Any], forced: dict[str, object]) -> dict[str, Any]:
     """`schema` without the properties the assistant toolset sets itself: a model is
     not offered an argument whose value the connection overwrites."""
@@ -417,6 +433,7 @@ async def _tools_descriptor(
             input_schema = strip_model_docstring(input_schema)
         if is_assistant(toolset):
             input_schema = _without_forced(input_schema, ASSISTANT_FORCED_ARGS.get(op.name, {}))
+            input_schema = _with_agent(input_schema, op)
         descriptor: dict[str, Any] = {
             "name": op.mcp_tool_name,
             "description": desc,

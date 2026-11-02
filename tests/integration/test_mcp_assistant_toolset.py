@@ -115,6 +115,23 @@ async def test_the_assistant_reads_without_writing_or_recording_usage(
         )
         assert "deploy/window" in asked["structuredContent"]["memory_keys"], asked
 
+        # A read of one writer's row answers once the call names the writer it listed.
+        traced = await _rpc(
+            c,
+            token,
+            "tools/call",
+            {
+                "name": "loom_memory_provenance",
+                "arguments": {
+                    "namespace": ns,
+                    "session_id": "s-1",
+                    "memory_key": "deploy/window",
+                    "agent": "writer",
+                },
+            },
+        )
+        assert traced["structuredContent"]["found"] is True, traced
+
         # The same search over HTTP, from a named reader in a session (a read recall credit
         # counts), records recall usage; once it shows, the assistant's earlier search
         # would have too.
