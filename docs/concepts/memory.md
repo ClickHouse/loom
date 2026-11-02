@@ -272,7 +272,8 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
 `memory.for_file` renders one line per memory, within its token budget. A row that does
 not fit is left out whole while the rows after it still get their turn, and a closing
 `- … <n> more` line, which counts against the budget too, says how many were left out and
-how to list them:
+how to list them. The header, the removal footer and the `… more` line are always printed,
+so a budget smaller than those can be exceeded:
 
 - A memory from an extra namespace (the repository's code namespace) is headed
   `Team rule (by <author>, <age>)`, or `Decision (by <author>, <age>)` for a decision

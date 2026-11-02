@@ -40,7 +40,8 @@ class MemoryForFileInput(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=16)
     # At most this many rows, across every namespace read.
     top_k: int = Field(default=8, ge=1, le=50)
-    # Cap on the rendered block; the hook injects `rendered` verbatim.
+    # Cap on the rendered block; the hook injects `rendered` verbatim. Its header,
+    # removal footer and "… more" line always print, so a smaller budget is exceeded.
     token_budget: int = Field(default=300, ge=50, le=4000)
     # Conflicted rows are still live facts a reader should see; duplicates,
     # superseded and rejected rows are not.

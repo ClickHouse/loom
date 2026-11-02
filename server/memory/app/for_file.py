@@ -242,6 +242,8 @@ def render_block(
     now: datetime | None = None,
 ) -> tuple[str, int, bool]:
     """Prompt-ready block cut at `token_budget`. Returns (text, tokens, truncated).
+    The header, the removal footer and the "… more" line always print, so a budget
+    smaller than those is exceeded.
     `home` is the caller's namespace; a row from any other is a team row (rule or decision),
     rendered with its author and age, and the block ends with how to remove one."""
     if not hits:
@@ -252,23 +254,30 @@ def render_block(
     lines = [f"Loom: {n} memor{'y' if n == 1 else 'ies'} anchored to {path} — read before editing:"]
     footer = _removal_footer(hits, home)
     used = len(lines[0]) + 1 + (len(footer) + 1 if footer else 0)
-    left_out = 0
-    for i, h in enumerate(hits):
+    rows = []
+    for h in hits:
         decision = _is_decision(h)
         if _is_team(h, home):
-            line = _team_line(h, now, decision=decision)
+            rows.append(_team_line(h, now, decision=decision))
         else:
             marks = _marker(h, show_decision=decision) + _status_notes(h, decision=decision)
-            line = f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}"
-        # A row that does not fit is left out and the later rows still get their turn, so
-        # each row also needs room for a "… more" line counting every row that may be left out.
-        most = left_out + n - i - 1
-        tail = len(_more_line(path, most)) + 1 if most else 0
-        if used + len(line) + 1 + tail > budget_chars:
-            left_out += 1
-            continue
-        lines.append(line)
-        used += len(line) + 1
+            rows.append(f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}")
+    left_out = 0
+    # A block that fits whole needs no "… more" line, so nothing is reserved for one.
+    if used + sum(len(row) + 1 for row in rows) <= budget_chars:
+        lines += rows
+    else:
+        for i, row in enumerate(rows):
+            # A row that does not fit is left out and the later rows still get their turn,
+            # so each row also needs room for a "… more" line counting every row that may
+            # be left out.
+            most = left_out + n - i - 1
+            tail = len(_more_line(path, most)) + 1 if most else 0
+            if used + len(row) + 1 + tail > budget_chars:
+                left_out += 1
+                continue
+            lines.append(row)
+            used += len(row) + 1
     truncated = left_out > 0
     if truncated:
         lines.append(_more_line(path, left_out))
