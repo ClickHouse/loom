@@ -28,7 +28,7 @@ from server.memory.app.projections import (
     resolved_entity_list,
 )
 from server.memory.app.provenance import writer_actor
-from server.memory.app.set_commit import count_attribute_tags, set_next, whole_seconds
+from server.memory.app.set_commit import count_attribute_tags, set_next
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
@@ -353,7 +353,8 @@ def _restates_stored_row(state: _BulkWriteState, entry: Any) -> bool:
     """Whether an entry repeating the stored value also keeps its sensitivity and pin and
     sets no expiry, so the skip gate counts it unchanged. The other fields
     `set_commit._only_reinforces` compares, status among them, are not checked: a replayed
-    extraction must not revive a row a later write retired. Only a level the entry names
+    extraction must not revive a row a later write retired. An entry that does change one
+    of the three writes the row as active, as memory.set does. Only a level the entry names
     counts: an extracted fact names none, and keeps the stored one."""
     live = state.existing_rows.get(entry.memory_key)
     stored_level = str(getattr(live, "sensitivity", "") or "")
@@ -528,10 +529,8 @@ def _settle_step(
     if same_bytes and held.pinned:
         row["pinned"] = 1  # the same bytes keep the pin, as on memory.set
     level = str(row.get("sensitivity") or "")
-    same_expiry = whole_seconds(row.get("expires_at")) == whole_seconds(
-        _not_lapsed(held.expires_at, state.now_utc)
-    )
-    if same_bytes and same_expiry and level == held.level and bool(row["pinned"]) == held.pinned:
+    sets_ttl = getattr(step.entry, "ttl_seconds", None) is not None
+    if same_bytes and not sets_ttl and level == held.level and bool(row["pinned"]) == held.pinned:
         return StepOutcome.UNCHANGED
     if held.pinned and not same_bytes and not row["pinned"]:
         return StepOutcome.PINNED

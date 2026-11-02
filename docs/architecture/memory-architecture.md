@@ -408,7 +408,8 @@ the write.
 An entry that repeats a key's stored bytes writes a version only when it names a new
 sensitivity, adds a pin or sets `ttl_seconds`; otherwise it counts in `skipped_unchanged`.
 Other fields, status among them, are not compared: a replayed extraction batch must not
-revive a superseded, rejected or proposed row over the write that retired it.
+revive a superseded, rejected or proposed row over the write that retired it. An entry that
+does change the level, the pin or the expiry writes the row as active, as `memory.set` does.
 
 `memory.import` (`handle_memory_import` in `memory/app/memory_import.py`) writes through
 `handle_memory_bulk_set`, so an imported item meets every check above. The bulk write's

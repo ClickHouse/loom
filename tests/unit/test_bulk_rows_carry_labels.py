@@ -286,6 +286,39 @@ async def test_a_repeat_of_a_retired_stored_value_leaves_it(monkeypatch, status)
     assert plan.memory_rows == []
 
 
+async def test_a_repeat_of_a_retired_stored_value_that_sets_a_ttl_writes_it_active(
+    monkeypatch,
+) -> None:
+    # A changed label is a new assertion, not a replay: the row is written, as memory.set
+    # writes it, active.
+    value = "Alice lives in Berlin"
+    again = {"memory_key": "k", "value": value, "ttl_seconds": 60}
+    stored = _stored(
+        value, status="superseded", superseded_by="22222222-2222-2222-2222-222222222222"
+    )
+    _, plan = await _settled(monkeypatch, stored, {}, again)
+    (row,) = plan.memory_rows
+    assert row["status"] == "active" and not row["superseded_by"]
+
+
+async def test_the_retention_window_alone_leaves_a_repeat_unchanged(monkeypatch) -> None:
+    # A medium row stored with no expiry before retention was on: its repeat is unchanged
+    # whether the skip gate or the replay judges it.
+    from server.memory.app.bulk_rows import StepOutcome
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitive_retention_days", 30)
+    value = "Alice lives in Berlin"
+    stored = _stored(value, sensitivity="medium")
+    other = {"memory_key": "k", "value": "Alice lives in Paris"}
+    merge = {0: NS(verdict="merge", existing_memory_id="X", peers=[])}
+    state, plan = await _settled(
+        monkeypatch, stored, merge, other, {"memory_key": "k", "value": value}
+    )
+    assert [s.outcome for s in state.steps] == [StepOutcome.KEPT_OUT, StepOutcome.UNCHANGED]
+    assert plan.memory_rows == []
+
+
 async def test_a_ttl_only_repeat_of_a_batch_value_sets_its_expiry(monkeypatch) -> None:
     value = "Alice lives in Berlin"
     first = {"memory_key": "k", "value": value}
