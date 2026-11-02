@@ -527,16 +527,24 @@ async def indexed_writes(
 ) -> int:
     """Memory keys the agent first created in the window, by any write op, that have a
     search vector from `model` (the deployment's embedder; a row still waiting has
-    `embedding_dim = 0`), in a served status and not past `expires_at`. An embedding row
-    keeps its first `created_at` across versions."""
+    `embedding_dim = 0`), in a served status and not past `expires_at`. An embedding row's
+    `created_at` is its version's write, so when a key was first created is read from
+    `loom.memory`, which carries it forward across versions."""
     ch = ch or _default_client()
     (row,) = await ch.query_all(
         f"""
         SELECT uniqExact(memory_key) AS n FROM loom.memory_embeddings FINAL
         WHERE {_SCOPE} AND agent = {{agent:String}} AND tombstoned_at IS NULL
-          AND created_at >= now() - INTERVAL {{win:UInt32}} SECOND
+          AND memory_key IN (
+              SELECT memory_key FROM loom.memory
+              WHERE {_SCOPE} AND agent = {{agent:String}}
+                AND created_at >= now() - INTERVAL {{win:UInt32}} SECOND
+          )
           AND embedding_model = {{model:String}} AND embedding_dim > 0
           AND {served_status_sql()} AND (expires_at IS NULL OR expires_at > now())
+        -- Pruning granules by the key set costs about 1 GiB for 300,000 keys; the scope
+        -- prefix already bounds the scan.
+        SETTINGS use_index_for_in_with_subqueries = 0
         """,
         params={
             "org": org,

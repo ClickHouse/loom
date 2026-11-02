@@ -30,6 +30,7 @@ class _CH:
     def __init__(self, by_marker: dict[str, Any] | None = None):
         self.by_marker = by_marker or {}
         self.sqls: list[str] = []
+        self.params: list[dict[str, Any] | None] = []
 
     def _answer(self, sql: str) -> Any:
         for marker, rows in self.by_marker.items():
@@ -41,11 +42,13 @@ class _CH:
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None):
         self.sqls.append(sql)
+        self.params.append(params)
         rows = self._answer(sql)
         return list(rows) if rows else []
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None):
         self.sqls.append(sql)
+        self.params.append(params)
         rows = self._answer(sql)
         if isinstance(rows, list):
             return rows[0] if rows else None
@@ -1028,22 +1031,34 @@ def test_the_ladder_counts_the_window_of_the_profile_the_brief_reports(
     async def _p(*a: Any, **k: Any) -> Any:
         return _fake_profile()  # cached over 7 days
 
-    windows: list[int] = []
-    real = handler._usage_evidence
-
-    async def _spy(org: str, namespace: str, agent: str, window: int) -> Any:
-        windows.append(window)
-        return await real(org, namespace, agent, window)
-
+    ch = _CH(_EVIDENCE_ROWS)
     monkeypatch.setattr(m, "mentor_profile", _p)
-    monkeypatch.setattr(handler, "_usage_evidence", _spy)
-    monkeypatch.setattr(handler, "get_client", lambda: _CH(_EVIDENCE_ROWS))
+    monkeypatch.setattr(handler, "get_client", lambda: ch)
     out = asyncio.run(
         handler.handle_mentor_brief(
             MentorBriefInput(org="o", namespace="ns", agent="a", window_seconds=30 * 86400)
         )
     )
-    assert out.window_seconds == 604800 and windows == [604800]
+    assert out.window_seconds == 604800
+    windows = {
+        marker: p["win"]
+        for sql, p in zip(ch.sqls, ch.params, strict=True)
+        for marker in (M_EVIDENCE, M_INDEXED, M_REPORTED, M_GRADED)
+        if marker in sql and p
+    }
+    assert windows == dict.fromkeys((M_EVIDENCE, M_INDEXED, M_REPORTED, M_GRADED), 604800)
+
+
+def test_indexed_writes_count_keys_first_created_in_the_window() -> None:
+    from server.insights.store import mentor as store
+
+    ch = _CH({M_INDEXED: [{"n": 2}]})
+    n = asyncio.run(store.indexed_writes("o", "ns", "a", 3600, model="m", ch=ch))
+    (sql,) = ch.sqls
+    # An embedding row's created_at is its version's write: a revision of an old key
+    # would pass a filter on it, so the creation time comes from loom.memory.
+    (outer, inner) = sql.split("SELECT memory_key FROM loom.memory")
+    assert n == 2 and "created_at" not in outer and "created_at >= now()" in inner
 
 
 def test_the_namespace_retention_wins_over_the_ledger_default(
