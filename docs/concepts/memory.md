@@ -298,8 +298,8 @@ Each line:
   whole, so a `knowledge:` citation keeps its `#section` and resolves through
   `knowledge.get`; the value's cut does not reach it.
 - A newer row the conflict check linked to an older one of its type is placed above it,
-  and a team line says which it supersedes (`supersedes decision` when the older is
-  tagged `decision`). Two typed decisions the check linked each keep their place in the block,
+  and a team line says which it supersedes (`supersedes decision` when the older is tagged
+  `decision`). Two typed decisions the check linked each keep their place in the block,
   with no such note, since each decision key is its own decision. When the budget leaves
   out any row that supersedes others, in any namespace, every row it supersedes is left
   out with it, so an older row never reads as current.
