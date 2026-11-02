@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import (
     BaseModel,
     Field,
+    PrivateAttr,
     SerializerFunctionWrapHandler,
     model_serializer,
 )
@@ -658,6 +659,8 @@ class MemorySearchOutput(BaseModel):
             data.pop("reinforcement", None)
         return data
 
+    # The settled input this search ran (None for a parked page); private, never on the wire.
+    _settled_input: MemorySearchInput | None = PrivateAttr(default=None)
     # The ranked hits, best first; empty when nothing passed the noise floor.
     results: list[_MemorySearchHit]
     # render="reader" only: the results as one prompt block ("[date] [key]

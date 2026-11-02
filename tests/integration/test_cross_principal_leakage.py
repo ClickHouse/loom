@@ -20,7 +20,9 @@ suite is a CI gate: it is asserted to be zero.
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import os
 import re
 import sys
 import time
@@ -1821,3 +1823,136 @@ def test_every_read_op_against_a_collection_leaks_nothing(
                     leaks[label] = found
     assert not leaks, f"{who}: canary nonces in responses: {leaks}"
     assert not bad_status, f"{who}: unexpected statuses: {bad_status}"
+
+
+# ---- loom_search under a code scope: the repository's decisions ----
+
+
+@dataclasses.dataclass
+class _CodeDecision:
+    org: str
+    namespace: str
+    key: str
+    nonce: str
+    topic: str
+
+
+@pytest.fixture
+def code_decision(control_plane_url: str, mint_test_token) -> typing.Iterator[_CodeDecision]:
+    """A decision canary in the deployment's code namespace (its own trunk:
+    one configured branch), written by a writer on that namespace and
+    deleted afterwards."""
+    org = os.environ.get("LOOM_CODE_ORG") or pytest.skip("LOOM_CODE_ORG unset: no code repo")
+    ns = os.environ.get("LOOM_CODE_NAMESPACE") or pytest.skip("LOOM_CODE_NAMESPACE unset")
+    # The topic word keeps the question on this test's row.
+    d = _CodeDecision(
+        org,
+        ns,
+        f"decision_canary_{uuid.uuid4().hex[:6]}",
+        _canary(),
+        f"zqtopic{uuid.uuid4().hex[:8]}",
+    )
+    tok = mint_test_token(org=org, namespaces=[ns], roles=["writer"], subject="maintainer")
+    ident = {"org": org, "namespace": ns, "agent": "maintainer", "memory_key": d.key}
+    r = _post(
+        control_plane_url,
+        tok,
+        "memory.set",
+        {
+            **ident,
+            "value": f"We evict the {d.topic} cache entries early because {d.nonce} said so.",
+            "memory_type": "decision",
+        },
+    )
+    assert r.status_code == 200, r.text
+    yield d
+    r = _post(control_plane_url, tok, "memory.delete", ident)
+    assert r.status_code == 200, r.text
+
+
+def _loom_search_in_checkout(
+    base: str, token: str, d: _CodeDecision, *, scoped: bool = True
+) -> httpx.Response:
+    """MCP `loom_search` over the caller's home namespace alone, asking the
+    question the decision answers (without its nonce); `scoped` sends the
+    checkout's code scope."""
+    headers = {"Authorization": f"Bearer {token}"}
+    if scoped:
+        headers["X-Loom-Code-Scope"] = f"{d.org}/{d.namespace}"
+    with httpx.Client(base_url=base, timeout=30.0) as c:
+        return c.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "loom_search",
+                    "arguments": {
+                        "query": f"why do we evict the {d.topic} cache entries early",
+                        "namespace_scope": "this",
+                    },
+                },
+            },
+            headers=headers,
+        )
+
+
+def test_positive_control_a_reader_of_the_repository_reads_its_decision(
+    control_plane_url, code_decision, mint_test_token
+) -> None:
+    d = code_decision
+    home = f"reader-{uuid.uuid4().hex[:6]}"
+    tok = mint_test_token(
+        org=d.org, namespaces=[home, d.namespace], roles=["viewer"], subject="reader"
+    )
+    r = _loom_search_in_checkout(control_plane_url, tok, d)
+    assert r.status_code == 200, r.text
+    assert d.nonce in r.text, f"the decision leg did not serve the canary: {r.text[:2000]}"
+    # The home namespace alone does not hold it: the code-scope leg served it.
+    r = _loom_search_in_checkout(control_plane_url, tok, d, scoped=False)
+    assert r.status_code == 200, r.text
+    assert d.nonce not in r.text
+    # Over HTTP the header sets no code scope: search.query reads no decisions.
+    with httpx.Client(base_url=control_plane_url, timeout=30.0) as c:
+        r = c.post(
+            "/v1/search.query",
+            json={
+                "org": d.org,
+                "namespace": home,
+                "agent": "reader",
+                "query": f"why do we evict the {d.topic} cache entries early",
+                "namespace_scope": "this",
+            },
+            headers={
+                "Authorization": f"Bearer {tok}",
+                "X-Loom-Code-Scope": f"{d.org}/{d.namespace}",
+            },
+        )
+    assert r.status_code == 200, r.text
+    assert d.nonce not in r.text
+
+
+@pytest.mark.parametrize("who", ["same_org", "other_org"])
+def test_loom_search_under_a_code_scope_serves_no_decision_to_a_non_reader(
+    control_plane_url, code_decision, mint_test_token, who
+) -> None:
+    d = code_decision
+    org = d.org if who == "same_org" else unique_org("leak-code-other")
+    tok = mint_test_token(
+        org=org, namespaces=[f"tenant-b-{uuid.uuid4().hex[:6]}"], roles=["writer"], subject=who
+    )
+    if who == "same_org":
+        # A deployment may make its code namespaces readable by the whole org;
+        # then this principal is a reader, not the case under test.
+        r = _post(
+            control_plane_url,
+            tok,
+            "memory.get",
+            {"org": d.org, "namespace": d.namespace, "agent": "maintainer", "memory_key": d.key},
+        )
+        if r.status_code == 200 and r.json().get("found"):
+            pytest.skip("the code namespace is readable by every principal of its org here")
+    r = _loom_search_in_checkout(control_plane_url, tok, d)
+    assert r.status_code == 200, r.text
+    assert d.nonce not in r.text, f"{who} read the repository's decision"

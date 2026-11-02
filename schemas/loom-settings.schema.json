@@ -2704,7 +2704,7 @@
           "default": 1.5,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds the repository-docs read for a brief may take."
+          "description": "Seconds a read of the scoped repository's documents or decisions may take (the docs section of a brief, and loom_search's repository docs and decisions legs)."
         },
         "knowledge_search_fanout_kinds": {
           "default": "memory,collection,personal",

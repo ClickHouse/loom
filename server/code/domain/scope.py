@@ -8,8 +8,8 @@ call that names no namespace, so the model does not have to remember the
 session primer's repository line. Explicit arguments win, and authorization
 then runs on the named namespace exactly as it would for an explicit one — a header
 naming a namespace the token cannot read is refused, never widened. The
-ContextVar lives below the transport because loom_search's knowledge leg
-(knowledge/app/repo_docs) reads it too.
+ContextVar lives below the transport because loom_search's repository gate
+(code/app/repo_scope) reads it too.
 """
 
 from __future__ import annotations

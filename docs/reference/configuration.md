@@ -829,7 +829,7 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_KNOWLEDGE_REPO_DOCS_TIMEOUT_S` | `float` | `1.5` | live | Seconds the repository-docs read for a brief may take. |
+| `LOOM_KNOWLEDGE_REPO_DOCS_TIMEOUT_S` | `float` | `1.5` | live | Seconds a read of the scoped repository's documents or decisions may take (the docs section of a brief, and loom_search's repository docs and decisions legs). |
 | `LOOM_KNOWLEDGE_BM25_CORPUS_TTL_S` | `float` | `300.0` | live | Seconds the BM25 corpus statistics of a knowledge namespace are cached. |
 | `LOOM_KNOWLEDGE_REPO_DOCS_LIST_TTL_S` | `float` | `60.0` | live | Seconds a repository's document list is cached for the docs section of a brief. |
 

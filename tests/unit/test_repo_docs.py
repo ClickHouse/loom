@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+import server.code.app.repo_scope as repo_scope
 import server.knowledge.app.repo_docs as rd
 from server.code.domain.index import repos
 from server.code.domain.scope import reset_code_scope, set_code_scope
@@ -66,8 +67,10 @@ def test_the_docs_namespace_is_the_trunk_branchs_the_page_order() -> None:
         (ORG, "Acme/w"): "code-w-26-1",  # then release branches, newest first
         (ORG, "Acme/z"): "code-z-a",  # then by name
     }
-    assert rd.docs_namespace_of(ORG, "code-kj-26-7") == "code-kj"  # every branch, one place
-    assert rd.docs_namespace_of(ORG, "memory-ns") == ""
+    # every branch of a repository reads one namespace, its trunk's
+    trunk = repo_scope.trunk_namespace_of(ORG, "code-kj-26-7")
+    assert trunk == "code-kj"
+    assert repo_scope.trunk_namespace_of(ORG, "memory-ns") == ""
     ENTRIES.append(_cfg("code-kj-27-1", "Acme/kj", "27.1"))
     try:
         assert repos.docs_namespaces()[(ORG, "Acme/kj")] == "code-kj"
@@ -116,12 +119,15 @@ async def test_under_a_code_scope_the_repositorys_docs_join_the_knowledge_sectio
             calls,
         ),
     )
-    monkeypatch.setattr("server.auth.authz.row_in_scope", _gate({"code-kj"}))
+    monkeypatch.setattr("server.code.app.repo_scope.row_in_scope", _gate({"code-kj"}))
     tok = set_code_scope(f"{ORG}/code-kj-26-7")
     try:
-        out = await rd.knowledge_with_repo_docs(BASE)
+        repo_ns = await repo_scope.repo_namespace_in_scope(ORG)  # every branch reads the trunk
     finally:
         reset_code_scope(tok)
+    # a release branch's scope resolves to its repository's trunk
+    assert repo_ns == "code-kj"
+    out = await rd.knowledge_with_repo_docs(BASE, repo_namespace=repo_ns)
     assert [(h.source_uri, h.namespace) for h in out.results] == [
         ("doc://eviction", "code-kj"),
         ("notes://a", "me"),
@@ -131,44 +137,68 @@ async def test_under_a_code_scope_the_repositorys_docs_join_the_knowledge_sectio
 
 
 @pytest.mark.asyncio
-async def test_no_scope_a_refused_gate_or_a_slow_leg_answer_the_base_alone(
+async def test_the_knowledge_leg_reads_only_the_namespace_the_gate_resolved(
     monkeypatch,
 ) -> None:
-
     base_only = {"me": [_hit("notes://a", 0.5, "me")], "code-kj": [_hit("doc://secret", 0.99)]}
+    calls: list[str] = []
     monkeypatch.setattr(
-        "server.knowledge.app.knowledge_search.handle_knowledge_search", _search(base_only)
+        "server.knowledge.app.knowledge_search.handle_knowledge_search", _search(base_only, calls)
     )
-    monkeypatch.setattr("server.auth.authz.row_in_scope", _gate({"code-kj"}))
-    # no scope: not a coding checkout
-    out = await rd.knowledge_with_repo_docs(BASE)
-    assert [h.source_uri for h in out.results] == ["notes://a"]
+
+    async def never(*a, **k):
+        raise AssertionError("the leg must not run a gate of its own")
+
+    monkeypatch.setattr("server.code.app.repo_scope.row_in_scope", never)
+    # the namespace the gate admitted is read as given
+    out = await rd.knowledge_with_repo_docs(BASE, repo_namespace="code-kj")
+    assert [h.source_uri for h in out.results] == ["doc://secret", "notes://a"]
+    assert sorted(calls) == ["code-kj:this", "me:all_mine"]
+    # the gate refused (or there is no scope): the base search alone, even under a scope
+    calls.clear()
     tok = set_code_scope(f"{ORG}/code-kj")
     try:
-        # the gate refuses the caller: a restricted repository's docs stay its own
-        monkeypatch.setattr("server.auth.authz.row_in_scope", _gate(set()))
-        assert [h.source_uri for h in (await rd.knowledge_with_repo_docs(BASE)).results] == [
-            "notes://a"
-        ]
-
-        # the gate itself fails: closed
-        async def boom(*a, **k):
-            raise RuntimeError("grants read failed")
-
-        monkeypatch.setattr("server.auth.authz.row_in_scope", boom)
-        assert [h.source_uri for h in (await rd.knowledge_with_repo_docs(BASE)).results] == [
-            "notes://a"
-        ]
-        monkeypatch.setattr("server.auth.authz.row_in_scope", _gate({"code-kj"}))
-        # the repository's search does not answer in time
-        monkeypatch.setattr(
-            "server.knowledge.app.knowledge_search.handle_knowledge_search",
-            _search(base_only, delay=0.05),
-        )
-        ns, hits = await rd.search_repo_docs(ORG, "code-kj", "q", 3, timeout_s=0.01)
-        assert (ns, hits) == ("code-kj", [])
+        out = await rd.knowledge_with_repo_docs(BASE, repo_namespace="")
     finally:
         reset_code_scope(tok)
+    assert [h.source_uri for h in out.results] == ["notes://a"]
+    assert calls == ["me:all_mine"]
+
+
+@pytest.mark.asyncio
+async def test_the_gate_admits_only_a_readable_repository_in_the_callers_org(
+    monkeypatch,
+) -> None:
+    async def scoped(scope: str | None) -> str:
+        tok = set_code_scope(scope)
+        try:
+            return await repo_scope.repo_namespace_in_scope(ORG)
+        finally:
+            reset_code_scope(tok)
+
+    monkeypatch.setattr("server.code.app.repo_scope.row_in_scope", _gate({"code-kj"}))
+    assert await scoped(f"{ORG}/code-kj-26-7") == "code-kj"
+    assert await scoped(None) == ""  # not a coding checkout
+    assert await scoped("other/code-kj") == ""  # another org's repository
+    assert await scoped(f"{ORG}/memory-ns") == ""  # not a repository index
+    monkeypatch.setattr("server.code.app.repo_scope.row_in_scope", _gate(set()))
+    assert await scoped(f"{ORG}/code-kj") == ""  # refused: a restricted repository stays its own
+
+    async def boom(*a, **k):
+        raise RuntimeError("grants read failed")
+
+    monkeypatch.setattr("server.code.app.repo_scope.row_in_scope", boom)
+    assert await scoped(f"{ORG}/code-kj") == ""  # the check fails: closed
+
+
+@pytest.mark.asyncio
+async def test_a_slow_repository_search_answers_nothing(monkeypatch) -> None:
+    base_only = {"code-kj": [_hit("doc://secret", 0.99)]}
+    monkeypatch.setattr(
+        "server.knowledge.app.knowledge_search.handle_knowledge_search",
+        _search(base_only, delay=0.05),
+    )
+    assert await rd.search_repo_docs(ORG, "code-kj", "q", 3, timeout_s=0.01) == []
 
 
 def test_a_hit_both_legs_return_is_listed_once() -> None:
@@ -217,7 +247,7 @@ async def test_the_orientation_pack_appends_the_docs_and_caches_the_listing(monk
     monkeypatch.setattr(
         "server.knowledge.app.document_reads.handle_knowledge_list", handle_knowledge_list
     )
-    monkeypatch.setattr("server.auth.authz.row_in_scope", _gate({"code-kj"}))
+    monkeypatch.setattr("server.code.app.repo_scope.row_in_scope", _gate({"code-kj"}))
     out = await cc._with_repo_docs(ORG, "code-kj-26-7", "# map", 2500)
     assert out.startswith("# map\n\n## Repository docs (code-kj)")
     assert "- On-call runbook — doc://runbook" in out
@@ -226,5 +256,5 @@ async def test_the_orientation_pack_appends_the_docs_and_caches_the_listing(monk
     # a map that already fills the budget gets nothing added, and no read
     assert await cc._with_repo_docs(ORG, "code-kj", "x" * 4 * 2490, 2500) == "x" * 4 * 2490
     # a caller the gate refuses reads no listing, cached or not
-    monkeypatch.setattr("server.auth.authz.row_in_scope", _gate(set()))
+    monkeypatch.setattr("server.code.app.repo_scope.row_in_scope", _gate(set()))
     assert await cc._with_repo_docs(ORG, "code-kj", "# map", 2500) == "# map"

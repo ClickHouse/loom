@@ -177,7 +177,7 @@ def _build_query_node_row(
     )
 
 
-def _schedule_exposure(input: MemorySearchInput, output: Any) -> None:
+def _schedule_exposure(input: MemorySearchInput, hits: list[Any]) -> None:
     """Append the returned keys to the exposure ledger, labelled with the op the caller invoked
     (memory.ask and context.pack route through this handler). Fire-and-forget; never on the
     read path's critical section."""
@@ -185,7 +185,7 @@ def _schedule_exposure(input: MemorySearchInput, output: Any) -> None:
         from server.memory.app.exposure_ledger import keys_of, record_exposure
         from server.observability.genai import current_operation
 
-        keys, below = keys_of(list(getattr(output, "results", None) or []))
+        keys, below = keys_of(hits)
         record_exposure(
             operation=current_operation() or "memory.search",
             org=input.org,
@@ -311,7 +311,7 @@ def _disclose_and_expose(ctx: SearchContext, output: MemorySearchOutput) -> None
     """The served response carries the recall-credit verdict (None = absent from the wire) and
     lands in the exposure ledger."""
     output.reinforcement = ctx.recall_credit
-    _schedule_exposure(ctx.input, output)
+    _schedule_exposure(ctx.input, list(output.results))
 
 
 async def _schedule_auto_touch(ctx: SearchContext) -> None:
@@ -324,15 +324,17 @@ async def _schedule_auto_touch(ctx: SearchContext) -> None:
         return
     decision = await _recall_credit_decision(input)
     ctx.recall_credit = decision.disclosure
-    if not decision.credited:
-        return
-    # Observability only, never read by retrieval — so fire-and-forget
-    # rather than block on a memory_id lookup + N writes. Snapshot
-    # final_hits since later fallbacks may reassign it, and the request's
-    # consumer: the credit's audit column.
+    if decision.credited:
+        # Snapshot final_hits since later fallbacks may reassign it.
+        _schedule_recall_credit(input, list(ctx.final_hits))
+
+
+def _schedule_recall_credit(input: MemorySearchInput, hits: list[Any]) -> None:
+    """One recall credit per returned key, written in the background: observability only,
+    never read by retrieval, so fire-and-forget rather than block on a memory_id lookup + N
+    writes. The request's consumer is the credit's audit column."""
     from server.observability.consumer import current_consumer
 
-    _ft_hits = list(ctx.final_hits)
     _consumer = str(current_consumer() or "")
 
     async def _bg_usage() -> None:
@@ -340,11 +342,10 @@ async def _schedule_auto_touch(ctx: SearchContext) -> None:
             from server.memory.store import usage as memory_repo_usage
 
             ns_keys: dict[str, list[str]] = {}
-            for h in _ft_hits:
+            for h in hits:
                 ns_keys.setdefault(h.namespace or input.namespace, []).append(h.memory_key)
-            # One recall credit per returned key, through the same funnel memory.ask's cited-used
-            # credit takes, rather than one per row (which would credit every session's copy of a
-            # key).
+            # Through the same funnel memory.ask's cited-used credit takes, rather than one
+            # per row (which would credit every session's copy of a key).
             await memory_repo_usage.record_usage_for_keys(
                 input.org, ns_keys, event_type="recall", agent=input.agent, consumer=_consumer
             )
@@ -352,6 +353,18 @@ async def _schedule_auto_touch(ctx: SearchContext) -> None:
             log.warning("recall-event log failed (non-fatal): %s", e)
 
     after_write.schedule(_bg_usage(), name="memory.search.recall_credit")
+
+
+async def credit_merged_hits(input: MemorySearchInput, hits: list[Any]) -> None:
+    """Exposure and recall credit for the hits of a pass merged into another response
+    (`_merged_into_parent`), which writes neither itself: `hits` are the ones the parent
+    merged, and `input` is the settled input the pass ran (`_settled_input`)."""
+    _schedule_exposure(input, hits)
+    if not input.auto_touch:
+        return
+    decision = await _recall_credit_decision(input)
+    if decision.credited:
+        _schedule_recall_credit(input, hits)
 
 
 async def _start_actual_work(input: MemorySearchInput) -> tuple[dict[str, Any], StageClock]:

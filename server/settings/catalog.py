@@ -1993,7 +1993,8 @@ class KnowledgeSettings(BaseModel):
     knowledge_chunk_stride: Annotated[int, LIVE] = 1230
 
     # ---- timeouts, budgets and caches ----
-    # Seconds the repository-docs read for a brief may take.
+    # Seconds a read of the scoped repository's documents or decisions may take (the
+    # docs section of a brief, and loom_search's repository docs and decisions legs).
     knowledge_repo_docs_timeout_s: Annotated[float, LIVE] = Field(default=1.5, gt=0)
     # Seconds the BM25 corpus statistics of a knowledge namespace are cached.
     knowledge_bm25_corpus_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
