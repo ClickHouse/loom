@@ -297,7 +297,7 @@ def _bulk_skip_gate(
     ):
         _refuse_locked(state, entry.memory_key)
         return True
-    if latest is None and restated and _same_labels_as_stored(state, entry):
+    if latest is None and restated and _restates_stored_row(state, entry):
         state.skipped_unchanged += 1
         _note_restatement(state, state.existing_ids.get(entry.memory_key, ""))
         state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
@@ -349,11 +349,11 @@ def _bulk_skip_gate(
     return False
 
 
-def _same_labels_as_stored(state: _BulkWriteState, entry: Any) -> bool:
+def _restates_stored_row(state: _BulkWriteState, entry: Any) -> bool:
     """Whether an entry repeating the stored value also keeps its sensitivity, adds no pin
-    and sets no expiry. memory.set writes a new version when any changes, so a bulk must
-    too. Only a level the entry names counts: an extracted fact names none, and keeps the
-    stored one."""
+    and sets no expiry, so the skip gate counts it unchanged. Other fields memory.set
+    compares (tags, type, confidence, validity) are not checked. Only a level the entry
+    names counts: an extracted fact names none, and keeps the stored one."""
     live = state.existing_rows.get(entry.memory_key)
     stored_level = str(getattr(live, "sensitivity", "") or "")
     named_level = str(getattr(entry, "sensitivity", "") or "")
