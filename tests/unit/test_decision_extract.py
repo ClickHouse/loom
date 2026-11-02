@@ -2051,9 +2051,9 @@ async def test_a_confirmed_restatement_below_five_closer_hits_still_blocks(monke
         return SimpleNamespace(results=hits[: inp.top_k])
 
     monkeypatch.setattr(search, "handle_memory_search", mem_search)
+    monkeypatch.setattr(settings, "memory_decision_extract_restatement_top_k", 7)
     report = await _run()
-    top_k = settings.memory_decision_extract_restatement_top_k
-    assert asked == [per_key_fetch(top_k)] and top_k == 20
+    assert asked == [per_key_fetch(7)]
     assert world.recorded == []
     assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
 

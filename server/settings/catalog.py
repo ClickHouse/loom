@@ -2570,8 +2570,11 @@ class MemorySettings(BaseModel):
     # keeps their keys and wording; past this many, the rest may be read as new. 0 = none.
     memory_decision_extract_known_max: Annotated[int, LIVE] = Field(default=30, ge=0)
     # Closest decision keys a candidate is compared with for a confirmed row under
-    # another key that states it already (cosine only, no model call).
-    memory_decision_extract_restatement_top_k: Annotated[int, LIVE] = Field(default=20, ge=1)
+    # another key that states it already (cosine only, no model call). At most 500,
+    # memory.search's top_k bound (SEARCH_TOP_K_MAX).
+    memory_decision_extract_restatement_top_k: Annotated[int, LIVE] = Field(
+        default=20, ge=1, le=500
+    )
     # ---- fact-leg reads of memory_embeddings ----
     # Seconds a process caches its count of patch parts on
     # loom.memory_embeddings (server/core/vectors/patch_parts.py); the fact leg

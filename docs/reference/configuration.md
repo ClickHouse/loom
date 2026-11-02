@@ -1104,7 +1104,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_DECISION_EXTRACT_KNOWN_MAX` | `int` | `30` | live | Decisions already recorded from a document that the prompt lists, so a re-run keeps their keys and wording; past this many, the rest may be read as new. 0 = none. |
-| `LOOM_MEMORY_DECISION_EXTRACT_RESTATEMENT_TOP_K` | `int` | `20` | live | Closest decision keys a candidate is compared with for a confirmed row under another key that states it already (cosine only, no model call). |
+| `LOOM_MEMORY_DECISION_EXTRACT_RESTATEMENT_TOP_K` | `int` | `20` | live | Closest decision keys a candidate is compared with for a confirmed row under another key that states it already (cosine only, no model call). At most 500, memory.search's top_k bound (SEARCH_TOP_K_MAX). |
 
 ### Fact-leg reads of memory_embeddings
 

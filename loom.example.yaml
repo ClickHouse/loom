@@ -3124,7 +3124,8 @@ settings:
   # memory_decision_extract_known_max: 30
 
   # Closest decision keys a candidate is compared with for a confirmed row under another
-  # key that states it already (cosine only, no model call). [live]
+  # key that states it already (cosine only, no model call). At most 500,
+  # memory.search's top_k bound (SEARCH_TOP_K_MAX). [live]
   # memory_decision_extract_restatement_top_k: 20
 
   # --- fact-leg reads of memory_embeddings ---
