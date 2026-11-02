@@ -436,7 +436,7 @@ async def _inject_memory_context(question: str) -> list[str]:
     except Exception as e:  # noqa: BLE001 — fail closed
         logger.debug("code.ask memory enrichment authorization failed: %s", e)
         return []
-    lines = 3  # memory lines shown, one per key
+    shown = 3  # memory lines, one per key
     try:
         from server.memory.api.models_search import MemorySearchInput
         from server.memory.app.search import handle_memory_search
@@ -444,7 +444,7 @@ async def _inject_memory_context(question: str) -> list[str]:
 
         out = await handle_memory_search(
             MemorySearchInput(
-                org=mem_org, namespace=mem_ns, query=question[:2000], top_k=per_key_fetch(lines)
+                org=mem_org, namespace=mem_ns, query=question[:2000], top_k=per_key_fetch(shown)
             )
         )
     except Exception as e:  # noqa: BLE001 — additive, never fatal
@@ -453,7 +453,7 @@ async def _inject_memory_context(question: str) -> list[str]:
     if getattr(out, "abstain", False):
         return []
     items: list[str] = []
-    for r in one_per_key(list(getattr(out, "results", None) or []), mem_ns, lines):
+    for r in one_per_key(list(getattr(out, "results", None) or []), mem_ns, shown):
         key = str(getattr(r, "memory_key", "") or "")
         text = (getattr(r, "content_excerpt", "") or "").strip()[:400]
         if text:
