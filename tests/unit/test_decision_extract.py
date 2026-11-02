@@ -2416,6 +2416,8 @@ async def test_a_parent_sections_captioned_picture_is_not_sent(monkeypatch) -> N
         ("[image]: x.png", False),
         ("[imagine the merge]", False),
         ("[the diagram][image]", False),
+        ("[image tiles]", False),
+        ("[images and charts are in the appendix]", False),
     ],
 )
 def test_an_image_placeholder_stands_alone(body: str, image: bool) -> None:

@@ -26,15 +26,15 @@ REJECTED = " — rejected: "
 # An image: a Markdown image, inline (`![flow](flow.png)`) or by reference
 # (`![diagram][fig1]`); an HTML `<img>` tag; or a slide export's placeholder, `[image]`,
 # `[Image 3]`, `[image: ...]`, `[image_1]`, `[pictures]`. A shortcut reference
-# (`![spill flow]`) is not read: it looks like a macro such as `vec![0; n]`. Not a
-# placeholder: link text
-# `[image tiles](tiles.md)`, a reference link `[image][1]`, a definition `[image]: x.png`,
-# the label of `[the diagram][image]`, or a word such as `[imagine]`.
+# (`![spill flow]`) is not read: it looks like a macro such as `vec![0; n]`.
+# Not a placeholder: link text `[image tiles](tiles.md)`, a reference link `[image][1]`,
+# a definition `[image]: x.png`, the label of `[the diagram][image]`, a shortcut link
+# `[image tiles]`, text such as `[images are in the appendix]`, or a word `[imagine]`.
 _IMAGE_MARKUP = re.compile(
     r"!\[[^\]]*\]\([^)]*\)"
     r"|!\[[^\]]*\]\[[^\]]*\]"
     r"|<img\b[^>]*>"
-    r"|(?<!\])\[(?:image|picture)s?(?:[\s:_\d][^\]]*)?\](?![(\[:])",
+    r"|(?<!\])\[(?:image|picture)s?(?:[\s_]?\d+|:[^\]]*)?\](?![(\[:])",
     re.I,
 )
 _LETTER = re.compile(r"[^\W\d_]")
