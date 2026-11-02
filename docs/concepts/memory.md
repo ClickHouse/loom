@@ -301,7 +301,8 @@ Each line:
   it and says which it supersedes (`supersedes decision` when the older is tagged
   `decision`). Two typed decisions the check linked each keep their place in the block,
   with no such note, since each decision key is its own decision. When the budget leaves
-  the newer row out, the older one is left out with it, so it never reads as current.
+  out any row that supersedes another, in any namespace, the row it supersedes is left out
+  with it, so the older row never reads as current.
 
 ## Memories linked to code
 

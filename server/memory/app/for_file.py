@@ -269,9 +269,7 @@ def render_block(
     else:
         hidden: set[tuple[str, str]] = set()
         for i, (h, row) in enumerate(zip(hits, rows, strict=True)):
-            # A row that does not fit is left out and the later rows still get their turn,
-            # so each row also needs room for a "… more" line counting every row that may
-            # be left out.
+            # Keep room for a "… more" line counting every row that may still be left out.
             most = left_out + n - i - 1
             tail = len(_more_line(path, most)) + 1
             ns = str(h.get("namespace") or "")

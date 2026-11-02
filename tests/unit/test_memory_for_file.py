@@ -338,6 +338,31 @@ def test_a_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:
     assert '- … 2 more; memory.for_file(path="src/a.cpp") lists them.' in text.splitlines()
 
 
+def _superseding(key: str, older: str, value: str, ns: str) -> dict[str, Any]:
+    row = _row(key, json.dumps(value), namespace=ns)
+    return row | {"supersedes_key": older, "supersedes": "bob", "supersedes_kind": "rule"}
+
+
+def test_an_own_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:
+    newer = _superseding("new", "old", "n" * 300, "me")
+    older = _row("old", json.dumps("Keep 32."), namespace="me")
+    text, _, truncated = mff.render_block("src/a.cpp", [newer, older], 60, home="me")
+    assert truncated is True and "- new" not in text and "- old" not in text
+    assert text.splitlines()[-1].startswith("- … 2 more;")
+
+
+def test_a_chain_of_superseded_rows_is_left_out_with_its_head() -> None:
+    rows = [
+        _superseding("c", "b", "c" * 300, "me"),
+        _superseding("b", "a", "Keep 48.", "me"),
+        _row("a", json.dumps("Keep 32."), namespace="me"),
+    ]
+    text, _, truncated = mff.render_block("src/a.cpp", rows, 60, home="me")
+    assert truncated is True and text.splitlines()[1:] == [
+        '- … 3 more; memory.for_file(path="src/a.cpp") lists them.'
+    ]
+
+
 def test_mixed_rows_stay_inside_the_budget() -> None:
     hits = [_row(f"k{i}", json.dumps("r" * (20 + 37 * i % 200))) for i in range(12)]
     for budget in range(50, 600):
