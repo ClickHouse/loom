@@ -1,7 +1,9 @@
 """The mentor's reads: the agent's calls in the window from `loom.agent_events`
 (sort key `(org, namespace, agent, ts)`: bounded scans) and the namespace facts a
 rule needs — its live memory rows, documents, records, runs and the grants the
-agent reads code under. Each method is one statement (two for the credited-keys
+agent reads code under — and the usage-evidence ladder `mentor.brief` reads at each
+brief (call outcomes, indexed keys, reported keys, graded runs, the namespace's
+retention). Each method is one statement (two for the credited-keys
 pair) and returns plain values; the mentor decides what they mean."""
 
 from __future__ import annotations
