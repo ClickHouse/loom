@@ -346,12 +346,12 @@ _FOOTER = (
     "removes it if you wrote it or are a maintainer; otherwise {steps}."
 )
 _RULE_STEP = "write a corrected rule for the file and tell its author"
-_DECISION_STEP = "for a decision, ask a maintainer to record the corrected decision"
+_DECISION_STEP = "ask a decision's author or a maintainer to record the corrected decision"
 
 
 def test_a_block_of_typed_decisions_says_only_how_to_correct_a_decision() -> None:
     footer = _lines([_decision("design/a"), _decision("design/b")])[-1]
-    assert footer == _FOOTER.format(what="rule or decision", steps=_DECISION_STEP)
+    assert footer == _FOOTER.format(what="decision", steps=_DECISION_STEP)
 
 
 def test_a_block_of_rules_and_decisions_says_both() -> None:

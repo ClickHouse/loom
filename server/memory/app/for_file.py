@@ -20,6 +20,7 @@ from server.memory.api.models_for_file import (
 )
 from server.memory.domain.code_change import STATE_RANK, worst
 from server.memory.domain.decision_schema import FAILURE_TAG, SCHEMA_NAME, is_decision
+from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import CONFIRMED_STATES, row_verification
 
 log = logging.getLogger(__name__)
@@ -166,9 +167,9 @@ def _status_notes(hit: dict[str, Any], decision: bool) -> str:
     return out + _CODE_NOTES.get(str(hit.get("code_state") or ""), "")
 
 
-def _marker(hit: dict[str, Any], show_decision: bool) -> str:
-    """` [constraint, decision]`: the row's kinds; `decision` only when `show_decision`
-    (a team line's head already says `Decision`)."""
+def _marker(hit: dict[str, Any], *, show_decision: bool) -> str:
+    """` [constraint, decision]`: the row's kinds. `decision` is added only when
+    `show_decision`; a team line leaves it out because its head says `Decision`."""
     kinds = [t for t in (hit.get("tags") or []) if t in ("constraint", "gotcha")]
     if show_decision:
         kinds.append("decision")
@@ -188,7 +189,7 @@ def _team_line(hit: dict[str, Any], now: datetime, decision: bool) -> str:
         who = f"{who}; {sup}" if who else sup
     label = "Decision" if decision else "Team rule"
     head = f"{label} ({who})" if who else label
-    marks = _marker(hit, False) + _status_notes(hit, decision)
+    marks = _marker(hit, show_decision=False) + _status_notes(hit, decision)
     return f"- {head}{marks}: {_body(hit, decision)} [id: {hit['memory_key']}]"
 
 
@@ -198,13 +199,17 @@ def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
     if not team:
         return ""
     ns = str(team[0].get("namespace") or "")
-    what = "rule or decision" if any(_is_decision(h) for h in team) else "rule"
     # A newer rule supersedes a rule or a tagged decision, never a typed one.
+    typed = [h.get("memory_type") == SCHEMA_NAME for h in team]
+    if all(typed):
+        what = "decision"
+    else:
+        what = "rule or decision" if any(_is_decision(h) for h in team) else "rule"
     steps = []
-    if any(h.get("memory_type") != SCHEMA_NAME for h in team):
+    if not all(typed):
         steps.append("write a corrected rule for the file and tell its author")
-    if any(h.get("memory_type") == SCHEMA_NAME for h in team):
-        steps.append("for a decision, ask a maintainer to record the corrected decision")
+    if any(typed):
+        steps.append("ask a decision's author or a maintainer to record the corrected decision")
     return (
         f'- A team {what} wrong or outdated? memory.delete(namespace="{ns}", memory_key=<id>) '
         f"removes it if you wrote it or are a maintainer; otherwise {'; or '.join(steps)}."
@@ -236,8 +241,8 @@ def render_block(
         if _is_team(h, home):
             line = _team_line(h, now, decision)
         else:
-            notes = _status_notes(h, decision)
-            line = f"- {h['memory_key']}{_marker(h, decision)}{notes}: {_body(h, decision)}"
+            marks = _marker(h, show_decision=decision) + _status_notes(h, decision)
+            line = f"- {h['memory_key']}{marks}: {_body(h, decision)}"
         if used + len(line) + 1 > budget_chars:
             truncated = True
             break
@@ -270,9 +275,9 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_id = {str(r.get("memory_id")): r for r in rows if r.get("memory_id")}
     newer_of: dict[int, list[dict[str, Any]]] = {}
     for r in rows:
-        # The conflict check links rows of one type only, so a typed decision's peers are
-        # decisions too.
-        if r.get("memory_type") == SCHEMA_NAME:
+        # The conflict check links rows of one type only, so a key-identified row's peers
+        # are of its type too.
+        if r.get("memory_type") in KEY_IDENTIFIED_TYPES:
             continue
         for cid in r.get("conflict_with") or []:
             peer = by_id.get(str(cid))
