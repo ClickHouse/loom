@@ -146,6 +146,7 @@ async def test_a_bridge_row_the_pool_holds_is_not_added_twice(monkeypatch) -> No
 
     class _CH:
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            assert "LIMIT {per_key:UInt32} BY memory_key" in sql
             asked.update(params)
             return [
                 {"agent": "a", "user_id": "u", "session_id": s, "memory_key": "k", "value": "v"}

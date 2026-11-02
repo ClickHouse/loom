@@ -291,7 +291,11 @@ async def test_search_target_touches_only_the_callers_identity(
         h._row_identity = (agent, uid, sid)  # as every fact leg stamps it
         return h
 
+    record = _hit("rec", sid="s2")
+    record._row_identity = None  # a record names no row: its key is read under the caller
     hits = [
+        record,
+        _hit("rec"),  # the caller's own row of that key, already read once
         _hit("both", agent="other-agent"),  # another owner's row of a key the caller holds too
         _hit("both"),
         _hit("mine"),
@@ -321,8 +325,12 @@ async def test_search_target_touches_only_the_callers_identity(
             **_ID, target={"search": {"query": "q3"}}, action="delete", reason="r", limit=10
         )
     )
-    assert out.matched == 2 and [r.memory_key for r in out.rows] == ["both", "mine"]
-    assert reads == [("cursor", "-", "-", "both"), ("cursor", "-", "-", "mine")]
+    assert out.matched == 3 and [r.memory_key for r in out.rows] == ["rec", "both", "mine"]
+    assert reads == [
+        ("cursor", "-", "-", "rec"),
+        ("cursor", "-", "-", "both"),
+        ("cursor", "-", "-", "mine"),
+    ]
     # every session, so a long value's set chunks are found; over-fetched for other owners' rows
     assert (asked[0].session_id, asked[0].top_k) == (None, 30)
 

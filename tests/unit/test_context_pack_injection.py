@@ -259,6 +259,10 @@ def test_each_hit_is_labelled_with_the_writer_of_its_own_row() -> None:
     assert _hit_author(actors, inp, hit(user_id="alice")) == " by=human:alice@example.com"
     assert _hit_author(actors, inp, hit()) == " by=unknown"
     assert _hit_author({}, inp, hit(session_id="s-m")) == " by=unknown"
+    # a hit that names its row is narrowed by that row, as every fact leg stamps it
+    named = hit()
+    named._row_identity = ("a", "alice", "s-a")
+    assert _hit_author(actors, inp, named) == " by=human:alice@example.com"
 
 
 def test_the_runs_manifest_says_who_wrote_a_session_and_what_its_digest_compressed() -> None:

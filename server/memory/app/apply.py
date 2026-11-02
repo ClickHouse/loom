@@ -187,14 +187,11 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
         key = hit.memory_key
         if key in seen:
             continue
-        # The search reads across sessions (and, for `-`, users and agents);
-        # the write stays on the caller's identity tuple, as keys and filter
-        # do. A hit of another owner's row is skipped, not re-pointed at a
-        # same-key row of the caller's. A record names no row: its key is the caller's.
-        found = hit_row_key(hit, input.namespace)
-        if names_row(hit) and (found.agent, found.user_id, found.session_id) != mine:
+        # act only on the caller's own row; a hit that names none (a record) reads its key
+        # under the caller's identity
+        owner = hit_row_key(hit, input.namespace)
+        if names_row(hit) and (owner.agent, owner.user_id, owner.session_id) != mine:
             continue
-        # seen only on the caller's own row: another owner's row of the key may come first
         seen.add(key)
         row = await memory_repo.get_by_key(
             identity, key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
