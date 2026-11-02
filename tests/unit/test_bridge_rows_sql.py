@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from server.memory.app.ask.completion import bridge_rows_by_key
-from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 
@@ -23,12 +23,8 @@ def _row(session: str, key: str, value: str, tags: str = "[]", version: int = 1)
     )
 
 
-class _LocalCH:
-    def __init__(self, *rows: str) -> None:
-        self.setup = [ddl("memory"), *rows]
-
-    async def query_all(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> Any:
-        return run(self.setup, sql, params)
+def _local_ch(*rows: str) -> LocalCH:
+    return LocalCH(ddl("memory"), *rows)
 
 
 def _ask(**kw: Any) -> Any:
@@ -39,7 +35,7 @@ def _ask(**kw: Any) -> Any:
 async def test_the_read_keeps_tagged_rows_and_caps_rows_per_key(monkeypatch) -> None:
     from server.settings import settings
 
-    ch = _LocalCH(
+    ch = _local_ch(
         *(
             _row(f"s{i}", "bernard_arnault_citizen_of", "France", "['project:x']", i)
             for i in (1, 2, 3)
@@ -62,7 +58,7 @@ async def test_the_read_keeps_tagged_rows_and_caps_rows_per_key(monkeypatch) -> 
 @pytest.mark.asyncio
 async def test_with_only_off_tag_rows_the_read_is_empty(monkeypatch) -> None:
     # empty, so the ask takes the semantic follow, which honours the hard tags
-    ch = _LocalCH(_row("s1", "bernard_arnault_net_worth", "a lot"))
+    ch = _local_ch(_row("s1", "bernard_arnault_net_worth", "a lot"))
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     assert await bridge_rows_by_key(_ask(tags=["project:x"]), "Bernard Arnault") == []
 
@@ -71,7 +67,7 @@ async def test_with_only_off_tag_rows_the_read_is_empty(monkeypatch) -> None:
 async def test_with_no_cap_one_key_takes_up_to_the_follows_top_k(monkeypatch) -> None:
     from server.settings import settings
 
-    ch = _LocalCH(
+    ch = _local_ch(
         *(_row(f"s{i}", "bernard_arnault_citizen_of", "France", version=i) for i in (1, 2, 3))
     )
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
@@ -84,7 +80,7 @@ async def test_with_no_cap_one_key_takes_up_to_the_follows_top_k(monkeypatch) ->
 async def test_rows_of_one_key_at_one_version_keep_one_order(monkeypatch) -> None:
     from server.settings import settings
 
-    ch = _LocalCH(*(_row(s, "bernard_arnault_citizen_of", "France") for s in ("s3", "s1", "s2")))
+    ch = _local_ch(*(_row(s, "bernard_arnault_citizen_of", "France") for s in ("s3", "s1", "s2")))
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr(settings, "memory_search_per_key_cap", 2)
     hits = await bridge_rows_by_key(_ask(), "Bernard Arnault")
@@ -94,7 +90,7 @@ async def test_rows_of_one_key_at_one_version_keep_one_order(monkeypatch) -> Non
 @pytest.mark.asyncio
 async def test_two_keys_at_one_version_keep_one_order_at_the_limit(monkeypatch) -> None:
     # read in this insert order, only the memory_key tiebreak puts `born_in` first
-    ch = _LocalCH(
+    ch = _local_ch(
         _row("s1", "bernard_arnault_born_in", "Roubaix"),
         _row("s1", "bernard_arnault_citizen_of", "France"),
     )

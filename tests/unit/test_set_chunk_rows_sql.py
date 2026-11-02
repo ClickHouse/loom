@@ -13,12 +13,11 @@ from server.core.ch_params import FIELD_BYTES, chunks
 from server.memory.app.retrieval.pool import SetChunkRow, _set_chunk_rows
 from server.memory.app.set_chunks import plan_set_chunks, set_chunk_identities
 from server.memory.domain.search_types import SearchHit
-from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.clickhouse_local import CLICKHOUSE, VECTOR, LocalCH, ddl
 from tests.unit.test_memory_search_service import _q
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 
-_VEC = "[" + ",".join(["0.1"] * 3072) + "]"
 LONG_V1 = "The replica lagged after the merge storm. " * 80
 LONG_V2 = "The tier was resized and the lag cleared. " * 80
 
@@ -39,25 +38,17 @@ def _row(
         "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
         "memory_key, memory_type, scope, content_excerpt, embedding, memory_key_embedding, "
         "embedding_model, embedding_dim, version, status, valid_to, tags) VALUES ('clickhouse', "
-        f"'ns', 'bot', '{user}', '{session}', 'lesson_a', 'semantic', 'private', 't', {_VEC}, "
-        f"{_VEC}, '{model}', 3072, {version}, '{status}', {valid_to}, {tags})",
+        f"'ns', 'bot', '{user}', '{session}', 'lesson_a', 'semantic', 'private', 't', {VECTOR}, "
+        f"{VECTOR}, '{model}', 3072, {version}, '{status}', {valid_to}, {tags})",
         "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
         "memory_type, value, version, status) VALUES ('clickhouse', 'ns', 'bot', "
         f"'{user}', '{session}', 'lesson_a', 'semantic', '{value}', {version}, '{status}')",
     ]
 
 
-class _LocalCH:
-    def __init__(self, *rows: list[str]) -> None:
-        self.setup = [
-            "SET enable_quantized_codec = 1",
-            ddl("memory_embeddings"),
-            ddl("memory"),
-            *(statement for row in rows for statement in row),
-        ]
-
-    async def query_all(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> Any:
-        return run(self.setup, sql, params)
+def _local_ch(*rows: list[str]) -> LocalCH:
+    tables = ("SET enable_quantized_codec = 1", ddl("memory_embeddings"), ddl("memory"))
+    return LocalCH(*tables, *(statement for row in rows for statement in row))
 
 
 def _chunk(user: str, value: str, index: int = 0) -> SearchHit:
@@ -83,7 +74,7 @@ def _named(chunk: SearchHit, session: str, version: int) -> dict[Any, SetChunkRo
 
 @pytest.mark.asyncio
 async def test_a_chunk_names_the_row_whose_value_cuts_it() -> None:
-    ch = _LocalCH(_row("u", "s1", 1, LONG_V1), _row("u", "s2", 2, LONG_V2))
+    ch = _local_ch(_row("u", "s1", 1, LONG_V1), _row("u", "s2", 2, LONG_V2))
     chunk = _chunk("u", LONG_V1)
     assert await _set_chunk_rows(ch, _q(), [chunk]) == _named(chunk, "s1", 1)
 
@@ -91,55 +82,55 @@ async def test_a_chunk_names_the_row_whose_value_cuts_it() -> None:
 @pytest.mark.asyncio
 async def test_a_chunk_no_rows_value_cuts_any_more_names_none() -> None:
     # s1 was re-set short after its long value was chunked: the chunk is stale
-    ch = _LocalCH(_row("u", "s1", 3, "a short value now"), _row("u", "s0", 1, LONG_V2))
+    ch = _local_ch(_row("u", "s1", 3, "a short value now"), _row("u", "s0", 1, LONG_V2))
     assert await _set_chunk_rows(ch, _q(), [_chunk("u", LONG_V1)]) == {}
 
 
 @pytest.mark.asyncio
 async def test_two_rows_holding_one_value_give_the_chunk_to_the_newest() -> None:
-    ch = _LocalCH(_row("u", "s1", 1, LONG_V1), _row("u", "s2", 5, LONG_V1))
+    ch = _local_ch(_row("u", "s1", 1, LONG_V1), _row("u", "s2", 5, LONG_V1))
     chunk = _chunk("u", LONG_V1)
     assert await _set_chunk_rows(ch, _q(), [chunk]) == _named(chunk, "s2", 5)
 
 
 @pytest.mark.asyncio
 async def test_two_rows_at_one_version_give_the_chunk_to_one_of_them_always() -> None:
-    ch = _LocalCH(_row("u", "s2", 4, LONG_V1), _row("u", "s1", 4, LONG_V1))
+    ch = _local_ch(_row("u", "s2", 4, LONG_V1), _row("u", "s1", 4, LONG_V1))
     chunk = _chunk("u", LONG_V1)
     assert await _set_chunk_rows(ch, _q(), [chunk]) == _named(chunk, "s1", 4)
 
 
 @pytest.mark.asyncio
 async def test_a_newer_duplicate_of_the_value_leaves_the_chunk_to_the_served_row() -> None:
-    ch = _LocalCH(_row("u", "s1", 1, LONG_V1), _row("u", "s2", 5, LONG_V1, status="duplicate"))
+    ch = _local_ch(_row("u", "s1", 1, LONG_V1), _row("u", "s2", 5, LONG_V1, status="duplicate"))
     chunk = _chunk("u", LONG_V1)
     assert await _set_chunk_rows(ch, _q(), [chunk]) == _named(chunk, "s1", 1)
 
 
 @pytest.mark.asyncio
 async def test_a_row_the_fact_leg_does_not_serve_names_none() -> None:
-    ch = _LocalCH(_row("u", "s1", 1, LONG_V1, valid_to="'2001-01-01 00:00:00'"))
+    ch = _local_ch(_row("u", "s1", 1, LONG_V1, valid_to="'2001-01-01 00:00:00'"))
     assert await _set_chunk_rows(ch, _q(), [_chunk("u", LONG_V1)]) == {}
 
 
 @pytest.mark.asyncio
 async def test_a_row_embedded_under_another_model_still_names_its_chunks() -> None:
     # the vector checks rank a row; they do not decide whether it is served
-    ch = _LocalCH(_row("u", "s1", 1, LONG_V1, model="an-older-model"))
+    ch = _local_ch(_row("u", "s1", 1, LONG_V1, model="an-older-model"))
     chunk = _chunk("u", LONG_V1)
     assert await _set_chunk_rows(ch, _q(), [chunk]) == _named(chunk, "s1", 1)
 
 
 @pytest.mark.asyncio
 async def test_a_row_outside_the_hard_tags_is_not_served() -> None:
-    ch = _LocalCH(_row("u", "s1", 1, LONG_V1))
+    ch = _local_ch(_row("u", "s1", 1, LONG_V1))
     assert await _set_chunk_rows(ch, _q(tags=["kind:lesson"]), [_chunk("u", LONG_V1)]) == {}
 
 
 @pytest.mark.asyncio
 async def test_a_row_inside_the_hard_tags_names_its_chunk_with_its_tags() -> None:
     # the hit made from the chunk is stamped with them, so the tag belt judges its own row
-    ch = _LocalCH(_row("u", "s1", 1, LONG_V1, tags="['kind:lesson', 'x']"))
+    ch = _local_ch(_row("u", "s1", 1, LONG_V1, tags="['kind:lesson', 'x']"))
     chunk = _chunk("u", LONG_V1)
     (named,) = (await _set_chunk_rows(ch, _q(tags=["kind:lesson"]), [chunk])).values()
     assert named == SetChunkRow(("bot", "u", "s1"), 1, ("kind:lesson", "x"))
@@ -152,7 +143,7 @@ async def test_only_the_writers_newest_rows_of_the_key_are_matched(
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_search_set_chunk_rows", 1)
-    ch = _LocalCH(
+    ch = _local_ch(
         *[_row("u", f"s{i}", i, LONG_V2) for i in range(1, 6)], _row("u", "s9", 9, LONG_V1)
     )
     chunk = _chunk("u", LONG_V1)
@@ -170,13 +161,13 @@ async def test_a_hard_category_decides_whether_the_row_is_served(
     category: str, named: bool
 ) -> None:
     # the hard category filter is a subquery inside the HAVING argMax
-    ch = _LocalCH(
+    ch = _local_ch(
         _row("u", "s1", 1, LONG_V1),
         [
             ddl("categories"),
             ddl("memory_categories"),
             "INSERT INTO loom.categories (org, namespace, category_id, name, embedding) VALUES "
-            f"('clickhouse', 'ns', 'c1', 'runbooks', {_VEC}), ('clickhouse', 'ns', 'c2', 'other', {_VEC})",
+            f"('clickhouse', 'ns', 'c1', 'runbooks', {VECTOR}), ('clickhouse', 'ns', 'c2', 'other', {VECTOR})",
             "INSERT INTO loom.memory_categories (org, namespace, memory_key, category_id) "
             "VALUES ('clickhouse', 'ns', 'lesson_a', 'c1')",
         ],

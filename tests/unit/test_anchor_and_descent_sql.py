@@ -7,11 +7,9 @@ from __future__ import annotations
 import pytest
 
 from server.memory.app.search.sql import anchor_pool_sql, digest_descent_sql
-from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.clickhouse_local import CLICKHOUSE, VECTOR, ddl, run
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-
-_VEC = "[" + ",".join(["0.1"] * 3072) + "]"
 
 
 def _row(user: str, session: str, key: str = "user_city", scope: str = "private") -> str:
@@ -19,8 +17,8 @@ def _row(user: str, session: str, key: str = "user_city", scope: str = "private"
         "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id,"
         " memory_key, memory_type, scope, content_excerpt, embedding, memory_key_embedding,"
         " embedding_model, embedding_dim, version) VALUES ('o', 'n', 'a',"
-        f" '{user}', '{session}', '{key}', 'semantic', '{scope}', 'Lives in Berlin', {_VEC},"
-        f" {_VEC}, 'm', 3072, 1)"
+        f" '{user}', '{session}', '{key}', 'semantic', '{scope}', 'Lives in Berlin', {VECTOR},"
+        f" {VECTOR}, 'm', 3072, 1)"
     )
 
 

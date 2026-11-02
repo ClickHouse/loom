@@ -82,6 +82,21 @@ _CREATED = re.compile(r"\bCREATE TABLE (?:IF NOT EXISTS )?([\w.]+)")
 _UNREAD = {"loom.audit_log", "loom.memory_projection_failures"}
 
 
+# one embedding at the codec's declared width
+VECTOR = "[" + ",".join(["0.1"] * 3072) + "]"
+
+
+class LocalCH:
+    """A ClickHouse client over clickhouse-local that runs the `setup` statements before
+    each read, so a test's rows are the whole database."""
+
+    def __init__(self, *setup: str) -> None:
+        self.setup = list(setup)
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> Any:
+        return run(self.setup, sql, params)
+
+
 class KeptCH:
     """A ClickHouse client over clickhouse-local whose database is kept under `path`, so
     each statement sees what the earlier ones wrote. An insert into one of the `_UNREAD`
