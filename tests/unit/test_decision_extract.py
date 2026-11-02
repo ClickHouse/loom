@@ -979,7 +979,7 @@ async def test_a_scenario_with_no_key_letters_is_dropped_and_the_run_goes_on(mon
     assert [r.action for r in report.records] == ["written"] and len(world.recorded) == 1
 
 
-def test_a_blank_reason_drops_the_alternative_and_a_reason_is_read_as_written() -> None:
+def test_a_blank_reason_drops_the_alternative_and_a_reason_is_read_stripped() -> None:
     (cand,) = (
         dx.parse_candidates(
             json.dumps(
@@ -997,7 +997,8 @@ def test_a_blank_reason_drops_the_alternative_and_a_reason_is_read_as_written() 
         )
         or []
     )
-    assert cand.alternatives == [("a plain set on disk", " costs random reads")]
+    # The verbatim check matches whitespace aside, so stripping a span cannot make it match.
+    assert cand.alternatives == [("a plain set on disk", "costs random reads")]
 
 
 @pytest.mark.asyncio
@@ -2103,6 +2104,8 @@ def test_every_printed_action_has_its_line() -> None:
         ("store offsets", "Offsets are stored.", True),
         ("run the merge per part", "Running the merge per part.", True),
         ("process each part", "Each part processes.", True),
+        ("sorted runs for the spill", "Sorted runs were chosen for the spill.", True),
+        ("spill into sorted runs", "We are choosing sorted runs for spilling.", True),
         ("spill into sorted runs", "A plain set on disk costs random reads.", False),
         ("spill into sorted runs", "Sorted runs avoid random reads on disk.", False),
     ],

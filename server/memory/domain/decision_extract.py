@@ -154,15 +154,10 @@ def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
-def _span(value: Any) -> str:
-    """A verbatim span as the model wrote it; `document_spans` swaps in the text's own."""
-    return value if isinstance(value, str) else ""
-
-
 def _alternative(item: Any) -> tuple[str, str] | None:
     if not isinstance(item, dict):
         return None
-    option, reason = _text(item.get("option")), _span(item.get("reason"))
+    option, reason = _text(item.get("option")), _text(item.get("reason"))
     return (option, reason) if option and reason.strip() else None
 
 
@@ -187,8 +182,8 @@ def parse_candidates(reply: str) -> list[Candidate] | None:
             category=_text(item.get("category")),
             scenario=_text(item.get("scenario")),
             outcome=_text(item.get("outcome")),
-            reasoning=_span(item.get("reasoning")),
-            quote=_span(item.get("quote")),
+            reasoning=_text(item.get("reasoning")),
+            quote=_text(item.get("quote")),
             alternatives=alternatives,
             is_constraint=item.get("is_constraint") is True,
             mentions=mentions,
@@ -257,10 +252,10 @@ def document_spans(cand: Candidate, texts: list[str]) -> Candidate:
 
 
 # Words that say a choice was made, or join a sentence, rather than give a reason.
-_FILLER_WORDS = frozenset(
-    "a an the and or of to in on at for with as is are be been it its this that these "
-    "those we our us they will would should must can so decide decides decided choose "
-    "chooses chose chosen use uses used using instead".split()
+_FILLER_WORDS = (
+    "a an the and or of to in on at for with as is are was were be been being has have had "
+    "it its this that these those we our us they will would should must can so decide "
+    "chose chosen choose use used using instead"
 )
 _WORD = re.compile(r"\w+")
 
@@ -283,7 +278,11 @@ def _stem(word: str) -> str:
 
 
 def _content_words(text: str) -> set[str]:
-    return {_stem(w) for w in _WORD.findall(text.lower()) if w not in _FILLER_WORDS}
+    return {_stem(w) for w in _WORD.findall(text.lower())} - _FILLER_STEMS
+
+
+# Compared as stems, so every form of a filler word is one: `deciding`, `chooses`, `used`.
+_FILLER_STEMS = frozenset(_stem(w) for w in _FILLER_WORDS.split())
 
 
 def restates_outcome(cand: Candidate) -> bool:
