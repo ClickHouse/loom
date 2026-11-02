@@ -1847,8 +1847,8 @@ async def test_a_refused_record_is_listed_once_and_counted(monkeypatch, capsys) 
     world = _World(monkeypatch, [c])
     world.refuse_record = _refusal("BLACKLISTED")
     report = await _run()
-    assert report.refused == [f"{_key(c)}: refused: BLACKLISTED"]
-    assert cli.exit_code(report) == 2
+    assert [(d.reason, d.refused) for d in report.dropped] == [("refused: BLACKLISTED", True)]
+    assert report.refused == [] and cli.exit_code(report) == 2
     cli.print_report(report)
     out = capsys.readouterr().out
     assert out.count("refused: BLACKLISTED") == 1
@@ -1931,7 +1931,8 @@ async def test_an_embedding_provider_error_on_a_write_is_reported(monkeypatch, e
     report = await _run()
     name = type(raised).__name__
     assert [d.reason for d in report.dropped] == [f"failed: {name}"]
-    assert report.refused == [f"{_key(c)}: failed: {name}", f"decision:gone: failed: {name}"]
+    assert [d.refused for d in report.dropped] == [True]
+    assert report.refused == [f"decision:gone: failed: {name}"]
     assert cli.exit_code(report) == 2
 
 
@@ -1953,7 +1954,7 @@ async def test_a_dry_run_whose_restatement_search_fails_exits_2(monkeypatch) -> 
     monkeypatch.setattr(search, "handle_memory_search", failing_search)
     report = await _run(dry_run=True)
     assert [d.reason for d in report.dropped] == ["failed: HTTPStatusError"]
-    assert report.refused == [f"{_key(c)}: failed: HTTPStatusError"]
+    assert report.dropped[0].refused and report.refused == []
     assert world.recorded == [] and cli.exit_code(report) == 2
 
 
@@ -1965,8 +1966,8 @@ async def test_a_refused_revise_leaves_its_row_for_the_next_run(monkeypatch) -> 
     world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."})
     world.refuse_record = _refusal("BLACKLISTED")
     report = await _run()
-    assert report.refused == [f"{_key(c)}: refused: BLACKLISTED"]
-    assert world.deletes == [] and report.retired == []
+    assert [d.reason for d in report.dropped] == ["refused: BLACKLISTED"]
+    assert report.refused == [] and world.deletes == [] and report.retired == []
 
 
 @pytest.mark.asyncio
@@ -1976,8 +1977,8 @@ async def test_a_refused_tag_write_is_not_tried_again_by_retire(monkeypatch) -> 
     world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, pinned=True)
     world.refuse_update = _refusal("AMBIGUOUS_KEY")
     report = await _run()
-    assert report.refused == [f"{_key(c)}: refused: AMBIGUOUS_KEY"]
-    assert report.flagged == []
+    assert [d.reason for d in report.dropped] == ["refused: AMBIGUOUS_KEY"]
+    assert report.refused == [] and report.flagged == []
 
 
 @pytest.mark.asyncio
@@ -2013,3 +2014,38 @@ async def test_a_failed_read_in_the_retire_step_is_reported(monkeypatch) -> None
     report = await _run()
     assert report.refused == ["decision:gone: failed: TimeoutError"]
     assert world.deletes == [] and cli.exit_code(report) == 2
+
+
+@pytest.mark.parametrize(
+    ("dropped", "refused", "code"),
+    [(True, [], 2), (False, [], 0), (False, ["decision:gone: refused: X"], 2)],
+)
+def test_a_refused_candidate_or_retire_write_exits_2(dropped, refused, code) -> None:
+    report = de.ExtractReport("o", "ns", "d", False)
+    report.dropped = [de.Dropped("s", "refused: X" if dropped else "x", refused=dropped)]
+    report.refused = refused
+    assert cli.exit_code(report) == code
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_restatement_below_five_closer_hits_still_blocks(monkeypatch) -> None:
+    from server.memory.app import search
+
+    world = _World(monkeypatch, [_candidate(scenario="spilling the final DISTINCT")])
+    hits = []
+    for i in range(5):
+        world.add(f"design/near{i}", agent="alice-agent")
+        hits.append(SimpleNamespace(memory_key=f"design/near{i}", similarity=0.95 - i / 100))
+    world.add("design/confirmed", agent="alice-agent", pinned=True)
+    hits.append(SimpleNamespace(memory_key="design/confirmed", similarity=0.86))
+    asked: list[int] = []
+
+    async def mem_search(inp):
+        asked.append(inp.top_k)
+        return SimpleNamespace(results=hits[: inp.top_k])
+
+    monkeypatch.setattr(search, "handle_memory_search", mem_search)
+    report = await _run()
+    assert asked == [de._RESTATEMENT_TOP_K] and de._RESTATEMENT_TOP_K == 20
+    assert world.recorded == []
+    assert report.records[0].note == "already recorded by alice-agent under design/confirmed"

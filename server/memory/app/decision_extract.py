@@ -71,6 +71,8 @@ CONSTRAINT_TAG = "constraint"
 EXTRACTED_CONFIDENCE = 0.5
 _REPLY_TOKENS = 4000
 _PAGE = 500
+# The closest decision rows the restatement check reads; cosine only, so cheap.
+_RESTATEMENT_TOP_K = 20
 
 
 @dataclass
@@ -102,8 +104,9 @@ class Dropped:
     section: str
     reason: str
     quote: str = ""
-    # The decision's key when a write of it was refused (also listed in `refused`).
-    key: str = ""
+    # A read or write of the candidate was refused or failed (the reason says which): it
+    # counts toward the exit code, as `ExtractReport.refused` does.
+    refused: bool = False
 
 
 @dataclass
@@ -127,9 +130,9 @@ class ExtractReport:
     # Keys tagged (or to tag) `source-changed`: confirmed rows (pinned or attested), and
     # rows with a recorded outcome, whose document now says otherwise.
     flagged: list[str] = field(default_factory=list)
-    # "<key>: refused: <code>" for each write the server refused, "<key>: failed: <error>"
-    # for one a provider error stopped (a reconcile one also has its `dropped` line, with
-    # the section and quote).
+    # The retire step's "<key>: refused: <code>" for a read or write the server refused,
+    # "<key>: failed: <error>" for one a provider error stopped. A candidate's is its
+    # `dropped` line, marked `refused`.
     refused: list[str] = field(default_factory=list)
     # "<key>: deleted since the run read it" or "<key>: rewritten since the run read it":
     # a write that found its row gone or moved on, a race the next run settles.
@@ -315,8 +318,7 @@ async def extract_document(
             # the other candidates and the retire step still run, and a re-run does not
             # stop at the same place.
             key = svc.decision_key(cand.category, cand.scenario)
-            report.dropped.append(Dropped(section, _refusal(e), cand.quote, key))
-            report.refused.append(f"{key}: {_refusal(e)}")
+            report.dropped.append(Dropped(section, _refusal(e), cand.quote, refused=True))
             # Handled this run: the retire step must not judge the key it just failed on.
             written.add(key)
             continue
@@ -675,7 +677,7 @@ async def _confirmed_restatement(
             namespace=namespace,
             agent="*",
             query=statement,
-            top_k=5,
+            top_k=_RESTATEMENT_TOP_K,
             memory_type="decision",
             namespace_scope="this",
             auto_touch=False,

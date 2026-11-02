@@ -110,7 +110,7 @@ def exit_code(report: ExtractReport) -> int:
     run read it is reported, not counted: the next run settles it."""
     if report.error:
         return 1
-    return 2 if report.refused else 0
+    return 2 if report.refused or any(d.refused for d in report.dropped) else 0
 
 
 def print_report(report: ExtractReport) -> None:
@@ -150,12 +150,7 @@ def print_report(report: ExtractReport) -> None:
         print(f"- {retire} {key}: its reasoning is no longer in the document")
     for pair in report.replaced:
         print(f"- {retire} {pair}: its reasoning is recorded under the new key")
-    # A refused candidate is printed once, as its dropped line above.
-    dropped_keys = {d.key for d in report.dropped if d.key}
-    for line in report.refused:
-        if not any(line.startswith(f"{key}: ") for key in dropped_keys):
-            print(f"- not changed {line}")
-    for line in report.races:
+    for line in report.refused + report.races:
         print(f"- not changed {line}")
     in_records = {r.memory_key for r in report.records}
     for key in report.flagged:
