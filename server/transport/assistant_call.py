@@ -1,8 +1,8 @@
 """Whether the `tools/call` being served came through the assistant toolset.
 
 Set once per call when its tool is resolved (`mcp_call._resolve_connection_tool`) and read
-by the phases that behave differently on that connection: the session-run stamp and the
-result shape. A connection property, never the self-reported `consumer` argument, so a
+by the phases that behave differently on that connection: the agent default, the
+session-run stamp and the result shape. A connection property, never the self-reported `consumer` argument, so a
 caller on another toolset cannot claim it.
 """
 

@@ -296,7 +296,7 @@ def resolve_toolset(requested: str | None, configured: str | None) -> str:
 
 def _without_forced(schema: dict[str, Any], forced: dict[str, object]) -> dict[str, Any]:
     """`schema` without the properties the assistant toolset sets itself: a model is
-    not offered an argument whatever value it sends is overwritten."""
+    not offered an argument whose value the connection overwrites."""
     if not forced or not isinstance(schema.get("properties"), dict):
         return schema
     # A forced argument has a default, so it is never in `required`.
