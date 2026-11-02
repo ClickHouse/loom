@@ -378,18 +378,18 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   image and at most 80 characters of other text (a caption), is not sent to the model and gets the line
   `image-only, rationale not extracted`; a heading alone over its subsections is not one. The text above the first
   heading, or a document with no heading, is skipped the same way when it holds an image and at most a caption; it is
-  reported as `(untitled)`. An image is a Markdown image (inline or by reference, `![diagram][fig1]`), an HTML image or
-  a placeholder such as `[image]`, `[Image 3]` or `[image: ...]`. The caption's characters are counted without HTML
-  tags, link targets, reference labels, the empty brackets a link around an image leaves, and bare URLs, so a badge
-  wrapped in a link adds none; a tag is a lower-case name on one line, so `x < 10k` and `Option<A>` stay text. A chunk
-  with no words is not sent either.
+  reported as `(untitled)`. An image is a Markdown image (inline, by reference as `![diagram][fig1]`, or by shortcut
+  reference as `![spill flow]`), an HTML image or a placeholder such as `[image]`, `[Image 3]` or `[image: ...]`. The
+  caption's characters are counted without HTML tags, link targets, reference labels, the empty brackets a link around
+  an image leaves, and bare URLs, so a badge wrapped in a link adds none; a tag is a lower-case name on one line, so
+  `x < 10k` and `Option<A>` stay text. A chunk with no words is not sent either.
 - **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
   `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
   punctuation, as their English (Snowball) stems, so `stored` meets `store` and `running` meets `run`. Filler words
-  (`we`, `the`, `will`, `decided`, `chose`, `use`, `instead` and the like) are skipped in any form: "We decided on
-  spilling into sorted runs." restates the outcome `spill into sorted runs`; "Sorted runs avoid random reads on disk."
-  gives a reason. An outcome that carries its own reason leaves the reasoning nothing to add, so the candidate is
-  dropped, which is why the prompt asks for the outcome without its reason.
+  (`we`, `the`, `will`, `decided`, `chose`, `use`, `instead`, `because` and the like) are skipped in any form: "We
+  decided on spilling into sorted runs." restates the outcome `spill into sorted runs`; "Sorted runs avoid random reads
+  on disk." gives a reason. An outcome that carries its own reason leaves the reasoning nothing to add, so the candidate
+  is dropped, which is why the prompt asks for the outcome without its reason.
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.

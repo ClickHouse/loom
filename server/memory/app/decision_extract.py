@@ -468,7 +468,7 @@ async def _candidates(
                 # The key keeps letters and digits a-z, 0-9 only (a CJK scenario has none).
                 key = ""
                 reason = reason or "no letters or digits a-z, 0-9 to build a key from"
-            pair = (cand.outcome.strip(), collapse_ws(cand.reasoning))
+            pair = (cand.outcome, collapse_ws(cand.reasoning))
             if not reason and key in keys:
                 reason = "same key as an earlier candidate"
             elif not reason and pair in pairs:

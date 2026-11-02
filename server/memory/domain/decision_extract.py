@@ -23,14 +23,16 @@ from server.memory.domain.lemmatize import snowball_stem_tokens
 
 # How a rejected option is stored: `<option> — rejected: <reason>`.
 REJECTED = " — rejected: "
-# An image: a Markdown image, inline (`![flow](flow.png)`) or by reference
-# (`![diagram][fig1]`); an HTML `<img>` tag; or a slide export's placeholder, `[image]`,
-# `[Image 3]`, `[image: ...]`, `[image_1]`, `[pictures]`. Not a placeholder: link text
+# An image: a Markdown image, inline (`![flow](flow.png)`), by reference
+# (`![diagram][fig1]`) or by shortcut reference (`![spill flow]`); an HTML `<img>` tag;
+# or a slide export's placeholder, `[image]`, `[Image 3]`, `[image: ...]`, `[image_1]`,
+# `[pictures]`. Not a placeholder: link text
 # `[image tiles](tiles.md)`, a reference link `[image][1]`, a definition `[image]: x.png`,
 # the label of `[the diagram][image]`, or a word such as `[imagine]`.
 _IMAGE_MARKUP = re.compile(
     r"!\[[^\]]*\]\([^)]*\)"
     r"|!\[[^\]]*\]\[[^\]]*\]"
+    r"|!\[[^\]]+\](?![(\[])"
     r"|<img\b[^>]*>"
     r"|(?<!\])\[(?:image|picture)s?(?:[\s:_\d][^\]]*)?\](?![(\[:])",
     re.I,
@@ -280,7 +282,7 @@ def document_spans(cand: Candidate, texts: list[str]) -> Candidate:
 _FILLER_WORDS = (
     "a an the and or of to in on at for with as is are was were be been being has have had "
     "it its this that these those we our us they will would should must can so decide "
-    "chose chosen choose use used using instead"
+    "chose chosen choose use used using instead because since"
 )
 _WORD = re.compile(r"\w+")
 

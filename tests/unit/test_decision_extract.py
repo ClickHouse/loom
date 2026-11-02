@@ -2105,6 +2105,8 @@ def test_every_printed_action_has_its_line() -> None:
         ("run the merge per part", "Running the merge per part.", True),
         ("process each part", "Each part processes.", True),
         ("store strings as offsets", "Offsets are stored as a string.", True),
+        ("spill into sorted runs", "Because we spill into sorted runs.", True),
+        ("spill into sorted runs", "Since we spill into sorted runs.", True),
         ("sorted runs for the spill", "Sorted runs were chosen for the spill.", True),
         ("spill into sorted runs", "We are choosing sorted runs for spilling.", True),
         ("spill into sorted runs", "A plain set on disk costs random reads.", False),
@@ -2491,6 +2493,7 @@ _LINKED_BADGE = f"[![build](badge.svg)]({_CI_URL})"
     ("body", "image_only"),
     [
         ("![diagram][fig1]\n\nFigure 1: the spill path.", True),
+        ("![spill flow]\n\nFigure 1: the spill path.", True),
         # Its link target, left over, would read as more than a caption.
         (f"{_LINKED_BADGE}\n\nBuild status for the spill code.", True),
         (
