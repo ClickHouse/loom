@@ -2824,12 +2824,14 @@ _SPILL = _candidate(
 )
 
 
-async def _second_read(monkeypatch, again: list[dict[str, Any]]) -> tuple[Any, Any]:
+async def _second_read(
+    monkeypatch, again: list[dict[str, Any]], spill: dict[str, Any] = _SPILL
+) -> tuple[Any, Any]:
     """A window of two sections: the first reply keeps the merge and joins the spill's
     reason; `again` is the second reply."""
     world = _World(monkeypatch, [])
     _chunks(monkeypatch, (_ONE, ("Spilling", "One")), (_TWO, ("Spilling", "Two")))
-    world.replies = [[_SPILL, _MERGE], again]
+    world.replies = [[spill, _MERGE], again]
     return world, await _run()
 
 
@@ -2858,6 +2860,49 @@ async def test_a_repair_with_a_reworded_outcome_and_a_new_reasoning_is_recorded(
         "spill to sorted runs on disk",
     ]
     assert [d.reason for d in report.dropped] == ["reasoning is not in the document text"]
+
+
+@pytest.mark.asyncio
+async def test_a_repair_matches_its_failed_outcome_whitespace_aside(monkeypatch) -> None:
+    # The repair rests on the kept merge decision's span: only its outcome marks it a repair.
+    spill = {**_SPILL, "outcome": "spill into\nsorted runs"}
+    repair = {**_SPILL, "outcome": "spill into sorted runs", "reasoning": _MERGE["reasoning"]}
+    world, report = await _second_read(monkeypatch, [repair], spill=spill)
+    assert [inp.outcome for inp in world.recorded] == [
+        "merge each run once",
+        "spill into sorted runs",
+    ]
+    assert de._REPEATED not in [d.reason for d in report.dropped]
+
+
+@pytest.mark.parametrize("lost", ["unreadable", "fake"])
+@pytest.mark.asyncio
+async def test_an_empty_window_whose_second_read_is_lost_is_refused(monkeypatch, lost) -> None:
+    from server.llm import client as llm_client
+    from server.settings import settings
+
+    world = _World(monkeypatch, [])
+    await _two_windows(monkeypatch)
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(llm_client, "provider_key_missing", lambda provider: False)
+    lost_reply = ("not json", "openai") if lost == "unreadable" else ("{}", "fake")
+    replies = [(json.dumps({"decisions": []}), "openai"), lost_reply]
+    replies.append((json.dumps({"decisions": [_candidate()]}), "openai"))
+
+    class _LLM:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            text, provider = replies.pop(0)
+            return SimpleNamespace(text=text, stop_reason="", provider=provider)
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _LLM())
+    report = await _run(window_chars=len(BODY) + 1)
+    # The other window is still read and recorded.
+    assert replies == [] and len(world.recorded) == 1
+    assert [r.action for r in report.records] == ["written"]
+    (d,) = report.dropped
+    assert d.section == "Spilling > Other" and d.refused
+    assert [r.reason for r in report.retried] == [de._EMPTY_REPLY]
+    assert cli.exit_code(report) == 2
 
 
 @pytest.mark.asyncio
