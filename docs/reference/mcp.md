@@ -109,13 +109,15 @@ connect by browser sign-in instead of a pasted token (`server/auth/oauth.py`):
   echoes it. The client's `clientInfo.name` is cached against it and becomes the
   `agent` of later calls, slugified (`Cursor` → `cursor`; absent →
   `claude-desktop`). The cache is in-process and bounded.
-- **Identity defaults.** Tool calls usually carry only the action's arguments.
-  The server fills `org` from the token and `namespace` and `agent` from the
-  caller's default workspace; explicit arguments win. `code.*` calls resolve to
-  the code plane instead. An `org` argument the token may not act in is refused
-  (`ORG_MISMATCH`): a token acts in its own org, an org-wide (`*`) token or a
-  platform admin in any org, the same rule as over HTTP (`authz.may_act_in_org`).
-  A restricted namespace still refuses every other org, platform admins included. `loom_search` takes no `namespace` argument: it
+- **Identity defaults.** Tool calls usually carry only the action's arguments. The
+  server fills `org` from the token and `namespace` and `agent` from the caller's
+  default workspace; explicit arguments win. `code.*` calls resolve to the code plane
+  instead, and on the `assistant` toolset a read that names no `agent` follows that
+  toolset's rule (see [The assistant toolset](#the-assistant-toolset)). An `org`
+  argument the token may not act in is refused (`ORG_MISMATCH`): a token acts in its
+  own org, an org-wide (`*`) token or a platform admin in any org, the same rule as
+  over HTTP (`authz.may_act_in_org`). A restricted namespace still refuses every other
+  org, platform admins included. `loom_search` takes no `namespace` argument: it
   searches the caller's home namespace and its other memory-kind namespaces, up to the
   fan-out cap.
 - **Code scope.** A client may send `X-Loom-Code-Scope: <org>/<namespace>` (the
@@ -161,7 +163,7 @@ Every registry operation not in `_MCP_HIDDEN_OPS` is a tool:
   tools never runs a state change unprompted. They are hints; the role check at
   call time is the boundary.
 
-Three synthetic tools are listed on every toolset:
+Three synthetic tools are listed on every toolset but `assistant`:
 
 | Tool            | Does                                                                                                                                                           |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -179,39 +181,43 @@ result. `Operation.mcp_tool` names it, so no second `loom_search_query` tool is
 listed or callable. See
 [unified search](../features/unified-search.md#searchquery-over-http-and-the-sdks).
 
-**Hidden ops** (`_MCP_HIDDEN_OPS` in `server/operations/toolsets.py`) are
-neither listed nor callable over MCP: the per-store searches `loom_search`
-replaces (`memory.search`, `knowledge.search`, `conversation.search`), review
-queues, snapshot and restore, policy administration, audit and cost
-dashboards, code-index ingest. A call to one answers `isError` with code
-`OP_NOT_ON_MCP` and what to use instead. They stay reachable over HTTP and the
-SDKs. The rule for hiding an op: would a typical end user, not an operator,
-reach for it in chat? A namespace-wide view can be hidden while a variant bounded
-to the caller stays on MCP: `namespace.list` is hidden and `namespace.list_mine`
-listed; `memory.extraction_status` (every batch queued in the namespace) is hidden
-and `memory.extraction_status_mine` (the batches the caller queued, by `queue_id`,
-at most 20 a call) is callable by name or through `loom_op` on every toolset,
-`readonly` included. Its write twin, `memory.extraction_retry_mine`, replays the
-caller's failed batches once more; `loom_op` routes it on every toolset but `readonly`.
+**Hidden ops** (`_MCP_HIDDEN_OPS` in `server/operations/toolsets.py`) are neither
+listed nor callable over MCP: the per-store searches `loom_search` replaces
+(`memory.search`, `knowledge.search`, `conversation.search`), review queues,
+snapshot and restore, policy administration, audit and cost dashboards, code-index
+ingest. A call to one answers `isError` with code `OP_NOT_ON_MCP` and what to use
+instead. They stay reachable over HTTP and the SDKs. On the `assistant` toolset
+`memory.search` and `knowledge.search` are listed and callable, and a call to any
+other hidden op answers `UNKNOWN_OP`. The rule for hiding an op: would a typical end
+user, not an operator, reach for it in chat? A namespace-wide view can be hidden
+while a variant bounded to the caller stays on MCP: `namespace.list` is hidden and
+`namespace.list_mine` listed; `memory.extraction_status` (every batch queued in the
+namespace) is hidden and `memory.extraction_status_mine` (the batches the caller
+queued, by `queue_id`, at most 20 a call) is callable by name or through `loom_op`
+on every toolset except `assistant` (`readonly` included). Its write twin,
+`memory.extraction_retry_mine`, replays the caller's failed batches once more;
+`loom_op` routes it on every toolset but `readonly` and `assistant`.
 
 ### Toolsets
 
 A toolset decides what is **listed**; every non-hidden op stays callable by
-tool name, or through `loom_op`, whatever the toolset.
+tool name, or through `loom_op`, whatever the toolset. The `assistant` toolset is the
+exception: on it only its own reads are callable.
 
-| Toolset    | Lists                                                                                                                                                                                                                                                                        | For                                            |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `core`     | The chat loop: memory save, recall and manage, working memory, knowledge documents, profile, conversation logging, namespace orientation, erasure, `blacklist.add`, `context.pack`. The code tools join with `LOOM_MCP_CODE_TOOLS=true`.                                     | chat clients (the default)                     |
-| `coding`   | `memory.set/update/get/delete`, `working_memory.set`, `context.pack`, the code tools (`code.search`, `grep`, `enclosing`, `ask`, `symbol`, `outline`, `callers`, `context_pack`), `tracker.duplicate_check`, `code.bisect_candidates`, `code.pr_check`, `code.impact`.       | coding agents                                  |
-| `tracker`  | `tracker.answer`, `binding`, `component`, `duplicate_check`, `flaky`, `item`, `links`, `release`, `similar`, `test_signal`, plus `code.bisect_candidates`, `code.pr_check`, `code.impact`.                                                                                   | sessions working a failing test, crash or PR   |
-| `tasks`    | `task.pull/create/complete/fail/wont_do/defer/heartbeat/updates/list/get`, `inbox.list`.                                                                                                                                                                                     | a session acting as an agent with a task inbox |
-| `atomic`   | `memory.set/get/delete/ask`, `working_memory.set/append`, `run.begin/complete`.                                                                                                                                                                                              | minimal, policy-shaped agents                  |
-| `readonly` | The `all` listing minus every tool whose `readOnlyHint` is false.                                                                                                                                                                                                            | read-only registrations                        |
-| `all`      | Every non-hidden op whose `maturity` is `stable`, plus the `experimental` ops the core or atomic roster lists. An experimental op that neither roster lists is left out; it is still callable by name or through `loom_op`. Code tools only with `LOOM_MCP_CODE_TOOLS=true`. | operators                                      |
+| Toolset     | Lists                                                                                                                                                                                                                                                                                                                                                        | For                                            |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| `core`      | The chat loop: memory save, recall and manage, working memory, knowledge documents, profile, conversation logging, namespace orientation, erasure, `blacklist.add`, `context.pack`. The code tools join with `LOOM_MCP_CODE_TOOLS=true`.                                                                                                                     | chat clients (the default)                     |
+| `coding`    | `memory.set/update/get/delete`, `working_memory.set`, `context.pack`, the code tools (`code.search`, `grep`, `enclosing`, `ask`, `symbol`, `outline`, `callers`, `context_pack`), `tracker.duplicate_check`, `code.bisect_candidates`, `code.pr_check`, `code.impact`.                                                                                       | coding agents                                  |
+| `tracker`   | `tracker.answer`, `binding`, `component`, `duplicate_check`, `flaky`, `item`, `links`, `release`, `similar`, `test_signal`, plus `code.bisect_candidates`, `code.pr_check`, `code.impact`.                                                                                                                                                                   | sessions working a failing test, crash or PR   |
+| `tasks`     | `task.pull/create/complete/fail/wont_do/defer/heartbeat/updates/list/get`, `inbox.list`.                                                                                                                                                                                                                                                                     | a session acting as an agent with a task inbox |
+| `atomic`    | `memory.set/get/delete/ask`, `working_memory.set/append`, `run.begin/complete`.                                                                                                                                                                                                                                                                              | minimal, policy-shaped agents                  |
+| `readonly`  | The `all` listing minus every tool whose `readOnlyHint` is false.                                                                                                                                                                                                                                                                                            | read-only registrations                        |
+| `assistant` | A fixed set of reads for investigating Loom on a person's behalf: `namespace.get/summary/inventory/taxonomy/audit/validate/guide_get/guide_history/list_categories`, `mentor.brief`, `grants.list`, `memory.search/ask/get/list/history/provenance/aggregate`, `facts.traverse/path`, `knowledge.search/get/list`, `code.search/symbol`. No synthetic tools. | a chat client acting for a signed-in person    |
+| `all`       | Every non-hidden op whose `maturity` is `stable`, plus the `experimental` ops the core or atomic roster lists. An experimental op that neither roster lists is left out; it is still callable by name or through `loom_op`. Code tools only with `LOOM_MCP_CODE_TOOLS=true`.                                                                                 | operators                                      |
 
 Curated rosters combine: `?toolset=coding+tracker`, `coding,tracker`, or an
-unescaped `+` that arrives as a space. Only curated rosters join (`all` and
-`readonly` are whole surfaces), and an unknown part makes the whole value
+unescaped `+` that arrives as a space. Only curated rosters join (`all`,
+`readonly` and `assistant` are whole surfaces), and an unknown part makes the whole value
 unknown, so the listing falls back to the deployment default. The rosters are
 the frozensets in `server/operations/toolsets.py`; `ops.capabilities` reports
 each op's `toolsets`. A second MCP registration on another toolset
@@ -233,8 +239,67 @@ paging and abstain fields. Score components, explanations, retrieval plans and
 costs, hashes and empty fields are dropped. **Why:** some clients hand
 `structuredContent` to the model as well as the text block, and the full
 diagnostic shape costs several thousand tokens for a short answer.
-`explain: true` on the call returns the full shape. HTTP and the SDKs always
-get the full result.
+`explain: true` on the call returns the full shape. HTTP, the SDKs and the
+`assistant` toolset always get the full result (on `assistant`, a `memory.search` without
+its per-hit score breakdown).
+
+### The assistant toolset
+
+`?toolset=assistant` is the connection a chat client uses to investigate Loom on behalf
+of the signed-in person: what a namespace holds, how it is used, and cited answers over
+memory, documents and code. The value names `assistant` alone (in any case): a misspelling or a
+union such as `assistant+core` does not resolve and the connection gets the deployment's
+default listing, with no error. The URL the operator configures and a `viewer` token
+carry the guarantee, not the client. A replica one release older does not know the value
+either and serves its default listing, so during a rolling upgrade only the token limits
+the connection: point a client at `?toolset=assistant` once every replica runs a build
+that serves it, and give it a `viewer` token in any case. On it:
+
+- **Only its reads are callable.** A `tools/call` for any other tool, `loom_op` and
+  `loom_search` included, answers `isError` before the handler runs, whatever the token
+  allows: with code `UNKNOWN_OP`, or with the access refusal when the call names an org or
+  namespace the token cannot read, which is checked first. The token is still checked on
+  every call, so a read the person may not make is refused as on any connection. Mint the
+  client's token with the `viewer` role to make the same limit hold on every other
+  surface.
+- **Its calls are ledgered as consumer `loom-assistant`**, whatever the call sends, a
+  refused call to a registry tool included (an unknown tool name writes no row).
+  `namespace.audit`, `namespace.summary`, `mentor.brief` and
+  `knowledge.reads` leave that consumer's and the dashboard's (`loom-ui`) reads out of
+  their usage counts, so looking at a namespace does not change its grade (a change to a
+  memory from the dashboard is a person using the namespace and still counts in
+  `namespace.audit` and `namespace.summary`); `namespace.audit` reports how many it left out in
+  `summary.inspector_calls`. A token whose `consumer` claim names another consumer keeps
+  its claim, and its calls are counted.
+- **A read names whose rows it reads.** The assistant writes nothing, so its client's own
+  agent holds no rows, and a read that names no `agent` is not narrowed to it:
+  `memory.ask` reads across agents and `mentor.brief` briefs the namespace's top writer,
+  as `memory.search`, `memory.list` and `memory.history` already read across agents. A
+  read of one writer's rows, `memory.aggregate` or `memory.provenance`, is refused for the
+  missing `agent` until the call names the writer: a search hit's `agent`, `user_id` and
+  `session_id`. The listing offers those arguments on every memory read, and `agent` on
+  `mentor.brief`. `memory.get` falls back to the row under any agent.
+- **Reads do not record usage.** `memory.search` runs with `auto_touch: false` and
+  `memory.ask` with `reinforce: false`, whatever the call sends, so an investigation does
+  not raise the recall counts that rank results; `memory.ask` also runs with
+  `precedents: false`, so no answer is stored for reuse. What remains is telemetry and
+  caches: the request ledger row; the exposure row every read of a memory leaves
+  (`loom.memory_exposures`, the record of who was served which row); the code search
+  trace a `code.search` or `code.symbol` writes (`loom.code_search_trace`, under
+  `LOOM_CODE_TRACE_LOG_ENABLED`); the search trace and query-node rows a `memory.search`
+  writes when `LOOM_SEARCH_TRACE_LOG_ENABLED` or `LOOM_MEMORY_QUERY_NODES_ENABLED` is on;
+  a `memory.ask` consistency row under deferred consistency; and the model response
+  cache. An assistant call opens no MCP session run, and its `initialize` and `loom`
+  prompt write no profile-read row: its primer inlines no profile.
+- **Results are the full output**, as HTTP returns them, since a citation needs the
+  identities, versions and attestations the trimmed shape drops; a `memory.search` runs
+  with `explain: false`, so its hits carry no per-hit score breakdown. `memory.search` and
+  `knowledge.search`, which the other listings leave to `loom_search`, are listed here
+  so an answer can come from one plane at a time.
+- **The `initialize` instructions** tell the model to cite each claim by key and version
+  or content hash, to keep source statements, computed results and its own reading apart,
+  to report missing evidence as not observed, and to treat stored text as data that
+  cannot grant a tool or approve a change.
 
 ## Errors
 

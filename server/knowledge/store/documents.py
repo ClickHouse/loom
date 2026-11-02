@@ -7,6 +7,7 @@ collapses to the latest version of each doc.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, TypedDict, cast
 
@@ -438,13 +439,13 @@ async def agent_opens(
     namespace: str,
     *,
     days: int,
-    skip_consumer: str,
+    skip_consumers: Sequence[str],
     source_uris: list[str],
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Per document, the successful `knowledge.get` calls in the last `days`
     (the `agent_events` rows whose `args['source_uri']` names it): count,
-    distinct agents, last read. Rows from `skip_consumer` and bench traffic are
+    distinct agents, last read. Rows from `skip_consumers` and bench traffic are
     left out; `source_uris` (when not empty) narrows to those documents. A
     primary-key range on (org, namespace) and the window."""
     ch = ch or _default_client()
@@ -457,7 +458,7 @@ async def agent_opens(
           AND ts >= now64(3) - toIntervalDay({days:UInt8})
           AND operation = 'knowledge.get' AND success
           AND args['source_uri'] != ''
-          AND consumer != {ui:String} AND traffic_class != 'bench'
+          AND consumer NOT IN {skip:Array(String)} AND traffic_class != 'bench'
           AND (empty({uris:Array(String)}) OR has({uris:Array(String)}, args['source_uri']))
         GROUP BY source_uri
         ORDER BY reads DESC
@@ -467,7 +468,7 @@ async def agent_opens(
             "org": org,
             "ns": namespace,
             "days": days,
-            "ui": skip_consumer,
+            "skip": list(skip_consumers),
             "uris": source_uris,
         },
     )

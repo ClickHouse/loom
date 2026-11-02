@@ -11,7 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from server.knowledge.api.models_knowledge import KnowledgeReadsInput
-from server.knowledge.app.reads import UI_CONSUMER, handle_knowledge_reads
+from server.knowledge.app.reads import handle_knowledge_reads
 from server.tracker.api.models import TrackerContractInput
 from server.tracker.app.sources import handle_tracker_contract
 from server.tracker.domain import contract as rc
@@ -122,9 +122,10 @@ async def test_reads_count_agent_opens_not_the_dashboards(monkeypatch) -> None:
         }
     ]
     sql, params = ch.calls[0]
-    assert "operation = 'knowledge.get'" in sql and "consumer != {ui:String}" in sql
+    assert "operation = 'knowledge.get'" in sql
+    assert "consumer NOT IN {skip:Array(String)}" in sql
     assert "traffic_class != 'bench'" in sql
-    assert params["ui"] == UI_CONSUMER == "loom-ui"
+    assert params["skip"] == ["loom-ui", "loom-assistant"]
     assert params == {**params, "org": "acme", "ns": "code-kj", "days": 7, "uris": []}
     # the ledger's sort key leads with (org, namespace): the read is a key range
     assert sql.index("org = {org:String}") < sql.index("operation")

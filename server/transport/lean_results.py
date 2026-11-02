@@ -19,6 +19,8 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from server.transport.assistant_call import assistant_call
+
 # Ranking and accounting detail the model never acts on. `explanation` is
 # the per-hit provenance note the text block already folds into `why`.
 # Kept on purpose: `version` (a write receipt clients read back — the MCP
@@ -125,7 +127,10 @@ def lean_result(payload: Any, arguments: dict[str, Any] | None) -> Any:
 
 
 def _explained(arguments: dict[str, Any] | None) -> bool:
-    return bool(arguments and arguments.get("explain"))
+    """Whether the call keeps the full output: it asked to explain, or it came through the
+    assistant toolset, whose answers cite the identities, versions and attestations the
+    trimmed shape drops."""
+    return assistant_call() or bool(arguments and arguments.get("explain"))
 
 
 # What an MCP client reads of a context.pack. The op's

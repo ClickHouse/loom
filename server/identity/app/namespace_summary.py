@@ -8,6 +8,7 @@ No new storage. Read-only.
 from __future__ import annotations
 
 import asyncio
+import functools
 from typing import Any
 
 from server.core.ch import get_client
@@ -18,6 +19,25 @@ from server.identity.api.models_namespace_catalog import (
     _NamespaceTypeCount,
 )
 from server.memory.domain.graph_quality import is_lexical_junk_entity
+from server.observability.consumer import INSPECTOR_CONSUMERS
+
+
+@functools.cache
+def _memory_changes() -> tuple[str, ...]:
+    """The memory ops that change a row, not read_only and called by a writer or audited: an
+    inspector's call to one is a person using the namespace."""
+    from server.operations.base import Role
+    from server.operations.registry import ALL_OPERATIONS
+
+    return tuple(
+        sorted(
+            op.name
+            for op in ALL_OPERATIONS
+            if op.name.startswith("memory.")
+            and not op.read_only
+            and (op.audit or op.required_role == Role.WRITER)
+        )
+    )
 
 
 async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSummaryOutput:
@@ -76,8 +96,17 @@ async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSum
             WHERE org = {org:String}
               AND namespace = {ns:String}
               AND ts >= now() - INTERVAL {win:UInt32} SECOND
+              -- the dashboard's and the assistant's reads inspect the namespace, not use it;
+              -- a change to a memory from the dashboard (a set, a delete, a pin) uses it
+              AND (operation IN {memory_changes:Array(String)}
+                   OR consumer NOT IN {inspectors:Array(String)})
             """,
-            params={**params, "win": int(input.activity_seconds)},
+            params={
+                **params,
+                "win": int(input.activity_seconds),
+                "inspectors": list(INSPECTOR_CONSUMERS),
+                "memory_changes": list(_memory_changes()),
+            },
         )
 
     type_rows, entity_rows, activity_row = await asyncio.gather(_types(), _entities(), _activity())

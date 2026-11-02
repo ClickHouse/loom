@@ -120,7 +120,16 @@ def test_coding_roster_is_the_six_memory_verbs_plus_the_code_tools():
     assert curated_roster("readonly", code_tools=True) is None
     # `tasks` is the fourth curated roster (the task inbox plane)
     # `qa` is the fifth curated roster (tracker record, bisect, pr_check, impact)
-    assert MCP_TOOLSETS == ("core", "coding", "atomic", "tasks", "tracker", "readonly", "all")
+    assert MCP_TOOLSETS == (
+        "core",
+        "coding",
+        "atomic",
+        "tasks",
+        "tracker",
+        "readonly",
+        "assistant",
+        "all",
+    )
     assert CURATED_TOOLSETS == {"core", "coding", "atomic", "tasks", "tracker"}
 
 
@@ -283,10 +292,11 @@ def test_catalogue_carries_the_toolset_membership():
     assert op_toolsets("memory.set") == ["all", "atomic", "coding", "core"]
     assert op_toolsets("memory.update") == ["all", "coding", "core"]
     assert op_toolsets("knowledge.add") == ["all", "core"]
-    assert op_toolsets("code.search") == ["all", "coding", "core"]
+    assert op_toolsets("code.search") == ["all", "assistant", "coding", "core"]
     assert op_toolsets("run.begin") == ["all", "atomic"]
-    assert op_toolsets("facts.traverse") == ["all"]
-    assert op_toolsets("memory.search") == [], "a hidden op is on no toolset"
+    assert op_toolsets("facts.traverse") == ["all", "assistant"]
+    assert op_toolsets("memory.bulk_set") == [], "a hidden op is on no toolset"
+    assert op_toolsets("memory.search") == ["assistant"], "but the assistant roster"
     for op in ALL_OPERATIONS:
         f = catalogue_facets(op)
         assert f["toolsets"] == op_toolsets(op.name)
@@ -294,14 +304,14 @@ def test_catalogue_carries_the_toolset_membership():
     snap = capability_snapshot()["ops"]
     assert snap["memory.pin"]["toolsets"] == ["all", "core"]
     assert snap["memory.pin"]["mcp_tier"] == "core"
-    assert snap["memory.search"]["toolsets"] == []
+    assert snap["memory.search"]["toolsets"] == ["assistant"]
     from server.code.api.models_status import CodeIndexStatusOutput
     from server.code.app.index_status import code_op_catalogue
     from server.insights.api.models_ops import OpCapability
 
     cat = code_op_catalogue()
     assert set(cat.toolsets) == set(cat.ops)
-    assert cat.toolsets["code.search"] == ["all", "coding", "core"]
+    assert cat.toolsets["code.search"] == ["all", "assistant", "coding", "core"]
     assert cat.toolsets["code.reindex"] == []
     assert CodeIndexStatusOutput(repo="r", branch="b", namespace="n").op_toolsets == {}
     assert (

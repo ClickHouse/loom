@@ -68,6 +68,7 @@ const report = (namespace: string, criticals: number): NamespaceAuditResult => (
     searches: 0,
     sets: 0,
     get_search_ratio: 0,
+    inspector_calls: 0,
   },
   findings: [],
   skipped: [],

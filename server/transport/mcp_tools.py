@@ -19,9 +19,13 @@ from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import (
     _MCP_HIDDEN_OPS,
+    ASSISTANT_FORCED_ARGS,
+    ASSISTANT_NAMED_AGENT_OPS,
+    MCP_ASSISTANT_OPS,
     SYNTHETIC_TOOL_OPS,
     canonical_toolset,
     curated_roster,
+    is_assistant,
     is_curated,
     is_toolset,
     toolset_parts,
@@ -32,6 +36,9 @@ from server.transport.mcp_config import (
     _LOOM_ACTIVATE_TOOL_NAME,
     _LOOM_SEARCH_TOOL_NAME,
     _READ_SHAPED_VERBS,
+)
+from server.transport.mcp_descriptions import (
+    ASSISTANT_TOOL_DESCRIPTIONS as _ASSISTANT_TOOL_DESCRIPTIONS,
 )
 from server.transport.mcp_descriptions import (
     ATOMIC_TOOL_DESCRIPTIONS as _ATOMIC_TOOL_DESCRIPTIONS,
@@ -288,11 +295,64 @@ def resolve_toolset(requested: str | None, configured: str | None) -> str:
     return requested_l if requested_l and is_toolset(requested_l) else configured_l
 
 
+# The identity arguments an assistant read lists: the other toolsets hide them, since the
+# caller's own identity fills in, but the assistant writes nothing and reads other writers'
+# rows, so it names the row a search hit showed it.
+_ASSISTANT_IDENTITY_ARGS: dict[str, str] = {
+    "agent": "The agent the read is about: a search hit's `agent` names its row's writer.",
+    "user_id": "The user the row belongs to: a search hit's `user_id`.",
+    "session_id": "The session the row belongs to: a search hit's `session_id`.",
+}
+
+
+def _with_identity(schema: dict[str, Any], op: Operation) -> dict[str, Any]:
+    """`schema` with the op's identity arguments listed again, for a memory or mentor read.
+    A code read's identity is the code plane's, and a namespace read's user narrows only
+    under its own `read_scope`, so neither lists them."""
+    props = schema.get("properties")
+    if not isinstance(props, dict) or not op.name.startswith(("memory.", "mentor.")):
+        return schema
+    fields = op.input_model.model_fields
+    named = {
+        arg: {"type": "string", "description": text}
+        for arg, text in _ASSISTANT_IDENTITY_ARGS.items()
+        if arg in fields
+    }
+    if not named:
+        return schema
+    out = {**schema, "properties": {**props, **named}}
+    if op.name in ASSISTANT_NAMED_AGENT_OPS:
+        out["required"] = [*schema.get("required", []), "agent"]
+    return out
+
+
+def _without_forced(schema: dict[str, Any], forced: dict[str, object]) -> dict[str, Any]:
+    """`schema` without the properties the assistant toolset sets itself: a model is
+    not offered an argument whose value the connection overwrites."""
+    if not forced or not isinstance(schema.get("properties"), dict):
+        return schema
+    # A forced argument has a default, so it is never in `required`.
+    return {
+        **schema,
+        "properties": {k: v for k, v in schema["properties"].items() if k not in forced},
+    }
+
+
+def assistant_connection(requested: str | None) -> bool:
+    """Whether a connection's ``?toolset=`` (resolved against the deployment's) is the
+    assistant toolset, where only its reads are callable."""
+    from server.settings import settings
+
+    return is_assistant(resolve_toolset(requested, settings.mcp_toolset))
+
+
 def _curated_description(toolset: str, op_name: str) -> str | None:
     """The curated prose for ``op_name`` on ``toolset``: the atomic tier has
     its own policy-shaped texts; the coding tier overrides the few
-    descriptions that name a `core`-only op; the rest share
-    TOOL_DESCRIPTIONS."""
+    descriptions that name a `core`-only op; the assistant toolset replaces those that
+    point at tools it does not carry; the rest share TOOL_DESCRIPTIONS."""
+    if is_assistant(toolset):
+        return _ASSISTANT_TOOL_DESCRIPTIONS.get(op_name) or _TOOL_DESCRIPTIONS.get(op_name)
     tiered = None
     for part in toolset_parts(toolset):  # a union takes its first part's tier
         if part == "atomic":
@@ -321,6 +381,9 @@ def listed_ops(toolset: str | None) -> list[Operation]:
     # publicly cacheable; the token is still the call-time
     # security boundary.
     readonly = toolset == "readonly"
+    if is_assistant(toolset):
+        # A fixed set of reads, listed whatever their maturity or the code tools flag.
+        return [op for op in ALL_OPERATIONS if op.name in MCP_ASSISTANT_OPS and op.read_only]
     code_tools = bool(settings.mcp_code_tools)
     core_ops = curated_roster(toolset, code_tools=code_tools) or frozenset()
     # The code tools are the coding tier's point: listed there regardless of
@@ -384,6 +447,9 @@ async def _tools_descriptor(
             # The curated text is the guidance; the model docstring beside it
             # is developer prose.
             input_schema = strip_model_docstring(input_schema)
+        if is_assistant(toolset):
+            input_schema = _without_forced(input_schema, ASSISTANT_FORCED_ARGS.get(op.name, {}))
+            input_schema = _with_identity(input_schema, op)
         descriptor: dict[str, Any] = {
             "name": op.mcp_tool_name,
             "description": desc,
@@ -394,7 +460,8 @@ async def _tools_descriptor(
         if op.name in always_load:
             descriptor["_meta"] = {"anthropic/alwaysLoad": True}
         descriptors.append(descriptor)
-    descriptors.extend(_synthetic_tool_descriptors(toolset))
+    if not is_assistant(toolset):
+        descriptors.extend(_synthetic_tool_descriptors(toolset))
     from server.transport.mcp_schemas import (
         DEFAULT_SCHEMA_PROFILE,
         SCHEMA_PROFILES,

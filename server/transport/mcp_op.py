@@ -207,6 +207,10 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     args = params.get("arguments") or {}
     if not isinstance(args, dict):
         return req, None  # `_call_tool` answers INVALID_PARAMS
+    from server.transport.mcp_tools import assistant_connection
+
+    if assistant_connection(toolset):
+        return req, None  # `_call_tool` refuses `loom_op` on the assistant toolset
     name = str(args.get("op") or "").strip()
     readonly = not routes_writes(toolset)
     if name.lower() in _HELP:

@@ -16,6 +16,7 @@ from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
 from server.memory.domain.namespace_shapes import STRUCTURED_TYPES
 from server.memory.domain.temporal_sql import served_status_sql
 from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL as _TRANSCRIPT_ROW
+from server.observability.consumer import INSPECTOR_CONSUMERS
 
 _TRACKER_TAG_RE = "(^|[^a-z])(test|tests|flaky|ci|regression|crash|failure|failing)([^a-z]|$)"
 _KEY_ID_RE = r"\d{2,}$"
@@ -28,11 +29,16 @@ _COORD_SEGMENTS = ("lease", "lock", "freeze", "claim")
 
 _SCOPE = "org = {org:String} AND namespace = {ns:String}"
 _WIN = "ts >= now() - INTERVAL {win:UInt32} SECOND"
+# The dashboard's and the assistant's calls inspect a namespace on a person's behalf;
+# they are not the agent's own use of Loom.
+_AGENT_CALL = "consumer NOT IN {inspectors:Array(String)}"
 _LEDGER_AGENT = (
     f"FROM loom.agent_events WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN} "
-    "AND kind != 'worker'"
+    f"AND kind != 'worker' AND {_AGENT_CALL}"
 )
-_LEDGER_NS = f"FROM loom.agent_events WHERE {_SCOPE} AND {_WIN} AND kind != 'worker'"
+_LEDGER_NS = (
+    f"FROM loom.agent_events WHERE {_SCOPE} AND {_WIN} AND kind != 'worker' AND {_AGENT_CALL}"
+)
 # A session the client named. '-' and '*' are what the transports write
 # when a call names none; a week of such calls is not one session.
 _REAL_SESSION = "session_id NOT IN ('', '-', '*')"
@@ -81,6 +87,7 @@ class ProfileReads:
             "org": org,
             "ns": namespace,
             "agent": agent,
+            "inspectors": list(INSPECTOR_CONSUMERS),
             "win": int(window_seconds),
             "ttl": int(limits["ttl"]),
             "tracker_re": _TRACKER_TAG_RE,
@@ -128,7 +135,7 @@ class ProfileReads:
             FROM loom.agent_events
             WHERE {_SCOPE} AND agent = {{agent:String}}
               AND ts >= now() - INTERVAL {{ttl:UInt32}} SECOND
-              AND args['out_hint_code'] != ''
+              AND args['out_hint_code'] != '' AND {_AGENT_CALL}
             """
         )
         return sorted(str(c) for c in (r.get("codes") or []) if c)
@@ -389,7 +396,7 @@ async def top_writers(
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND ts >= now() - INTERVAL {{win:UInt32}} SECOND AND kind != 'worker'
           AND operation IN {_in(write_ops)} AND agent NOT IN {{anon:Array(String)}}
-          AND consumer != 'loom-ui'
+          AND {_AGENT_CALL}
         GROUP BY agent ORDER BY n DESC LIMIT {{lim:UInt32}}
         """,
         params={
@@ -398,6 +405,7 @@ async def top_writers(
             "win": int(window_seconds),
             "anon": sorted(anonymous),
             "lim": int(limit),
+            "inspectors": list(INSPECTOR_CONSUMERS),
         },
     )
     return [str(r["agent"]) for r in rows]
@@ -417,15 +425,16 @@ async def hints_shown(
     ch = ch or _default_client()
     return list(
         await ch.query_all(
-            """
+            f"""
             SELECT session_id, args['out_hint_code'] AS code, min(ts) AS first_ts
             FROM loom.agent_events
-            WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String}
-              AND ts >= now() - INTERVAL {win:UInt32} SECOND
+            WHERE org = {{org:String}} AND namespace = {{ns:String}} AND agent = {{agent:String}}
+              AND ts >= now() - INTERVAL {{win:UInt32}} SECOND
               AND args['out_hint_code'] != '' AND session_id NOT IN ('', '-', '*')
+              AND {_AGENT_CALL}
             GROUP BY session_id, code
             ORDER BY first_ts DESC
-            LIMIT {cap:UInt32}
+            LIMIT {{cap:UInt32}}
             """,
             params={
                 "org": org,
@@ -433,6 +442,7 @@ async def hints_shown(
                 "agent": agent,
                 "win": int(window_seconds),
                 "cap": int(cap),
+                "inspectors": list(INSPECTOR_CONSUMERS),
             },
         )
     )
@@ -452,12 +462,12 @@ async def last_calls(
     ch = ch or _default_client()
     return list(
         await ch.query_all(
-            """
+            f"""
             SELECT session_id, operation, max(ts) AS last_ts
             FROM loom.agent_events
-            WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String}
-              AND ts >= now() - INTERVAL {win:UInt32} SECOND
-              AND session_id IN {sessions:Array(String)}
+            WHERE org = {{org:String}} AND namespace = {{ns:String}} AND agent = {{agent:String}}
+              AND ts >= now() - INTERVAL {{win:UInt32}} SECOND
+              AND session_id IN {{sessions:Array(String)}} AND {_AGENT_CALL}
             GROUP BY session_id, operation
             """,
             params={
@@ -466,15 +476,16 @@ async def last_calls(
                 "agent": agent,
                 "win": int(window_seconds),
                 "sessions": sessions,
+                "inspectors": list(INSPECTOR_CONSUMERS),
             },
         )
     )
 
 
 # A call the evidence ladder counts as the agent's: a request row (not a deferred verdict
-# a call left behind), not the dashboard's traffic, and not a brief, which is ledgered
-# under the agent it names.
-_COUNTED_CALL = "kind = 'request' AND consumer != 'loom-ui' AND operation != 'mentor.brief'"
+# a call left behind), not the dashboard's or the assistant's traffic, and not a brief,
+# which is ledgered under the agent it names.
+_COUNTED_CALL = f"kind = 'request' AND {_AGENT_CALL} AND operation != 'mentor.brief'"
 
 
 async def call_evidence(
@@ -511,7 +522,13 @@ async def call_evidence(
         FROM loom.agent_events
         WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN}
         """,
-        params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "win": int(window_seconds),
+            "inspectors": list(INSPECTOR_CONSUMERS),
+        },
     )
     return row
 
@@ -596,7 +613,13 @@ async def reported_keys(
             )
         )
         """,
-        params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "win": int(window_seconds),
+            "inspectors": list(INSPECTOR_CONSUMERS),
+        },
     )
     return int(row["n"])
 

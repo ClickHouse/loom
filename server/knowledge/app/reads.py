@@ -4,17 +4,17 @@ The one per-document signal loom records is a read: every `knowledge.get`
 leaves an `agent_events` row whose allow-listed `args['source_uri']` names
 the document (event_args). What a search *returned* is not recorded for
 knowledge, so this op says "opened", never "found". The dashboard's own
-previews send `consumer: loom-ui` and are left out, so a maintainer checking
-a document does not count as an agent reading it; bench traffic is left out
-too. `agent_events` is ordered by (org, namespace, agent, ts): the read is a
-primary-key range on the namespace and the window.
+previews (`consumer: loom-ui`) and the assistant toolset (`loom-assistant`) are
+left out, so a person checking a document does not count as an agent reading
+it; bench traffic is left out too. `agent_events` is ordered by (org,
+namespace, agent, ts): the read is a primary-key range on the namespace and
+the window.
 """
 
 from __future__ import annotations
 
 from server.knowledge.api.models_knowledge import KnowledgeReadsInput, KnowledgeReadsOutput
-
-UI_CONSUMER = "loom-ui"
+from server.observability.consumer import INSPECTOR_CONSUMERS
 
 
 async def handle_knowledge_reads(input: KnowledgeReadsInput) -> KnowledgeReadsOutput:
@@ -23,7 +23,7 @@ async def handle_knowledge_reads(input: KnowledgeReadsInput) -> KnowledgeReadsOu
     days = max(1, min(int(input.days), 30))
     uris = [str(u) for u in (input.source_uris or []) if str(u)][:200]
     rows = await documents_repo.agent_opens(
-        input.org, input.namespace, days=days, skip_consumer=UI_CONSUMER, source_uris=uris
+        input.org, input.namespace, days=days, skip_consumers=INSPECTOR_CONSUMERS, source_uris=uris
     )
     return KnowledgeReadsOutput(
         window_days=days,

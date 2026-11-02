@@ -136,11 +136,8 @@ describe("RepoDocsList", () => {
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText("Page the owner first.")).toBeInTheDocument();
     expect(dialog).toHaveTextContent("opened by agents 5 times in 7 days");
-    expect(vi.mocked(getKnowledge).mock.calls[0]).toEqual([
-      { org: "dev", namespace: "code-kj" },
-      DOC.source_uri,
-      { consumer: "loom-ui" },
-    ]);
+    // The request path names every dashboard call `loom-ui`, so a preview is not an agent read.
+    expect(vi.mocked(getKnowledge).mock.calls[0]).toEqual([{ org: "dev", namespace: "code-kj" }, DOC.source_uri]);
     expect(within(dialog).getByRole("button", { name: /Download/ })).toBeInTheDocument();
   });
 

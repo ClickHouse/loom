@@ -389,7 +389,7 @@ Fields for every `knowledge` op: [operations/knowledge.md](operations/knowledge.
 | [`knowledge.get`](operations/knowledge.md#knowledgeget) | Fetch a single document by source_uri. | viewer | read | yes |  |
 | [`knowledge.list`](operations/knowledge.md#knowledgelist) | Paginated listing of documents in a namespace, for curation tools. | viewer | read | yes |  |
 | [`knowledge.outline`](operations/knowledge.md#knowledgeoutline) | A document's table of contents, as recorded on its chunks at ingest, and optionally one section's assembled text. | viewer | read | no |  |
-| [`knowledge.reads`](operations/knowledge.md#knowledgereads) | How often agents opened each document of the namespace over the last `days`: `knowledge.get` reads from the event ledger, the dashboard's own previews and bench traffic left out. | viewer | read | no |  |
+| [`knowledge.reads`](operations/knowledge.md#knowledgereads) | How often agents opened each document over the last `days` (`knowledge.get` ledger rows; dashboard, assistant and bench traffic left out). | viewer | read | no |  |
 | [`knowledge.search`](operations/knowledge.md#knowledgesearch) | Search the user's uploaded document library — bills, contracts, receipts, resumes, policies, manuals, technical docs. | viewer | read | no |  |
 | [`knowledge.synthesize`](operations/knowledge.md#knowledgesynthesize) | Complete a task over WHOLE documents, not a search slice: every active chunk of the named documents is read in order, in windows that respect section boundaries, each window is noted once, and the… | viewer | idempotent | no | yes |
 | [`knowledge.update_metadata`](operations/knowledge.md#knowledgeupdate_metadata) | Edit doc-level metadata (title, description, tags). | writer | idempotent | no | yes |

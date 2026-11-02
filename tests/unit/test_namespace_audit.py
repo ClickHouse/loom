@@ -20,6 +20,7 @@ from server.identity.app import namespace_audit as na
 from server.identity.domain.read_scope import honours_read_scope
 from server.operations import toolsets
 from server.transport import mcp_descriptions
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
@@ -630,7 +631,7 @@ def test_registered_read_only_for_viewers_and_kept_off_the_curated_toolsets() ->
     assert "namespace.audit" not in toolsets._MCP_CODING_OPS
     assert "namespace.audit" not in toolsets._MCP_ATOMIC_OPS
     assert "namespace.audit" not in toolsets._MCP_HIDDEN_OPS
-    assert toolsets.op_toolsets("namespace.audit") == ["all"]
+    assert toolsets.op_toolsets("namespace.audit") == ["all", "assistant"]
     assert "object store" in mcp_descriptions.TOOL_DESCRIPTIONS["namespace.audit"]
 
 
@@ -708,6 +709,13 @@ def test_cli_table_renders_from_a_sample_output() -> None:
         "namespace.audit clickhouse/ops-alerts — window 3d, UNHEALTHY (2 critical, 0 warning, 0 info)"
     )
     assert "gets 6606 / searches 52 / sets 1687 (ratio 127.04)" in lines[1]
+    assert "not counted" not in lines[1]
+    shown = na.render_table(
+        _sample_output().model_copy(
+            update={"summary": _sample_output().summary.model_copy(update={"inspector_calls": 9})}
+        )
+    )
+    assert shown.splitlines()[1].endswith("; 9 dashboard and assistant calls not counted")
     assert "live 786 rows / 21,500,000 B; versions 1687 rows / 51,400,000 B" in lines[1]
     header = next(line for line in lines if line.strip().startswith("code"))
     assert header.split() == ["code", "severity", "kind", "count", "share", "first", "sample"]
@@ -1195,3 +1203,53 @@ def test_a_token_narrowed_below_the_namespace_cannot_call_either_report() -> Non
     below it is refused before either runs."""
     assert not honours_read_scope("namespace.audit")
     assert not honours_read_scope("namespace.validate")
+
+
+@pytest.mark.asyncio
+async def test_inspector_calls_are_left_out_of_every_ledger_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out, ch = await _run(
+        monkeypatch,
+        {
+            M_LIVE: _live(1, 1),
+            M_LEDGER: {"gets": 3, "searches": 1, "sets": 0, "inspector_calls": 9},
+        },
+    )
+    assert out.summary.inspector_calls == 9 and out.summary.gets == 3
+    ledger_sqls = [s for s in ch.sqls if "FROM loom.agent_events" in s]
+    assert ledger_sqls
+    for sql in ledger_sqls:
+        assert "consumer NOT IN {inspectors:Array(String)}" in sql
+    assert ch.params[0]["inspectors"] == ["loom-ui", "loom-assistant"]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_the_ledger_summary_counts_a_dashboard_write_but_no_inspector_read() -> None:
+    def call(operation: str, consumer: str) -> str:
+        return (
+            "INSERT INTO loom.agent_events (org, namespace, agent, operation, consumer, ts) "
+            f"VALUES ('o', 'ns', 'bot', '{operation}', '{consumer}', now())"
+        )
+
+    rows = [
+        call("memory.get", ""),
+        call("memory.get", "loom-ui"),
+        call("memory.search", "loom-assistant"),
+        # A person editing a memory from the dashboard uses the namespace.
+        call("memory.set", "loom-ui"),
+    ]
+
+    class _Local:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+            return run([ddl("agent_events"), *rows], sql, params)
+
+        async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+            found = await self.query_all(sql, params)
+            return found[0] if found else None
+
+    audit = na.new_audit(_inp(), ch=_Local())
+    await audit.summary_ledger()
+    s = audit.summary
+    assert (s.gets, s.searches, s.sets, s.inspector_calls) == (1, 0, 1, 2)

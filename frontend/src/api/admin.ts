@@ -24,6 +24,8 @@ export interface NamespaceAuditSummary {
   sets: number;
   // gets / max(searches, 1): the object-store gauge.
   get_search_ratio: number;
+  // Dashboard and assistant calls in the window, left out of the counts above.
+  inspector_calls: number;
 }
 
 /** Mirrors `NamespaceAuditFinding`. `samples` carry keys and counts only —

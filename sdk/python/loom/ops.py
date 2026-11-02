@@ -9942,7 +9942,7 @@ class OutlineEntry(TypedDict, total=False):
 
 
 class KnowledgeReadsInput(TypedDict, total=False):
-    "How often agents opened each document of the namespace over the last"
+    "How often agents opened each document over the last `days` (`knowledge.get`"
 
     org: Required[str]
     namespace: Required[str]
@@ -9951,7 +9951,7 @@ class KnowledgeReadsInput(TypedDict, total=False):
 
 
 class KnowledgeReadsBody(TypedDict, total=False):
-    "How often agents opened each document of the namespace over the last"
+    "How often agents opened each document over the last `days` (`knowledge.get`"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -14537,6 +14537,7 @@ class NamespaceAuditSummary(TypedDict, total=False):
     searches: NotRequired[int]
     sets: NotRequired[int]
     get_search_ratio: NotRequired[float]
+    inspector_calls: NotRequired[int]
 
 
 class NamespaceAuditFinding(TypedDict, total=False):

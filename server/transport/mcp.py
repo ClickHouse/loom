@@ -38,6 +38,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, Request, Response
 
 from server.identity.app.caller_home import caller_org
+from server.observability.consumer import ASSISTANT_CONSUMER
 from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
 from server.transport.mcp_auth import (
@@ -85,7 +86,7 @@ from server.transport.mcp_primer import (
     _read_resource,
     _resources_descriptor,
 )
-from server.transport.mcp_tools import _tools_descriptor
+from server.transport.mcp_tools import _tools_descriptor, assistant_connection
 
 log = logging.getLogger(__name__)
 
@@ -174,8 +175,9 @@ async def _handle_request(
             # inlines the caller's profile sections — so it leaves a ledger
             # row like `loom_activate` does, and the Profile page's "read by"
             # chip stops saying "never read" to a client that reads it on
-            # every connect. Anonymous probes carry no profile and no row.
-            if auth is not None:
+            # every connect. Anonymous probes carry no profile and no row, and neither
+            # does the assistant toolset's primer, which inlines no profile.
+            if auth is not None and not assistant_connection(toolset):
                 await _emit_initialize_event(auth, client_name)
         return _ok(req_id, result)
 
@@ -219,7 +221,9 @@ async def _handle_request(
         )
 
     if method == "prompts/list":
-        return _ok(req_id, {"prompts": _prompts_descriptor(), **cache_hints(LIST_TTL_MS, "public")})
+        return _ok(
+            req_id, {"prompts": _prompts_descriptor(toolset), **cache_hints(LIST_TTL_MS, "public")}
+        )
 
     if method == "prompts/get":
         return await _get_prompt(req_id, params, auth, client_name, toolset)
@@ -227,7 +231,7 @@ async def _handle_request(
     if method == "resources/list":
         return _ok(
             req_id,
-            {"resources": _resources_descriptor(), **cache_hints(LIST_TTL_MS, "public")},
+            {"resources": _resources_descriptor(toolset), **cache_hints(LIST_TTL_MS, "public")},
         )
 
     if method == "resources/read":
@@ -382,12 +386,18 @@ def attach(app: FastAPI) -> None:
                     if isinstance(client_info, dict):
                         _remember_client_for_session(session_id, client_info.get("name"))
             client_name = _resolve_client_name(req, session_id)
-            req, early = route_loom_op(req, toolset=request.query_params.get("toolset"), auth=auth)
+            # One read of the selectors, so routing, the screen and the call agree.
+            listing = _listing_params(request)
+            req, early = route_loom_op(req, toolset=listing["toolset"], auth=auth)
             if early is not None:
                 return early
             # AuthZ: identity must match the args; a namespace the JWT lacks → grants.
             if auth is not None and req.get("method") == "tools/call":
-                screened = await _screen_tool_call(req, auth)
+                # An assistant connection's refusals are its own, as its calls are.
+                assistant = assistant_connection(listing["toolset"])
+                screened = await _screen_tool_call(
+                    req, auth, consumer=ASSISTANT_CONSUMER if assistant else ""
+                )
                 if screened is not None:
                     return screened
             return await _handle_request(
@@ -395,7 +405,7 @@ def attach(app: FastAPI) -> None:
                 auth,
                 client_name,
                 mcp_session_id=session_id or "",
-                **_listing_params(request),
+                **listing,
             )
 
         if isinstance(payload, list):

@@ -31,7 +31,7 @@ class _CH:
     def __init__(self, by_marker: dict[str, Any] | None = None):
         self.by_marker = by_marker or {}
         self.sqls: list[str] = []
-        self.params: list[dict[str, Any] | None] = []
+        self.params: list[dict[str, Any]] = []
 
     def _answer(self, sql: str) -> Any:
         for marker, rows in self.by_marker.items():
@@ -43,13 +43,13 @@ class _CH:
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None):
         self.sqls.append(sql)
-        self.params.append(params)
+        self.params.append(params or {})
         rows = self._answer(sql)
         return list(rows) if rows else []
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None):
         self.sqls.append(sql)
-        self.params.append(params)
+        self.params.append(params or {})
         rows = self._answer(sql)
         if isinstance(rows, list):
             return rows[0] if rows else None
@@ -609,6 +609,14 @@ def _call(
     op: str, args: dict[str, Any], result: Any, *, session: str = "s1"
 ) -> tuple[str, str] | None:
     return m.call_hint(op, args, result, session_key=session, org="o", namespace="ns", agent="a")
+
+
+def test_the_dashboard_and_the_assistant_get_no_call_hint() -> None:
+    miss = {"found": False}
+    for consumer in ("loom-ui", "loom-assistant"):
+        args = {"memory_key": "deploy_window", "consumer": consumer}
+        assert _call("memory.get", args, miss, session=f"silent-{consumer}") is None
+    assert _call("memory.get", {"memory_key": "deploy_window"}, miss, session="loud") is not None
 
 
 def test_get_miss_fires_once_per_session() -> None:
@@ -1527,12 +1535,20 @@ def test_brief_for_an_anonymous_caller_is_about_the_top_writer(
         and out.agent_defaulted is False
         and out.agents == ["claude-code", "obs-verify"]
     )
-    # Anonymous writers and the dashboard are excluded from the writers read itself.
+    # Anonymous writers, the dashboard and the assistant are excluded from the writers read.
     writers_sql = [q for q in ch.sqls if "GROUP BY agent ORDER BY n DESC" in q][0]
     assert (
         "agent NOT IN {anon:Array(String)}" in writers_sql
-        and "consumer != 'loom-ui'" in writers_sql
+        and "consumer NOT IN {inspectors:Array(String)}" in writers_sql
     )
+    # Every ledger read the brief makes leaves the inspectors out, by a bound parameter.
+    ledger = [
+        (sql, p) for sql, p in zip(ch.sqls, ch.params, strict=True) if "loom.agent_events" in sql
+    ]
+    assert ledger
+    for sql, p in ledger:
+        assert "consumer NOT IN {inspectors:Array(String)}" in sql, sql
+        assert p["inspectors"] == ["loom-ui", "loom-assistant"]
 
 
 # --- a public tracker namespace's brief -----------------------------
@@ -1757,3 +1773,25 @@ def test_the_shown_codes_leave_with_the_profile_the_cache_evicts(monkeypatch) ->
     m._cache_put(("o", "ns", "a3"), 300.0, _fake_profile(agent="a3", facts=shown))
     assert ("o", "ns", "a1") not in m._cache
     assert set(m._profile_shown) == {("o", "ns", "a2"), ("o", "ns", "a3")}
+
+
+def test_every_profile_ledger_read_leaves_the_inspectors_out() -> None:
+    from server.insights.store.mentor import ProfileReads
+
+    ch = _CH()
+    reads = ProfileReads(
+        "o",
+        "ns",
+        "a",
+        3600,
+        ops={"sets": m.SETS, "gets": m.GETS, "searches": m.SEARCHES, "packs": m.PACKS},
+        limits={"ttl": 60, "large": 1, "huge": 2, "advisory": 3, "clip": 4, "episodic_chars": 5},
+        ch=ch,
+    )
+    # One read of the agent's own calls and one of the namespace's.
+    asyncio.run(reads.op_counts())
+    asyncio.run(reads.namespace_ledger())
+    assert len(ch.sqls) == 2
+    for sql, params in zip(ch.sqls, ch.params, strict=True):
+        assert "consumer NOT IN {inspectors:Array(String)}" in sql
+        assert params["inspectors"] == ["loom-ui", "loom-assistant"]

@@ -23,13 +23,20 @@ from server.core import llm_free
 from server.core.errors import LoomServerError
 from server.core.naming import named
 from server.identity.app.caller_home import home_namespace
+from server.observability.consumer import ASSISTANT_CONSUMER
 from server.operations.base import Operation
-from server.operations.toolsets import _MCP_HIDDEN_OPS
+from server.operations.toolsets import (
+    _MCP_HIDDEN_OPS,
+    ASSISTANT_FORCED_ARGS,
+    ASSISTANT_NAMED_AGENT_OPS,
+    MCP_ASSISTANT_OPS,
+)
 from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
 from server.transport._common import begin_call, bind_request, validation_note
 from server.transport._common import validation_errors as _validation_errors
 from server.transport.arg_feedback import feedback, refused_result, tool_error
+from server.transport.assistant_call import assistant_call, set_assistant_call
 from server.transport.lean_results import lean_result
 from server.transport.mcp_config import (
     _LOOM_ACTIVATE_TOOL_NAME,
@@ -49,7 +56,7 @@ from server.transport.mcp_outcome import (
     _success_response,
 )
 from server.transport.mcp_primer import _render_primer_and_emit
-from server.transport.mcp_tools import TOOLS_BY_NAME, _emit_mcp_event
+from server.transport.mcp_tools import TOOLS_BY_NAME, _emit_mcp_event, assistant_connection
 
 if TYPE_CHECKING:
     from server.core.idempotency import Scope
@@ -208,7 +215,7 @@ async def _call_tool(
 
     begin_call()
 
-    tool = await _resolve_tool(req_id, name, auth, client_name, toolset)
+    tool = await _resolve_connection_tool(req_id, name, arguments, auth, client_name, toolset)
     if isinstance(tool, dict):
         return tool  # loom_activate's answer, or the not-available refusal
     op = tool
@@ -334,6 +341,10 @@ def _stamp_session_run(
 
         if not defaults or not _mcp_runs.takes_run(op):
             return None, False
+        # An investigation's reads are not the work of a run: an assistant call's session
+        # opens none.
+        if assistant_call():
+            return None, False
         # The run row lives in the caller's org and default namespace, whatever
         # namespace a call names, so every web process files it under one key.
         caller = _mcp_runs.Caller.of_call(current_auth(), arguments)
@@ -368,8 +379,60 @@ async def _bind_session_run(
         log.debug("mcp session run failed for %s (non-fatal): %s", op.name, _run_err)
 
 
+def _assistant_refusal(req_id: Any, name: str, auth: Any) -> dict[str, Any] | None:
+    """The refusal for a tool the assistant toolset does not carry, None for one it does.
+    The token may allow more; this connection serves only the toolset's reads."""
+    op = TOOLS_BY_NAME.get(name)
+    if op is not None and op.name in MCP_ASSISTANT_OPS and op.read_only:
+        return None
+    if op is not None:
+        # A registry op the toolset leaves out is ledgered by its name; an unknown name,
+        # chosen by the client, is not written to the ledger at all.
+        emit_token_refusal(op.name, auth, error_code=UNKNOWN_OP, consumer=ASSISTANT_CONSUMER)
+    msg = f"Tool {name!r} is not available on the assistant toolset."
+    body = {"error": msg, "code": UNKNOWN_OP, "tool": name}
+    return _ok(
+        req_id,
+        {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body},
+    )
+
+
+async def _resolve_connection_tool(
+    req_id: Any,
+    name: str,
+    arguments: dict[str, Any],
+    auth: Any,
+    client_name: str | None,
+    toolset: str | None,
+) -> Operation | dict[str, Any]:
+    """`_resolve_tool`, and on the assistant toolset first its refusal of any tool it does
+    not carry, then its forced arguments and consumer stamped over the model's own (in
+    place), so the model cannot argue either away. A token whose `consumer` claim names
+    another consumer keeps its claim (`resolve_consumer_and_source`)."""
+    on_assistant = assistant_connection(toolset)
+    set_assistant_call(on_assistant)
+    if not on_assistant:
+        return await _resolve_tool(req_id, name, auth, client_name, toolset)
+    refused = _assistant_refusal(req_id, name, auth)
+    if refused is not None:
+        return refused
+    # The roster carries the plane searches the other listings hide in favour of
+    # `loom_search`: an investigation reads one plane at a time.
+    tool = await _resolve_tool(req_id, name, auth, client_name, toolset, allow_hidden=True)
+    if not isinstance(tool, dict):
+        arguments.update(ASSISTANT_FORCED_ARGS.get(tool.name, {}))
+        arguments["consumer"] = ASSISTANT_CONSUMER
+    return tool
+
+
 async def _resolve_tool(
-    req_id: Any, name: str, auth: Any, client_name: str | None, toolset: str | None = None
+    req_id: Any,
+    name: str,
+    auth: Any,
+    client_name: str | None,
+    toolset: str | None = None,
+    *,
+    allow_hidden: bool = False,
 ) -> Operation | dict[str, Any]:
     """Phase 1 of `_call_tool`: the tool name → its registry op, or the
     whole JSON-RPC response when the call ends here (`loom_activate` ran,
@@ -388,7 +451,7 @@ async def _resolve_tool(
         )
 
     op = TOOLS_BY_NAME.get(name)
-    if op is None or op.name in _MCP_HIDDEN_OPS:
+    if op is None or (op.name in _MCP_HIDDEN_OPS and not allow_hidden):
         # Return a result-with-isError, not a JSON-RPC error frame: some
         # clients drop conversation state on JSON-RPC errors (surfaces as
         # "Tool result could not be submitted"). Both are spec-legal.
@@ -489,6 +552,17 @@ async def _bind_caller_identity(
     if defaults and op.name in _MCP_CROSS_AGENT_READS:
         if not arguments.get("agent") or arguments.get("agent") == defaults.get("agent"):
             arguments["agent"] = "*"
+    # The assistant writes nothing, so its client's own agent holds no rows. A read it names
+    # no agent for keeps the op's own default (`memory.ask` across agents, `mentor.brief`
+    # the namespace's top writer); a read of one writer's rows (ASSISTANT_NAMED_AGENT_OPS)
+    # is refused for the missing `agent` rather than answering empty. `memory.get` keeps
+    # the client's agent and falls back to the row under any agent itself.
+    agent_field = op.input_model.model_fields.get("agent")
+    if assistant_call() and not explicit_agent and agent_field is not None:
+        if op.name in ASSISTANT_NAMED_AGENT_OPS:
+            arguments.pop("agent", None)
+        elif isinstance(agent_field.default, str) and op.name not in _MCP_CROSS_AGENT_READS:
+            arguments["agent"] = agent_field.default
     return request_id, defaults
 
 

@@ -2,7 +2,6 @@
 // in that view's chunk and the shell evaluates only the functions it calls. Importers
 // still import from `api.ts`.
 import { post } from "../api";
-import { CODE_CONSUMER } from "../api";
 import type { CodeId, RequestOpts } from "../api";
 
 // ---------------------------------------------------------------------------
@@ -261,7 +260,7 @@ export interface CodeIndexStatus extends Omit<CodeRepoSummary, "indexed_at"> {
 export async function codeRefresh(
   id: CodeId,
 ): Promise<{ triggered: boolean; already_running: boolean; head_before: string; head_after: string }> {
-  return post("/v1/code.refresh", { ...id, agent: "loom-ui", consumer: CODE_CONSUMER, wait: false });
+  return post("/v1/code.refresh", { ...id, agent: "loom-ui", wait: false });
 }
 
 export interface CodeUnit {
@@ -304,7 +303,6 @@ export async function codeSearch(
 ): Promise<CodeSearchResult> {
   return post<CodeSearchResult>("/v1/code.search", {
     ...id,
-    consumer: CODE_CONSUMER,
     query,
     top_k: opts.top_k ?? 10,
     path_prefix: opts.path_prefix ?? "",
@@ -321,7 +319,6 @@ export interface CodeSymbolResult {
 export async function codeSymbol(id: CodeId, name: string): Promise<CodeSymbolResult> {
   return post<CodeSymbolResult>("/v1/code.symbol", {
     ...id,
-    consumer: CODE_CONSUMER,
     name,
     include_body: true,
     include_history: true,
@@ -350,7 +347,6 @@ export interface CodeEdgesResult {
 export async function codeCallers(id: CodeId, name: string, depth = 1): Promise<CodeEdgesResult> {
   return post<CodeEdgesResult>("/v1/code.callers", {
     ...id,
-    consumer: CODE_CONSUMER,
     name,
     depth,
     max_nodes: 100,
@@ -360,7 +356,6 @@ export async function codeCallers(id: CodeId, name: string, depth = 1): Promise<
 export async function codeCallees(id: CodeId, name: string): Promise<CodeEdgesResult> {
   return post<CodeEdgesResult>("/v1/code.callees", {
     ...id,
-    consumer: CODE_CONSUMER,
     name,
     depth: 1,
     max_nodes: 100,
@@ -373,7 +368,6 @@ export async function codeMap(
 ): Promise<{ map: string; tokens_used: number; commit_sha: string }> {
   return post("/v1/code.map", {
     ...id,
-    consumer: CODE_CONSUMER,
     token_budget: opts.token_budget ?? 1500,
     module_prefix: opts.module_prefix ?? "",
   });
@@ -433,7 +427,7 @@ export async function codeIndexErrors(
   limit = 100,
   opts: RequestOpts = {},
 ): Promise<{ rows: CodeIndexErrorRow[]; total: number }> {
-  return post("/v1/code.index_errors", { ...id, consumer: CODE_CONSUMER, limit }, opts.signal);
+  return post("/v1/code.index_errors", { ...id, limit }, opts.signal);
 }
 
 export interface CodeRecentCommitRow {
@@ -449,7 +443,7 @@ export async function codeRecentCommits(
   limit = 20,
   opts: RequestOpts = {},
 ): Promise<{ rows: CodeRecentCommitRow[] }> {
-  return post("/v1/code.recent_commits", { ...id, consumer: CODE_CONSUMER, limit }, opts.signal);
+  return post("/v1/code.recent_commits", { ...id, limit }, opts.signal);
 }
 
 /** Provenance + freshness attached to every search/symbol/grep answer. */
@@ -464,7 +458,7 @@ export interface CodeAsOf {
 }
 
 export async function codeCoverage(id: CodeId, opts: RequestOpts = {}): Promise<CodeCoverage> {
-  return post<CodeCoverage>("/v1/code.coverage", { ...id, consumer: CODE_CONSUMER }, opts.signal);
+  return post<CodeCoverage>("/v1/code.coverage", id, opts.signal);
 }
 
 export interface CodeContextPackRow {
@@ -485,7 +479,6 @@ export async function listCodeContextPacks(
     "/v1/code.context_packs",
     {
       ...id,
-      consumer: CODE_CONSUMER,
       limit: opts.limit ?? 50,
       offset: opts.offset ?? 0,
       pr_number: opts.pr_number ?? 0,
@@ -501,7 +494,6 @@ export async function codeContextPack(
 ): Promise<{ context: string; tokens_used: number; source: "precomputed" | "orientation"; merge_commit_sha: string }> {
   return post("/v1/code.context_pack", {
     ...id,
-    consumer: CODE_CONSUMER,
     pr_number,
     token_budget,
   });

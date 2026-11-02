@@ -230,6 +230,20 @@ export function boundedSignal(signal?: AbortSignal): AbortSignal | undefined {
   }
 }
 
+/** The dashboard's consumer: usage reports leave out a person's reads through it
+ *  (`namespace.audit` and `namespace.summary` still count a change the person makes). */
+export const UI_CONSUMER = "loom-ui";
+
+// A registry op's path, `/v1/<op>`: its input takes `consumer`. The other routes
+// (`/v1/admin/...`, `/v1/me/...`) have their own bodies, and some refuse an unknown field.
+const OP_PATH = /^\/v1\/[^/]+$/;
+
+function asDashboardCall(path: string, body: unknown): unknown {
+  if (!OP_PATH.test(path) || body === null || typeof body !== "object" || Array.isArray(body)) return body;
+  // A body's own `consumer` is kept: some ops take it as an input (a cost summary's filter).
+  return { consumer: UI_CONSUMER, ...(body as Record<string, unknown>) };
+}
+
 /** The one request path every authenticated call rides: the inflight counter, the view's
  *  call count, the bounded signal, and a typed ApiError (status, server code, message,
  *  request id) for any non-2xx — never a "403: {json}" string. Answers the ok Response. */
@@ -243,7 +257,7 @@ async function request(method: "GET" | "POST", path: string, body?: unknown, sig
         ? {
             method,
             headers: { "Content-Type": "application/json", ...authHeader() },
-            body: JSON.stringify(body),
+            body: JSON.stringify(asDashboardCall(path, body)),
             signal: boundedSignal(signal),
           }
         : { method, headers: authHeader(), signal: boundedSignal(signal) },
@@ -1271,7 +1285,6 @@ export async function leaveNamespace(org: string, namespace: string): Promise<{ 
 }
 
 export type CodeId = { org: string; namespace: string };
-export const CODE_CONSUMER = "loom-ui";
 // Every reader of the shared repository list — the Repositories page, its cards, the
 // bell, Setup — reads these; two keys (scip_py_lag, has_maintainer) nothing reads stay on
 // the server.
@@ -1309,7 +1322,6 @@ export async function listCodeRepos(org: string, opts: RequestOpts = {}): Promis
     "/v1/code.repos",
     {
       org,
-      consumer: CODE_CONSUMER,
       fields: CODE_REPOS_FIELDS,
     },
     opts.signal,
@@ -1318,7 +1330,7 @@ export async function listCodeRepos(org: string, opts: RequestOpts = {}): Promis
 }
 
 export async function codeIndexStatus(id: CodeId, opts: RequestOpts = {}): Promise<CodeIndexStatus> {
-  return post<CodeIndexStatus>("/v1/code.index_status", { ...id, consumer: CODE_CONSUMER }, opts.signal);
+  return post<CodeIndexStatus>("/v1/code.index_status", id, opts.signal);
 }
 
 export interface TaxonomyEntry {

@@ -210,7 +210,7 @@ A document's table of contents, as recorded on its chunks at ingest, and optiona
 
 ## `knowledge.reads`
 
-How often agents opened each document of the namespace over the last `days`: `knowledge.get` reads from the event ledger, the dashboard's own previews and bench traffic left out.
+How often agents opened each document over the last `days` (`knowledge.get` ledger rows; dashboard, assistant and bench traffic left out).
 
 `POST /v1/knowledge.reads` · MCP `loom_knowledge_reads` · role `viewer` · read · not listed under the MCP `all` toolset
 

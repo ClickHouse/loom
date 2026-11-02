@@ -3,7 +3,7 @@
 // calls and the build — posted when the viewer leaves the view (a navigation or the page
 // hiding), never inside the view's own measured window. Every observer is optional: a
 // browser without one reports what it has.
-import { authHeader } from "../api";
+import { authHeader, UI_CONSUMER } from "../api";
 import { readCalls, resetCalls } from "./vitalsCounter";
 
 type Identity = { org: string; namespace: string };
@@ -71,6 +71,7 @@ export function flushView(identity: Identity | null, build: string): void {
     org: identity.org,
     namespace: identity.namespace,
     agent: "loom-ui",
+    consumer: UI_CONSUMER,
     route,
     lcp_ms: firstView ? lcpMs : null,
     long_task_ms: Math.round(longTaskMs),

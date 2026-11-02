@@ -155,11 +155,13 @@ class NamespaceSummaryOutput(BaseModel):
     type_counts: list[_NamespaceTypeCount]
     # Entities with the highest co-occurrence degree over live graph edges.
     top_entities: list[_NamespaceTopEntity]
-    recent_writes: int  # memory writes in the activity window
-    recent_recalls: int  # search.auto_touch bumps in the window
-    # Distinct agents with a ledger row in the activity window.
+    recent_writes: int  # memory write calls in the activity window
+    recent_recalls: int  # memory.search calls in the window
+    # Distinct agents with a ledger row in the activity window; the dashboard's and the
+    # assistant toolset's calls are left out, as they are of the recalls above, except a
+    # change to a memory (a set, a delete, a pin).
     distinct_agents: int
-    # Time of the newest ledger row in the activity window.
+    # Time of the newest ledger row in the activity window, the same calls left out.
     last_activity_at: datetime | None
 
 
@@ -344,6 +346,9 @@ class NamespaceAuditSummary(BaseModel):
     sets: int = 0
     # gets / max(searches, 1): the object-store gauge.
     get_search_ratio: float = 0.0
+    # The gets and searches in the window from the dashboard and the assistant
+    # toolset (consumers `loom-ui`, `loom-assistant`), left out of the counts above.
+    inspector_calls: int = 0
 
 
 class NamespaceAuditFinding(FindingContract):
