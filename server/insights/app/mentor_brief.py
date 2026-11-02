@@ -173,7 +173,7 @@ _RUNG_MEANING: dict[UsageRungName, str] = {
     "attempt": "calls the ledger records under this agent, answered or not",
     "success": "of those, calls without an error; a read that found nothing counts",
     "committed_write": "`memory.set` calls that stored a row (not a no-op, dry run or replay)",
-    "indexed_write": "memory keys first written in the window that have a current vector",
+    "indexed_write": "memories first written in the window that have a current vector",
     "returned_hit": (
         "reads that answered (a search that did not abstain, a get that found its key); "
         "not whether the answer reached the model"

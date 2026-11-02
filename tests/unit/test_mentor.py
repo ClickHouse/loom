@@ -22,6 +22,7 @@ from server.insights.app import mentor_brief as handler
 from server.insights.app import mentor_rules
 from server.observability import ledger
 from server.settings import settings
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
 class _CH:
@@ -1049,16 +1050,48 @@ def test_the_ladder_counts_the_window_of_the_profile_the_brief_reports(
     assert windows == dict.fromkeys((M_EVIDENCE, M_INDEXED, M_REPORTED, M_GRADED), 604800)
 
 
-def test_indexed_writes_count_keys_first_created_in_the_window() -> None:
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_indexed_writes_count_memories_first_created_in_the_window() -> None:
     from server.insights.store import mentor as store
 
-    ch = _CH({M_INDEXED: [{"n": 2}]})
-    n = asyncio.run(store.indexed_writes("o", "ns", "a", 3600, model="m", ch=ch))
-    (sql,) = ch.sqls
-    # An embedding row's created_at is its version's write: a revision of an old key
-    # would pass a filter on it, so the creation time comes from loom.memory.
-    (outer, inner) = sql.split("SELECT memory_key FROM loom.memory")
-    assert n == 2 and "created_at" not in outer and "created_at >= now()" in inner
+    def memory(user: str, key: str, days_ago: int, version: int) -> str:
+        return (
+            "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
+            f"value, version, created_at) VALUES ('o', 'ns', 'a', '{user}', '-', '{key}', 'v', "
+            f"{version}, now() - INTERVAL {days_ago} DAY)"
+        )
+
+    def embedding(user: str, key: str, dim: int, version: int) -> str:
+        # Written now, as every version's embedding row is; the codec needs full vectors.
+        return (
+            "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
+            "memory_key, embedding_model, embedding_dim, embedding, memory_key_embedding, "
+            "status, version, created_at) SELECT 'o', 'ns', 'a', "
+            f"'{user}', '-', '{key}', 'm', {dim}, v, v, 'active', {version}, now() "
+            "FROM (SELECT arrayWithConstant(3072, toBFloat16(0)) AS v)"
+        )
+
+    class _Local:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+            setup = ["SET enable_quantized_codec = 1", ddl("memory"), ddl("memory_embeddings")]
+            return run([*setup, *rows], sql, params)
+
+    rows = [
+        # u1's old key, revised today: not created in the window.
+        memory("u1", "pref/tz", 60, 2),
+        embedding("u1", "pref/tz", 3072, 2),
+        # u2 created the same key today and it is not embedded yet.
+        memory("u2", "pref/tz", 0, 1),
+        embedding("u2", "pref/tz", 0, 1),
+        # u3, u4 and u5 each created and embedded the same key today: three memories.
+        *(
+            row
+            for user in ("u3", "u4", "u5")
+            for row in (memory(user, "pref/lang", 0, 1), embedding(user, "pref/lang", 3072, 1))
+        ),
+    ]
+    n = asyncio.run(store.indexed_writes("o", "ns", "a", 7 * 86400, model="m", ch=_Local()))
+    assert n == 3
 
 
 def test_the_namespace_retention_wins_over_the_ledger_default(

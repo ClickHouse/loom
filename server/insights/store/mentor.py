@@ -525,18 +525,20 @@ async def indexed_writes(
     model: str,
     ch: _CHClient | None = None,
 ) -> int:
-    """Memory keys the agent first created in the window, by any write op, that have a
-    search vector from `model` (the deployment's embedder; a row still waiting has
-    `embedding_dim = 0`), in a served status and not past `expires_at`. An embedding row's
-    `created_at` is its version's write, so when a key was first created is read from
-    `loom.memory`, which carries it forward across versions."""
+    """Memories the agent first created in the window, by any write op, one per user,
+    session and key, that have a search vector from `model` (the deployment's embedder; a
+    row still waiting has `embedding_dim = 0`), in a served status and not past
+    `expires_at`. An embedding row's `created_at` is its version's write, so when a memory
+    was first created is read from `loom.memory`, which carries it forward across
+    versions."""
     ch = ch or _default_client()
     (row,) = await ch.query_all(
         f"""
-        SELECT uniqExact(memory_key) AS n FROM loom.memory_embeddings FINAL
+        SELECT uniqExact(user_id, session_id, memory_key) AS n
+        FROM loom.memory_embeddings FINAL
         WHERE {_SCOPE} AND agent = {{agent:String}} AND tombstoned_at IS NULL
-          AND memory_key IN (
-              SELECT memory_key FROM loom.memory
+          AND (user_id, session_id, memory_key) IN (
+              SELECT user_id, session_id, memory_key FROM loom.memory
               WHERE {_SCOPE} AND agent = {{agent:String}}
                 AND created_at >= now() - INTERVAL {{win:UInt32}} SECOND
           )
