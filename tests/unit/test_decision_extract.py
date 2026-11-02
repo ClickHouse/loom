@@ -2468,3 +2468,43 @@ async def test_chunks_stored_with_no_section_path_are_judged_on_their_own_text(
     (prompt,) = world.prompts
     assert "Build status" not in prompt[1] and BODY in prompt[1]
     assert report.image_only == ["", "Spilling > Architecture"]
+
+
+_LINKED_BADGE = "[![build](badge.svg)](https://ci.example.com/org/spill/actions/workflows/ci.yml)"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "![diagram][fig1]\n\nFigure 1: the spill path.",
+        # Its link target, left over, would read as more than a caption.
+        f"{_LINKED_BADGE}\n\nBuild status for the spill code.",
+    ],
+)
+def test_a_reference_or_linked_image_with_a_caption_is_image_only(body: str) -> None:
+    assert dx.image_only(body)
+
+
+@pytest.mark.asyncio
+async def test_a_linked_badge_and_caption_preamble_is_not_sent(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    badge = f"{_LINKED_BADGE}\n\nBuild status for the spill code."
+    doc = f"{badge}\n\n{DOC}"
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, badge, ()),
+            CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (prompt,) = world.prompts
+    assert "Build status" not in prompt[1]
+    assert report.image_only == ["", "Spilling > Architecture"]

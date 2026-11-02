@@ -22,12 +22,17 @@ from server.memory.domain.decision_statement import collapse_ws
 
 # How a rejected option is stored: `<option> — rejected: <reason>`.
 REJECTED = " — rejected: "
-# A Markdown image, an HTML image tag, or a slide export's image placeholder.
+# A Markdown image (a linked one, `[![build](badge.svg)](ci.yml)`, as a whole; or by
+# reference, `![diagram][fig1]`), an HTML image tag, or a slide export's placeholder.
 # A placeholder is `[image]`, `[Image 3]`, `[image: ...]`, `[image_1]` or `[pictures]`,
 # never followed by a link target: `[image tiles](tiles.md)`, `[image][1]` and
 # `[image]: x.png` are links, `[imagine]` a word.
 _IMAGE_MARKUP = re.compile(
-    r"!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>|\[(?:image|picture)s?(?:[\s:_\d][^\]]*)?\](?![(\[:])",
+    r"\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)"
+    r"|!\[[^\]]*\]\([^)]*\)"
+    r"|!\[[^\]]*\]\[[^\]]*\]"
+    r"|<img\b[^>]*>"
+    r"|\[(?:image|picture)s?(?:[\s:_\d][^\]]*)?\](?![(\[:])",
     re.I,
 )
 _LETTER = re.compile(r"[^\W\d_]")
