@@ -263,8 +263,8 @@ async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
     window = int(inp.window_seconds)
     profile = await svc.mentor_profile(inp.org, inp.namespace, agent, window_seconds=window)
     # A cached profile keeps the window it was read over, which the brief
-    # reports, so the ladder counts that window. It reads no profile, so it
-    # answers when the mentor is off too.
+    # reports, so the ladder counts that window. It uses none of the profile's
+    # counts, so it answers when the mentor is off too.
     ladder = await _usage_evidence(
         inp.org, inp.namespace, agent, profile.window_seconds if profile else window
     )

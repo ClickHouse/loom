@@ -202,8 +202,8 @@ call by key, the row's writer, whoever calls): a call whose body names no agent 
 id, an MCP `memory.update`, the Python SDK's `memory.update` by default) or that reads
 across agents and is recorded under `*` (`memory.search` and `memory.ask` from the SDKs,
 MCP's cross-agent reads, a `memory.outcome` that names no agent) is not counted. The
-ladder reads no profile, so it answers when the mentor is off too; a brief about no agent
-in particular has no ladder.
+ladder uses none of the profile's counts, so it answers when the mentor is off too; a
+brief about no agent in particular has no ladder.
 
 | Rung                  | Source   | Counts                                                                                                                                                                                                                                                                                              |
 | --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
