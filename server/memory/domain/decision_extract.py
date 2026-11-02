@@ -310,7 +310,7 @@ def stitched_note(failed: Sequence[tuple[str, str]]) -> str:
         for outcome, span in failed
     )
     return (
-        "In your last reply these decisions have a reason that is not one span of the text: "
+        "An earlier reply gave these decisions a reason that is not one span of the text: "
         "it joins words from two places. Reply with only these decisions again, each "
         "reasoning and each rejected option's reason one contiguous span copied from the "
         'text, or {"decisions": []} when the text gives no such span:\n' + lines
@@ -381,8 +381,16 @@ def reasonless_ban(cand: Candidate) -> bool:
 
 def without_reason(cand: Candidate) -> Candidate:
     """A ban the text states with no reason: its outcome is its reasoning, the document's
-    span on one line, which the statement reads as no stated reason."""
-    return replace(cand, outcome=collapse_ws(cand.reasoning))
+    span on one line, which the statement reads as no stated reason. A reasoning that is
+    a fragment of the ban (fewer words than the outcome) gives way to the quote when the
+    quote states the ban too: "no server retry setting" alone loses "client-side
+    retries only"."""
+    span = cand.reasoning
+    fragment = _content_words(cand.reasoning) < _content_words(cand.outcome)
+    quote_fits = len(collapse_ws(cand.quote)) <= OUTCOME_MAX_CHARS
+    if fragment and quote_fits and _BAN_MARKER.search(cand.quote):
+        span = cand.quote
+    return replace(cand, reasoning=span, outcome=collapse_ws(span))
 
 
 # A section that restates others: its quote is no decision, though its text stays in the
@@ -402,7 +410,8 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n\s*\n\s*|\n(?=[ \t]*(?:[-*+]|\d+[.)
 # Words that say a sentence rejects or contrasts what it names.
 _NEGATION = re.compile(
     r"\b(?:not|no|never|cannot|can['’]t|instead|rather|without|fails?|reject(?:ed)?|than"
-    r"|avoid|slow|over|against|versus|vs|unlike|replac\w*|favou?r|dropped)\b",
+    r"|avoid|slow|over|against|versus|vs|unlike|replac\w*|favou?r\w*|prefer\w*"
+    r"|outperform\w*|beats?|compared|dropped)\b",
     re.I,
 )
 

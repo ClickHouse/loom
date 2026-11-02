@@ -2747,7 +2747,10 @@ async def test_a_stitched_reasoning_is_asked_for_again_as_one_span(monkeypatch) 
     report = await _run()
     assert len(world.prompts) == 2
     note = world.prompts[1][1]
-    assert note.startswith("In your last reply") and json.dumps(_STITCHED_REASONING) in note
+    assert (
+        note.startswith("An earlier reply gave these decisions")
+        and json.dumps(_STITCHED_REASONING) in note
+    )
     assert note.endswith(world.prompts[0][1])
     assert [r.action for r in report.records] == ["written"]
     assert [d.reason for d in report.retried] == [de._STITCHED]
@@ -2906,6 +2909,19 @@ async def test_an_empty_window_whose_second_read_is_lost_is_refused(monkeypatch,
 
 
 @pytest.mark.asyncio
+async def test_a_stitched_rejected_reason_is_asked_for_again_and_repaired(monkeypatch) -> None:
+    stitched = "a plain set on disk random reads"
+    joined = [{"option": "a plain set on disk", "reason": stitched}]
+    world = _World(monkeypatch, [_candidate()])
+    world.replies = [[_candidate(alternatives=joined)]]
+    report = await _run()
+    assert len(world.prompts) == 2 and json.dumps(stitched) in world.prompts[1][1]
+    (inp,) = world.recorded
+    assert inp.alternatives == ["a plain set on disk — rejected: costs random reads"]
+    assert [r.reason for r in report.retried] == [de._STITCHED]
+
+
+@pytest.mark.asyncio
 async def test_a_window_gets_at_most_one_extra_call(monkeypatch) -> None:
     world = _World(monkeypatch, [_candidate()])
     stitched = [{"option": "a plain set on disk", "reason": "costs on disk random reads"}]
@@ -3060,6 +3076,15 @@ def test_the_outcome_limit_is_decision_records() -> None:
     assert limit == dx.OUTCOME_MAX_CHARS
 
 
+@pytest.mark.asyncio
+async def test_a_ban_fragment_as_reasoning_gives_way_to_the_ban_quote(monkeypatch) -> None:
+    world = _World(monkeypatch, [_ban(reasoning="no server retry setting")])
+    _chunks(monkeypatch, (f"{_BAN} The proxy adds jitter to each attempt.", ("Retries",)))
+    await _run()
+    (inp,) = world.recorded
+    assert inp.outcome == inp.reasoning == _BAN
+
+
 def test_the_report_prints_each_second_read(capsys) -> None:
     report = de.ExtractReport("doc.md", dry_run=True)
     report.retried = [de.Retried(SECTION, de._EMPTY_REPLY), de.Retried("", de._STITCHED)]
@@ -3195,6 +3220,12 @@ async def test_a_recap_candidate_with_a_missing_reasoning_is_not_read_again(monk
         ("We chose sorted runs over a plain set on disk.", "a plain set on disk", "x" * 12, False),
         ("Sorted runs replace the hash set.", "the hash set", "x" * 12, False),
         ("We benchmarked sorted runs against a hash set.", "a hash set", "x" * 12, False),
+        ("We prefer sorted runs to a plain set on disk.", "a plain set on disk", "x" * 12, False),
+        ("Sorted runs are favored; a hash set reads at random.", "a hash set", "x" * 12, False),
+        ("The design favours sorted runs to a hash set.", "a hash set", "x" * 12, False),
+        ("Sorted runs outperform a hash set on disk.", "a hash set", "x" * 12, False),
+        ("Sorted runs beat a hash set on disk.", "a hash set", "x" * 12, False),
+        ("Sorted runs, compared with a hash set, read in order.", "a hash set", "x" * 12, False),
         # A hard-wrapped sentence keeps its negation on the next line.
         (
             "Sorting the runs in memory is\nnot possible: the runs exceed RAM.\n"

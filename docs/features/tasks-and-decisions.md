@@ -415,9 +415,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   reason ("Client-side retries only; no server retry setting."), a candidate the model marks `is_constraint` whose
   reasoning holds `only`, `no`, `never`, `must`, `not`, `always`, `at most` or `at least` as a word, whose reasoning
   restates its outcome or is its whole quote (an outcome shorter than the sentence), and whose reasoning fits an outcome
-  (1000 characters; a longer one is judged as any other candidate), is kept with its reasoning as its outcome, so it is
-  recorded with the `constraint` tag and reads `Decided <outcome>.` with no reason. The flag alone is not enough: models
-  mark plain descriptions as constraints too.
+  (1000 characters; a longer one is judged as any other candidate), is kept with its reasoning as its outcome (a
+  reasoning with fewer words than the outcome, such as "no server retry setting" of that ban, gives way to the quote
+  when the quote holds a ban word too), so it is recorded with the `constraint` tag and reads `Decided <outcome>.` with
+  no reason. The flag alone is not enough: models mark plain descriptions as constraints too.
 - **Recaps**: a candidate whose quote is in a section with `recap`, `summary` or `background` as a word of a heading at
   any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. The
   section stays in the window, since its text may give a later decision's reason.
@@ -428,11 +429,15 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   at `.`, `!` or `?` before whitespace, at a blank line or before a list item; a single line break does not end one) and
   that sentence holds none of `not`, `no`, `never`, `cannot`, `can't`, `instead`, `rather`, `without`, `fail`, `fails`,
   `reject`, `rejected`, `than`, `avoid`, `slow`, `over`, `against`, `versus`, `vs`, `unlike`, `replace` (and `replaces`,
-  `replaced`, `replacing`), `favor`, `favour`, `dropped`, so "We chose sorted runs over a plain set on disk." still
-  rejects the set. The sentence that holds the option's own rejection reason is not read: it is the rejection. Text
-  outside the quote is not read either: a document often names an option in one sentence ("We looked at a plain set on
-  disk.", a list item, "benchmarked … against …") and rejects it in the next. A quote "…; sharding by tenant is deferred
-  to v2." states "Defer sharding by tenant"; "so v1 cannot evict it" still rejects "evict the largest job".
+  `replaced`, `replacing`), `favor`, `favour` (and `favored`, `favours` and the like), `prefer` (and `prefers`,
+  `preferred`), `outperform` (and its forms), `beat`, `beats`, `compared`, `dropped`, so "We chose sorted runs over a
+  plain set on disk." and "We prefer sorted runs to a plain set on disk." still reject the set. The list leans wide on
+  purpose: a missed contrast word drops a true alternative's `Rejected:` part, while an inverted option kept would tell
+  an agent the chosen design was rejected. The sentence that holds the option's own rejection reason is not read: it is
+  the rejection. Text outside the quote is not read either: a document often names an option in one sentence ("We looked
+  at a plain set on disk.", a list item, "benchmarked … against …") and rejects it in the next. A quote "…; sharding by
+  tenant is deferred to v2." states "Defer sharding by tenant"; "so v1 cannot evict it" still rejects "evict the largest
+  job".
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.
