@@ -483,9 +483,9 @@ async def last_calls(
 
 
 # A call the evidence ladder counts as the agent's: a request row (not a deferred verdict
-# a call left behind), not the dashboard's traffic, and not a brief, which is ledgered
-# under the agent it names.
-_COUNTED_CALL = "kind = 'request' AND consumer != 'loom-ui' AND operation != 'mentor.brief'"
+# a call left behind), not the dashboard's or the assistant's traffic, and not a brief,
+# which is ledgered under the agent it names.
+_COUNTED_CALL = f"kind = 'request' AND {_AGENT_CALL} AND operation != 'mentor.brief'"
 
 
 async def call_evidence(
@@ -522,7 +522,13 @@ async def call_evidence(
         FROM loom.agent_events
         WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN}
         """,
-        params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "win": int(window_seconds),
+            "inspectors": list(INSPECTOR_CONSUMERS),
+        },
     )
     return row
 
@@ -607,7 +613,13 @@ async def reported_keys(
             )
         )
         """,
-        params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "win": int(window_seconds),
+            "inspectors": list(INSPECTOR_CONSUMERS),
+        },
     )
     return int(row["n"])
 

@@ -1221,4 +1221,3 @@ async def test_inspector_calls_are_left_out_of_every_ledger_count(
     for sql in ledger_sqls:
         assert "consumer NOT IN {inspectors:Array(String)}" in sql
     assert ch.params[0]["inspectors"] == ["loom-ui", "loom-assistant"]
-

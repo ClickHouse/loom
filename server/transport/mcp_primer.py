@@ -345,7 +345,7 @@ def _assistant_primer(defaults: dict[str, Any] | None) -> str:
         "session you name narrows what you read; it never widens it. Nothing here writes: "
         "draft a change for the person to review, never claim it was applied.\n\n"
         "**2. Inspect.** Start from `loom_namespace_summary` and `loom_namespace_audit` "
-        "(and `loom_namespace_validate` for stored-contract checks). A finding of kind "
+        "(and `loom_namespace_validate` for stored-contract checks). A finding whose `kind` is "
         "`usage_heuristic` is a pattern worth a look, not proof of misuse; read its "
         "`uncertainty`, and treat `skipped` checks and `samples_complete: false` as gaps.\n\n"
         "**3. Answer with citations.** Use `loom_memory_ask` or `loom_memory_search` for "
