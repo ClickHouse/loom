@@ -168,8 +168,12 @@ def fold_set_chunks(hits: list[SearchHit], rows: Mapping[ChunkId, SetChunkRow]) 
         cid = _chunk_id(h)
         return rows.get(cid) if cid is not None else None
 
+    return _fold(hits, named, _row_place)
+
+
+def _row_place(who: RowIdentity | None, key: str) -> tuple[str, ...]:
     # a pooled fact that names no row keys as `(key,)`, which no named row matches
-    return _fold(hits, named, lambda who, key: (*(who or ()), key))
+    return (key,) if who is None else (*who, key)
 
 
 def fold_shared_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:

@@ -258,6 +258,13 @@ def test_a_hit_made_from_a_chunk_carries_its_rows_tags() -> None:
     assert hit.tags == ["t"]
 
 
+def test_a_named_chunk_never_folds_onto_a_fact_that_names_no_row() -> None:
+    bare = _hit("lesson_a", 0.5)  # a leg that read no identity
+    rows = {ChunkId("a", "u", "lesson_a", 0, _SHA): SetChunkRow(("a", "u", "s2"), 7, ())}
+    out = fold_set_chunks([bare, _writer_chunk("u")], rows)
+    assert {h.identity for h in out} == {None, ("a", "u", "s2")}
+
+
 def test_under_shared_scope_a_chunk_folds_onto_a_fact_of_its_key() -> None:
     # no row is read (the writer's private row is never served there)
     shared = replace(_hit("lesson_a", 0.5), identity=("_shared", "-", "-"))
