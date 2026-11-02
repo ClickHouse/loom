@@ -1933,3 +1933,25 @@ async def test_an_embedding_provider_error_on_a_write_is_reported(monkeypatch, e
     assert [d.reason for d in report.dropped] == [f"failed: {name}"]
     assert report.refused == [f"{_key(c)}: failed: {name}", f"decision:gone: failed: {name}"]
     assert cli.exit_code(report) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_whose_restatement_search_fails_exits_2(monkeypatch) -> None:
+    import httpx
+
+    from server.memory.app import search
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    request = httpx.Request("POST", "http://embedder.invalid/v1/embeddings")
+
+    async def failing_search(inp):
+        raise httpx.HTTPStatusError(
+            "503", request=request, response=httpx.Response(503, request=request)
+        )
+
+    monkeypatch.setattr(search, "handle_memory_search", failing_search)
+    report = await _run(dry_run=True)
+    assert [d.reason for d in report.dropped] == ["failed: HTTPStatusError"]
+    assert report.refused == [f"{_key(c)}: failed: HTTPStatusError"]
+    assert world.recorded == [] and cli.exit_code(report) == 2

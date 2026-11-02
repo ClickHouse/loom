@@ -61,8 +61,8 @@ def register_decisions_cli(sub: Any) -> None:
         "source-changed. "
         "Dry run by default (still calls the model); --apply writes. Exits 1 when it could "
         "not read the document (no document, no chunks, no usable model, no window read), 2 "
-        "when a write was refused or failed (a row changed since the run read it is reported, "
-        "not counted).",
+        "when a write, or a read it needed, was refused or failed (a row changed since the run "
+        "read it is reported, not counted).",
     )
     p_ext.add_argument("--org", required=True)
     p_ext.add_argument("--namespace", required=True, help="The namespace holding the document")
@@ -104,8 +104,9 @@ def _cmd_extract(args: argparse.Namespace) -> int:
 
 def exit_code(report: ExtractReport) -> int:
     """1 when the run could not read the document (no document, no chunks, no usable model,
-    no window read), 2 when a write was refused or failed, else 0. A row deleted or
-    rewritten since the run read it is reported, not counted: the next run settles it."""
+    no window read), 2 when a write, or a read it needed, was refused or failed (in a dry
+    run too), else 0. A row deleted or rewritten since the run read it is reported, not
+    counted: the next run settles it."""
     if report.error:
         return 1
     return 2 if report.refused else 0
