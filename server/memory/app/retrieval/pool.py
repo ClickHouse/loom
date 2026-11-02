@@ -168,7 +168,8 @@ def fold_set_chunks(hits: list[SearchHit], rows: Mapping[ChunkId, SetChunkRow]) 
         cid = _chunk_id(h)
         return rows.get(cid) if cid is not None else None
 
-    return _fold(hits, named, lambda who, key: None if who is None else (*who, key))
+    # a pooled fact that names no row keys as `(key,)`, which no named row matches
+    return _fold(hits, named, lambda who, key: (*(who or ()), key))
 
 
 def fold_shared_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
@@ -180,7 +181,7 @@ def fold_shared_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
 def _fold(
     hits: list[SearchHit],
     named: Callable[[SearchHit], SetChunkRow | None],
-    place: Callable[[RowIdentity | None, str], tuple[str, ...] | None],
+    place: Callable[[RowIdentity | None, str], tuple[str, ...]],
 ) -> list[SearchHit]:
     """Fold each set chunk onto the pooled hit of the row `named` gives it, or add it as
     that row's hit (a chunk `named` gives none is dropped). `place` keys a row, pooled or
@@ -190,15 +191,12 @@ def _fold(
     out = [h for h in hits if not _is_set_chunk(h)]
     at: dict[tuple[str, ...], int] = {}
     for pos, h in enumerate(out):
-        pooled_at = place(h.identity, h.memory_key)
-        if (getattr(h, "source", "") or "fact") != "chunk" and pooled_at is not None:
-            at.setdefault(pooled_at, pos)
+        if h.source != "chunk":
+            at.setdefault(place(h.identity, h.memory_key), pos)
     for h in hits:
         if not _is_set_chunk(h) or (row := named(h)) is None:
             continue
         target = place(row.identity, str(h.parent_memory_key))
-        if target is None:
-            continue
         if target in at:
             parent = out[at[target]]
             out[at[target]] = replace(parent, **_folded_fields(parent, h))
