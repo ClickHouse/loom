@@ -14,14 +14,28 @@ pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary no
 _VEC = "[" + ",".join(["0.1"] * 3072) + "]"
 
 
-def _row(session: str) -> str:
+def _row(session: str, key: str = "user_task_worktree", scope: str = "private") -> str:
     return (
         "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id,"
         " memory_key, memory_type, scope, content_excerpt, embedding, memory_key_embedding,"
         " embedding_model, embedding_dim, version) VALUES ('o', 'n', 'a', 'u',"
-        f" '{session}', 'user_task_worktree', 'semantic', 'private', 'the worktree', {_VEC},"
+        f" '{session}', '{key}', 'semantic', '{scope}', 'the worktree', {_VEC},"
         f" {_VEC}, 'm', 3072, 1)"
     )
+
+
+_SQL = key_match_sql("e.org = {org:String} AND e.tombstoned_at IS NULL")
+
+
+def _params(**kw: int) -> dict[str, object]:
+    return {
+        "org": "o",
+        "ns": "n",
+        "stems": ["user", "task", "worktre"],
+        "qv": [0.1] * 3072,
+        "min_strength": 0.0,
+        **kw,
+    }
 
 
 def test_rows_of_one_key_that_tie_keep_one_order() -> None:
@@ -31,15 +45,18 @@ def test_rows_of_one_key_that_tie_keep_one_order() -> None:
         ddl("memory_embeddings"),
         *(_row(s) for s in ("s4", "s2", "s3", "s1")),
     ]
-    sql = key_match_sql("e.org = {org:String} AND e.tombstoned_at IS NULL")
-    params = {
-        "org": "o",
-        "ns": "n",
-        "stems": ["user", "task", "worktre"],
-        "qv": [0.1] * 3072,
-        "min_strength": 0.0,
-        "per_key": 3,
-        "limit": 10,
-    }
-    rows = run(setup, sql, params)
+    rows = run(setup, _SQL, _params(per_key=3, limit=10))
     assert [r["session_id"] for r in rows] == ["s1", "s2", "s3"]
+
+
+def test_two_keys_that_tie_keep_one_order_at_the_limit() -> None:
+    # a shared row sorts after a private one in the table's key, so FINAL reads
+    # `worktree_task_user` first; only the memory_key tiebreak puts `user_task_worktree` first
+    setup = [
+        "SET enable_quantized_codec = 1",
+        ddl("memory_embeddings"),
+        _row("s1", "user_task_worktree", scope="shared"),
+        _row("s1", "worktree_task_user"),
+    ]
+    rows = run(setup, _SQL, _params(per_key=3, limit=1))
+    assert [r["memory_key"] for r in rows] == ["user_task_worktree"]

@@ -43,8 +43,8 @@ def test_the_anchor_pool_takes_tied_rows_in_row_order() -> None:
 
 
 def test_digest_descent_takes_tied_rows_in_row_order() -> None:
-    # two writes of one value under two keys, the later one read first: only the tiebreak
-    # takes `user_city` first
+    # a shared row sorts after a private one in the table's key, so FINAL reads
+    # `user_location` first; only the memory_key tiebreak puts `user_city` first
     rows = [_row("u1", "s1", "user_city", scope="shared"), _row("u1", "s1", "user_location")]
     got = run(
         _setup(*rows),

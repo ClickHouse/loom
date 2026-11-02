@@ -89,3 +89,15 @@ async def test_rows_of_one_key_at_one_version_keep_one_order(monkeypatch) -> Non
     monkeypatch.setattr(settings, "memory_search_per_key_cap", 2)
     hits = await bridge_rows_by_key(_ask(), "Bernard Arnault")
     assert [h.session_id for h in hits] == ["s1", "s2"]
+
+
+@pytest.mark.asyncio
+async def test_two_keys_at_one_version_keep_one_order_at_the_limit(monkeypatch) -> None:
+    # read in this insert order, only the memory_key tiebreak puts `born_in` first
+    ch = _LocalCH(
+        _row("s1", "bernard_arnault_born_in", "Roubaix"),
+        _row("s1", "bernard_arnault_citizen_of", "France"),
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    hits = await bridge_rows_by_key(_ask(), "Bernard Arnault", top_k=1)
+    assert [h.memory_key for h in hits] == ["bernard_arnault_born_in"]
