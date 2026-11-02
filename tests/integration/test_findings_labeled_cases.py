@@ -51,6 +51,22 @@ class _Ns:
             "memory.set", {"agent": "writer", "memory_key": key, "value": value, **kw}
         )
 
+    async def all_embedded(self) -> bool:
+        """Every searchable live row has a vector, as the worker leaves it."""
+        return (
+            self.count(
+                "SELECT count() FROM (SELECT agent, user_id, session_id, memory_key "
+                "FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} "
+                "AND tombstoned_at IS NULL AND memory_type NOT IN ('episodic', 'profile') "
+                "AND sensitivity != 'high' AND length(value) > 0) AS a "
+                "LEFT ANTI JOIN (SELECT agent, user_id, session_id, memory_key "
+                "FROM loom.memory_embeddings FINAL WHERE org = {org:String} "
+                "AND namespace = {ns:String} AND tombstoned_at IS NULL AND embedding_dim > 0) AS b "
+                "USING (agent, user_id, session_id, memory_key)"
+            )
+            == 0
+        )
+
     def count(self, sql: str) -> int:
         rows = self.ch.query(sql, parameters={"org": ORG, "ns": self.name}).result_rows
         return int(rows[0][0])
@@ -196,6 +212,10 @@ async def test_labeled_cases_score_full_precision_and_recall(
         for case, (build, labels) in CASES.items():
             ns = _Ns(c, ch_client, names[case])
             await build(ns)
+            if case != "delayed_indexing":
+                # Audit once every row is embedded: a row the worker has not reached yet is
+                # an indexing backlog, which only the delayed case is labelled with.
+                await eventually(ns.all_embedded, description=f"{case}: rows embedded")
             audit = await ns.op("namespace.audit", {"window_seconds": 3600})
             validate = await ns.op("namespace.validate", {})
             raised, ran = _raised(audit, validate)

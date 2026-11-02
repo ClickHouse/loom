@@ -1408,9 +1408,14 @@ async def test_an_audit_run_twice_still_sees_writes_the_ledger_never_recorded() 
     await na.run_checks(audit, ["telemetry_unavailable"])
     gap = _finding(audit, "telemetry_unavailable")
     assert gap.severity == "warning" and gap.count == 1
-    # A write through any op is a recorded call, and so is a person's profile edit in the
-    # dashboard: either closes the gap.
-    for closer in (_ledger_row("procedure.add"), _ledger_row("profile.set", consumer="loom-ui")):
+    # A write through any op is a recorded call, and so is a person's profile edit or
+    # settings save in the dashboard: each closes the gap.
+    closers = (
+        _ledger_row("procedure.add"),
+        _ledger_row("profile.set", consumer="loom-ui"),
+        _ledger_row("namespace.register", consumer="loom-ui"),
+    )
+    for closer in closers:
         closed = _LocalCH(["memory", "agent_events"], [*rows, closer])
         audit = na.new_audit(_inp(window_seconds=3600), ch=closed)
         await na.run_checks(audit, ["telemetry_unavailable"])

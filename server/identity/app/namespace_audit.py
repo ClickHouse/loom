@@ -277,7 +277,8 @@ _CONTRACT: dict[str, RuleContract] = {
             f"created in the last {TELEMETRY_LAG_SECONDS} seconds is not judged; its "
             "ledger row may not have landed yet. Reports on the namespace (the audit's own "
             "call among them) and the dashboard's or the assistant's reads and page views do "
-            "not close a gap; their data writes do."
+            "not close a gap; their calls that change stored state (a memory write, a "
+            "setting, a grant) do."
         ),
         uncertainty=(
             "Rows written in-process, by an importer run without `--base-url` or a worker "
@@ -465,9 +466,10 @@ def keys_named(key: str, value: str, keys: set[str]) -> int:
 
 @functools.cache
 def _data_writes() -> tuple[str, ...]:
-    """The ops that change a namespace's data: not read_only, and called by a writer or
-    audited. An inspector's call to anything else (a read, the dashboard's page-view
-    vitals) only looks at the namespace."""
+    """The ops that change stored state (a memory write, a setting, a grant): not
+    read_only, and called by a writer or audited. An inspector's call to anything else (a
+    read, the dashboard's page-view vitals) only looks at the namespace."""
+    # Imported here: the registry imports the op modules, which import this one.
     from server.operations.base import Role
     from server.operations.registry import ALL_OPERATIONS
 
