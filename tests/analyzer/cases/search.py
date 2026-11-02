@@ -218,6 +218,7 @@ def cases() -> list[Case]:
                             "memory_key": "k1",
                             "version": 1,
                             "tags": [],
+                            "sha": "",
                         }
                     ]
                 }

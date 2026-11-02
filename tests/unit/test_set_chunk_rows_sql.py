@@ -32,14 +32,16 @@ def _row(
     valid_to: str = "NULL",
     model: str = "text-embedding-3-small",
     tags: str = "[]",
+    sha: str = "",
 ) -> list[str]:
     """A row's vector at `version` and its stored value."""
     return [
         "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
         "memory_key, memory_type, scope, content_excerpt, embedding, memory_key_embedding, "
-        "embedding_model, embedding_dim, version, status, valid_to, tags) VALUES ('clickhouse', "
-        f"'ns', 'bot', '{user}', '{session}', 'lesson_a', 'semantic', 'private', 't', {VECTOR}, "
-        f"{VECTOR}, '{model}', 3072, {version}, '{status}', {valid_to}, {tags})",
+        "embedding_model, embedding_dim, version, status, valid_to, tags, content_sha256) VALUES "
+        f"('clickhouse', 'ns', 'bot', '{user}', '{session}', 'lesson_a', 'semantic', 'private', "
+        f"'t', {VECTOR}, {VECTOR}, '{model}', 3072, {version}, '{status}', {valid_to}, {tags}, "
+        f"'{sha}')",
         "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
         "memory_type, value, version, status) VALUES ('clickhouse', 'ns', 'bot', "
         f"'{user}', '{session}', 'lesson_a', 'semantic', '{value}', {version}, '{status}')",
@@ -196,3 +198,23 @@ async def test_the_writer_keys_fit_one_form_field() -> None:
     every = sorted(("bot", "u", k) for k in keys)
     assert 0 < len(bound) < len(every) and bound == every[: len(bound)]
     assert next(chunks(bound, limit=FIELD_BYTES)) == bound
+
+
+@pytest.mark.asyncio
+async def test_rows_holding_one_value_read_it_once() -> None:
+    # a key written in three sessions with one value: one value read, the newest row named
+    ch = _local_ch(
+        *(_row("u", s, v, LONG_V1, sha="same") for s, v in (("s1", 1), ("s2", 2), ("s3", 3)))
+    )
+    value_reads: list[Any] = []
+    read = ch.query_all
+
+    async def counting(sql: str, params: dict[str, Any] | None = None, **kw: Any) -> Any:
+        if "FROM loom.memory FINAL" in sql:
+            value_reads.append(params["rows"])
+        return await read(sql, params, **kw)
+
+    ch.query_all = counting  # type: ignore[method-assign]
+    chunk = _chunk("u", LONG_V1)
+    assert await _set_chunk_rows(ch, _q(), [chunk]) == _named(chunk, "s3", 3)
+    assert [len(rows) for rows in value_reads] == [1]
