@@ -6,7 +6,7 @@ chunk-share cap and floor on the window.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, NamedTuple
 
@@ -159,38 +159,47 @@ class ChunkId(NamedTuple):
     sha: str
 
 
-def fold_set_chunks(
-    hits: list[SearchHit], rows: Mapping[ChunkId, SetChunkRow] | None
+def fold_set_chunks(hits: list[SearchHit], rows: Mapping[ChunkId, SetChunkRow]) -> list[SearchHit]:
+    """Under private scope, fold the verbatim chunks of long memory.set values onto the rows
+    `rows` names (`_set_chunk_rows`): onto the row when it is pooled, as its hit when it is
+    not. A chunk `rows` names no row for is dropped: no served row's value cuts it."""
+
+    def named(h: SearchHit) -> tuple[SetChunkRow, tuple[str, ...]] | None:
+        cid = _chunk_id(h)
+        found = rows.get(cid) if cid is not None else None
+        return None if found is None else (found, (*found.identity, str(h.parent_memory_key)))
+
+    return _fold(hits, named, lambda h: None if h.identity is None else (*h.identity, h.memory_key))
+
+
+def fold_shared_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
+    """Under shared scope, where the writer's private row is never served, a chunk folds onto
+    a pooled fact of its key, or becomes the hit of the key's promoted row."""
+    return _fold(
+        hits,
+        lambda h: (_SHARED_SET_CHUNK_ROW, (str(h.parent_memory_key),)),
+        lambda h: (h.memory_key,),
+    )
+
+
+def _fold(
+    hits: list[SearchHit],
+    named: Callable[[SearchHit], tuple[SetChunkRow, tuple[str, ...]] | None],
+    fact_at: Callable[[SearchHit], tuple[str, ...] | None],
 ) -> list[SearchHit]:
-    """Fold the verbatim chunks of long memory.set values onto the rows `rows` names
-    (`_set_chunk_rows`): onto the row when it is pooled, as its hit when it is not, and a
-    chunk `rows` names no row for is dropped. With `rows` None (shared scope) a chunk folds
-    onto a pooled fact of its key, or becomes the hit of the key's promoted row."""
+    """Fold each set chunk onto the pooled fact at the position `named` gives it, or add it
+    as that row's hit; `fact_at` places each pooled fact."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
     out = [h for h in hits if not _is_set_chunk(h)]
-    # each pooled fact's position, by its row, or by its key under shared scope
     at: dict[tuple[str, ...], int] = {}
     for pos, h in enumerate(out):
-        if (getattr(h, "source", "") or "fact") == "chunk":
-            continue
-        if rows is None:
-            at.setdefault((h.memory_key,), pos)
-        elif h.identity is not None:
-            at.setdefault((*h.identity, h.memory_key), pos)
+        if (getattr(h, "source", "") or "fact") != "chunk" and (place := fact_at(h)) is not None:
+            at.setdefault(place, pos)
     for h in hits:
-        if not _is_set_chunk(h):
+        if not _is_set_chunk(h) or (found := named(h)) is None:
             continue
-        parent_key = str(h.parent_memory_key)
-        target: tuple[str, ...]
-        if rows is None:
-            row, target = _SHARED_SET_CHUNK_ROW, (parent_key,)
-        else:
-            cid = _chunk_id(h)
-            found = rows.get(cid) if cid is not None else None
-            if found is None:
-                continue  # no served row's value is known to cut it
-            row, target = found, (*found.identity, parent_key)
+        row, target = found
         if target in at:
             parent = out[at[target]]
             out[at[target]] = replace(parent, **_folded_fields(parent, h))
@@ -199,7 +208,7 @@ def fold_set_chunks(
         _, _, session = row.identity
         converted = replace(
             h,
-            memory_key=parent_key,
+            memory_key=str(h.parent_memory_key),
             source="fact",
             parent_memory_key="",
             identity=row.identity,
@@ -236,15 +245,12 @@ def _chunk_id(h: SearchHit) -> ChunkId | None:
 
 async def _set_chunk_rows(
     ch: _CHClient, q: SearchQuery, hits: list[SearchHit]
-) -> dict[ChunkId, SetChunkRow] | None:
+) -> dict[ChunkId, SetChunkRow]:
     """The served row each pooled set chunk was cut from: of the writer's served rows of the
     key with the newest vectors (`memory_search_set_chunk_rows` of them; a status change
     re-writes a vector too), the first whose current value cuts that chunk
     (`set_chunk_identities`). A chunk none of them cuts, or every chunk when a
-    read fails, names none. None under shared scope, where the writer's private row is
-    never served: the chunks fold by key."""
-    if q.scope != "private":
-        return None
+    read fails, names none. Private scope only (`fold_shared_set_chunks` reads no row)."""
     pooled = {cid for h in hits if _is_set_chunk(h) and (cid := _chunk_id(h)) is not None}
     if not pooled:
         return {}
@@ -320,7 +326,10 @@ async def _finish_pool(ch: _CHClient, hits: list[SearchHit], q: SearchQuery) -> 
     tips ties between days, not months — then the chunk share cap and floor
     and the window cut. No LLM rerank here: it runs
     once, in the handler, on the cross-namespace pool."""
-    hits = fold_set_chunks(hits, await _set_chunk_rows(ch, q, hits))
+    if q.scope == "private":
+        hits = fold_set_chunks(hits, await _set_chunk_rows(ch, q, hits))
+    else:
+        hits = fold_shared_set_chunks(hits)
     hits = await _recency_backfill(ch, q, hits)
     if q.recency_intent and float(q.recency_pool_weight) > 0.0:
         hits = rerank_by_recency_pool(hits, weight=float(q.recency_pool_weight))

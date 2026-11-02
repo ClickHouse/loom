@@ -17,7 +17,12 @@ import pytest
 
 from server.memory.app.retrieval import SearchHit, fusion
 from server.memory.app.retrieval import pool as S
-from server.memory.app.retrieval.pool import ChunkId, SetChunkRow, fold_set_chunks
+from server.memory.app.retrieval.pool import (
+    ChunkId,
+    SetChunkRow,
+    fold_set_chunks,
+    fold_shared_set_chunks,
+)
 from server.memory.domain.search_types import hit_row_key, row_key_of
 
 
@@ -47,14 +52,14 @@ def _set_chunk(parent: str, idx: int, score: float, excerpt: str = "") -> Search
 
 def test_a_pool_without_set_chunks_is_returned_as_is() -> None:
     hits = [_hit("a", 0.9), _hit("chunk:sess-1:0", 0.8, "chunk"), _hit("b", 0.7)]
-    assert fold_set_chunks(hits, None) is hits
+    assert fold_shared_set_chunks(hits) is hits
 
 
 def test_chunk_with_parent_in_pool_merges_and_lifts_the_parent() -> None:
     parent = _hit("lesson_a", 0.60, excerpt="head of the value")
     chunk = _set_chunk("lesson_a", 2, 0.85, excerpt="the matching passage")
     other = _hit("lesson_b", 0.70)
-    out = fold_set_chunks([chunk, other, parent], None)
+    out = fold_shared_set_chunks([chunk, other, parent])
     assert [h.memory_key for h in out] == ["lesson_a", "lesson_b"]
     folded = out[0]
     assert folded.source == "fact"
@@ -67,7 +72,7 @@ def test_chunk_with_parent_in_pool_merges_and_lifts_the_parent() -> None:
 def test_a_lower_scored_chunk_keeps_the_parents_excerpt_and_score() -> None:
     parent = _hit("lesson_a", 0.90, excerpt="head")
     chunk = _set_chunk("lesson_a", 0, 0.40, excerpt="tail passage")
-    out = fold_set_chunks([parent, chunk], None)
+    out = fold_shared_set_chunks([parent, chunk])
     assert [h.memory_key for h in out] == ["lesson_a"]
     assert out[0].rank_score == pytest.approx(0.90)
     assert out[0].content_excerpt == "head"
@@ -76,7 +81,7 @@ def test_a_lower_scored_chunk_keeps_the_parents_excerpt_and_score() -> None:
 
 def test_chunk_without_parent_in_pool_becomes_the_parent_hit() -> None:
     chunk = _set_chunk("lesson_z", 3, 0.75, excerpt="only the tail matched")
-    out = fold_set_chunks([_hit("lesson_b", 0.8), chunk], None)
+    out = fold_shared_set_chunks([_hit("lesson_b", 0.8), chunk])
     assert [h.memory_key for h in out] == ["lesson_b", "lesson_z"]
     z = out[1]
     assert z.source == "fact" and z.parent_memory_key == ""
@@ -87,13 +92,12 @@ def test_chunk_without_parent_in_pool_becomes_the_parent_hit() -> None:
 
 
 def test_several_chunks_of_one_absent_parent_collapse_to_one_row() -> None:
-    out = fold_set_chunks(
+    out = fold_shared_set_chunks(
         [
             _set_chunk("lesson_z", 0, 0.70),
             _set_chunk("lesson_z", 4, 0.80),
             _set_chunk("lesson_z", 1, 0.60),
-        ],
-        None,
+        ]
     )
     assert [h.memory_key for h in out] == ["lesson_z"]
     assert out[0].rank_score == pytest.approx(0.80)
@@ -104,7 +108,7 @@ def test_several_chunks_of_one_absent_parent_collapse_to_one_row() -> None:
 def test_conversation_chunks_and_chunks_without_a_parent_pass_through() -> None:
     conv = _hit("chunk:sess-9:2", 0.9, "chunk")
     orphan = _hit("chunk:memory.set:lesson_q:0", 0.8, "chunk")  # no parent_memory_key
-    out = fold_set_chunks([conv, orphan, _hit("lesson_a", 0.5)], None)
+    out = fold_shared_set_chunks([conv, orphan, _hit("lesson_a", 0.5)])
     assert [h.memory_key for h in out] == [
         "chunk:sess-9:2",
         "chunk:memory.set:lesson_q:0",
@@ -113,8 +117,8 @@ def test_conversation_chunks_and_chunks_without_a_parent_pass_through() -> None:
 
 
 def test_order_is_reestablished_by_the_shared_sort_key() -> None:
-    out = fold_set_chunks(
-        [_hit("lesson_b", 0.70), _set_chunk("lesson_a", 0, 0.95), _hit("lesson_c", 0.80)], None
+    out = fold_shared_set_chunks(
+        [_hit("lesson_b", 0.70), _set_chunk("lesson_a", 0, 0.95), _hit("lesson_c", 0.80)]
     )
     assert [h.memory_key for h in out] == ["lesson_a", "lesson_c", "lesson_b"]
 
@@ -127,14 +131,11 @@ def test_finish_pool_folds_before_the_chunk_cap_and_floor(monkeypatch: pytest.Mo
     async def no_backfill(ch, q, hits):
         return hits
 
-    async def by_key(ch, q, hits):
-        return None  # fold the chunks by key: the order of fold and cap is the subject
-
     monkeypatch.setattr(S, "_recency_backfill", no_backfill)
-    monkeypatch.setattr(S, "_set_chunk_rows", by_key)
     monkeypatch.setattr(settings, "memory_search_chunk_min_share", 0.4)
+    # shared scope folds the chunks by key: the order of fold and cap is the subject
     q = SimpleNamespace(
-        top_k=5, recency_intent=False, recency_pool_weight=0.0, chunk_max_share=None
+        scope="shared", top_k=5, recency_intent=False, recency_pool_weight=0.0, chunk_max_share=None
     )
     pool = [_set_chunk(f"lesson_{i}", 0, 0.9 - i * 0.01) for i in range(4)]
     pool += [_hit(f"fact_{i}", 0.6 - i * 0.01) for i in range(6)]
@@ -173,7 +174,7 @@ def test_the_floor_keeps_a_folded_parents_seat_but_the_cap_does_not_count_it(
     from server.memory.app.retrieval.pool import cap_chunk_share, floor_chunk_share
 
     facts = [_hit(f"fact_{i}", 0.9 - i * 0.01) for i in range(6)]
-    folded = fold_set_chunks([_set_chunk("lesson_z", 0, 0.30, excerpt="passage")], None)[0]
+    folded = fold_shared_set_chunks([_set_chunk("lesson_z", 0, 0.30, excerpt="passage")])[0]
     assert folded.source == "fact" and folded.score_components["folded_chunks"] == 1.0
     pool = facts + [folded]  # folded parent ranks last on score
     window = floor_chunk_share(list(pool), 5, 0.4)[:5]
@@ -191,16 +192,16 @@ def test_a_folded_row_is_rank_neutral_no_asserted_tiebreak() -> None:
     from server.memory.app.search.scoring import asserted_component
 
     converted = replace(
-        fold_set_chunks([_set_chunk("lesson_z", 0, 0.7)], None)[0], source_class="asserted"
+        fold_shared_set_chunks([_set_chunk("lesson_z", 0, 0.7)])[0], source_class="asserted"
     )
     assert converted.score_components["folded_lift"] == 1.0
     lifted = replace(
-        fold_set_chunks([_hit("lesson_a", 0.5), _set_chunk("lesson_a", 1, 0.8)], None)[0],
+        fold_shared_set_chunks([_hit("lesson_a", 0.5), _set_chunk("lesson_a", 1, 0.8)])[0],
         source_class="asserted",
     )
     assert lifted.score_components["folded_lift"] == 1.0
     kept = replace(
-        fold_set_chunks([_hit("lesson_b", 0.9), _set_chunk("lesson_b", 1, 0.4)], None)[0],
+        fold_shared_set_chunks([_hit("lesson_b", 0.9), _set_chunk("lesson_b", 1, 0.4)])[0],
         source_class="asserted",
     )
     assert "folded_lift" not in kept.score_components  # the parent's own score stood
@@ -256,7 +257,7 @@ def test_a_hit_made_from_a_chunk_carries_its_rows_tags() -> None:
 def test_under_shared_scope_a_chunk_folds_onto_a_fact_of_its_key() -> None:
     # no row is read (the writer's private row is never served there)
     shared = replace(_hit("lesson_a", 0.5), identity=("_shared", "-", "-"))
-    (folded,) = fold_set_chunks([shared, _writer_chunk("u", "the passage")], None)
+    (folded,) = fold_shared_set_chunks([shared, _writer_chunk("u", "the passage")])
     assert (folded.identity, folded.content_excerpt) == (("_shared", "-", "-"), "the passage")
 
 
@@ -298,7 +299,7 @@ def test_under_shared_scope_a_converted_chunk_names_the_promoted_row() -> None:
         identity=("a", "u", "memory.set:lesson_z"),
         session_id="memory.set:lesson_z",
     )
-    (hit,) = fold_set_chunks([chunk], None)
+    (hit,) = fold_shared_set_chunks([chunk])
     assert (hit.memory_key, hit.identity, hit.session_id) == (
         "lesson_z",
         ("_shared", "-", "-"),

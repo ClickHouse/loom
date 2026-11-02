@@ -144,12 +144,6 @@ async def test_a_row_inside_the_hard_tags_names_its_chunk_with_its_tags() -> Non
 
 
 @pytest.mark.asyncio
-async def test_under_shared_scope_no_row_is_read() -> None:
-    chunk = _chunk("u", LONG_V1)
-    assert await _set_chunk_rows(_LocalCH(), _q(scope="shared"), [chunk]) is None
-
-
-@pytest.mark.asyncio
 async def test_only_the_writers_newest_rows_of_the_key_are_matched(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
