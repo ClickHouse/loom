@@ -2646,3 +2646,26 @@ def test_image_markup_inside_code_makes_no_section_image_only() -> None:
     fence = "```\n![]()\n```"
     doc = f"`![1]`\n\n# Spilling\n\n{fence}\n\n## Final DISTINCT\n\n{BODY}\n"
     assert dx.image_only_sections(doc) == []
+
+
+@pytest.mark.asyncio
+async def test_a_captioned_picture_in_a_preamble_with_text_is_sent(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    picture = "![flow](flow.png)\n\nFigure 1: the spill path."
+    # The preamble as a whole is a picture, its caption and a paragraph: not image-only.
+    doc = f"{picture}\n\n{BODY}\n\n{DOC}"
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, picture, ()), CorpusChunk(uri, 1, BODY, ())]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    assert dx.image_only(picture) and "" not in report.image_only
+    (prompt,) = world.prompts
+    assert "Figure 1: the spill path." in prompt[1] and BODY in prompt[1]

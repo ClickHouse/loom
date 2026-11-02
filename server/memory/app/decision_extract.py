@@ -299,8 +299,8 @@ async def extract_document(
         return report
     live_texts = [doc.content or "", *(c.text for c in chunks)]
     report.image_only = dx.image_only_sections(doc.content or "")
-    # A section judged image-only is not sent; on the empty path (the text above the first
-    # heading, or a document with no heading) each chunk is judged on its own text.
+    # A section judged image-only is not sent. An empty-path chunk of an image-only
+    # preamble is skipped only when its own text is image-only too.
     skipped = set(report.image_only)
 
     def sent(c: CorpusChunk) -> bool:

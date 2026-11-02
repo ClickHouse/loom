@@ -379,7 +379,8 @@ def image_only_sections(content: str) -> list[str]:
     heading alone, over a picture, or over a picture and a caption of up to
     CAPTION_MAX_CHARS. A heading alone over its subsections is not one; a heading over a
     picture and then subsections is. The text above the first heading, or a document with
-    no heading, counts when it holds a picture; its breadcrumb is ''."""
+    no heading, counts when it holds a picture and at most a caption; its breadcrumb is
+    ''."""
     sections = detect_sections(content) or [Section(path=(), depth=0, start=0, lines=[content])]
     out: list[str] = []
     for i, sec in enumerate(sections):
