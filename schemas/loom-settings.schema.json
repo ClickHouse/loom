@@ -4249,7 +4249,7 @@
         "memory_search_per_key_cap": {
           "default": 3,
           "type": "integer",
-          "description": "Rows per memory_key in the final block (0 = no cap), freeing slots taken by one key re-extracted per session (38 of 60 questions on one eval). Skipped for aggregational / temporal_diff shapes. Also bounds the key-match arm's and the entity follow's rows per key, and how far one-item-per-key callers over-fetch."
+          "description": "Rows per memory_key the final block, key-match and the entity follow keep (0 = no cap), and the one-per-key over-fetch; block and key-match skip it for aggregational/temporal_diff."
         },
         "memory_search_pool_multiplier_deep": {
           "default": 5,

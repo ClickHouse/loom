@@ -111,9 +111,9 @@ def anchor_pool_sql(where_sql: str) -> str:
                        e.scope AS scope
                 FROM loom.memory_embeddings AS e FINAL
                 WHERE {where_sql}
-                -- one value written in several sessions ties on distance: take it in row order
+                -- rows that hold one value tie on distance: take them in row order
                 ORDER BY cosineDistance(e.embedding, {{qv:Array(Float32)}}) ASC,
-                         e.agent, e.user_id, e.session_id
+                         e.agent, e.user_id, e.session_id, e.memory_key
                 LIMIT {{limit:UInt32}}
             """
 
@@ -346,7 +346,9 @@ def digest_descent_sql(where_sql: str) -> str:
                        tags, agent, user_id, session_id, version
                 FROM loom.memory_embeddings FINAL
                 WHERE {where_sql}
-                ORDER BY cosineDistance(embedding, {{qv:Array(Float32)}}) ASC, agent, user_id
+                -- rows that hold one value tie on distance: take them in row order
+                ORDER BY cosineDistance(embedding, {{qv:Array(Float32)}}) ASC,
+                         agent, user_id, memory_key
                 LIMIT 1 BY agent, user_id, memory_key
                 LIMIT {{k:UInt32}}
             """
