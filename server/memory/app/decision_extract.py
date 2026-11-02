@@ -18,7 +18,7 @@ extractor's own rows instead of writing beside them:
   document says the same again;
 - it differs and its row is another writer's or another document's: nothing is written;
 - no record under the key, but a confirmed decision row (pinned or attested) reads the
-  same above the conflict threshold: skipped as already recorded.
+  same at or above the conflict threshold: skipped as already recorded.
 
 After the writes, the extractor deletes its unconfirmed rows citing this document whose
 reasoning (a verbatim span of the document) is no longer in its text, or whose outcome
@@ -137,6 +137,11 @@ def _confirmed(row: MemoryRow) -> bool:
     memory.for_file marks `(unconfirmed)` by."""
     state = verification_state(row.verified_by, row.verified_sha256, row.content_sha256)
     return confirmed(row.pinned, state)
+
+
+def _has_outcome(record: dict[str, Any]) -> bool:
+    """decision.outcome recorded what happened: a re-record or a delete would lose it."""
+    return bool(str(record.get("realized_outcome") or "").strip())
 
 
 def _is_extractor(agent: str, user_id: str, session_id: str) -> bool:
@@ -524,7 +529,7 @@ async def _reconcile(
                 else f"recorded by {writer.agent}; the extractor revises only its own rows"
             )
             return rec
-        if row is not None and str(record.get("realized_outcome") or "").strip():
+        if row is not None and _has_outcome(record):
             # decision.record rebuilds the record and the decision tags from the body alone,
             # so a re-record would drop the outcome decision.outcome wrote. Re-applying it
             # afterwards would credit the run's memories a second time. A changed verbatim
@@ -789,13 +794,13 @@ async def _retire(
         restated = held.get((str(record.get("outcome") or "").strip(), reasoning.strip()))
         try:
             # A row with a recorded outcome is kept: deleting it would lose the outcome.
-            if not _confirmed(row) and restated is not None and not record.get("realized_outcome"):
+            if not _confirmed(row) and restated is not None and not _has_outcome(record):
                 if await _delete_row(report, row):
                     report.replaced.append(f"{key} -> {restated}")
                 continue
             if not any(reasoning in t for t in live_texts):
                 # A row with a recorded outcome is tagged, never deleted, like a pinned one.
-                keep = _confirmed(row) or bool(record.get("realized_outcome"))
+                keep = _confirmed(row) or _has_outcome(record)
                 await _retire_row(report, row, keep=keep)
         except (HTTPException, LoomServerError) as e:
             report.refused.append(f"{key}: {_refusal(e)}")
