@@ -36,13 +36,13 @@ def _params(**kw: int) -> dict[str, object]:
     }
 
 
+def _setup(*rows: str) -> list[str]:
+    return ["SET enable_quantized_codec = 1", ddl("memory_embeddings"), *rows]
+
+
 def test_rows_of_one_key_that_tie_keep_one_order() -> None:
     # one value in four sessions: the same strength and the same vector
-    setup = [
-        "SET enable_quantized_codec = 1",
-        ddl("memory_embeddings"),
-        *(_row(s) for s in ("s4", "s2", "s3", "s1")),
-    ]
+    setup = _setup(*(_row(s) for s in ("s4", "s2", "s3", "s1")))
     rows = run(setup, _SQL, _params(per_key=3, limit=10))
     assert [r["session_id"] for r in rows] == ["s1", "s2", "s3"]
 
@@ -50,11 +50,8 @@ def test_rows_of_one_key_that_tie_keep_one_order() -> None:
 def test_two_keys_that_tie_keep_one_order_at_the_limit() -> None:
     # a shared row sorts after a private one in the table's key, so FINAL reads
     # `worktree_task_user` first; only the memory_key tiebreak puts `user_task_worktree` first
-    setup = [
-        "SET enable_quantized_codec = 1",
-        ddl("memory_embeddings"),
-        _row("s1", "user_task_worktree", scope="shared"),
-        _row("s1", "worktree_task_user"),
-    ]
+    setup = _setup(
+        _row("s1", "user_task_worktree", scope="shared"), _row("s1", "worktree_task_user")
+    )
     rows = run(setup, _SQL, _params(per_key=3, limit=1))
     assert [r["memory_key"] for r in rows] == ["user_task_worktree"]

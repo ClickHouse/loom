@@ -3,14 +3,12 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain.search_types import RowKey
 from server.memory.store import dedup
-from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 
@@ -25,14 +23,11 @@ _ROWS = (
 )
 
 
-class _LocalCH:
-    async def query_all(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> Any:
-        return run([ddl("memory"), _ROWS], sql, params)
-
-
 @pytest.mark.asyncio
 async def test_a_row_read_answers_for_that_row_alone() -> None:
     rows = [RowKey("n", "a", "-", "s2", "k2"), RowKey("n", "", "", "", "k1")]
-    found = await dedup.status_by_rows("o", rows, scope=WHOLE_NAMESPACE, ch=_LocalCH())
+    found = await dedup.status_by_rows(
+        "o", rows, scope=WHOLE_NAMESPACE, ch=LocalCH(ddl("memory"), _ROWS)
+    )
     # a key named without its row's identity matches no stored row
     assert [(s.row_key, s.status) for s in found] == [(rows[0], "duplicate")]

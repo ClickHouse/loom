@@ -47,8 +47,8 @@ def _row(
 
 
 def _local_ch(*rows: list[str]) -> LocalCH:
-    tables = ("SET enable_quantized_codec = 1", ddl("memory_embeddings"), ddl("memory"))
-    return LocalCH(*tables, *(statement for row in rows for statement in row))
+    schema = ("SET enable_quantized_codec = 1", ddl("memory_embeddings"), ddl("memory"))
+    return LocalCH(*schema, *(statement for row in rows for statement in row))
 
 
 def _chunk(user: str, value: str, index: int = 0) -> SearchHit:

@@ -77,11 +77,6 @@ def _output(
     return [json.loads(line) for line in out.stdout.splitlines() if line.strip()]
 
 
-_CREATED = re.compile(r"\bCREATE TABLE (?:IF NOT EXISTS )?([\w.]+)")
-# Side tables a write path inserts into and no KeptCH test reads back.
-_UNREAD = {"loom.audit_log", "loom.memory_projection_failures"}
-
-
 # one embedding at the codec's declared width
 VECTOR = "[" + ",".join(["0.1"] * 3072) + "]"
 
@@ -95,6 +90,11 @@ class LocalCH:
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> Any:
         return run(self.setup, sql, params)
+
+
+_CREATED = re.compile(r"\bCREATE TABLE (?:IF NOT EXISTS )?([\w.]+)")
+# Side tables a write path inserts into and no KeptCH test reads back.
+_UNREAD = {"loom.audit_log", "loom.memory_projection_failures"}
 
 
 class KeptCH:
