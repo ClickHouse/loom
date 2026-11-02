@@ -54,7 +54,8 @@ SYSTEM = (
     "- reasoning: the reason the text gives for the choice (the cost, constraint or "
     "failure it avoids), an exact span of the text. Never the decision restated in other "
     "words: a span that only says what was chosen is no reasoning, and a decision whose "
-    "text gives no reason is not emitted.\n"
+    "text gives no reason is not emitted, except a ban or an invariant the text states "
+    "without one: emit it with is_constraint true and its own sentence as the reasoning.\n"
     '- alternatives: the options the text rejects, each {"option": ..., "reason": ...}, '
     "the reason an exact span of the text.\n"
     "- category: design:<component>, lower case, so decisions about one component share "

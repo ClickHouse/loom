@@ -2199,6 +2199,9 @@ async def test_a_reasoning_the_document_rewrapped_is_not_retired(monkeypatch) ->
 def test_the_prompt_asks_for_the_reason_and_skips_recaps_and_superseded_text() -> None:
     prompt = dx.system_prompt(3)
     assert "Never the decision restated in other words" in prompt
+    # A ban stated without a reason may be emitted, as a constraint resting on its own sentence.
+    assert "except a ban or an invariant the text states without one" in prompt
+    assert "is_constraint true and its own sentence as the reasoning" in prompt
     assert "a section that sums up or recaps other sections" in prompt
     assert "former, replaced or superseded" in prompt
     # The code decides what is image-only: a caption over a diagram may state a decision.

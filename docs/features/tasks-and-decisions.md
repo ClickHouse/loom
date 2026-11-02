@@ -368,7 +368,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   is shortened and ends in `…`.
 - **Prompt**: the model is asked for the reason the text gives for each choice (the cost, constraint or failure it
   avoids), never the decision restated, for nothing from a section that sums up other sections, and never to give as
-  the outcome what the text marks as former, replaced or superseded (an old default, a previous behaviour). It says
+  the outcome what the text marks as former, replaced or superseded (an old default, a previous behaviour). A decision
+  the text gives no reason for is left out, except a ban or an invariant stated without one: the model emits it with
+  `is_constraint` true and its own sentence as the reasoning, which the restatement check keeps (below). It says
   nothing about images or captions: what is image-only is the filter's call below, and a section it sends, such as a
   one-line caption over a diagram beside more text, may state a decision.
 - **Second read**: a window gets at most one extra model call, reported as `read again`. When the reply holds no
