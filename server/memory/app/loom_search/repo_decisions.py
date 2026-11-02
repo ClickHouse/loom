@@ -22,11 +22,11 @@ log = logging.getLogger("loom.loom_search")
 
 async def search_repo_decisions(
     mem_input: MemorySearchInput, repo_namespace: str
-) -> MemorySearchOutput | None:
+) -> tuple[MemorySearchOutput, MemorySearchInput] | None:
     """The decision memories in `repo_namespace` that match `mem_input`'s
-    query; None when there is nothing to add, when the search abstains, or
-    on any failure. The read scope the token allows is pinned inside the
-    search, as for the base search."""
+    query, with the input the search settled on; None when there is nothing
+    to add, when the search abstains, or on any failure. The read scope the
+    token allows is pinned inside the search, as for the base search."""
     from server.memory.app.search import handle_memory_search
 
     # The base search already reads its own namespace.
@@ -46,7 +46,8 @@ async def search_repo_decisions(
         # A recorded statement fits the stored clip, and its reason comes last: an
         # excerpt would cut it. bodies="none" still serves keys only.
         bodies="none" if mem_input.bodies == "none" else "full",
-        floor_mode=mem_input.floor_mode,
+        # Only rows that clear the floor: padding the section is the home search's job.
+        floor_mode="drop",
         # The junk classifier targets captured session rows; a decision is authored,
         # and two decisions under different keys are two decisions however alike.
         quality_filter=False,
@@ -72,7 +73,8 @@ async def search_repo_decisions(
         return None
     # Only decision rows: no computed row, digest or entity summary from this pass.
     decisions = [h for h in out.results if h.memory_type == "decision" and h.source == "fact"]
-    if out.abstain or not decisions:
+    settled = out._settled_input
+    if out.abstain or not decisions or settled is None:
         return None
     for h in decisions:
         if not h.namespace:
@@ -80,7 +82,7 @@ async def search_repo_decisions(
         # Another namespace's row, as the fan-out marks one.
         h.score_components["foreign"] = 1.0
     out.results = decisions
-    return out
+    return out, settled
 
 
 def merge_memory_hits(
@@ -129,17 +131,17 @@ async def memory_with_repo_decisions(
     except BaseException:
         extra.cancel()
         raise
-    decisions = await extra
-    if decisions is None:
+    found = await extra
+    if found is None:
         return base
+    decisions, settled = found
     hits, added = merge_memory_hits(base.results, decisions.results, mem_input.namespace)
     if not added:
         return base
     # Credited as the base search credits its own: for the hits it hands on,
     # before the section's floors and answer-first rules, with the input the
-    # decision pass ran (_finish_search_output sets it on every pass that searched).
-    assert decisions._settled_input is not None
-    await credit_merged_hits(decisions._settled_input, added)
+    # decision pass ran.
+    await credit_merged_hits(settled, added)
     update: dict[str, Any] = {
         "results": hits,
         "candidates_total": base.candidates_total + len(added),

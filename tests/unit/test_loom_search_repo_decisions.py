@@ -378,12 +378,14 @@ async def test_the_decision_search_is_merged_llm_free_and_carries_the_tokens_rea
     )
     try:
         set_current_auth(pinned)
-        assert await repo_decisions.search_repo_decisions(BASE, TRUNK) is not None
+        readmit = BASE.model_copy(update={"floor_mode": "readmit"})
+        assert await repo_decisions.search_repo_decisions(readmit, TRUNK) is not None
         (settled,) = resolved
         assert (settled.user_id, settled.read_scope) == ("alice", "own_user")
         assert (settled.search_mode, settled.hyde, settled.rerank) == ("semantic", False, "none")
         # the defaults fill only what the pass left unset
         assert (settled.top_k, settled.legs, settled.memory_type) == (3, ["memory"], "decision")
+        assert settled.floor_mode == "drop"
         assert _is_llm_free(settled) and settled._merged_into_parent
         # an own_user token that names no user is refused, and the leg answers nothing
         set_current_auth(unresolvable)
@@ -619,9 +621,9 @@ async def test_the_real_search_serves_only_decision_rows_from_the_repository(
     monkeypatch.setattr(retrieval, "fetch_session_summaries", fetch_session_summaries)
     monkeypatch.setattr(computed, "_maybe_derived_aggregate", aggregate)
     inp = BASE.model_copy(update={"org": "o", "render": "", "tags": []})
-    out = await repo_decisions.search_repo_decisions(inp, TRUNK)
-    assert out is not None
-    settled = out._settled_input
+    found = await repo_decisions.search_repo_decisions(inp, TRUNK)
+    assert found is not None
+    out, settled = found
     assert [(h.memory_key, h.memory_type, h.namespace) for h in out.results] == [
         ("decision:evict", "decision", TRUNK)
     ]
