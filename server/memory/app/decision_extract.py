@@ -1,10 +1,10 @@
 """`loom decisions extract`: mine one knowledge document into decision records.
 
 Each window of the document's live chunks goes to the model once; a candidate that is
-not the document's own words is dropped (`server.memory.domain.decision_extract`). A
-kept candidate is reconciled against what the namespace already holds, then written
-through `decision.record` under one fixed identity, so a re-run revises the
-extractor's own rows instead of writing beside them:
+not the document's own words, or whose reasoning only restates its outcome, is dropped
+(`server.memory.domain.decision_extract`). A kept candidate is reconciled against what
+the namespace already holds, then written through `decision.record` under one fixed
+identity, so a re-run revises the extractor's own rows instead of writing beside them:
 
 - the key's active record has the same verbatim fields (reasoning, rejected options'
   reasons; the rest is the model's wording) and its row carries the same files, source
@@ -21,11 +21,11 @@ extractor's own rows instead of writing beside them:
   same at or above the conflict threshold: skipped as already recorded.
 
 After the writes, the extractor deletes its unconfirmed rows citing this document whose
-reasoning (a verbatim span of the document) is no longer in its text, or whose outcome
-and reasoning this run recorded under another key. A row it keeps (confirmed, or with a
-recorded outcome) whose reasoning left is tagged `source-changed` instead. A refused
-write is reported and the run goes on. Runs in-process, with no auth context: operator
-only.
+reasoning (a span of the document, whitespace aside) is no longer in its text, or whose
+outcome and reasoning this run recorded under another key. A row it keeps (confirmed, or
+with a recorded outcome) whose reasoning left is tagged `source-changed` instead. A
+refused write is reported and the run goes on. Runs in-process, with no auth context:
+operator only.
 """
 
 from __future__ import annotations
@@ -43,9 +43,9 @@ from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_decision import DecisionRecordInput
 from server.memory.app import decisions as svc
 from server.memory.domain import decision_extract as dx
-from server.memory.domain.corpus_synthesis import Window, windows
+from server.memory.domain.corpus_synthesis import CorpusChunk, Window, windows
 from server.memory.domain.decision_schema import SOURCE_CHANGED_TAG
-from server.memory.domain.decision_statement import alternatives, memory_value
+from server.memory.domain.decision_statement import alternatives, collapse_ws, memory_value
 from server.memory.domain.files import detect_value_files, normalize_files
 from server.memory.domain.trust import confirmed, row_content_sha256, verification_state
 from server.memory.store import (
@@ -299,8 +299,18 @@ async def extract_document(
         return report
     live_texts = [doc.content or "", *(c.text for c in chunks)]
     report.image_only = dx.image_only_sections(doc.content or "")
-    # A chunk with no words (an image under its heading) carries no rationale to read.
-    wins = windows([c for c in chunks if not dx.image_only(c.text)], window_chars=window_chars)
+    # A section judged image-only is not sent. An empty-path chunk of an image-only
+    # preamble is skipped only when its own text is image-only too.
+    skipped = set(report.image_only)
+
+    def sent(c: CorpusChunk) -> bool:
+        if dx.no_words(c.text):
+            return False
+        if dx.breadcrumb(c.section_path) not in skipped:
+            return True
+        return not c.section_path and not dx.image_only(c.text)
+
+    wins = windows([c for c in chunks if sent(c)], window_chars=window_chars)
     report.windows = len(wins)
     # One scan of the extractor's rows on this document and their records, for the prompt
     # and the retire step; rows this run writes are skipped by the retire step.
@@ -348,7 +358,7 @@ async def extract_document(
         if rec.action == "flagged":
             report.flagged.append(rec.memory_key)
         if rec.holds:
-            held.setdefault((rec.held_outcome, cand.reasoning.strip()), rec.memory_key)
+            held.setdefault((rec.held_outcome, collapse_ws(cand.reasoning)), rec.memory_key)
     await _retire(report, own, live_texts, written, held)
     return report
 
@@ -424,8 +434,9 @@ async def _candidates(
     known: list[tuple[str, str, str]],
 ) -> tuple[list[tuple[dx.Candidate, str, list[str]]], int]:
     """(candidate, its section, the texts it was checked against) for every candidate
-    that passes the verbatim check, at most `max_per_section` per section; and how many
-    windows the model answered with a readable reply."""
+    that passes the verbatim and restatement checks, its spans the document's own, at
+    most `max_per_section` per section; and how many windows the model answered with a
+    readable reply."""
     from server.llm.client import get_llm_client
 
     llm = get_llm_client()
@@ -444,15 +455,20 @@ async def _candidates(
         answered += 1
         texts = [c.text for c in w.chunks]
         for cand in cands:
-            section = dx.quote_section(w, cand.quote)
             reason = dx.verbatim_failure(cand, texts)
+            if not reason:
+                cand = dx.document_spans(cand, texts)
+                if dx.restates_outcome(cand):
+                    reason = dx.RESTATED
+            # The quote as the chunk writes it, so a re-wrapped one still names its section.
+            section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
             try:
                 key = svc.decision_key(cand.category, cand.scenario)
             except ValueError:
                 # The key keeps letters and digits a-z, 0-9 only (a CJK scenario has none).
                 key = ""
                 reason = reason or "no letters or digits a-z, 0-9 to build a key from"
-            pair = (cand.outcome.strip(), cand.reasoning.strip())
+            pair = (cand.outcome, collapse_ws(cand.reasoning))
             if not reason and key in keys:
                 reason = "same key as an earlier candidate"
             elif not reason and pair in pairs:
@@ -554,8 +570,9 @@ def _same_decision(record: dict[str, Any], inp: DecisionRecordInput) -> bool:
     """The document still says what the record says: the verbatim fields, the reasoning
     and the rejected options' reasons, as decision.record stores them, are the same. The
     model words the category, scenario, outcome and options anew on each run; a change
-    there alone is no change in the document."""
-    if str(record.get("reasoning") or "") != inp.reasoning.strip():
+    there alone is no change in the document. Nor is a change in whitespace: a re-wrapped
+    line leaves every row as it is, the stored span still found by the retire step."""
+    if collapse_ws(str(record.get("reasoning") or "")) != collapse_ws(inp.reasoning):
         return False
     return _same_reasons(alternatives(record), inp.alternatives)
 
@@ -935,13 +952,14 @@ async def _retire_one(
     reasoning = str(record.get("reasoning") or "")
     if not reasoning:
         return
-    restated = held.get((str(record.get("outcome") or "").strip(), reasoning.strip()))
+    restated = held.get((str(record.get("outcome") or "").strip(), collapse_ws(reasoning)))
     # A row with a recorded outcome is kept: deleting it would lose the outcome.
     if not _confirmed(row) and restated is not None and not _has_outcome(record):
         if await _delete_row(report, row):
             report.replaced.append(f"{key} -> {restated}")
         return
-    if not any(reasoning in t for t in live_texts):
+    # Whitespace aside, as the verbatim check reads it: a re-wrapped line is the same text.
+    if not dx.find_span(reasoning, live_texts):
         # A row with a recorded outcome is tagged, never deleted, like a pinned one.
         keep = _confirmed(row) or _has_outcome(record)
         await _retire_row(report, row, keep=keep)

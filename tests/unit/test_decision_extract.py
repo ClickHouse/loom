@@ -662,18 +662,6 @@ async def test_an_unreadable_reply_is_reported(monkeypatch) -> None:
     assert [d.reason for d in report.dropped] == ["the model's reply is not the JSON asked for"]
 
 
-@pytest.mark.asyncio
-async def test_the_fake_model_returns_candidates_that_pass_the_check() -> None:
-    from server.llm import customer
-    from server.llm.fake import FakeLLMClient
-
-    w = Window([CorpusChunk("d", 0, BODY, ("Spilling", "Final DISTINCT"))])
-    with customer.for_org("o"):
-        res = await FakeLLMClient().complete(dx.system_prompt(3), dx.user_prompt(w))
-    (cand,) = dx.parse_candidates(res.text) or []
-    assert dx.verbatim_failure(cand, [BODY]) == ""
-
-
 def test_the_command_is_dry_run_by_default() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd")
@@ -991,7 +979,7 @@ async def test_a_scenario_with_no_key_letters_is_dropped_and_the_run_goes_on(mon
     assert [r.action for r in report.records] == ["written"] and len(world.recorded) == 1
 
 
-def test_a_blank_reason_drops_the_alternative_and_a_reason_is_read_as_written() -> None:
+def test_a_blank_reason_drops_the_alternative_and_a_reason_is_read_stripped() -> None:
     (cand,) = (
         dx.parse_candidates(
             json.dumps(
@@ -1009,7 +997,8 @@ def test_a_blank_reason_drops_the_alternative_and_a_reason_is_read_as_written() 
         )
         or []
     )
-    assert cand.alternatives == [("a plain set on disk", " costs random reads")]
+    # The verbatim check matches whitespace aside, so stripping a span cannot make it match.
+    assert cand.alternatives == [("a plain set on disk", "costs random reads")]
 
 
 @pytest.mark.asyncio
@@ -1498,6 +1487,13 @@ async def test_an_attested_restatement_under_another_key_is_skipped(monkeypatch)
     [
         ({"quote": "We spill.", "reasoning": "We spill."}, "quote too short to rest a decision on"),
         ({"reasoning": "We spill"}, "reasoning too short to rest a decision on"),
+        # 12 characters as the model wrote them, 9 as the document has them.
+        ({"reasoning": "We    spill."}, "reasoning too short to rest a decision on"),
+        ({"quote": "We    spill."}, "quote too short to rest a decision on"),
+        (
+            {"alternatives": [{"option": "a hash set", "reason": "random    read"}]},
+            "the reason given for rejecting 'a hash set' is too short to rest on",
+        ),
         (
             {"alternatives": [{"option": "a hash set", "reason": "random"}]},
             "the reason given for rejecting 'a hash set' is too short to rest on",
@@ -2094,3 +2090,582 @@ def test_every_printed_action_has_its_line() -> None:
     from typing import get_args
 
     assert set(get_args(de.Action)) - {"row_changed"} == set(cli._ACTIONS)
+
+
+# ------------------------------------------------------------------ restated reasons, whitespace, captions
+
+
+@pytest.mark.parametrize(
+    ("outcome", "reasoning", "restated"),
+    [
+        ("spill into sorted runs", "We spill into sorted runs.", True),
+        ("spill into sorted runs", "We decided on spilling into sorted runs.", True),
+        ("Sorted runs for the spill", "We use sorted runs, instead.", True),
+        ("store offsets", "Offsets are stored.", True),
+        ("run the merge per part", "Running the merge per part.", True),
+        ("process each part", "Each part processes.", True),
+        ("store strings as offsets", "Offsets are stored as a string.", True),
+        ("spill into sorted runs", "Because we spill into sorted runs.", True),
+        ("spill into sorted runs", "Since we spill into sorted runs.", True),
+        ("spill into sorted runs", "We picked sorted runs for spilling.", True),
+        ("spill into sorted runs", "We opted for sorted runs.", True),
+        ("spill into sorted runs", "The decision is to spill into sorted runs.", True),
+        ("sorted runs for the spill", "Sorted runs were chosen for the spill.", True),
+        ("spill into sorted runs", "We are choosing sorted runs for spilling.", True),
+        ("spill into sorted runs", "A plain set on disk costs random reads.", False),
+        ("spill into sorted runs", "Sorted runs avoid random reads on disk.", False),
+        # An outcome that carries its reason leaves the reasoning nothing to add: dropped,
+        # which is why the prompt asks for the outcome without the reason.
+        (
+            "spill into sorted runs, as a plain set on disk costs random reads",
+            "A plain set on disk costs random reads.",
+            True,
+        ),
+    ],
+)
+def test_a_reasoning_with_no_word_beyond_its_outcome_restates_it(
+    outcome: str, reasoning: str, restated: bool
+) -> None:
+    assert dx.restates_outcome(_cand(outcome=outcome, reasoning=reasoning)) is restated
+
+
+@pytest.mark.asyncio
+async def test_a_candidate_whose_reasoning_restates_the_outcome_is_dropped(monkeypatch) -> None:
+    restating = _candidate(
+        reasoning="We spill into sorted runs like ORDER BY.",
+        outcome="spill into sorted runs like ORDER BY",
+    )
+    world = _World(monkeypatch, [restating])
+    report = await _run()
+    assert world.recorded == [] and report.records == []
+    (d,) = report.dropped
+    assert (d.section, d.reason, d.refused) == (SECTION, dx.RESTATED, False)
+
+
+# DOC has this sentence on one line.
+_WRAPPED_REASONING = "We spill into sorted\nruns like ORDER BY."
+
+
+def test_a_span_differing_only_in_whitespace_is_the_documents() -> None:
+    text = "We spill into sorted\nruns like ORDER BY.  A plain set on disk costs random reads."
+    cand = _cand(reasoning="A plain set on disk  costs random reads.")
+    assert dx.verbatim_failure(cand, [text]) == ""
+    assert dx.find_span("sorted runs like", [text]) == "sorted\nruns like"
+    assert dx.find_span("sorted runslike", [text]) == ""
+    stored = dx.document_spans(cand, [text])
+    assert (
+        stored.quote
+        == "We spill into sorted\nruns like ORDER BY.  A plain set on disk costs random reads."
+    )
+    assert stored.reasoning == "A plain set on disk costs random reads."
+    assert stored.alternatives == [("a plain set on disk", "costs random reads")]
+
+
+@pytest.mark.asyncio
+async def test_a_span_with_other_line_breaks_is_recorded_as_the_document_writes_it(
+    monkeypatch,
+) -> None:
+    from server.knowledge.app import document_reads
+
+    wrapped = BODY.replace("A plain set on disk ", "A plain set\non disk ")
+    world = _World(monkeypatch, [_candidate(reasoning="A plain set on disk costs random reads.")])
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, wrapped, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (inp,) = world.recorded
+    assert inp.reasoning == "A plain set\non disk costs random reads."
+    assert inp.source_resource_id == f"knowledge:ns/doc.md#{SECTION}"
+    assert report.dropped == []
+
+
+@pytest.mark.asyncio
+async def test_a_reasoning_the_document_rewrapped_is_not_retired(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    # DOC has the sentence on one line; the stored span broke it.
+    world.record("decision:wrapped", {"reasoning": "A plain set on disk\ncosts random reads."})
+    report = await _run()
+    assert report.retired == [] and world.deletes == [] and report.flagged == []
+
+
+def test_the_prompt_asks_for_the_reason_and_skips_recaps_and_superseded_text() -> None:
+    prompt = dx.system_prompt(3)
+    assert "Never the decision restated in other words" in prompt
+    assert "a section that sums up or recaps other sections" in prompt
+    assert "former, replaced or superseded" in prompt
+    assert "an image with its caption" in prompt
+
+
+@pytest.mark.parametrize(
+    ("body", "image_only"),
+    [
+        ("![diagram](img.png)\n\nFigure 2: the spill path, from the sort to the merge.", True),
+        ("[image]\nThe write path", True),
+        ("![diagram](img.png)\n\n" + BODY, False),
+        # A short line with no picture is text, a decision perhaps.
+        ("Spill into sorted runs: random reads cost too much.", False),
+    ],
+)
+def test_an_image_with_only_a_caption_is_image_only(body: str, image_only: bool) -> None:
+    assert dx.image_only(body) is image_only
+
+
+@pytest.mark.asyncio
+async def test_a_captioned_diagram_is_not_sent_and_is_reported_image_only(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    caption = "![diagram](flow.png)\n\nFigure 1: how a spilled block flows back."
+    doc = DOC.replace("![diagram](img.png)\n", caption + "\n")
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT")),
+            CorpusChunk(uri, 1, caption, ("Spilling", "Architecture")),
+        ]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (prompt,) = world.prompts
+    assert "Figure 1" not in prompt[1]
+    assert report.image_only == ["Spilling > Architecture"]
+
+
+@pytest.mark.asyncio
+async def test_the_fake_model_rests_each_decision_on_a_second_sentence() -> None:
+    from server.llm import customer
+    from server.llm.fake import FakeLLMClient
+
+    w = Window(
+        [
+            CorpusChunk("d", 0, BODY, ("Spilling", "Final DISTINCT")),
+            CorpusChunk("d", 1, "One sentence only, no reason given.", ("Spilling", "Short")),
+        ]
+    )
+    with customer.for_org("o"):
+        res = await FakeLLMClient().complete(dx.system_prompt(3), dx.user_prompt(w))
+    (cand,) = dx.parse_candidates(res.text) or []
+    assert cand.outcome == "We spill into sorted runs like ORDER BY."
+    assert cand.reasoning == "A plain set on disk costs random reads."
+    assert dx.verbatim_failure(cand, [BODY]) == "" and not dx.restates_outcome(cand)
+
+
+@pytest.mark.asyncio
+async def test_a_long_sections_last_chunk_with_an_image_and_a_short_tail_is_sent(
+    monkeypatch,
+) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    tail = "![a long diagram name](figures/spill-merge-flow.png)\n\nThe merge reads each run once."
+    doc = DOC.replace(BODY, f"{BODY}\n\n{tail}")
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT")),
+            CorpusChunk(uri, 1, tail, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (prompt,) = world.prompts
+    assert "The merge reads each run once." in prompt[1]
+    assert report.image_only == ["Spilling > Architecture"]
+
+
+@pytest.mark.asyncio
+async def test_a_rewrapped_reasoning_under_a_reworded_key_replaces_the_old_row(
+    monkeypatch,
+) -> None:
+    first = _candidate()
+    world = _World(monkeypatch, [])
+    # Recorded when the document broke the line; DOC now has it on one line.
+    wrapped = {**_same_fields(first), "reasoning": _WRAPPED_REASONING}
+    world.record(_key(first), wrapped, files=[HEADER])
+    second = _candidate(scenario="spilling the final DISTINCT")
+    world.reply = [second]
+    report = await _run()
+    assert [r.action for r in report.records] == ["written"]
+    assert report.replaced == [f"{_key(first)} -> {_key(second)}"]
+    assert [d.memory_key for d in world.deletes] == [_key(first)]
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_row_whose_document_only_rewrapped_is_not_flagged(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    stored = {**_same_fields(c), "reasoning": _WRAPPED_REASONING}
+    world.record(_key(c), stored, pinned=True)
+    report = await _run()
+    assert [r.action for r in report.records] == ["unchanged"]
+    assert world.updates == [] and world.recorded == [] and report.flagged == []
+
+
+@pytest.mark.asyncio
+async def test_an_unpinned_own_row_whose_reasoning_only_rewrapped_is_unchanged(
+    monkeypatch,
+) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "reasoning": _WRAPPED_REASONING}, files=[HEADER])
+    report = await _run()
+    assert [r.action for r in report.records] == ["unchanged"]
+    assert world.recorded == [] and world.updates == [] and world.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_a_row_with_an_outcome_whose_reasoning_only_rewrapped_is_not_tagged(
+    monkeypatch,
+) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    fields = {**_same_fields(c), "reasoning": _WRAPPED_REASONING, "realized_outcome": "no gaps"}
+    # Its files are stale, so the row is not unchanged; the decision itself is.
+    world.record(_key(c), fields, files=[])
+    report = await _run()
+    assert [r.action for r in report.records] == ["outcome_known"]
+    assert world.recorded == [] and world.updates == [] and report.flagged == []
+
+
+@pytest.mark.asyncio
+async def test_one_reasoning_wrapped_apart_in_two_windows_is_written_once(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+    from server.llm import client as llm_client
+
+    first = _candidate()
+    second = _candidate(scenario="spilling the final DISTINCT")
+    world = _World(monkeypatch, [])
+    replies = [[first], [second]]
+
+    class _TwoWindows:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            return SimpleNamespace(text=json.dumps({"decisions": replies.pop(0)}), stop_reason="")
+
+    async def chunks(org, ns, uri):
+        wrapped = BODY.replace("sorted runs", "sorted\nruns")
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT")),
+            CorpusChunk(uri, 1, wrapped, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _TwoWindows())
+    report = await _run(window_chars=len(BODY) + 1)
+    assert report.windows == 2
+    assert [d.reason for d in report.dropped] == ["same decision as an earlier candidate"]
+    assert len(world.recorded) == 1
+
+
+def test_a_parent_section_over_a_captioned_picture_is_image_only() -> None:
+    doc = (
+        "# Spilling\n\n![flow](flow.png)\n\nFigure 1: the spill path.\n\n"
+        "## Final DISTINCT\n\n" + BODY + "\n\n"
+        "# Merging\n\n## Runs\n\n" + BODY + "\n"
+    )
+    # The parent with a picture is reported; a heading alone over subsections is not.
+    assert dx.image_only_sections(doc) == ["Spilling"]
+    # So is a parent over a picture alone, with no words at all.
+    bare = f"# Spilling\n\n![flow](flow.png)\n\n## Final DISTINCT\n\n{BODY}\n"
+    assert dx.image_only_sections(bare) == ["Spilling"]
+
+
+@pytest.mark.asyncio
+async def test_a_parent_sections_captioned_picture_is_not_sent(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    caption = "![flow](flow.png)\n\nFigure 1: the spill path."
+    doc = f"# Spilling\n\n{caption}\n\n## Final DISTINCT\n\n{BODY}\n"
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, caption, ("Spilling",)),
+            CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (prompt,) = world.prompts
+    assert "Figure 1" not in prompt[1] and "[section: Spilling > Final DISTINCT]" in prompt[1]
+    assert report.image_only == ["Spilling"]
+
+
+@pytest.mark.parametrize(
+    ("body", "image"),
+    [
+        ("[image]", True),
+        ("[Image 3]", True),
+        ("[image: the spill path]", True),
+        ("[image1]", True),
+        ("[image_1]", True),
+        ("[images]", True),
+        ("[pictures]", True),
+        ("[image tiles](tiles.md)", False),
+        ("[image][1]", False),
+        ("[image]: x.png", False),
+        ("[imagine the merge]", False),
+        ("[the diagram][image]", False),
+        ("[image tiles]", False),
+        ("[images and charts are in the appendix]", False),
+    ],
+)
+def test_an_image_placeholder_stands_alone(body: str, image: bool) -> None:
+    # A caption-length text beside it decides: with a placeholder the body is image-only.
+    assert dx.image_only(f"{body}\n\nThe spill path.") is image
+
+
+def test_a_preamble_or_a_headingless_document_of_a_picture_is_image_only() -> None:
+    badge = "![build](badge.svg)\n\nBuild status for the spill code."
+    assert dx.image_only_sections(f"{badge}\n\n# Spilling\n\n{BODY}\n") == [""]
+    assert dx.image_only_sections(badge) == [""]
+    assert dx.image_only_sections(f"Intro line.\n\n# Spilling\n\n{BODY}\n") == []
+    assert dx.image_only_sections(BODY) == []
+
+
+@pytest.mark.asyncio
+async def test_a_badge_and_caption_preamble_is_not_sent_and_is_reported(
+    monkeypatch, capsys
+) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    badge = "![build](badge.svg)\n\nBuild status for the spill code."
+    doc = f"{badge}\n\n{DOC}"
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, badge, ()),
+            CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (prompt,) = world.prompts
+    assert "Build status" not in prompt[1]
+    assert report.image_only == ["", "Spilling > Architecture"]
+    cli.print_report(report)
+    assert "image-only, rationale not extracted: (untitled)" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_chunks_stored_with_no_section_path_are_judged_on_their_own_text(
+    monkeypatch,
+) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    badge = "![build](badge.svg)\n\nBuild status for the spill code."
+    doc = f"{badge}\n\n{DOC}"
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        # Chunked when no heading was seen: every chunk has the preamble's empty path.
+        return [CorpusChunk(uri, 0, badge, ()), CorpusChunk(uri, 1, BODY, ())]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (prompt,) = world.prompts
+    assert "Build status" not in prompt[1] and BODY in prompt[1]
+    assert report.image_only == ["", "Spilling > Architecture"]
+
+
+_CI_URL = "https://ci.example.com/org/spill/actions/workflows/ci.yml"
+_LINKED_BADGE = f"[![build](badge.svg)]({_CI_URL})"
+
+
+@pytest.mark.parametrize(
+    ("body", "image_only"),
+    [
+        ("![diagram][fig1]\n\nFigure 1: the spill path.", True),
+        # A shortcut reference is not read as an image: it looks like a macro.
+        ("![spill flow]\n\nFigure 1: the spill path.", False),
+        ("Use vec![0; n]: a fixed array overflows the stack.", False),
+        ("    let buf = vec![0u8; 4096];\n\nAllocate the buffer once per block.", False),
+        # Its link target, left over, would read as more than a caption.
+        (f"{_LINKED_BADGE}\n\nBuild status for the spill code.", True),
+        (
+            f'<a href="{_CI_URL}"><img src="badge.svg"></a>\n\nBuild status for the spill code.',
+            True,
+        ),
+        (f"[![b][badge]]({_CI_URL})\n\nBuild status for the spill code.", True),
+        ('<img src="flow.png" alt="flow">\n\nFigure 1: the spill path.', True),
+        # A comparison or a generic is no tag: the decision beside the diagram is text.
+        (
+            "![flow](flow.png)\n\nSpill once the block count is < 10k and memory use is > 80% "
+            "of the limit, so the merge stays sequential.",
+            False,
+        ),
+        # A link is no image: a short sentence with one is text.
+        ("See [the merge notes](https://example.com/notes) for why runs are sorted.", False),
+    ],
+)
+def test_a_caption_is_counted_without_its_markup(body: str, image_only: bool) -> None:
+    assert dx.image_only(body) is image_only
+
+
+def test_only_tag_shaped_markup_is_removed_from_a_caption() -> None:
+    text = '<p align="center">Returns Option<A>, Map<a, b> when x < 10k and y > 80%.</p>'
+    assert dx.caption_text(text) == "Returns Option<A>, Map<a, b> when x < 10k and y > 80%."
+
+
+@pytest.mark.asyncio
+async def test_a_linked_badge_and_caption_preamble_is_not_sent(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    badge = f"{_LINKED_BADGE}\n\nBuild status for the spill code."
+    doc = f"{badge}\n\n{DOC}"
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, badge, ()),
+            CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (prompt,) = world.prompts
+    assert "Build status" not in prompt[1]
+    assert report.image_only == ["", "Spilling > Architecture"]
+
+
+@pytest.mark.asyncio
+async def test_a_headingless_document_of_a_captioned_picture_is_not_sent(
+    monkeypatch, capsys
+) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    picture = "![flow](flow.png)\n\nFigure 1: the spill path."
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=picture)
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, picture, ())]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    assert world.prompts == [] and report.windows == 0
+    assert report.image_only == [""]
+    cli.print_report(report)
+    assert "image-only, rationale not extracted: (untitled)" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_reason_the_document_rewrapped_is_no_change(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    # Stored on one line, as decision.record keeps an alternative.
+    world.record(_key(c), _same_fields(c), files=[HEADER])
+
+    async def chunks(org, ns, uri):
+        wrapped = BODY.replace("costs random reads", "costs random\nreads")
+        return [CorpusChunk(uri, 0, wrapped, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    assert [r.action for r in report.records] == ["unchanged"]
+    assert world.recorded == [] and world.updates == [] and world.deletes == []
+
+
+def test_a_preamble_of_linked_badges_and_a_caption_is_image_only() -> None:
+    badges = " ".join(f"[![b{i}](b{i}.svg)]({_CI_URL}/{i})" for i in range(8))
+    caption = "Build, lint, docs and release status for the spill."
+    assert len(caption) == 51
+    assert dx.image_only_sections(f"{badges}\n\n{caption}\n\n# Spilling\n\n{BODY}\n") == [""]
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_candidate_with_a_rewrapped_quote_names_the_quotes_section(
+    monkeypatch,
+) -> None:
+    from server.knowledge.app import document_reads
+
+    # The quote is the second section's, re-wrapped; the reasoning is in no chunk.
+    cand = _candidate(
+        quote="A plain set on disk costs random reads.", reasoning="Sorted runs are faster."
+    )
+    world = _World(monkeypatch, [cand])
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, "We spill into sorted runs like ORDER BY.", ("Spilling", "One")),
+            CorpusChunk(uri, 1, "A plain set on disk\ncosts random reads.", ("Spilling", "Two")),
+        ]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    assert world.recorded == []
+    (d,) = report.dropped
+    assert (d.section, d.reason) == ("Spilling > Two", "reasoning is not in the document text")
+
+
+@pytest.mark.parametrize(
+    ("body", "image_only"),
+    [
+        ("Embed `![d](f.png)` in the page.", False),
+        ("```md\n![d](f.png)\n```\n\nEmbed it so.", False),
+        ("Embed it as `<img src=x>` in the page.", False),
+        ("![d](f.png)\n\nFigure 1: the spill path, see `spill()`.", True),
+    ],
+)
+def test_image_markup_inside_code_is_text(body: str, image_only: bool) -> None:
+    assert dx.image_only(body) is image_only
+
+
+def test_image_markup_inside_code_makes_no_section_image_only() -> None:
+    fence = "```\n![]()\n```"
+    doc = f"`![1]`\n\n# Spilling\n\n{fence}\n\n## Final DISTINCT\n\n{BODY}\n"
+    assert dx.image_only_sections(doc) == []
+
+
+@pytest.mark.asyncio
+async def test_a_captioned_picture_in_a_preamble_with_text_is_sent(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    picture = "![flow](flow.png)\n\nFigure 1: the spill path."
+    # The preamble as a whole is a picture, its caption and a paragraph: not image-only.
+    doc = f"{picture}\n\n{BODY}\n\n{DOC}"
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, picture, ()), CorpusChunk(uri, 1, BODY, ())]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    assert dx.image_only(picture) and "" not in report.image_only
+    (prompt,) = world.prompts
+    assert "Figure 1: the spill path." in prompt[1] and BODY in prompt[1]

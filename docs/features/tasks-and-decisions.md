@@ -364,14 +364,34 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   the document, and asks the model to reuse that wording for a decision the text still states, so a re-run reads the
   same keys. Category and scenario are shown whole, since the key is built from them; an outcome over 160 characters
   is shortened and ends in `…`.
+- **Prompt**: the model is asked for the reason the text gives for each choice (the cost, constraint or failure it
+  avoids), never the decision restated, for nothing from a section that sums up other sections, and never to give as
+  the outcome what the text marks as former, replaced or superseded (an old default, a previous behaviour).
+- **Image-only sections**: a section whose own text has no words (a heading alone or over an image), or holds an image
+  and at most 80 characters of other text (a caption), is not sent to the model and gets the line
+  `image-only, rationale not extracted`; a heading alone over its subsections is not one. The text above the first
+  heading, or a document with no heading, is skipped the same way when it holds an image and at most a caption; it is
+  reported as `(untitled)`. An image is a Markdown image (inline, or by reference as `![diagram][fig1]`; a shortcut
+  reference such as `![spill flow]` is not read, since it looks like a macro such as `vec![0; n]`), an HTML image or a
+  placeholder such as `[image]`, `[Image 3]` or `[image: ...]`. The caption's characters are counted without HTML tags,
+  link targets, reference labels, the empty brackets a link around an image leaves, and bare URLs, so a badge wrapped in
+  a link adds none; a tag is a lower-case name on one line, so `x < 10k` and `Option<A>` stay text. Image markup inside
+  code (`![d](f.png)` or `<img>` in a code span or block) is text. A chunk with no words is not sent either.
 - **Verbatim check**: the model returns, per decision, a `quote` and a `reasoning` and a reason for each rejected
-  option. A candidate is kept only when its quote, its reasoning and every reason are each an exact substring of one
-  chunk. Each is at least 12 characters long: a shorter span ("We", "the") is in every document, so a decision resting
-  on it could never retire. At most `--max-per-section` (default 3) are kept per section. A candidate whose category
-  or scenario holds no letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with one key, or
-  with one outcome and reasoning (overlapping chunks give two windows the same text), the first is kept. A section
-  with no words (a heading alone or over an image) is not sent to the model and gets the line
-  `image-only, rationale not extracted`.
+  option. A candidate is kept only when its quote, its reasoning and every reason are each a substring of one chunk,
+  with every run of whitespace read as one space: a model copying a span drops line breaks and doubled spaces. What is
+  recorded is the chunk's own span, line breaks and all. Each is at least 12 characters long: a shorter span ("We",
+  "the") is in every document, so a decision resting on it could never retire. At most `--max-per-section` (default 3)
+  are kept per section. A candidate whose category or scenario holds no letter or digit from a-z, 0-9 has no key and is
+  dropped. Of two candidates with one key, or with one outcome and reasoning (overlapping chunks give two windows the
+  same text), the first is kept.
+- **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
+  `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
+  punctuation, as their English (Snowball) stems, so `stored` meets `store` and `running` meets `run`. Filler words
+  (`we`, `the`, `will`, `decided`, `chose`, `use`, `instead`, `because` and the like) are skipped in any form: "We
+  decided on spilling into sorted runs." restates the outcome `spill into sorted runs`; "Sorted runs avoid random reads
+  on disk." gives a reason. An outcome that carries its own reason leaves the reasoning nothing to add, so the candidate
+  is dropped, which is why the prompt asks for the outcome without its reason.
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.
@@ -388,9 +408,11 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   name defined in several files is printed as unresolved too, for a human to pick the file.
 - **Reconcile**: the document says otherwise only when a verbatim field differs: the reasoning, or the set of rejected
   options' reasons, each matched as a prefix where `decision.record` cut a long alternative at its 300-character cap.
-  The category, scenario, outcome and option wording are the model's, and a change there alone is no change. A row
-  counts as confirmed when it is pinned or attested in its current form (`memory.verify`), the rule `memory.for_file`
-  marks `(unconfirmed)` by. By the row the key's active record belongs to:
+  The category, scenario, outcome and option wording are the model's, and a change there alone is no change. Nor is a
+  change in whitespace alone (a re-wrapped line): the row keeps its stored span, which the retire step still finds,
+  and `decision.record` stores rejected options' reasons on one line already. A row counts as confirmed when it is
+  pinned or attested in its current form (`memory.verify`), the rule `memory.for_file` marks `(unconfirmed)` by. By
+  the row the key's active record belongs to:
   - **The extractor's own, unconfirmed, from this document**: same verbatim fields and the same `files`,
     `source_resource_id` and `constraint` tag: no write. A verbatim field differs, or only those row fields do (a file
     that resolves once the code is indexed, a renamed heading): recorded again (the record is superseded, history
@@ -418,12 +440,13 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   its re-record is replaced with the rest of the record; the tag write's precondition covers the value, not a
   tags-only change in the gap.
 - **Retire**: an unconfirmed `loom-decisions` row citing the document whose reasoning is no longer in the document's
-  text is deleted with `memory.delete_version`, which also retires its record; a confirmed one, or one whose outcome
-  `decision.outcome` recorded, is tagged `source-changed` instead. The reasoning read is the extractor's own record: a
-  key whose active record another identity wrote is left alone. An unconfirmed row whose outcome and reasoning this
-  run recorded under another key (the model worded the scenario differently) is deleted too, so the decision is not
-  served twice, unless its realized outcome is recorded; another decision resting on the same reasoning has another
-  outcome and stays. Otherwise a row whose reasoning is still there stays, whether or not the run emitted it again.
+  text, whitespace read as in the verbatim check, is deleted with `memory.delete_version`, which also retires its
+  record; a confirmed one, or one whose outcome `decision.outcome` recorded, is tagged `source-changed` instead. The
+  reasoning read is the extractor's own record: a key whose active record another identity wrote is left alone. An
+  unconfirmed row whose outcome and reasoning (whitespace aside) this run recorded under another key (the model worded
+  the scenario differently) is deleted too, so the decision is not served twice, unless its realized outcome is
+  recorded; another decision resting on the same reasoning has another outcome and stays. Otherwise a row whose
+  reasoning is still there stays, whether or not the run emitted it again.
 - **Citing the document**: a row cites it when its `source_resource_id` starts `knowledge:<namespace>/<source_uri>#`,
   so a heading holding `#` (`C# bindings`) is no obstacle, unless a document `<source_uri>#<part>` it also starts with
   was ever ingested in the namespace: `doc#v2#Intro` cites `doc#v2` once that document exists.
