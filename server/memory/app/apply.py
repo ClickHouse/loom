@@ -50,7 +50,7 @@ from server.memory.api.models_apply import (
 )
 from server.memory.api.models_crud import MemoryDeleteInput, MemoryTouchInput
 from server.memory.api.models_lock import MemoryLockInput
-from server.memory.api.models_search import SEARCH_TOP_K_MAX, MemorySearchInput
+from server.memory.api.models_search import MemorySearchInput
 from server.memory.domain import lock as _lock
 from server.memory.domain.search_types import hit_row_key, names_row
 from server.memory.store.inserts import insert_memory_versions
@@ -106,6 +106,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             if row is not None:
                 rows.append(row)
         return rows, False
+    limit = int(input.limit)
     if target.filter:
         f = target.filter
         where = [
@@ -122,7 +123,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             "agent": input.agent,
             "uid": input.user_id,
             "sid": input.session_id,
-            "lim": int(input.limit) + 1,
+            "lim": limit + 1,
         }
         if f.memory_type:
             where.append("memory_type = {mt:String}")
@@ -159,14 +160,16 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             params=params,
         )
         rows = [memory_repo._hydrate(r) for r in raw]
-        truncated = len(rows) > int(input.limit)
-        return rows[: int(input.limit)], truncated
+        truncated = len(rows) > limit
+        return rows[:limit], truncated
     # search
     from server.memory.app.search import handle_memory_search
     from server.memory.app.search.scoring import per_key_fetch
 
     assert target.search is not None
-    # No `session_id`: a session filter would leave out a long value's set chunks.
+    # No `session_id`: a session filter would leave out a long value's set chunks. One row
+    # past `limit` says `truncated`.
+    top_k = per_key_fetch(limit + 1)
     out = await handle_memory_search(
         MemorySearchInput(
             org=input.org,
@@ -174,7 +177,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             agent=input.agent,
             user_id=input.user_id,
             query=target.search.query,
-            top_k=per_key_fetch(int(input.limit) + 1),  # one past `limit` says `truncated`
+            top_k=top_k,
             namespace_scope="this",
         )
     )
@@ -182,7 +185,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
     seen: set[str] = set()
     mine = (input.agent, input.user_id, input.session_id)
     for hit in out.results:
-        score = float(getattr(hit, "score", 0.0) or 0.0)
+        score = float(hit.similarity)
         if target.search.min_score is not None and score < target.search.min_score:
             continue
         key = hit.memory_key
@@ -199,10 +202,14 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
         )
         if row is not None:
             rows.append(row)
-            if len(rows) > int(input.limit):  # one row past `limit`: more matched
-                return rows[: int(input.limit)], True
-    # a full window may hold back rows of the caller's past it
-    return rows, len(out.results) >= SEARCH_TOP_K_MAX
+            if len(rows) > limit:  # one row past `limit`: more matched
+                return rows[:limit], True
+    # a full window may hold back rows of the caller's past it, unless its weakest hit
+    # already fell below `min_score` (hits come best first)
+    full = len(out.results) >= top_k
+    floor = target.search.min_score
+    weakest = float(out.results[-1].similarity) if out.results else 0.0
+    return rows, full and (floor is None or weakest >= floor)
 
 
 # ---------------------------------------------------------------- execute

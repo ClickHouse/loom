@@ -387,7 +387,6 @@ def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
         {"password": 'ab"cd12345'},
         {"password": "config/db/pass1"},  # a relative path is not a reference
         {"db_pwd": "hunter2xyz9"},
-        "PWD=/workspace1",  # in free text a bare PWD is still an assignment
     ],
 )
 def test_a_credential_under_a_credential_key_reads_high(value: object) -> None:
@@ -395,6 +394,13 @@ def test_a_credential_under_a_credential_key_reads_high(value: object) -> None:
     assert value_reads_high(value)
     assert reads_high(stored)  # a raw chunk of the stored object
     assert high_spans(stored)
+
+
+def test_a_working_directory_as_free_text_still_reads_high() -> None:
+    # a known false positive: the assignment pattern takes `PWD=` as a password, though the
+    # same line under a JSON `PWD` key is a working directory and stays unlabelled
+    assert detect_sensitivity("PWD=/workspace1") == "high"
+    assert detect_sensitivity(detector_text({"PWD": "/workspace1"})) == ""
 
 
 @pytest.mark.parametrize(

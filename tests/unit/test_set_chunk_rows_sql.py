@@ -4,10 +4,12 @@ value cuts that chunk."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
+from server.core.ch_params import FIELD_BYTES, chunks
 from server.memory.app.retrieval.pool import SetChunkRow, _set_chunk_rows
 from server.memory.app.set_chunks import plan_set_chunks, set_chunk_identities
 from server.memory.domain.search_types import SearchHit
@@ -187,10 +189,6 @@ async def test_a_hard_category_decides_whether_the_row_is_served(
 @pytest.mark.asyncio
 async def test_the_writer_keys_fit_one_form_field() -> None:
     # a chunk of a writer and key past the field names no row and drops
-    from dataclasses import replace
-
-    from server.core.ch_params import FIELD_BYTES, chunks
-
     asked: list[dict[str, Any]] = []
 
     class _CH:

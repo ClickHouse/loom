@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from server.memory.api.models_apply import MemoryApplyInput
 from server.memory.app.apply_ops import handle_memory_apply
 from server.memory.store import MemoryRow
+from server.settings import settings
 
 _NOW = datetime(2026, 9, 12, 12, 0, 0)
 _ID = {"org": "test", "namespace": "personal", "agent": "cursor"}
@@ -343,8 +344,6 @@ async def test_search_target_touches_only_the_callers_identity(
     assert [r.memory_key for r in out.rows] == ["rec"] and out.truncated is True
     assert reads == [("cursor", "-", "-", "rec"), ("cursor", "-", "-", "both")]
     # with a per-key cap of 1 the window still reaches one past `limit`
-    from server.settings import settings
-
     monkeypatch.setattr(settings, "memory_search_per_key_cap", 1)
     asked.clear()
     out = await handle_memory_apply(
@@ -353,6 +352,54 @@ async def test_search_target_touches_only_the_callers_identity(
         )
     )
     assert asked[0].top_k == 2 and out.truncated is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("other_rows", "min_score", "truncated"),
+    [(32, None, True), (31, None, False), (32, 0.95, False)],  # a floor past the weakest hit
+)
+async def test_a_full_search_window_may_hold_more_of_the_callers_rows(
+    monkeypatch: pytest.MonkeyPatch, other_rows: int, min_score: float | None, truncated: bool
+) -> None:
+    # limit 10 asks for 33 hits; a full window of other owners' rows says more may be past it
+    from server.memory.api.models_search import _MemorySearchHit
+
+    def hit(key: str, agent: str, similarity: float) -> Any:
+        h = _MemorySearchHit(
+            memory_key=key,
+            memory_type="semantic",
+            content_excerpt=key,
+            distance=1 - similarity,
+            similarity=similarity,
+        )
+        h._row_identity = (agent, "-", "-")
+        return h
+
+    hits = [
+        hit("mine", "cursor", 1.0),
+        *(hit(f"k{i}", "other-agent", 0.9) for i in range(other_rows)),
+    ]
+
+    async def _search(_: Any) -> Any:
+        return SimpleNamespace(results=hits)
+
+    async def _get_by_key(identity: Any, key: str, **_: Any) -> MemoryRow | None:
+        return _row(key, agent=identity.agent)
+
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
+    monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+    out = await handle_memory_apply(
+        MemoryApplyInput(
+            **_ID,
+            target={"search": {"query": "q", "min_score": min_score}},
+            action="delete",
+            reason="r",
+            limit=10,
+        )
+    )
+    assert [r.memory_key for r in out.rows] == ["mine"] and out.truncated is truncated
 
 
 def test_apply_op_is_a_writer_op_and_audited() -> None:
