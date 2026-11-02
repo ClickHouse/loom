@@ -9,6 +9,10 @@
 4. Pinned short-circuit: a non-pinned write conflicting with a pinned
    peer is rejected with 409 PINNED_CONFLICT — pinned is a write-time
    invariant, not a UI badge.
+
+A KEY_IDENTIFIED_TYPES row (a decision) skips the merge, duplicate and
+refines steps and the pinned short-circuit: a row under another key is
+another decision, so every close peer is only a conflict.
 """
 
 from __future__ import annotations
@@ -41,6 +45,7 @@ from server.memory.domain.conflicts import (
     substitution_result,
     templated_substitution,
 )
+from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 from server.memory.store import conflicts as _conflicts_repo
 from server.memory.store.conflict_candidates import (
@@ -543,7 +548,9 @@ async def check_on_commit(
         rows = []
     else:
         rows = await _peer_rows(ch, params, scope)
-    if candidate_rows is None:  # a bulk caller's rows carry its pinned arm already
+    keyed = memory_type in KEY_IDENTIFIED_TYPES
+    # A bulk caller's rows carry its pinned arm already; a decision needs none.
+    if candidate_rows is None and not keyed:
         rows += await _foreign_pinned_rows(ch, params, scope, rows)
     if not rows:
         return ConflictResult(verdict="clear", peers=[])
@@ -559,9 +566,12 @@ async def check_on_commit(
     if not rows:
         return ConflictResult(verdict="clear", peers=[])
 
-    new_canonical = canonical(new_value)
     all_peers, foreign = _split_by_read_scope([_peer_of(r) for r in rows])
     peers = [p for p in all_peers if p.similarity >= threshold]
+    if keyed:
+        verdict = "conflict" if peers else "clear"
+        return ConflictResult(verdict=verdict, peers=peers, review=bool(all_peers))
+    new_canonical = canonical(new_value)
     # A pinned row outside the writer's read scope still blocks it.
     foreign_blocker = next((p for p in foreign if p.pinned and p.similarity >= threshold), None)
     if not peers and foreign_blocker is None:

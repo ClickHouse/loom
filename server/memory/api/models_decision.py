@@ -17,6 +17,9 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from server.core.naming import SENTINEL
+from server.memory.api.models_common import FileRefs
+from server.memory.domain.provenance import DeclaredSourceClass
+from server.operations.base import MCP_HIDDEN
 
 
 class DecisionRecordInput(BaseModel):
@@ -31,7 +34,8 @@ class DecisionRecordInput(BaseModel):
     # category + scenario identify the decision: re-deciding the same scenario
     # supersedes the earlier record (history keeps it).
     category: str = Field(min_length=1, max_length=120)
-    # The situation that needed deciding; it is what `decision.precedents` matches.
+    # The situation that needed deciding; `decision.precedents` matches a query against
+    # the decision's statement, which includes the start of the scenario.
     scenario: str = Field(min_length=1, max_length=2000)
     # Why this outcome was chosen.
     reasoning: str = Field(min_length=1, max_length=4000)
@@ -56,21 +60,30 @@ class DecisionRecordInput(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=16)
     # Real-world time the decision took effect; None = now.
     valid_at: datetime | None = None
+    # The repo files this decision governs (repo-relative path or bare filename);
+    # memory.for_file serves it before an edit of them. Unset = detected from the
+    # decision's text; a rewrite that detects none keeps the row's; [] clears.
+    files: FileRefs | None = None
+    # Declare that this decision was derived from other content (`derived`) or came
+    # from outside (`external`, `imported`). The server decides every other
+    # class from the token and the operation; a body may only downgrade.
+    source_class: DeclaredSourceClass | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
+    # The file path, document id or URL this decision was taken from, cited on its hits.
+    source_resource_id: str = ""
 
 
 class DecisionRecordOutput(BaseModel):
-    # The decision's key, derived from category + scenario, to pass to `decision.outcome` and
-    # `decision.chain`; after a merge, the key memory.set merged it into ("" if that row can
-    # no longer be read).
+    # The decision's key, derived from category + scenario; pass it to
+    # `decision.outcome` and `decision.chain`.
     memory_key: str
-    # The id of the `decision` record version written; "" after a merge.
+    # The id of the `decision` record version written.
     record_id: str
     # True when an active decision for the same category + scenario existed
     # and is now superseded by this one.
     superseded_prior: bool = False
     # How many `caused` / `influenced` edges were written; a failed link is skipped.
     edges_written: int = 0
-    # Plain-text hint naming the follow-up operations, or why nothing was written after a merge.
+    # Plain-text hint naming the follow-up operations.
     next: str = ""
 
 
@@ -87,7 +100,7 @@ class DecisionRow(BaseModel):
     realized_outcome: str = ""
     success: bool | None = None
     made_at: str = ""
-    # Precedent search only: cosine similarity of the scenario to the query.
+    # Precedent search only: cosine similarity of the decision's statement to the query.
     similarity: float = 0.0
 
 
@@ -106,7 +119,7 @@ class DecisionPrecedentsInput(BaseModel):
 
 
 class DecisionPrecedentsOutput(BaseModel):
-    # Active past decisions, most similar scenario first.
+    # Active past decisions, the most similar decision statement first.
     precedents: list[DecisionRow]
     # The embedder the underlying memory search used.
     embedding_model: str = ""
@@ -160,10 +173,7 @@ class DecisionOutcomeInput(BaseModel):
 class DecisionOutcomeOutput(BaseModel):
     # The decision's key, echoed.
     memory_key: str
-    # False when memory.set merged the revision into another decision of the same text
-    # and nothing was written; a missing decision answers 404 instead.
+    # Always true: a missing decision answers 404 instead.
     updated: bool
     # memories credited through the run ledger (run.complete memories_used).
     memories_credited: int = 0
-    # Why nothing was written when `updated` is false; "" otherwise.
-    next: str = ""

@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from loom.memory import SourceClass
 from loom.run import current_run_id
 
 if TYPE_CHECKING:
@@ -44,8 +45,17 @@ class DecisionClient:
         session_id: str | None = None,
         user_id: str | None = None,
         valid_at: datetime | None = None,
+        files: Sequence[str] | None = None,
+        source_resource_id: str = "",
+        source_class: SourceClass | None = None,
     ) -> dict[str, Any]:
-        """Returns {memory_key, record_id, superseded_prior, edges_written, next}."""
+        """Returns {memory_key, record_id, superseded_prior, edges_written, next}.
+
+        `files`: the repo files this decision governs; `memory.for_file` serves it
+        before an edit of them. `source_resource_id`: the document, file or URL the
+        decision was taken from. `source_class`: "derived", "external" or
+        "imported" to declare where it came from; a request may only downgrade.
+        """
         payload: dict[str, Any] = {
             "org": self._agent.org,
             "namespace": self._agent.namespace,
@@ -69,6 +79,14 @@ class DecisionClient:
             payload["user_id"] = user_id
         if valid_at is not None:
             payload["valid_at"] = valid_at.isoformat()
+        if isinstance(files, str):
+            raise TypeError("files takes a list of paths, not one string")
+        if files is not None:
+            payload["files"] = list(files)
+        if source_resource_id:
+            payload["source_resource_id"] = source_resource_id
+        if source_class is not None:
+            payload["source_class"] = source_class
         return await self._agent.transport.post("/v1/decision.record", payload)
 
     async def precedents(

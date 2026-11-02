@@ -2604,7 +2604,6 @@ export interface DecisionOutcomeOutput {
   memory_key: string;
   updated: boolean;
   memories_credited?: number;
-  next?: string;
 }
 
 export interface DecisionPrecedentsInput {
@@ -2640,6 +2639,9 @@ export interface DecisionRecordInput {
   influenced_by?: string[];
   tags?: string[];
   valid_at?: string | null;
+  files?: string[] | null;
+  source_class?: "derived" | "external" | "imported" | null;
+  source_resource_id?: string;
 }
 
 export interface DecisionRecordOutput {

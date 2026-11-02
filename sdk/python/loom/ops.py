@@ -8789,7 +8789,6 @@ class DecisionOutcomeOutput(TypedDict, total=False):
     memory_key: Required[str]
     updated: Required[bool]
     memories_credited: NotRequired[int]
-    next: NotRequired[str]
 
 
 class DecisionPrecedentsInput(TypedDict, total=False):
@@ -8835,6 +8834,9 @@ class DecisionRecordInput(TypedDict, total=False):
     influenced_by: NotRequired[list[str]]
     tags: NotRequired[list[str]]
     valid_at: NotRequired[Optional[str]]
+    files: NotRequired[Optional[list[str]]]
+    source_class: NotRequired[Optional[Literal["derived", "external", "imported"]]]
+    source_resource_id: NotRequired[str]
 
 
 class DecisionRecordBody(TypedDict, total=False):
@@ -8855,6 +8857,9 @@ class DecisionRecordBody(TypedDict, total=False):
     influenced_by: NotRequired[list[str]]
     tags: NotRequired[list[str]]
     valid_at: NotRequired[Optional[str]]
+    files: NotRequired[Optional[list[str]]]
+    source_class: NotRequired[Optional[Literal["derived", "external", "imported"]]]
+    source_resource_id: NotRequired[str]
 
 
 class DecisionRecordOutput(TypedDict, total=False):

@@ -25,6 +25,12 @@ compare the new value with the active rows of the same `memory_type` in the name
 - Under `newest_wins`, a value of the same shape with a different fill ("The office
   lease ends in 2025" → "... 2027") is an update: the older row retires (`refines`).
 
+A `decision` row is identified by its key (category and scenario), not its text: in the
+write-time conflict check, a peer under another key is never a merge, a duplicate, a
+refinement or a pinned refusal, only a conflict ([decisions](../tasks-and-decisions.md#decisions)).
+A `memory.bulk_set` entry whose value is byte-identical to a live row under another key
+folds into that row whatever its type, a `decision` included.
+
 No verdict on the write calls an LLM. The [conflict resolver](#the-conflict-resolver)
 judges flagged and nearby pairs afterwards.
 
@@ -41,14 +47,14 @@ duplicate threshold follows the same order without the type step, ending at
 Every write answers with `conflict_verdict`, the `peers` it was judged against (closest
 first, at most five) and a `next` hint such as `memory.update(memory_key=<peer>, ...)`.
 
-| Verdict     | Meaning                                                                               | Row written                                                        |
-| ----------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `clear`     | Nothing close.                                                                        | Yes, `active`.                                                     |
-| `merge`     | The same fact after canonicalisation is already stored.                               | No. The stored row is reinforced; `noop=true`, `merged_into_key`.  |
-| `duplicate` | Near-identical to a peer but not canonically equal.                                   | Yes, `status='duplicate'` with `duplicate_of`.                     |
-| `conflict`  | Close to a peer but different.                                                        | Yes; both rows `conflicted` and cross-linked.                      |
-| `refines`   | Under `newest_wins`, the same statement with a different fill: an update of the peer. | Yes; the replaced peer is superseded.                              |
-| `rejected`  | Close to a pinned peer, or a changed value for a pinned key.                          | No. 409 `PINNED_CONFLICT` (a dry run returns the verdict instead). |
+| Verdict     | Meaning                                                                                         | Row written                                                        |
+| ----------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `clear`     | Nothing close.                                                                                  | Yes, `active`.                                                     |
+| `merge`     | The same fact after canonicalisation is already stored.                                         | No. The stored row is reinforced; `noop=true`, `merged_into_key`.  |
+| `duplicate` | Near-identical to a peer but not canonically equal.                                             | Yes, `status='duplicate'` with `duplicate_of`.                     |
+| `conflict`  | Close to a peer but different.                                                                  | Yes; both rows `conflicted` and cross-linked.                      |
+| `refines`   | Under `newest_wins`, the same statement with a different fill: an update of the peer.           | Yes; the replaced peer is superseded.                              |
+| `rejected`  | Close to a pinned peer (a `decision` excepted, see above), or a changed value for a pinned key. | No. 409 `PINNED_CONFLICT` (a dry run returns the verdict instead). |
 
 - Every verdict is deterministic and settled in the response.
 - `dry_run=true` runs the whole check and writes nothing.
@@ -74,14 +80,15 @@ Superseded rows are served only to reads that pass `include_superseded=true` (or
 `memory.pin` writes a fact and marks it pinned. A pin is a write-time rule, not a
 ranking hint:
 
-- A close write against a pinned peer is refused with 409 `PINNED_CONFLICT`;
-  `pinned_blocker_id` names the row.
+- A close write against a pinned peer is refused with 409 `PINNED_CONFLICT` (a
+  `decision` excepted, see above); `pinned_blocker_id` names the row.
 - A changed value for a pinned key is refused the same way unless the write itself pins.
 - A byte-identical restatement passes and keeps the pin.
 - In `memory.bulk_set`, an entry for a pinned key is skipped (`skipped_pinned`); one
-  close to a pinned peer is listed in `rejected_pinned`. Entries for one key settle in
-  order, as separate `memory.set` calls would: an entry that is refused or merged leaves
-  no value or pin for the next one, and repeating it gets the same verdict.
+  close to a pinned peer is listed in `rejected_pinned` (a `decision` excepted, see
+  above). Entries for one key settle in order, as separate `memory.set` calls would: an
+  entry that is refused or merged leaves no value or pin for the next one, and repeating
+  it gets the same verdict.
 
 To change a pinned value, call `memory.update` (keeps the pin) or `memory.pin` (re-pins).
 

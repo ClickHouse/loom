@@ -256,16 +256,37 @@ was `caused_by` or `influenced_by`. It writes:
 - a searchable memory row of type `decision` under the same key;
 - an edge from each `caused_by` / `influenced_by` key to the decision.
 
+The memory row's value is one statement, `Category: <category>. Scenario: <scenario>. Decided <outcome> because
+<reasoning>. Rejected: <alternative>; …`, then `Realized: …` once `decision.outcome` has recorded one. Search embeds
+and excerpts it and `memory.for_file` shows it. Each part is shortened to fit the embedded excerpt, the scenario
+most, because the pre-edit line shows the start of the statement and must reach the outcome. The excerpt is
+measured as the value is stored, JSON-encoded, where a non-ASCII character takes six or more, so a Cyrillic or CJK
+part keeps about a sixth as many characters as an ASCII one. The record keeps every field in full except the
+alternatives, each kept to its first 300 characters.
+
+- **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the
+  fields the statement is built from in full (not `decision_maker` or `run_id`, which the row never holds).
+- **Files**: `files` sets the row's files as on `memory.set`; unset, they are detected from the stored fields, never
+  from the shortened statement. `memory.for_file` serves the decision before an edit of a file it names.
+- **Source**: `source_resource_id` and `source_class` set those columns as on `memory.set`; `source_resource_id`
+  cites the document the decision was taken from.
+- **Outcome**: `decision.outcome` keeps the row's files, source, declared class and the caller's tags. It sets the
+  `decision` tags again and works out the server's `sensitivity:` and `attribute:` labels again.
+
+A decision is identified by its key, not its text. The write-time conflict check never merges a decision into another
+decision's row, files it as a duplicate of one, lets one replace it or lets a pinned one refuse it, however alike they
+read; a close decision under another key is flagged as a conflict. The conflict resolver may later retire one of a
+close pair it judges an update of the other; that is recorded as `memory.auto_supersede`, and `memory.restore` undoes
+it.
+
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
-(`superseded_prior=true`); history keeps it. When the writer of a pinned decision decides it again, the call is
-refused with 409 `PINNED_CONFLICT` and nothing is written; an admin unpins it with `memory.unpin` first. The pin
-guards only its writer's row: another identity's decision on the same scenario still supersedes the record. The new
-record holds only what the new decision states: fields it leaves out, and an earlier `realized_outcome` or `success`,
-are not carried over, whether it is written by `decision.record` or `memory.record.write`. A `decision.outcome`
-without `success` keeps the record's verdict. When another decision key already holds the same text, `memory.set`
-merges the row into it and nothing is written: `decision.record` answers that key (empty if that decision can no
-longer be read) with an empty `record_id` and no edges, and `decision.outcome` answers `updated=false`, credits no
-memories and names that key in `next` (or, when that decision can no longer be read, asks for the call again).
+(`superseded_prior=true`); history keeps it. A decision recorded again word for word writes the same statement, which
+`memory.set` takes as a restatement: it reinforces the row, and a pinned decision accepts it. When the writer of a
+pinned decision decides it otherwise, the call is refused with 409 `PINNED_CONFLICT` and nothing is written; an admin
+unpins it with `memory.unpin` first. The pin guards only its writer's row: another identity's decision on the same
+scenario still supersedes the record. The new record holds only what the new decision states: fields it leaves out,
+and an earlier `realized_outcome` or `success`, are not carried over, whether it is written by `decision.record` or
+`memory.record.write`. A `decision.outcome` without `success` keeps the record's verdict.
 
 The record holds the text of its last writer, the agent, user and session that recorded it, so a delete of that
 writer's decision row retires it; an expired row still counts as live. Another identity's row under the same key was
@@ -287,16 +308,19 @@ superseded in the record plane and does not keep the record.
 - **A record with no decision row**: `memory.record.write` on the `decision` schema writes the record alone.
   `decision.chain` serves it, and `decision.outcome` answers not-found for it; record decisions with `decision.record`.
 - **`decision.outcome`**: writes under the record's writer, keeping a pinned row's pin, and answers not-found when
-  the writer's row is not live. Its row write is conditional on the row it read: it answers 409
-  `PRECONDITION_FAILED` when the decision changes during the call or another conditional write holds the key, and 503
-  when the key's lease store is unreachable; call it again. The condition is on the row's value, not its pin: a
-  `memory.unpin` that lands between the outcome's read and its write is undone, as the outcome writes the row pinned
-  again.
+  the writer's row is not live. Its row write is conditional on the row it read: it answers 409 `PRECONDITION_FAILED`
+  when the decision changes during the call or another conditional write holds the key, and 503 when the key's lease
+  store is unreachable; call it again. A re-record that keeps the decision's text leaves the row's value as it was,
+  so the outcome also checks the writer's record before its row write and again before its record write, and answers
+  the same 409 when it moved; caught at the second check, the row holds the outcome's statement and outcome tags
+  until the call is made again, and that call counts as a restatement of the row. The condition is on the row's
+  value, not its pin: a `memory.unpin` that lands between the outcome's read and its write is undone, as the outcome
+  writes the row pinned again.
 
 | Operation             | Role   | Does                                                                                               |
 | --------------------- | ------ | -------------------------------------------------------------------------------------------------- |
 | `decision.record`     | writer | Record a decision and its causal edges.                                                            |
-| `decision.precedents` | viewer | Semantic search over past scenarios (at most 25), optionally by `category` or `with_outcome_only`. |
+| `decision.precedents` | viewer | Semantic search over past decisions (at most 25), optionally by `category` or `with_outcome_only`. |
 | `decision.chain`      | viewer | Walk causal edges `upstream`, `downstream` or `both`, up to 4 hops.                                |
 | `decision.outcome`    | writer | Record `realized_outcome` and `success`; credit or charge the memories the deciding run relied on. |
 

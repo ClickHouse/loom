@@ -40,6 +40,7 @@ def local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> KeptCH:
         *(ddl(t) for t in ("memory_record_fields", "memory_record_conflicts")),
         *(ddl(t) for t in ("memory_schemas", "memory_schema_fields")),
         ddl("operator_edges"),
+        *(ddl(t) for t in ("blacklist", "blacklist_version")),
     )
 
     @asynccontextmanager
@@ -97,7 +98,7 @@ def _set_into(ch: KeptCH, monkeypatch: pytest.MonkeyPatch, before: Any = None) -
             value=json.dumps(inp.value),
         )
         await ch.insert("loom.memory", [row])
-        return SimpleNamespace(version=row["version"], conflict_verdict="clear")
+        return SimpleNamespace(version=row["version"])
 
     monkeypatch.setattr("server.memory.app.write.handle_memory_set", _set)
     return seen
@@ -373,28 +374,22 @@ async def test_a_decision_row_written_above_the_tombstone_keeps_the_record(
 async def test_a_refused_memory_row_leaves_no_active_record(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The memory row is written first: when memory.set refuses (a pinned peer), the
+    # The memory row is written first: when memory.set refuses the write, the
     # record write is never reached, so no record says what the memory plane refused.
     from fastapi import HTTPException
 
     from server.memory.app import decision as h
 
-    # memory.set's refusal for a close pinned peer under another key, as it raises it.
-    peer_refusal = {
-        "code": "PINNED_CONFLICT",
-        "message": "write conflicts with a pinned memory ('m-1'); update the pinned row "
-        "explicitly via memory.update_by_id or unpin it first",
-        "pinned_blocker_id": "m-1",
-        "peer_ids": ["m-1"],
-    }
+    # memory.set's refusal of a locked key, as it raises it, reaches the caller unchanged.
+    locked = {"code": "LOCKED", "message": "memory.set: the key is locked"}
 
-    async def _pinned_conflict(_inp: Any) -> Any:
-        raise HTTPException(status_code=409, detail=peer_refusal)
+    async def _refused(_inp: Any) -> Any:
+        raise HTTPException(status_code=409, detail=locked)
 
-    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _pinned_conflict)
+    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _refused)
     with pytest.raises(HTTPException) as refused:
         await h.handle_decision_record(record_input(caused_by=[], influenced_by=[]))
-    assert refused.value.detail == peer_refusal
+    assert refused.value.detail == locked
     key = svc.decision_key("Deploy", "Roll back or hotfix the 26.5 image?")
     assert await h._decision_records(local, "o", "n", [key]) == {}
     assert await local.query_all("SELECT 1 FROM loom.memory_records") == []
@@ -544,7 +539,7 @@ async def test_a_delete_between_the_row_and_the_record_leaves_the_new_record_tom
     async def _set_then_delete(inp: Any) -> Any:
         await local.insert("loom.memory", [_memory_row(inp.agent, inp.memory_type, time.time_ns())])
         await _delete(inp.agent)
-        return SimpleNamespace(version=0, conflict_verdict="clear")
+        return SimpleNamespace(version=0)
 
     monkeypatch.setattr("server.memory.app.write.handle_memory_set", _set_then_delete)
     out = await h.handle_decision_record(
@@ -768,6 +763,154 @@ async def test_an_outcome_after_a_re_record_answers_a_conflict(
 
 
 @pytest.mark.asyncio
+async def test_an_outcome_after_a_same_text_re_record_answers_a_conflict(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A re-record under another run writes the same statement, so the row's hash does not
+    # move. Landing inside the outcome's row write, it is caught before the record: the
+    # record stays the re-record's, and the row holds the outcome's statement until a retry.
+    from server.core.errors import PreconditionFailedError
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    scenario = {"category": "deploy", "scenario": "Roll back or hotfix the image?"}
+    re_recorded = []
+
+    async def _re_record_inside_the_outcome(_call: int) -> None:
+        if "decision:outcome-known" in seen[-1].tags and not re_recorded:
+            re_recorded.append(True)
+            await h.handle_decision_record(
+                record_input(**scenario, run_id="r2", caused_by=[], influenced_by=[])
+            )
+
+    seen = _set_into(local, monkeypatch, before=_re_record_inside_the_outcome)
+    await h.handle_decision_record(record_input(**scenario, caused_by=[], influenced_by=[]))
+    with pytest.raises(PreconditionFailedError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    seed = await _seed_decision()
+    assert seed is not None and seed.run_id == "r2" and seed.realized_outcome == ""
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
+    row = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
+    assert row is not None and row.value.endswith("Realized: ok.")
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_after_a_re_record_before_its_write_writes_nothing(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The re-record lands between the outcome's read and its row write: the outcome is
+    # refused before it writes anything.
+    from server.core.errors import PreconditionFailedError
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    scenario = {"category": "deploy", "scenario": "Roll back or hotfix the image?"}
+    _set_into(local, monkeypatch)
+    await h.handle_decision_record(record_input(**scenario, caused_by=[], influenced_by=[]))
+    checked = h._checked_statement
+
+    async def _re_record_then_check(org: str, namespace: str, payload: Any, tags: Any) -> Any:
+        if payload.get("realized_outcome"):
+            await h.handle_decision_record(
+                record_input(**scenario, run_id="r2", caused_by=[], influenced_by=[])
+            )
+        return await checked(org, namespace, payload, tags)
+
+    monkeypatch.setattr(h, "_checked_statement", _re_record_then_check)
+    with pytest.raises(PreconditionFailedError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
+    row = await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE)
+    assert row is not None and "Realized" not in row.value
+    assert (await _seed_decision()).run_id == "r2"
+
+
+@pytest.mark.asyncio
+async def test_a_delete_before_the_outcome_writes_answers_not_found(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The writer deletes its row after the outcome read it and before the outcome writes.
+    from server.core.errors import NotFoundError
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+
+    _set_into(local, monkeypatch)
+    await h.handle_decision_record(
+        record_input(
+            category="deploy",
+            scenario="Roll back or hotfix the image?",
+            caused_by=[],
+            influenced_by=[],
+        )
+    )
+    checked = h._checked_statement
+
+    async def _delete_then_check(org: str, namespace: str, payload: Any, tags: Any) -> Any:
+        if payload.get("realized_outcome"):
+            await _delete("claude")
+        return await checked(org, namespace, payload, tags)
+
+    monkeypatch.setattr(h, "_checked_statement", _delete_then_check)
+    with pytest.raises(NotFoundError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    assert await _seed_decision() is None
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
+    assert await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE) is None
+
+
+@pytest.mark.asyncio
+async def test_a_delete_after_the_outcomes_row_write_answers_not_found(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The delete lands after the outcome's row write and before its record write: the
+    # record check finds no live writer, so the outcome writes no record back.
+    from server.core.errors import NotFoundError
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.app import decision as h
+    from server.memory.app import write
+
+    _set_into(local, monkeypatch)
+    write_row = write.handle_memory_set
+
+    async def _write_then_delete(inp: Any) -> Any:
+        out = await write_row(inp)
+        if "decision:outcome-known" in inp.tags:
+            await _delete("claude")
+        return out
+
+    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _write_then_delete)
+    await h.handle_decision_record(
+        record_input(
+            category="deploy",
+            scenario="Roll back or hotfix the image?",
+            caused_by=[],
+            influenced_by=[],
+        )
+    )
+    with pytest.raises(NotFoundError):
+        await h.handle_decision_outcome(
+            DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
+        )
+    assert await _seed_decision() is None
+    identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
+    assert await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE) is None
+
+
+@pytest.mark.asyncio
 async def test_an_outcome_whose_row_changed_answers_a_conflict(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -910,91 +1053,6 @@ async def test_a_busy_key_lease_refuses_the_outcome_as_it_is(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("merged_into", "hint"),
-    [
-        (
-            "decision:peer",
-            "memory.set merged this into decision:peer, a decision with the same text; nothing was written.",
-        ),
-        (
-            "",
-            "memory.set merged this into a decision that can no longer be read; nothing was written. Call decision.record again.",
-        ),
-    ],
-)
-async def test_a_decision_merged_into_another_key_writes_nothing(
-    local: KeptCH, monkeypatch: pytest.MonkeyPatch, merged_into: str, hint: str
-) -> None:
-    # memory.set found the same text under another decision key and stored no row: no record
-    # and no edges are written, and the answer names that key ("" when its row was not read).
-    import server.memory.app.ops as mops
-    from server.memory.app import decision as h
-
-    async def _merge(_inp: Any) -> Any:
-        return SimpleNamespace(version=0, conflict_verdict="merge", merged_into_key=merged_into)
-
-    async def _no_link(_inp: Any) -> Any:
-        raise AssertionError("an edge was written for a merged decision")
-
-    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _merge)
-    monkeypatch.setattr(mops, "handle_memory_link", _no_link)
-    out = await h.handle_decision_record(record_input())
-    assert (out.memory_key, out.record_id) == (merged_into, "")
-    assert (out.superseded_prior, out.edges_written) == (False, 0)
-    assert out.next == hint
-    assert await local.query_all("SELECT 1 FROM loom.memory_records") == []
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("merged_into", "hint"),
-    [
-        (
-            "decision:peer",
-            "memory.set merged this into decision:peer, a decision with the same text; nothing was written.",
-        ),
-        (
-            "",
-            "memory.set merged this into a decision that can no longer be read; nothing was written. Call decision.outcome again.",
-        ),
-    ],
-)
-async def test_an_outcome_merged_into_another_key_writes_and_credits_nothing(
-    local: KeptCH, monkeypatch: pytest.MonkeyPatch, merged_into: str, hint: str
-) -> None:
-    import server.memory.app.ops as mops
-    from server.memory.api.models_decision import DecisionOutcomeInput
-    from server.memory.app import decision as h
-
-    await _write_decision_rows(local, "claude", run_id="r1")
-    local.create(ddl("agent_runs"))
-    await local.insert(
-        "loom.agent_runs",
-        [{"org": "o", "namespace": "n", "run_id": "r1", "memories_used": ["runbook:rollback"]}],
-    )
-    credited: list[Any] = []
-
-    async def _merge(_inp: Any) -> Any:
-        return SimpleNamespace(version=0, conflict_verdict="merge", merged_into_key=merged_into)
-
-    async def _credit(inp: Any) -> Any:
-        credited.append(inp)
-        return SimpleNamespace(applied=len(inp.memory_keys))
-
-    monkeypatch.setattr("server.memory.app.write.handle_memory_set", _merge)
-    monkeypatch.setattr(mops, "handle_memory_outcome_run", _credit)
-    out = await h.handle_decision_outcome(
-        DecisionOutcomeInput(
-            org="o", namespace="n", memory_key=_KEY, realized_outcome="ok", success=True
-        )
-    )
-    assert (out.updated, out.memories_credited, credited) == (False, 0, [])
-    assert out.next == hint
-    assert await _history() == ["active"]
-
-
-@pytest.mark.asyncio
 async def test_a_delete_the_write_fence_catches_answers_not_found(
     local: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1041,7 +1099,7 @@ def _set_with_pin_guard(ch: KeptCH, monkeypatch: pytest.MonkeyPatch) -> None:
         row = _memory_row(inp.agent, inp.memory_type, time.time_ns())
         row.update(pinned=inp.pinned, value=json.dumps(inp.value), memory_key=inp.memory_key)
         await ch.insert("loom.memory", [row])
-        return SimpleNamespace(version=row["version"], conflict_verdict="clear")
+        return SimpleNamespace(version=row["version"])
 
     monkeypatch.setattr("server.memory.app.write.handle_memory_set", _set)
 

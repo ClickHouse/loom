@@ -50,7 +50,18 @@ from server.memory.store.inserts import insert_memory_versions
 log = logging.getLogger(__name__)
 
 
-def _count_write(namespace: str, outcome: str) -> None:
+def count_attribute_tags(namespace: str, tags: list[str]) -> None:
+    """Record one attribute-tag tick per `attribute:<class>` label a write added."""
+    try:
+        from server.observability.metrics import record_attribute_tagged
+
+        for tag in tags:
+            record_attribute_tagged(namespace=namespace, attribute=tag.split(":", 1)[1])
+    except Exception:  # noqa: BLE001 — metrics never fail a write
+        pass
+
+
+def count_write(namespace: str, outcome: str) -> None:
     """Record one `loom.memory.writes` tick for a terminal write outcome.
 
     `memory.set` has four terminal shapes and they are not interchangeable:
@@ -279,11 +290,9 @@ def _whole_seconds(dt: datetime | None) -> datetime | None:
 
 
 def _only_reinforces(w: _SetWrite) -> bool:
-    """The same value said again with the same status, type, tags, expiry, confidence,
-    valid_at, valid_to and sensitivity: the new version only reinforces the live row. A restated
-    rejected, superseded or conflicted row is served again, so it is a change. The live
-    row reads back at its columns' precision (Float32 confidence, whole-second DateTime),
-    so each field is compared at that precision."""
+    """A restatement of the live row with every column below unchanged, each compared at its
+    stored precision (Float32 confidence, whole-second DateTime); a restated rejected,
+    superseded or conflicted row is served again, so it is a change."""
     if not w.restated:
         return False
     row, existing = w.memory_row, w.existing
@@ -296,6 +305,9 @@ def _only_reinforces(w: _SetWrite) -> bool:
         and _whole_seconds(row.get("valid_at")) == _whole_seconds(existing.valid_at)
         and _whole_seconds(row.get("valid_to")) == _whole_seconds(existing.valid_to)
         and str(row.get("sensitivity") or "") == str(existing.sensitivity or "")
+        and sorted(row.get("files") or []) == sorted(existing.files or [])
+        and str(row.get("source_resource_id") or "") == str(existing.source_resource_id or "")
+        and str(row.get("source_class") or "") == str(existing.source_class or "")
     )
 
 
@@ -384,7 +396,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     )
     # Non-searchable types skip the conflict check entirely, so there is no
     # verdict to map: the insert always happened.
-    _count_write(input.namespace, "updated" if had_existing_row else "created")
+    count_write(input.namespace, "updated" if had_existing_row else "created")
     return MemorySetOutput(
         retyped_from=retyped_from,
         version=version,
@@ -643,7 +655,7 @@ async def _set_merge(
     # Canonical-form match: the caller restated a memory Loom already had.
     # No row was inserted, so this is the outcome that separates "still
     # ingesting" from "only ever hearing the same things again".
-    _count_write(input.namespace, "merged")
+    count_write(input.namespace, "merged")
     return MemorySetOutput(
         retyped_from=retyped_from,
         version=version,
@@ -886,7 +898,7 @@ async def _set_after_write(
 
     chunks_written = await _set_chunks.write_set_chunks_fail_open(input, ch=ch, embedder=embedder)
     # The insert happened either way; the verdict says what kind of row it is.
-    _count_write(
+    count_write(
         input.namespace,
         _set_write_outcome(duplicate_of_id, conflict_result.verdict, had_existing_row),
     )

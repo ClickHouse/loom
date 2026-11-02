@@ -25,7 +25,6 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app import provenance as app_provenance
 from server.memory.app.set_commit import (
-    _count_write,
     _set_after_write,
     _set_conflict_verdict,
     _set_dry_run_answer,
@@ -34,6 +33,8 @@ from server.memory.app.set_commit import (
     _set_merge,
     _set_plain_insert,
     _SetWrite,
+    count_attribute_tags,
+    count_write,
 )
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
@@ -166,14 +167,14 @@ async def handle_memory_set(
             # only 5xx is infrastructure, so a policy problem never points the operator at
             # infrastructure.
             outcome = "rejected" if 400 <= e.status_code < 500 else _WRITE_OUTCOME_UNMAPPED
-        _count_write(input.namespace, outcome)
+        count_write(input.namespace, outcome)
         raise
     except Exception:
         # Infrastructure failures do NOT arrive as HTTPException: server/core/ch.py raises driver
         # exceptions or a bare RuntimeError, and the repository and namespace_types modules
         # raise no HTTPException at all. Counted here so a ClickHouse outage shows as
         # `error`, then re-raised untouched — this is an accounting hook, not error handling.
-        _count_write(input.namespace, _WRITE_OUTCOME_UNMAPPED)
+        count_write(input.namespace, _WRITE_OUTCOME_UNMAPPED)
         raise
     # A base64, double-encoded or over-cap value is stored as given (a value is a value) and
     # the response says so once per shape, so the agent can fix its side.
@@ -428,13 +429,7 @@ async def _set_prepare_value(w: _SetWrite) -> None:
     _sens_tags = sensitivity_tags(effective_sensitivity, input.tags or [])
     if _sens_tags:
         input = input.model_copy(update={"tags": [*(input.tags or []), *_sens_tags]})
-        try:
-            from server.observability.metrics import record_attribute_tagged
-
-            for _t in _attr_tags:
-                record_attribute_tagged(namespace=input.namespace, attribute=_t.split(":", 1)[1])
-        except Exception:  # noqa: BLE001 — metrics never fail a write
-            pass
+        count_attribute_tags(input.namespace, _attr_tags)
     w.input = input
     w.serialized_value = serialized_value
     w.new_sha = new_sha

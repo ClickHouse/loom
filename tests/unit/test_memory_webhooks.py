@@ -518,9 +518,12 @@ async def test_memory_set_announces_a_change_and_never_a_restatement(
 ) -> None:
     from server.memory.app.set_commit import _announce_set
 
-    live = _memory_row("k", tags=["tea"]) if existing else None
+    # A row as memory.set builds it: a class, files and a source the live row also holds.
+    source = {"source_class": "asserted", "files": ["src/a.py"], "source_resource_id": "doc:x"}
+    live = _memory_row("k", tags=["tea"], **source) if existing else None
     row = {"memory_key": "k", "version": 42, "tags": ["tea"], "expires_at": None}
     row |= {"memory_type": "episodic", "confidence": 0.8, "valid_at": None, "valid_to": None}
+    row |= source
     w = SimpleNamespace(had_existing_row=existing, restated=restated, memory_row=row, existing=live)
     await _announce_set(w)  # type: ignore[arg-type]
     assert announced == ([[(event, row)]] if event else [])
@@ -537,6 +540,9 @@ async def test_memory_set_announces_a_change_and_never_a_restatement(
         {"valid_to": NOW},
         {"memory_type": "semantic"},
         {"sensitivity": "high"},
+        {"files": ["src/main.py"]},
+        {"source_resource_id": "knowledge:docs/plan.md"},
+        {"source_class": "derived"},
     ],
 )
 async def test_memory_set_of_the_same_value_with_new_fields_is_revised(

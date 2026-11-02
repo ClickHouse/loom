@@ -27,7 +27,7 @@ from server.memory.app.projections import (
     resolved_entity_list,
 )
 from server.memory.app.provenance import writer_actor
-from server.memory.app.set_commit import set_next, set_peers
+from server.memory.app.set_commit import count_attribute_tags, set_next, set_peers
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
@@ -64,11 +64,7 @@ def _with_attribute_tags(tags: Any, value: str, namespace: str) -> list[str]:
         from server.memory.domain.sensitivity import attribute_tags
 
         extra = attribute_tags(value, base)
-        if extra:
-            from server.observability.metrics import record_attribute_tagged
-
-            for t in extra:
-                record_attribute_tagged(namespace=namespace, attribute=t.split(":", 1)[1])
+        count_attribute_tags(namespace, extra)
         return [*base, *extra]
     except Exception:  # noqa: BLE001 — tagging is optional; base tags
         return base

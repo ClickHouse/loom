@@ -19,7 +19,7 @@ from pydantic import (
     model_validator,
 )
 
-from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
+from server.memory.api.models_common import FileRefs, MemorySetPeer, MemoryType, _Identity
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.delete_marks import caller_trace
 from server.memory.domain.expire_reasons import caller_reason
@@ -29,6 +29,7 @@ from server.memory.domain.graph_quality import (
     canonical_relation,
 )
 from server.memory.domain.search_text import canonicalize_verb
+from server.memory.domain.sensitivity import Sensitivity
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 from server.operations.read_projection import project as _project_fields
@@ -318,7 +319,7 @@ class MemorySetInput(_Identity):
     # or bare filename); memory.for_file serves it before an edit of them.
     # Unset = detected from the value; a rewrite that detects none keeps the
     # row's; [] clears.
-    files: list[Annotated[str, Field(max_length=1024)]] | None = Field(default=None, max_length=32)
+    files: FileRefs | None = None
     # The writer's own confidence in the fact, 0..1 (1.0 = certain).
     confidence: float = 1.0
     # Provenance tag of the write (`conversation:<id>`, `curated_doc://…`); a known
@@ -366,7 +367,7 @@ class MemorySetInput(_Identity):
     # Sensitivity tier. 'high' = never embedded, searched or in a recency pack;
     # read by key only, audited. '' = detect from the value: credentials, card
     # numbers, SSNs, PINs high; email, phone, IBAN medium.
-    sensitivity: Literal["", "low", "medium", "high"] = ""
+    sensitivity: Sensitivity = ""
     # Run the conflict check and return its verdict, peers and
     # `next` WITHOUT writing — no loom.memory row, no embedding row, no audit
     # hash, no usage event, no supersession. `version` is 0, `noop` is true.

@@ -8,15 +8,22 @@ than duplicating.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
 from pydantic import BaseModel, Field
 
 from server.core.naming import SENTINEL, named
+from server.memory.domain.files import MAX_FILE_CHARS, MAX_FILES
 
 # Open string at the wire so operators can register custom taxonomies via
 # tag_registry. Core four (semantic/procedural/preference = searchable+embedded,
 # episodic = session-scoped) remain a runtime convention the handlers key off.
 MemoryType = str
+
+# The repo files a row is about, as memory.set and decision.record take them.
+FileRefs = Annotated[
+    list[Annotated[str, Field(max_length=MAX_FILE_CHARS)]], Field(max_length=MAX_FILES)
+]
 
 
 class _Identity(BaseModel):
