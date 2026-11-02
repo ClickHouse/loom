@@ -71,6 +71,7 @@ ASSIGNMENT_WORDS = (
 # replaces them in what it states
 _ASSIGNMENT_STOP_CHARS = "\"',;"
 _ASSIGNMENT_VALUE_CHAR = rf"[^\s{re.escape(_ASSIGNMENT_STOP_CHARS)}]"
+_ASSIGNMENT_STOPS = str.maketrans(_ASSIGNMENT_STOP_CHARS, "_" * len(_ASSIGNMENT_STOP_CHARS))
 
 _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsk-(?:proj-|ant-|lf-)?[A-Za-z0-9_-]{20,}"),  # OpenAI / Anthropic / Langfuse
@@ -438,9 +439,6 @@ _SECRET_REFERENCE = re.compile(
 )
 
 
-_ASSIGNMENT_STOPS = str.maketrans(_ASSIGNMENT_STOP_CHARS, "_" * len(_ASSIGNMENT_STOP_CHARS))
-
-
 def _keyed_credential(key: str, value: str) -> str:
     """`password: <value>` for a token-shaped string under a key that ends in a credential
     word (`password`, `dbPassword`, `client_secret`), for the assignment pattern to read; ''
@@ -454,7 +452,6 @@ def _keyed_credential(key: str, value: str) -> str:
         return ""
     if not (any(c.isalpha() for c in v) and any(c.isdigit() for c in v)):
         return ""
-    # the assignment pattern stops at a quote, comma or semicolon; this text only feeds it
     return "password: " + v.translate(_ASSIGNMENT_STOPS)
 
 

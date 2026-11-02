@@ -10,7 +10,7 @@ import uuid as _uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import HTTPException
 
@@ -617,19 +617,16 @@ def write_step_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
         elif step.outcome is StepOutcome.LOCKED:
             res.conflict_verdict = LOCKED
             state.skipped_locked.append(res.memory_key)
-        elif (
-            step.outcome is StepOutcome.COPY and step.repeats is not None
-        ):  # COPY comes only from _settle_repeat
-            _copy_verdict(state, plan, step, step.repeats)
+        elif step.outcome is StepOutcome.COPY:
+            _copy_verdict(state, plan, step)
 
 
-def _copy_verdict(
-    state: _BulkWriteState, plan: BulkVerdictPlan, step: _Step, repeated: _Step
-) -> None:
+def _copy_verdict(state: _BulkWriteState, plan: BulkVerdictPlan, step: _Step) -> None:
     """A repeat of a merged or rejected row answers that row's verdict, as the same
     memory.set again would, and is listed under it in the `plan`; a merge's repeat
     reinforces the merge target."""
-    src, res = repeated.result, step.result
+    # only `_settle_repeat` gives a step COPY, so it repeats one
+    src, res = cast(_Step, step.repeats).result, step.result
     res.conflict_verdict = src.conflict_verdict
     res.peers = list(src.peers)
     res.next = src.next

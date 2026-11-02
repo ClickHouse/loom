@@ -339,15 +339,13 @@ async def delete_learnings_queue_by_user(
     cids = [str(r["candidate_id"]) for r in rows]
     if not cids:
         return n
-    latest = [
-        r
-        for part in chunks(cids)
-        for r in await ch.query_all(
+    latest: list[dict[str, Any]] = []
+    for part in chunks(cids):
+        latest += await ch.query_all(
             "SELECT * FROM loom.learnings_queue FINAL "
             "WHERE org = {org:String} AND candidate_id IN {cids:Array(UUID)}",
             params={"org": org, "cids": part},
         )
-    ]
     pending = [str(r["candidate_id"]) for r in latest if r["status"] == "pending"]
     decided = [r for r in latest if r["status"] != "pending"]
     blank = [
