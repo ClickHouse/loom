@@ -2632,8 +2632,8 @@ async def test_a_dropped_candidate_with_a_rewrapped_quote_names_the_quotes_secti
 @pytest.mark.parametrize(
     ("body", "image_only"),
     [
-        ("Use `vec![0; n]` for the buffer: a fixed array would overflow the stack.", False),
-        ("```js\nif (![a, b].includes(k)) skip();\n```\n\nSkip unknown keys.", False),
+        ("Embed `![d](f.png)` in the page.", False),
+        ("```md\n![d](f.png)\n```\n\nEmbed it so.", False),
         ("Embed it as `<img src=x>` in the page.", False),
         ("![d](f.png)\n\nFigure 1: the spill path, see `spill()`.", True),
     ],

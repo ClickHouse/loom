@@ -128,8 +128,8 @@ _MARKUP_CHARS = re.compile(r"[!\[\]<>]")
 
 
 def _code_as_text(body: str) -> str:
-    """`body` with the markup characters inside code blanked: `vec![0; n]` and
-    `<img>` in code are text, never an image, and still count as text."""
+    """`body` with the markup characters inside code blanked: `![d](f.png)` and `<img>`
+    in code are text, never an image, and still count as text."""
     return _CODE.sub(lambda m: _MARKUP_CHARS.sub(" ", m.group(0)), body)
 
 
