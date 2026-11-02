@@ -375,7 +375,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   reference as `![spill flow]`), an HTML image or a placeholder such as `[image]`, `[Image 3]` or `[image: ...]`. The
   caption's characters are counted without HTML tags, link targets, reference labels, the empty brackets a link around
   an image leaves, and bare URLs, so a badge wrapped in a link adds none; a tag is a lower-case name on one line, so
-  `x < 10k` and `Option<A>` stay text. A chunk with no words is not sent either.
+  `x < 10k` and `Option<A>` stay text. Image markup inside code (`vec![0; n]`) is text. A chunk with no words is not
+  sent either.
 - **Verbatim check**: the model returns, per decision, a `quote` and a `reasoning` and a reason for each rejected
   option. A candidate is kept only when its quote, its reasoning and every reason are each a substring of one chunk,
   with every run of whitespace read as one space: a model copying a span drops line breaks and doubled spaces. What is

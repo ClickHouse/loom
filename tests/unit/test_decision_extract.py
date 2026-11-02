@@ -2619,3 +2619,16 @@ async def test_a_dropped_candidate_with_a_rewrapped_quote_names_the_quotes_secti
     assert world.recorded == []
     (d,) = report.dropped
     assert (d.section, d.reason) == ("Spilling > Two", "reasoning is not in the document text")
+
+
+@pytest.mark.parametrize(
+    ("body", "image_only"),
+    [
+        ("Use `vec![0; n]` for the buffer: a fixed array would overflow the stack.", False),
+        ("```js\nif (![a, b].includes(k)) skip();\n```\n\nSkip unknown keys.", False),
+        ("Embed it as `<img src=x>` in the page.", False),
+        ("![d](f.png)\n\nFigure 1: the spill path, see `spill()`.", True),
+    ],
+)
+def test_image_markup_inside_code_is_text(body: str, image_only: bool) -> None:
+    assert dx.image_only(body) is image_only

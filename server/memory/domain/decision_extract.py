@@ -122,9 +122,20 @@ def user_prompt(window: Window) -> str:
 CAPTION_MAX_CHARS = 80
 
 
+# A fenced code block or an inline code span.
+_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]+`", re.S)
+_MARKUP_CHARS = re.compile(r"[!\[\]<>]")
+
+
+def _code_as_text(body: str) -> str:
+    """`body` with the markup characters inside code blanked: `vec![0; n]` and
+    `<img>` in code are text, never an image, and still count as text."""
+    return _CODE.sub(lambda m: _MARKUP_CHARS.sub(" ", m.group(0)), body)
+
+
 def no_words(body: str) -> bool:
     """No letters once its images are removed: a heading alone or over a picture."""
-    return not _LETTER.search(_IMAGE_MARKUP.sub("", body))
+    return not _LETTER.search(_IMAGE_MARKUP.sub("", _code_as_text(body)))
 
 
 # Markup around an image's caption that is no text a reader sees: an HTML tag, a link's
@@ -152,6 +163,7 @@ def image_only(body: str) -> bool:
     a caption."""
     if no_words(body):
         return True
+    body = _code_as_text(body)
     return bool(_IMAGE_MARKUP.search(body)) and len(caption_text(body)) <= CAPTION_MAX_CHARS
 
 
