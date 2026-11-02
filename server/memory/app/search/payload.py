@@ -10,7 +10,7 @@ from typing import Any
 
 from server.core.ch import get_client
 from server.identity.app.request_scope import request_scope
-from server.memory.app.search.request import _apply_explain_default
+from server.memory.app.search.request import apply_explain_default
 from server.memory.app.search.tiers import _reader_user_id
 from server.memory.app.search_tag_filter import read_row_tags as _read_row_tags
 from server.memory.domain.sensitivity import reads_high
@@ -520,7 +520,7 @@ def _apply_bodies(hits: list[Any], input: Any) -> None:
     untouched, so a caller can still cite and memory.get what it needs. The wire tier of the
     per-hit explanation is decided here too — both are "what a hit carries", on the main and
     the read-your-writes path alike."""
-    _apply_explain_default(hits, input)
+    apply_explain_default(hits, input)
     bodies = getattr(input, "bodies", "full") or "full"
     if bodies in ("full", "unit", "source") or not hits:
         return

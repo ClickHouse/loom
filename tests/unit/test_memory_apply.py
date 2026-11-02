@@ -283,9 +283,8 @@ async def test_search_target_touches_only_the_callers_identity(
     hits = [
         record,
         _search_hit("rec"),  # the caller's own row of that key, already read once
-        _search_hit(
-            "both", agent="other-agent"
-        ),  # another owner's row of a key the caller holds too
+        # another owner's row of a key the caller holds too
+        _search_hit("both", agent="other-agent"),
         _search_hit("both"),
         _search_hit("mine"),
         _search_hit("theirs", agent="other-agent"),

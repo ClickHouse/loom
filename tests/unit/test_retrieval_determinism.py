@@ -1,9 +1,9 @@
 """A memory search is a function of its inputs.
 
-Every ranked list of hits sorts by (−rank_score, distance, memory_key); the
-non-vector SQL legs carry a key tie-breaker after their score; the two vector
-legs keep the bare `ORDER BY distance` shape the codes-first read requires and
-leave determinism to the Python sort over their over-fetched candidates.
+Every ranked list of hits sorts by (−rank_score, distance, memory_key) and then the row's
+namespace, agent, user and session; the non-vector SQL legs carry a key tie-breaker after
+their score; the two vector legs keep the bare `ORDER BY distance` shape the codes-first
+read requires and leave determinism to the Python sort over their over-fetched candidates.
 """
 
 from __future__ import annotations

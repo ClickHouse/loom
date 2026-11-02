@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from server.core.ch_params import chunks
-from server.core.repo_base import _CHClient, _default_client
+from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
 from server.erasure.store.predicates import (
@@ -339,13 +339,13 @@ async def delete_learnings_queue_by_user(
     cids = [str(r["candidate_id"]) for r in rows]
     if not cids:
         return n
-    latest: list[dict[str, Any]] = []
-    for part in chunks(cids):
-        latest += await ch.query_all(
-            "SELECT * FROM loom.learnings_queue FINAL "
-            "WHERE org = {org:String} AND candidate_id IN {cids:Array(UUID)}",
-            params={"org": org, "cids": part},
-        )
+    latest = await query_all_sliced(
+        ch,
+        "SELECT * FROM loom.learnings_queue FINAL "
+        "WHERE org = {org:String} AND candidate_id IN {cids:Array(UUID)}",
+        {"org": org, "cids": cids},
+        "cids",
+    )
     # the delete slices are cut sorted, so a re-run cuts the same ones and finds its own
     # pending mutations
     pending = sorted(str(r["candidate_id"]) for r in latest if r["status"] == "pending")

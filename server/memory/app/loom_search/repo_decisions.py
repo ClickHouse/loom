@@ -128,7 +128,7 @@ async def memory_with_repo_decisions(
     decisions, merged into the one section. Raises only what the base search
     raises."""
     from server.memory.app.search import handle_memory_search
-    from server.memory.app.search.request import _apply_explain_default
+    from server.memory.app.search.request import apply_explain_default
     from server.memory.app.search.telemetry import credit_merged_hits
 
     if not repo_namespace:
@@ -151,7 +151,7 @@ async def memory_with_repo_decisions(
     # (the settled top_k, not the decision pass's over-fetch).
     home = base._settled_input or mem_input
     await credit_merged_hits(settled.model_copy(update={"top_k": home.top_k}), added)
-    _apply_explain_default(added, home)
+    apply_explain_default(added, home)
     update: dict[str, Any] = {
         "results": hits,
         "candidates_total": base.candidates_total + len(added),

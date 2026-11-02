@@ -22,7 +22,7 @@ from server.memory.app.search.payload import (
     _fill_optional_hit_fields,
     _resolve_relative_words,
 )
-from server.memory.app.search.request import _apply_explain_default
+from server.memory.app.search.request import apply_explain_default
 from server.memory.app.search.scope import _SearchRun
 from server.memory.app.search.scoring import _score_explanation
 from server.memory.app.search.telemetry import (
@@ -92,7 +92,7 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
     # A parked page was serialised without tags unless the first call asked; fill on this
     # call's own switch.
     await _fill_hit_tags(hits, input)
-    _apply_explain_default(hits, input)
+    apply_explain_default(hits, input)
     out = MemorySearchOutput(
         results=hits,
         embedding_model=embedder_name,

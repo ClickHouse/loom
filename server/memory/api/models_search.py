@@ -22,7 +22,7 @@ from server.operations.base import MCP_HIDDEN
 # ============================================================
 
 
-SEARCH_TOP_K_MAX = 500  # the most hits one memory.search returns
+SEARCH_TOP_K_MAX = 500  # not a setting: the wire bound of memory.search's top_k
 
 
 class MemorySearchInput(BaseModel):
