@@ -946,11 +946,8 @@ def cases() -> list[Case]:
             "server.insights.store.mentor",
             _mentor_evidence,
             {},
-            # Each read is an aggregate (one row, every column it reads back); the labelled
-            # ids answer one row, so the read of their keys renders too.
-            rows=lambda sql, params: [
-                {"n": 0, "retention_days": 0, "id": "00000000-0000-0000-0000-000000000001"}
-            ],
+            # Each read is an aggregate: one row, every column it reads back.
+            rows=lambda sql, params: [{"n": 0, "retention_days": 0}],
         )
     )
     out.append(

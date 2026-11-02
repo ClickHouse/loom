@@ -7,7 +7,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from server.core.ch import get_client
 from server.embedding import get_embedder
@@ -211,9 +211,14 @@ def _rung(rung: UsageRungName, count: int | None, source: UsageSource) -> UsageR
     return UsageRung(rung=rung, count=count, source=source, meaning=_RUNG_MEANING[rung])
 
 
-async def _usage_evidence(
-    org: str, namespace: str, agent: str, window_seconds: int
-) -> tuple[list[UsageRung], datetime | None, int | None, list[str]]:
+class _Ladder(NamedTuple):
+    rungs: list[UsageRung]
+    ledger_from: datetime | None
+    retention_days: int | None
+    skipped: list[str]
+
+
+async def _usage_evidence(org: str, namespace: str, agent: str, window_seconds: int) -> _Ladder:
     """The evidence ladder, the oldest ledger row in the window, how long the ledger keeps
     this namespace's rows, and the reads that failed ("step: reason"). Read at each brief,
     not from the cached profile; the five reads run at once and stand alone: a failed one
@@ -221,7 +226,7 @@ async def _usage_evidence(
     if agent in ANONYMOUS_AGENTS:
         # No agent in particular: the ledger's `-` and `*` rows are everyone's unattributed
         # calls, not one agent's.
-        return [], None, None, []
+        return _Ladder([], None, None, [])
     ch = get_client()
     who = (org, namespace, agent, window_seconds)
     failed: list[str] = []
@@ -274,13 +279,13 @@ async def _usage_evidence(
         _rung("client_acknowledged", reported, "client"),
         _rung("task_outcome", graded, "client"),
     ]
-    return rungs, calls.get("oldest_row"), retention, failed
+    return _Ladder(rungs, calls.get("oldest_row"), retention, failed)
 
 
 async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
     agent, writers, defaulted = await _resolve_agent(inp)
     window = int(inp.window_seconds)
-    profile, (ladder, ledger_from, retention, ladder_failed) = await asyncio.gather(
+    profile, ladder = await asyncio.gather(
         svc.mentor_profile(inp.org, inp.namespace, agent, window_seconds=window),
         # The ladder reads no profile, so it answers when the mentor is off too.
         _usage_evidence(inp.org, inp.namespace, agent, window),
@@ -297,10 +302,10 @@ async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
             sessions=0,
             agents=writers,
             agent_defaulted=defaulted,
-            usage_evidence=ladder,
-            ledger_from=ledger_from,
-            ledger_retention_days=retention,
-            skipped=["profile: unavailable", *ladder_failed],
+            usage_evidence=ladder.rungs,
+            ledger_from=ladder.ledger_from,
+            ledger_retention_days=ladder.retention_days,
+            skipped=["profile: unavailable", *ladder.skipped],
             healthy=True,
         )
     hints = [
@@ -324,12 +329,12 @@ async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
         planes=_planes(profile),
         hints=hints,
         adoption=await _adoption(profile),
-        usage_evidence=ladder,
-        ledger_from=ledger_from,
-        ledger_retention_days=retention,
+        usage_evidence=ladder.rungs,
+        ledger_from=ladder.ledger_from,
+        ledger_retention_days=ladder.retention_days,
         agents=writers,
         agent_defaulted=defaulted,
-        skipped=[*profile.skipped, *ladder_failed],
+        skipped=[*profile.skipped, *ladder.skipped],
         healthy=not any(h.severity in ("warning", "critical") for h in profile.hints),
     )
 

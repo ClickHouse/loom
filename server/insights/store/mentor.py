@@ -568,32 +568,23 @@ async def reported_keys(
     A label by key is not counted: it resolves under the row writer's `agent`, so the ledger
     records it under the writer, whoever gave it."""
     ch = ch or _default_client()
-    params: dict[str, Any] = {
-        "org": org,
-        "ns": namespace,
-        "agent": agent,
-        "win": int(window_seconds),
-    }
-    labelled = await ch.query_all(
-        f"SELECT DISTINCT toUUIDOrZero(args['memory_id']) AS id FROM loom.agent_events "
-        f"WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN} AND {_COUNTED_CALL} "
-        "AND success AND operation = 'memory.outcome' AND args['out_recorded'] = 'true' "
-        "AND args['outcome'] IN ('used', 'positive') AND args['memory_id'] != ''",
-        params,
-    )
-    ids = [r["id"] for r in labelled]
-    # The labelled rows' keys, read by id only when there are any (a memory's key never
-    # changes across its versions, so any version answers).
-    by_id = (
-        f"UNION ALL SELECT memory_key AS k FROM loom.memory "
-        f"WHERE {_SCOPE} AND memory_id IN {{ids:Array(UUID)}}"
-        if ids
-        else ""
-    )
     (row,) = await ch.query_all(
-        f"SELECT uniqExact(k) AS n FROM ("
-        f"SELECT k FROM ({_CREDITED_KEYS}) WHERE NOT startsWith(k, 'chunk:') {by_id})",
-        {**params, "ids": ids},
+        f"""
+        SELECT uniqExact(k) AS n FROM (
+            SELECT k FROM ({_CREDITED_KEYS}) WHERE NOT startsWith(k, 'chunk:')
+            UNION ALL
+            -- A memory's key never changes across its versions, so any version answers.
+            SELECT memory_key AS k FROM loom.memory
+            WHERE {_SCOPE} AND memory_id IN (
+                SELECT toUUIDOrZero(args['memory_id']) FROM loom.agent_events
+                WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN} AND {_COUNTED_CALL}
+                  AND success AND operation = 'memory.outcome'
+                  AND args['out_recorded'] = 'true' AND args['outcome'] IN ('used', 'positive')
+                  AND args['memory_id'] != ''
+            )
+        )
+        """,
+        {"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
     return int(row["n"])
 
