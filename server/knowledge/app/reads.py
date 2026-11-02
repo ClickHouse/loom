@@ -4,10 +4,11 @@ The one per-document signal loom records is a read: every `knowledge.get`
 leaves an `agent_events` row whose allow-listed `args['source_uri']` names
 the document (event_args). What a search *returned* is not recorded for
 knowledge, so this op says "opened", never "found". The dashboard's own
-previews (`consumer: loom-ui`) and the assistant toolset (`loom-assistant`) are left
-out, so a person checking a document does not count as an agent reading it; bench
-traffic is left out too. `agent_events` is ordered by (org, namespace, agent, ts): the read is a
-primary-key range on the namespace and the window.
+previews (`consumer: loom-ui`) and the assistant toolset (`loom-assistant`) are
+left out, so a person checking a document does not count as an agent reading
+it; bench traffic is left out too. `agent_events` is ordered by (org,
+namespace, agent, ts): the read is a primary-key range on the namespace and
+the window.
 """
 
 from __future__ import annotations
