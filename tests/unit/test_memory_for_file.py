@@ -321,7 +321,7 @@ def test_a_row_too_long_for_the_budget_does_not_hide_the_rows_after_it() -> None
 
 
 def test_a_block_that_fits_whole_reserves_nothing() -> None:
-    # 100 and 30 characters: the block fits in 194 of 200, so nothing is reserved or cut.
+    # 100 and 30 characters: the block fits in 193 of 200, so nothing is reserved or cut.
     hits = [_row("k0", json.dumps("a" * 94)), _row("k1", json.dumps("b" * 24))]
     text, tokens, truncated = mff.render_block("src/a.cpp", hits, 50, home="me")
     assert truncated is False and tokens <= 50
@@ -446,9 +446,9 @@ def test_a_block_filling_the_budget_prints_whole_and_one_more_character_cuts_it(
     header = "Loom: 2 memories anchored to src/a.cpp — read before editing:"
     row0 = "- k0: " + "a" * 100
     budget = 80
-    # The block counts a newline after every line, its last included, so the three lines
-    # and three newlines fill the 320 characters of 80 tokens exactly.
-    row1_chars = budget * mff._CHARS_PER_TOKEN - len(header) - len(row0) - 3
+    # The three lines and the two newlines between them fill the 320 characters of 80
+    # tokens exactly.
+    row1_chars = budget * mff._CHARS_PER_TOKEN - len(header) - len(row0) - 2
     row1 = "- k1: " + "b" * (row1_chars - len("- k1: "))
 
     def block(second: str) -> tuple[str, int, bool]:

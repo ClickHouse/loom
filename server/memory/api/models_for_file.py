@@ -12,13 +12,14 @@ or through a link to code in it (`server.memory.app.code_links`).
 
 Read-only, VIEWER. Rows tagged `constraint` sort first, then pinned, then
 confidence; a row the conflict check linked to an older one of its namespace is
-placed above it. `rendered` is cut at `token_budget` (its header and removal footer
-always print, and its "… more" line whenever a row is left out).
-`extra_namespaces` (a repository's primary code namespace, where its team file
-rules and design decisions live) runs the same query per readable namespace,
-merged in the same order, team rows marked with their author. Each hit carries
-its `source_resource_id` and its `verification` state; a decision's rendered
-line carries the source after its value.
+placed above it (two typed decisions keep their order). `rendered` is cut at
+`token_budget` (its header and removal footer always print, and its "… more"
+line whenever a row is left out). `extra_namespaces` (a repository's primary
+code namespace, where its team file rules and design decisions live) runs the
+same query per readable namespace, merged in the same order, team rows marked
+with their author. Each hit carries its `source_resource_id` and its
+`verification` state; a decision's rendered line carries the source after its
+value.
 """
 
 from __future__ import annotations
@@ -42,9 +43,9 @@ class MemoryForFileInput(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=16)
     # At most this many rows, across every namespace read.
     top_k: int = Field(default=8, ge=1, le=50)
-    # Cap on the rendered block; the hook injects `rendered` verbatim. Its header and
-    # removal footer always print, and its "… more" line whenever a row is left out, so a
-    # budget smaller than those can be exceeded.
+    # Cap on the rendered block, which its header, removal footer and "… more" line can
+    # exceed; the hook injects `rendered` verbatim. The header and footer always print, the
+    # "… more" line whenever a row is left out.
     token_budget: int = Field(default=300, ge=50, le=4000)
     # Conflicted rows are still live facts a reader should see; duplicates,
     # superseded and rejected rows are not.
@@ -104,7 +105,7 @@ class MemoryForFileOutput(BaseModel):
     total: int
     # Matching rows: `constraint`-tagged first, then pinned, then by confidence,
     # then newest; a row the conflict check linked to an older one of its namespace is
-    # placed above it.
+    # placed above it (two typed decisions keep their order).
     hits: list[_MemoryForFileHit]
     # Prompt-ready block, cut at token_budget. Empty when total == 0.
     rendered: str = ""

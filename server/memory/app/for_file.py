@@ -253,7 +253,8 @@ def render_block(
     n = len(hits)
     lines = [f"Loom: {n} memor{'y' if n == 1 else 'ies'} anchored to {path} — read before editing:"]
     footer = _removal_footer(hits, home)
-    used = len(lines[0]) + 1 + (len(footer) + 1 if footer else 0)
+    # Each line after the header adds its length and the newline before it.
+    used = len(lines[0]) + (len(footer) + 1 if footer else 0)
     rows = []
     for h in hits:
         decision = _is_decision(h)
