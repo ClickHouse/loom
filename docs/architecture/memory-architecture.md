@@ -106,8 +106,8 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     check. In order:
     - canonical-form match: `merge`, no insert (`_set_merge`);
     - pinned peer: `rejected` (409);
-    - peer at or above `LOOM_DUPLICATE_THRESHOLD` with the same content words and no
-      value the other lacks on each side (`values_differ`): `duplicate`;
+    - peer at or above `LOOM_DUPLICATE_THRESHOLD` with the same content words, unless
+      each side states a value the other lacks (`values_differ`): `duplicate`;
     - any other close peer: `conflict`.
 
     A `decision` row (`KEY_IDENTIFIED_TYPES`) is identified by its key: a close peer in

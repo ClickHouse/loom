@@ -141,8 +141,8 @@ def value_tokens(text: str) -> set[str]:
     """Normalised value tokens in `text` ("27:12", "25:50", "$40", "5k")."""
     out: set[str] = set()
     for m in _VALUE_RE.finditer(text or ""):
-        # lowercased, no space before a unit ("5 k" reads as "5k"); a currency sign stays
-        token = re.sub(r"\s", "", m.group(0)).lower()
+        # "5 k" reads as "5k"
+        token = "".join(m.group(0).split()).lower()
         out.add(_THOUSANDS.sub("", token))
     return out
 
