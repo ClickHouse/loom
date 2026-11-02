@@ -431,16 +431,19 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   reads the reasoning alone, and the tag may stand for an outcome or a rejected option the document still contradicts.
   By hand, a maintainer drops it with `memory.update_by_id` on the row's `memory_id` with `tags` less
   `source-changed`, or re-records the decision (after `memory.unpin`) or deletes it.
-- **Refusals**: a write the server refuses (a blacklisted decision, a row pinned during the run) is reported with its
-  code, as is a delete that finds the row rewritten since the run read it or a tag write that finds it deleted, and
-  the run goes on with the next candidate and the retire step.
+- **Refusals and races**: a write the server refuses (a blacklisted decision, a row pinned during the run, a busy key,
+  a store timeout) is reported with its code; a write that finds its row deleted or rewritten since the run read it is
+  reported as such, a race the next run settles. Either way the run goes on with the next candidate and the retire
+  step.
 - **Limits**: `--max-per-section` is at least 1 and `--window-chars` at least 500; a smaller value is refused. A reply
   cut at the model's token limit is reported as such, with the advice to lower either; a model call that fails (a
   provider error, a timeout) loses its window only.
-- **Model and exit code**: a keyed provider (`LOOM_LLM_PROVIDER=openai` or `anthropic`) with no API key set refuses
-  the run before any model call, since the client would fall back to the fake model, whose decisions pass the verbatim
-  check by construction; `LOOM_LLM_PROVIDER=fake` runs on it on purpose. The command exits 1 when nothing was
-  extracted (no document, no chunks, no model key), 2 when the server refused a write, else 0.
+- **Model and exit code**: the run refuses before any model call when it would read the document with the fake model,
+  whose decisions pass the verbatim check by construction: a keyed provider (`LOOM_LLM_PROVIDER=openai` or
+  `anthropic`) with no API key set, or no provider configured at all. `LOOM_LLM_PROVIDER=fake` set explicitly runs on
+  it on purpose. A run whose every model call failed or came back unreadable reads nothing and retires nothing. The
+  command exits 1 when nothing was extracted (no document, no chunks, no usable model, no window read), 2 when the
+  server refused a write, else 0; a race does not change the exit code.
 
 The reasoning is the verbatim span the retire step reads: the record has no field for the quote. To confirm an
 extracted decision, a maintainer reads its identity with `memory.get` and calls `memory.pin` under it, or attests

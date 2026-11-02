@@ -106,6 +106,7 @@ class _World:
         self.writer_reads: list[str] = []
         # Keys rewritten between the run's read and its delete.
         self.moved_on: set[str] = set()
+        self.deleted_before: set[str] = set()
         self.index_down = False
         # memory_ids deleted between the run's read and its tag write.
         self.gone: set[str] = set()
@@ -118,6 +119,11 @@ class _World:
         self.deletes: list[Any] = []
         self.prompts: list[tuple[str, str]] = []
         self._patch(monkeypatch)
+        from server.settings import settings
+
+        # LOOM_LLM_PROVIDER=fake set on purpose: the run does not refuse the fake model.
+        monkeypatch.setattr(settings, "llm_provider", "fake")
+        monkeypatch.setattr(settings, "_llm_provider_source", "LOOM_LLM_PROVIDER")
 
     def add(self, key: str, **row: Any) -> _Row:
         r = _row(key, **row)
@@ -205,7 +211,12 @@ class _World:
             if world.refuse_delete:
                 raise world.refuse_delete
             world.deletes.append(inp)
-            return SimpleNamespace(tombstoned=inp.memory_key not in world.moved_on)
+            if inp.memory_key in world.deleted_before:
+                return SimpleNamespace(tombstoned=False, found=False, reason="")
+            moved = inp.memory_key in world.moved_on
+            return SimpleNamespace(
+                tombstoned=not moved, found=True, reason="version_changed" if moved else ""
+            )
 
         async def code_symbol_handler(inp):
             if world.index_down:
@@ -899,7 +910,8 @@ async def test_a_row_rewritten_before_its_delete_is_not_reported_retired(monkeyp
     world.moved_on.add("decision:gone")
     report = await _run()
     assert report.retired == []
-    assert report.refused == ["decision:gone: rewritten since the run read it"]
+    assert report.races == ["decision:gone: rewritten since the run read it"]
+    assert cli.exit_code(report) == 0
 
 
 @pytest.mark.asyncio
@@ -1102,11 +1114,12 @@ async def test_a_tag_write_on_a_row_deleted_since_the_read_is_reported(monkeypat
     world.record("decision:gone", {"reasoning": "gone"}, pinned=True)
     world.gone = {f"id-{_key(c)}-loom-decisions", "id-decision:gone-loom-decisions"}
     report = await _run()
-    assert report.records == [] and report.flagged == []
-    assert [d.reason for d in report.dropped] == [
-        "refused: the row was deleted since the run read it"
+    assert report.records == [] and report.flagged == [] and report.dropped == []
+    assert sorted(report.races) == [
+        f"{_key(c)}: deleted since the run read it",
+        "decision:gone: deleted since the run read it",
     ]
-    assert report.refused == ["decision:gone: deleted since the run read it"]
+    assert report.refused == [] and cli.exit_code(report) == 0
 
 
 @pytest.mark.asyncio
@@ -1744,3 +1757,49 @@ def test_the_exit_code_says_whether_a_write_was_refused(dropped, refused, code) 
     report.dropped = [de.Dropped("s", r) for r in dropped]
     report.refused = refused
     assert cli.exit_code(report) == code
+
+
+@pytest.mark.asyncio
+async def test_an_inferred_fake_provider_refuses_before_any_model_call(monkeypatch) -> None:
+    from server.settings import settings
+
+    world = _World(monkeypatch, [_candidate()])
+    monkeypatch.setattr(settings, "_llm_provider_source", "nothing set")
+    report = await _run()
+    assert report.error.startswith("no LLM provider is configured")
+    assert world.prompts == [] and world.recorded == [] and cli.exit_code(report) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_every_model_call_fails_reads_nothing_and_retires_nothing(
+    monkeypatch, capsys
+) -> None:
+    import httpx
+
+    from server.llm import client as llm_client
+
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"})
+
+    class _Down:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Down())
+    report = await _run()
+    assert report.error.startswith("no window was read")
+    assert world.deletes == [] and report.retired == [] and cli.exit_code(report) == 1
+    cli.print_report(report)
+    out = capsys.readouterr()
+    assert "error: no window was read" in out.err
+    assert "the model call failed: ConnectError" in out.out
+
+
+@pytest.mark.asyncio
+async def test_a_row_deleted_before_its_delete_is_a_race(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"})
+    world.deleted_before.add("decision:gone")
+    report = await _run()
+    assert report.races == ["decision:gone: deleted since the run read it"]
+    assert report.refused == [] and cli.exit_code(report) == 0

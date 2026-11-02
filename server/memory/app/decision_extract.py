@@ -77,7 +77,7 @@ _PAGE = 500
 class RecordReport:
     memory_key: str
     # written | revised | unchanged | flagged | already_flagged | not_ours | outcome_known |
-    # already_recorded (a refused tag write, row_changed, goes to `dropped` instead)
+    # already_recorded (a tag write that found its row gone, row_changed, goes to `races`)
     action: str
     # The decision.record body, with the identity the write goes (or would go) under.
     body: dict[str, Any]
@@ -121,16 +121,11 @@ class ExtractReport:
     # Keys tagged (or to tag) `source-changed`: confirmed rows (pinned or attested), and
     # rows with a recorded outcome, whose document now says otherwise.
     flagged: list[str] = field(default_factory=list)
-    # "<key>: refused: <code>" for each retire write the server refused, or
-    # "<key>: rewritten since the run read it" for a delete that found the row moved on,
-    # "<key>: deleted since the run read it" for a tag write that found it gone.
+    # "<key>: refused: <code>" for each retire write the server refused.
     refused: list[str] = field(default_factory=list)
-
-
-def _identity(org: str, namespace: str) -> Identity:
-    return Identity(
-        org=org, namespace=namespace, agent=EXTRACTOR_AGENT, user_id="-", session_id="-"
-    )
+    # "<key>: deleted since the run read it" or "<key>: rewritten since the run read it":
+    # a write that found its row gone or moved on, a race the next run settles.
+    races: list[str] = field(default_factory=list)
 
 
 def _confirmed(row: MemoryRow) -> bool:
@@ -193,19 +188,28 @@ def _unread_reply(stop_reason: str) -> str:
 
 
 def _no_model_error() -> str:
-    """Why the run must not start: the configured provider has no key, so the client falls
-    back to the fake model, whose decisions pass the verbatim check by construction and
-    would be recorded as the document's. A provider configured as `fake` runs."""
+    """Why the run must not start: it would read the document with the fake model, whose
+    decisions pass the verbatim check by construction and would be recorded as the
+    document's. That is so when a keyed provider has no key (the client falls back to the
+    fake) or when nothing chose a provider (it resolves to `fake`). A provider set to
+    `fake` explicitly, with LOOM_LLM_PROVIDER, runs."""
     from server.llm.client import provider_key_missing
     from server.settings import settings
 
-    if not provider_key_missing(settings.llm_provider):
-        return ""
-    return (
-        f"LOOM_LLM_PROVIDER={settings.llm_provider} has no API key set, so the run would "
-        "read the document with the fake model; set the key, or LOOM_LLM_PROVIDER=fake to "
-        "run on it on purpose"
-    )
+    provider = settings.llm_provider
+    if provider_key_missing(provider):
+        return (
+            f"LOOM_LLM_PROVIDER={provider} has no API key set, so the run would read the "
+            "document with the fake model; set the key, or LOOM_LLM_PROVIDER=fake to run on "
+            "it on purpose"
+        )
+    if provider == "fake" and settings.llm_provider_inferred():
+        return (
+            "no LLM provider is configured, so the run would read the document with the "
+            "fake model; set LOOM_LLM_PROVIDER and its key, or LOOM_LLM_PROVIDER=fake to run "
+            "on it on purpose"
+        )
+    return ""
 
 
 def _refusal(e: HTTPException | LoomServerError) -> str:
@@ -256,7 +260,13 @@ async def extract_document(
     # step; rows this run writes are skipped by the retire step.
     own_rows = await _extractor_rows(org, namespace, source_uri)
     known = await _known_decisions(org, namespace, own_rows)
-    kept = await _candidates(org, namespace, source_uri, wins, max_per_section, report, known)
+    kept, answered = await _candidates(
+        org, namespace, source_uri, wins, max_per_section, report, known
+    )
+    if wins and not answered:
+        # A run that read nothing must not retire anything.
+        report.error = "no window was read: every model call failed or its reply was unreadable"
+        return report
     written: set[str] = set()
     # (outcome, reasoning) -> key of each decision this document now holds, for the retire
     # step: the same outcome on the same verbatim reasoning is the same decision, however
@@ -273,8 +283,7 @@ async def extract_document(
             continue
         written.add(rec.memory_key)
         if rec.action == "row_changed":
-            reason = "refused: the row was deleted since the run read it"
-            report.dropped.append(Dropped(section, reason, cand.quote))
+            report.races.append(f"{rec.memory_key}: deleted since the run read it")
             continue
         report.records.append(rec)
         if rec.action == "flagged":
@@ -314,15 +323,17 @@ async def _candidates(
     max_per_section: int,
     report: ExtractReport,
     known: list[tuple[str, str, str]],
-) -> list[tuple[dx.Candidate, str, list[str]]]:
+) -> tuple[list[tuple[dx.Candidate, str, list[str]]], int]:
     """(candidate, its section, the texts it was checked against) for every candidate
-    that passes the verbatim check, at most `max_per_section` per section."""
+    that passes the verbatim check, at most `max_per_section` per section; and how many
+    windows the model answered with a readable reply."""
     from server.llm.client import get_llm_client
     from server.llm.json_text import strip_code_fence
 
     llm = get_llm_client()
     system = dx.system_prompt(max_per_section, known)
     kept: list[tuple[dx.Candidate, str, list[str]]] = []
+    answered = 0
     per_section: dict[str, int] = {}
     keys: set[str] = set()
     pairs: set[tuple[str, str]] = set()  # (outcome, reasoning) of each kept candidate
@@ -345,6 +356,7 @@ async def _candidates(
         if cands is None:
             report.dropped.append(Dropped(first, _unread_reply(res.stop_reason)))
             continue
+        answered += 1
         texts = [c.text for c in w.chunks]
         for cand in cands:
             section = dx.quote_section(w, cand.quote)
@@ -373,7 +385,7 @@ async def _candidates(
             keys.add(key)
             pairs.add(pair)
             kept.append((cand, section, texts))
-    return kept
+    return kept, answered
 
 
 def _record_input(
@@ -766,7 +778,9 @@ async def _extractor_rows(org: str, namespace: str, source_uri: str) -> list[Mem
     time (the listing carries no source), each page read back in one bulk read. The cost
     grows with every decision the extractor holds in the namespace, not with this
     document's: no store read filters on `source_resource_id`."""
-    ident = _identity(org, namespace)
+    ident = Identity(
+        org=org, namespace=namespace, agent=EXTRACTOR_AGENT, user_id="-", session_id="-"
+    )
     out: list[MemoryRow] = []
     offset = 0
     while True:
@@ -843,7 +857,7 @@ async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool) -> N
         if SOURCE_CHANGED_TAG in row.tags:
             return
         if not report.dry_run and not await _set_source_changed(row, True):
-            report.refused.append(f"{row.memory_key}: deleted since the run read it")
+            report.races.append(f"{row.memory_key}: deleted since the run read it")
             return
         report.flagged.append(row.memory_key)
     elif await _delete_row(report, row):
@@ -852,7 +866,7 @@ async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool) -> N
 
 async def _delete_row(report: ExtractReport, row: MemoryRow) -> bool:
     """Delete the extractor's row at the version read (nothing in a dry run); False when
-    it was rewritten since, which is reported."""
+    it was deleted or rewritten since, which is reported."""
     from server.memory.api.models_crud import MemoryDeleteVersionInput
     from server.memory.app.handlers import handle_memory_delete_version
 
@@ -869,6 +883,7 @@ async def _delete_row(report: ExtractReport, row: MemoryRow) -> bool:
     if out.tombstoned:
         await _audit("memory.delete_version", inp)
     else:
-        # Rewritten since it was read: the next run judges the new version.
-        report.refused.append(f"{row.memory_key}: rewritten since the run read it")
+        # Gone, or rewritten since it was read: the next run judges what is there.
+        moved = "deleted" if not out.found else "rewritten"
+        report.races.append(f"{row.memory_key}: {moved} since the run read it")
     return bool(out.tombstoned)

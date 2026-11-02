@@ -60,7 +60,8 @@ def register_decisions_cli(sub: Any) -> None:
         "extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row "
         "source-changed. "
         "Dry run by default (still calls the model); --apply writes. Exits 1 when nothing "
-        "was extracted, 2 when the server refused a write.",
+        "was extracted, 2 when the server refused a write (a row changed since the run read it "
+        "is reported, not counted).",
     )
     p_ext.add_argument("--org", required=True)
     p_ext.add_argument("--namespace", required=True, help="The namespace holding the document")
@@ -101,8 +102,9 @@ def _cmd_extract(args: argparse.Namespace) -> int:
 
 
 def exit_code(report: ExtractReport) -> int:
-    """1 when nothing was extracted (no document, no chunks, no model key), 2 when the
-    server refused a write, else 0."""
+    """1 when nothing was extracted (no document, no chunks, no usable model, no window
+    read), 2 when the server refused a write, else 0. A row deleted or rewritten since the
+    run read it is reported, not counted: the next run settles it."""
     if report.error:
         return 1
     refused = report.refused or any(d.reason.startswith("refused:") for d in report.dropped)
@@ -114,7 +116,8 @@ def print_report(report: ExtractReport) -> None:
     code-link signals, then what was dropped and why."""
     if report.error:
         print(f"error: {report.error}", file=sys.stderr)
-        return
+        if not report.dropped:
+            return
     print(
         f"{report.source_uri}: {report.windows} window(s), {len(report.records)} decision(s)"
         + (" (dry run)" if report.dry_run else "")
@@ -144,7 +147,7 @@ def print_report(report: ExtractReport) -> None:
         print(f"- {retire} {key}: its reasoning is no longer in the document")
     for pair in report.replaced:
         print(f"- {retire} {pair}: its reasoning is recorded under the new key")
-    for line in report.refused:
+    for line in report.refused + report.races:
         print(f"- not changed {line}")
     in_records = {r.memory_key for r in report.records}
     for key in report.flagged:
