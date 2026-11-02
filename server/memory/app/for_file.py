@@ -502,8 +502,14 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
             )
         )
 
+    # The ids are not on the wire, but render_block needs them to leave a superseded row
+    # out with its superseder; `hits` was built from `rows` one to one, in order.
+    shown = [
+        h.model_dump() | {"memory_id": r.get("memory_id"), "supersedes_id": r.get("supersedes_id")}
+        for h, r in zip(hits, rows, strict=True)
+    ]
     rendered, tokens, truncated = render_block(
-        path, [h.model_dump() for h in hits], input.token_budget, home=input.namespace
+        path, shown, input.token_budget, home=input.namespace
     )
     return MemoryForFileOutput(
         path=path,

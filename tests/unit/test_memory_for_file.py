@@ -418,20 +418,26 @@ def test_the_more_line_fits_inside_the_budget() -> None:
 
 
 def test_a_block_filling_the_budget_prints_whole_and_one_more_character_cuts_it() -> None:
-    def block(second: int, budget: int) -> tuple[str, int, bool]:
-        hits = [_row("k0", json.dumps("a" * 100)), _row("k1", json.dumps("b" * second))]
+    header = "Loom: 2 memories anchored to src/a.cpp — read before editing:"
+    row0 = "- k0: " + "a" * 100
+    budget = 80
+    # The block counts a newline after every line, its last included, so the three lines
+    # and three newlines fill the 320 characters of 80 tokens exactly.
+    row1_chars = budget * mff._CHARS_PER_TOKEN - len(header) - len(row0) - 3
+    row1 = "- k1: " + "b" * (row1_chars - len("- k1: "))
+
+    def block(second: str) -> tuple[str, int, bool]:
+        hits = [_row("k0", json.dumps("a" * 100)), _row("k1", json.dumps(second))]
         return mff.render_block("src/a.cpp", hits, budget, home="me")
 
-    # A second row that fills the budget to the character (the block counts a
-    # newline after its last line): both rows print and nothing is cut.
-    full, _, _ = block(100, 10_000)
-    second = 100 + (-(len(full) + 1)) % mff._CHARS_PER_TOKEN
-    budget = (len(block(second, 10_000)[0]) + 1) // mff._CHARS_PER_TOKEN
-    text, tokens, truncated = block(second, budget)
-    assert truncated is False and tokens == budget and "- k1: " in text
-    # One character more and it is left out, with room kept for the "… more" line.
-    text, tokens, truncated = block(second + 1, budget)
-    assert truncated is True and text.splitlines()[-1].startswith("- … 1 more")
+    text, tokens, truncated = block(row1[6:])
+    assert text == "\n".join([header, row0, row1]) and truncated is False and tokens == budget
+    # One character more and row1 is left out, with room kept for the "… more" line.
+    text, tokens, truncated = block(row1[6:] + "b")
+    assert truncated is True and text.splitlines()[1:] == [
+        row0,
+        '- … 1 more; memory.for_file(path="src/a.cpp") lists them.',
+    ]
     assert tokens <= budget
 
 
