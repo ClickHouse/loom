@@ -128,7 +128,7 @@ class Dropped:
 
 @dataclass
 class Retried:
-    """A second read of a window, or its loss: the window's first section and why."""
+    """A second read of a window, or its loss: the section it is reported under and why."""
 
     section: str
     reason: str
@@ -408,28 +408,28 @@ async def _read_window(
     llm: Any,
     system: str,
     w: Window,
-    first: str,
+    section: str,
     report: ExtractReport,
     *,
     fake_chosen: bool,
     note: str = "",
     answered_already: bool = False,
 ) -> list[dx.Candidate] | None:
-    """The model's candidates for one window, whose first section is `first`, or None
-    when the read is lost: the call failed, the fake model answered for a real provider,
-    or the reply is unreadable; each is a dropped line marked `refused`, a read the run
-    needed. `note` goes before the window's text. When the window is `answered_already`
-    (a second read for what the first reply got wrong), a lost read is a `read again`
-    line, never refused."""
+    """The model's candidates for one window, or None when the read is lost: the call
+    failed, the fake model answered for a real provider, or the reply is unreadable; each
+    is a dropped line marked `refused`, a read the run needed, reported under `section`.
+    `note` goes before the window's text. When the window is `answered_already` (a second
+    read for what the first reply got wrong), a lost read is a `read again` line under
+    `section`, never refused."""
     from server.llm.json_text import strip_code_fence
 
     user = f"{note}\n\n{dx.user_prompt(w)}" if note else dx.user_prompt(w)
 
     def lost(reason: str) -> None:
         if answered_already:
-            report.retried.append(Retried(first, f"the second read was lost: {reason}"))
+            report.retried.append(Retried(section, f"the second read was lost: {reason}"))
         else:
-            report.dropped.append(Dropped(first, reason, refused=True))
+            report.dropped.append(Dropped(section, reason, refused=True))
 
     try:
         with llm_stage("decision_extract"):
