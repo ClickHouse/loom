@@ -446,7 +446,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   is dropped as unread. A run whose every model call failed or came back unreadable reads nothing and retires nothing.
   The command exits 1 when it could not read the document (no document, no chunks, no usable model, the extractor's
   own rows unreadable before any model call, no window read), 2 when a write, or a read it needed, was refused or
-  failed (a dry run's reads count too), else 0; a race does not change the exit code.
+  failed (a dry run's reads count too, and so does a window the model could not answer readably while others were
+  read), else 0; a race does not change the exit code.
 
 The reasoning is the verbatim span the retire step reads: the record has no field for the quote. To confirm an
 extracted decision, a maintainer reads its identity with `memory.get` and calls `memory.pin` under it, or attests its

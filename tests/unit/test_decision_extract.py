@@ -896,7 +896,8 @@ async def test_retire_reads_records_only_for_rows_of_this_document(monkeypatch) 
     world.record("decision:here", {"reasoning": "gone"})
     world.record("decision:there", {"reasoning": "gone"}, source_resource_id="knowledge:ns/b#x")
     await _run()
-    assert set(world.writer_reads) == {"decision:here"}
+    # One record read per extractor row of this document, shared by the prompt and retire.
+    assert world.writer_reads == ["decision:here"]
 
 
 @pytest.mark.parametrize("flag", [["--max-per-section", "0"], ["--window-chars", "100"]])
@@ -1524,7 +1525,8 @@ async def test_a_tag_clear_on_a_value_changed_since_the_read_is_a_race(monkeypat
     world.value_moved = {f"id-{_key(c)}-loom-decisions"}
     report = await _run()
     (rec,) = report.records
-    assert rec.note == "source-changed not cleared: the row was rewritten since the run read it"
+    # Reported once, as a race; the record's note does not repeat it.
+    assert rec.note == ""
     assert report.races == [f"{_key(c)}: rewritten since the run read it"]
     assert cli.exit_code(report) == 0
 
@@ -1997,23 +1999,17 @@ async def test_unreadable_extractor_rows_stop_the_run_before_any_model_call(monk
 
 
 @pytest.mark.asyncio
-async def test_a_failed_read_in_the_retire_step_is_reported(monkeypatch) -> None:
-    world = _World(monkeypatch, [])
+async def test_a_failed_record_read_stops_the_run_before_any_model_call(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
     world.record("decision:gone", {"reasoning": "gone"})
-    reads = 0
-    real = de.live_writer_record
 
-    async def flaky(org, ns, key, ch=None):
-        nonlocal reads
-        reads += 1
-        if reads > 1:  # the first read is the prompt's list; the retire step's fails
-            raise TimeoutError("slow")
-        return await real(org, ns, key, ch=ch)
+    async def slow(org, ns, key, ch=None):
+        raise TimeoutError("slow")
 
-    monkeypatch.setattr(de, "live_writer_record", flaky)
+    monkeypatch.setattr(de, "live_writer_record", slow)
     report = await _run()
-    assert report.refused == ["decision:gone: failed: TimeoutError"]
-    assert world.deletes == [] and cli.exit_code(report) == 2
+    assert report.error == "could not read the extractor's rows: failed: TimeoutError"
+    assert world.deletes == [] and world.prompts == [] and cli.exit_code(report) == 1
 
 
 @pytest.mark.parametrize(
@@ -2049,3 +2045,13 @@ async def test_a_confirmed_restatement_below_five_closer_hits_still_blocks(monke
     assert asked == [de._RESTATEMENT_TOP_K] and de._RESTATEMENT_TOP_K == 20
     assert world.recorded == []
     assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("answers", "code"), [(["fake", "openai"], 2), (["openai", "openai"], 0)])
+async def test_a_partly_read_document_exits_2(monkeypatch, answers, code) -> None:
+    _World(monkeypatch, [])
+    await _two_windows(monkeypatch)
+    _fake_fallback(monkeypatch, answers)
+    report = await _run(window_chars=len(BODY) + 1)
+    assert report.error == "" and cli.exit_code(report) == code

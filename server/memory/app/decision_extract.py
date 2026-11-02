@@ -104,8 +104,9 @@ class Dropped:
     section: str
     reason: str
     quote: str = ""
-    # A read or write of the candidate was refused or failed (the reason says which): it
-    # counts toward the exit code, as `ExtractReport.refused` does.
+    # A read the run needed (a window, or a read or write of the candidate) was refused or
+    # failed (the reason says which): it counts toward the exit code, as
+    # `ExtractReport.refused` does.
     refused: bool = False
 
 
@@ -289,15 +290,15 @@ async def extract_document(
     # A chunk with no words (an image under its heading) carries no rationale to read.
     wins = windows([c for c in chunks if not dx.image_only(c.text)], window_chars=window_chars)
     report.windows = len(wins)
-    # One scan of the extractor's rows on this document, for the prompt and the retire
-    # step; rows this run writes are skipped by the retire step.
+    # One scan of the extractor's rows on this document and their records, for the prompt
+    # and the retire step; rows this run writes are skipped by the retire step.
     try:
-        own_rows = await _extractor_rows(org, namespace, source_uri)
-        known = await _known_decisions(org, namespace, own_rows)
+        own = await _own_records(org, namespace, await _extractor_rows(org, namespace, source_uri))
     except _REPORTED_ERRORS as e:
         # Before any model call: a run that cannot see its own rows reads nothing.
         report.error = f"could not read the extractor's rows: {_refusal(e)}"
         return report
+    known = _known_decisions(own)
     kept, answered = await _candidates(
         org, namespace, source_uri, wins, max_per_section, report, known
     )
@@ -332,22 +333,30 @@ async def extract_document(
             report.flagged.append(rec.memory_key)
         if rec.holds:
             held.setdefault((rec.held_outcome, cand.reasoning.strip()), rec.memory_key)
-    await _retire(report, own_rows, live_texts, written, held)
+    await _retire(report, own, live_texts, written, held)
     return report
 
 
-async def _known_decisions(
+async def _own_records(
     org: str, namespace: str, rows: list[MemoryRow]
-) -> list[tuple[str, str, str]]:
+) -> list[tuple[MemoryRow, dict[str, Any]]]:
+    """Each of the extractor's rows with the record its key holds, where that record is
+    the extractor's own: another identity's record of the key, active or superseding
+    ours, says nothing about whether our row's text still stands."""
+    out: list[tuple[MemoryRow, dict[str, Any]]] = []
+    for row in rows:
+        writer = await live_writer_record(org, namespace, row.memory_key)
+        if writer is not None and _is_extractor(writer.agent, writer.user_id, writer.session_id):
+            out.append((row, svc.parse_record_json(writer.record_json)))
+    return out
+
+
+def _known_decisions(own: list[tuple[MemoryRow, dict[str, Any]]]) -> list[tuple[str, str, str]]:
     """(category, scenario, outcome) of the extractor's decisions on this document, pinned
     or not, for the prompt: a model told how a decision was worded before reuses the
     wording, so its key and its outcome stay put across runs."""
     known: list[tuple[str, str, str]] = []
-    for row in rows:
-        writer = await live_writer_record(org, namespace, row.memory_key)
-        if writer is None or not _is_extractor(writer.agent, writer.user_id, writer.session_id):
-            continue
-        record = svc.parse_record_json(writer.record_json)
+    for _row, record in own:
         category, scenario, outcome = (
             str(record.get(f) or "") for f in ("category", "scenario", "outcome")
         )
@@ -362,7 +371,7 @@ async def _read_window(
 ) -> list[dx.Candidate] | None:
     """The model's candidates for one window, or None when the window is lost: the call
     failed, the fake model answered for a real provider, or the reply is unreadable; each
-    is a dropped line."""
+    is a dropped line marked `refused`, a read the run needed."""
     from server.llm.json_text import strip_code_fence
 
     first = dx.breadcrumb(w.chunks[0].section_path)
@@ -376,15 +385,17 @@ async def _read_window(
             )
     except (httpx.HTTPError, TimeoutError, LoomServerError) as e:
         # A provider error, a timeout or a refused call loses this window only.
-        report.dropped.append(Dropped(first, f"the model call failed: {type(e).__name__}"))
+        report.dropped.append(
+            Dropped(first, f"the model call failed: {type(e).__name__}", refused=True)
+        )
         return None
     if not fake_chosen and res.provider == "fake":
         # A fallback with no key answered: its decisions pass the check by construction.
-        report.dropped.append(Dropped(first, _FAKE_ANSWER))
+        report.dropped.append(Dropped(first, _FAKE_ANSWER, refused=True))
         return None
     cands = dx.parse_candidates(strip_code_fence(res.text))
     if cands is None:
-        report.dropped.append(Dropped(first, _unread_reply(res.stop_reason)))
+        report.dropped.append(Dropped(first, _unread_reply(res.stop_reason), refused=True))
     return cands
 
 
@@ -776,8 +787,8 @@ async def _clear_if_tagged(rec: RecordReport, row: MemoryRow, dry_run: bool) -> 
         return
     note = "would clear source-changed" if dry_run else "source-changed cleared"
     if not dry_run and (moved := await _set_source_changed(row, False)):
-        rec.race = moved
-        note = f"source-changed not cleared: the row was {moved} since the run read it"
+        rec.race = moved  # reported once, in `races`
+        return
     rec.note = f"{rec.note}; {note}" if rec.note else note
 
 
@@ -873,7 +884,7 @@ async def _extractor_rows(org: str, namespace: str, source_uri: str) -> list[Mem
 
 async def _retire(
     report: ExtractReport,
-    rows: list[MemoryRow],
+    own: list[tuple[MemoryRow, dict[str, Any]]],
     live_texts: list[str],
     written: set[str],
     held: dict[tuple[str, str], str],
@@ -888,11 +899,11 @@ async def _retire(
     `source-changed` tag: it sees the reasoning alone, and the tag may stand for another
     field the document still contradicts; reconcile drops it when the verbatim fields
     match again."""
-    for row in rows:
+    for row, record in own:
         if row.memory_key in written:
             continue
         try:
-            await _retire_one(report, row, live_texts, held)
+            await _retire_one(report, row, record, live_texts, held)
         except _REPORTED_ERRORS as e:
             report.refused.append(f"{row.memory_key}: {_refusal(e)}")
 
@@ -900,18 +911,13 @@ async def _retire(
 async def _retire_one(
     report: ExtractReport,
     row: MemoryRow,
+    record: dict[str, Any],
     live_texts: list[str],
     held: dict[tuple[str, str], str],
 ) -> None:
-    """The retire step for one of the extractor's rows; its reads and writes raise to the
-    caller, which reports them."""
+    """The retire step for one of the extractor's rows and its own record; its writes
+    raise to the caller, which reports them."""
     key = row.memory_key
-    # The extractor's own record: another identity's record of the key, active or
-    # superseding ours, says nothing about whether our row's text still stands.
-    writer = await live_writer_record(report.org, report.namespace, key)
-    if writer is None or not _is_extractor(writer.agent, writer.user_id, writer.session_id):
-        return
-    record = svc.parse_record_json(writer.record_json)
     reasoning = str(record.get("reasoning") or "")
     if not reasoning:
         return
