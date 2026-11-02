@@ -69,7 +69,7 @@ def test_the_score_path_reads_the_stored_preview() -> None:
 
 def test_a_truncated_preview_row_reads_its_stored_hash_not_the_preview() -> None:
     from server.core.hashing import sha256_value_json
-    from server.memory.app.query import _row_content_sha256
+    from server.memory.domain.trust import row_content_sha256 as _row_content_sha256
 
     row = memory_repo.MemoryRow(
         memory_id="00000000-0000-0000-0000-000000000001",

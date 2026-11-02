@@ -122,6 +122,11 @@ def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def _list(value: Any) -> list[Any]:
+    """A list field of the reply, or [] when the model wrote something else there."""
+    return value if isinstance(value, list) else []
+
+
 def _span(value: Any) -> str:
     """A verbatim span as the model wrote it: stripping it could make it match."""
     return value if isinstance(value, str) else ""
@@ -149,8 +154,8 @@ def parse_candidates(reply: str) -> list[Candidate] | None:
     for item in items:
         if not isinstance(item, dict):
             continue
-        alternatives = [a for a in map(_alternative, item.get("alternatives") or []) if a]
-        mentions = [_text(m) for m in item.get("mentions") or [] if _text(m)]
+        alternatives = [a for a in map(_alternative, _list(item.get("alternatives"))) if a]
+        mentions = [_text(m) for m in _list(item.get("mentions")) if _text(m)]
         cand = Candidate(
             category=_text(item.get("category")),
             scenario=_text(item.get("scenario")),

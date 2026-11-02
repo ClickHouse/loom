@@ -46,7 +46,7 @@ from server.memory.domain.corpus_synthesis import Window, windows
 from server.memory.domain.decision_schema import SOURCE_CHANGED_TAG
 from server.memory.domain.decision_statement import alternatives, memory_value
 from server.memory.domain.files import detect_value_files, normalize_files
-from server.memory.domain.trust import confirmed, verification_state
+from server.memory.domain.trust import confirmed, row_content_sha256, verification_state
 from server.memory.store import (
     Identity,
     MemoryRow,
@@ -133,9 +133,11 @@ def _identity(org: str, namespace: str) -> Identity:
 
 
 def _confirmed(row: MemoryRow) -> bool:
-    """A human stands behind the row: pinned, or attested in its current form; the rule
-    memory.for_file marks `(unconfirmed)` by."""
-    state = verification_state(row.verified_by, row.verified_sha256, row.content_sha256)
+    """A person or a service account stood behind the row: pinned, or attested in its
+    current form, read as memory.get reads it; the rule memory.for_file marks
+    `(unconfirmed)` by."""
+    current = row_content_sha256(row)
+    state = verification_state(row.verified_by, row.verified_sha256, current)
     return confirmed(row.pinned, state)
 
 
@@ -374,8 +376,9 @@ def _record_input(
 
 
 def _fits(org: str, namespace: str, source_uri: str, cand: dx.Candidate, section: str) -> bool:
-    """The candidate fits decision.record's field limits. Checked with no files: the
-    resolved files (at most one per looked-up name) fit any candidate that fits."""
+    """The candidate fits decision.record's field limits. Checked with no files: the files
+    a run adds pass through normalize_files, capped at the FileRefs limits, so they never
+    make a fitting candidate unfit."""
     try:
         _record_input(org, namespace, source_uri, cand, section, [])
     except ValidationError:

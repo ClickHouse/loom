@@ -1660,3 +1660,20 @@ def test_an_error_goes_to_stderr(capsys) -> None:
     cli.print_report(report)
     out = capsys.readouterr()
     assert out.out == "" and out.err == "error: no live document\n"
+
+
+def test_an_attestation_binding_the_value_of_a_row_with_no_hash_column_confirms_it() -> None:
+    from server.core.hashing import sha256_value_json
+    from server.memory.app.decision_extract import _confirmed
+
+    value = "Decided spill."
+    bound = sha256_value_json(json.dumps(value))
+    row = _row("decision:k", value=value, content_sha256="", verified_by="human:alice")
+    assert _confirmed(_Row(**{**vars(row), "verified_sha256": bound}))
+    assert not _confirmed(_Row(**{**vars(row), "verified_sha256": "other"}))
+
+
+def test_a_list_field_the_model_filled_with_something_else_reads_empty() -> None:
+    reply = json.dumps({"decisions": [_candidate(mentions=3, alternatives=True)]})
+    (cand,) = dx.parse_candidates(reply) or []
+    assert cand.mentions == [] and cand.alternatives == []
