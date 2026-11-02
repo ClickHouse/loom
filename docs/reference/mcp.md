@@ -109,14 +109,15 @@ connect by browser sign-in instead of a pasted token (`server/auth/oauth.py`):
   echoes it. The client's `clientInfo.name` is cached against it and becomes the
   `agent` of later calls, slugified (`Cursor` → `cursor`; absent →
   `claude-desktop`). The cache is in-process and bounded.
-- **Identity defaults.** Tool calls usually carry only the action's arguments.
-  The server fills `org` from the token and `namespace` and `agent` from the
-  caller's default workspace; explicit arguments win. `code.*` calls resolve to
-  the code plane instead, and on the `assistant` toolset a read that names no `agent`
-  follows that toolset's rule (see [The assistant toolset](#the-assistant-toolset)). An `org` argument the token may not act in is refused
-  (`ORG_MISMATCH`): a token acts in its own org, an org-wide (`*`) token or a
-  platform admin in any org, the same rule as over HTTP (`authz.may_act_in_org`).
-  A restricted namespace still refuses every other org, platform admins included. `loom_search` takes no `namespace` argument: it
+- **Identity defaults.** Tool calls usually carry only the action's arguments. The
+  server fills `org` from the token and `namespace` and `agent` from the caller's
+  default workspace; explicit arguments win. `code.*` calls resolve to the code plane
+  instead, and on the `assistant` toolset a read that names no `agent` follows that
+  toolset's rule (see [The assistant toolset](#the-assistant-toolset)). An `org`
+  argument the token may not act in is refused (`ORG_MISMATCH`): a token acts in its
+  own org, an org-wide (`*`) token or a platform admin in any org, the same rule as
+  over HTTP (`authz.may_act_in_org`). A restricted namespace still refuses every other
+  org, platform admins included. `loom_search` takes no `namespace` argument: it
   searches the caller's home namespace and its other memory-kind namespaces, up to the
   fan-out cap.
 - **Code scope.** A client may send `X-Loom-Code-Scope: <org>/<namespace>` (the
@@ -181,11 +182,11 @@ listed or callable. See
 [unified search](../features/unified-search.md#searchquery-over-http-and-the-sdks).
 
 **Hidden ops** (`_MCP_HIDDEN_OPS` in `server/operations/toolsets.py`) are
-neither listed nor callable over MCP, except `memory.search` and `knowledge.search` on
-the `assistant` toolset: the per-store searches `loom_search`
+neither listed nor callable over MCP: the per-store searches `loom_search`
 replaces (`memory.search`, `knowledge.search`, `conversation.search`), review
 queues, snapshot and restore, policy administration, audit and cost
-dashboards, code-index ingest. A call to one answers `isError` with code
+dashboards, code-index ingest. On the `assistant` toolset `memory.search` and
+`knowledge.search` are listed and callable. A call to one answers `isError` with code
 `OP_NOT_ON_MCP` and what to use instead. They stay reachable over HTTP and the
 SDKs. The rule for hiding an op: would a typical end user, not an operator,
 reach for it in chat? A namespace-wide view can be hidden while a variant bounded
