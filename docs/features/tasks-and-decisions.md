@@ -375,6 +375,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.
+  Each `decision.record` and `memory.delete_version` call leaves the audit row the transport writes for that op, with
+  the actor `process:cli:decisions`; the tag write, `memory.update_by_id`, declares none, as over HTTP.
 - **Files**: each backticked or qualified name and each bare class name the document text holds is looked up with
   `code.symbol` in the same namespace; exactly one defining file (a class preferred over its constructor) goes into
   `files`, several or none add nothing. When the code index cannot be read for a name, a decision already recorded
@@ -391,9 +393,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   unconfirmed and from this document: recorded again (the record is superseded, history keeps it). A verbatim field
   differs and the row is confirmed and cites this document: no write; the full `decision.record` body is printed with
   the row's agent, user and session, and the row is tagged `source-changed` by its `memory_id` (`memory.update_by_id`,
-  tags only), unless it already carries the tag. The tag write is a new version by the extractor: the row's pin, value
-  and attestation stay (the value's hash does not change, so the attestation still binds it), and its actor and age
-  move to it, so the pre-edit line reads `by cli:decisions, just now`. To accept the body, a maintainer unpins a
+  tags only, conditional on the value read: a value changed since, by `decision.outcome` or a re-record, is refused
+  and reported), unless it already carries the tag. The tag write is a new version by the extractor: the row's pin,
+  value and attestation stay (the value's hash does not change, so the attestation still binds it), and its actor and
+  age move to it, so the pre-edit line reads `by cli:decisions, just now`. To accept the body, a maintainer unpins a
   pinned row with `memory.unpin` (`decision.record` on a pinned writer row answers 409 `PINNED_CONFLICT`) and sends
   it; an attested row takes the body, and its attestation then reads stale until `memory.verify` binds it again. A
   confirmed row is tagged whoever wrote it, as long as it cites this document. A row from another document, or another

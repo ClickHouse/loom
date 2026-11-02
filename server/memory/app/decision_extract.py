@@ -387,7 +387,10 @@ def _same_reasons(stored: list[str], candidate: list[str]) -> bool:
     if len(remaining) != len(stored):
         return False
     # The alternatives holding a reason first, so a reasonless one takes what is left.
-    for alt in sorted(stored, key=lambda a: dx.REJECTED not in a):
+    # Exact (uncut) ones before cut ones, so a short cut prefix cannot take the reason an
+    # exact one needs; reasonless ones last.
+    order = sorted(stored, key=lambda a: (dx.REJECTED not in a, len(a) >= svc.ALTERNATIVE_CHARS))
+    for alt in order:
         reason = alt.rpartition(dx.REJECTED)[2]
         cut = len(alt) >= svc.ALTERNATIVE_CHARS
         if dx.REJECTED not in alt:
@@ -456,6 +459,7 @@ async def _reconcile(
             key,
             scope=WHOLE_NAMESPACE,
             fresh=True,
+            strong=True,
         )
         if row is not None and not complete:
             # The code index did not answer for every name: keep the files the row has
@@ -517,9 +521,11 @@ async def _reconcile(
         rec.action = "revised"
     rec.holds = True
     if not dry_run:
+        from server.memory.api.ops_decision import decision_record
         from server.memory.app.decision import handle_decision_record
 
-        await handle_decision_record(inp)
+        out = await handle_decision_record(inp)
+        await _audit(decision_record, inp, out)
     return rec
 
 
@@ -665,19 +671,41 @@ async def _set_source_changed(row: MemoryRow, on: bool) -> bool:
     be ambiguous there."""
     from server.memory.api.models_crud import MemoryUpdateByIdInput
     from server.memory.app.update import handle_memory_update_by_id
+    from server.memory.app.write import stored_sha256
 
     tags = [t for t in row.tags if t != SOURCE_CHANGED_TAG]
-    # memory.update_by_id has no precondition on tags (`if_match_sha256` covers the value
-    # alone), so a tag written between the read and this call is lost.
+    # Conditional on the value read: a decision.outcome or a re-record since then is
+    # refused (409 PRECONDITION_FAILED), not overwritten with tags from the old reading.
+    # The hash covers the value alone, so a tags-only write in the gap is not seen.
     out = await handle_memory_update_by_id(
         MemoryUpdateByIdInput(
             org=row.org,
             memory_id=row.memory_id,
             tags=[*tags, SOURCE_CHANGED_TAG] if on else tags,
             char_limit=row.char_limit,  # None would drop the row's cap
+            if_match_sha256=stored_sha256(row),
         )
     )
     return bool(out.updated)
+
+
+async def _audit(op: Any, inp: Any, out: Any) -> None:
+    """The audit row the transport writes for `op` after a successful call (an op that
+    declares `audit`), written here since an in-process call has no transport: the op's
+    name, the writer actor (`process:cli:decisions`), the op's audit subject or else the
+    input. Best effort, as there."""
+    from server.memory.app.provenance import writer_actor
+    from server.observability import audit
+
+    if not op.audit:
+        return
+    try:
+        subject = op.audit_subject(inp, out) if op.audit_subject else inp.model_dump(mode="json")
+    except Exception:  # noqa: BLE001 — a subject that cannot be built still gets an audit row
+        subject = {}
+    await audit.emit(
+        op.name, org=inp.org, namespace=inp.namespace, actor=writer_actor("-"), subject=subject
+    )
 
 
 async def _extractor_rows(org: str, namespace: str, source_uri: str) -> list[MemoryRow]:
@@ -694,6 +722,7 @@ async def _extractor_rows(org: str, namespace: str, source_uri: str) -> list[Mem
             order_by="memory_key_asc",
             limit=_PAGE,
             offset=offset,
+            preview=True,  # only the keys are used; the rows are read whole below
         )
         offset += len(page)
         rows = await get_many_by_keys(
@@ -715,14 +744,14 @@ async def _retire(
 ) -> None:
     """Contract the extractor's own rows on this document whose reasoning left its text:
     delete an unconfirmed one; tag a confirmed one (pinned or attested), or one with a
-    recorded outcome, `source-changed`. An unconfirmed one whose outcome and reasoning this
-    run holds under
-    another key (`held`) is deleted too: the model worded the scenario anew, and the
-    decision is not served twice. Another decision resting on the same reasoning has
-    another outcome and stays. A row whose reasoning is still there stays, even when this
-    run's model did not emit it again. The step never drops a `source-changed` tag: it
-    sees the reasoning alone, and the tag may stand for another field the document still
-    contradicts; reconcile drops it when the verbatim fields match again."""
+    recorded outcome, `source-changed`. An unconfirmed one whose outcome and reasoning
+    this run holds under another key (`held`) is deleted too: the model worded the
+    scenario anew, and the decision is not served twice. Another decision resting on the
+    same reasoning has another outcome and stays. A row whose reasoning is still there
+    stays, even when this run's model did not emit it again. The step never drops a
+    `source-changed` tag: it sees the reasoning alone, and the tag may stand for another
+    field the document still contradicts; reconcile drops it when the verbatim fields
+    match again."""
     org, namespace = report.org, report.namespace
     for row in rows:
         key = row.memory_key
@@ -774,15 +803,18 @@ async def _delete_row(report: ExtractReport, row: MemoryRow) -> bool:
 
     if report.dry_run:
         return True
-    out = await handle_memory_delete_version(
-        MemoryDeleteVersionInput(
-            org=row.org,
-            namespace=row.namespace,
-            agent=EXTRACTOR_AGENT,
-            memory_key=row.memory_key,
-            version=row.version,
-        )
+    from server.memory.api.ops_crud import memory_delete_version
+
+    inp = MemoryDeleteVersionInput(
+        org=row.org,
+        namespace=row.namespace,
+        agent=EXTRACTOR_AGENT,
+        memory_key=row.memory_key,
+        version=row.version,
     )
+    out = await handle_memory_delete_version(inp)
+    if out.tombstoned:
+        await _audit(memory_delete_version, inp, out)
     if not out.tombstoned:
         # Rewritten since it was read: the next run judges the new version.
         report.refused.append(f"{row.memory_key}: changed while the run read it")

@@ -71,6 +71,7 @@ def _row(key: str, **over: Any) -> _Row:
         verified_by="",
         verified_sha256="",
         content_sha256="sha-1",
+        value="Decided spill.",
         version=7,
         source_resource_id=f"knowledge:ns/doc.md#{SECTION}",
     )
@@ -109,6 +110,9 @@ class _World:
         # memory_ids deleted between the run's read and its tag write.
         self.gone: set[str] = set()
         self.bulk_reads = 0
+        self.audits: list[tuple[str, str, dict[str, Any]]] = []
+        # memory_ids whose value moved on since the run read them.
+        self.value_moved: set[str] = set()
         self.refuse_update: Any = None
         self.deletes: list[Any] = []
         self.prompts: list[tuple[str, str]] = []
@@ -188,6 +192,9 @@ class _World:
         async def mem_update(inp):
             if world.refuse_update:
                 raise world.refuse_update
+            if inp.memory_id in world.value_moved:
+                assert inp.if_match_sha256  # the write is conditional on the value read
+                raise _refusal("PRECONDITION_FAILED")
             if inp.memory_id in world.gone:
                 return SimpleNamespace(updated=False)
             world.updates.append(inp)
@@ -229,6 +236,13 @@ class _World:
                 if (r.agent, r.user_id, r.session_id, r.memory_key) in wanted
             }
 
+        from server.observability import audit
+
+        async def emit(event_type, *, org, namespace, actor, subject=None, **kw):
+            world.audits.append((event_type, actor, subject or {}))
+            return "h"
+
+        mp.setattr(audit, "emit", emit)
         mp.setattr(de, "actors_by_key", actors)
         mp.setattr(de, "memory_rows_by_identity_keys", by_identity)
         mp.setattr(search, "handle_memory_search", mem_search)
@@ -1463,3 +1477,57 @@ async def test_an_attested_restatement_under_another_key_is_skipped(monkeypatch)
 )
 def test_a_span_too_short_to_rest_a_decision_on_is_dropped(over, reason) -> None:
     assert dx.verbatim_failure(_cand(**over), [BODY]) == reason
+
+
+@pytest.mark.asyncio
+async def test_a_tag_write_on_a_value_changed_since_the_read_is_refused(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"}, pinned=True)
+    world.value_moved = {"id-decision:gone-loom-decisions"}
+    report = await _run()
+    assert report.refused == ["decision:gone: refused: PRECONDITION_FAILED"]
+    assert report.flagged == [] and world.updates == []
+    assert world.rows[0].tags == ["decision"]
+
+
+def test_an_exact_reason_is_matched_before_a_cut_one_takes_it() -> None:
+    from server.memory.app.decision_extract import _same_reasons
+
+    exact = "a plain set — rejected: costs random reads"
+    # Cut at the cap inside its reason, so its stored prefix is only "costs".
+    option = "o" * (svc.ALTERNATIVE_CHARS - len(" — rejected: costs"))
+    (cut,) = svc.clean_alternatives([f"{option} — rejected: costs random reads and memory"])
+    assert cut.endswith("rejected: costs")
+    # Reordered, the exact one first: a greedy prefix match of the cut one would take it.
+    candidate = [exact, f"{option} — rejected: costs random reads and memory"]
+    assert _same_reasons([cut, exact], candidate)
+
+
+@pytest.mark.asyncio
+async def test_each_write_leaves_the_audit_row_the_transport_would(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record("decision:gone", {"reasoning": "gone"})
+    world.record("decision:flag", {"reasoning": "gone"}, pinned=True)
+    from server.memory.domain.provenance import cli_actor, pipeline_actor
+
+    with pipeline_actor(cli_actor("decisions")):
+        await _run()
+    events = [(e, a) for e, a, _ in world.audits]
+    # decision.record and memory.delete_version declare an audit row; memory.update_by_id
+    # does not, as over the transport.
+    assert sorted(events) == [
+        ("decision.record", "process:cli:decisions"),
+        ("memory.delete_version", "process:cli:decisions"),
+    ]
+    record_subject = next(s for e, _, s in world.audits if e == "decision.record")
+    assert record_subject["agent"] == "loom-decisions" and record_subject["category"]
+    assert len(world.updates) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_leaves_no_audit_row(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    world.record("decision:gone", {"reasoning": "gone"})
+    await _run(dry_run=True)
+    assert world.audits == []
