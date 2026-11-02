@@ -167,7 +167,6 @@ async def _adoption(profile: mentor_rules.MentorProfile) -> list[MentorAdoption]
     ]
 
 
-# What each rung counts, and what it does not show.
 # What each rung counts, and what it does not show; the attribution rules are in
 # docs/features/namespaces-and-sharing.md#the-mentor.
 _RUNG_MEANING: dict[UsageRungName, str] = {
@@ -206,14 +205,15 @@ async def _usage_evidence(org: str, namespace: str, agent: str, window_seconds: 
         return _Ladder([], None, None, [])
     ch = get_client()
     who = (org, namespace, agent, window_seconds)
-    failed: list[str] = []
+    # Step → why it failed; reported in step order, whichever read fails first.
+    failed: dict[str, str] = {}
 
     async def read[T](step: str, coro: Awaitable[T]) -> T | None:
         try:
             return await coro
         except Exception as exc:  # noqa: BLE001 — a failed read leaves its rungs uncounted
             log.warning("mentor %s read failed: %s", step, exc)
-            failed.append(f"{step}: {type(exc).__name__}")
+            failed[step] = type(exc).__name__
             return None
 
     async def indexed() -> int:
@@ -256,7 +256,9 @@ async def _usage_evidence(org: str, namespace: str, agent: str, window_seconds: 
         _rung("client_acknowledged", reported, "client"),
         _rung("task_outcome", graded, "client"),
     ]
-    return _Ladder(rungs, calls.get("oldest_row"), retention, failed)
+    steps = ("calls", "indexed_writes", "reported_keys", "graded_runs", "retention")
+    skipped = [f"{step}: {failed[step]}" for step in steps if step in failed]
+    return _Ladder(rungs, calls.get("oldest_row"), retention, skipped)
 
 
 async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
