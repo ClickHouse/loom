@@ -2108,6 +2108,13 @@ def test_every_printed_action_has_its_line() -> None:
         ("spill into sorted runs", "We are choosing sorted runs for spilling.", True),
         ("spill into sorted runs", "A plain set on disk costs random reads.", False),
         ("spill into sorted runs", "Sorted runs avoid random reads on disk.", False),
+        # An outcome that carries its reason leaves the reasoning nothing to add: dropped,
+        # which is why the prompt asks for the outcome without the reason.
+        (
+            "spill into sorted runs, as a plain set on disk costs random reads",
+            "A plain set on disk costs random reads.",
+            True,
+        ),
     ],
 )
 def test_a_reasoning_with_no_word_beyond_its_outcome_restates_it(
@@ -2127,6 +2134,10 @@ async def test_a_candidate_whose_reasoning_restates_the_outcome_is_dropped(monke
     assert world.recorded == [] and report.records == []
     (d,) = report.dropped
     assert (d.section, d.reason, d.refused) == (SECTION, dx.RESTATED, False)
+
+
+# DOC has this sentence on one line.
+_WRAPPED_REASONING = "We spill into sorted\nruns like ORDER BY."
 
 
 def test_a_span_differing_only_in_whitespace_is_the_documents() -> None:
@@ -2273,7 +2284,7 @@ async def test_a_rewrapped_reasoning_under_a_reworded_key_replaces_the_old_row(
     first = _candidate()
     world = _World(monkeypatch, [])
     # Recorded when the document broke the line; DOC now has it on one line.
-    wrapped = {**_same_fields(first), "reasoning": "We spill into sorted\nruns like ORDER BY."}
+    wrapped = {**_same_fields(first), "reasoning": _WRAPPED_REASONING}
     world.record(_key(first), wrapped, files=[HEADER])
     second = _candidate(scenario="spilling the final DISTINCT")
     world.reply = [second]
@@ -2287,14 +2298,11 @@ async def test_a_rewrapped_reasoning_under_a_reworded_key_replaces_the_old_row(
 async def test_a_pinned_row_whose_document_only_rewrapped_is_not_flagged(monkeypatch) -> None:
     c = _candidate()
     world = _World(monkeypatch, [c])
-    stored = {**_same_fields(c), "reasoning": "We spill into sorted\nruns like ORDER BY."}
+    stored = {**_same_fields(c), "reasoning": _WRAPPED_REASONING}
     world.record(_key(c), stored, pinned=True)
     report = await _run()
     assert [r.action for r in report.records] == ["unchanged"]
     assert world.updates == [] and world.recorded == [] and report.flagged == []
-
-
-_WRAPPED_REASONING = "We spill into sorted\nruns like ORDER BY."
 
 
 @pytest.mark.asyncio
@@ -2473,10 +2481,8 @@ async def test_chunks_stored_with_no_section_path_are_judged_on_their_own_text(
     assert report.image_only == ["", "Spilling > Architecture"]
 
 
-_LINKED_BADGE = "[![build](badge.svg)](https://ci.example.com/org/spill/actions/workflows/ci.yml)"
-
-
 _CI_URL = "https://ci.example.com/org/spill/actions/workflows/ci.yml"
+_LINKED_BADGE = f"[![build](badge.svg)]({_CI_URL})"
 
 
 @pytest.mark.parametrize(
@@ -2491,12 +2497,23 @@ _CI_URL = "https://ci.example.com/org/spill/actions/workflows/ci.yml"
         ),
         (f"[![b][badge]]({_CI_URL})\n\nBuild status for the spill code.", True),
         ('<img src="flow.png" alt="flow">\n\nFigure 1: the spill path.', True),
+        # A comparison or a generic is no tag: the decision beside the diagram is text.
+        (
+            "![flow](flow.png)\n\nSpill once the block count is < 10k and memory use is > 80% "
+            "of the limit, so the merge stays sequential.",
+            False,
+        ),
         # A link is no image: a short sentence with one is text.
         ("See [the merge notes](https://example.com/notes) for why runs are sorted.", False),
     ],
 )
 def test_a_caption_is_counted_without_its_markup(body: str, image_only: bool) -> None:
     assert dx.image_only(body) is image_only
+
+
+def test_only_tag_shaped_markup_is_removed_from_a_caption() -> None:
+    text = '<p align="center">Returns Option<A>, Map<a, b> when x < 10k and y > 80%.</p>'
+    assert dx.caption_text(text) == "Returns Option<A>, Map<a, b> when x < 10k and y > 80%."
 
 
 @pytest.mark.asyncio

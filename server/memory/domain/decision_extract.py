@@ -56,8 +56,8 @@ SYSTEM = (
     "it.\n"
     "- scenario: the specific situation that was decided, specific enough that another "
     "document's decision does not share it.\n"
-    '- outcome: what was decided, short enough that "Decided <outcome> because '
-    '<reasoning>." fits 220 characters.\n'
+    "- outcome: what was chosen, without the reason (that is the reasoning), short "
+    'enough that "Decided <outcome> because <reasoning>." fits 220 characters.\n'
     "- is_constraint: true when the decision is a ban or an invariant code must keep.\n"
     "- mentions: the class, function and setting names and pull request numbers the "
     "text names, as written.\n"
@@ -125,8 +125,10 @@ def no_words(body: str) -> bool:
 
 
 # Markup around an image's caption that is no text a reader sees: an HTML tag, a link's
-# target or reference label, a bare URL.
-_HTML_TAG = re.compile(r"<[^>]+>")
+# target or reference label, a bare URL. A tag is lower case and on one line, its name
+# followed by a space, `/` or `>`: `x < 10k and y > 80%` and `Option<A>` are text. Any
+# name, not only inline ones: a badge often sits in a `<p>` or a `<div>`.
+_HTML_TAG = re.compile(r"</?[a-z][a-z0-9-]*(?=[\s/>])[^<>\n]*>")
 _LINK_TARGET = re.compile(r"\]\([^)]*\)|\]\[[^\]]*\]")
 _URL = re.compile(r"https?://\S+")
 
@@ -368,8 +370,9 @@ def image_only_sections(content: str) -> list[str]:
     heading alone, over a picture, or over a picture and a caption of up to
     CAPTION_MAX_CHARS. A heading alone over its subsections is not one; a heading over a
     picture and then subsections is. The text above the first heading, or a document with
-    no heading, counts when it holds a picture; its breadcrumb is ''. The run neither
-    sends nor reads these sections."""
+    no heading, counts when it holds a picture; its breadcrumb is '', and the run judges
+    each chunk stored with that empty path on its own text too. The run neither sends nor
+    reads these sections."""
     sections = detect_sections(content) or [Section(path=(), depth=0, start=0, lines=[content])]
     out: list[str] = []
     for i, sec in enumerate(sections):
