@@ -134,8 +134,8 @@ class OpCapability(BaseModel):
     audit: bool
     request_fields: list[str] = Field(default_factory=list)
     response_fields: list[str] = Field(default_factory=list)
-    # Additive: every MCP toolset whose listing carries the
-    # op — core | coding | atomic | all; empty for a hidden op.
+    # Additive: every MCP toolset whose listing carries the op; empty for a hidden op
+    # off the assistant roster.
     toolsets: list[str] = Field(default_factory=list)
 
 
