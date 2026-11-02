@@ -71,11 +71,13 @@ def emit_token_refusal(
     org: str = "",
     server_fault: bool = False,
     request_id: str = "",
+    consumer: str = "",
 ) -> None:
     """Emit a token-attributed refusal row in an isolated request context,
     unless this batch already wrote it. The copy is reset so earlier batch
     entries cannot contaminate the row. `request_id`: the call's, once it
-    has one (its log lines and statements carry it); else a new one."""
+    has one (its log lines and statements carry it); else a new one.
+    `consumer`: the one the connection names, below a token's claim."""
 
     org = org or str(getattr(auth, "org", "") or "")
     if org in ("", "*"):
@@ -84,12 +86,18 @@ def emit_token_refusal(
     if not batch_allows_row(op_name, error_code, org, status):
         return
     contextvars.copy_context().run(
-        _emit_token_refusal, op_name, auth, error_code, org, server_fault, request_id
+        _emit_token_refusal, op_name, auth, error_code, org, server_fault, request_id, consumer
     )
 
 
 def _emit_token_refusal(
-    op_name: str, auth: Any, code: str, org: str, server_fault: bool, request_id: str
+    op_name: str,
+    auth: Any,
+    code: str,
+    org: str,
+    server_fault: bool,
+    request_id: str,
+    consumer: str,
 ) -> None:
     from server.observability.consumer import bind_current_consumer
     from server.observability.ledger import emit_agent_event
@@ -97,7 +105,7 @@ def _emit_token_refusal(
     from server.transport._common import begin_call, sli_columns
 
     begin_call()
-    bind_current_consumer(None, auth)
+    bind_current_consumer({"consumer": consumer} if consumer else None, auth)
     bind_claimed_class(auth)
     emit_agent_event(
         op_name=op_name,

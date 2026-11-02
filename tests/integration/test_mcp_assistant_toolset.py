@@ -124,7 +124,9 @@ async def test_the_assistant_reads_without_writing_or_recording_usage(
                 "/v1/namespace.audit", json={"org": ORG, "namespace": ns}, headers=auth
             )
             summary = r.json()["summary"]
-            return summary if summary["inspector_calls"] >= 1 else None
+            # Both ledger rows landed: the assistant's and the HTTP search's.
+            landed = summary["inspector_calls"] >= 1 and summary["searches"] >= 1
+            return summary if landed else None
 
         summary = await eventually(_inspected, description="the ledger has the assistant calls")
         # The HTTP search is the namespace's one counted search; the assistant's are not.

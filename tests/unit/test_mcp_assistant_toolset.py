@@ -258,11 +258,16 @@ def test_the_listing_offers_no_argument_the_connection_overwrites(
 def test_an_unknown_tool_name_writes_no_ledger_row(
     bound: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    rows: list[str] = []
-    monkeypatch.setattr(mcp_call, "emit_token_refusal", lambda name, *a, **k: rows.append(name))
+    rows: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        mcp_call,
+        "emit_token_refusal",
+        lambda name, *a, **k: rows.append((name, k.get("consumer", ""))),
+    )
     _call("x" * 500, {})
     _call("loom_memory_set", {})
-    assert rows == ["memory.set"]
+    # A refused call is the assistant's too, so an operator finds it by its consumer.
+    assert rows == [("memory.set", "loom-assistant")]
 
 
 def test_an_assistant_call_opens_no_session_run() -> None:

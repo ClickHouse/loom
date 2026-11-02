@@ -541,10 +541,9 @@ class KnowledgeBulkDeleteOutput(BaseModel):
 
 
 class KnowledgeReadsInput(BaseModel):
-    """How often agents opened each document of the namespace over the last
-    `days`: `knowledge.get` reads from the event ledger, the dashboard's own
-    previews, the assistant toolset's reads and bench traffic left out. Opened,
-    not found — what a search returned is not recorded for knowledge."""
+    """How often agents opened each document over the last `days` (`knowledge.get`
+    ledger rows; dashboard, assistant and bench traffic left out). Opened, not
+    found — what a search returned is not recorded for knowledge."""
 
     org: str
     namespace: str

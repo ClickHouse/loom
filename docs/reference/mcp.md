@@ -253,11 +253,13 @@ the connection: point a client at `?toolset=assistant` once every replica runs a
 that serves it, and give it a `viewer` token in any case. On it:
 
 - **Only its reads are callable.** A `tools/call` for any other tool, `loom_op` and
-  `loom_search` included, answers `isError` with code `UNKNOWN_OP` before the handler
-  runs, whatever the token allows. The token is still checked on every call, so a read
+  `loom_search` included, answers `isError` before the handler runs, whatever the token
+  allows: with code `UNKNOWN_OP`, or with the access refusal when the call names an org or
+  namespace the token cannot read, which is checked first. The token is still checked on every call, so a read
   the person may not make is refused as on any connection. Mint the client's token with
   the `viewer` role to make the same limit hold on every other surface.
-- **Its calls are ledgered as consumer `loom-assistant`**, whatever the call sends.
+- **Its calls are ledgered as consumer `loom-assistant`**, whatever the call sends, a
+  refused one included.
   `namespace.audit`, `namespace.summary`, `mentor.brief` and `knowledge.reads` leave that
   consumer and the dashboard's (`loom-ui`) out of their usage counts, so looking at a namespace does not
   change its grade; `namespace.audit` reports how many it left out in

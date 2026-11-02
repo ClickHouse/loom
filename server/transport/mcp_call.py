@@ -383,7 +383,7 @@ def _assistant_refusal(req_id: Any, name: str, auth: Any) -> dict[str, Any] | No
     if op is not None:
         # A registry op the toolset leaves out is ledgered by its name; an unknown name,
         # chosen by the client, is not written to the ledger at all.
-        emit_token_refusal(op.name, auth, error_code=UNKNOWN_OP)
+        emit_token_refusal(op.name, auth, error_code=UNKNOWN_OP, consumer=ASSISTANT_CONSUMER)
     msg = f"Tool {name!r} is not available on the assistant toolset."
     body = {"error": msg, "code": UNKNOWN_OP, "tool": name}
     return _ok(
