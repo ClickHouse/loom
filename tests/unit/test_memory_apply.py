@@ -384,28 +384,18 @@ async def _apply_search(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("other_rows", "ceiling", "truncated"),
-    [(31, 0, True), (30, 0, False), (18, 20, True), (17, 20, False)],  # 20: a token's ceiling
+    [(32, 0, True), (31, 0, False), (19, 20, True), (18, 20, False)],  # 20: a token's ceiling
 )
-async def test_a_full_window_ending_in_the_callers_row_may_hold_more(
+async def test_a_full_search_window_may_hold_more_of_the_callers_rows(
     monkeypatch: pytest.MonkeyPatch, other_rows: int, ceiling: int, truncated: bool
 ) -> None:
-    # limit 10 asks for 33 hits at the per-key cap of 3, or as many as the ceiling serves
+    # limit 10 asks for 33 hits at the per-key cap of 3, or as many as the ceiling serves;
+    # the search does not filter by writer, so a full window says more may match whoever
+    # holds its last hits
     monkeypatch.setattr(settings, "memory_search_per_key_cap", 3)
-    others = [_search_hit(f"k{i}", agent="x") for i in range(other_rows)]
-    hits = [_search_hit("mine"), *others, _search_hit("mine_last")]
+    hits = [_search_hit("mine"), *(_search_hit(f"k{i}", agent="x") for i in range(other_rows))]
     out = await _apply_search(monkeypatch, hits, ceiling=ceiling)
-    assert [r.memory_key for r in out.rows] == ["mine", "mine_last"]
-    assert out.truncated is truncated
-
-
-@pytest.mark.asyncio
-async def test_a_full_window_of_other_writers_rows_cuts_none_of_the_callers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(settings, "memory_search_per_key_cap", 3)
-    hits = [_search_hit("mine"), *(_search_hit(f"k{i}", agent="x") for i in range(32))]
-    out = await _apply_search(monkeypatch, hits)
-    assert [r.memory_key for r in out.rows] == ["mine"] and out.truncated is False
+    assert [r.memory_key for r in out.rows] == ["mine"] and out.truncated is truncated
 
 
 @pytest.mark.asyncio

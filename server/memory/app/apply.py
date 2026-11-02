@@ -205,9 +205,10 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             rows.append(row)
             if len(rows) > limit:  # one row past `limit`: more matched
                 return rows[:limit], True
-    # a full window whose last hit is the caller's may have cut off more of their rows
+    # the search does not filter by writer: a window it filled may have cut off more of
+    # the caller's rows, whoever holds its last hits
     window = out.top_k_ceiling or top_k
-    return rows, len(out.results) >= window and is_mine(out.results[-1])
+    return rows, len(out.results) >= window
 
 
 # ---------------------------------------------------------------- execute

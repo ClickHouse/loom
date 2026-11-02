@@ -786,12 +786,13 @@ as an assignment). A relative path without one of those prefixes (`src/app1`) st
 as a secret. A quote, comma or semicolon in the value does not cut it short. So
 `{"db": {"password": "hunter2xyz"}}` and `{"password": "admin:Passw0rd"}` are `high`, and
 `{"password": "required"}`, `{"password": "********"}`, `{"api_key": "YOUR_API_KEY"}` and
-`{"api_key": "env:OPENAI_API_KEY"}` are not. Any other key labels nothing. `reads_high` reads the same pairs in raw JSON text,
-such as a chunk of an object value, when the value is one quoted token or digits and
-dashes. The sweep's prefilter is a superset of this key rule, not a copy: it selects a key
-that ends in a label or a credential word, so it may select a few non-secret rows (`spin`,
-`unpin`, `ATMPIN`, `{"password": "required"}`), which the detector, comparing whole key
-words, leaves unlabelled; each costs a re-check on the sweep's passes within its window.
+`{"api_key": "env:OPENAI_API_KEY"}` are not. Any other key labels nothing.
+`reads_high` reads the same pairs in raw JSON text, such as a chunk of an object value,
+when the value is one quoted token or digits and dashes. The sweep's prefilter is a
+superset of this key rule, not a copy: it selects a key that ends in a label or a
+credential word, so it may select a few non-secret rows (`spin`, `unpin`, `ATMPIN`,
+`{"password": "required"}`), which the detector, comparing whole key words, leaves
+unlabelled; each costs a re-check on the sweep's passes within its window.
 The sweep reads the bytes its writer stored in `value`, where a dotted key such as
 `{"security.code": "5512"}` keeps its words, and also the object in `value_json`, which an
 import may fill with more than `value` holds.
