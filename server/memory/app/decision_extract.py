@@ -716,7 +716,7 @@ async def _confirmed_restatement(
     threshold, _ = await resolve_conflict_floor(org, namespace, "decision")
     close = [h for h in res.results if h.memory_key != key and h.similarity >= threshold]
     close.sort(key=lambda h: h.similarity, reverse=True)
-    # one hit per key, its most similar row's: _rows_of_key reads every row of it
+    # _rows_of_key reads every row of a key: read each key once, at its most similar hit
     for hit in one_per_key(close, namespace, _RESTATEMENT_TOP_K):
         # Every identity's row of the key, read exactly: a confirmed one may sit beside a
         # newer unconfirmed one.

@@ -2064,10 +2064,20 @@ async def test_a_confirmed_restatement_below_keys_of_many_rows_still_blocks(monk
     async def mem_search(inp):
         return SimpleNamespace(results=hits[: inp.top_k])
 
+    read: list[str] = []
+    rows_of_key = de._rows_of_key
+
+    async def counted(org, namespace, key):
+        read.append(key)
+        return await rows_of_key(org, namespace, key)
+
     monkeypatch.setattr(search, "handle_memory_search", mem_search)
+    monkeypatch.setattr(de, "_rows_of_key", counted)
     report = await _run()
     assert world.recorded == []
     assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+    # each key's rows are read once
+    assert read == [*(f"design/near{i}" for i in range(7)), "design/confirmed"]
 
 
 @pytest.mark.asyncio
