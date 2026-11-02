@@ -68,9 +68,10 @@ def test_the_tool_drops_sub_floor_padding(monkeypatch: pytest.MonkeyPatch) -> No
     MemorySearchInput(org="o", namespace="n", agent="*", query="q", floor_mode="drop")
 
 
-def test_flagged_rows_leave_the_section_and_the_block_when_a_real_hit_exists() -> None:
+def test_flagged_rows_leave_the_section_when_a_real_hit_exists() -> None:
     """The calibration flags rows under its own bar, above the floor
-    `drop` uses; the tool removes them and their block paragraphs."""
+    `drop` uses; the tool removes them. Their paragraphs leave when
+    search_sections renders the block from the final rows."""
     memory = {
         "results": [
             {"memory_key": "coffee_type", "content_excerpt": "espresso"},
@@ -83,7 +84,6 @@ def test_flagged_rows_leave_the_section_and_the_block_when_a_real_hit_exists() -
     out = loom_search_fanout.drop_flagged_hits(memory)
     assert [h["memory_key"] for h in out["results"]] == ["coffee_type"]
     assert out["below_threshold_dropped"] == 2 and out["candidates_total"] == 20
-    assert out["reader_block"] == "[2026-09-19] [coffee_type] (semantic) espresso"
     # All flagged: an abstain-shaped answer keeps its evidence.
     all_flagged = {
         "results": [{"memory_key": "a", "below_threshold": True}],
@@ -91,6 +91,3 @@ def test_flagged_rows_leave_the_section_and_the_block_when_a_real_hit_exists() -
     }
     assert loom_search_fanout.drop_flagged_hits(all_flagged) is all_flagged
     assert loom_search_fanout.drop_flagged_hits({"results": []}) == {"results": []}
-    assert "drop_flagged_hits(mem_result.model_dump())" in inspect.getsource(
-        loom_search_fanout.search_sections
-    )

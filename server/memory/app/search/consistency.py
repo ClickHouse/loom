@@ -156,7 +156,8 @@ async def _consistency_reread(
 
     _rw_window_s = float(_settings.ch_read_your_writes_window_s)
     # One level of re-entry: a pass memory.search already re-entered never re-reads again.
-    if getattr(input, "_pass_depth", 0) != 0:
+    # A merged pass (loom_search's repository decisions) keeps only the up-front write-mark check.
+    if getattr(input, "_pass_depth", 0) != 0 or getattr(input, "_merged_into_parent", False):
         return None
     reread_input = input.model_copy(update={"_pass_depth": 1})
     if (

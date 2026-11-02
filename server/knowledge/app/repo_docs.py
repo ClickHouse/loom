@@ -1,11 +1,11 @@
 """A repository's documents.
 
 A document a repository depends on — a design note, a runbook, an internal
-spec — is a knowledge document in the repository's docs namespace: its trunk
-branch's code namespace (`repos.docs_namespaces`). It is written there by a
-maintainer (admin on the code namespace, so `knowledge.add` passes the
-ordinary WRITER gate) and read by whoever may read the repository, so a
-restricted repository's documents are as restricted as its code.
+spec — is a knowledge document in the repository's trunk code namespace
+(`server/code/app/repo_scope.py`). It is written there by a maintainer
+(admin on the code namespace, so `knowledge.add` passes the ordinary WRITER
+gate) and read by whoever may read the repository, so a restricted
+repository's documents are as restricted as its code.
 
 Under a code scope the repository's documents join `loom_search`'s knowledge
 section, and `code.context_pack` returns them as its `docs` section. Every
@@ -31,44 +31,15 @@ from server.settings import settings
 log = logging.getLogger("loom.repo_docs")
 
 
-def docs_namespace_of(org: str, code_namespace: str) -> str:
-    """The docs namespace of the repository `code_namespace` indexes; "" when
-    it is not a repository index."""
-    from server.code.domain.index.repos import docs_namespaces, repo_for_namespace
-
-    cfg = repo_for_namespace(org, code_namespace)
-    if cfg is None:
-        return ""
-    return docs_namespaces().get((org, str(cfg.repo)), "")
-
-
-async def readable_docs_namespace(org: str, code_namespace: str) -> str:
-    """`docs_namespace_of`, passed through the gate for the current principal
-    (VIEWER on the docs namespace); "" when unbound, refused, or the check
-    fails (closed)."""
-    ns = docs_namespace_of(org, code_namespace)
-    if not ns:
-        return ""
-    try:
-        from server.auth.authz import row_in_scope
-        from server.operations.base import Role
-
-        return ns if await row_in_scope(org, ns, Role.VIEWER, hides_answer=False) else ""
-    except Exception as e:  # noqa: BLE001 — closed
-        log.debug("repo docs gate failed (closed): %s", e)
-        return ""
-
-
 async def search_repo_docs(
-    org: str, code_namespace: str, query: str, top_k: int, *, timeout_s: float | None = None
-) -> tuple[str, list[_SearchHit]]:
-    """(docs namespace, hits) for `query` over the repository's documents;
-    ("", []) when there is nothing the caller may read, or on any failure."""
+    org: str, repo_namespace: str, query: str, top_k: int, *, timeout_s: float | None = None
+) -> list[_SearchHit]:
+    """Hits for `query` over the documents in `repo_namespace`, a namespace that
+    passed the caller's gate (`repo_namespace_in_scope`); [] on any failure."""
     if timeout_s is None:
         timeout_s = settings.knowledge_repo_docs_timeout_s
-    ns = await readable_docs_namespace(org, code_namespace)
-    if not ns or not query.strip():
-        return "", []
+    if not query.strip():
+        return []
     try:
         from server.knowledge.app.knowledge_search import handle_knowledge_search
 
@@ -76,7 +47,7 @@ async def search_repo_docs(
             handle_knowledge_search(
                 KnowledgeSearchInput(
                     org=org,
-                    namespace=ns,
+                    namespace=repo_namespace,
                     query=query,
                     top_k=max(1, min(int(top_k), 20)),
                     namespace_scope="this",
@@ -85,13 +56,13 @@ async def search_repo_docs(
             timeout=timeout_s,
         )
     except Exception as e:  # noqa: BLE001 — an additive leg never fails the caller
-        log.info("repo docs search on %s/%s did not answer: %s", org, ns, e)
-        return ns, []
+        log.info("repo docs search on %s/%s did not answer: %s", org, repo_namespace, e)
+        return []
     hits = list(out.results)
     for h in hits:
         if not h.namespace:
-            h.namespace = ns
-    return ns, hits
+            h.namespace = repo_namespace
+    return hits
 
 
 def merge_hits(base: list[_SearchHit], extra: list[_SearchHit], top_k: int) -> list[_SearchHit]:
@@ -112,20 +83,22 @@ def merge_hits(base: list[_SearchHit], extra: list[_SearchHit], top_k: int) -> l
     return out[: max(1, int(top_k))]
 
 
-async def knowledge_with_repo_docs(know_input: KnowledgeSearchInput) -> KnowledgeSearchOutput:
-    """`loom_search`'s knowledge leg: the knowledge search, and — under a code
-    scope — the scoped repository's documents, merged into the one section.
-    Raises only what the base search raises."""
-    from server.code.domain.scope import current_code_scope
+async def knowledge_with_repo_docs(
+    know_input: KnowledgeSearchInput, *, repo_namespace: str
+) -> KnowledgeSearchOutput:
+    """`loom_search`'s knowledge leg: the knowledge search, and — when the
+    code scope names a repository the caller may read (`repo_namespace`,
+    from `repo_namespace_in_scope`; "" for none) — its documents, merged
+    into the one section. Raises only what the base search raises."""
     from server.knowledge.app.knowledge_search import handle_knowledge_search
 
-    scope = current_code_scope()
-    if not scope:
+    if not repo_namespace:
         return await handle_knowledge_search(know_input)
-    org, code_ns = scope
-    base, (_ns, extra) = await asyncio.gather(
+    base, extra = await asyncio.gather(
         handle_knowledge_search(know_input),
-        search_repo_docs(org, code_ns, str(know_input.query), int(know_input.top_k)),
+        search_repo_docs(
+            know_input.org, repo_namespace, str(know_input.query), int(know_input.top_k)
+        ),
     )
     if not extra:
         return base
@@ -157,7 +130,9 @@ async def list_repo_docs(
     them; ("", []) when there is nothing the caller may read, or on failure."""
     if timeout_s is None:
         timeout_s = settings.knowledge_repo_docs_timeout_s
-    ns = await readable_docs_namespace(org, code_namespace)
+    from server.code.app.repo_scope import readable_repo_namespace
+
+    ns = await readable_repo_namespace(org, code_namespace)
     if not ns:
         return "", []
     # the gate ran for this caller above; the listing itself is the same for

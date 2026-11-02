@@ -121,7 +121,10 @@ connect by browser sign-in instead of a pasted token (`server/auth/oauth.py`):
 - **Code scope.** A client may send `X-Loom-Code-Scope: <org>/<namespace>` (the
   Claude Code plugin sends the repository its checkout resolved to). It applies
   to every `code.*` call that names no namespace, and authorization then runs on
-  that namespace as if it had been named.
+  that namespace as if it had been named. `loom_search` under the header also reads
+  the repository's documents and `decision` memories from its trunk code namespace,
+  when the caller may read it, and runs the tracker duplicate check for a
+  defect-shaped query.
 - **Implicit run.** One run per (org, token subject, session), begun in the
   run ledger by the session's first run-scoped tool call and filed in the
   caller's default namespace; writes carry its `run_id` (except `run.*`, which

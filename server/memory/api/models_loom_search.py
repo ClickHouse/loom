@@ -66,8 +66,9 @@ class SearchOutput(BaseModel):
     # The duplicate-check verdict for a defect-shaped query under a code scope;
     # absent otherwise, or when that leg failed or timed out.
     tracker: dict[str, Any] | None = None
-    # The `memory.search` result, rendered as a reader block, without the hits the
-    # calibration flagged below its threshold (unless every hit is flagged).
+    # The `memory.search` result plus the scoped repository's decisions, rendered as a
+    # reader block, without the hits the calibration flagged below its threshold
+    # (unless every hit is flagged).
     memory: dict[str, Any] = Field(default_factory=dict)
     # The `knowledge.search` result plus the scoped repository's documents, hits below
     # the knowledge similarity floor dropped.

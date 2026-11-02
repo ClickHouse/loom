@@ -3921,6 +3921,12 @@
           "type": "integer",
           "description": "Days a consumer's closer keeps its run-less reads credited."
         },
+        "memory_repo_decisions_timeout_s": {
+          "default": 1.5,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds loom_search's read of the scoped repository's decisions may take; a slower read adds nothing and the memory section serves the home search alone."
+        },
         "memory_retrieval_empty_block_retries": {
           "default": 3,
           "minimum": 0,

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 
+from server.code.app.repo_scope import repo_namespace_in_scope
 from server.memory.api.models_loom_search import SearchInput, SearchOutput
 from server.memory.app.loom_search.fanout import search_sections
 
@@ -16,7 +17,8 @@ async def handle_search(input: SearchInput) -> SearchOutput:
     transport authorized. An `all_mine` search also reads the caller's
     memory-kind namespaces; when they cannot be resolved it narrows to
     `namespace`, never widens. Prompt text is captured at the most
-    restrictive consent of every namespace read."""
+    restrictive consent of every namespace read, the code scope's repository
+    namespace included."""
     from server.auth.fanout import namespaces_to_search
     from server.observability.capture_consent import narrow_to
 
@@ -25,10 +27,13 @@ async def handle_search(input: SearchInput) -> SearchOutput:
         read, _ = await namespaces_to_search(input.org, input.namespace, namespace_scope)
     except Exception as e:  # noqa: BLE001 — no fan-out namespaces narrows the search, never widens
         log.warning("search namespace resolution failed (non-fatal): %s", e)
-        # Consent is narrowed below over the addressed namespace alone, so no
-        # leg may read wider than it.
+        # Consent is narrowed below over the addressed namespace (plus the code
+        # scope's repository namespace), so no leg reads wider than its consent.
         read, namespace_scope = [input.namespace], "this"
-    await narrow_to(input.org, read)
+    # Under a code scope the repository's documents and decisions are read too (on a later
+    # page, its documents only).
+    repo_namespace = await repo_namespace_in_scope(input.org)
+    await narrow_to(input.org, [*read, repo_namespace] if repo_namespace else read)
     payload = await search_sections(
         org=input.org,
         namespace=input.namespace,
@@ -41,5 +46,6 @@ async def handle_search(input: SearchInput) -> SearchOutput:
         bodies=input.bodies,
         page=input.page.strip(),
         explain=input.explain,
+        repo_namespace=repo_namespace,
     )
     return SearchOutput.model_validate(payload)

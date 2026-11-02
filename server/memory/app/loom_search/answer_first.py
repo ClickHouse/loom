@@ -186,8 +186,9 @@ def answer_first(
     """`payload` with the sections a leading home fact makes redundant
     withheld (see the module docstring). Foreign rows stay within `margin`
     of the lead's similarity, home rows within `home_margin`.
-    Returns the same object; adds a `withheld` dict only when something was
-    withheld."""
+    Returns the same object, and the rows kept are the same dict objects
+    (`search_sections` maps each back to its search model by id); adds a
+    `withheld` dict only when something was withheld."""
 
     if explain:
         return payload

@@ -31,7 +31,7 @@ Search every plane of the caller's Loom content in one call.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `tracker` | `dict[str, Any] \| None` | The duplicate-check verdict for a defect-shaped query under a code scope; absent otherwise, or when that leg failed or timed out. |
-| `memory` | `dict[str, Any]` | The `memory.search` result, rendered as a reader block, without the hits the calibration flagged below its threshold (unless every hit is flagged). |
+| `memory` | `dict[str, Any]` | The `memory.search` result plus the scoped repository's decisions, rendered as a reader block, without the hits the calibration flagged below its threshold (unless every hit is flagged). |
 | `knowledge` | `dict[str, Any]` | The `knowledge.search` result plus the scoped repository's documents, hits below the knowledge similarity floor dropped. |
 | `profile` | `dict[str, Any]` | Profile sections whose label or text matches the query words, then by meaning. |
 | `conversations` | `dict[str, Any]` | The `conversation.search` hits under `results`. |

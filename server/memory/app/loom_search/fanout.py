@@ -1,12 +1,13 @@
 """The loom_search fan-out: one question over every plane that could answer it.
 
-Memory, knowledge (plus the scoped repository's documents), profile and
-conversations are searched in parallel, and — for a defect report under a
-code scope — the tracker record; the sections are assembled into one payload
-and trimmed by the answer-first rules (answer_first.py). A leg that fails
-returns `{"error": ..., "results": []}` under its section and the others still
-answer. The MCP `loom_search` tool renders this payload as its text and lean
-result; the `search` operation returns it as is.
+Memory (plus the scoped repository's decisions), knowledge (plus the scoped
+repository's documents), profile and conversations are searched in parallel,
+and — for a defect report under a code scope — the tracker record; the
+sections are assembled into one payload and trimmed by the answer-first
+rules (answer_first.py). A leg that fails returns
+`{"error": ..., "results": []}` under its section and the others still
+answer. The MCP `loom_search` tool renders this payload as its text and
+lean result; the `search` operation returns it as is.
 """
 
 from __future__ import annotations
@@ -18,9 +19,11 @@ from server.core.errors import LoomServerError
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
 from server.knowledge.app.repo_docs import knowledge_with_repo_docs
-from server.memory.api.models_search import MemorySearchInput
+from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app.agent_rules import request_rule_agent, served_hits
+from server.memory.app.ask.reader_render import render_reader_block
 from server.memory.app.loom_search.answer_first import answer_first
+from server.memory.app.loom_search.repo_decisions import memory_with_repo_decisions
 from server.memory.app.loom_search.tracker_leg import tracker_leg
 from server.memory.app.profile_search import search_profile
 
@@ -155,8 +158,9 @@ def drop_flagged_hits(memory: dict[str, Any]) -> dict[str, Any]:
     calibration are two thresholds: `drop` removes rows under the similarity floor,
     while the calibration flags rows under its own, higher bar — the reader is told to
     ignore those, so the agent surface does not serve them. The reader block loses their
-    paragraphs (`[date] [key] …`, blank-line separated) too. When every row is flagged
-    the section is left as is: an abstain-shaped answer keeps its evidence."""
+    paragraphs when `search_sections` renders the block from the final rows. When
+    every row is flagged the section is left as is: an abstain-shaped answer keeps its
+    evidence."""
     hits = memory.get("results")
     if not isinstance(hits, list) or not hits:
         return memory
@@ -164,16 +168,7 @@ def drop_flagged_hits(memory: dict[str, Any]) -> dict[str, Any]:
     if not flagged or len(flagged) == len(hits):
         return memory
     kept = [h for h in hits if not (isinstance(h, dict) and h.get("below_threshold"))]
-    kept_keys = {str(h.get("memory_key") or "") for h in kept if isinstance(h, dict)}
-    dropped_keys = {str(h.get("memory_key") or "") for h in flagged} - kept_keys
-    out = {**memory, "results": kept, "below_threshold_dropped": len(flagged)}
-    block = str(memory.get("reader_block") or "")
-    if block and dropped_keys:
-        paras = [
-            para for para in block.split("\n\n") if not any(f"[{k}]" in para for k in dropped_keys)
-        ]
-        out["reader_block"] = "\n\n".join(paras)
-    return out
+    return {**memory, "results": kept, "below_threshold_dropped": len(flagged)}
 
 
 async def _conversation_leg(conv_input: Any, scope: ReadFilters) -> Any:
@@ -200,16 +195,17 @@ async def search_sections(
     bodies: Literal["full", "excerpt", "none", "unit"],
     page: str,
     explain: bool,
+    repo_namespace: str,
 ) -> dict[str, Any]:
     """The assembled loom_search payload for `query` addressed to
     (`org`, `namespace`); every leg reads the namespaces `namespaces_to_search`
     gives for `namespace_scope`, and the knowledge leg leaves out the rules
     promoted for a bot other than the one `request_rule_agent(agent)` names. The
-    caller has already authorized `namespace`."""
+    caller has already authorized `namespace`; `repo_namespace` passed the
+    repository gate (`repo_namespace_in_scope`; "" for none)."""
     from server.auth.fanout import namespaces_to_search
     from server.knowledge.api.models_conversations import ConversationSearchInput
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput
-    from server.memory.app.search import handle_memory_search
 
     scope = request_scope()
     namespaces, skipped = await namespaces_to_search(org, namespace, namespace_scope)
@@ -231,8 +227,9 @@ async def search_sections(
         page=page,
         floor_mode=floor_mode(),
         quality_filter=True,
-        # The memory section is the reader block memory.ask
-        # reads — dated, in ask order, whole excerpts — not key + 200 chars.
+        # The memory section is the reader block memory.ask reads (dated, in ask
+        # order, whole excerpts). It is rebuilt below from the rows kept; this
+        # search's render supplies the reader_instructions.
         render="reader",
     )
     know_input = KnowledgeSearchInput(
@@ -252,8 +249,10 @@ async def search_sections(
         namespace_scope=namespace_scope,
     )
     mem_result, know_result, profile_rows, conv_result, t_section = await asyncio.gather(
-        handle_memory_search(mem_input),
-        knowledge_with_repo_docs(know_input),  # + the scoped repository's docs
+        # A later page continues the home search alone; the knowledge leg re-runs on
+        # every page and keeps the repository's documents.
+        memory_with_repo_decisions(mem_input, repo_namespace="" if page else repo_namespace),
+        knowledge_with_repo_docs(know_input, repo_namespace=repo_namespace),
         search_profile(  # By words, then by meaning
             org, namespaces, query, top_k=top_k, lexical=profile_hit_matches, scope=scope
         ),
@@ -265,16 +264,27 @@ async def search_sections(
     # The QA verdict leads when the question is a defect report.
     payload: dict[str, Any] = {"tracker": t_section} if isinstance(t_section, dict) else {}
     payload["namespaces_skipped"] = skipped
+    # Each dumped row and its search model, by the row's id. Holding the row keeps its
+    # id from being reused, so a step that copied a row would fail the lookup.
+    models: dict[int, tuple[dict[str, Any], _MemorySearchHit]] = {}
+    # The input the memory search ran (the block renders with its sanitized query,
+    # as memory.search does); None for a parked page, which searched nothing.
+    settled: MemorySearchInput | None = None
     if isinstance(mem_result, Exception):
         payload["memory"] = {"error": _leg_error(mem_result), "results": []}
     else:
-        payload["memory"] = drop_flagged_hits(mem_result.model_dump())
+        memory = mem_result.model_dump()
+        models = {id(d): (d, m) for d, m in zip(memory["results"], mem_result.results, strict=True)}
+        settled = mem_result._settled_input
+        payload["memory"] = drop_flagged_hits(memory)
     if isinstance(know_result, Exception):
         payload["knowledge"] = {"error": _leg_error(know_result), "results": []}
     else:
 
         async def widen(k: int) -> list[dict[str, Any]]:
-            wider = await knowledge_with_repo_docs(know_input.model_copy(update={"top_k": k}))
+            wider = await knowledge_with_repo_docs(
+                know_input.model_copy(update={"top_k": k}), repo_namespace=repo_namespace
+            )
             results: list[dict[str, Any]] = wider.model_dump()["results"]
             return results
 
@@ -301,6 +311,17 @@ async def search_sections(
         payload["conversations"] = {**conv_dump, "results": conv_hits}
 
     payload = answer_first(payload, namespace, explain=explain)
+    if settled is not None:
+        # The block is rendered from the rows left after trimming, through their models:
+        # the dumps hide the score_components the restatement notes read. The
+        # repository's rows are labelled, unless the search is addressed to it.
+        mem = payload["memory"]
+        served = []
+        for h in mem["results"]:
+            _row, model = models[id(h)]
+            served.append(model)
+        label = "" if repo_namespace == namespace else repo_namespace
+        mem["reader_block"] = render_reader_block(served, settled.query, label_namespace=label)
     return payload
 
 

@@ -300,6 +300,8 @@ async def _finish_search_output(
     # The count is free and always on; the handle costs one small insert and is made only when
     # asked for and only when there is a tail to serve.
     _output.candidates_total = max(int(ctx.candidates_total), len(final_hits))
+    # What a caller re-renders the reader block with, or credits a merged pass with.
+    _output._settled_input = input
     if getattr(input, "_merged_into_parent", False):
         # Only this pass's hits reach the caller, through the parent that merges them: the
         # page, the trace log, the exposure record and the hints are the parent's.

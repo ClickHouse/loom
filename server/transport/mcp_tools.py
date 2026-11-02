@@ -92,7 +92,8 @@ def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
                 "**Unified search across the user's Loom content** — memory "
                 "(facts, preferences, decisions), profile (always-loaded "
                 "persona sections), knowledge (uploaded documents) and past "
-                "conversations — four searches, one round-trip. This is THE "
+                "conversations — four searches, one round-trip; under a code "
+                "scope, also the repository's docs and decisions. This is THE "
                 "search tool: call "
                 "it before answering any 'what do I / what did we decide / "
                 "have we discussed X' question.\n\n"
@@ -101,8 +102,8 @@ def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
                 "than declaring 'nothing in Loom'. Re-call on a NEW question, "
                 "never on the same question in the same turn.\n\n"
                 "**Paging.** `memory.candidates_total` is how many memories "
-                "matched; `memory.results` is the top of that list. When it "
-                "exceeds what you received AND the answer is not in hand (a "
+                "matched; `memory.results` is the top of that list. When "
+                "`memory.next_page` is set AND the answer is not in hand (a "
                 "list, a count), call again with "
                 "`page` = `memory.next_page` to read the next slice. Stop when "
                 "next_page is empty or the answer is complete.\n\n"
@@ -552,7 +553,7 @@ def _memory_section_lines(
             )
         total = int(memory.get("candidates_total") or 0)
         head = "\nMemory hits"
-        if total > len(mem_hits):
+        if memory.get("next_page"):
             head += f" ({len(mem_hits)} of {total}; next_page serves the rest)"
         out.append(head + ":")
         out.append(block)
@@ -560,7 +561,7 @@ def _memory_section_lines(
             # Under explain=true the block is followed by one
             # `why` line per hit, in block order, so the reader keeps the
             # paragraphs it scores on and gets the ranking terms beside them.
-            whys = [(str(h.get("memory_key") or ""), why_note(h)) for h in mem_hits[:top_k]]
+            whys = [(str(h.get("memory_key") or ""), why_note(h)) for h in mem_hits]
             whys = [(k, w) for k, w in whys if w]
             if whys:
                 out.append("Why each was served:")

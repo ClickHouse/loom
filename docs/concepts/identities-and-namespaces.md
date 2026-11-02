@@ -81,11 +81,11 @@ created for an indexed repository. Its directory row in `loom.namespaces` carrie
 configuration: description, kind, visibility, join policy, conflict and proposal policy,
 cost cap, retention and retrieval defaults.
 
-| Namespace kind | Holds                                             | Read by                                                     |
-| -------------- | ------------------------------------------------- | ----------------------------------------------------------- |
-| `memory`       | Facts, documents, conversations: the default kind | memory, knowledge and conversation operations, and fan-outs |
-| `code`         | One indexed repository and branch                 | the `code.*` operations, addressed by name                  |
-| `bench`        | A benchmark corpus                                | benchmarks; its traffic is classed `bench`                  |
+| Namespace kind | Holds                                             | Read by                                                                      |
+| -------------- | ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `memory`       | Facts, documents, conversations: the default kind | memory, knowledge and conversation operations, and fan-outs                  |
+| `code`         | One indexed repository and branch                 | the `code.*` operations, addressed by name; `loom_search` under a code scope |
+| `bench`        | A benchmark corpus                                | benchmarks; its traffic is classed `bench`                                   |
 
 A search that fans out over all of a caller's namespaces spans the `memory` kind only
 (`LOOM_MEMORY_SEARCH_FANOUT_KINDS`): sweeping every code index for a personal fact costs
@@ -202,7 +202,9 @@ Then the list is narrowed:
 
 - **Kinds.** Only namespaces of the kinds in `LOOM_MEMORY_SEARCH_FANOUT_KINDS` (default
   `memory`) are swept. Code and benchmark namespaces are read by name or with their own
-  tools.
+  tools. The exception is MCP `loom_search` under a code scope: it also reads the scoped
+  repository's trunk code namespace, for its documents and decisions, when the caller may
+  read it ([unified search](../features/unified-search.md#which-namespaces-it-reads)).
 - **Restricted namespaces** stay only when the caller passes the restricted check.
 - **The cap.** Besides the addressed namespace, at most
   `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` (default 32) are read, in the caller's list

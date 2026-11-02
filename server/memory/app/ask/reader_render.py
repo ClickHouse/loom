@@ -56,10 +56,11 @@ def reader_instructions() -> str:
     )
 
 
-def render_reader_block(hits: list[Any], question: str = "") -> str:
+def render_reader_block(hits: list[Any], question: str = "", *, label_namespace: str = "") -> str:
     """One paragraph per hit: `[date] [memory_key] (type) excerpt`, in the
     order `memory.ask` would read them for this question (chronological for
-    temporal questions, rank order otherwise)."""
+    temporal questions, rank order otherwise). A hit from `label_namespace`
+    names it beside its type: `(decision, code-acme)`."""
     if not hits:
         return ""
     from server.memory.app.ask.rendering import evidence_order
@@ -73,6 +74,8 @@ def render_reader_block(hits: list[Any], question: str = "") -> str:
     for h in ordered:
         key = str(_get(h, "memory_key") or "")
         mtype = str(_get(h, "memory_type") or "memory")
+        if label_namespace and _get(h, "namespace") == label_namespace:
+            mtype = f"{mtype}, {label_namespace}"
         text = str(_get(h, "content_excerpt") or "")[:_EXCERPT_CHARS]
         parts.append(f"[{_date_of(h)}] [{key}] ({mtype}) {text}{_restatement_note(h, keys)}")
     return "\n\n".join(parts)

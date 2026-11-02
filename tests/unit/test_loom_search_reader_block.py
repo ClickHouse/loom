@@ -38,10 +38,18 @@ def test_block_replaces_the_clipped_hit_lines(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_paging_hint() -> None:
-    memory = {"reader_block": "[d] [k] (t) x", "candidates_total": 124}
+    memory = {"reader_block": "[d] [k] (t) x", "candidates_total": 124, "next_page": "p2"}
     text = "\n".join(mcp_tools._memory_section_lines(memory, _hits(), top_k=5))
     assert "How to read" not in text, "no rule without reader_instructions"
     assert "Memory hits (2 of 124; next_page serves the rest):" in text
+
+
+def test_no_paging_hint_without_a_next_page() -> None:
+    # A count above the rows served promises no page unless there is one to serve.
+    memory = {"reader_block": "[d] [k] (t) x", "candidates_total": 124, "next_page": ""}
+    text = "\n".join(mcp_tools._memory_section_lines(memory, _hits(), top_k=5))
+    assert "next_page serves the rest" not in text
+    assert "Memory hits:" in text
 
 
 def test_without_a_block_the_hit_lines_are_what_they_were() -> None:

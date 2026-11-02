@@ -1,0 +1,52 @@
+"""The repository namespace a request may read.
+
+A repository keeps what agents read about it beyond its code (its documents
+and its decision memories) in one place: its trunk branch's code namespace
+(`repos.docs_namespaces`). Every branch of the repository reads that one
+namespace, and it carries the repository's own access, so a restricted
+repository's documents and decisions are as restricted as its code.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from server.auth.authz import row_in_scope
+from server.code.domain.index.repos import docs_namespaces, repo_for_namespace
+from server.code.domain.scope import current_code_scope
+from server.operations.base import Role
+
+log = logging.getLogger("loom.repo_scope")
+
+
+def trunk_namespace_of(org: str, code_namespace: str) -> str:
+    """The trunk code namespace of the repository `code_namespace` indexes;
+    "" when it is not a repository index."""
+    cfg = repo_for_namespace(org, code_namespace)
+    if cfg is None:
+        return ""
+    return docs_namespaces().get((org, str(cfg.repo)), "")
+
+
+async def readable_repo_namespace(org: str, code_namespace: str) -> str:
+    """`trunk_namespace_of`, passed through the gate for the current
+    principal (VIEWER); "" when unbound, refused, or the check fails (closed)."""
+    ns = trunk_namespace_of(org, code_namespace)
+    if not ns:
+        return ""
+    try:
+        return ns if await row_in_scope(org, ns, Role.VIEWER, hides_answer=False) else ""
+    except Exception as e:  # noqa: BLE001 — a gate that cannot check refuses
+        # One line per scoped request while the grants read is down.
+        log.warning("repository namespace gate failed (closed): %s", e)
+        return ""
+
+
+async def repo_namespace_in_scope(org: str) -> str:
+    """The trunk code namespace of the repository the request's code scope
+    names, when it is in `org` and the caller may read it; "" otherwise. The
+    one gate for `loom_search`'s repository legs (documents and decisions)."""
+    scope = current_code_scope()
+    if not scope or scope[0] != org:
+        return ""
+    return await readable_repo_namespace(org, scope[1])

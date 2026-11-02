@@ -164,9 +164,11 @@ async def test_loom_search_uses_grant_namespace_and_fans_profile_across_membersh
         def model_dump(self) -> dict[str, Any]:
             return self.payload
 
-    async def _memory_search(input_obj: Any) -> _Dump:
+    async def _memory_search(input_obj: Any) -> Any:
+        from server.memory.api.models_search import MemorySearchOutput
+
         captured["memory_input"] = input_obj
-        return _Dump({"results": []})
+        return MemorySearchOutput(results=[], embedding_model="fake")
 
     async def _knowledge_search(input_obj: Any) -> _Dump:
         captured["knowledge_input"] = input_obj

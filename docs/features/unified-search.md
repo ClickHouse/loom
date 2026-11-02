@@ -14,7 +14,7 @@ One call runs these legs in parallel:
 ```mermaid
 flowchart LR
   Q["loom_search(query)"] --> NS["namespaces: home first, then the caller's memory-kind namespaces"]
-  NS --> M["memory.search (reader render, paging, quality filter)"]
+  NS --> M["memory.search (reader render, paging, quality filter; + the scoped repository's decisions)"]
   NS --> K["knowledge.search (+ the scoped repository's docs)"]
   NS --> P["profile sections (words, then meaning)"]
   NS --> C["conversation.search"]
@@ -29,7 +29,7 @@ flowchart LR
 
 | Leg           | What runs                                                                                                                                                                                                                                       | Kept when                                                                       |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Memory        | `memory.search` over every author with `render="reader"`, `paging=true`, `quality_filter=true`.                                                                                                                                                 | The hit clears the precision floor (below).                                     |
+| Memory        | `memory.search` over every author with `render="reader"`, `paging=true`, `quality_filter=true`; under a code scope also the `decision` memories in the scoped repository's trunk code namespace, when the caller may read it (1.5 s bound).     | The hit clears the precision floor (below).                                     |
 | Knowledge     | `knowledge.search`; under a code scope also the scoped repository's docs (1.5 s bound). Leaves out rules promoted for another agent (tagged `agent:<other>`); see [extraction](./memory/extraction.md#rules-the-assistant-states-about-itself). | Similarity ≥ `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY` (0.30).            |
 | Profile       | Profile sections in scope, matched by words, then by cosine against `label` + value.                                                                                                                                                            | A word match, or cosine ≥ `LOOM_MCP_LOOM_SEARCH_PROFILE_MIN_SIMILARITY` (0.38). |
 | Conversations | `conversation.search` over every author.                                                                                                                                                                                                        | Cosine ≥ `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY` (0.30).                      |
@@ -52,13 +52,17 @@ A leg that fails returns `{"error": ...}` under its own key; the other sections 
 The tool has no `namespace` argument; the server picks.
 
 - **Fan-out:** the caller's namespaces of the kinds in `LOOM_MEMORY_SEARCH_FANOUT_KINDS` (default `memory`). Code and
-  tracker namespaces are reached by their own tools, never swept. A namespace with no recorded kind counts as memory.
+  tracker namespaces are reached by their own tools, never swept, with two exceptions under a code scope
+  (`X-Loom-Code-Scope`): the tracker duplicate check, and the scoped repository's trunk code namespace (its decision
+  memories and its documents), which the memory and knowledge legs read when the caller may read that namespace. A
+  namespace with no recorded kind counts as memory.
 - **Home first:** the caller's own namespace leads, even when the token's first namespace is a teammate's.
 - **Restricted** namespaces stay out unless the caller passes their read check.
 
 ### What it withholds
 
-Each rule reports what it withheld in `withheld` and in the text summary. `explain=true` keeps everything.
+Each rule reports what it withheld in `withheld` and in the text summary, and a withheld memory row leaves the reader
+block too. `explain=true` keeps everything.
 
 1. **Precision floor.** Memory hits below the floor are withheld; hits from another namespace need
    `LOOM_MCP_LOOM_SEARCH_FOREIGN_MARGIN` (0.08) more. `LOOM_MCP_LOOM_SEARCH_PRECISION_FLOOR` below 0 (the default)
@@ -74,11 +78,21 @@ Each rule reports what it withheld in `withheld` and in the text summary. `expla
 ### Reading the memory section
 
 The memory section has one paragraph per hit, `[date] [key] (type) excerpt`, in the order `memory.ask` would read
-them. The reading rule rides ahead of the block once per MCP session, then as a one-line pointer
-(every time for a client that sends no session id).
+them. A decision from the scoped repository names its namespace beside its type, `(decision, <namespace>)`, and is
+placed among the home hits by similarity.
 
-- `memory.candidates_total` counts the matches. When it exceeds what came back and the answer needs all of them (a
-  list, a count), call again with `page` = `memory.next_page`. An expired handle abstains with `page_expired`.
+The reading rule rides ahead of the block once per MCP session, then as a one-line pointer (every time for a client
+that sends no session id).
+
+- `memory.candidates_total` counts the matches, decisions merged in included. Decisions do not count against `top_k`
+  (at most `top_k` of them join), so no home row is pushed out. When `memory.next_page` is set and the answer needs
+  every match (a list, a count), call again with `page` = `memory.next_page`; later pages continue the home search
+  alone and count its matches only. An expired handle abstains with `page_expired`.
+- Repository decisions are served at the stored clip (a recorded statement fits it, reason included), or as keys
+  only under `bodies=none`. `bodies_returned`, `bodies_elided` and `tokens_returned` count the home
+  search's hits only.
+- The home search's trace row, exposure record and recall credit describe its own results before the merge; the
+  decisions merged in get one exposure record and recall credit of their own.
 - `LOOM_MCP_LOOM_SEARCH_FLOOR_MODE`: `drop` (default) drops sub-floor rows, `readmit` pads `top_k` with them,
   `ids_only` pads with empty bodies.
 - Score components, retrieval plans and empty fields are dropped unless `explain=true`.
@@ -107,12 +121,13 @@ conversation hit.`), then the sections with hits, then a clause for anything wit
 `search.query` (viewer, read-only, idempotent) is served at `POST /v1/search.query` and through the SDKs' generic
 call. It is the same search with the identity explicit:
 
-| Difference  | MCP `loom_search`                                 | `search.query` over HTTP / SDK                                                                               |
-| ----------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Identity    | `org` from the token; the server picks namespaces | `org` and `namespace` required; `namespace` is never rewritten                                               |
-| Scope       | the fan-out above                                 | `namespace_scope`: `all_mine` (default) adds the caller's memory-kind namespaces; `this` is `namespace` only |
-| Result      | text summary plus the lean structured result      | `memory`, `knowledge`, `profile`, `conversations`, and `tracker` / `withheld` when they fired                |
-| Tracker leg | fires under an `X-Loom-Code-Scope` connection     | does not fire: only an MCP connection sets a code scope                                                      |
+| Difference                    | MCP `loom_search`                                 | `search.query` over HTTP / SDK                                                                               |
+| ----------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Identity                      | `org` from the token; the server picks namespaces | `org` and `namespace` required; `namespace` is never rewritten                                               |
+| Scope                         | the fan-out above                                 | `namespace_scope`: `all_mine` (default) adds the caller's memory-kind namespaces; `this` is `namespace` only |
+| Result                        | text summary plus the lean structured result      | `memory`, `knowledge`, `profile`, `conversations`, and `tracker` / `withheld` when they fired                |
+| Tracker leg                   | fires under an `X-Loom-Code-Scope` connection     | does not fire: only an MCP connection sets a code scope                                                      |
+| Repository docs and decisions | read under an `X-Loom-Code-Scope` connection      | not read: only an MCP connection sets a code scope                                                           |
 
 When the fan-out namespaces cannot be resolved, `all_mine` narrows to `namespace`; it never widens. Which namespaces
 count as the caller's, and the cap on how many are read, are in
@@ -213,7 +228,13 @@ The SDK's `Session.offload` / `Session.fetch` wrap the pair for one session.
 
 - **An empty `loom_search` is not "nothing in Loom".** The memory leg may have abstained or rows may have been
   withheld; the text says which.
-- **Code and tracker namespaces are not in the fan-out.** Use the code tools, or `memory.search` with that namespace.
+- **Code and tracker namespaces are not in the fan-out.** Only the scoped repository's decisions and documents join
+  under a code scope. Otherwise use the code tools, or `memory.search` with that namespace.
+- **A decision written moments ago may be missing.** The repository's decision search keeps only the up-front
+  read-your-writes check (a namespace marked as just written is read with sequential consistency). It runs no re-read
+  of its own, and the home search re-reads only the home namespaces, so a decision written through another replica can
+  be missed until replication catches up. Decisions are written rarely; an extra pass on every scoped search would
+  cost more than it saves.
 - **One call per question.** Repeating the same question repeats the ranking; call again only with `page`.
 - **Paging handles expire** (`abstain_code="page_expired"`); search again.
 - **Offloaded blobs expire.** A pointer in an old transcript can outlive its blob (`found: false`).

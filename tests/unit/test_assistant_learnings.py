@@ -1500,7 +1500,7 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
 
     asked: list[int] = []
 
-    async def knowledge(input: Any) -> Any:
+    async def knowledge(input: Any, **_kw: Any) -> Any:
         asked.append(input.top_k)
         return _knowledge_hits(ranked, input.top_k)
 
@@ -1530,6 +1530,7 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
         bodies="excerpt",
         page="",
         explain=False,
+        repo_namespace="",
     )
 
     uris = [h["source_uri"] for h in payload["knowledge"]["results"]]
