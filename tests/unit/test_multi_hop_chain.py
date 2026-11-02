@@ -4,6 +4,7 @@ second retrieval; value-suffixed keys collapse onto the attribute's key."""
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 from server.memory.app.ask.completion import bridge_entities
 from server.memory.app.ask.prompts import _CHAIN_NOTE
@@ -130,3 +131,27 @@ def test_bridges_come_from_fact_rows_before_chunks() -> None:
         ),
     ]
     assert bridge_entities(hits, q, limit=2)[0] == "Bernard Arnault"
+
+
+def test_a_bridge_row_read_by_key_names_its_row(monkeypatch) -> None:
+    # so the ask pool sees the row it already holds, and keeps each session's row of a key
+    import asyncio
+    from types import SimpleNamespace
+
+    from server.memory.app.ask import completion
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            assert "agent, user_id, session_id" in sql
+            return [
+                {"agent": "a", "user_id": "u", "session_id": s, "memory_key": "k", "value": "v"}
+                for s in ("s1", "s2")
+            ]
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+    inp = SimpleNamespace(org="o", namespace="n", agent="a", user_id="u", session_id=None)
+    hits = asyncio.run(completion.bridge_rows_by_key(inp, "Bernard Arnault"))
+    assert [(h._row_identity, h.session_id) for h in hits] == [
+        (("a", "u", "s1"), "s1"),
+        (("a", "u", "s2"), "s2"),
+    ]

@@ -194,10 +194,10 @@ async def decompose_question(llm: Any, question: str, *, max_parts: int = 4) -> 
         return []
 
 
-class PoolSeen:
-    """What an ask pool holds, for merging more hits into it: a hit that names its row is
-    new when that row is not pooled, one that names none (a record, a key read) when no
-    hit of its key is."""
+class PooledRows:
+    """The rows an ask pool holds, for merging more hits into it: a hit that names its row
+    is new when that row is not pooled, and a record, which names none, when no hit of its
+    key is."""
 
     def __init__(self, hits: list[Any], namespace: str) -> None:
         self.namespace = namespace
@@ -244,7 +244,7 @@ async def decomposed_retrieval(
     if not parts:
         return [], ranked
     merged = list(ranked)
-    seen = PoolSeen(merged, str(search_input.namespace))
+    pooled = PooledRows(merged, str(search_input.namespace))
     for part in parts:
         try:
             sub = await handle_memory_search(
@@ -255,7 +255,7 @@ async def decomposed_retrieval(
             if stats is not None:
                 stats["failed"] = int(stats.get("failed", 0)) + 1
             continue
-        merged.extend(h for h in sub.results or [] if seen.add(h))
+        merged.extend(h for h in sub.results or [] if pooled.add(h))
     return parts, merged
 
 

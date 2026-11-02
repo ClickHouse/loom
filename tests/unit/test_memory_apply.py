@@ -323,7 +323,8 @@ async def test_search_target_touches_only_the_callers_identity(
     )
     assert out.matched == 2 and [r.memory_key for r in out.rows] == ["both", "mine"]
     assert reads == [("cursor", "-", "-", "both"), ("cursor", "-", "-", "mine")]
-    assert (asked[0].session_id, asked[0].top_k) == ("-", 10)  # the caller's session only
+    # every session, so a long value's set chunks are found; over-fetched for other owners' rows
+    assert (asked[0].session_id, asked[0].top_k) == (None, 30)
 
 
 def test_apply_op_is_a_writer_op_and_audited() -> None:

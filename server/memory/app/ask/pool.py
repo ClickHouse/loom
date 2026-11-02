@@ -40,7 +40,7 @@ from server.memory.app.ask.question_shapes import (
 )
 from server.memory.app.ask.rendering import evidence_order
 from server.memory.app.ask.retrieval_legs import (
-    PoolSeen,
+    PooledRows,
     _pending_evidence_stage,
     _recency_rerank,
     _time_cue_first,
@@ -284,13 +284,13 @@ async def _widen_by_question(
     # to — the loss ledger's "no ages in memories" with all eight ages stored.
     _parts = split_compound_question(getattr(search_input, "query", "") or "")
     if len(_parts) > 1:
-        seen = PoolSeen(run.ranked, str(search_input.namespace))
+        pooled = PooledRows(run.ranked, str(search_input.namespace))
         for _part in _parts[1:]:
             try:
                 _sub = await handle_memory_search(_with(search_input, query=_part))
             except Exception:  # noqa: BLE001 — additive
                 continue
-            run.ranked.extend(h for h in _sub.results or [] if seen.add(h))
+            run.ranked.extend(h for h in _sub.results or [] if pooled.add(h))
     # Multi-hop decomposition: a question whose answer needs
     # two facts in sequence gets one embedding that sits between them and a
     # window spent on whichever fact is closer. Split it, retrieve each part,
@@ -321,7 +321,7 @@ async def _widen_by_question(
     chain_question = False
     if is_chain_question(question):
         chain_question = True
-        pooled = PoolSeen(run.ranked, str(search_input.namespace))
+        pooled = PooledRows(run.ranked, str(search_input.namespace))
         for _bridge in bridge_entities(
             run.ranked,
             question,
