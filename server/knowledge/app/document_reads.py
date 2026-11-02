@@ -1,10 +1,12 @@
-"""knowledge.list / get / outline: reads of the documents of one namespace."""
+"""knowledge.list / get / outline: reads of the documents of one namespace, and
+`document_chunks`, a document's live chunks in order (knowledge.synthesize and
+`loom decisions extract` read through it)."""
 
 from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.core.cursors import decode_cursor as _decode_list_cursor
 from server.core.cursors import encode_cursor as _encode_list_cursor
@@ -22,6 +24,9 @@ from server.knowledge.api.models_knowledge import (
 )
 from server.knowledge.domain.chunking import Chunk
 from server.operations.read_projection import resolve as _resolve_projection
+
+if TYPE_CHECKING:
+    from server.memory.domain.corpus_synthesis import CorpusChunk
 
 _LIST_ALWAYS = frozenset({"source_uri"})
 
@@ -193,3 +198,31 @@ async def handle_knowledge_get(input: KnowledgeGetInput) -> KnowledgeGetOutput:
         superseded=row.superseded_at is not None,
         doc_id=row.doc_id,
     )
+
+
+async def document_chunks(org: str, namespace: str, source_uri: str) -> list[CorpusChunk]:
+    """The document's live chunks for the current embedding model, in document order, each
+    with its section path. Empty for a document chunked under another model, until
+    `loom rechunk`."""
+    from server.knowledge.store import chunks as knowledge_repo
+    from server.memory.domain.corpus_synthesis import CorpusChunk
+
+    rows = await knowledge_repo.list_for_doc(
+        org, namespace, source_uri, embedding_model=get_embedder().model_name
+    )
+    out: list[CorpusChunk] = []
+    for r in rows:
+        try:
+            raw = json.loads(r.chunk_metadata) if r.chunk_metadata else {}
+        except (TypeError, ValueError):
+            raw = {}
+        path = raw.get("section_path") if isinstance(raw, dict) else None
+        out.append(
+            CorpusChunk(
+                source_uri=source_uri,
+                idx=int(r.chunk_idx),
+                text=str(r.content or ""),
+                section_path=tuple(str(p) for p in path) if isinstance(path, list) else (),
+            )
+        )
+    return out

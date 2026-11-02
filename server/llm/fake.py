@@ -32,6 +32,35 @@ _SCHEMA_ENUM_RE = re.compile(
 # Plain-arg form used in Stage 2/3 prompts:  - field_name: type_spec
 _PLAIN_FIELD_RE = re.compile(r"-\s+(?P<name>\w+):\s+(?P<type>[\w\s]+)$", re.M)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+# server.memory.domain.decision_extract's candidate prompt.
+_DECISION_ANCHOR = "You extract design decisions"
+_SECTION_RE = re.compile(
+    r"^\[section: (?P<name>[^\]]*)\]\n\n(?P<body>.*?)(?=\n\n\[section: |\Z)", re.M | re.S
+)
+_CAMEL_RE = re.compile(r"\b[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+\b")
+
+
+def _decisions_from_sections(user: str) -> dict[str, object]:
+    """One decision per section, resting on the section's first sentence copied as it is,
+    so the extractor's verbatim check passes on what the fake returns."""
+    out: list[dict[str, object]] = []
+    for m in _SECTION_RE.finditer(user):
+        first = _SENTENCE_SPLIT_RE.split(m["body"].strip(), 1)[0].split("\n", 1)[0].strip()
+        if not re.search(r"[^\W\d_]", first):
+            continue
+        out.append(
+            {
+                "category": "design:fake",
+                "scenario": m["name"],
+                "outcome": first[:120],
+                "reasoning": first,
+                "alternatives": [],
+                "quote": first,
+                "is_constraint": False,
+                "mentions": _CAMEL_RE.findall(first),
+            }
+        )
+    return {"decisions": out}
 
 
 def _synthesize_typed_record(system: str, user: str) -> dict[str, object]:
@@ -192,6 +221,8 @@ class FakeLLMClient:
             synthesized = json.dumps(_synthesize_typed_record(system, user))
         elif _PROFILE_ANCHOR in system:
             synthesized = json.dumps(_fill_profile(system, user))
+        elif _DECISION_ANCHOR in system:
+            synthesized = json.dumps(_decisions_from_sections(user))
         elif _EXTRACTION_ANCHOR in system:
             payload = _extract_facts_from_user_prompt(
                 user, agent_rules=_AGENT_RULES_ANCHOR in system

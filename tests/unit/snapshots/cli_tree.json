@@ -3357,6 +3357,243 @@
       }
      ]
     },
+    "decisions": {
+     "prog": "loom decisions",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "subcommand"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "subcommand",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "extract": {
+         "prog": "loom decisions extract",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "dry_run": true,
+          "apply_gated": true,
+          "func": "server.cli.decisions:_cmd_extract"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "org",
+            "namespace",
+            "source_uri",
+            "max_per_section",
+            "window_chars",
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--namespace"
+           ],
+           "dest": "namespace",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The namespace holding the document",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--source-uri"
+           ],
+           "dest": "source_uri",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The document's source_uri",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--max-per-section"
+           ],
+           "dest": "max_per_section",
+           "action": "_StoreAction",
+           "default": 3,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "server.cli.decisions:_per_section",
+           "required": false,
+           "help": "Decisions kept per section, at least 1 (default 3)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--window-chars"
+           ],
+           "dest": "window_chars",
+           "action": "_StoreAction",
+           "default": 6000,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "server.cli.decisions:_window_chars",
+           "required": false,
+           "help": "Characters of the document per model call, at least 500 (default 6000)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--apply"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreFalseAction",
+           "default": true,
+           "const": false,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "write the decision records (default: dry run)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--dry-run"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreTrueAction",
+           "default": true,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "report what --apply would write, write nothing (the default)",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "extract": "loom decisions extract"
+       },
+       "choices_help": [
+        {
+         "dest": "extract",
+         "help": "Mine one knowledge document into decision records: one model call per window of its sections, candidates kept only when their quote, reasoning and rejected options' reasons are the document's own words, written through decision.record as agent loom-decisions. A re-run revises or retires the extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row source-changed. Dry run by default (still calls the model); --apply writes. Exits 1 when it could not read the document (no document, no chunks, no usable model, its own rows unreadable, no window read), 2 when a write, or a read it needed (a window included), was refused or failed (a row changed since the run read it is reported, not counted).",
+         "metavar": "extract"
+        }
+       ]
+      }
+     ]
+    },
     "export-okf": {
      "prog": "loom export-okf",
      "usage": null,
@@ -12824,6 +13061,7 @@
    },
    "aliases_of": {
     "code": "loom code",
+    "decisions": "loom decisions",
     "export-okf": "loom export-okf",
     "import-okf": "loom import-okf",
     "okf-lint": "loom okf-lint",
@@ -12890,6 +13128,11 @@
      "dest": "code",
      "help": "Code intelligence plane operations.",
      "metavar": "code"
+    },
+    {
+     "dest": "decisions",
+     "help": "Decision records mined from documents.",
+     "metavar": "decisions"
     },
     {
      "dest": "export-okf",

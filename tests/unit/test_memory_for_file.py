@@ -515,3 +515,39 @@ def test_a_cut_object_value_prints_as_stored() -> None:
     raw = json.dumps({"k": "v" * 700})[:600]
     hit = _decision("design/o", value_truncated=True) | {"value": raw}
     assert raw[:40] in _lines([hit])[1]
+
+
+def test_a_decision_whose_source_changed_says_so_confirmed_or_not() -> None:
+    tags = ["decision", "source-changed"]
+    pinned = _lines([_decision("design/p", tags=tags)])[1]
+    assert pinned.startswith(
+        "- Decision (by alice, 3 days ago) (pinned) (source changed since confirmation): "
+    )
+    own = _lines([_decision("design/u", tags=tags, pinned=False, namespace="me")])[1]
+    assert own.startswith("- design/u [decision] (unconfirmed) (source changed): ")
+    # A fact carrying the tag is no decision: nothing is added.
+    fact = _row("fact", json.dumps("A plain fact."), tags=["source-changed"], namespace="me")
+    assert "(source changed" not in _lines([fact])[1]
+
+
+@pytest.mark.asyncio
+async def test_the_served_block_marks_a_decision_whose_source_changed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        _decision("extracted", "Decided spill.", pinned=False, tags=["decision", "source-changed"])
+    ]
+    monkeypatch.setattr(mff, "get_client", lambda: _CH(rows))
+    out = await mff.handle_memory_for_file(
+        MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", token_budget=300)
+    )
+    assert "(unconfirmed) (source changed): Decided spill." in out.rendered
+
+
+def test_an_attested_decision_whose_source_changed_reads_since_confirmation() -> None:
+    # `verification` as the handler derives it for an attestation binding the current value.
+    hit = _decision(
+        "design/a", pinned=False, tags=["decision", "source-changed"], verification="human"
+    )
+    line = _lines([hit])[1]
+    assert "(source changed since confirmation)" in line and "(unconfirmed)" not in line

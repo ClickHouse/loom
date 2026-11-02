@@ -19,6 +19,7 @@ agent cannot promote its own write to `human:`.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
 from typing import Any, Literal
@@ -75,6 +76,12 @@ def attests(
     return verification_state(verified_by, verified_sha256, current_sha256) in CONFIRMED_STATES
 
 
+def confirmed(pinned: bool, state: str) -> bool:
+    """Whether a person or a service account stood behind the row: it is pinned, or its
+    attestation binds its current content (`state` from `verification_state`)."""
+    return pinned or state in CONFIRMED_STATES
+
+
 def verification_state(
     verified_by: str | None,
     verified_sha256: str | None,
@@ -98,6 +105,15 @@ def row_verification(r: Mapping[str, Any]) -> VerificationState:
     whole = r.get("value") is not None and not r.get("value_truncated")
     current = live_sha256(r.get("content_sha256"), str(r["value"]) if whole else None)
     return verification_state(r.get("verified_by") or "", r.get("verified_sha256") or "", current)
+
+
+def row_content_sha256(row: Any) -> str:
+    """A MemoryRow's live hash (`live_sha256`); its `value` is decoded, so it is re-encoded
+    to hash a row whose column is unset."""
+    value = getattr(row, "value", None)
+    whole = value is not None and not getattr(row, "value_truncated", False)
+    value_json = json.dumps(value, default=str) if whole else None
+    return live_sha256(getattr(row, "content_sha256", None), value_json)
 
 
 def live_sha256(stored: str | bytes | None, value_json: str | None) -> str:

@@ -84,7 +84,10 @@ async def test_handler_maps_every_window_then_reduces(monkeypatch: pytest.Monkey
         return False
 
     monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)
-    monkeypatch.setattr(kh, "get_embedder", lambda: SimpleNamespace(model_name="fake"))
+    monkeypatch.setattr(
+        "server.knowledge.app.document_reads.get_embedder",
+        lambda: SimpleNamespace(model_name="fake"),
+    )
     rows = [
         SimpleNamespace(
             chunk_idx=0, content="a" * 500, chunk_metadata=json.dumps({"section_path": ["s1"]})
@@ -142,7 +145,10 @@ async def test_handler_folds_hierarchically_and_honours_max_windows(
         return False
 
     monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)
-    monkeypatch.setattr(kh, "get_embedder", lambda: SimpleNamespace(model_name="fake"))
+    monkeypatch.setattr(
+        "server.knowledge.app.document_reads.get_embedder",
+        lambda: SimpleNamespace(model_name="fake"),
+    )
     rows = [SimpleNamespace(chunk_idx=i, content="x" * 1900, chunk_metadata="{}") for i in range(6)]
 
     async def _list(org: str, ns: str, uri: str, *, embedding_model: str, ch: Any = None):

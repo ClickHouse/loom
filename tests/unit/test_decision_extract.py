@@ -1,0 +1,2060 @@
+"""`loom decisions extract`: the verbatim check, mention resolution and the reconcile and
+retire branches, over a fake model and stubbed planes."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from server.cli import decisions as cli
+from server.memory.app import decision_extract as de
+from server.memory.app import decisions as svc
+from server.memory.domain import decision_extract as dx
+from server.memory.domain.corpus_synthesis import CorpusChunk, Window
+from server.memory.store import WriterRecord
+
+DOC = (
+    "# Spilling\n\n"
+    "## Final DISTINCT\n\n"
+    "We spill into sorted runs like ORDER BY. A plain set on disk costs random reads. "
+    "ExternalDistinctTransform does the merge, see #4821 and max_bytes_before_external_group_by.\n\n"
+    "## Architecture\n\n"
+    "![diagram](img.png)\n"
+)
+SECTION = "Spilling > Final DISTINCT"
+HEADER = "src/Processors/ExternalDistinctTransform.h"
+BODY = (
+    "We spill into sorted runs like ORDER BY. A plain set on disk costs random reads. "
+    "ExternalDistinctTransform does the merge, see #4821 and max_bytes_before_external_group_by."
+)
+
+
+def _candidate(**over: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "category": "design:spilling",
+        "scenario": "how the final DISTINCT spills to disk",
+        "outcome": "spill into sorted runs",
+        "reasoning": "We spill into sorted runs like ORDER BY.",
+        "alternatives": [{"option": "a plain set on disk", "reason": "costs random reads"}],
+        "quote": "We spill into sorted runs like ORDER BY. A plain set on disk costs random reads.",
+        "is_constraint": False,
+        "mentions": ["ExternalDistinctTransform", "#4821", "max_bytes_before_external_group_by"],
+    }
+    base.update(over)
+    return base
+
+
+def _key(c: dict[str, Any]) -> str:
+    return svc.decision_key(c["category"], c["scenario"])
+
+
+class _Row(SimpleNamespace):
+    pass
+
+
+def _row(key: str, **over: Any) -> _Row:
+    base: dict[str, Any] = dict(
+        org="o",
+        namespace="ns",
+        agent=de.EXTRACTOR_AGENT,
+        user_id="-",
+        session_id="-",
+        memory_key=key,
+        pinned=False,
+        tags=["decision"],
+        files=[],
+        char_limit=None,
+        verified_by="",
+        verified_sha256="",
+        content_sha256="sha-1",
+        value="Decided spill.",
+        version=7,
+        source_resource_id=f"knowledge:ns/doc.md#{SECTION}",
+    )
+    base.update(over)
+    base.setdefault("memory_id", f"id-{key}-{base['agent']}")
+    base.setdefault("memory_type", "decision")
+    return _Row(**base)
+
+
+class _World:
+    """The planes the extractor reads and writes, in memory."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, reply: list[dict[str, Any]]) -> None:
+        self.reply = reply
+        self.records: dict[str, tuple[WriterRecord, dict[str, Any]]] = {}
+        self.rows: list[_Row] = []
+        self.search_hits: list[Any] = []
+        self.symbols: dict[str, list[tuple[str, str]]] = {
+            "ExternalDistinctTransform": [
+                ("src/Processors/ExternalDistinctTransform.h", "DB::ExternalDistinctTransform"),
+                (
+                    "src/Processors/ExternalDistinctTransform.cpp",
+                    "DB::ExternalDistinctTransform::ExternalDistinctTransform",
+                ),
+            ]
+        }
+        self.recorded: list[Any] = []
+        self.updates: list[Any] = []
+        self.refuse_record: Any = None
+        # Every document ever ingested in the namespace; the first is the one extracted.
+        self.docs = {"doc.md"}
+        self.writer_reads: list[str] = []
+        # Keys rewritten between the run's read and its delete.
+        self.moved_on: set[str] = set()
+        self.deleted_before: set[str] = set()
+        self.index_down = False
+        # memory_ids deleted between the run's read and its tag write.
+        self.gone: set[str] = set()
+        self.bulk_reads = 0
+        self.audits: list[tuple[str, str, dict[str, Any]]] = []
+        # memory_ids whose value moved on since the run read them.
+        self.value_moved: set[str] = set()
+        self.refuse_update: Any = None
+        self.refuse_delete: Any = None
+        self.deletes: list[Any] = []
+        self.prompts: list[tuple[str, str]] = []
+        self._patch(monkeypatch)
+        from server.settings import settings
+
+        # LOOM_LLM_PROVIDER=fake set on purpose: the run does not refuse the fake model.
+        monkeypatch.setattr(settings, "llm_provider", "fake")
+        monkeypatch.setattr(settings, "_llm_provider_source", "LOOM_LLM_PROVIDER")
+
+    def add(self, key: str, **row: Any) -> _Row:
+        r = _row(key, **row)
+        self.rows.append(r)
+        return r
+
+    def record(self, key: str, fields: dict[str, Any], **row: Any) -> None:
+        """A row and the key's active record, written by that row's identity."""
+        r = self.add(key, **row)
+        writer = WriterRecord(r.agent, r.user_id, r.session_id, json.dumps(fields), None)  # type: ignore[arg-type]
+        self.records[key] = (writer, fields)
+
+    def _patch(self, mp: pytest.MonkeyPatch) -> None:
+        from server.code.app import symbol as code_symbol
+        from server.knowledge.app import document_reads
+        from server.llm import client as llm_client
+        from server.memory.app import conflicts, decision, handlers, search, update
+
+        world = self
+
+        class _LLM:
+            async def complete(self, system, user, max_tokens=0, response_format=None):
+                world.prompts.append((system, user))
+                return SimpleNamespace(text=json.dumps({"decisions": world.reply}), stop_reason="")
+
+        async def knowledge_get(inp):
+            return SimpleNamespace(found=inp.source_uri in world.docs, content=DOC)
+
+        async def chunks(org, ns, uri):
+            return [CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT"))]
+
+        async def writer(org, ns, key, ch=None):
+            world.writer_reads.append(key)
+            return world.records[key][0] if key in world.records else None
+
+        def same(ident, r):
+            return all(
+                getattr(ident, a) in ("*", getattr(r, a))
+                for a in ("agent", "user_id", "session_id")
+            )
+
+        async def get_by_key(ident, key, *, scope, fresh=False, strong=False):
+            # As the store: a `*` agent drops the identity filter and the newest row wins.
+            if ident.agent == "*":
+                hits = [r for r in world.rows if r.memory_key == key]
+            else:
+                hits = [r for r in world.rows if r.memory_key == key and same(ident, r)]
+            return hits[-1] if hits else None
+
+        async def many(ident, keys, *, scope, strong=False):
+            world.bulk_reads += 1
+            return [r for r in world.rows if r.memory_key in keys and same(ident, r)]
+
+        async def list_rows(ident, *, scope, memory_type, order_by="", limit=200, offset=0, **kw):
+            rows = [r for r in world.rows if same(ident, r)]
+            if kw.get("pinned_only"):
+                rows = [r for r in rows if r.pinned]
+            if kw.get("key_prefix"):
+                rows = [r for r in rows if r.memory_key.startswith(kw["key_prefix"])]
+            return rows[offset : offset + limit]
+
+        async def mem_search(inp):
+            return SimpleNamespace(results=world.search_hits)
+
+        async def floor(org, ns, memory_type):
+            return 0.85, 0.15
+
+        async def decision_record(inp):
+            if world.refuse_record:
+                raise world.refuse_record
+            world.recorded.append(inp)
+
+        async def mem_update(inp):
+            if world.refuse_update:
+                raise world.refuse_update
+            if inp.memory_id in world.value_moved:
+                assert inp.if_match_sha256  # the write is conditional on the value read
+                from fastapi import HTTPException
+
+                # As memory.update_by_id answers a hash mismatch: with the live hash.
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "PRECONDITION_FAILED", "current_sha256": "sha-new"},
+                )
+            if inp.memory_id in world.gone:
+                return SimpleNamespace(updated=False)
+            world.updates.append(inp)
+            return SimpleNamespace(updated=True)
+
+        async def delete_version(inp):
+            if world.refuse_delete:
+                raise world.refuse_delete
+            world.deletes.append(inp)
+            if inp.memory_key in world.deleted_before:
+                return SimpleNamespace(tombstoned=False, found=False, reason="")
+            moved = inp.memory_key in world.moved_on
+            return SimpleNamespace(
+                tombstoned=not moved, found=True, reason="version_changed" if moved else ""
+            )
+
+        async def code_symbol_handler(inp):
+            if world.index_down:
+                raise RuntimeError("code index unreachable")
+            defs = world.symbols.get(inp.name, [])
+            return SimpleNamespace(definitions=[SimpleNamespace(path=p, symbol=s) for p, s in defs])
+
+        mp.setattr(llm_client, "get_llm_client", lambda: _LLM())
+        mp.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+        mp.setattr(document_reads, "document_chunks", chunks)
+        mp.setattr(de, "live_writer_record", writer)
+        mp.setattr(de, "get_by_key", get_by_key)
+        mp.setattr(de, "list_by_namespace", list_rows)
+        mp.setattr(de, "get_many_by_keys", many)
+
+        async def actors(org, keys, *, scope):
+            return {
+                (ns, k): [
+                    {"agent": r.agent, "user_id": r.user_id, "session_id": r.session_id}
+                    for r in world.rows
+                    if r.memory_key == k
+                ]
+                for ns, k in keys
+            }
+
+        async def by_identity(idents):
+            wanted = {(i[2], i[3], i[4], i[5]) for i in idents}
+            return {
+                (r.org, r.namespace, r.agent, r.user_id, r.session_id, r.memory_key): r
+                for r in world.rows
+                if (r.agent, r.user_id, r.session_id, r.memory_key) in wanted
+            }
+
+        from server.observability import audit
+
+        async def emit(event_type, *, org, namespace, actor, subject=None, **kw):
+            world.audits.append((event_type, actor, subject or {}))
+            return "h"
+
+        mp.setattr(audit, "emit", emit)
+        mp.setattr(de, "actors_by_key", actors)
+        mp.setattr(de, "memory_rows_by_identity_keys", by_identity)
+        mp.setattr(search, "handle_memory_search", mem_search)
+        mp.setattr(conflicts, "resolve_conflict_floor", floor)
+        mp.setattr(decision, "handle_decision_record", decision_record)
+        mp.setattr(update, "handle_memory_update_by_id", mem_update)
+        mp.setattr(handlers, "handle_memory_delete_version", delete_version)
+        mp.setattr(code_symbol, "handle_code_symbol", code_symbol_handler)
+
+
+async def _run(dry_run: bool = False, uri: str = "doc.md", **kw: Any) -> de.ExtractReport:
+    return await de.extract_document("o", "ns", uri, dry_run=dry_run, **kw)
+
+
+def _same_fields(c: dict[str, Any]) -> dict[str, Any]:
+    """The record decision.record stores for the candidate."""
+    return {
+        "category": c["category"],
+        "scenario": c["scenario"],
+        "outcome": c["outcome"],
+        "reasoning": c["reasoning"],
+        "alternatives": "\n".join(
+            f"{a['option']} — rejected: {a['reason']}" for a in c["alternatives"]
+        ),
+    }
+
+
+# ------------------------------------------------------------------ verbatim check
+
+
+def _cand(**over: Any) -> dx.Candidate:
+    (cand,) = dx.parse_candidates(json.dumps({"decisions": [_candidate(**over)]})) or []
+    return cand
+
+
+def test_a_candidate_resting_on_the_documents_words_passes() -> None:
+    assert dx.verbatim_failure(_cand(), [BODY]) == ""
+
+
+@pytest.mark.parametrize(
+    ("over", "reason"),
+    [
+        ({"quote": "We spill into sorted runs, like ORDER BY."}, "quote is not in"),
+        ({"quote": "   "}, "quote too short"),
+        ({"reasoning": "Sorted runs are faster."}, "reasoning is not in"),
+        (
+            {"alternatives": [{"option": "a hash set", "reason": "it uses too much memory"}]},
+            "rejecting 'a hash set'",
+        ),
+    ],
+)
+def test_a_paraphrase_is_dropped(over: dict[str, Any], reason: str) -> None:
+    assert reason in dx.verbatim_failure(_cand(**over), [BODY])
+
+
+def test_a_quote_across_two_chunks_is_not_the_documents() -> None:
+    cand = _cand(quote="ORDER BY.\n\nA plain set", reasoning="ORDER BY.")
+    assert dx.verbatim_failure(cand, ["We spill like ORDER BY.", "A plain set costs."])
+
+
+def test_a_reply_that_is_not_json_or_lacks_fields_reads_as_such() -> None:
+    from server.llm.json_text import strip_code_fence
+
+    assert dx.parse_candidates("I found two decisions") is None
+    assert dx.parse_candidates('{"other": []}') is None
+    assert dx.parse_candidates(json.dumps([_candidate(outcome="")])) == []
+    fenced = "```json\n" + json.dumps({"decisions": [_candidate()]}) + "\n```"
+    (cand,) = dx.parse_candidates(strip_code_fence(fenced)) or []
+    assert cand.rejected() == ["a plain set on disk — rejected: costs random reads"]
+
+
+def test_image_only_sections_are_the_leaves_with_no_words() -> None:
+    assert dx.image_only_sections(DOC) == ["Spilling > Architecture"]
+    assert dx.image_only_sections("# A\n\n## B\n\ntext\n\n## C\n\n[image]\n") == ["A > C"]
+
+
+def test_the_quote_names_its_section() -> None:
+    w = Window(
+        [
+            CorpusChunk("d", 0, "First slide text.", ("Deck", "One")),
+            CorpusChunk("d", 1, "Second slide text.", ("Deck", "Two")),
+        ]
+    )
+    assert dx.quote_section(w, "Second slide") == "Deck > Two"
+    assert dx.quote_section(w, "nowhere") == "Deck > One"
+    assert "[section: Deck > Two]" in dx.user_prompt(w)
+
+
+# ------------------------------------------------------------------ mentions
+
+
+def test_mentions_are_sorted_by_what_resolves_them() -> None:
+    text = "`DB::JoinStep` and JoinStep, ExternalDistinctTransform, #4821, max_threads, `merge`"
+    m = dx.sort_mentions(
+        ["DB::JoinStep", "ExternalDistinctTransform", "#4821", "max_threads", "Invented", "merge"],
+        text,
+    )
+    assert m.symbols == [
+        ("DB::JoinStep", "qualified"),
+        ("ExternalDistinctTransform", "camelcase"),
+        ("merge", "qualified"),
+    ]
+    assert m.unresolved == [("#4821", "pr"), ("max_threads", "setting")]
+
+
+def test_a_class_wins_over_its_constructor_and_homonyms_link_nothing() -> None:
+    assert dx.definition_path([("a.h", "DB::Foo"), ("a.cpp", "DB::Foo::Foo")]) == "a.h"
+    assert dx.definition_path([("a.cpp", "DB::f"), ("b.cpp", "DB::g::f")]) == ""
+    assert dx.definition_path([]) == ""
+
+
+# ------------------------------------------------------------------ reconcile
+
+
+@pytest.mark.asyncio
+async def test_a_new_decision_is_written_with_the_extractor_identity_and_its_source(
+    monkeypatch,
+) -> None:
+    world = _World(monkeypatch, [_candidate(is_constraint=True)])
+    report = await _run()
+    (inp,) = world.recorded
+    assert (inp.agent, inp.user_id, inp.session_id) == ("loom-decisions", "-", "-")
+    assert inp.confidence == 0.5 and inp.source_class == "derived"
+    assert inp.source_resource_id == f"knowledge:ns/doc.md#{SECTION}"
+    assert inp.tags == ["source-kind:design_doc", "constraint"]
+    assert inp.files == ["src/Processors/ExternalDistinctTransform.h"]
+    assert inp.alternatives == ["a plain set on disk — rejected: costs random reads"]
+    (rec,) = report.records
+    assert rec.action == "written" and rec.memory_key == _key(_candidate())
+    assert rec.signals == [
+        "ExternalDistinctTransform: camelcase, exact -> src/Processors/ExternalDistinctTransform.h"
+    ]
+    assert rec.unresolved == ["#4821 (pr)", "max_bytes_before_external_group_by (setting)"]
+    assert report.image_only == ["Spilling > Architecture"]
+    assert "At most 3 items per section" in world.prompts[0][0]
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_writes_nothing_and_prints_the_bodies(monkeypatch, capsys) -> None:
+    world = _World(monkeypatch, [_candidate(), _candidate(quote="not in the deck")])
+    report = await _run(dry_run=True)
+    assert world.recorded == [] and world.updates == [] and world.deletes == []
+    cli.print_report(report)
+    out = capsys.readouterr().out
+    assert "(dry run)" in out and f"would record {_key(_candidate())}" in out
+    assert '"agent": "loom-decisions"' in out and '"source_class": "derived"' in out
+    assert "unresolved: #4821 (pr)" in out
+    assert f"dropped [{SECTION}] quote is not in the document text" in out
+    assert "image-only, rationale not extracted: Spilling > Architecture" in out
+
+
+@pytest.mark.asyncio
+async def test_an_identical_record_is_left_alone(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), files=[HEADER])
+    report = await _run()
+    assert world.recorded == [] and report.records[0].action == "unchanged"
+
+
+@pytest.mark.asyncio
+async def test_a_file_that_resolves_on_a_later_run_revises_the_row(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    symbols = world.symbols
+    world.symbols = {}  # the code is not indexed yet
+    await _run()
+    (first,) = world.recorded
+    assert first.files == []
+    world.record(_key(c), _same_fields(c), files=[])
+    world.symbols = symbols
+    report = await _run()
+    assert report.records[0].action == "revised"
+    assert world.recorded[-1].files == [HEADER]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"files": [HEADER], "source_resource_id": "knowledge:ns/doc.md#Old heading"},
+        {"files": [HEADER], "tags": ["decision", "constraint"]},
+    ],
+)
+async def test_a_moved_section_or_a_dropped_constraint_revises_the_row(monkeypatch, row) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), **row)
+    report = await _run()
+    assert report.records[0].action == "revised" and len(world.recorded) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_row_with_the_same_text_is_left_alone_whatever_its_files(
+    monkeypatch,
+) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), files=[], pinned=True)
+    report = await _run()
+    assert report.records[0].action == "unchanged"
+    assert world.recorded == [] and world.updates == []
+
+
+@pytest.mark.asyncio
+async def test_a_row_from_another_document_is_not_revised(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    other = "knowledge:ns/other.md#Final DISTINCT"
+    world.record(
+        _key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, source_resource_id=other
+    )
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "not_ours" and other in rec.note
+    assert world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_the_extractors_unpinned_row_is_revised(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."})
+    report = await _run()
+    assert report.records[0].action == "revised" and len(world.recorded) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_row_is_tagged_and_its_body_printed_never_written(
+    monkeypatch, capsys
+) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        {**_same_fields(c), "reasoning": "We keep a hash set."},
+        agent="alice-agent",
+        user_id="alice",
+        pinned=True,
+        char_limit=900,
+    )
+    report = await _run()
+    assert world.recorded == []
+    (upd,) = world.updates
+    assert upd.tags == ["decision", "source-changed"] and upd.value is None
+    assert upd.memory_id == "id-" + _key(c) + "-alice-agent"
+    assert upd.char_limit == 900  # the row's own cap, passed back
+    (rec,) = report.records
+    assert rec.action == "flagged" and rec.body["agent"] == "alice-agent"
+    assert rec.body["user_id"] == "alice"
+    cli.print_report(report)
+    assert '"agent": "alice-agent"' in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_another_writers_unpinned_record_is_not_revised(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, agent="claude")
+    report = await _run()
+    assert world.recorded == [] and world.updates == []
+    assert report.records[0].action == "not_ours"
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_restatement_under_another_key_is_skipped(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    world.add("design/spilling/final", agent="alice-agent", pinned=True)
+    # A newer unpinned row of the key beside it does not hide the pinned one.
+    world.add("design/spilling/final", agent="bob-agent")
+    world.search_hits = [SimpleNamespace(memory_key="design/spilling/final", similarity=0.91)]
+    report = await _run()
+    assert world.recorded == []
+    (rec,) = report.records
+    assert rec.action == "already_recorded"
+    assert rec.note == "already recorded by alice-agent under design/spilling/final"
+
+
+@pytest.mark.asyncio
+async def test_a_close_unpinned_or_distant_pinned_peer_does_not_stop_the_write(
+    monkeypatch,
+) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    world.add("design/a", agent="alice-agent", pinned=False)
+    world.add("design/b", agent="alice-agent", pinned=True)
+    world.search_hits = [SimpleNamespace(memory_key="design/a", similarity=0.95)]
+    await _run()
+    world.search_hits = [SimpleNamespace(memory_key="design/b", similarity=0.6)]
+    await _run()
+    assert len(world.recorded) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_section_cap_and_a_repeated_key_drop_candidates(monkeypatch) -> None:
+    c = _candidate()
+    other = _candidate(scenario="how the merge reads its runs", outcome="merge runs by key")
+    world = _World(monkeypatch, [c, c, other])
+    report = await _run(max_per_section=1)
+    assert [d.reason for d in report.dropped] == [
+        "same key as an earlier candidate",
+        "the section already has --max-per-section 1",
+    ]
+    assert len(world.recorded) == 1
+
+
+# ------------------------------------------------------------------ retire
+
+
+@pytest.mark.asyncio
+async def test_rows_whose_reasoning_left_the_document_are_retired_or_flagged(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    gone = {"reasoning": "We keep a hash set."}
+    world.record("decision:gone", gone)
+    world.record("decision:gone-pinned", gone, pinned=True)
+    world.record("decision:kept", {"reasoning": "A plain set on disk costs random reads."})
+    world.record("decision:other-doc", gone, source_resource_id="knowledge:ns/other.md#x")
+    world.record("decision:not-ours", gone, agent="claude")
+    report = await _run()
+    assert report.retired == ["decision:gone"]
+    (d,) = world.deletes
+    assert (d.memory_key, d.agent, d.version) == ("decision:gone", "loom-decisions", 7)
+    assert report.flagged == ["decision:gone-pinned"]
+    assert [u.memory_id for u in world.updates] == ["id-decision:gone-pinned-loom-decisions"]
+
+
+@pytest.mark.asyncio
+async def test_a_flagged_row_is_not_tagged_twice(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record(
+        "decision:gone", {"reasoning": "gone"}, pinned=True, tags=["decision", "source-changed"]
+    )
+    report = await _run()
+    assert report.flagged == [] and world.updates == []
+
+
+@pytest.mark.asyncio
+async def test_a_tagged_pinned_row_the_document_still_contradicts_is_not_tagged_again(
+    monkeypatch, capsys
+) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        {**_same_fields(c), "reasoning": "We keep a hash set."},
+        pinned=True,
+        tags=["decision", "source-changed"],
+    )
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "already_flagged" and report.flagged == [] and world.updates == []
+    cli.print_report(report)
+    assert f"already tagged source-changed {rec.memory_key}" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_retires_nothing(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"})
+    report = await _run(dry_run=True)
+    assert report.retired == ["decision:gone"] and world.deletes == []
+
+
+# ------------------------------------------------------------------ errors and the CLI
+
+
+@pytest.mark.asyncio
+async def test_a_missing_document_or_one_without_chunks_writes_nothing(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [_candidate()])
+    world.record("decision:gone", {"reasoning": "gone"})
+    report = await _run(uri="missing.md")
+    assert "no live document 'missing.md'" in report.error
+
+    async def none(org, ns, uri):
+        return []
+
+    monkeypatch.setattr(document_reads, "document_chunks", none)
+    report = await _run()
+    assert "loom rechunk --org o --namespace ns --source-uri doc.md --apply" in report.error
+    assert world.recorded == [] and world.deletes == [] and world.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_reply_is_reported(monkeypatch) -> None:
+    from server.llm import client as llm_client
+
+    _World(monkeypatch, [])
+
+    class _Prose:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            return SimpleNamespace(text="There is one decision here.", stop_reason="")
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Prose())
+    report = await _run()
+    assert [d.reason for d in report.dropped] == ["the model's reply is not the JSON asked for"]
+
+
+@pytest.mark.asyncio
+async def test_the_fake_model_returns_candidates_that_pass_the_check() -> None:
+    from server.llm import customer
+    from server.llm.fake import FakeLLMClient
+
+    w = Window([CorpusChunk("d", 0, BODY, ("Spilling", "Final DISTINCT"))])
+    with customer.for_org("o"):
+        res = await FakeLLMClient().complete(dx.system_prompt(3), dx.user_prompt(w))
+    (cand,) = dx.parse_candidates(res.text) or []
+    assert dx.verbatim_failure(cand, [BODY]) == ""
+
+
+def test_the_command_is_dry_run_by_default() -> None:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd")
+    cli.register_decisions_cli(sub)
+    args = parser.parse_args(
+        ["decisions", "extract", "--org", "o", "--namespace", "ns", "--source-uri", "d"]
+    )
+    assert (args.subcommand, args.dry_run, args.max_per_section) == ("extract", True, 3)
+    args = parser.parse_args(
+        ["decisions", "extract", "--org", "o", "--namespace", "n", "--source-uri", "d", "--apply"]
+    )
+    assert args.dry_run is False
+
+
+def test_a_cli_run_writes_as_the_decisions_command() -> None:
+    from server.cli.app import _dispatch
+    from server.memory.app.provenance import writer_actor
+
+    seen: list[str] = []
+
+    def _func(_: argparse.Namespace) -> int:
+        seen.append(writer_actor())
+        return 0
+
+    ns = argparse.Namespace(cmd="decisions", subcommand="extract", func=_func)
+    assert _dispatch(ns) == 0
+    assert seen == ["process:cli:decisions"]
+
+
+@pytest.mark.asyncio
+async def test_a_chunk_with_only_an_image_is_not_sent_to_the_model(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT")),
+            CorpusChunk(uri, 1, "![diagram](img.png)", ("Spilling", "Architecture")),
+        ]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (prompt,) = world.prompts
+    assert "img.png" not in prompt[1] and "[section: Spilling > Final DISTINCT]" in prompt[1]
+    assert report.image_only == ["Spilling > Architecture"]
+
+
+# ------------------------------------------------------------------ refusals and ownership
+
+
+def _refusal(code: str) -> Any:
+    from fastapi import HTTPException
+
+    return HTTPException(status_code=409, detail={"code": code, "message": "refused"})
+
+
+@pytest.mark.asyncio
+async def test_a_refused_record_is_reported_and_the_run_goes_on(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    world.record("decision:gone", {"reasoning": "gone"})
+    world.refuse_record = _refusal("BLACKLISTED")
+    report = await _run()
+    assert [(d.section, d.reason) for d in report.dropped] == [
+        (SECTION, f"{_key(_candidate())}: refused: BLACKLISTED")
+    ]
+    assert report.records == []
+    assert report.retired == ["decision:gone"] and len(world.deletes) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_source_changed_tag_goes_by_memory_id_and_a_refusal_is_reported(
+    monkeypatch, capsys
+) -> None:
+    world = _World(monkeypatch, [])
+    # Two identities hold the key with user and session `-`: memory.update would read that
+    # as any and answer AMBIGUOUS_KEY; the tag is written by the extractor row's id.
+    world.record("decision:gone", {"reasoning": "gone"}, pinned=True)
+    world.add("decision:gone", agent="claude")
+    await _run()
+    (upd,) = world.updates
+    assert upd.memory_id == "id-decision:gone-loom-decisions"
+    world.refuse_update = _refusal("AMBIGUOUS_KEY")
+    report = await _run()
+    assert report.refused == ["decision:gone: refused: AMBIGUOUS_KEY"]
+    cli.print_report(report)
+    out = capsys.readouterr().out
+    assert "not changed decision:gone: refused: AMBIGUOUS_KEY" in out
+    assert report.flagged == [] and "tagged decision:gone" not in out
+
+
+@pytest.mark.asyncio
+async def test_a_refused_pinned_tag_drops_only_that_candidate(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, pinned=True)
+    world.refuse_update = _refusal("AMBIGUOUS_KEY")
+    report = await _run()
+    assert [d.reason for d in report.dropped] == [f"{_key(c)}: refused: AMBIGUOUS_KEY"]
+
+
+@pytest.mark.asyncio
+async def test_retire_reads_the_extractors_own_record_not_another_writers(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    # Our row's reasoning still stands, but another identity recorded the key since: its
+    # record is the active one, and its text is not in the document.
+    world.add("decision:shared")
+    world.record("decision:shared", {"reasoning": "Something else entirely."}, agent="claude")
+    report = await _run()
+    assert report.retired == [] and world.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_a_hash_in_a_heading_or_in_a_source_uri_is_told_apart(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    assert await de.cites_document("o", "knowledge:ns/doc.md#Intro", "ns", "doc.md")
+    # A heading holding `#` still cites this document while no `doc.md#<part>` exists.
+    assert await de.cites_document("o", "knowledge:ns/doc.md#C# bindings", "ns", "doc.md")
+    assert await de.cites_document("o", "knowledge:ns/doc.md#v2#Intro", "ns", "doc.md")
+    world.docs.add("doc.md#v2")
+    assert not await de.cites_document("o", "knowledge:ns/doc.md#v2#Intro", "ns", "doc.md")
+    assert await de.cites_document("o", "knowledge:ns/doc.md#v2#Intro", "ns", "doc.md#v2")
+    assert not await de.cites_document("o", "knowledge:ns/doc.md", "ns", "doc.md")
+    assert not await de.cites_document("o", "knowledge:other/doc.md#Intro", "ns", "doc.md")
+
+
+@pytest.mark.asyncio
+async def test_retire_leaves_a_row_of_a_document_whose_uri_extends_this_one(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.docs.add("doc.md#v2")
+    world.record(
+        "decision:v2", {"reasoning": "gone"}, source_resource_id="knowledge:ns/doc.md#v2#Intro"
+    )
+    report = await _run()
+    assert report.retired == [] and world.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_a_hash_in_a_heading_keeps_the_row_ours_to_revise_and_retire(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    sharp = "knowledge:ns/doc.md#Spilling > C# bindings"
+    world.record(
+        _key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, source_resource_id=sharp
+    )
+    world.record("decision:gone", {"reasoning": "gone"}, source_resource_id=sharp)
+    report = await _run()
+    assert report.records[0].action == "revised"
+    assert report.retired == ["decision:gone"]
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_row_of_another_document_is_not_tagged(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    other = "knowledge:ns/other.md#Final DISTINCT"
+    world.record(
+        _key(c),
+        {**_same_fields(c), "reasoning": "We keep a hash set."},
+        agent="alice-agent",
+        pinned=True,
+        source_resource_id=other,
+    )
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "not_ours" and rec.body["agent"] == "alice-agent"
+    assert world.updates == [] and world.recorded == [] and report.flagged == []
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_row_the_document_says_again_loses_source_changed(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c), _same_fields(c), files=[HEADER], pinned=True, tags=["decision", "source-changed"]
+    )
+    dry = await _run(dry_run=True)
+    assert dry.records[0].note == "would clear source-changed" and world.updates == []
+    report = await _run()
+    assert report.records[0].action == "unchanged"
+    assert report.records[0].note == "source-changed cleared"
+    assert [(u.memory_id, u.tags) for u in world.updates] == [
+        ("id-" + _key(c) + "-loom-decisions", ["decision"])
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_tag_stays_on_a_run_that_does_not_emit_the_key(
+    monkeypatch,
+) -> None:
+    # The pinned row carries source-changed, set by hand or by an earlier run on a changed
+    # rejected reason; its reasoning is still in the document. This run's model leaves the
+    # key out: the retire step keeps the tag.
+    world = _World(monkeypatch, [])
+    world.record(
+        "decision:k",
+        {"reasoning": "A plain set on disk costs random reads.", "outcome": "a hash set"},
+        pinned=True,
+        tags=["decision", "source-changed"],
+    )
+    report = await _run()
+    assert world.updates == [] and report.flagged == [] and report.retired == []
+
+
+@pytest.mark.asyncio
+async def test_the_most_similar_close_hit_with_a_pin_skips_the_candidate(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    world.add("design/unpinned", agent="alice-agent")
+    world.add("design/pinned", agent="alice-agent", pinned=True)
+    world.add("design/far", agent="alice-agent", pinned=True)
+    # Fused rank order is not similarity order: the first hit is unpinned, the third too far.
+    world.search_hits = [
+        SimpleNamespace(memory_key="design/unpinned", similarity=0.95),
+        SimpleNamespace(memory_key="design/pinned", similarity=0.88),
+        SimpleNamespace(memory_key="design/far", similarity=0.5),
+    ]
+    report = await _run()
+    assert report.records[0].note == "already recorded by alice-agent under design/pinned"
+
+
+@pytest.mark.asyncio
+async def test_retire_reads_records_only_for_rows_of_this_document(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:here", {"reasoning": "gone"})
+    world.record("decision:there", {"reasoning": "gone"}, source_resource_id="knowledge:ns/b#x")
+    await _run()
+    # One record read per extractor row of this document, shared by the prompt and retire.
+    assert world.writer_reads == ["decision:here"]
+
+
+@pytest.mark.parametrize("flag", [["--max-per-section", "0"], ["--window-chars", "100"]])
+def test_the_command_refuses_a_cap_below_its_floor(flag: list[str]) -> None:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd")
+    cli.register_decisions_cli(sub)
+    base = ["decisions", "extract", "--org", "o", "--namespace", "n", "--source-uri", "d"]
+    with pytest.raises(SystemExit):
+        parser.parse_args([*base, *flag])
+
+
+@pytest.mark.asyncio
+async def test_a_row_rewritten_before_its_delete_is_not_reported_retired(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"})
+    world.moved_on.add("decision:gone")
+    report = await _run()
+    assert report.retired == []
+    assert report.races == ["decision:gone: rewritten since the run read it"]
+    assert cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_that_words_the_scenario_anew_leaves_one_live_row(monkeypatch) -> None:
+    first = _candidate()
+    world = _World(monkeypatch, [first])
+    await _run()
+    world.record(_key(first), _same_fields(first), files=[HEADER])
+    # The second run's model words the same decision differently: another key.
+    second = _candidate(scenario="spilling the final DISTINCT")
+    world.reply = [second]
+    report = await _run()
+    assert [r.action for r in report.records] == ["written"]
+    assert report.replaced == [f"{_key(first)} -> {_key(second)}"]
+    assert [d.memory_key for d in world.deletes] == [_key(first)]
+    assert report.retired == []
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_row_with_a_reasoning_recorded_anew_is_kept(monkeypatch) -> None:
+    first = _candidate()
+    world = _World(monkeypatch, [_candidate(scenario="spilling the final DISTINCT")])
+    world.record(_key(first), _same_fields(first), files=[HEADER], pinned=True)
+    report = await _run()
+    assert report.replaced == [] and world.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_two_decisions_on_one_reasoning_both_stay_when_one_is_emitted(monkeypatch) -> None:
+    a = _candidate()
+    b = _candidate(scenario="how the merge orders its runs", outcome="merge runs by key")
+    world = _World(monkeypatch, [a])
+    world.record(_key(a), _same_fields(a), files=[HEADER])
+    world.record(_key(b), _same_fields(b), files=[HEADER])
+    report = await _run()
+    assert report.records[0].action == "unchanged"
+    assert report.replaced == [] and report.retired == [] and world.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_code_index_keeps_the_files_a_row_has(monkeypatch, capsys) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    await _run()
+    (first,) = world.recorded
+    assert first.files == [HEADER]
+    world.record(_key(c), _same_fields(c), files=[HEADER])
+    world.index_down = True
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "unchanged" and len(world.recorded) == 1
+    assert rec.signals == ["ExternalDistinctTransform: camelcase, unknown (code index unavailable)"]
+    # A changed decision is revised with the files the row has.
+    world.reply = [{**c, "reasoning": "A plain set on disk costs random reads."}]
+    report = await _run(dry_run=True)
+    assert report.records[0].action == "revised" and report.records[0].body["files"] == [HEADER]
+
+
+@pytest.mark.asyncio
+async def test_a_scenario_with_no_key_letters_is_dropped_and_the_run_goes_on(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate(category="设计", scenario="如何溢出"), _candidate()])
+    report = await _run()
+    assert [d.reason for d in report.dropped] == [
+        "no letters or digits a-z, 0-9 to build a key from"
+    ]
+    assert [r.action for r in report.records] == ["written"] and len(world.recorded) == 1
+
+
+def test_a_blank_reason_drops_the_alternative_and_a_reason_is_read_as_written() -> None:
+    (cand,) = (
+        dx.parse_candidates(
+            json.dumps(
+                {
+                    "decisions": [
+                        _candidate(
+                            alternatives=[
+                                {"option": "a hash set", "reason": "   "},
+                                {"option": "a plain set on disk", "reason": " costs random reads"},
+                            ]
+                        )
+                    ]
+                }
+            )
+        )
+        or []
+    )
+    assert cand.alternatives == [("a plain set on disk", " costs random reads")]
+
+
+@pytest.mark.asyncio
+async def test_a_decision_with_a_recorded_outcome_is_not_re_recorded(monkeypatch, capsys) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    # decision.outcome wrote the outcome; the code index now resolves a file the row lacks.
+    world.record(
+        _key(c),
+        {**_same_fields(c), "realized_outcome": "no spill regressions", "success": True},
+        files=[],
+        tags=["decision", "decision:outcome-known", "decision:success"],
+    )
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "outcome_known" and world.recorded == []
+    cli.print_report(report)
+    out = capsys.readouterr().out
+    assert f"not revised {rec.memory_key}: its outcome is recorded" in out
+    assert "decision.record {" in out
+
+
+@pytest.mark.asyncio
+async def test_a_reworded_row_with_a_recorded_outcome_is_kept(monkeypatch) -> None:
+    first = _candidate()
+    world = _World(monkeypatch, [_candidate(scenario="spilling the final DISTINCT")])
+    world.record(
+        _key(first), {**_same_fields(first), "realized_outcome": "no regressions"}, files=[HEADER]
+    )
+    report = await _run()
+    assert report.replaced == [] and world.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_the_pinned_note_says_to_unpin_before_sending_the_body(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, pinned=True)
+    report = await _run(dry_run=True)
+    assert "unpin the row with memory.unpin, then send it" in report.records[0].note
+
+
+# ------------------------------------------------------------------ model wording
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pinned", [False, True])
+@pytest.mark.parametrize(
+    "reworded",
+    [
+        {"outcome": "spill sorted runs to disk"},
+        {"alternatives": [{"option": "an on-disk hash set", "reason": "costs random reads"}]},
+    ],
+)
+async def test_a_reworded_outcome_or_option_is_no_change(monkeypatch, reworded, pinned) -> None:
+    # Outcome and option are the model's words: a re-run that words them anew neither
+    # revises the extractor's row nor tags a pinned one.
+    c = _candidate()
+    world = _World(monkeypatch, [{**c, **reworded}])
+    world.record(_key(c), _same_fields(c), files=[HEADER], pinned=pinned)
+    report = await _run()
+    assert [r.action for r in report.records] == ["unchanged"]
+    assert world.recorded == [] and world.updates == []
+
+
+@pytest.mark.asyncio
+async def test_a_changed_rejected_reason_is_a_change(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c), {**_same_fields(c), "alternatives": "a plain set on disk — rejected: slow"}
+    )
+    report = await _run()
+    assert report.records[0].action == "revised"
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_lists_the_documents_decisions_to_reuse_their_wording(
+    monkeypatch,
+) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "category": "design:spilling"}, files=[HEADER])
+    world.record("decision:elsewhere", _same_fields(c), source_resource_id="knowledge:ns/b#x")
+    await _run()
+    system = world.prompts[0][0]
+    assert "reuse its category and scenario exactly" in system
+    assert (
+        "- design:spilling | how the final DISTINCT spills to disk | spill into sorted runs"
+        in system
+    )
+    assert system.count("\n- design:") == 1
+    assert dx.system_prompt(3) == dx.SYSTEM.replace("{max_per_section}", "3")
+
+
+@pytest.mark.asyncio
+async def test_a_row_with_an_outcome_whose_reasoning_left_is_tagged_not_deleted(
+    monkeypatch,
+) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:done", {"reasoning": "gone", "realized_outcome": "it worked"})
+    report = await _run()
+    assert world.deletes == [] and report.retired == []
+    assert report.flagged == ["decision:done"]
+    assert [u.memory_id for u in world.updates] == ["id-decision:done-loom-decisions"]
+
+
+@pytest.mark.asyncio
+async def test_a_tag_write_on_a_row_deleted_since_the_read_is_reported(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, pinned=True)
+    world.record("decision:gone", {"reasoning": "gone"}, pinned=True)
+    world.gone = {f"id-{_key(c)}-loom-decisions", "id-decision:gone-loom-decisions"}
+    report = await _run()
+    assert report.records == [] and report.flagged == [] and report.dropped == []
+    assert sorted(report.races) == [
+        f"{_key(c)}: deleted since the run read it",
+        "decision:gone: deleted since the run read it",
+    ]
+    assert report.refused == [] and cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_long_reason_cut_at_the_cap_survives_a_reworded_option(monkeypatch) -> None:
+    long_reason = "costs random reads " + "and more random reads " * 14
+    body = BODY + " " + long_reason
+    c = _candidate(alternatives=[{"option": "a hash set", "reason": long_reason}])
+
+    world = _World(monkeypatch, [c])
+    from server.knowledge.app import document_reads
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, body, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    stored = svc.clean_alternatives([f"a hash set — rejected: {long_reason}"])
+    assert len(stored[0]) == svc.ALTERNATIVE_CHARS  # cut inside the reason
+    world.record(_key(c), {**_same_fields(c), "alternatives": stored[0]}, files=[HEADER])
+    world.reply = [
+        {**c, "alternatives": [{"option": "a hash-based set on disk", "reason": long_reason}]}
+    ]
+    report = await _run()
+    assert report.records[0].action == "unchanged" and world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_alternatives_in_another_order_are_no_change(monkeypatch) -> None:
+    reasons = [f"costs random reads {i}" for i in range(10)]
+    alts = [{"option": f"option {i}", "reason": r} for i, r in enumerate(reasons)]
+    body = BODY + " " + " ".join(reasons)
+    c = _candidate(alternatives=alts)
+    world = _World(monkeypatch, [{**c, "alternatives": list(reversed(alts))}])
+    from server.knowledge.app import document_reads
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, body, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    world.record(_key(c), _same_fields(c), files=[HEADER])
+    report = await _run()
+    assert report.records[0].action == "unchanged"
+
+
+@pytest.mark.asyncio
+async def test_an_unpinned_row_the_document_says_again_loses_source_changed(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        {**_same_fields(c), "realized_outcome": "no regressions"},
+        files=[HEADER],
+        tags=["decision", "source-changed"],
+    )
+    report = await _run()
+    assert report.records[0].note == "source-changed cleared"
+    assert [u.tags for u in world.updates] == [["decision"]]
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_key_another_identity_holds_replaces_nothing(monkeypatch) -> None:
+    first = _candidate()
+    second = _candidate(scenario="spilling the final DISTINCT")
+    world = _World(monkeypatch, [second])
+    world.record(_key(first), _same_fields(first), files=[HEADER])
+    # The reworded key is another identity's, with the same decision: not ours to hold it.
+    world.record(_key(second), _same_fields(second), agent="claude", files=[HEADER])
+    report = await _run()
+    assert report.records[0].action == "unchanged"
+    assert report.replaced == [] and world.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_the_restatement_search_makes_no_model_call(monkeypatch) -> None:
+    from server.memory.app import search
+
+    world = _World(monkeypatch, [_candidate()])
+    seen: list[Any] = []
+
+    async def mem_search(inp):
+        seen.append(inp)
+        return SimpleNamespace(results=[])
+
+    monkeypatch.setattr(search, "handle_memory_search", mem_search)
+    await _run()
+    (inp,) = seen
+    assert (inp.search_mode, inp.rerank, inp.hyde, inp.retrieval_budget) == (
+        "semantic",
+        "none",
+        False,
+        "fast",
+    )
+    assert world.recorded
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stop", "reason"),
+    [
+        ("length", "reply cut at the token limit; lower --window-chars or --max-per-section"),
+        ("max_tokens", "reply cut at the token limit; lower --window-chars or --max-per-section"),
+        (
+            "content_filter",
+            "the model's reply is not the JSON asked for (stop reason: content_filter)",
+        ),
+    ],
+)
+async def test_a_reply_cut_short_says_why(monkeypatch, stop, reason) -> None:
+    from server.llm import client as llm_client
+
+    _World(monkeypatch, [])
+
+    class _Cut:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            return SimpleNamespace(text='{"decisions": [{"category": "des', stop_reason=stop)
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Cut())
+    report = await _run()
+    assert [d.reason for d in report.dropped] == [reason]
+
+
+@pytest.mark.asyncio
+async def test_a_changed_decision_with_an_outcome_is_flagged(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        {**_same_fields(c), "reasoning": "We keep a hash set.", "realized_outcome": "it held"},
+        files=[HEADER],
+    )
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "flagged" and report.flagged == [rec.memory_key]
+    assert world.recorded == [] and [u.tags for u in world.updates] == [
+        ["decision", "source-changed"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_files_only_change_on_a_decision_with_an_outcome_is_left(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "realized_outcome": "it held"}, files=[])
+    report = await _run()
+    assert report.records[0].action == "outcome_known" and world.updates == []
+
+
+def test_an_alternative_cut_before_its_reason_matches_any_one_reason() -> None:
+    from server.memory.app.decision_extract import _same_reasons
+
+    option = "o" * (svc.ALTERNATIVE_CHARS + 20)
+    (stored,) = svc.clean_alternatives([f"{option} — rejected: costs random reads"])
+    assert dx.REJECTED not in stored
+    assert _same_reasons([stored], [f"{option} — rejected: costs random reads"])
+    assert _same_reasons([stored], ["another wording — rejected: costs random reads"])
+    assert not _same_reasons([stored], [])
+    other = "a hash set — rejected: slow"
+    assert _same_reasons([other, stored], ["a hash set — rejected: slow", "x — rejected: y"])
+
+
+def test_a_backticked_snake_case_name_is_looked_up_first() -> None:
+    m = dx.sort_mentions(
+        ["handle_decision_record", "max_threads"], "`handle_decision_record` and max_threads"
+    )
+    assert m.symbols == [("handle_decision_record", "qualified")]
+    assert m.unresolved == [("max_threads", "setting")]
+
+
+@pytest.mark.asyncio
+async def test_a_backticked_name_the_index_lacks_is_reported_as_a_setting(monkeypatch) -> None:
+    c = _candidate(mentions=["max_bytes_before_external_group_by", "handle_decision_record"])
+    world = _World(monkeypatch, [c])
+    from server.knowledge.app import document_reads
+
+    body = BODY.replace(
+        "max_bytes_before_external_group_by", "`max_bytes_before_external_group_by`"
+    )
+    body += " `handle_decision_record` writes it."
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, body, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    world.symbols["handle_decision_record"] = [
+        ("server/memory/app/decision.py", "handle_decision_record")
+    ]
+    report = await _run(dry_run=True)
+    (rec,) = report.records
+    assert rec.unresolved == ["max_bytes_before_external_group_by (setting)"]
+    assert "server/memory/app/decision.py" in rec.body["files"]
+
+
+@pytest.mark.asyncio
+async def test_eleven_alternatives_fit_decision_record_as_it_keeps_them(monkeypatch) -> None:
+    reasons = [f"costs random reads {i}" for i in range(11)]
+    alts = [{"option": f"option {i}", "reason": r} for i, r in enumerate(reasons)]
+    # A case-only duplicate of the first, which decision.record folds away too.
+    alts.append({"option": "OPTION 0", "reason": reasons[0]})
+    body = BODY + " " + " ".join(reasons)
+    world = _World(monkeypatch, [_candidate(alternatives=alts)])
+    from server.knowledge.app import document_reads
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, body, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    assert [r.action for r in report.records] == ["written"] and report.dropped == []
+    (inp,) = world.recorded
+    assert len(inp.alternatives) == svc.MAX_ALTERNATIVES
+    assert inp.alternatives[0] == "option 0 — rejected: costs random reads 0"
+
+
+@pytest.mark.asyncio
+async def test_the_extractors_rows_are_read_once_per_run(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    world.record("decision:here", {"reasoning": "gone"})
+    await _run()
+    assert world.bulk_reads == 1
+
+
+@pytest.mark.asyncio
+async def test_one_decision_worded_twice_across_overlapping_windows_is_written_once(
+    monkeypatch,
+) -> None:
+    from server.knowledge.app import document_reads
+
+    first = _candidate()
+    second = _candidate(scenario="spilling the final DISTINCT")
+    world = _World(monkeypatch, [])
+    replies = [[first], [second]]
+
+    class _TwoWindows:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            return SimpleNamespace(text=json.dumps({"decisions": replies.pop(0)}), stop_reason="")
+
+    async def chunks(org, ns, uri):
+        # Two chunks whose stride overlaps: each window holds the same text.
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT")),
+            CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
+        ]
+
+    from server.llm import client as llm_client
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _TwoWindows())
+    report = await _run(window_chars=len(BODY) + 1)
+    assert report.windows == 2
+    assert [d.reason for d in report.dropped] == ["same decision as an earlier candidate"]
+    assert len(world.recorded) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_row_with_stale_fields_the_document_says_again_is_cleared(
+    monkeypatch,
+) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        {**_same_fields(c), "realized_outcome": "it held"},
+        files=[HEADER],
+        source_resource_id="knowledge:ns/doc.md#Old heading",
+        tags=["decision", "source-changed"],
+    )
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "outcome_known"
+    assert rec.note == "its outcome is recorded; re-recording would lose it; source-changed cleared"
+    assert world.recorded == [] and [u.tags for u in world.updates] == [["decision"]]
+
+
+@pytest.mark.asyncio
+async def test_an_unfit_candidate_takes_no_section_slot(monkeypatch) -> None:
+    unfit = _candidate(category="design:" + "x" * 200)
+    world = _World(monkeypatch, [unfit, _candidate()])
+    report = await _run(max_per_section=1)
+    assert [d.reason for d in report.dropped] == ["does not fit decision.record"]
+    assert len(world.recorded) == 1 and world.recorded[0].category == "design:spilling"
+
+
+@pytest.mark.asyncio
+async def test_a_long_scenario_shown_whole_keeps_its_key_across_runs(monkeypatch) -> None:
+    from server.llm import client as llm_client
+
+    scenario = "how the final DISTINCT spills to disk " + "under memory pressure " * 9
+    assert len(scenario) > 160
+    c = _candidate(scenario=scenario)
+    world = _World(monkeypatch, [c])
+    await _run()
+    (first,) = world.recorded
+    world.record(_key(c), _same_fields(c), files=[HEADER])
+
+    class _Reuser:
+        """A model that copies the scenario the prompt lists."""
+
+        async def complete(self, system: str, user: str, **k: Any) -> Any:
+            listed = system.rsplit("\n- ", 1)[1].split(" | ")
+            reply = {**c, "category": listed[0], "scenario": listed[1]}
+            return SimpleNamespace(text=json.dumps({"decisions": [reply]}), stop_reason="")
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Reuser())
+    report = await _run()
+    assert report.records[0].memory_key == _key(c) == svc.decision_key(first.category, scenario)
+    assert report.records[0].action == "unchanged"
+
+
+def test_a_long_outcome_is_shortened_and_marked_in_the_prompt() -> None:
+    prompt = dx.system_prompt(3, [("design:x", "a scenario", "o" * 300)])
+    line = prompt.rsplit("\n- ", 1)[1]
+    assert line.startswith("design:x | a scenario | ") and line.endswith("…")
+    assert len(line.split(" | ")[2]) == 160
+    assert "an outcome ending in … is shortened" in prompt
+
+
+def test_clean_alternatives_can_keep_them_uncut() -> None:
+    long = "a hash set — rejected: " + "slow " * 80
+    assert len(svc.clean_alternatives([long])[0]) == svc.ALTERNATIVE_CHARS
+    assert svc.clean_alternatives([long, long.upper()], cut=False) == [" ".join(long.split())]
+
+
+_ATTESTED = {"verified_by": "human:alice", "verified_sha256": "sha-1", "content_sha256": "sha-1"}
+
+
+@pytest.mark.asyncio
+async def test_an_attested_row_the_document_contradicts_is_tagged_not_revised(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, **_ATTESTED)
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "flagged" and world.recorded == []
+    assert "attest the new decision again with memory.verify" in rec.note
+    assert [u.tags for u in world.updates] == [["decision", "source-changed"]]
+
+
+@pytest.mark.asyncio
+async def test_an_attested_row_whose_reasoning_left_is_tagged_not_deleted(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"}, **_ATTESTED)
+    report = await _run()
+    assert world.deletes == [] and report.flagged == ["decision:gone"]
+
+
+@pytest.mark.asyncio
+async def test_a_stale_attestation_does_not_protect_a_row(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"}, **{**_ATTESTED, "content_sha256": "sha-2"})
+    report = await _run()
+    assert report.retired == ["decision:gone"] and report.flagged == []
+
+
+@pytest.mark.asyncio
+async def test_an_attested_restatement_under_another_key_is_skipped(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate(scenario="spilling the final DISTINCT")])
+    world.add("decision:attested", **_ATTESTED)
+    world.search_hits = [SimpleNamespace(memory_key="decision:attested", similarity=0.9)]
+    report = await _run()
+    assert world.recorded == []
+    assert report.records[0].note == "already recorded by loom-decisions under decision:attested"
+
+
+@pytest.mark.parametrize(
+    ("over", "reason"),
+    [
+        ({"quote": "We spill.", "reasoning": "We spill."}, "quote too short to rest a decision on"),
+        ({"reasoning": "We spill"}, "reasoning too short to rest a decision on"),
+        (
+            {"alternatives": [{"option": "a hash set", "reason": "random"}]},
+            "the reason given for rejecting 'a hash set' is too short to rest on",
+        ),
+    ],
+)
+def test_a_span_too_short_to_rest_a_decision_on_is_dropped(over, reason) -> None:
+    assert dx.verbatim_failure(_cand(**over), [BODY]) == reason
+
+
+@pytest.mark.asyncio
+async def test_a_tag_write_on_a_value_changed_since_the_read_is_a_race(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"}, pinned=True)
+    world.value_moved = {"id-decision:gone-loom-decisions"}
+    report = await _run()
+    assert report.races == ["decision:gone: rewritten since the run read it"]
+    assert report.refused == [] and report.flagged == [] and world.updates == []
+    assert world.rows[0].tags == ["decision"] and cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_tag_clear_on_a_value_changed_since_the_read_is_a_race(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c), _same_fields(c), files=[HEADER], pinned=True, tags=["decision", "source-changed"]
+    )
+    world.value_moved = {f"id-{_key(c)}-loom-decisions"}
+    report = await _run()
+    (rec,) = report.records
+    # Reported once, as a race; the record's note does not repeat it.
+    assert rec.note == ""
+    assert report.races == [f"{_key(c)}: rewritten since the run read it"]
+    assert cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_flag_on_a_value_changed_since_the_read_is_a_race(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, pinned=True)
+    world.value_moved = {f"id-{_key(c)}-loom-decisions"}
+    report = await _run()
+    assert report.records == [] and report.dropped == []
+    assert report.races == [f"{_key(c)}: rewritten since the run read it"]
+    assert cli.exit_code(report) == 0
+
+
+def test_an_exact_reason_is_matched_before_a_cut_one_takes_it() -> None:
+    from server.memory.app.decision_extract import _same_reasons
+
+    exact = "a plain set — rejected: costs random reads"
+    # Cut at the cap inside its reason, so its stored prefix is only "costs".
+    option = "o" * (svc.ALTERNATIVE_CHARS - len(" — rejected: costs"))
+    (cut,) = svc.clean_alternatives([f"{option} — rejected: costs random reads and memory"])
+    assert cut.endswith("rejected: costs")
+    # Reordered, the exact one first: a greedy prefix match of the cut one would take it.
+    candidate = [exact, f"{option} — rejected: costs random reads and memory"]
+    assert _same_reasons([cut, exact], candidate)
+
+
+@pytest.mark.asyncio
+async def test_each_write_leaves_the_audit_row_the_transport_would(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record("decision:gone", {"reasoning": "gone"})
+    world.record("decision:flag", {"reasoning": "gone"}, pinned=True)
+    from server.memory.domain.provenance import cli_actor, pipeline_actor
+
+    with pipeline_actor(cli_actor("decisions")):
+        await _run()
+    events = [(e, a) for e, a, _ in world.audits]
+    # decision.record and memory.delete_version declare an audit row; memory.update_by_id
+    # does not, as over the transport.
+    assert sorted(events) == [
+        ("decision.record", "process:cli:decisions"),
+        ("memory.delete_version", "process:cli:decisions"),
+    ]
+    record_subject = next(s for e, _, s in world.audits if e == "decision.record")
+    assert record_subject["agent"] == "loom-decisions" and record_subject["category"]
+    assert len(world.updates) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_leaves_no_audit_row(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    world.record("decision:gone", {"reasoning": "gone"})
+    await _run(dry_run=True)
+    assert world.audits == []
+
+
+def test_the_audited_ops_declare_an_audit_row_with_the_input_as_subject() -> None:
+    from server.memory.api.ops_crud import memory_delete_version
+    from server.memory.api.ops_decision import decision_record
+
+    for op in (decision_record, memory_delete_version):
+        assert op.audit and op.audit_subject is None
+
+
+def test_of_two_cut_reasons_sharing_a_prefix_the_longer_is_matched_first() -> None:
+    from server.memory.app.decision_extract import _same_reasons
+
+    def cut_at(reason_kept: str, full: str) -> tuple[str, str]:
+        option = "o" * (svc.ALTERNATIVE_CHARS - len(" — rejected: " + reason_kept))
+        (stored,) = svc.clean_alternatives([f"{option} — rejected: {full}"])
+        assert stored.endswith(f"rejected: {reason_kept}")
+        return stored, f"{option} — rejected: {full}"
+
+    short, short_full = cut_at("costs", "costs memory")
+    long, long_full = cut_at("costs random reads and", "costs random reads and more")
+    # Both orders: the short prefix must not take the long one's candidate first.
+    assert _same_reasons([short, long], [long_full, short_full])
+    assert _same_reasons([long, short], [short_full, long_full])
+
+
+def test_a_non_integer_cap_is_refused_with_a_reason(capsys) -> None:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd")
+    cli.register_decisions_cli(sub)
+    base = ["decisions", "extract", "--org", "o", "--namespace", "n", "--source-uri", "d"]
+    with pytest.raises(SystemExit):
+        parser.parse_args([*base, "--max-per-section", "three"])
+    assert "must be an integer, at least 1" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_a_backticked_name_defined_in_two_files_is_no_setting(monkeypatch) -> None:
+    c = _candidate(mentions=["handle_decision_record"])
+    world = _World(monkeypatch, [c])
+    from server.knowledge.app import document_reads
+
+    body = BODY + " `handle_decision_record` writes it."
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, body, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    world.symbols["handle_decision_record"] = [
+        ("server/memory/app/decision.py", "handle_decision_record"),
+        ("server/legacy/decision.py", "handle_decision_record"),
+    ]
+    report = await _run(dry_run=True)
+    (rec,) = report.records
+    assert rec.signals == ["handle_decision_record: qualified, no single definition"]
+    assert rec.unresolved == ["handle_decision_record (several definitions)"]
+    assert rec.body["files"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["record", "update", "delete"])
+async def test_a_server_error_on_a_write_is_reported_and_the_run_goes_on(
+    monkeypatch, where
+) -> None:
+    from server.core.errors import PreconditionFailedError
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record("decision:gone", {"reasoning": "gone"})
+    world.record("decision:flag", {"reasoning": "gone"}, pinned=True)
+    busy = PreconditionFailedError("the key is busy")
+    setattr(world, f"refuse_{where}", busy)
+    report = await _run()
+    reasons = [d.reason for d in report.dropped] + report.refused
+    assert any("refused: PRECONDITION_FAILED" in r for r in reasons)
+    # A busy key carries no live hash: a refusal, not a race.
+    assert cli.exit_code(report) == 2 and report.races == []
+    # The other writes still ran.
+    if where != "record":
+        assert len(world.recorded) == 1
+    if where != "delete":
+        assert report.retired == ["decision:gone"]
+    if where != "update":
+        assert report.flagged == ["decision:flag"]
+
+
+@pytest.mark.asyncio
+async def test_a_path_the_document_writes_out_is_a_file(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    body = "We keep the merge in src/Storages/MergeTreeData.cpp because it owns the parts."
+    c = _candidate(
+        quote=body,
+        reasoning="We keep the merge in src/Storages/MergeTreeData.cpp because it owns the parts.",
+        alternatives=[],
+        mentions=[],
+    )
+    world = _World(monkeypatch, [c])
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, body, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    await _run()
+    (inp,) = world.recorded
+    assert inp.files == ["src/Storages/MergeTreeData.cpp"]
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_decision_is_held_by_its_stored_outcome(monkeypatch) -> None:
+    # This run words the outcome anew under the old key (no change), and an older row
+    # under a reworded key holds the stored outcome: it is the duplicate to replace.
+    c = _candidate()
+    world = _World(monkeypatch, [{**c, "outcome": "spill sorted runs to disk"}])
+    world.record(_key(c), _same_fields(c), files=[HEADER])
+    world.record("decision:older", _same_fields(c), files=[HEADER])
+    report = await _run()
+    assert report.records[0].action == "unchanged"
+    assert report.replaced == [f"decision:older -> {_key(c)}"]
+
+
+def test_an_error_goes_to_stderr(capsys) -> None:
+    report = de.ExtractReport("missing.md", True, error="no live document")
+    cli.print_report(report)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == "error: no live document\n"
+
+
+def test_an_attestation_binding_the_value_of_a_row_with_no_hash_column_confirms_it() -> None:
+    from server.core.hashing import sha256_value_json
+    from server.memory.app.decision_extract import _confirmed
+
+    value = "Decided spill."
+    bound = sha256_value_json(json.dumps(value))
+    row = _row("decision:k", value=value, content_sha256="", verified_by="human:alice")
+    assert _confirmed(_Row(**{**vars(row), "verified_sha256": bound}))
+    assert not _confirmed(_Row(**{**vars(row), "verified_sha256": "other"}))
+
+
+def test_a_list_field_the_model_filled_with_something_else_reads_empty() -> None:
+    reply = json.dumps({"decisions": [_candidate(mentions=3, alternatives=True)]})
+    (cand,) = dx.parse_candidates(reply) or []
+    assert cand.mentions == [] and cand.alternatives == []
+
+
+@pytest.mark.asyncio
+async def test_a_keyed_provider_without_its_key_refuses_before_any_model_call(
+    monkeypatch,
+) -> None:
+    from server.llm import client as llm_client
+    from server.settings import settings
+
+    world = _World(monkeypatch, [_candidate()])
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(llm_client, "provider_key_missing", lambda provider: True)
+    report = await _run()
+    assert report.error.startswith("LOOM_LLM_PROVIDER=openai has no API key set")
+    assert world.prompts == [] and world.recorded == []
+    assert cli.exit_code(report) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_provider_configured_as_fake_runs(monkeypatch) -> None:
+    from server.settings import settings
+
+    world = _World(monkeypatch, [_candidate()])
+    monkeypatch.setattr(settings, "llm_provider", "fake")
+    report = await _run()
+    assert report.error == "" and len(world.recorded) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failed_model_call_loses_its_window_only(monkeypatch) -> None:
+    import httpx
+
+    from server.knowledge.app import document_reads
+    from server.llm import client as llm_client
+
+    world = _World(monkeypatch, [])
+    replies: list[Any] = [httpx.ReadTimeout("slow"), [_candidate()]]
+
+    class _Flaky:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            reply = replies.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+            return SimpleNamespace(text=json.dumps({"decisions": reply}), stop_reason="")
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Other")),
+            CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Flaky())
+    report = await _run(window_chars=len(BODY) + 1)
+    assert [d.reason for d in report.dropped] == ["the model call failed: ReadTimeout"]
+    assert len(world.recorded) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_inferred_fake_provider_refuses_before_any_model_call(monkeypatch) -> None:
+    from server.settings import settings
+
+    world = _World(monkeypatch, [_candidate()])
+    monkeypatch.setattr(settings, "_llm_provider_source", "nothing set")
+    report = await _run()
+    assert report.error.startswith("no LLM provider is configured")
+    assert world.prompts == [] and world.recorded == [] and cli.exit_code(report) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_every_model_call_fails_reads_nothing_and_retires_nothing(
+    monkeypatch, capsys
+) -> None:
+    import httpx
+
+    from server.llm import client as llm_client
+
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"})
+
+    class _Down:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Down())
+    report = await _run()
+    assert report.error.startswith("no window was read")
+    assert world.deletes == [] and report.retired == [] and cli.exit_code(report) == 1
+    cli.print_report(report)
+    out = capsys.readouterr()
+    assert "error: no window was read" in out.err
+    assert "the model call failed: ConnectError" in out.out
+
+
+@pytest.mark.asyncio
+async def test_a_row_deleted_before_its_delete_is_a_race(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"})
+    world.deleted_before.add("decision:gone")
+    report = await _run()
+    assert report.races == ["decision:gone: deleted since the run read it"]
+    assert report.refused == [] and cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_refused_record_is_listed_once_and_counted(monkeypatch, capsys) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.refuse_record = _refusal("BLACKLISTED")
+    report = await _run()
+    assert [(d.reason, d.refused) for d in report.dropped] == [
+        (f"{_key(c)}: refused: BLACKLISTED", True)
+    ]
+    assert report.refused == [] and cli.exit_code(report) == 2
+    cli.print_report(report)
+    out = capsys.readouterr().out
+    assert out.count("refused: BLACKLISTED") == 1
+    assert f"dropped [{SECTION}] {_key(c)}: refused: BLACKLISTED" in out
+
+
+def _fake_fallback(monkeypatch, answers: list[str]) -> None:
+    """A real provider configured (inferred `openai`) whose fallback with no key answered:
+    each window's reply comes from the provider named in `answers`."""
+    from server.llm import client as llm_client
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(llm_client, "provider_key_missing", lambda provider: False)
+
+    class _Primary:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            provider = answers.pop(0)
+            return SimpleNamespace(
+                text=json.dumps({"decisions": [_candidate()]}),
+                stop_reason="",
+                provider=provider,
+            )
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Primary())
+
+
+async def _two_windows(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Other")),
+            CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+
+
+@pytest.mark.asyncio
+async def test_a_window_the_fallback_fake_answered_is_dropped(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    await _two_windows(monkeypatch)
+    _fake_fallback(monkeypatch, ["fake", "openai"])
+    report = await _run(window_chars=len(BODY) + 1)
+    assert [d.reason for d in report.dropped] == [de._FAKE_ANSWER]
+    assert len(world.recorded) == 1 and report.error == ""
+
+
+@pytest.mark.asyncio
+async def test_a_run_the_fallback_fake_answered_wholly_reads_nothing(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"})
+    await _two_windows(monkeypatch)
+    _fake_fallback(monkeypatch, ["fake", "fake"])
+    report = await _run(window_chars=len(BODY) + 1)
+    assert report.error == (
+        "no window was read: every model call failed, was answered by the fake model, or "
+        "came back unreadable"
+    )
+    assert cli.exit_code(report) == 1
+    assert world.recorded == [] and world.deletes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        "httpx",
+        "timeout",
+    ],
+)
+async def test_an_embedding_provider_error_on_a_write_is_reported(monkeypatch, error) -> None:
+    import httpx
+
+    raised: Exception = (
+        httpx.ConnectError("embedder down") if error == "httpx" else TimeoutError("slow")
+    )
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record("decision:gone", {"reasoning": "gone"})
+    world.refuse_record = raised
+    world.refuse_delete = raised
+    report = await _run()
+    name = type(raised).__name__
+    assert [d.reason for d in report.dropped] == [f"{_key(c)}: failed: {name}"]
+    assert [d.refused for d in report.dropped] == [True]
+    assert report.refused == [f"decision:gone: failed: {name}"]
+    assert cli.exit_code(report) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_whose_restatement_search_fails_exits_2(monkeypatch) -> None:
+    import httpx
+
+    from server.memory.app import search
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    request = httpx.Request("POST", "http://embedder.invalid/v1/embeddings")
+
+    async def failing_search(inp):
+        raise httpx.HTTPStatusError(
+            "503", request=request, response=httpx.Response(503, request=request)
+        )
+
+    monkeypatch.setattr(search, "handle_memory_search", failing_search)
+    report = await _run(dry_run=True)
+    assert [d.reason for d in report.dropped] == [f"{_key(c)}: failed: HTTPStatusError"]
+    assert report.dropped[0].refused and report.refused == []
+    assert world.recorded == [] and cli.exit_code(report) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_refused_revise_leaves_its_row_for_the_next_run(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    # The row's reasoning is gone from the document; the candidate revises it, refused.
+    world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."})
+    world.refuse_record = _refusal("BLACKLISTED")
+    report = await _run()
+    assert [d.reason for d in report.dropped] == [f"{_key(c)}: refused: BLACKLISTED"]
+    assert report.refused == [] and world.deletes == [] and report.retired == []
+
+
+@pytest.mark.asyncio
+async def test_a_refused_tag_write_is_not_tried_again_by_retire(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, pinned=True)
+    world.refuse_update = _refusal("AMBIGUOUS_KEY")
+    report = await _run()
+    assert [d.reason for d in report.dropped] == [f"{_key(c)}: refused: AMBIGUOUS_KEY"]
+    assert report.refused == [] and report.flagged == []
+
+
+@pytest.mark.asyncio
+async def test_unreadable_extractor_rows_stop_the_run_before_any_model_call(monkeypatch) -> None:
+    import httpx
+
+    world = _World(monkeypatch, [_candidate()])
+
+    async def down(*a: Any, **k: Any) -> Any:
+        raise httpx.ConnectError("store down")
+
+    monkeypatch.setattr(de, "list_by_namespace", down)
+    report = await _run()
+    assert report.error == "could not read the extractor's rows: failed: ConnectError"
+    assert world.prompts == [] and world.recorded == [] and cli.exit_code(report) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failed_record_read_stops_the_run_before_any_model_call(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    world.record("decision:gone", {"reasoning": "gone"})
+
+    async def slow(org, ns, key, ch=None):
+        raise TimeoutError("slow")
+
+    monkeypatch.setattr(de, "live_writer_record", slow)
+    report = await _run()
+    assert report.error == "could not read the extractor's rows: failed: TimeoutError"
+    assert world.deletes == [] and world.prompts == [] and cli.exit_code(report) == 1
+
+
+@pytest.mark.parametrize(
+    ("dropped", "refused", "code"),
+    [(True, [], 2), (False, [], 0), (False, ["decision:gone: refused: X"], 2)],
+)
+def test_a_refused_candidate_or_retire_write_exits_2(dropped, refused, code) -> None:
+    report = de.ExtractReport("d", False)
+    report.dropped = [de.Dropped("s", "refused: X" if dropped else "x", refused=dropped)]
+    report.refused = refused
+    assert cli.exit_code(report) == code
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_restatement_below_five_closer_hits_still_blocks(monkeypatch) -> None:
+    from server.memory.app import search
+
+    world = _World(monkeypatch, [_candidate(scenario="spilling the final DISTINCT")])
+    hits = []
+    for i in range(5):
+        world.add(f"design/near{i}", agent="alice-agent")
+        hits.append(SimpleNamespace(memory_key=f"design/near{i}", similarity=0.95 - i / 100))
+    world.add("design/confirmed", agent="alice-agent", pinned=True)
+    hits.append(SimpleNamespace(memory_key="design/confirmed", similarity=0.86))
+    asked: list[int] = []
+
+    async def mem_search(inp):
+        asked.append(inp.top_k)
+        return SimpleNamespace(results=hits[: inp.top_k])
+
+    monkeypatch.setattr(search, "handle_memory_search", mem_search)
+    report = await _run()
+    assert asked == [de._RESTATEMENT_TOP_K] and de._RESTATEMENT_TOP_K == 20
+    assert world.recorded == []
+    assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("answers", "code"), [(["fake", "openai"], 2), (["openai", "openai"], 0)])
+async def test_a_partly_read_document_exits_2(monkeypatch, answers, code) -> None:
+    _World(monkeypatch, [])
+    await _two_windows(monkeypatch)
+    _fake_fallback(monkeypatch, answers)
+    report = await _run(window_chars=len(BODY) + 1)
+    assert report.error == "" and cli.exit_code(report) == code
+
+
+def test_every_printed_action_has_its_line() -> None:
+    from typing import get_args
+
+    assert set(get_args(de.Action)) - {"row_changed"} == set(cli._ACTIONS)

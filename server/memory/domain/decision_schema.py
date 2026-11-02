@@ -13,6 +13,9 @@ DECISION_TAG = "decision"
 OUTCOME_KNOWN_TAG = "decision:outcome-known"
 SUCCESS_TAG = "decision:success"
 FAILURE_TAG = "decision:failure"
+# The tag on a decision row whose source document no longer says what it says;
+# memory.for_file prints it beside the row's pin marker.
+SOURCE_CHANGED_TAG = "source-changed"
 
 
 def is_decision(memory_type: str, tags: Collection[str]) -> bool:

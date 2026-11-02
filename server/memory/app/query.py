@@ -53,14 +53,6 @@ def _wants_usage(keep: frozenset[str] | None) -> bool:
     return keep is None or bool(keep & {"evidence_count", "recall_count", "last_recalled_at"})
 
 
-def _row_content_sha256(row: Any) -> str:
-    """A MemoryRow's live hash; its `value` is decoded, so it is re-encoded."""
-    value = getattr(row, "value", None)
-    whole = value is not None and not getattr(row, "value_truncated", False)
-    value_json = json.dumps(value, default=str) if whole else None
-    return _trust.live_sha256(getattr(row, "content_sha256", None), value_json)
-
-
 def _preview_for_list(row: MemoryRow, max_chars: int) -> tuple[Any, bool]:
     """`(value, value_truncated)` for one list row —
     the value cut to `max_chars`, and whether the row holds more than was
@@ -390,7 +382,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
                     verification=_trust.verification_state(
                         r.verified_by,
                         r.verified_sha256,
-                        _row_content_sha256(r),
+                        _trust.row_content_sha256(r),
                     ),
                     evidence_count=r.evidence_count,
                     recall_count=r.recall_count,
@@ -407,7 +399,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
                     value=pv,
                     value_truncated=pcut,
                     # A short secret's hash can be guessed; a high row's comes with the value.
-                    content_sha256="" if r.sensitivity == "high" else _row_content_sha256(r),
+                    content_sha256="" if r.sensitivity == "high" else _trust.row_content_sha256(r),
                     char_limit=r.char_limit,
                 )
                 for r, (pv, pcut) in ((r, _preview_for_list(r, preview_chars)) for r in rows)
@@ -807,7 +799,7 @@ async def handle_memory_bulk_get(
         canonical_key = canonical.get(r.memory_key)
         out = row_output(
             r,
-            sha=_row_content_sha256(r),
+            sha=_trust.row_content_sha256(r),
             canonical_key=canonical_key,
             duplicate_of=duplicate_of_shown(r, canonical_key),
             superseded_by=successors.get(str(r.memory_id), ""),
