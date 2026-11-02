@@ -11,8 +11,9 @@ a repo-relative path or a bare filename, because stored rows use both shapes)
 or through a link to code in it (`server.memory.app.code_links`).
 
 Read-only, VIEWER. Rows tagged `constraint` sort first, then
-pinned, then confidence. `rendered` is cut at `token_budget` (its header,
-removal footer and "… more" line always print). `extra_namespaces` (a
+pinned, then confidence. `rendered` is cut at `token_budget` (its header and
+removal footer always print, and its "… more" line whenever a row is left
+out). `extra_namespaces` (a
 repository's primary code namespace, where its team file rules and design
 decisions live) runs the same query per readable namespace, merged in the same
 order, team rows marked with their author. Each hit carries its
@@ -41,8 +42,9 @@ class MemoryForFileInput(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=16)
     # At most this many rows, across every namespace read.
     top_k: int = Field(default=8, ge=1, le=50)
-    # Cap on the rendered block; the hook injects `rendered` verbatim. Its header,
-    # removal footer and "… more" line always print, so a budget smaller than those can be exceeded.
+    # Cap on the rendered block; the hook injects `rendered` verbatim. Its header and
+    # removal footer always print, and its "… more" line whenever a row is left out, so a
+    # budget smaller than those can be exceeded.
     token_budget: int = Field(default=300, ge=50, le=4000)
     # Conflicted rows are still live facts a reader should see; duplicates,
     # superseded and rejected rows are not.

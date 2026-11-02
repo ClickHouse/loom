@@ -242,8 +242,8 @@ def render_block(
     now: datetime | None = None,
 ) -> tuple[str, int, bool]:
     """Prompt-ready block cut at `token_budget`. Returns (text, tokens, truncated).
-    The header, the removal footer and the "… more" line always print, so a budget
-    smaller than those can be exceeded.
+    The header and the removal footer always print, and the "… more" line whenever a row
+    is left out, so a budget smaller than those can be exceeded.
     `home` is the caller's namespace; a row from any other is a team row (rule or decision),
     rendered with its author and age, and the block ends with how to remove one."""
     if not hits:

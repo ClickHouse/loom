@@ -272,8 +272,8 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
 `memory.for_file` renders one line per memory, within its token budget. A row that does
 not fit is left out whole while the rows after it still get their turn, and a closing
 `- … <n> more` line, which counts against the budget too, says how many were left out and
-how to list them. The header, the removal footer and the `… more` line are always printed,
-so a budget smaller than those can be exceeded.
+how to list them. The header and the removal footer are always printed, and the `… more`
+line whenever a row is left out, so a budget smaller than those can be exceeded.
 
 Each line:
 
