@@ -291,29 +291,12 @@ def _only_labels(lines: str | None) -> bool:
     return not lines or not any(_NOT_A_LABEL.search(x.strip()) for x in lines.splitlines())
 
 
-def find_span(span: str, texts: Sequence[str]) -> str:
-    """The first text's own span that reads as `span`, or '': each run of whitespace
-    taken as one space, letter case ignored, and up to three label lines read across
-    between two words. A model copying a span drops line breaks and doubled spaces,
-    capitalises a sentence's first word, and skips the labels a converted slide puts
-    inside a sentence. What is returned is the text's, labels included, so it is always
-    a substring of the text.
-
-    Not found: a span whose next word is also the first word of a label line before it
-    ("The proxy" over "the nearest replica"). Each gap commits to the first reading that
-    reaches its next word, and a match whose labels include a line that is no label is
-    dropped for the next start; a reading only another choice at an earlier gap allows
-    is not tried."""
+def _span_match(span: str, texts: Sequence[str]) -> re.Match[str] | None:
+    """The first text's match of `span`, as `find_span` reads it, or None."""
     words = span.split()
     if not words:
-        return ""
-    # Each gap and the word after it is atomic: once the next word is found, the gap is
-    # not read again another way, so a failed match costs linear time in the span's
-    # words, however many lines look like labels. The next word right after the
-    # whitespace is tried first, so a stored span, whose labels are words of it, always
-    # finds itself again. A word ends where the document's does, so `so` never takes
-    # the start of a label `Something`; the last word may still end inside one when
-    # nothing else matches, as before: a CJK span has no spaces to end at.
+        return None
+    # Atomic gaps, the next word right after the whitespace tried first: linear time.
     parts = [re.escape(words[0])]
     for n, word in enumerate(words[1:], start=2):
         w = re.escape(word)
@@ -323,17 +306,39 @@ def find_span(span: str, texts: Sequence[str]) -> str:
             parts.append(rf"(?>\s+{w}(?!\w)|{_LABEL_GAP}{w}(?!\w)|\s+{w})")
     pattern = re.compile("".join(parts), re.IGNORECASE)
     for text in texts:
-        # A match that read across a line that is no label is not the span: the next
-        # start is tried. Checked here, not in the pattern, where it costs a scan of
-        # the word lists at every character of every line tried as a label. Labels are
-        # as few as reach the next word, so a longer reading of a rejected gap would
-        # hold the same line.
+        # Labels are checked after the match; a rejected match retries from the next start.
         start = 0
         while m := pattern.search(text, start):
             if all(map(_only_labels, m.groups())):
-                return m.group(0)
+                return m
             start = m.start() + 1
-    return ""
+    return None
+
+
+def find_span(span: str, texts: Sequence[str]) -> str:
+    """The first text's own span that reads as `span`, or '': each run of whitespace
+    taken as one space, letter case ignored, and up to three label lines read across
+    between two words, as a model copies a span from a converted slide. What is returned
+    is the text's, labels included, so it is always a substring of the text. Not found:
+    a label line whose first word reads as the next word ("The proxy" over "the nearest
+    replica")."""
+    m = _span_match(span, texts)
+    return m.group(0) if m else ""
+
+
+def stored_span(span: str, texts: Sequence[str]) -> str:
+    """The text's span that reads as `span` (`find_span`) as it is stored: the
+    document's own words and case on one line, its label lines left out, or ''."""
+    m = _span_match(span, texts)
+    if not m:
+        return ""
+    pieces, at = [], m.start()
+    for n in range(1, len(m.groups()) + 1):
+        if m.start(n) >= 0:
+            pieces.append(m.string[at : m.start(n)])
+            at = m.end(n)
+    pieces.append(m.string[at : m.end()])
+    return collapse_ws(" ".join(pieces))
 
 
 def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
@@ -392,13 +397,14 @@ def stitched_note(failed: Sequence[tuple[str, str]]) -> str:
 
 
 def document_spans(cand: Candidate, texts: list[str]) -> Candidate:
-    """`cand` with each span replaced by the text's own, line breaks and all, for a
-    candidate that passed the verbatim check: what is stored is the document's."""
+    """`cand` with each span replaced by the text's own as it is stored (`stored_span`),
+    for a candidate that passed the verbatim check: what is stored is the document's
+    words, never a label between them."""
     return replace(
         cand,
-        quote=find_span(cand.quote, texts),
-        reasoning=find_span(cand.reasoning, texts),
-        alternatives=[(option, find_span(reason, texts)) for option, reason in cand.alternatives],
+        quote=stored_span(cand.quote, texts),
+        reasoning=stored_span(cand.reasoning, texts),
+        alternatives=[(option, stored_span(reason, texts)) for option, reason in cand.alternatives],
     )
 
 
@@ -434,7 +440,7 @@ _BAN_MARKER = re.compile(rf"\b(?:{_BAN_WORDS})\b", re.I)
 
 
 def states_a_ban(cand: Candidate) -> bool:
-    """A constraint whose reasoning, the span that is stored, says only, no, never, must,
+    """A constraint whose reasoning, the model's span, says only, no, never, must,
     not, always, at most or at least. The model's constraint flag alone is not enough: it
     marks plain descriptions as constraints too."""
     return cand.is_constraint and bool(_BAN_MARKER.search(cand.reasoning))
@@ -456,8 +462,9 @@ def reasonless_ban(cand: Candidate) -> bool:
 
 
 def without_reason(cand: Candidate) -> Candidate:
-    """A ban the text states with no reason: its outcome is its reasoning, the document's
-    span on one line, which the statement reads as no stated reason. A reasoning that is
+    """A ban the text states with no reason: its outcome is its reasoning, which the
+    statement reads as no stated reason. Read on the model's spans; the caller stores
+    the document's. A reasoning that is
     a fragment of the ban (fewer words than the outcome) gives way to the quote when the
     quote states the ban too: "no server retry setting" alone loses "client-side
     retries only"."""
@@ -480,13 +487,31 @@ def in_recap(section: str) -> bool:
     return bool(_RECAP_HEADING.search(section))
 
 
+# Sentence punctuation, and a link: a body holding one says something of its own.
+_SENTENCE_MARK = re.compile(r"[.!?;。！？；]")
+_LINK = re.compile(r"\]\(|\]\[|https?://|<a\s", re.I)
+
+
+def _divider_body(body: str) -> bool:
+    """A body that only titles what follows: an image and at most a caption, or a short
+    line with no sentence punctuation and no link ("Where we started")."""
+    if image_only(body):
+        return True
+    text = _IMAGE_MARKUP.sub(" ", _code_as_text(body))
+    if _LINK.search(text) or more_than_a_caption(body):
+        return False
+    return not _SENTENCE_MARK.search(caption_text(text))
+
+
 def recap_span_sections(content: str) -> set[str]:
     """The breadcrumbs of the sections a recap divider covers. A divider is a short
     section (no more text than a caption) with no subsections, whose own heading names a
     recap, summary or background: a slide deck marks a recap by a title slide and puts
     the recap on the slides after it. Its span runs until the next short section, or the
     next heading above the divider's level. A recap-named section with a longer body is
-    `in_recap` by its own heading and opens no span. A breadcrumb that also names a
+    `in_recap` by its own heading and opens no span, as is one whose body holds a
+    sentence or a link (`_divider_body`): a summary line states the decisions the
+    sections after it give. A breadcrumb that also names a
     section outside a span is left out: a quote is told apart by its breadcrumb only, and
     a decision is kept rather than lost."""
     sections = detect_sections(content)
@@ -503,7 +528,13 @@ def recap_span_sections(content: str) -> set[str]:
             inside.add(breadcrumb(sec.path))
             continue
         outside.add(breadcrumb(sec.path))
-        if short and sec.path and not has_children and _RECAP_HEADING.search(sec.path[-1]):
+        body = "\n".join(sec.lines)
+        if (
+            sec.path
+            and not has_children
+            and _divider_body(body)
+            and _RECAP_HEADING.search(sec.path[-1])
+        ):
             divider_depth = sec.depth
     return inside - outside
 

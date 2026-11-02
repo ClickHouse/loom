@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -649,16 +650,21 @@ def test_a_span_split_across_two_chunks_is_not_found() -> None:
         # Every match reads across a `not` line and is rejected, one start at a time.
         ("a\nnot\n" * 100_000, "a a a"),
     ],
+    ids=["labels", "rejected"],
 )
 def test_lines_that_all_look_like_labels_cost_linear_time(text, span) -> None:
-    import time
+    # 200,000 lines against a tenth of them: a matcher that tried every way to read each
+    # gap would take exponential time on the final mismatch, and one that rescanned the
+    # text per start, quadratic time. Linear time is ten times the small input's.
+    def best(t: str) -> float:
+        runs = []
+        for _ in range(3):
+            started = time.perf_counter()
+            assert dx.find_span(span, [t]) == ""
+            runs.append(time.perf_counter() - started)
+        return min(runs)
 
-    # 200,000 lines: a matcher that tried every way to read each gap would take
-    # exponential time on the final mismatch, and one that rescanned the text per start,
-    # quadratic time.
-    started = time.perf_counter()
-    assert dx.find_span(span, [text]) == ""
-    assert time.perf_counter() - started < 2
+    assert best(text) < 30 * best(text[: len(text) // 10])
 
 
 @pytest.mark.parametrize(
@@ -762,13 +768,22 @@ async def test_a_span_with_labels_and_another_case_is_stored_as_the_documents(mo
     world.content = f"# Spilling\n\n## Final DISTINCT\n\n{text}\n"
     await _run()
     (inp,) = world.recorded
-    assert inp.reasoning == text and inp.reasoning in world.content
-    # The retire step finds the stored span in the live text: the row stays.
+    # The document's words and case, its labels left out.
+    assert inp.reasoning == REPLICA_SPAN
+    # The retire step reads the stored span across the labels again: on the unchanged
+    # document the row stays.
     world.reply = []
     world.record("decision:replica", {"reasoning": inp.reasoning})
     world.record("decision:gone", {"reasoning": "Each shard keeps two replicas per region."})
     report = await _run()
     assert report.retired == ["decision:gone"]
+    # Once the document says otherwise, it retires.
+    world.deletes.clear()
+    changed = SPLIT.format(labels="Shard A\n").replace("one replica", "two replicas")
+    _chunks(monkeypatch, (changed, ("Spilling", "Final DISTINCT")))
+    world.content = f"# Spilling\n\n## Final DISTINCT\n\n{changed}\n"
+    report = await _run()
+    assert "decision:replica" in report.retired
 
 
 @pytest.mark.asyncio
@@ -1153,14 +1168,20 @@ async def test_a_rerun_that_words_the_scenario_anew_leaves_one_live_row(monkeypa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("ban", [False, True])
 async def test_a_case_only_change_under_a_reworded_scenario_leaves_one_live_row(
-    monkeypatch,
+    monkeypatch, ban
 ) -> None:
-    first = _candidate()
+    first = _ban() if ban else _candidate()
     world = _World(monkeypatch, [])
+    fields = {**_same_fields(first), "reasoning": first["reasoning"].upper()}
+    if ban:
+        # A reason-less ban's outcome is its reasoning, upper case too.
+        _chunks(monkeypatch, (_BAN, ("Spilling", "Final DISTINCT")))
+        fields["outcome"] = _BAN.upper()
     # Recorded when the document wrote the sentence in upper case.
-    world.record(_key(first), {**_same_fields(first), "reasoning": first["reasoning"].upper()})
-    second = _candidate(scenario="spilling the final DISTINCT")
+    world.record(_key(first), fields)
+    second = {**first, "scenario": "spilling the final DISTINCT"}
     world.reply = [second]
     report = await _run()
     assert [r.action for r in report.records] == ["written"]
@@ -2445,16 +2466,17 @@ def test_a_span_differing_only_in_whitespace_is_the_documents() -> None:
     assert dx.find_span("sorted runs like", [text]) == "sorted\nruns like"
     assert dx.find_span("sorted runslike", [text]) == ""
     stored = dx.document_spans(cand, [text])
+    # Stored on one line, the document's words and case.
     assert (
         stored.quote
-        == "We spill into sorted\nruns like ORDER BY.  A plain set on disk costs random reads."
+        == "We spill into sorted runs like ORDER BY. A plain set on disk costs random reads."
     )
     assert stored.reasoning == "A plain set on disk costs random reads."
     assert stored.alternatives == [("a plain set on disk", "costs random reads")]
 
 
 @pytest.mark.asyncio
-async def test_a_span_with_other_line_breaks_is_recorded_as_the_document_writes_it(
+async def test_a_span_with_other_line_breaks_is_recorded_on_one_line(
     monkeypatch,
 ) -> None:
     from server.knowledge.app import document_reads
@@ -2468,7 +2490,7 @@ async def test_a_span_with_other_line_breaks_is_recorded_as_the_document_writes_
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     (inp,) = world.recorded
-    assert inp.reasoning == "A plain set\non disk costs random reads."
+    assert inp.reasoning == "A plain set on disk costs random reads."
     assert inp.source_resource_id == f"knowledge:ns/doc.md#{SECTION}"
     assert report.dropped == []
 
@@ -3373,18 +3395,23 @@ async def test_a_ban_copied_in_another_case_is_still_its_whole_quote(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_a_reasonless_ban_split_by_a_label_keeps_the_label_in_its_outcome(
-    monkeypatch,
-) -> None:
-    # Judged on the model's span, which is the whole quote; recorded as the document's,
-    # so the outcome reads the label word inline, as the statement shows any span.
+@pytest.mark.parametrize(
+    "over",
+    [
+        # The reasoning is the whole quote.
+        {"outcome": "no server retry setting"},
+        # The reasoning is a fragment of the ban: the quote is stored instead, judged on
+        # the model's spans, so the label inside the document's quote changes nothing.
+        {"reasoning": "no server retry setting."},
+    ],
+)
+async def test_a_reasonless_ban_split_by_a_label_is_stored_without_it(monkeypatch, over) -> None:
     text = "Client-side retries only;\nProxy\nno server retry setting."
-    world = _World(monkeypatch, [_ban(outcome="no server retry setting")])
+    world = _World(monkeypatch, [_ban(**over)])
     _chunks(monkeypatch, (text, ("Retries",)))
     await _run()
     (inp,) = world.recorded
-    assert inp.reasoning == text
-    assert inp.outcome == "Client-side retries only; Proxy no server retry setting."
+    assert inp.outcome == inp.reasoning == _BAN
 
 
 @pytest.mark.asyncio
@@ -3544,11 +3571,19 @@ def test_a_recap_divider_covers_the_sections_up_to_the_next_short_one() -> None:
     [
         # A recap-named section with a body of its own is a recap by its own heading.
         "# Deck\n\n## Summary\n\n" + LONG + "\n\n## Spill\n\n" + LONG + "\n",
+        # A summary line states the decisions the sections after it give.
+        "# Design\n\n## Summary\n\nShard by tenant to bound joins.\n\n## Sharding\n\n"
+        + LONG
+        + "\n\n## Replication\n\n"
+        + LONG
+        + "\n",
+        # A pointer elsewhere is no divider either.
+        "# Design\n\n## Background\n\nSee [the RFC](rfc.md)\n\n## Sharding\n\n" + LONG + "\n",
         # A heading alone over its subsections: they carry its name in their breadcrumbs.
         "# Background\n\n## History\n\n" + LONG + "\n\n# Spill\n\n" + LONG + "\n",
     ],
 )
-def test_a_long_recap_section_or_one_over_subsections_opens_no_span(content) -> None:
+def test_a_recap_section_with_a_sentence_a_link_or_subsections_opens_no_span(content) -> None:
     assert dx.recap_span_sections(content) == set()
 
 

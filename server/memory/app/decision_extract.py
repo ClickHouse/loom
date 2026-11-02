@@ -375,7 +375,7 @@ async def extract_document(
         if rec.action == "flagged":
             report.flagged.append(rec.memory_key)
         if rec.holds:
-            held.setdefault((rec.held_outcome, _reasoning_key(cand.reasoning)), rec.memory_key)
+            held.setdefault(_held_key(rec.held_outcome, cand.reasoning), rec.memory_key)
     await _retire(report, own, live_texts, written, held)
     return report
 
@@ -559,9 +559,8 @@ def _repairs(
     texts = [c.text for c in w.chunks]
     out: list[dx.Candidate] = []
     for cand in again:
-        # The document's span, as a kept candidate's reasoning is: the model's copy may
-        # differ in case or skip a label line.
-        reasoning = collapse_ws(dx.find_span(cand.reasoning, texts) or cand.reasoning)
+        # Stored as a kept candidate's reasoning is: the model's copy may differ in case.
+        reasoning = dx.stored_span(cand.reasoning, texts) or collapse_ws(cand.reasoning)
         if collapse_ws(cand.outcome) in outcomes or reasoning not in reasonings:
             out.append(cand)
         else:
@@ -588,16 +587,17 @@ def _check_window(
         reason = dx.verbatim_failure(cand, texts)
         span = dx.unfound_reason(cand, texts) if reason else ""
         if not reason:
-            # Judged on the model's spans: a label line the document puts inside the
-            # reasoning is no word it adds to the outcome.
+            # Judged on the model's spans, then stored as the document's. A reason-less
+            # ban is kept as one, its outcome the stored reasoning; any other restatement
+            # is dropped.
             ban = dx.reasonless_ban(cand)
-            restated = not ban and dx.restates_outcome(cand)
-            cand = dx.document_spans(cand, texts)
-            # A reason-less ban is kept as one; any other restatement is dropped.
             if ban:
                 cand = dx.without_reason(cand)
-            elif restated:
+            elif dx.restates_outcome(cand):
                 reason = dx.RESTATED
+            cand = dx.document_spans(cand, texts)
+            if ban:
+                cand = replace(cand, outcome=cand.reasoning)
         # The quote as the chunk writes it, so a re-wrapped one still names its section.
         section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
         if dx.in_recap(section) or section in state.recap:
@@ -1105,11 +1105,11 @@ async def _retire(
             report.refused.append(f"{row.memory_key}: {_refusal(e)}")
 
 
-def _reasoning_key(reasoning: str) -> str:
-    """A reasoning as the retire step compares it with this run's: whitespace and case
-    aside, so a case-only change in the document under a reworded scenario still names
-    its heir."""
-    return collapse_ws(reasoning).casefold()
+def _held_key(outcome: str, reasoning: str) -> tuple[str, str]:
+    """A decision as the retire step compares it with this run's: its outcome and
+    reasoning, whitespace and case aside, so a case-only change in the document under a
+    reworded scenario still names its heir."""
+    return collapse_ws(outcome).casefold(), collapse_ws(reasoning).casefold()
 
 
 async def _retire_one(
@@ -1125,7 +1125,8 @@ async def _retire_one(
     reasoning = str(record.get("reasoning") or "")
     if not reasoning:
         return
-    restated = held.get((str(record.get("outcome") or "").strip(), _reasoning_key(reasoning)))
+    outcome = str(record.get("outcome") or "")
+    restated = held.get(_held_key(outcome, reasoning))
     # A row with a recorded outcome is kept: deleting it would lose the outcome.
     if not _confirmed(row) and restated is not None and not _has_outcome(record):
         if await _delete_row(report, row):
