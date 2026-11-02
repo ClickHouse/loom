@@ -50,7 +50,7 @@ from server.memory.api.models_apply import (
 )
 from server.memory.api.models_crud import MemoryDeleteInput, MemoryTouchInput
 from server.memory.api.models_lock import MemoryLockInput
-from server.memory.api.models_search import MemorySearchInput
+from server.memory.api.models_search import SEARCH_TOP_K_MAX, MemorySearchInput
 from server.memory.domain import lock as _lock
 from server.memory.domain.search_types import hit_row_key, names_row
 from server.memory.store.inserts import insert_memory_versions
@@ -174,7 +174,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             agent=input.agent,
             user_id=input.user_id,
             query=target.search.query,
-            top_k=per_key_fetch(int(input.limit)),
+            top_k=per_key_fetch(int(input.limit) + 1),  # one past `limit` says `truncated`
             namespace_scope="this",
         )
     )
@@ -201,7 +201,8 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             rows.append(row)
             if len(rows) > int(input.limit):  # one row past `limit`: more matched
                 return rows[: int(input.limit)], True
-    return rows, False
+    # a full window may hold back rows of the caller's past it
+    return rows, len(out.results) >= SEARCH_TOP_K_MAX
 
 
 # ---------------------------------------------------------------- execute

@@ -387,6 +387,7 @@ def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
         {"password": 'ab"cd12345'},
         {"password": "config/db/pass1"},  # a relative path is not a reference
         {"db_pwd": "hunter2xyz9"},
+        "PWD=/workspace1",  # in free text a bare PWD is still an assignment
     ],
 )
 def test_a_credential_under_a_credential_key_reads_high(value: object) -> None:

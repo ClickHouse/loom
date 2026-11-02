@@ -626,14 +626,15 @@ def _copy_verdict(state: _BulkWriteState, plan: BulkVerdictPlan, step: _Step) ->
     memory.set again would, and is listed under it in the `plan`; a merge's repeat
     reinforces the merge target."""
     # only `_settle_repeat` gives a step COPY, so it repeats one
-    src, res = cast(_Step, step.repeats).result, step.result
+    repeated = cast(_Step, step.repeats)
+    src, res = repeated.result, step.result
     res.conflict_verdict = src.conflict_verdict
     res.peers = list(src.peers)
     res.next = src.next
     res.pinned_blocker_id = src.pinned_blocker_id
     if src.conflict_verdict == "merge":
         plan.merged.append(res.memory_key)
-        _note_restatement(state, plan.merged_into.get(id(step.row), ""))
+        _note_restatement(state, plan.merged_into.get(id(repeated.row), ""))
     elif src.conflict_verdict == "rejected":
         plan.rejected_pinned.append(res.memory_key)
 

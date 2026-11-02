@@ -182,3 +182,29 @@ async def test_a_hard_category_decides_whether_the_row_is_served(
     chunk = _chunk("u", LONG_V1)
     rows = await _set_chunk_rows(ch, _q(category=category), [chunk])
     assert rows == (_named(chunk, "s1", 1) if named else {})
+
+
+@pytest.mark.asyncio
+async def test_the_writer_keys_fit_one_form_field() -> None:
+    # a chunk of a writer and key past the field names no row and drops
+    from dataclasses import replace
+
+    from server.core.ch_params import FIELD_BYTES, chunks
+
+    asked: list[dict[str, Any]] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None, **_: Any) -> list[Any]:
+            asked.append(params)
+            return []
+
+    base = _chunk("u", LONG_V1)
+    keys = [f"{'k' * 200}{i:04d}" for i in range(1000)]
+    pooled = [
+        replace(base, parent_memory_key=k, memory_key=f"chunk:memory.set:{k}:0") for k in keys
+    ]
+    assert await _set_chunk_rows(_CH(), _q(), pooled) == {}
+    bound = asked[0]["set_rows"]
+    every = sorted(("bot", "u", k) for k in keys)
+    assert 0 < len(bound) < len(every) and bound == every[: len(bound)]
+    assert next(chunks(bound, limit=FIELD_BYTES)) == bound

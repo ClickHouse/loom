@@ -332,7 +332,7 @@ async def test_search_target_touches_only_the_callers_identity(
         ("cursor", "-", "-", "mine"),
     ]
     # every session, so a long value's set chunks are found; over-fetched for other owners' rows
-    assert (asked[0].session_id, asked[0].top_k) == (None, 30)
+    assert (asked[0].session_id, asked[0].top_k) == (None, 33)
     # it reads one row past `limit`, so `truncated` means another row of the caller's exists
     reads.clear()
     out = await handle_memory_apply(
@@ -342,6 +342,17 @@ async def test_search_target_touches_only_the_callers_identity(
     )
     assert [r.memory_key for r in out.rows] == ["rec"] and out.truncated is True
     assert reads == [("cursor", "-", "-", "rec"), ("cursor", "-", "-", "both")]
+    # with a per-key cap of 1 the window still reaches one past `limit`
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_search_per_key_cap", 1)
+    asked.clear()
+    out = await handle_memory_apply(
+        MemoryApplyInput(
+            **_ID, target={"search": {"query": "q3"}}, action="delete", reason="r", limit=1
+        )
+    )
+    assert asked[0].top_k == 2 and out.truncated is True
 
 
 def test_apply_op_is_a_writer_op_and_audited() -> None:
