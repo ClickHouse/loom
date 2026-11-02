@@ -423,14 +423,14 @@ async def test_a_rule_contradicting_an_older_tagged_decision_names_it_a_decision
     # The conflict check links rows of one type, so the older is a rule tagged `decision`.
     old = _row(
         "design/join/buckets",
-        "Decided 32 buckets.",
+        json.dumps("Decided 32 buckets."),
         tags=["decision"],
         updated_at=datetime(2026, 9, 20, 12, 0),
         memory_id="u-old",
     )
     new = _row(
         "rules/join/buckets",
-        "Keep 64 buckets.",
+        json.dumps("Keep 64 buckets."),
         tags=["constraint"],
         updated_at=datetime(2026, 9, 25, 10, 0),
         actor="human:bob",

@@ -22,6 +22,17 @@ def _post(base: str, op: str, token: str, body: dict[str, Any]) -> dict[str, Any
     return r.json()
 
 
+def _poll(base: str, token: str, request: dict[str, Any], done: Any) -> dict[str, Any]:
+    """memory.for_file until `done(out)` holds (the write is visible), or the last answer."""
+    out: dict[str, Any] = {}
+    for _ in range(50):
+        out = _post(base, "memory.for_file", token, request)
+        if done(out):
+            break
+        time.sleep(0.2)
+    return out
+
+
 def test_decision_rows_name_their_source_and_whether_they_are_confirmed(
     control_plane_url: str, mint_test_token: Any
 ) -> None:
@@ -50,12 +61,7 @@ def test_decision_rows_name_their_source_and_whether_they_are_confirmed(
         | {"namespace": own, "memory_key": "design/draft", "value": "Decided to keep one pass."},
     )
     request = {"org": ORG, "namespace": own, "path": "src/a.cpp", "extra_namespaces": [team]}
-    out: dict[str, Any] = {}
-    for _ in range(50):
-        out = _post(control_plane_url, "memory.for_file", token, request)
-        if out["total"] == 2:
-            break
-        time.sleep(0.2)
+    out = _poll(control_plane_url, token, request, lambda out: out["total"] == 2)
     assert out["total"] == 2, out
     lines = out["rendered"].splitlines()
     # mint_test_token's default subject is the author
@@ -76,11 +82,9 @@ def test_decision_rows_name_their_source_and_whether_they_are_confirmed(
         token,
         {"org": ORG, "namespace": own, "agent": "claude-code", "memory_key": "design/draft"},
     )
-    for _ in range(50):
-        out = _post(control_plane_url, "memory.for_file", token, request)
-        if out["hits"][1]["verification"] == "process":
-            break
-        time.sleep(0.2)
+    out = _poll(
+        control_plane_url, token, request, lambda out: out["hits"][1]["verification"] == "process"
+    )
     assert out["hits"][1]["verification"] == "process", out
     assert out["rendered"].splitlines()[2].startswith("- design/draft [decision]: ")
 
@@ -108,12 +112,7 @@ def test_a_recorded_decision_reads_as_its_statement_before_an_edit(
     )
     key = recorded["memory_key"]
     request = {"org": ORG, "namespace": "recorded", "path": "src/b.cpp"}
-    out: dict[str, Any] = {}
-    for _ in range(50):
-        out = _post(control_plane_url, "memory.for_file", token, request)
-        if out["total"] == 1:
-            break
-        time.sleep(0.2)
+    out = _poll(control_plane_url, token, request, lambda out: out["total"] == 1)
     assert out["total"] == 1, out
     assert out["rendered"].splitlines()[1] == (
         f"- {key} [decision] (unconfirmed): Category: design. Scenario: Spill the final "
@@ -144,12 +143,7 @@ def test_a_long_recorded_decision_prints_as_text(
         },
     )
     request = {"org": ORG, "namespace": "recorded-long", "path": "src/c.cpp"}
-    out: dict[str, Any] = {}
-    for _ in range(50):
-        out = _post(control_plane_url, "memory.for_file", token, request)
-        if out["total"] == 1:
-            break
-        time.sleep(0.2)
+    out = _poll(control_plane_url, token, request, lambda out: out["total"] == 1)
     assert out["total"] == 1, out
     line = out["rendered"].splitlines()[1]
     assert ": Category: design. Scenario: Réécrire la jointure ?" in line

@@ -111,8 +111,9 @@ def refusal_hint(existing: Any, *, op: str) -> dict[str, Any]:
     if typed_decision:
         # A member cannot call decision.record, and no rule is shown above a typed decision.
         steps = [
-            f"ask {author} or a maintainer of {ns!r}: they can record the corrected decision "
-            f"with decision.record, or remove it with memory.delete {key!r}"
+            f"ask {author} (who can revise it with memory.update) or a maintainer of {ns!r} "
+            f"(who can record the corrected decision with decision.record, or memory.delete "
+            f"{key!r})"
         ]
     else:
         steps = [

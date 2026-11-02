@@ -275,8 +275,8 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             peer = by_id.get(str(cid))
             if peer is None or peer is r or peer.get("namespace") != r.get("namespace"):
                 continue
-            kind = r.get("memory_type")
-            if kind in KEY_IDENTIFIED_TYPES and peer.get("memory_type") == kind:
+            memory_type = r.get("memory_type")
+            if memory_type in KEY_IDENTIFIED_TYPES and peer.get("memory_type") == memory_type:
                 continue
             new, old = (r, peer) if _stamp(r) >= _stamp(peer) else (peer, r)
             if not new.get("supersedes_key"):
