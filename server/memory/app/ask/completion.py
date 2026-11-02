@@ -8,9 +8,10 @@ import logging
 import re
 from typing import Any
 
+from server.core.tag_sql import tag_predicate
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.ask.identity import memory_identity_where
-from server.memory.app.search_tag_filter import stamp_row_tags
+from server.memory.app.search_tag_filter import request_hard_tags, stamp_row_tags
 from server.memory.domain.search_types import row_identity
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,9 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
     if len(slug) < 4 or identity is None:
         return []
     where, params = identity
+    if hard_tags := request_hard_tags(search_input):
+        # as every search fact leg does: no untagged row stands in for the semantic follow
+        where, params = [*where, tag_predicate("")], {**params, "tags": hard_tags}
     try:
         from server.core.ch import get_client
         from server.settings import settings
