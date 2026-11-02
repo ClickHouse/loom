@@ -139,9 +139,9 @@ def test_a_long_recorded_decision_prints_as_text(
             "agent": "claude-code",
             "category": "design",
             "scenario": "Réécrire la jointure ?",
-            "outcome": "réécrire",
+            "outcome": "réécrire la jointure " * 10,
             "reasoning": "la mémoire est bornée " * 15,
-            "alternatives": ["garder la jointure actuelle", "attendre la prochaine version"],
+            "alternatives": ["garder la jointure actuelle " * 4, "attendre la version " * 4],
             "files": ["src/c.cpp"],
         },
     )
