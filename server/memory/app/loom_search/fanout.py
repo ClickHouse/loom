@@ -315,7 +315,10 @@ async def search_sections(
         # the dumps hide the score_components the restatement notes read. The
         # repository's rows are labelled, unless the search is addressed to it.
         mem = payload["memory"]
-        served = [models[id(h)][1] for h in mem["results"]]
+        served = []
+        for h in mem["results"]:
+            _row, model = models[id(h)]
+            served.append(model)
         label = "" if repo_namespace == namespace else repo_namespace
         mem["reader_block"] = render_reader_block(served, settled.query, label_namespace=label)
     return payload

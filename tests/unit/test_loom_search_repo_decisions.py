@@ -743,7 +743,7 @@ async def test_an_excerpt_quoting_another_rows_head_cannot_carry_that_row(monkey
 
 
 @pytest.mark.asyncio
-# cites_fact names a key inside the float-typed score_components, as production writes it
+# production stores cites_fact (a key, not a float) in score_components; pydantic warns on the dump
 @pytest.mark.filterwarnings("ignore:Pydantic serializer warnings")
 async def test_restatement_notes_are_recomputed_against_the_served_rows(monkeypatch) -> None:
     """A chunk that restates a fact is noted only while that fact is served;
