@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from server.core.datetimes import naive_utc_now, to_naive_utc
-from server.core.hashing import sha256_value_json as _content_sha256_of_stored
+from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
@@ -581,7 +581,7 @@ async def _set_merge(
     if not _peer_in_read_scope(existing):
         existing, merged_into_id = None, ""
     existing_sha = (
-        _content_sha256_of_stored(json.dumps(existing.value, default=str))
+        served_content_sha256(existing.value)
         if existing is not None and existing.value is not None
         else new_sha
     )

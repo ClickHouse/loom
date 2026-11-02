@@ -448,8 +448,8 @@ async def test_a_conditional_set_whose_check_passed_lands_above_the_row_it_check
 ) -> None:
     # The row it checks was written after the set began: its version is drawn after the
     # check, so it lands above that row instead of beneath it.
+    from server.core.hashing import served_content_sha256
     from server.memory.app import write
-    from server.memory.app.write import _content_sha256_of_stored
 
     ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
 
@@ -458,7 +458,7 @@ async def test_a_conditional_set_whose_check_passed_lands_above_the_row_it_check
     # The set's first draw is below the row it then checks; the draw after the check is not.
     draws = iter([head - 1, head + 1])
     monkeypatch.setattr(write, "next_version", lambda: next(draws))
-    sha = _content_sha256_of_stored(json.dumps("Tuesdays"))
+    sha = served_content_sha256("Tuesdays")
     out = await _set_through_phases(ch, monkeypatch, sha=sha)
     got = await _read_back(ch)
     assert got is not None and got.value == "Thursdays" and out.version == head + 1
@@ -470,12 +470,12 @@ async def test_a_delete_after_a_conditional_sets_check_answers_409(
 ) -> None:
     from fastapi import HTTPException
 
-    from server.memory.app.write import _content_sha256_of_stored
+    from server.core.hashing import served_content_sha256
 
     ch.create("SET enable_quantized_codec = 1", ddl("memory_embeddings"))
 
     await ch.insert("loom.memory", [_row("Tuesdays", time.time_ns() - 1_000_000)])
-    sha = _content_sha256_of_stored(json.dumps("Tuesdays"))
+    sha = served_content_sha256("Tuesdays")
 
     async def delete() -> None:
         await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))

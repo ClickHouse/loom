@@ -13,8 +13,8 @@ from fastapi import HTTPException
 from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.hashing import served_content_sha256
 from server.core.hashing import sha256_value as _content_sha256
-from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
@@ -73,9 +73,7 @@ _WRITE_OUTCOME_UNMAPPED = "error"
 
 def stored_sha256(row: Any) -> str:
     """The hash `if_match_sha256` is checked against: of the row's stored value."""
-    if row is None or row.value is None:
-        return ""
-    return _content_sha256_of_stored(json.dumps(row.value, default=str))
+    return "" if row is None else served_content_sha256(row.value)
 
 
 def _guard_existing_row(

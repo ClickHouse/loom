@@ -14,8 +14,8 @@ from fastapi import HTTPException
 from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.hashing import served_content_sha256
 from server.core.hashing import sha256_value as _content_sha256
-from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.core.naming import named
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
@@ -382,11 +382,7 @@ def _check_update_precondition(input: Any, existing: MemoryRow) -> None:
     """Optimistic concurrency: the live row's hash must match before accepting."""
     if not input.if_match_sha256:
         return
-    current_sha = (
-        _content_sha256_of_stored(json.dumps(existing.value, default=str))
-        if existing.value is not None
-        else ""
-    )
+    current_sha = served_content_sha256(existing.value)
     if current_sha != input.if_match_sha256:
         raise HTTPException(
             status_code=409,
