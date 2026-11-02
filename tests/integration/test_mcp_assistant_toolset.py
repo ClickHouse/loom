@@ -144,6 +144,19 @@ async def test_the_assistant_reads_without_writing_or_recording_usage(
         )
         assert r.status_code == 200, r.text[:400]
 
+        async def _dashboard_get_ledgered() -> bool:
+            rows = ch_client.query(
+                "SELECT count() FROM loom.agent_events WHERE org = {org:String} "
+                "AND namespace = {ns:String} AND operation = 'memory.get' "
+                "AND consumer = 'loom-ui'",
+                parameters={"org": ORG, "ns": ns},
+            ).result_rows
+            return int(rows[0][0]) >= 1
+
+        # The audit is read once the dashboard's own row has landed, so `gets` below proves
+        # it was left out rather than not yet written.
+        await eventually(_dashboard_get_ledgered, description="the dashboard get is ledgered")
+
         async def _inspected() -> Any:
             r = await c.post(
                 "/v1/namespace.audit", json={"org": ORG, "namespace": ns}, headers=auth
