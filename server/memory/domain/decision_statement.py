@@ -62,11 +62,10 @@ def _wide_cut(text: str, end: int, cut: int) -> int:
 def _clip(text: str, limit: int) -> str:
     """`text` cut to `limit` JSON-encoded characters, ending in an ellipsis when cut.
 
-    The cut falls on the last space, so no half token (`guide.md` of
-    `guide.mdx`) reads as a file of its own. Wide (CJK) text may be cut between two wide
-    characters instead, when that is later, but never between two Hangul syllables
-    (Korean spaces its words, so it is cut at a space). With neither before the limit nothing
-    is kept.
+    The cut falls on the last space, so no half token (`guide.md` of `guide.mdx`) reads
+    as a file of its own. Wide (CJK) text may be cut between two wide characters instead,
+    when that is later, but never between two Hangul syllables (Korean spaces its words,
+    so it is cut at a space). With neither before the limit nothing is kept.
     """
     if _encoded_len(text) <= limit:
         return text
@@ -120,7 +119,7 @@ def memory_value(payload: dict[str, Any]) -> str:
     the reason, for the memory row that search embeds and memory.for_file shows.
 
     The category is left out: it is on the record and in the row's tag, and a slug or a
-    field label is noise to search and to the pre-edit line. Each part is clipped so the
+    `Scenario:` label is noise to search and to the pre-edit line. Each part is clipped so the
     statement fits the embedded excerpt; nothing parses this text.
     """
     scenario = _part(payload.get("scenario"))

@@ -68,11 +68,11 @@ def test_memory_value_reads_as_a_statement() -> None:
 
 
 def test_the_pre_edit_line_reaches_the_outcome() -> None:
-    # memory.for_file prints a statement's first 220 characters: a long category and
-    # scenario are clipped, so the outcome is always in that line.
+    # memory.for_file prints a statement's first 220 characters: a long scenario is
+    # clipped, so the outcome is always in that line.
     value = stmt.memory_value({"scenario": "Roll back?", "outcome": "roll back " * 100})
     assert "Decided roll back" in value[:60]
-    long = stmt.memory_value({"category": "c " * 60, "scenario": "s " * 1000, "outcome": "pin"})
+    long = stmt.memory_value({"scenario": "s " * 1000, "outcome": "pin"})
     assert "Decided pin" in long[:220]
 
 
@@ -88,7 +88,6 @@ def test_a_statement_with_every_part_at_its_cap_is_embedded_whole(ch: str) -> No
 
     word = ch + " "  # one-character words: each part is cut at its cap or one below
     payload = {
-        "category": word * 120,
         "scenario": word * 1000,
         "outcome": word * 1000,
         "reasoning": word * 2000,
@@ -126,7 +125,6 @@ def test_the_pre_edit_line_shows_the_outcome_at_full_caps() -> None:
     outcome = "spill into sorted runs and merge them with a fan-in of eight"
     value = stmt.memory_value(
         {
-            "category": "design:" + "-".join(["spilling"] * 11),
             "scenario": "how the final DISTINCT spills to disk " * 10,
             "outcome": outcome,
             "reasoning": "sorted runs reuse the ORDER BY merge " * 20,
