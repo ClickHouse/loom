@@ -441,8 +441,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
 - **Model and exit code**: the run refuses before any model call when it would read the document with the fake model,
   whose decisions pass the verbatim check by construction: a keyed provider (`LOOM_LLM_PROVIDER=openai` or
   `anthropic`) with no API key set, or no provider configured at all. `LOOM_LLM_PROVIDER=fake` set explicitly runs on
-  it on purpose. A run whose every model call failed or came back unreadable reads nothing and retires nothing. The
-  command exits 1 when nothing was extracted (no document, no chunks, no usable model, no window read), 2 when the
+  it on purpose. Otherwise a window the fake model answers (a fallback model, `LOOM_LLM_FALLBACK_MODEL`, with no key)
+  is dropped as unread. A run whose every model call failed or came back unreadable reads nothing and retires nothing.
+  The command exits 1 when nothing was extracted (no document, no chunks, no usable model, no window read), 2 when the
   server refused a write, else 0; a race does not change the exit code.
 
 The reasoning is the verbatim span the retire step reads: the record has no field for the quote. To confirm an

@@ -1785,7 +1785,8 @@ async def test_a_failed_model_call_loses_its_window_only(monkeypatch) -> None:
 
 @pytest.mark.parametrize(
     ("dropped", "refused", "code"),
-    [([], [], 0), (["refused: BLACKLISTED"], [], 2), ([], ["k: refused: X"], 2), (["x"], [], 0)],
+    # The exit code reads `refused` alone; a dropped line is for the printed report.
+    [([], [], 0), (["refused: BLACKLISTED"], [], 0), ([], ["k: refused: X"], 2), (["x"], [], 0)],
 )
 def test_the_exit_code_says_whether_a_write_was_refused(dropped, refused, code) -> None:
     report = de.ExtractReport("o", "ns", "d", False)
@@ -1838,3 +1839,71 @@ async def test_a_row_deleted_before_its_delete_is_a_race(monkeypatch) -> None:
     report = await _run()
     assert report.races == ["decision:gone: deleted since the run read it"]
     assert report.refused == [] and cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_refused_record_is_listed_once_and_counted(monkeypatch, capsys) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.refuse_record = _refusal("BLACKLISTED")
+    report = await _run()
+    assert report.refused == [f"{_key(c)}: refused: BLACKLISTED"]
+    assert cli.exit_code(report) == 2
+    cli.print_report(report)
+    out = capsys.readouterr().out
+    assert out.count("refused: BLACKLISTED") == 1
+    assert f"dropped [{SECTION}] refused: BLACKLISTED" in out
+
+
+def _fake_fallback(monkeypatch, answers: list[str]) -> None:
+    """A real provider configured (inferred `openai`) whose fallback with no key answered:
+    each window's reply comes from the provider named in `answers`."""
+    from server.llm import client as llm_client
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(llm_client, "provider_key_missing", lambda provider: False)
+
+    class _Primary:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            provider = answers.pop(0)
+            return SimpleNamespace(
+                text=json.dumps({"decisions": [_candidate()]}),
+                stop_reason="",
+                provider=provider,
+            )
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Primary())
+
+
+async def _two_windows(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Other")),
+            CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+
+
+@pytest.mark.asyncio
+async def test_a_window_the_fallback_fake_answered_is_dropped(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    await _two_windows(monkeypatch)
+    _fake_fallback(monkeypatch, ["fake", "openai"])
+    report = await _run(window_chars=len(BODY) + 1)
+    assert [d.reason for d in report.dropped] == [de._FAKE_ANSWER]
+    assert len(world.recorded) == 1 and report.error == ""
+
+
+@pytest.mark.asyncio
+async def test_a_run_the_fallback_fake_answered_wholly_reads_nothing(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"})
+    await _two_windows(monkeypatch)
+    _fake_fallback(monkeypatch, ["fake", "fake"])
+    report = await _run(window_chars=len(BODY) + 1)
+    assert report.error.startswith("no window was read") and cli.exit_code(report) == 1
+    assert world.recorded == [] and world.deletes == []

@@ -102,6 +102,8 @@ class Dropped:
     section: str
     reason: str
     quote: str = ""
+    # The decision's key when a write of it was refused (also listed in `refused`).
+    key: str = ""
 
 
 @dataclass
@@ -124,7 +126,8 @@ class ExtractReport:
     # Keys tagged (or to tag) `source-changed`: confirmed rows (pinned or attested), and
     # rows with a recorded outcome, whose document now says otherwise.
     flagged: list[str] = field(default_factory=list)
-    # "<key>: refused: <code>" for each retire write the server refused.
+    # "<key>: refused: <code>" for each write the server refused (a reconcile refusal
+    # also has its `dropped` line, with the section and quote).
     refused: list[str] = field(default_factory=list)
     # "<key>: deleted since the run read it" or "<key>: rewritten since the run read it":
     # a write that found its row gone or moved on, a race the next run settles.
@@ -188,6 +191,9 @@ def _unread_reply(stop_reason: str) -> str:
         return "reply cut at the token limit; lower --window-chars or --max-per-section"
     reason = "the model's reply is not the JSON asked for"
     return f"{reason} (stop reason: {stop_reason})" if stop_reason else reason
+
+
+_FAKE_ANSWER = "answered by the fake model; set the fallback model's key or LOOM_LLM_PROVIDER=fake"
 
 
 def _no_model_error() -> str:
@@ -282,7 +288,9 @@ async def extract_document(
             # A blacklisted or newly pinned decision, a busy key, a store that timed out:
             # the other candidates and the retire step still run, and a re-run does not
             # stop at the same place.
-            report.dropped.append(Dropped(section, _refusal(e), cand.quote))
+            key = svc.decision_key(cand.category, cand.scenario)
+            report.dropped.append(Dropped(section, _refusal(e), cand.quote, key))
+            report.refused.append(f"{key}: {_refusal(e)}")
             continue
         written.add(rec.memory_key)
         if rec.race:
@@ -319,6 +327,37 @@ async def _known_decisions(
     return known
 
 
+async def _read_window(
+    llm: Any, system: str, w: Window, report: ExtractReport, *, fake_chosen: bool
+) -> list[dx.Candidate] | None:
+    """The model's candidates for one window, or None when the window is lost: the call
+    failed, the fake model answered for a real provider, or the reply is unreadable; each
+    is a dropped line."""
+    from server.llm.json_text import strip_code_fence
+
+    first = dx.breadcrumb(w.chunks[0].section_path)
+    try:
+        with llm_stage("decision_extract"):
+            res = await llm.complete(
+                system,
+                dx.user_prompt(w),
+                max_tokens=_REPLY_TOKENS,
+                response_format={"type": "json_object"},
+            )
+    except (httpx.HTTPError, TimeoutError, LoomServerError) as e:
+        # A provider error, a timeout or a refused call loses this window only.
+        report.dropped.append(Dropped(first, f"the model call failed: {type(e).__name__}"))
+        return None
+    if not fake_chosen and res.provider == "fake":
+        # A fallback with no key answered: its decisions pass the check by construction.
+        report.dropped.append(Dropped(first, _FAKE_ANSWER))
+        return None
+    cands = dx.parse_candidates(strip_code_fence(res.text))
+    if cands is None:
+        report.dropped.append(Dropped(first, _unread_reply(res.stop_reason)))
+    return cands
+
+
 async def _candidates(
     org: str,
     namespace: str,
@@ -332,9 +371,10 @@ async def _candidates(
     that passes the verbatim check, at most `max_per_section` per section; and how many
     windows the model answered with a readable reply."""
     from server.llm.client import get_llm_client
-    from server.llm.json_text import strip_code_fence
+    from server.settings import settings
 
     llm = get_llm_client()
+    fake_chosen = settings.llm_provider == "fake" and not settings.llm_provider_inferred()
     system = dx.system_prompt(max_per_section, known)
     kept: list[tuple[dx.Candidate, str, list[str]]] = []
     answered = 0
@@ -343,22 +383,8 @@ async def _candidates(
     pairs: set[tuple[str, str]] = set()  # (outcome, reasoning) of each kept candidate
     # An operator command: its calls are not gated by the namespace's cost cap.
     for w in wins:
-        first = dx.breadcrumb(w.chunks[0].section_path)
-        try:
-            with llm_stage("decision_extract"):
-                res = await llm.complete(
-                    system,
-                    dx.user_prompt(w),
-                    max_tokens=_REPLY_TOKENS,
-                    response_format={"type": "json_object"},
-                )
-        except (httpx.HTTPError, TimeoutError, LoomServerError) as e:
-            # A provider error, a timeout or a refused call loses this window only.
-            report.dropped.append(Dropped(first, f"the model call failed: {type(e).__name__}"))
-            continue
-        cands = dx.parse_candidates(strip_code_fence(res.text))
+        cands = await _read_window(llm, system, w, report, fake_chosen=fake_chosen)
         if cands is None:
-            report.dropped.append(Dropped(first, _unread_reply(res.stop_reason)))
             continue
         answered += 1
         texts = [c.text for c in w.chunks]
