@@ -3179,7 +3179,8 @@ class MemorySearchSettings(BaseModel):
     memory_search_key_match_mode: Annotated[Literal["always", "gated", "off"], LIVE] = "gated"
     # Rows per memory_key in the final block (0 = no cap), freeing slots taken
     # by one key re-extracted per session (38 of 60 questions on one eval).
-    # Skipped for aggregational / temporal_diff shapes.
+    # Skipped for aggregational / temporal_diff shapes. Also bounds the key-match arm's and
+    # the entity follow's rows per key, and how far one-item-per-key callers over-fetch.
     memory_search_per_key_cap: Annotated[int, LIVE] = 3
     # How many of a writer's served rows of one key, those with the newest vectors, a pooled
     # memory.set chunk is matched against, by value, to find the row it was cut from.
