@@ -736,7 +736,9 @@ async def test_a_refused_record_is_reported_and_the_run_goes_on(monkeypatch) -> 
     world.record("decision:gone", {"reasoning": "gone"})
     world.refuse_record = _refusal("BLACKLISTED")
     report = await _run()
-    assert [(d.section, d.reason) for d in report.dropped] == [(SECTION, "refused: BLACKLISTED")]
+    assert [(d.section, d.reason) for d in report.dropped] == [
+        (SECTION, f"{_key(_candidate())}: refused: BLACKLISTED")
+    ]
     assert report.records == []
     assert report.retired == ["decision:gone"] and len(world.deletes) == 1
 
@@ -769,7 +771,7 @@ async def test_a_refused_pinned_tag_drops_only_that_candidate(monkeypatch) -> No
     world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, pinned=True)
     world.refuse_update = _refusal("AMBIGUOUS_KEY")
     report = await _run()
-    assert [d.reason for d in report.dropped] == ["refused: AMBIGUOUS_KEY"]
+    assert [d.reason for d in report.dropped] == [f"{_key(c)}: refused: AMBIGUOUS_KEY"]
 
 
 @pytest.mark.asyncio
@@ -1849,12 +1851,14 @@ async def test_a_refused_record_is_listed_once_and_counted(monkeypatch, capsys) 
     world = _World(monkeypatch, [c])
     world.refuse_record = _refusal("BLACKLISTED")
     report = await _run()
-    assert [(d.reason, d.refused) for d in report.dropped] == [("refused: BLACKLISTED", True)]
+    assert [(d.reason, d.refused) for d in report.dropped] == [
+        (f"{_key(c)}: refused: BLACKLISTED", True)
+    ]
     assert report.refused == [] and cli.exit_code(report) == 2
     cli.print_report(report)
     out = capsys.readouterr().out
     assert out.count("refused: BLACKLISTED") == 1
-    assert f"dropped [{SECTION}] refused: BLACKLISTED" in out
+    assert f"dropped [{SECTION}] {_key(c)}: refused: BLACKLISTED" in out
 
 
 def _fake_fallback(monkeypatch, answers: list[str]) -> None:
@@ -1932,7 +1936,7 @@ async def test_an_embedding_provider_error_on_a_write_is_reported(monkeypatch, e
     world.refuse_delete = raised
     report = await _run()
     name = type(raised).__name__
-    assert [d.reason for d in report.dropped] == [f"failed: {name}"]
+    assert [d.reason for d in report.dropped] == [f"{_key(c)}: failed: {name}"]
     assert [d.refused for d in report.dropped] == [True]
     assert report.refused == [f"decision:gone: failed: {name}"]
     assert cli.exit_code(report) == 2
@@ -1955,7 +1959,7 @@ async def test_a_dry_run_whose_restatement_search_fails_exits_2(monkeypatch) -> 
 
     monkeypatch.setattr(search, "handle_memory_search", failing_search)
     report = await _run(dry_run=True)
-    assert [d.reason for d in report.dropped] == ["failed: HTTPStatusError"]
+    assert [d.reason for d in report.dropped] == [f"{_key(c)}: failed: HTTPStatusError"]
     assert report.dropped[0].refused and report.refused == []
     assert world.recorded == [] and cli.exit_code(report) == 2
 
@@ -1968,7 +1972,7 @@ async def test_a_refused_revise_leaves_its_row_for_the_next_run(monkeypatch) -> 
     world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."})
     world.refuse_record = _refusal("BLACKLISTED")
     report = await _run()
-    assert [d.reason for d in report.dropped] == ["refused: BLACKLISTED"]
+    assert [d.reason for d in report.dropped] == [f"{_key(c)}: refused: BLACKLISTED"]
     assert report.refused == [] and world.deletes == [] and report.retired == []
 
 
@@ -1979,7 +1983,7 @@ async def test_a_refused_tag_write_is_not_tried_again_by_retire(monkeypatch) -> 
     world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, pinned=True)
     world.refuse_update = _refusal("AMBIGUOUS_KEY")
     report = await _run()
-    assert [d.reason for d in report.dropped] == ["refused: AMBIGUOUS_KEY"]
+    assert [d.reason for d in report.dropped] == [f"{_key(c)}: refused: AMBIGUOUS_KEY"]
     assert report.refused == [] and report.flagged == []
 
 

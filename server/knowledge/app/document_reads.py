@@ -1,4 +1,6 @@
-"""knowledge.list / get / outline: reads of the documents of one namespace."""
+"""knowledge.list / get / outline: reads of the documents of one namespace, and
+`document_chunks`, a document's live chunks in order (knowledge.synthesize and
+`loom decisions extract` read through it)."""
 
 from __future__ import annotations
 
@@ -203,12 +205,12 @@ async def document_chunks(org: str, namespace: str, source_uri: str) -> list[Cor
     with its section path. Empty for a document chunked under another model, until
     `loom rechunk`."""
     from server.knowledge.store import chunks as knowledge_repo
-    from server.memory.domain import corpus_synthesis as cs
+    from server.memory.domain.corpus_synthesis import CorpusChunk
 
     rows = await knowledge_repo.list_for_doc(
         org, namespace, source_uri, embedding_model=get_embedder().model_name
     )
-    out: list[cs.CorpusChunk] = []
+    out: list[CorpusChunk] = []
     for r in rows:
         try:
             raw = json.loads(r.chunk_metadata) if r.chunk_metadata else {}
@@ -216,7 +218,7 @@ async def document_chunks(org: str, namespace: str, source_uri: str) -> list[Cor
             raw = {}
         path = raw.get("section_path") if isinstance(raw, dict) else None
         out.append(
-            cs.CorpusChunk(
+            CorpusChunk(
                 source_uri=source_uri,
                 idx=int(r.chunk_idx),
                 text=str(r.content or ""),

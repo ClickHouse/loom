@@ -319,7 +319,8 @@ async def extract_document(
             # the other candidates and the retire step still run, and a re-run does not
             # stop at the same place.
             key = svc.decision_key(cand.category, cand.scenario)
-            report.dropped.append(Dropped(section, _refusal(e), cand.quote, refused=True))
+            reason = f"{key}: {_refusal(e)}"
+            report.dropped.append(Dropped(section, reason, cand.quote, refused=True))
             # Handled this run: the retire step must not judge the key it just failed on.
             written.add(key)
             continue
