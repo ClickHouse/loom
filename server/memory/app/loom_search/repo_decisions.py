@@ -29,7 +29,6 @@ async def search_repo_decisions(
     on any failure. The read scope the token allows is pinned inside the
     search, as for the base search."""
     from server.memory.app.search import handle_memory_search
-    from server.memory.app.search.request import _above_excerpt_k
     from server.memory.app.search.scoring import one_per_key, per_key_fetch
 
     # The base search already reads its own namespace.
@@ -46,8 +45,8 @@ async def search_repo_decisions(
         query=mem_input.query,
         # One item per decision key: ask for enough rows that `top_k` keys survive the trim.
         top_k=per_key_fetch(mem_input.top_k),
-        # Explained or elided as the caller's own search is, by its top_k, not the over-fetch.
-        explain=not _above_excerpt_k(mem_input) if mem_input.explain is None else mem_input.explain,
+        # Kept whole here: the merge elides them as the home search elides its own.
+        explain=True,
         tags=mem_input.tags,
         # A recorded statement fits the stored clip, and its reason comes last: an
         # excerpt would cut it. bodies="none" still serves keys only.
@@ -131,6 +130,7 @@ async def memory_with_repo_decisions(
     decisions, merged into the one section. Raises only what the base search
     raises."""
     from server.memory.app.search import handle_memory_search
+    from server.memory.app.search.request import _apply_explain_default
     from server.memory.app.search.telemetry import credit_merged_hits
 
     if not repo_namespace:
@@ -151,6 +151,7 @@ async def memory_with_repo_decisions(
     # Credited as the base search credits its own: for the hits it hands on,
     # before the section's floors and answer-first rules.
     await credit_merged_hits(settled, added)
+    _apply_explain_default(added, base._settled_input or mem_input)
     update: dict[str, Any] = {
         "results": hits,
         "candidates_total": base.candidates_total + len(added),

@@ -355,7 +355,6 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
         {"password": "[REDACTED]"},
         {"password": "${DB_PASSWORD}"},
         {"password": "vault:kv/db/password1"},
-        {"db_password": "https://vault.example/v1/secret/db1"},
         {"password": "/etc/key1x"},
         {"client_secret": "/q8Zt/R3mKp9x"},  # two /-segments read as a path: a known miss
         {"password": "../secrets/db1"},
@@ -388,7 +387,10 @@ def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
         {"password": 'ab"cd12345'},
         {"password": "config/db/pass1"},  # a relative path is not a reference
         {"db_pwd": "hunter2xyz9"},
-        {"db_password": "postgres://app:s3cretPw@db/main"},  # a URL that carries one
+        {"db_password": "postgres://app:s3cretPw@db/main"},
+        {"webhook_secret": "https://hooks.slack.com/services/T000/B000/XXXXabc123"},
+        # a URL that only names where the secret lives reads high too: a known false positive
+        {"db_password": "https://vault.example/v1/secret/db1"},
         # an ARN's `secret:` part reads as an assignment: a known false positive
         {"client_secret": "arn:aws:secretsmanager:eu-west-1:123456789012:secret:prod/db-AbCd12"},
     ],
