@@ -525,3 +525,27 @@ def test_an_assistant_read_naming_no_agent_keeps_the_ops_default(
     finally:
         set_assistant_call(False)
     assert named["agent"] == "writer"
+
+
+@pytest.mark.parametrize("op_name", ["memory.aggregate", "memory.provenance"])
+def test_an_assistant_read_of_one_writers_rows_needs_the_writer_named(
+    monkeypatch: pytest.MonkeyPatch, op_name: str
+) -> None:
+    from pydantic import ValidationError
+
+    from server.transport.assistant_call import set_assistant_call
+
+    async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
+        return {"org": "o", "namespace": "ns", "agent": "claude-code", "user_id": "-"}
+
+    monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
+    op = OPERATIONS_BY_NAME[op_name]
+    arguments: dict[str, Any] = {"memory_key": "k", "agg_func": "count"}
+    set_assistant_call(True)
+    try:
+        asyncio.run(mcp_call._bind_caller_identity(op, arguments, None, None))
+    finally:
+        set_assistant_call(False)
+    # Refused for the missing writer, not answered empty under the client's own agent.
+    with pytest.raises(ValidationError, match="agent"):
+        op.input_model(**arguments)

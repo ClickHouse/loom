@@ -547,13 +547,23 @@ async def _bind_caller_identity(
     if defaults and op.name in _MCP_CROSS_AGENT_READS:
         if not arguments.get("agent") or arguments.get("agent") == defaults.get("agent"):
             arguments["agent"] = "*"
-    # The assistant writes nothing, so its client's own agent holds no rows: a read it names
+    # The assistant writes nothing, so its client's own agent holds no rows. A read it names
     # no agent for keeps the op's own default (`memory.ask` across agents, `mentor.brief`
-    # the namespace's top writer) instead of the client's slug.
+    # the namespace's top writer); a read of one writer's rows (`memory.aggregate`,
+    # `memory.provenance`) is refused for the missing `agent` rather than answering empty.
+    # `memory.get` falls back to the row under any agent itself.
     agent_field = op.input_model.model_fields.get("agent")
-    if assistant_call() and not explicit_agent and agent_field is not None:
-        if isinstance(agent_field.default, str) and op.name not in _MCP_CROSS_AGENT_READS:
+    if (
+        assistant_call()
+        and not explicit_agent
+        and agent_field is not None
+        and op.name not in _MCP_CROSS_AGENT_READS
+        and op.name != "memory.get"
+    ):
+        if isinstance(agent_field.default, str):
             arguments["agent"] = agent_field.default
+        else:
+            arguments.pop("agent", None)
     return request_id, defaults
 
 

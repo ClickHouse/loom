@@ -112,7 +112,8 @@ connect by browser sign-in instead of a pasted token (`server/auth/oauth.py`):
 - **Identity defaults.** Tool calls usually carry only the action's arguments.
   The server fills `org` from the token and `namespace` and `agent` from the
   caller's default workspace; explicit arguments win. `code.*` calls resolve to
-  the code plane instead. An `org` argument the token may not act in is refused
+  the code plane instead, and on the `assistant` toolset a read that names no `agent`
+  follows that toolset's rule (see [The assistant toolset](#the-assistant-toolset)). An `org` argument the token may not act in is refused
   (`ORG_MISMATCH`): a token acts in its own org, an org-wide (`*`) token or a
   platform admin in any org, the same rule as over HTTP (`authz.may_act_in_org`).
   A restricted namespace still refuses every other org, platform admins included. `loom_search` takes no `namespace` argument: it
@@ -269,6 +270,13 @@ that serves it, and give it a `viewer` token in any case. On it:
   `namespace.summary`); `namespace.audit` reports how many it left out in
   `summary.inspector_calls`. A token whose `consumer` claim names another consumer keeps
   its claim, and its calls are counted.
+- **A read names whose rows it reads.** The assistant writes nothing, so its client's own
+  agent holds no rows, and a read that names no `agent` is not narrowed to it:
+  `memory.ask` reads across agents and `mentor.brief` briefs the namespace's top writer,
+  as `memory.search`, `memory.list` and `memory.history` already read across agents. A
+  read of one writer's rows, `memory.aggregate` or `memory.provenance`, is refused for the
+  missing `agent` until the call names the writer (a search hit's `agent`). `memory.get`
+  falls back to the row under any agent.
 - **Reads do not record usage.** `memory.search` runs with `auto_touch: false` and
   `memory.ask` with `reinforce: false`, whatever the call sends, so an investigation does
   not raise the recall counts that rank results; `memory.ask` also runs with

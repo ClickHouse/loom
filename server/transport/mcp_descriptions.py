@@ -2213,16 +2213,17 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "memory.aggregate": (
         "Exact counts, sums, averages, minimums and maximums over typed memory records, "
-        "with GROUP BY on their fields. Use it for every 'how many' or 'total' question "
-        "instead of counting search hits; report the number it returns as computed, with "
-        "the filter it ran under. Free-text memories are not counted. It counts one "
-        "writer's records: name the `agent` that wrote them (a search hit's `agent`)."
+        "with GROUP BY on their fields, over one writer's records: name the `agent` that "
+        "wrote them (a search hit's `agent`); a call that names none is refused. Use it for "
+        "a 'how many' or 'total' question instead of counting search hits, and report the "
+        "number it returns as computed, with the writer and filter it ran under. Free-text "
+        "memories are not counted."
     ),
     "memory.provenance": (
         "Where one memory came from: its source (a conversation, a document, a tool, a "
         "person) and whether that source can still be opened. It reads the row one writer "
         "holds: name the `memory_key` and the `agent` that wrote it (a search hit's "
-        "`agent`)."
+        "`agent`); a call that names no agent is refused."
     ),
     "knowledge.search": (
         "Search the namespace's documents. Hits carry the document's `source_uri`, its "
