@@ -305,7 +305,7 @@ _ASSISTANT_IDENTITY_ARGS: dict[str, str] = {
 }
 
 
-def _with_identity(schema: dict[str, Any], op: Any) -> dict[str, Any]:
+def _with_identity(schema: dict[str, Any], op: Operation) -> dict[str, Any]:
     """`schema` with the op's identity arguments listed again, for a memory or mentor read.
     A code read's identity is the code plane's, and a namespace read's user narrows only
     under its own `read_scope`, so neither lists them."""

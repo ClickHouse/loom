@@ -111,7 +111,8 @@ class MemoryAskInput(_Identity):
     # the read boundary; agent is authorship metadata), matching memory.search,
     # and serve every bot's promoted rules. Set an explicit agent to narrow to
     # that one author's rows and that bot's rules. Over MCP an unnamed agent is
-    # the client's own, so the read is narrowed to that agent.
+    # the client's own, so the read is narrowed to that agent; on the assistant
+    # toolset, which writes nothing, it stays `*`.
     agent: str = "*"
     # Same semantics as memory.search.read_scope; binds to this op's user_id /
     # session_id identity fields. The token's claim is the ceiling.
