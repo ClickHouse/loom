@@ -554,9 +554,9 @@ def test_an_assistant_read_of_one_writers_rows_needs_the_writer_named(
 
 
 def test_the_summary_keeps_a_dashboard_change_to_a_memory_and_no_read() -> None:
-    from server.identity.app.namespace_summary import memory_change_ops
+    from server.identity.app.namespace_summary import _memory_changes
 
-    changes = set(memory_change_ops())
+    changes = set(_memory_changes())
     assert {"memory.set", "memory.delete", "memory.pin", "memory.update"} <= changes
     # An admin's read, and anything outside memory (the dashboard's page-view vitals).
     assert not {"memory.dedup_list", "memory.exposure_summary", "ui.vitals"} & changes

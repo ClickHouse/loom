@@ -40,7 +40,7 @@ const SAMPLE_LIMIT = 5;
 
 const SEVERITY_RANK: Record<NamespaceAuditSeverity, number> = { critical: 0, warning: 1, info: 2 };
 
-/** The namespace audit's ten finding codes, as a person reads them. An unknown code (a
+/** The namespace audit's finding codes, as a person reads them. An unknown code (a
  *  check added later) falls back to its words. */
 const CODE_LABELS: Record<string, string> = {
   exact_key_store: "Exact-key store",
@@ -53,6 +53,9 @@ const CODE_LABELS: Record<string, string> = {
   coordination_as_memory: "Coordination as memory",
   episodic_blobs: "Episodic blobs",
   version_churn: "Version churn",
+  telemetry_unavailable: "Telemetry unavailable",
+  index_backlog: "Indexing backlog",
+  intentional_exact_key_reads: "Procedure reads by key",
 };
 
 function humanizeAuditCode(code: string): string {

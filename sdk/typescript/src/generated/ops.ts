@@ -6412,7 +6412,7 @@ export interface NamespaceAuditSummary {
   inspector_calls?: number;
   typed_gets?: number;
   written_in_window?: number;
-  ledger_writes?: number;
+  ledger_calls?: number;
 }
 
 export interface NamespaceAuditFinding {

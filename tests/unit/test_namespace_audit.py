@@ -1287,7 +1287,7 @@ async def test_writes_with_no_ledger_skip_the_ledger_checks_instead_of_passing_t
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     live = {**_live(10, 1), "written_in_window": 4}
-    out, _ = await _run(monkeypatch, {M_LIVE: live, M_LEDGER: {"ledger_writes": 0}})
+    out, _ = await _run(monkeypatch, {M_LIVE: live, M_LEDGER: {"ledger_calls": 0}})
     gap = _finding(out, "telemetry_unavailable")
     assert gap.severity == "warning" and gap.kind == "system_state" and gap.count == 4
     codes = {f.code for f in out.findings}
@@ -1298,11 +1298,11 @@ async def test_writes_with_no_ledger_skip_the_ledger_checks_instead_of_passing_t
     assert "coordination_as_memory" in codes
 
     # A ledger that has the window's calls: every check runs and the gap reads clean.
-    out, _ = await _run(monkeypatch, {M_LIVE: live, M_LEDGER: {"ledger_writes": 9}})
+    out, _ = await _run(monkeypatch, {M_LIVE: live, M_LEDGER: {"ledger_calls": 9}})
     assert _finding(out, "telemetry_unavailable").count == 0
     assert "exact_key_store" in {f.code for f in out.findings}
     # A quiet namespace has nothing to count: no gap either.
-    out, _ = await _run(monkeypatch, {M_LIVE: _live(10, 1), M_LEDGER: {"ledger_writes": 0}})
+    out, _ = await _run(monkeypatch, {M_LIVE: _live(10, 1), M_LEDGER: {"ledger_calls": 0}})
     assert _finding(out, "telemetry_unavailable").severity == "info"
 
 
@@ -1310,7 +1310,7 @@ async def test_writes_with_no_ledger_skip_the_ledger_checks_instead_of_passing_t
 async def test_reads_of_structured_rows_are_left_out_of_the_object_store_gauge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ledger = {"ledger_writes": 400, "gets": 300, "typed_gets": 250, "searches": 5, "sets": 0}
+    ledger = {"ledger_calls": 400, "gets": 300, "typed_gets": 250, "searches": 5, "sets": 0}
     out, ch = await _run(monkeypatch, {M_LIVE: _live(10, 1), M_LEDGER: ledger})
     exact = _finding(out, "exact_key_store")
     assert exact.count == 50 and exact.severity != "critical"
@@ -1382,22 +1382,23 @@ def _ledger_row(operation: str, *, key: str = "", consumer: str = "") -> str:
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.asyncio
 async def test_an_audit_run_twice_still_sees_writes_the_ledger_never_recorded() -> None:
-    # The first audit's own row, a summary and a search are in the ledger; no write is.
+    # The first audit's own row, a summary and a dashboard read are in the ledger: none is
+    # a call that says the window was recorded.
     ch = _LocalCH(
         ["memory", "agent_events"],
         [
             _memory_row("team/fact", minutes_ago=10),
             _ledger_row("namespace.audit"),
             _ledger_row("namespace.summary"),
-            _ledger_row("memory.search"),
+            _ledger_row("memory.search", consumer="loom-ui"),
         ],
     )
     audit = na.new_audit(_inp(window_seconds=3600), ch=ch)
     await na.run_checks(audit, ["telemetry_unavailable"])
     gap = _finding(audit, "telemetry_unavailable")
     assert gap.severity == "warning" and gap.count == 1
-    # Once a write is ledgered the gap closes.
-    ch.setup.append(_ledger_row("memory.set", key="team/fact"))
+    # A write through any op (a procedure added) is a recorded call: the gap closes.
+    ch.setup.append(_ledger_row("procedure.add", key="team/fact"))
     audit = na.new_audit(_inp(window_seconds=3600), ch=ch)
     await na.run_checks(audit, ["telemetry_unavailable"])
     assert _finding(audit, "telemetry_unavailable").count == 0
@@ -1406,24 +1407,28 @@ async def test_an_audit_run_twice_still_sees_writes_the_ledger_never_recorded() 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.asyncio
 async def test_version_churn_counts_each_writers_distinct_contents() -> None:
-    def version(user: str, version: int, sha: str) -> str:
+    def version(user: str, key: str, version: int, sha: str) -> str:
         return (
             "INSERT INTO loom.memory_versions (org, namespace, agent, user_id, session_id, "
             f"memory_key, value, version, content_sha256) VALUES ('o', 'ns', 'bot', '{user}', "
-            f"'-', 'pref/tz', 'UTC', {version}, '{sha * 64}')"
+            f"'-', '{key}', 'UTC', {version}, '{sha * 64}')"
         )
 
     rows = [
         # u1 wrote once, then two status changes copied the same value.
-        version("u1", 1, "a"),
-        version("u1", 2, "a"),
-        version("u1", 3, "a"),
+        version("u1", "pref/tz", 1, "a"),
+        version("u1", "pref/tz", 2, "a"),
+        version("u1", "pref/tz", 3, "a"),
         # u2 holds the same key with the same content: a version of its own.
-        version("u2", 1, "a"),
+        version("u2", "pref/tz", 1, "a"),
+        # A status that flips back and forth is rewritten every time.
+        *(version("u1", "job/state", v, "ab"[v % 2]) for v in range(1, 5)),
     ]
     audit = na.new_audit(_inp(), ch=_LocalCH(["memory_versions"], rows))
     await audit.version_churn()
-    assert _finding(audit, "version_churn").count == 2
+    f = _finding(audit, "version_churn")
+    assert f.count == 6
+    assert {s["memory_key"]: s["versions"] for s in f.samples} == {"job/state": 4, "pref/tz": 2}
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")

@@ -41,7 +41,6 @@ from server.identity.api.models_namespace_catalog import (
     NamespaceAuditOutput,
     NamespaceAuditSummary,
 )
-from server.identity.app.namespace_summary import memory_change_ops
 from server.identity.app.report_rules import RuleContract, RuleLog, attach_evidence
 from server.memory.domain.excerpt import EXCERPT_LIMIT
 from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
@@ -120,6 +119,12 @@ _LEDGER = f"{_LEDGER_ALL} AND {_AGENT_CALL}"
 # the exact-key samples and the hot-key list the coordination check joins.
 _HOT_KEY = "memory_key != '' AND reads >= {hot:UInt32}"
 # The live keys of a type that is structured by design: read back whole by key on purpose.
+# The reports on a namespace: their own ledger rows say nothing about whether the window's
+# calls were recorded.
+_REPORT_OPS = (
+    "('namespace.audit', 'namespace.validate', 'namespace.summary', 'namespace.inventory', "
+    "'mentor.brief')"
+)
 _TYPED_KEYS = f"SELECT memory_key {_LIVE} AND memory_type IN {{structured:Array(String)}}"
 _HOT_KEYS = (
     f"SELECT memory_key, count() AS reads {_LEDGER} "
@@ -152,8 +157,9 @@ _TEXT: dict[str, tuple[str, str]] = {
     # Runs first: the ledger checks read whether it found the ledger empty.
     "telemetry_unavailable": (
         "Live rows were written in the window but the ledger holds no call for the "
-        "namespace: the read and search counts were not recorded, so the checks built on "
-        "them are skipped rather than reported clean.",
+        "namespace apart from reports on it and the dashboard's or the assistant's reads: "
+        "the read and search counts were not recorded, so the checks built on them are "
+        "skipped rather than reported clean.",
         "Check that the server writes its event ledger (loom.agent_events) and keeps it "
         "for the window (LOOM_RETENTION_AGENT_EVENTS_DAYS), then rerun with a window the "
         "ledger covers; `memory.list` still shows the rows themselves.",
@@ -174,13 +180,15 @@ _TEXT: dict[str, tuple[str, str]] = {
         "the namespace.",
     ),
     "index_backlog": (
-        "Searchable rows with no vector and no recorded embed error: rows the embedding "
-        f"worker has not reached. Within {INDEX_GRACE_SECONDS // 60} minutes of a write "
-        "that is normal lag; older, the worker is stopped or behind. Either way the rows "
+        "Searchable rows with no vector and no error of their own: rows the embedding "
+        "worker has not reached, or whose model call the deployment held or could not "
+        f"bill. Within {INDEX_GRACE_SECONDS // 60} minutes of a write that is normal lag; "
+        "older, the worker is stopped or behind, or the calls are held. Either way the rows "
         "are not found by meaning yet, through no fault of the writer.",
-        "Check that the embedding worker runs and that the org's model calls are allowed; "
-        "the worker picks these rows up on its next pass, and `memory.get` still reads them "
-        "by key meanwhile. Nothing for the writer to change.",
+        "Check that the embedding worker runs and that the org's model calls are allowed: "
+        "a held row is retried on the worker's next pass, and a row whose call named no org "
+        "to bill is not retried until the deployment attributes its calls. `memory.get` "
+        "still reads them by key meanwhile. Nothing for the writer to change.",
     ),
     "hand_rolled_index_rows": (
         f"Live rows whose value names {INDEX_ROW_MIN_KEYS}+ other live keys of the "
@@ -263,8 +271,8 @@ _CONTRACT: dict[str, RuleContract] = {
         exceptions=(
             "Only a namespace written in the window is judged: a quiet one has nothing to "
             f"count. A write of the last {TELEMETRY_LAG_SECONDS} seconds is not judged; its "
-            "ledger row may not have landed yet. Reads and the audit's own call are not "
-            "write rows and do not hide a gap."
+            "ledger row may not have landed yet. Reports on the namespace (the audit's own "
+            "call among them) and the dashboard's or the assistant's reads do not close a gap."
         ),
     ),
     "exact_key_store": RuleContract(
@@ -368,11 +376,12 @@ _CONTRACT: dict[str, RuleContract] = {
     ),
     "version_churn": RuleContract(
         "usage_heuristic",
-        # 2: versions are counted per distinct content, not per status change.
+        # 2: a version that repeats the one before it (a status change) is not counted.
         2,
         exceptions=(
-            "A version that changes only the row's status (conflict marking, supersession) is "
-            "not counted: the writer rewrote nothing."
+            "A version whose content repeats the one before it under the same writer (a "
+            "status change: conflict marking, supersession) is not counted; a value that "
+            "flips back and forth counts every time."
         ),
         uncertainty="A fact that really changes often leaves a long history that is not waste.",
     ),
@@ -475,7 +484,6 @@ class _Audit:
             "index_clip": int(INDEX_ROW_VALUE_CLIP),
             "grace": int(INDEX_GRACE_SECONDS),
             "lag": int(TELEMETRY_LAG_SECONDS),
-            "memory_changes": list(memory_change_ops()),
             "holds": list(EMBED_HOLDS),
         }
         self.summary = NamespaceAuditSummary()
@@ -589,8 +597,7 @@ class _Audit:
     async def summary_ledger(self) -> None:
         r = await self.one(
             f"""
-            SELECT countIf(operation IN {{memory_changes:Array(String)}} OR kind = 'worker')
-                       AS ledger_writes,
+            SELECT countIf(operation NOT IN {_REPORT_OPS} AND {_AGENT_CALL}) AS ledger_calls,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}) AS gets,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}
                            AND memory_key IN ({_TYPED_KEYS})) AS typed_gets,
@@ -603,7 +610,7 @@ class _Audit:
             """
         )
         s = self.summary
-        s.ledger_writes = int(r.get("ledger_writes") or 0)
+        s.ledger_calls = int(r.get("ledger_calls") or 0)
         s.typed_gets = int(r.get("typed_gets") or 0)
         s.gets = int(r.get("gets") or 0)
         s.searches = int(r.get("searches") or 0)
@@ -614,8 +621,8 @@ class _Audit:
     # -- checks -------------------------------------------------------------
 
     def ledger_missing(self, code: str) -> bool:
-        """Skip a ledger check, saying why, when the ledger holds none of the window's
-        calls: its counts would read as a clean namespace."""
+        """Skip a ledger check, saying why, when the ledger holds no call for the window's
+        writes (`telemetry_unavailable`): its counts would read as a clean namespace."""
         if not self.telemetry_gap:
             return False
         self.rules.skip(code, "telemetry_unavailable")
@@ -627,9 +634,9 @@ class _Audit:
         if not (self.rules.has_run("summary_live") and self.rules.has_run("summary_ledger")):
             self.rules.skip("telemetry_unavailable", "summary read failed")
             return
-        # Writes, not any row: the audit's own call, a summary or a dashboard read in the
-        # window is a ledger row, and would hide that the writes were never recorded.
-        self.telemetry_gap = s.written_in_window > 0 and s.ledger_writes == 0
+        # Any call but a report on the namespace or an inspector's read: the audit's own row,
+        # or the dashboard looking, would otherwise hide that the window went unrecorded.
+        self.telemetry_gap = s.written_in_window > 0 and s.ledger_calls == 0
         count = s.written_in_window if self.telemetry_gap else 0
         self.add(
             "telemetry_unavailable",
@@ -893,11 +900,15 @@ class _Audit:
             SELECT sum(versions) OVER () AS total, sum(bytes) OVER () AS total_bytes,
                    memory_key, versions, bytes
             FROM (SELECT memory_key, count() AS versions, sum(chars) AS bytes
-                  -- one per distinct content: a status change (conflict marking,
-                  -- supersession) copies the value but rewrites nothing
-                  FROM (SELECT memory_key, content_sha256, any(length(value)) AS chars
-                        FROM loom.memory_versions FINAL WHERE {_SCOPE}
-                        GROUP BY agent, user_id, session_id, memory_key, content_sha256)
+                  -- a version that repeats the one before it under the same writer (a
+                  -- status change: conflict marking, supersession) rewrites nothing
+                  FROM (SELECT memory_key, length(value) AS chars,
+                               content_sha256 != lagInFrame(content_sha256) OVER (
+                                   PARTITION BY agent, user_id, session_id, memory_key
+                                   ORDER BY version
+                                   ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rewrote
+                        FROM loom.memory_versions FINAL WHERE {_SCOPE})
+                  WHERE rewrote
                   GROUP BY memory_key)
             ORDER BY bytes DESC, memory_key
             LIMIT {{lim_past:UInt32}}
