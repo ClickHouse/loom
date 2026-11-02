@@ -23,16 +23,16 @@ from server.memory.domain.lemmatize import snowball_stem_tokens
 
 # How a rejected option is stored: `<option> — rejected: <reason>`.
 REJECTED = " — rejected: "
-# An image: a Markdown image, inline (`![flow](flow.png)`), by reference
-# (`![diagram][fig1]`) or by shortcut reference (`![spill flow]`); an HTML `<img>` tag;
-# or a slide export's placeholder, `[image]`, `[Image 3]`, `[image: ...]`, `[image_1]`,
-# `[pictures]`. Not a placeholder: link text
+# An image: a Markdown image, inline (`![flow](flow.png)`) or by reference
+# (`![diagram][fig1]`); an HTML `<img>` tag; or a slide export's placeholder, `[image]`,
+# `[Image 3]`, `[image: ...]`, `[image_1]`, `[pictures]`. A shortcut reference
+# (`![spill flow]`) is not read: it looks like a macro such as `vec![0; n]`. Not a
+# placeholder: link text
 # `[image tiles](tiles.md)`, a reference link `[image][1]`, a definition `[image]: x.png`,
 # the label of `[the diagram][image]`, or a word such as `[imagine]`.
 _IMAGE_MARKUP = re.compile(
     r"!\[[^\]]*\]\([^)]*\)"
     r"|!\[[^\]]*\]\[[^\]]*\]"
-    r"|!\[[^\]]+\](?![(\[])"
     r"|<img\b[^>]*>"
     r"|(?<!\])\[(?:image|picture)s?(?:[\s:_\d][^\]]*)?\](?![(\[:])",
     re.I,
@@ -158,13 +158,17 @@ def caption_text(body: str) -> str:
     return collapse_ws(_URL.sub(" ", text))
 
 
+def has_image(body: str) -> bool:
+    """`body` holds an image outside its code."""
+    return bool(_IMAGE_MARKUP.search(_code_as_text(body)))
+
+
 def image_only(body: str) -> bool:
     """A section body with no words (`no_words`), or with an image and no more text than
     a caption."""
     if no_words(body):
         return True
-    body = _code_as_text(body)
-    return bool(_IMAGE_MARKUP.search(body)) and len(caption_text(body)) <= CAPTION_MAX_CHARS
+    return has_image(body) and len(caption_text(_code_as_text(body))) <= CAPTION_MAX_CHARS
 
 
 @dataclass
@@ -381,8 +385,7 @@ def image_only_sections(content: str) -> list[str]:
         nxt = sections[i + 1].path if i + 1 < len(sections) else ()
         has_children = len(nxt) > len(sec.path) and nxt[: len(sec.path)] == sec.path
         body = "\n".join(sec.lines)
-        has_image = bool(_IMAGE_MARKUP.search(_code_as_text(body)))
-        if image_only(body) and (has_image or (sec.path and not has_children)):
+        if image_only(body) and (has_image(body) or (sec.path and not has_children)):
             out.append(breadcrumb(sec.path))
     return out
 

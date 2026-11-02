@@ -2493,7 +2493,10 @@ _LINKED_BADGE = f"[![build](badge.svg)]({_CI_URL})"
     ("body", "image_only"),
     [
         ("![diagram][fig1]\n\nFigure 1: the spill path.", True),
-        ("![spill flow]\n\nFigure 1: the spill path.", True),
+        # A shortcut reference is not read as an image: it looks like a macro.
+        ("![spill flow]\n\nFigure 1: the spill path.", False),
+        ("Use vec![0; n]: a fixed array overflows the stack.", False),
+        ("    let buf = vec![0u8; 4096];\n\nAllocate the buffer once per block.", False),
         # Its link target, left over, would read as more than a caption.
         (f"{_LINKED_BADGE}\n\nBuild status for the spill code.", True),
         (
