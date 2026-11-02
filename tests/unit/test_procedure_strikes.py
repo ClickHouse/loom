@@ -141,9 +141,7 @@ def test_three_consecutive_failures_quarantine_and_a_success_lifts_it(
     assert _procedure_status(row) == "quarantined"
 
     async def _search(inp: Any) -> Any:
-        # two sessions' rows of the key: one procedure
-        hits = [NS(namespace="ns", memory_key="p:ship", similarity=s) for s in (0.9, 0.8)]
-        return NS(results=hits)
+        return NS(results=[NS(namespace="ns", memory_key="p:ship", similarity=0.9)])
 
     async def _rows(_ident: Any, _keys: list[str], **_k: Any) -> list[Any]:
         return [NS(memory_key="p:ship", value=row)]
@@ -233,3 +231,27 @@ def test_evolve_reports_retention(monkeypatch: pytest.MonkeyPatch) -> None:
         )
     )
     assert out.retention == {"pairs": 2.0, "ok_after_ok": 1.0, "rate": 0.5}
+
+
+def test_a_procedure_served_in_two_sessions_is_one_match(monkeypatch: pytest.MonkeyPatch) -> None:
+    # the search serves a row per session; top_k still counts procedures
+    from server.memory.api.models_procedure import ProcedureMatchInput
+    from server.memory.app.procedure import handle_procedure_match
+
+    asked: list[int] = []
+
+    async def _search(inp: Any) -> Any:
+        asked.append(inp.top_k)
+        hits = [("p:a", 0.9), ("p:a", 0.8), ("p:b", 0.7), ("p:c", 0.6)]
+        return NS(results=[NS(namespace="ns", memory_key=k, similarity=s) for k, s in hits])
+
+    async def _rows(_ident: Any, keys: list[str], **_k: Any) -> list[Any]:
+        return [NS(memory_key=k, value=_row(["a"])) for k in keys]
+
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
+    monkeypatch.setattr("server.memory.store.get_many_by_keys", _rows)
+    m = asyncio.run(
+        handle_procedure_match(ProcedureMatchInput(org="o", namespace="ns", situation="x", top_k=2))
+    )
+    assert [x.memory_key for x in m.matches] == ["p:a", "p:b"]
+    assert asked == [6]  # two keys at three rows each

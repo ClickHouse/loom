@@ -184,3 +184,21 @@ def rows_per_key(query_shape: str) -> int:
     if query_shape in ("aggregational", "temporal_diff"):
         return 0
     return int(settings.memory_search_per_key_cap)
+
+
+def one_per_key(hits: list[Any], namespace: str, top_k: int) -> list[Any]:
+    """The best hit of each (namespace, memory_key), at most `top_k` of them, for a caller
+    that reads one item per key: the search serves a row per writer and session."""
+    seen: set[tuple[str, str]] = set()
+    out = []
+    for h in hits:
+        key = (str(getattr(h, "namespace", "") or namespace), str(h.memory_key))
+        if key not in seen:
+            seen.add(key)
+            out.append(h)
+    return out[:top_k]
+
+
+def per_key_fetch(top_k: int) -> int:
+    """How many hits to ask for so `one_per_key` can still return `top_k` keys."""
+    return min(500, top_k * max(1, rows_per_key("")))

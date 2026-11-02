@@ -196,7 +196,8 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             )
         ):
             continue
-        seen.add(key)  # once it is the caller's: another owner's row of the key may come first
+        # seen only on the caller's own row: another owner's row of the key may come first
+        seen.add(key)
         row = await memory_repo.get_by_key(
             identity, key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
         )

@@ -80,7 +80,9 @@ def _dead_other_sections(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_decision_hits_render_as_their_own_section(monkeypatch: pytest.MonkeyPatch) -> None:
     _dead_other_sections(monkeypatch)
     monkeypatch.setattr(
-        "server.memory.app.search.handle_memory_search", _search_stub([_FACT, _DECISION])
+        # d1 recorded in two sessions: one line
+        "server.memory.app.search.handle_memory_search",
+        _search_stub([_FACT, _DECISION, NS(**{**vars(_DECISION), "rank_score": 0.7})]),
     )
 
     async def _records(ch: Any, org: str, ns: str, keys: list[str]) -> dict[str, Any]:

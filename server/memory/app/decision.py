@@ -378,6 +378,7 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
 
 async def handle_decision_precedents(input: DecisionPrecedentsInput) -> DecisionPrecedentsOutput:
     from server.memory.app.search import handle_memory_search
+    from server.memory.app.search.scoring import one_per_key, per_key_fetch
 
     ch = get_client()
     tags = [_category_tag(input.category)] if input.category.strip() else []
@@ -387,22 +388,21 @@ async def handle_decision_precedents(input: DecisionPrecedentsInput) -> Decision
             namespace=input.namespace,
             agent=input.agent or "*",
             query=input.query,
-            top_k=max(input.top_k * 2, 10),
+            top_k=per_key_fetch(max(input.top_k * 2, 10)),
             memory_type="decision",
             tags=tags,
             namespace_scope="this",
             auto_touch=False,
         )
     )
-    hits = [(h.memory_key, float(getattr(h, "similarity", 0.0) or 0.0)) for h in res.results]
+    best = one_per_key(res.results, input.namespace, max(input.top_k * 2, 10))
+    hits = [(h.memory_key, float(getattr(h, "similarity", 0.0) or 0.0)) for h in best]
     records = await _decision_records(ch, input.org, input.namespace, [k for k, _ in hits])
     rows = []
-    seen: set[str] = set()
     for key, sim in hits:
         rec = records.get(key)
-        if rec is None or key in seen:
-            continue  # a key served in several sessions is one decision, at its best hit
-        seen.add(key)
+        if rec is None:
+            continue
         if input.with_outcome_only and not rec.get("realized_outcome"):
             continue
         rows.append(_row(key, rec, sim))

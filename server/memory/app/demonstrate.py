@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from server.memory.api.models_demonstrate import (
     DemonstrationRow,
     MemoryDemonstrateInput,
@@ -19,6 +17,7 @@ async def handle_memory_demonstrate(input: MemoryDemonstrateInput) -> MemoryDemo
     vote) under `include_tags`, so each hit carries its own row's tags, read in
     the namespace it came from (`all_mine` spans several)."""
     from server.memory.app.search import handle_memory_search
+    from server.memory.app.search.scoring import one_per_key, per_key_fetch
     from server.memory.domain import demonstrations as svc
 
     search = await handle_memory_search(
@@ -27,7 +26,7 @@ async def handle_memory_demonstrate(input: MemoryDemonstrateInput) -> MemoryDemo
             namespace=input.namespace,
             agent=input.agent,
             query=input.query,
-            top_k=min(200, input.k * 2),
+            top_k=per_key_fetch(min(200, input.k * 2)),
             tags=[input.example_tag],
             search_mode="semantic",
             namespace_scope=input.namespace_scope,
@@ -35,7 +34,8 @@ async def handle_memory_demonstrate(input: MemoryDemonstrateInput) -> MemoryDemo
             include_tags=True,
         )
     )
-    hits: list[Any] = list(getattr(search, "results", None) or [])
+    # one vote per example, however many sessions it was written in
+    hits = one_per_key(list(search.results or []), input.namespace, min(200, input.k * 2))
     if not hits:
         return MemoryDemonstrateOutput(
             query=input.query,

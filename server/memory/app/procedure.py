@@ -223,6 +223,7 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
     """Top-K procedures by situation similarity (and goal similarity when a
     goal is given), each with its full body."""
     from server.memory.app import search as _search
+    from server.memory.app.search.scoring import one_per_key, per_key_fetch
 
     search_in = MemorySearchInput(
         org=input.org,
@@ -232,7 +233,7 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
         query=input.situation,
         memory_type="procedural",
         tags=list(input.tags),
-        top_k=input.top_k,
+        top_k=per_key_fetch(input.top_k),
         namespace_scope=input.namespace_scope,
         search_mode="semantic",
         recipe="fast",
@@ -243,11 +244,12 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
         key_axis=False if input.goal else None,
     )
     search_out = await _search.handle_memory_search(search_in)
+    hits = one_per_key(search_out.results, input.namespace, input.top_k)
 
     u_weight = float(input.utility_weight or 0.0)
 
     keys_by_ns: dict[str, list[str]] = {}
-    for hit in search_out.results:
+    for hit in hits:
         keys_by_ns.setdefault(hit.namespace or input.namespace, []).append(hit.memory_key)
 
     goal_sims: dict[tuple[str, str], float] = {}
@@ -257,14 +259,11 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
     rows_by_key = await _procedure_rows(input, keys_by_ns)
 
     matches: list[_ProcedureMatch] = []
-    seen: set[tuple[str, str]] = set()
-    for hit in search_out.results:
-        ns_key = (hit.namespace or input.namespace, hit.memory_key)
-        row = rows_by_key.get(ns_key)
+    for hit in hits:
+        row = rows_by_key.get((hit.namespace or input.namespace, hit.memory_key))
         value = row.value if row is not None else {}
-        if row is None or ns_key in seen or not isinstance(value, dict) or "steps" not in value:
-            continue  # the key's rows read as one procedure, at its best hit
-        seen.add(ns_key)
+        if row is None or not isinstance(value, dict) or "steps" not in value:
+            continue
         is_template = bool(value.get("template", False))
         if input.templates_only and not is_template:
             continue
