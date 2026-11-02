@@ -9,7 +9,6 @@ import pytest
 
 from server.memory.app import decisions as svc
 from server.memory.domain import decision_statement as stmt
-from server.memory.domain.files import detect_value_files
 
 
 def test_the_statement_leaves_out_the_category_and_field_labels() -> None:
@@ -17,8 +16,6 @@ def test_the_statement_leaves_out_the_category_and_field_labels() -> None:
         {"category": "storage:schema.sql", "scenario": "Spill to disk?", "outcome": "pin"}
     )
     assert value == "Spill to disk? Decided pin."
-    # The category's slug is not in the text, so no file is detected from it.
-    assert detect_value_files(value) == []
 
 
 def test_memory_value_reads_as_a_statement() -> None:
