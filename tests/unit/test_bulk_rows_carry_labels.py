@@ -286,19 +286,31 @@ async def test_a_repeat_of_a_retired_stored_value_leaves_it(monkeypatch, status)
     assert plan.memory_rows == []
 
 
-async def test_a_repeat_of_a_retired_stored_value_that_sets_a_ttl_writes_it_active(
-    monkeypatch,
+@pytest.mark.parametrize(
+    ("label", "column", "landed"),
+    [
+        ("ttl_seconds", "expires_at", 60),
+        ("sensitivity", "sensitivity", "medium"),
+        ("pinned", "pinned", True),
+    ],
+)
+async def test_a_repeat_of_a_retired_stored_value_that_changes_a_label_writes_it_active(
+    monkeypatch, label, column, landed
 ) -> None:
     # A changed label is a new assertion, not a replay: the row is written, as memory.set
     # writes it, active.
     value = "Alice lives in Berlin"
-    again = {"memory_key": "k", "value": value, "ttl_seconds": 60}
     stored = _stored(
         value, status="superseded", superseded_by="22222222-2222-2222-2222-222222222222"
     )
-    _, plan = await _settled(monkeypatch, stored, {}, again)
+    state, plan = await _settled(
+        monkeypatch, stored, {}, {"memory_key": "k", "value": value, label: landed}
+    )
     (row,) = plan.memory_rows
     assert row["status"] == "active" and not row["superseded_by"]
+    if label == "ttl_seconds":
+        landed = state.now_utc + timedelta(seconds=60)
+    assert row[column] == landed
 
 
 async def test_the_retention_window_alone_leaves_a_repeat_unchanged(monkeypatch) -> None:
@@ -310,6 +322,8 @@ async def test_the_retention_window_alone_leaves_a_repeat_unchanged(monkeypatch)
     monkeypatch.setattr(settings, "memory_sensitive_retention_days", 30)
     value = "Alice lives in Berlin"
     stored = _stored(value, sensitivity="medium")
+    state, plan = await _settled(monkeypatch, stored, {}, {"memory_key": "k", "value": value})
+    assert plan.memory_rows == [] and state.skipped_unchanged == 1
     other = {"memory_key": "k", "value": "Alice lives in Paris"}
     merge = {0: NS(verdict="merge", existing_memory_id="X", peers=[])}
     state, plan = await _settled(
