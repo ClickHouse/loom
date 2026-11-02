@@ -187,8 +187,9 @@ def rows_per_key(query_shape: str) -> int:
 
 
 def one_per_key(hits: list[Any], namespace: str, top_k: int | None = None) -> list[Any]:
-    """The best hit of each (namespace, memory_key), at most `top_k` of them, for a caller
-    that reads one item per key: the search serves a row per writer and session."""
+    """The first hit of each (namespace, memory_key) in the order given (callers pass a
+    ranked list), at most `top_k` of them, for a caller that reads one item per key: the
+    search serves a row per writer and session."""
     seen: set[tuple[str, str]] = set()
     out = []
     for h in hits:

@@ -164,8 +164,13 @@ def test_duplicate_step_requires_the_same_content_words() -> None:
     # A new value in new words is an update, not a paraphrase.
     assert not same_content_words("my PB is 27:10", "beat my PB, 26:30")
     assert same_content_words("my PB is 27:10", "my PB is 27:10 in the 5k")
-    # A value spelt another way reads as a new one, so the pair goes to the conflict check.
+    # A value spelt another way reads as a new one, so the pair goes to the conflict check;
+    # a currency is part of the value.
     assert not same_content_words("the plan costs $40", "the plan costs 40 dollars")
+    assert not same_content_words("the plan costs $40", "the plan costs €40")
+    # a thousands separator is not
+    assert same_content_words("the plan has 1,000 seats", "the plan has 1000 seats")
+    assert not same_content_words("the plan has 1,000 seats", "the plan has 1,500 seats")
 
 
 def test_later_valid_peers_needs_both_dates() -> None:

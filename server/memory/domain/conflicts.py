@@ -129,6 +129,7 @@ def strip_parentheticals(text: str) -> str:
 
 # Value tokens: clock times (27:12, 5:30pm), dates, money, percentages, plain
 # numbers with optional unit suffix (5k, 10km, 3rd).
+_THOUSANDS = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
 _VALUE_RE = re.compile(
     r"(?<![A-Za-z])(?:\$|€|£)?\d+(?:[.,:]\d+)*(?:\s?(?:%|am|pm|k|km|kg|lb|lbs|mi|hrs?|min|s))?(?![A-Za-z])",
     re.IGNORECASE,
@@ -139,8 +140,10 @@ def value_tokens(text: str) -> set[str]:
     """Normalised value tokens in `text` ("27:12", "25:50", "$40", "5k")."""
     out: set[str] = set()
     for m in _VALUE_RE.finditer(text or ""):
-        # lowercased, with no space before a unit: "5K" and "5 k" read as "5k"
-        out.add(m.group(0).strip().lower().replace(" ", ""))
+        # lowercased, with no space before a unit ("5K" and "5 k" read as "5k") and no
+        # thousands separator ("1,000" reads as "1000"); a currency sign stays
+        token = m.group(0).strip().lower().replace(" ", "")
+        out.add(_THOUSANDS.sub("", token))
     return out
 
 
