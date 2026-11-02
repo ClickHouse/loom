@@ -98,4 +98,8 @@ async def test_the_pool_collapses_before_the_duplicates_are_read(
         namespaces=["n"],
     )
     await assemble._drop_excluded_and_duplicates(ctx)
-    assert seen == [[passage]]
+    assert seen == [[passage]] and ctx.actual_work["rows_collapsed"] == 1
+    # nothing to collapse adds no count
+    ctx.all_hits, ctx.actual_work = [passage], {}
+    await assemble._drop_excluded_and_duplicates(ctx)
+    assert "rows_collapsed" not in ctx.actual_work

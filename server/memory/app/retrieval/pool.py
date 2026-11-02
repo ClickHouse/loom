@@ -5,6 +5,7 @@ chunk-share cap and floor on the window.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
@@ -269,8 +270,7 @@ async def _set_chunk_rows(
             f"""
             SELECT e.agent AS agent, e.user_id AS user_id, e.session_id AS session_id,
                    e.memory_key AS memory_key, max(e.version) AS version,
-                   argMax(e.tags, e.version) AS tags,
-                   argMax(e.content_sha256, e.version) AS sha
+                   argMax(e.tags, e.version) AS tags
             FROM loom.memory_embeddings AS e FINAL
             WHERE e.org = {{org:String}}
               AND e.namespace = {{ns:String}}
@@ -283,16 +283,7 @@ async def _set_chunk_rows(
             """,
             params=params,
         )
-        # rows of a key written in many sessions often hold one value: read and chunk it
-        # once (`sha` is the write's content hash, '' on a row stored without one)
-        first_of: dict[str, RowKey] = {}
-        for r in served:
-            if r["sha"]:
-                first_of.setdefault(str(r["sha"]), row_key_of(q.namespace, r))
-        readers = [
-            r for r in served if first_of.get(str(r["sha"])) in (None, row_key_of(q.namespace, r))
-        ]
-        values = await _row_values(ch, q, readers)
+        values = await _row_values(ch, q, served)
     except Exception as e:  # noqa: BLE001 — naming a chunk's row never fails a search
         log.warning("set chunk rows read failed; this pool's set chunks are dropped: %s", e)
         return {}
@@ -300,15 +291,17 @@ async def _set_chunk_rows(
     for c in pooled:
         by_writer.setdefault((c.agent, c.user_id, c.memory_key), []).append(c)
     out: dict[ChunkId, SetChunkRow] = {}
-    cuts_of: dict[RowKey, frozenset[tuple[int, str]]] = {}
+    # rows of a key written in many sessions often hold one value: chunk it once
+    cuts_of: dict[tuple[str, str], frozenset[tuple[int, str]]] = {}
     for r in served:  # newest first: the first row whose value cuts a chunk names it
         row = row_key_of(q.namespace, r)
-        read = first_of.get(str(r["sha"]), row)
-        if read not in values:
+        if row not in values:
             continue
-        if read not in cuts_of:
-            cuts_of[read] = set_chunk_identities(*values[read])
-        cuts = cuts_of[read]
+        value, memory_type = values[row]
+        text = json.dumps(value, ensure_ascii=False, default=str)  # chunking keeps key order
+        if (text, memory_type) not in cuts_of:
+            cuts_of[text, memory_type] = set_chunk_identities(value, memory_type)
+        cuts = cuts_of[text, memory_type]
         for c in by_writer.get((row.agent, row.user_id, row.memory_key), []):
             if (c.chunk_index, c.sha) in cuts:
                 identity = (row.agent, row.user_id, row.session_id)
