@@ -450,7 +450,10 @@ The reasoning is the verbatim span the retire step reads: the record has no fiel
 extracted decision, a maintainer reads its identity with `memory.get` and calls `memory.pin` under it, or attests
 its current value with `memory.verify`. Before an edit,
 `memory.for_file` marks an extracted row `(unconfirmed)` and `(source changed …)` as it does every decision row
-([Decisions](#decisions)).
+([Decisions](#decisions)). Extracted into a repository's trunk code namespace, the rows also reach `loom_search` from a
+checkout of the repository, as every decision recorded there does
+([unified search](unified-search.md#reading-the-memory-section)); that surface marks no pin state, so an extracted
+row reads there as any decision does until a maintainer confirms or deletes it.
 
 ## History policies
 
