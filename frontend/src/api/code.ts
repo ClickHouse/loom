@@ -458,7 +458,7 @@ export interface CodeAsOf {
 }
 
 export async function codeCoverage(id: CodeId, opts: RequestOpts = {}): Promise<CodeCoverage> {
-  return post<CodeCoverage>("/v1/code.coverage", { ...id }, opts.signal);
+  return post<CodeCoverage>("/v1/code.coverage", id, opts.signal);
 }
 
 export interface CodeContextPackRow {

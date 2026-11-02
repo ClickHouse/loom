@@ -265,9 +265,9 @@ that serves it, and give it a `viewer` token in any case. On it:
   refused call to a registry tool included (an unknown tool name writes no row).
   `namespace.audit`, `namespace.summary`, `mentor.brief` and
   `knowledge.reads` leave that consumer's and the dashboard's (`loom-ui`) reads out of
-  their usage counts, so looking at a namespace does not change its grade (a write from
-  the dashboard is a person using the namespace and still counts in `namespace.audit` and
-  `namespace.summary`); `namespace.audit` reports how many it left out in
+  their usage counts, so looking at a namespace does not change its grade (a change to a
+  memory from the dashboard is a person using the namespace and still counts in
+  `namespace.audit` and `namespace.summary`); `namespace.audit` reports how many it left out in
   `summary.inspector_calls`. A token whose `consumer` claim names another consumer keeps
   its claim, and its calls are counted.
 - **A read names whose rows it reads.** The assistant writes nothing, so its client's own
