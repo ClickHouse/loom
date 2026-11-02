@@ -80,15 +80,15 @@ def _readable(hit: dict[str, Any]) -> str:
         try:
             value = json.loads(raw)
         except ValueError:
-            return raw  # a value not stored as JSON (memory.set always encodes one)
+            return raw  # memory.set always stores JSON; any other text prints as stored
         return _encodable(
             value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
         )
     if not raw.startswith('"'):
         return raw
-    # An escape the cut split (`\u00e9` cut after `\u0`) leaves the text undecodable; drop
-    # the last few characters until it decodes.
-    for end in range(len(raw), max(len(raw) - 6, 1), -1):
+    # An escape the cut split (`\u00e9` cut after `\u0`) leaves the text undecodable; an
+    # escape is six characters, so dropping at most five of the last ones decodes it.
+    for end in range(len(raw), max(len(raw) - len("\\u0000"), 1), -1):
         try:
             text: str = json.loads(raw[:end] + '"')
         except ValueError:

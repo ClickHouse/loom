@@ -274,7 +274,8 @@ extra namespace (the repository's code namespace) is headed `Team rule (by <auth
 tag `decision`). A line lists its `constraint`, `gotcha` and `decision` kinds in one
 bracket (`[constraint, decision]`; a line headed `Decision` leaves out `decision`). It
 carries `(pinned)` for a pinned row, `(unconfirmed)` for a decision not pinned or attested
-in its current form (a pin or attestation by its own writer counts), `(outcome: failed)`
+in its current form (an attestation by its own writer counts; a member of a code namespace
+may not pin a row there, so a pinned team row was pinned by an admin), `(outcome: failed)`
 for a decision whose recorded outcome failed, and a note when its linked code changed or
 went. The value is printed as text, not as the JSON it is stored as, and ends in `…` when
 the read cut it. A decision with a source carries ` — source: <source_resource_id>` after

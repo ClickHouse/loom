@@ -255,9 +255,10 @@ def test_an_unpinned_decision_is_unconfirmed_in_either_namespace() -> None:
     assert own == f"- design/b [decision] (unconfirmed): Decided X because Y. — source: {_SOURCE}"
 
 
-def test_a_row_that_is_not_a_decision_renders_as_before() -> None:
+def test_a_row_that_is_not_a_decision_gets_no_decision_marks() -> None:
+    # No head, source or (unconfirmed); its value is printed as text like every row's.
     rule = _decision("rules/r", "Keep 64.", memory_type="semantic", tags=["constraint"])
-    note = _row("note", "Mine.", source_resource_id=_SOURCE, namespace="me")
+    note = _row("note", json.dumps("Mine."), source_resource_id=_SOURCE, namespace="me")
     assert _lines([rule, note])[1:3] == [
         "- Team rule (by alice, 3 days ago) [constraint] (pinned): Keep 64. [id: rules/r]",
         "- note: Mine.",
