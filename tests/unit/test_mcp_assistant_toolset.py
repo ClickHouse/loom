@@ -25,6 +25,7 @@ from server.operations.toolsets import (
 )
 from server.settings import settings
 from server.transport import mcp_call, mcp_op, mcp_primer
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
 @pytest.fixture(autouse=True)
@@ -345,16 +346,75 @@ def test_the_prompt_and_resource_describe_the_assistant_primer() -> None:
     assert "read-only" in mcp_primer._resources_descriptor("assistant")[0]["description"]
 
 
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.asyncio
-async def test_namespace_summary_leaves_the_inspectors_out_of_its_activity(
+async def test_namespace_summary_counts_a_dashboard_write_but_no_inspector_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.identity.api.models_namespace_catalog import NamespaceSummaryInput
-    from server.identity.app.namespace_summary import handle_namespace_summary
-    from tests.unit.ch_fake import RecordingCH
+    from server.identity.app import namespace_summary
 
-    ch = RecordingCH(strict=False).install(monkeypatch, "server.identity.app.namespace_summary")
-    await handle_namespace_summary(NamespaceSummaryInput(org="o", namespace="ns"))
-    activity = ch.statements("FROM loom.agent_events")[0]
-    assert "consumer NOT IN {inspectors:Array(String)}" in activity.sql
-    assert activity.params["inspectors"] == ["loom-ui", "loom-assistant"]
+    def call(operation: str, agent: str, consumer: str) -> str:
+        return (
+            "INSERT INTO loom.agent_events (org, namespace, agent, operation, consumer, ts) "
+            f"VALUES ('o', 'ns', '{agent}', '{operation}', '{consumer}', now())"
+        )
+
+    rows = [
+        call("memory.search", "bot", ""),
+        # A person editing a memory from the dashboard uses the namespace.
+        call("memory.set", "alice", "loom-ui"),
+        # The dashboard's and the assistant's reads only look at it.
+        call("memory.search", "alice", "loom-ui"),
+        call("memory.search", "helper", "loom-assistant"),
+    ]
+
+    class _Local:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+            if "FROM loom.agent_events" not in sql:
+                return []
+            return run([ddl("agent_events"), *rows], sql, params)
+
+        async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+            found = await self.query_all(sql, params)
+            return found[0] if found else None
+
+    monkeypatch.setattr(namespace_summary, "get_client", lambda: _Local())
+    out = await namespace_summary.handle_namespace_summary(
+        NamespaceSummaryInput(org="o", namespace="ns")
+    )
+    assert (out.recent_writes, out.recent_recalls, out.distinct_agents) == (1, 1, 2)
+
+
+def test_a_screened_refusal_on_the_assistant_connection_carries_its_consumer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth.jwt import AuthInfo
+    from server.observability import events
+    from server.operations.base import Role
+    from server.transport import mcp_auth
+
+    emitted: list[Any] = []
+
+    class _Emitter:
+        def emit(self, event: Any) -> None:
+            emitted.append(event)
+
+    monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
+    monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: _Emitter())
+
+    async def _no(*_a: Any) -> tuple[bool, bool]:
+        return False, False
+
+    monkeypatch.setattr(mcp_auth, "_may_read", _no)
+    eve = AuthInfo(
+        subject="eve", org="eve-org", namespaces=(), roles=(Role.VIEWER,), is_service_account=False
+    )
+    for arguments in ({"org": "acme", "memory_key": "k"}, {"namespace": "n", "memory_key": "k"}):
+        req = {"id": 1, "method": "tools/call", "params": {"name": "loom_memory_get"}}
+        req["params"]["arguments"] = arguments  # type: ignore[index]
+        assert asyncio.run(mcp_auth._screen_tool_call(req, eve, consumer="loom-assistant"))
+    assert [(e.error_code, e.consumer) for e in emitted] == [
+        ("ORG_MISMATCH", "loom-assistant"),
+        ("NAMESPACE_NOT_ACCESSIBLE", "loom-assistant"),
+    ]

@@ -62,14 +62,27 @@ def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]
 
 
 def _ledger_refusal(
-    tool_name: Any, auth: AuthInfo, *, error_code: str, org: str = "", server_fault: bool = False
+    tool_name: Any,
+    auth: AuthInfo,
+    *,
+    error_code: str,
+    org: str = "",
+    server_fault: bool = False,
+    consumer: str = "",
 ) -> None:
     from server.transport.mcp_ledger import emit_token_refusal
     from server.transport.mcp_tools import TOOLS_BY_NAME
 
     op = TOOLS_BY_NAME.get(str(tool_name or ""))
     if op is not None:
-        emit_token_refusal(op.name, auth, error_code=error_code, org=org, server_fault=server_fault)
+        emit_token_refusal(
+            op.name,
+            auth,
+            error_code=error_code,
+            org=org,
+            server_fault=server_fault,
+            consumer=consumer,
+        )
 
 
 async def _plane_namespace(
@@ -272,14 +285,17 @@ def _token_refused(
     )
 
 
-async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, Any] | None:
+async def _screen_tool_call(
+    req: dict[str, Any], auth: AuthInfo, *, consumer: str = ""
+) -> dict[str, Any] | None:
     """The pre-dispatch screen of an authenticated `tools/call`: the call's
     `org` must be one the token may act in (ORG_MISMATCH), and a `namespace`
     the gate would not let it read is refused (NAMESPACE_NOT_ACCESSIBLE) — a
     code/tracker tool's resolves to the namespace it names, rewritten into
     the arguments in place. Returns the
     refusal response, or None to dispatch. A malformed `params` /
-    `arguments` passes through: `_handle_request` answers it."""
+    `arguments` passes through: `_handle_request` answers it. `consumer`: the one the
+    connection names, which a refusal row carries below a token's claim."""
     from server.transport import namespace_resolve as nr
 
     # The resolution note is this call's: a batch runs its entries in one
@@ -306,7 +322,7 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
         # drop conversation state on those) — so the agent reads
         # the message and can recover. Ledgered in the token's org, never
         # the one the call named.
-        _ledger_refusal(tool_name, auth, error_code="ORG_MISMATCH")
+        _ledger_refusal(tool_name, auth, error_code="ORG_MISMATCH", consumer=consumer)
         msg = f"token org {auth.org!r} != request org {req_org!r}"
         return _ok(
             req.get("id"),
@@ -322,11 +338,13 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
     from server.core.errors import LoomServerError
 
     try:
-        return await _screen_namespace(req, tool_name, args, auth, target_org, str(req_ns))
+        return await _screen_namespace(
+            req, tool_name, args, auth, target_org, str(req_ns), consumer
+        )
     except LoomServerError as e:
         # A read the check could not make past its cache (a 503): counted
         # against the server, then raised.
-        _ledger_refusal(tool_name, auth, error_code=e.code, org=target_org)
+        _ledger_refusal(tool_name, auth, error_code=e.code, org=target_org, consumer=consumer)
         raise
 
 
@@ -337,6 +355,7 @@ async def _screen_namespace(
     auth: AuthInfo,
     target_org: str,
     req_ns: str,
+    consumer: str,
 ) -> dict[str, Any] | None:
     """The screen's namespace check: None when the caller may read `req_ns`
     (or the code/tracker index it resolves to, written into `args`), else
@@ -356,7 +375,14 @@ async def _screen_namespace(
             refusal, unverified = _not_accessible_result(tool_name, auth, req_ns), given_unverified
         # The org the token may act in, as HTTP records the same refusal.
         code = str(refusal["structuredContent"]["code"])
-        _ledger_refusal(tool_name, auth, error_code=code, org=target_org, server_fault=unverified)
+        _ledger_refusal(
+            tool_name,
+            auth,
+            error_code=code,
+            org=target_org,
+            server_fault=unverified,
+            consumer=consumer,
+        )
         return _ok(req.get("id"), refusal)
     # Readable: the op's own gate enforces the role it requires.
     return None

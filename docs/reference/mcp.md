@@ -261,8 +261,9 @@ that serves it, and give it a `viewer` token in any case. On it:
 - **Its calls are ledgered as consumer `loom-assistant`**, whatever the call sends, a
   refused one included.
   `namespace.audit`, `namespace.summary`, `mentor.brief` and `knowledge.reads` leave that
-  consumer and the dashboard's (`loom-ui`) out of their usage counts, so looking at a namespace does not
-  change its grade; `namespace.audit` reports how many it left out in
+  consumer's and the dashboard's (`loom-ui`) reads out of their usage counts, so looking
+  at a namespace does not change its grade (a write from the dashboard is a person using
+  the namespace and still counts in `namespace.audit` and `namespace.summary`); `namespace.audit` reports how many it left out in
   `summary.inspector_calls`. A token whose `consumer` claim names another consumer keeps
   its claim, and its calls are counted.
 - **Reads do not record usage.** `memory.search` runs with `auto_touch: false` and

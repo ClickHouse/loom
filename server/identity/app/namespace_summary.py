@@ -66,19 +66,22 @@ async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSum
         return await ch.query_one(
             """
             SELECT
-                countIf(operation IN ('memory.set', 'memory.bulk_set',
-                                       'memory.set_from_messages',
-                                       'memory.update_by_id',
-                                       'memory.touch'))   AS writes,
+                countIf(is_write)                         AS writes,
                 countIf(operation = 'memory.search')      AS recalls,
                 uniqExact(agent)                          AS agents,
                 max(ts)                                   AS last_at
-            FROM loom.agent_events
-            WHERE org = {org:String}
-              AND namespace = {ns:String}
-              AND ts >= now() - INTERVAL {win:UInt32} SECOND
-              -- the dashboard's and the assistant's calls inspect the namespace, not use it
-              AND consumer NOT IN {inspectors:Array(String)}
+            FROM (SELECT operation, agent, ts, consumer,
+                         operation IN ('memory.set', 'memory.bulk_set',
+                                       'memory.set_from_messages',
+                                       'memory.update_by_id',
+                                       'memory.touch') AS is_write
+                  FROM loom.agent_events
+                  WHERE org = {org:String}
+                    AND namespace = {ns:String}
+                    AND ts >= now() - INTERVAL {win:UInt32} SECOND)
+            -- the dashboard's and the assistant's reads inspect the namespace, not use it;
+            -- a write from the dashboard is a person using it
+            WHERE is_write OR consumer NOT IN {inspectors:Array(String)}
             """,
             params={
                 **params,

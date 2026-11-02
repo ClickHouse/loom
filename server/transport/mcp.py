@@ -38,6 +38,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, Request, Response
 
 from server.identity.app.caller_home import caller_org
+from server.observability.consumer import ASSISTANT_CONSUMER
 from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
 from server.transport.mcp_auth import (
@@ -390,7 +391,11 @@ def attach(app: FastAPI) -> None:
                 return early
             # AuthZ: identity must match the args; a namespace the JWT lacks → grants.
             if auth is not None and req.get("method") == "tools/call":
-                screened = await _screen_tool_call(req, auth)
+                # An assistant connection's refusals are its own, as its calls are.
+                assistant = assistant_connection(request.query_params.get("toolset"))
+                screened = await _screen_tool_call(
+                    req, auth, consumer=ASSISTANT_CONSUMER if assistant else ""
+                )
                 if screened is not None:
                     return screened
             return await _handle_request(

@@ -490,10 +490,10 @@ class _Audit:
             f"""
             SELECT countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}) AS gets,
                    countIf(operation IN {_LEDGER_SEARCHES} AND {_AGENT_CALL}) AS searches,
-                   countIf(operation IN {_LEDGER_SETS} AND {_AGENT_CALL}) AS sets,
+                   -- a write from the dashboard is a person using the namespace
+                   countIf(operation IN {_LEDGER_SETS}) AS sets,
                    countIf(NOT ({_AGENT_CALL}) AND (operation IN {_LEDGER_GETS}
-                           OR operation IN {_LEDGER_SEARCHES}
-                           OR operation IN {_LEDGER_SETS})) AS inspector_calls
+                           OR operation IN {_LEDGER_SEARCHES})) AS inspector_calls
             {_LEDGER_ALL}
             """
         )

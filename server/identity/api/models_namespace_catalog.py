@@ -158,9 +158,10 @@ class NamespaceSummaryOutput(BaseModel):
     recent_writes: int  # memory write calls in the activity window
     recent_recalls: int  # memory.search calls in the window
     # Distinct agents with a ledger row in the activity window; the dashboard's and the
-    # assistant toolset's calls are left out, as they are of the two counts above.
+    # assistant toolset's reads are left out, as they are of the recalls above (a write
+    # from the dashboard counts).
     distinct_agents: int
-    # Time of the newest ledger row in the activity window, the same calls left out.
+    # Time of the newest ledger row in the activity window, the same reads left out.
     last_activity_at: datetime | None
 
 
@@ -345,7 +346,7 @@ class NamespaceAuditSummary(BaseModel):
     sets: int = 0
     # gets / max(searches, 1): the object-store gauge.
     get_search_ratio: float = 0.0
-    # The gets, searches and sets in the window from the dashboard and the assistant
+    # The gets and searches in the window from the dashboard and the assistant
     # toolset (consumers `loom-ui`, `loom-assistant`), left out of the counts above.
     inspector_calls: int = 0
 
