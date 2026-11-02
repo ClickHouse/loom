@@ -2412,6 +2412,7 @@ async def test_a_parent_sections_captioned_picture_is_not_sent(monkeypatch) -> N
         ("[image][1]", False),
         ("[image]: x.png", False),
         ("[imagine the merge]", False),
+        ("[the diagram][image]", False),
     ],
 )
 def test_an_image_placeholder_stands_alone(body: str, image: bool) -> None:
@@ -2539,3 +2540,27 @@ async def test_a_linked_badge_and_caption_preamble_is_not_sent(monkeypatch) -> N
     (prompt,) = world.prompts
     assert "Build status" not in prompt[1]
     assert report.image_only == ["", "Spilling > Architecture"]
+
+
+@pytest.mark.asyncio
+async def test_a_headingless_document_of_a_captioned_picture_is_not_sent(
+    monkeypatch, capsys
+) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    picture = "![flow](flow.png)\n\nFigure 1: the spill path."
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=picture)
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, picture, ())]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    assert world.prompts == [] and report.windows == 0
+    assert report.image_only == [""]
+    cli.print_report(report)
+    assert "image-only, rationale not extracted: (untitled)" in capsys.readouterr().out

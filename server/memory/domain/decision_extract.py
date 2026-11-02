@@ -25,13 +25,13 @@ REJECTED = " — rejected: "
 # A Markdown image (inline, or by reference: `![diagram][fig1]`), an HTML image tag, or a
 # slide export's placeholder.
 # A placeholder is `[image]`, `[Image 3]`, `[image: ...]`, `[image_1]` or `[pictures]`,
-# never followed by a link target: `[image tiles](tiles.md)`, `[image][1]` and
-# `[image]: x.png` are links, `[imagine]` a word.
+# never part of a link: `[image tiles](tiles.md)`, `[image][1]`, `[image]: x.png` and the
+# label of `[the diagram][image]` are links, `[imagine]` a word.
 _IMAGE_MARKUP = re.compile(
     r"!\[[^\]]*\]\([^)]*\)"
     r"|!\[[^\]]*\]\[[^\]]*\]"
     r"|<img\b[^>]*>"
-    r"|\[(?:image|picture)s?(?:[\s:_\d][^\]]*)?\](?![(\[:])",
+    r"|(?<!\])\[(?:image|picture)s?(?:[\s:_\d][^\]]*)?\](?![(\[:])",
     re.I,
 )
 _LETTER = re.compile(r"[^\W\d_]")
@@ -370,9 +370,7 @@ def image_only_sections(content: str) -> list[str]:
     heading alone, over a picture, or over a picture and a caption of up to
     CAPTION_MAX_CHARS. A heading alone over its subsections is not one; a heading over a
     picture and then subsections is. The text above the first heading, or a document with
-    no heading, counts when it holds a picture; its breadcrumb is '', and the run judges
-    each chunk stored with that empty path on its own text too. The run neither sends nor
-    reads these sections."""
+    no heading, counts when it holds a picture; its breadcrumb is ''."""
     sections = detect_sections(content) or [Section(path=(), depth=0, start=0, lines=[content])]
     out: list[str] = []
     for i, sec in enumerate(sections):

@@ -388,8 +388,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   consonant undoubled, so `stored` meets `store` and `running` meets `run`. Filler words (`we`, `the`, `will`,
   `decided`, `chose`, `use`, `instead` and the like) are skipped in any form: "We decided on spilling into sorted runs."
   restates the outcome `spill into sorted runs`; "Sorted runs avoid random reads on disk." gives a reason. An outcome
-  that carries its own reason leaves the reasoning nothing to add, so the candidate is dropped; the prompt asks for the
-  outcome without the reason for that reason.
+  that carries its own reason leaves the reasoning nothing to add, so the candidate is dropped, which is why the prompt
+  asks for the outcome without its reason.
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.
