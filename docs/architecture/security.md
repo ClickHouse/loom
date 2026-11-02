@@ -779,11 +779,11 @@ text still reads as an assignment) states its string value as `password: <value>
 value is one token of 8+ characters holding a letter and a digit and is not a reference
 (`env:NAME`, `vault:PATH`, `secret:NAME`, `ref:NAME`, an all-caps `$NAME`, `${NAME}`, a
 value that opens with `/`, a segment, then `/` (`/etc/key1`), or one opening `~/`, `./` or
-`../`; a base64 secret of that shape reads as a path and is missed). A URL is never a reference,
-since a webhook or a presigned URL is the secret itself, so a URL that only names where a
-secret lives reads `high`, as does an ARN that names one (its `secret:` part reads as an
-assignment). A relative path
-without one of those prefixes (`src/app1`) still reads as a secret. A quote, comma or
+`../`; a base64 secret of that shape reads as a path and is missed). A URL is never a
+reference, since a webhook or a presigned URL is the secret itself, so a URL that only names
+where a secret lives reads `high`, as does an ARN that names one (its `secret:` part reads
+as an assignment). A relative path without one of those prefixes (`src/app1`) still reads
+as a secret. A quote, comma or
 semicolon in the value does not cut it short. So `{"db": {"password": "hunter2xyz"}}` and
 `{"password": "admin:Passw0rd"}` are `high`, and `{"password": "required"}`, `{"password":
 "********"}`, `{"api_key": "YOUR_API_KEY"}` and `{"api_key": "env:OPENAI_API_KEY"}` are

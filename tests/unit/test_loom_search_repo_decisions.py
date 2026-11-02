@@ -893,8 +893,8 @@ async def test_two_rows_of_one_decision_key_count_as_one_decision(monkeypatch) -
 async def test_merged_decisions_explain_as_the_home_search_does(
     monkeypatch, top_k, explain, kept
 ) -> None:
-    # the pass asks for per_key_fetch(top_k) rows, past the excerpt k, yet its merged hits
-    # keep or drop their score_components by the caller's top_k and explain
+    # the pass asks with explain=True, and its merged hits keep or drop their
+    # score_components by the caller's top_k and explain
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_search_excerpt_bodies_k", 15)
@@ -905,3 +905,26 @@ async def test_merged_decisions_explain_as_the_home_search_does(
     (decision,) = [h for h in out.results if h.memory_key == "decision:evict"]
     elided = bool(getattr(decision, "_elide", frozenset()))
     assert elided is not kept
+    assert next(c for c in calls if c.namespace == TRUNK).explain is True
+
+
+@pytest.mark.asyncio
+async def test_merged_decisions_follow_the_home_searchs_settled_top_k(monkeypatch) -> None:
+    # a role ceiling settles the home search at 10: its hits are explained, so are the
+    # decisions merged into them, though the request asked for 20
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_search_excerpt_bodies_k", 15)
+    search = _search(PLANES, [])
+
+    async def capped(inp: MemorySearchInput) -> MemorySearchOutput:
+        out = await search(inp)
+        if inp.namespace == "me":
+            out._settled_input = inp.model_copy(update={"top_k": 10})
+        return out
+
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", capped)
+    inp = BASE.model_copy(update={"top_k": 20})
+    out = await repo_decisions.memory_with_repo_decisions(inp, repo_namespace=TRUNK)
+    (decision,) = [h for h in out.results if h.memory_key == "decision:evict"]
+    assert not getattr(decision, "_elide", frozenset())

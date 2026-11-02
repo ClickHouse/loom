@@ -388,7 +388,7 @@ def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
         {"password": "config/db/pass1"},  # a relative path is not a reference
         {"db_pwd": "hunter2xyz9"},
         {"db_password": "postgres://app:s3cretPw@db/main"},
-        {"webhook_secret": "https://hooks.slack.com/services/T000/B000/XXXXabc123"},
+        {"webhook_secret": "https://hooks.example/services/T000/B000/XXXXabc123"},
         # a URL that only names where the secret lives reads high too: a known false positive
         {"db_password": "https://vault.example/v1/secret/db1"},
         # an ARN's `secret:` part reads as an assignment: a known false positive
