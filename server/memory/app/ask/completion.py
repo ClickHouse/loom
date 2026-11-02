@@ -79,7 +79,7 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
               -- a high value is readable by key only, not as an answer's excerpt
               AND sensitivity != 'high'
               AND memory_key LIKE {{pat:String}}
-            ORDER BY version DESC
+            ORDER BY version DESC, agent, user_id, session_id  -- ties keep one order
             -- one attribute written in many sessions leaves room for the bridge's others
             LIMIT {{per_key:UInt32}} BY memory_key
             LIMIT {{lim:UInt32}}

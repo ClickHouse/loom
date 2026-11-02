@@ -78,3 +78,14 @@ async def test_with_no_cap_one_key_takes_up_to_the_follows_top_k(monkeypatch) ->
     monkeypatch.setattr(settings, "memory_search_per_key_cap", 0)
     hits = await bridge_rows_by_key(_ask(), "Bernard Arnault", top_k=2)
     assert [h.session_id for h in hits] == ["s3", "s2"]
+
+
+@pytest.mark.asyncio
+async def test_rows_of_one_key_at_one_version_keep_one_order(monkeypatch) -> None:
+    from server.settings import settings
+
+    ch = _LocalCH(*(_row(s, "bernard_arnault_citizen_of", "France") for s in ("s3", "s1", "s2")))
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(settings, "memory_search_per_key_cap", 2)
+    hits = await bridge_rows_by_key(_ask(), "Bernard Arnault")
+    assert [h.session_id for h in hits] == ["s1", "s2"]
