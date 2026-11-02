@@ -512,7 +512,7 @@ async def _candidates(
             again = await _read_window(
                 llm, system, w, report, fake_chosen=fake_chosen, note=note, answered_already=True
             )
-            repaired = _repairs(again or [], failed, state.kept[before:], first, report)
+            repaired = _repairs(w, again or [], failed, state.kept[before:], report)
             _check_window(org, namespace, source_uri, w, repaired, state, report)
     return state.kept, answered
 
@@ -521,10 +521,10 @@ _REPEATED = "the second read repeats a decision the first reply gave"
 
 
 def _repairs(
+    w: Window,
     again: list[dx.Candidate],
     failed: list[tuple[str, str]],
     kept: list[tuple[dx.Candidate, str, list[str]]],
-    section: str,
     report: ExtractReport,
 ) -> list[dx.Candidate]:
     """The second read's candidates that repair a failed one: a candidate with a failed
@@ -532,11 +532,13 @@ def _repairs(
     decision given again, its scenario reworded, would be written twice."""
     outcomes = {outcome for outcome, _span in failed}
     reasonings = {collapse_ws(c.reasoning) for c, _section, _texts in kept}
+    texts = [c.text for c in w.chunks]
     out: list[dx.Candidate] = []
     for cand in again:
         if cand.outcome in outcomes or collapse_ws(cand.reasoning) not in reasonings:
             out.append(cand)
         else:
+            section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
             report.dropped.append(Dropped(section, _REPEATED, cand.quote))
     return out
 

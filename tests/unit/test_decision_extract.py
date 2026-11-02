@@ -2806,6 +2806,60 @@ async def test_a_second_read_repeating_a_kept_decision_writes_it_once(monkeypatc
     ]
 
 
+_ONE = "We spill into sorted runs like ORDER BY. A plain set on disk costs random reads."
+_TWO = "The merge reads each run once. One pass keeps reads sequential."
+_MERGE = _candidate(
+    scenario="the merge",
+    outcome="merge each run once",
+    quote="The merge reads each run once.",
+    reasoning="One pass keeps reads sequential.",
+    alternatives=[],
+    mentions=[],
+)
+_SPILL = _candidate(
+    quote="We spill into sorted runs like ORDER BY.",
+    reasoning=_STITCHED_REASONING,
+    alternatives=[],
+    mentions=[],
+)
+
+
+async def _second_read(monkeypatch, again: list[dict[str, Any]]) -> tuple[Any, Any]:
+    """A window of two sections: the first reply keeps the merge and joins the spill's
+    reason; `again` is the second reply."""
+    world = _World(monkeypatch, [])
+    _chunks(monkeypatch, (_ONE, ("Spilling", "One")), (_TWO, ("Spilling", "Two")))
+    world.replies = [[_SPILL, _MERGE], again]
+    return world, await _run()
+
+
+@pytest.mark.asyncio
+async def test_a_repeat_in_a_later_section_is_reported_there(monkeypatch) -> None:
+    world, report = await _second_read(monkeypatch, [{**_MERGE, "scenario": "merging runs"}])
+    assert [inp.scenario for inp in world.recorded] == ["the merge"]
+    assert [(d.section, d.reason) for d in report.dropped] == [
+        ("Spilling > One", "reasoning is not in the document text"),
+        ("Spilling > Two", de._REPEATED),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_repair_with_a_reworded_outcome_and_a_new_reasoning_is_recorded(
+    monkeypatch,
+) -> None:
+    repair = {
+        **_SPILL,
+        "outcome": "spill to sorted runs on disk",
+        "reasoning": "A plain set on disk costs random reads.",
+    }
+    world, report = await _second_read(monkeypatch, [repair])
+    assert [inp.outcome for inp in world.recorded] == [
+        "merge each run once",
+        "spill to sorted runs on disk",
+    ]
+    assert [d.reason for d in report.dropped] == ["reasoning is not in the document text"]
+
+
 @pytest.mark.asyncio
 async def test_a_window_gets_at_most_one_extra_call(monkeypatch) -> None:
     world = _World(monkeypatch, [_candidate()])

@@ -261,14 +261,14 @@ repository, for a caller who may read the namespace ([unified search](unified-se
 
 The memory row's value is one statement,
 `Category: <category>. Scenario: <scenario>. Decided <outcome> because <reasoning>. Rejected: <alternative>; …`, then
-`Realized: …` once `decision.outcome` has recorded one. A reasoning that is the outcome word for word (case and
-whitespace aside) records a ban or an invariant stated with no reason: the statement reads `Decided <outcome>.`, the
-outcome keeping the reasoning's room as well, and `context.pack` gives no `because`. Search embeds and excerpts it and
-`memory.for_file` shows it. Each part is shortened to fit the embedded excerpt, the scenario most, because the pre-edit
-line shows the start of the statement and must reach the outcome. The excerpt is measured as the value is stored,
-JSON-encoded, where a non-ASCII character takes six or more, so a Cyrillic or CJK part keeps about a sixth as many
-characters as an ASCII one. The record keeps every field in full except the alternatives, each kept to its first 300
-characters.
+`Realized: …` once `decision.outcome` has recorded one. A reasoning that is the outcome word for word (case, whitespace
+and the closing punctuation aside) records a ban or an invariant stated with no reason: the statement reads
+`Decided <outcome>.`, the outcome keeping the reasoning's room as well, and `context.pack` gives no `because`. Search
+embeds and excerpts it and `memory.for_file` shows it. Each part is shortened to fit the embedded excerpt, the scenario
+most, because the pre-edit line shows the start of the statement and must reach the outcome. The excerpt is measured as
+the value is stored, JSON-encoded, where a non-ASCII character takes six or more, so a Cyrillic or CJK part keeps about
+a sixth as many characters as an ASCII one. The record keeps every field in full except the alternatives, each kept to
+its first 300 characters.
 
 - **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the
   fields the statement is built from in full (not `decision_maker` or `run_id`, which the row never holds).
