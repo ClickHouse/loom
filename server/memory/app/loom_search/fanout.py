@@ -280,8 +280,8 @@ async def search_sections(
     payload: dict[str, Any] = {"tracker": t_section} if isinstance(t_section, dict) else {}
     payload["namespaces_skipped"] = skipped
     models: dict[int, _MemorySearchHit] = {}  # each dumped row's search model, by the row's id
-    # The input the memory search ran; None for a page served from the parked
-    # list, which searched nothing and carries no reader block.
+    # The input the memory search ran (the block renders with its sanitized query,
+    # as memory.search does); None for a parked page, which searched nothing.
     settled: MemorySearchInput | None = None
     if isinstance(mem_result, Exception):
         payload["memory"] = {"error": _leg_error(mem_result), "results": []}

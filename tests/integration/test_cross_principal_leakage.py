@@ -1950,7 +1950,9 @@ def test_loom_search_under_a_code_scope_serves_no_decision_to_a_non_reader(
             "memory.get",
             {"org": d.org, "namespace": d.namespace, "agent": "maintainer", "memory_key": d.key},
         )
-        assert r.status_code == 403 or not r.json().get("found"), r.text
+        assert r.status_code == 403 or (r.status_code == 200 and r.json().get("found") is False), (
+            r.text
+        )
     r = _loom_search_in_checkout(control_plane_url, tok, d)
     assert r.status_code == 200, r.text
     assert d.nonce not in r.text, f"{who} read the repository's decision"

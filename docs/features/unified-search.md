@@ -84,8 +84,8 @@ placed among the home hits by similarity.
 The reading rule rides ahead of the block once per MCP session, then as a one-line pointer (every time for a client
 that sends no session id).
 
-- `memory.candidates_total` counts the matches, and is at least the rows served; decisions merged in may push home
-  rows out. When `memory.next_page` is set and the answer needs every match (a list, a count), call again with `page`
+- `memory.candidates_total` counts the matches, decisions merged in included. Decisions do not count against `top_k`
+  (at most `top_k` of them join), so no home row is pushed out. When `memory.next_page` is set and the answer needs every match (a list, a count), call again with `page`
   = `memory.next_page`; later pages continue the home search alone. An expired handle abstains with `page_expired`.
 - Repository decisions are served at the stored clip (a recorded statement fits it, reason included), or as keys
   only under `bodies=none`. `bodies_returned`, `bodies_elided` and `tokens_returned` count the home

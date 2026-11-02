@@ -83,24 +83,19 @@ async def search_repo_decisions(
     return out
 
 
-def _is_computed_row(h: _MemorySearchHit) -> bool:
-    """A computed row `memory.search` pins first and serves above `top_k`
-    (a derived aggregate or a date difference)."""
-    return h.source in ("derived", "computed")
-
-
 def merge_memory_hits(
-    base: list[_MemorySearchHit], extra: list[_MemorySearchHit], home_ns: str, top_k: int
+    base: list[_MemorySearchHit], extra: list[_MemorySearchHit], home_ns: str
 ) -> tuple[list[_MemorySearchHit], list[_MemorySearchHit]]:
     """One memory list and the `extra` hits added to it. `base` keeps its
     own order (rank order, not always falling similarity); each `extra` hit
     goes after the last base hit whose similarity is at least its own (the
-    rank scores of two searches do not compare), so it never displaces a
-    home hit that matched better. One hit per (namespace, memory_key), cut
-    at `top_k` (a computed row does not count)."""
+    rank scores of two searches do not compare). One hit per (namespace,
+    memory_key). Nothing is cut: the extra hits are bounded by their own
+    search's `top_k`, and a base hit pushed out would be served on no page."""
     seen = {(h.namespace or home_ns, h.memory_key) for h in base}
     # slots[i]: the extra hits that go after the first i base hits
     slots: list[list[_MemorySearchHit]] = [[] for _ in range(len(base) + 1)]
+    added: list[_MemorySearchHit] = []
     for h in sorted(extra, key=lambda x: x.similarity, reverse=True):
         key = (h.namespace or home_ns, h.memory_key)
         if key in seen:
@@ -108,21 +103,11 @@ def merge_memory_hits(
         seen.add(key)
         after = max((i + 1 for i, b in enumerate(base) if b.similarity >= h.similarity), default=0)
         slots[after].append(h)
-    merged: list[tuple[_MemorySearchHit, bool]] = [(h, True) for h in slots[0]]
+        added.append(h)
+    out = list(slots[0])
     for i, b in enumerate(base):
-        merged.append((b, False))
-        merged.extend((h, True) for h in slots[i + 1])
-    out: list[_MemorySearchHit] = []
-    added: list[_MemorySearchHit] = []
-    kept = 0
-    for h, from_extra in merged:
-        if not _is_computed_row(h):
-            if kept == top_k:
-                continue
-            kept += 1
-        out.append(h)
-        if from_extra:
-            added.append(h)
+        out.append(b)
+        out.extend(slots[i + 1])
     return out, added
 
 
@@ -147,21 +132,17 @@ async def memory_with_repo_decisions(
     decisions = await extra
     if decisions is None:
         return base
-    # The role ceiling the base search applied bounds the merged list too.
-    top_k = base.top_k_ceiling or mem_input.top_k
-    hits, added = merge_memory_hits(base.results, decisions.results, mem_input.namespace, top_k)
+    hits, added = merge_memory_hits(base.results, decisions.results, mem_input.namespace)
     if not added:
         return base
     # Credited as the base search credits its own: for the hits it hands on,
     # before the section's floors and answer-first rules, with the input the
-    # decision pass ran (set on every pass that searched).
-    settled = decisions._settled_input
-    if settled is not None:
-        await credit_merged_hits(settled, added)
+    # decision pass ran (a pass that searched always carries it).
+    assert decisions._settled_input is not None
+    await credit_merged_hits(decisions._settled_input, added)
     update: dict[str, Any] = {
         "results": hits,
-        # At least what is served; the "more on a later page" text follows next_page.
-        "candidates_total": max(base.candidates_total, len(hits)),
+        "candidates_total": base.candidates_total + len(added),
         "namespaces_searched": list(dict.fromkeys([*base.namespaces_searched, repo_namespace])),
         "reader_block": "",
     }

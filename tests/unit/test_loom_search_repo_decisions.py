@@ -169,6 +169,7 @@ def _search(results_by_ns: dict[str, list[_MemorySearchHit]], calls: list[Any], 
             reader_block="old block" if inp.render == "reader" and hits else "",
             reader_instructions="rules" if inp.render == "reader" else "",
             namespaces_searched=[inp.namespace],
+            candidates_total=len(hits),
             abstain=not hits,
             abstain_code="" if hits else "no_match",
             abstain_reason="" if hits else "no results",
@@ -246,16 +247,17 @@ async def test_an_empty_home_namespace_serves_the_decision_without_abstaining(
     assert block.startswith("[undated] [decision:evict] (decision, code-kj)")
 
 
-def test_the_merge_keeps_one_hit_per_namespace_and_key_and_cuts_at_top_k() -> None:
+def test_the_merge_keeps_one_hit_per_namespace_and_key() -> None:
     base = [_hit("a", 0.8, "me"), _hit("same", 0.5, TRUNK), _hit("b", 0.3, "")]
     extra = [_hit("same", 0.9, TRUNK), _hit("d", 0.6, TRUNK), _hit("b", 0.7, TRUNK)]
-    out, added = repo_decisions.merge_memory_hits(base, extra, "me", 4)
+    out, added = repo_decisions.merge_memory_hits(base, extra, "me")
     assert [h.memory_key for h in added] == ["b", "d"]
     assert [(h.memory_key, h.namespace, h.similarity) for h in out] == [
         ("a", "me", 0.8),
         ("b", TRUNK, 0.7),  # another namespace's `b` is another row
         ("d", TRUNK, 0.6),
         ("same", TRUNK, 0.5),  # the base copy stays, the extra one is dropped
+        ("b", "", 0.3),
     ]
 
 
@@ -399,21 +401,20 @@ async def test_only_the_merged_decisions_are_credited_once(monkeypatch) -> None:
 
     monkeypatch.setattr("server.memory.app.search.telemetry.credit_merged_hits", credit)
     planes = {
-        "me": [_hit("note-a", 0.6, "me"), _hit("note-b", 0.55, "me")],
+        # the home fan-out already read decision:seen; its own search credits it
+        "me": [_hit("note-a", 0.6, "me"), _hit("decision:seen", 0.55, TRUNK)],
         TRUNK: [
             _hit("decision:kept", 0.58, mtype="decision"),
-            _hit("decision:cut", 0.1, mtype="decision"),
+            _hit("decision:seen", 0.55, mtype="decision"),
         ],
     }
-    out = await _leg(
-        monkeypatch, TRUNK, [], planes=planes, inp=BASE.model_copy(update={"top_k": 3})
-    )
-    assert [h.memory_key for h in out.results] == ["note-a", "decision:kept", "note-b"]
+    out = await _leg(monkeypatch, TRUNK, [], planes=planes)
+    assert [h.memory_key for h in out.results] == ["note-a", "decision:kept", "decision:seen"]
     assert credited == [(TRUNK, ["decision:kept"])]
 
 
 @pytest.mark.asyncio
-async def test_candidates_total_is_at_least_what_the_section_serves(monkeypatch) -> None:
+async def test_candidates_total_counts_the_merged_decisions(monkeypatch) -> None:
     async def counted(total: int):
         async def search(inp: MemorySearchInput) -> MemorySearchOutput:
             out = await _search(PLANES, [])(inp)
@@ -424,8 +425,7 @@ async def test_candidates_total_is_at_least_what_the_section_serves(monkeypatch)
         monkeypatch.setattr("server.memory.app.search.handle_memory_search", search)
         return await repo_decisions.memory_with_repo_decisions(BASE, repo_namespace=TRUNK)
 
-    assert (await counted(10)).candidates_total == 10  # the home pool's count stands
-    assert (await counted(0)).candidates_total == 3  # never fewer than the rows served
+    assert (await counted(10)).candidates_total == 11  # the home pool's count plus the decision
 
 
 @pytest.mark.asyncio
@@ -499,40 +499,29 @@ async def test_capture_consent_is_narrowed_to_the_repository_before_any_leg(
     assert order == [f"narrow:me,mine-2,{TRUNK}", f"search:{TRUNK}"]
 
 
-def test_the_merge_does_not_count_the_computed_rows_against_top_k() -> None:
-    aggregate = _hit("derived_aggregate", 1.0, "me")
-    aggregate.source = "derived"
-    date_diff = _hit("temporal_diff", 1.0, "me")
-    date_diff.source = "computed"
-    base = [date_diff, aggregate, _hit("a", 0.8, "me"), _hit("b", 0.4, "me")]
-    extra = [_hit("d", 0.6, TRUNK)]
-    out, added = repo_decisions.merge_memory_hits(base, extra, "me", 2)
-    # the pinned computed rows ride above top_k, as memory.search serves them
-    assert [h.memory_key for h in out] == ["temporal_diff", "derived_aggregate", "a", "d"]
-    assert [h.memory_key for h in added] == ["d"]
-
-
 @pytest.mark.asyncio
-async def test_the_merged_section_is_cut_at_the_ceiling_the_base_search_applied(
-    monkeypatch,
-) -> None:
+async def test_decisions_join_above_the_ceiling_the_base_search_applied(monkeypatch) -> None:
+    """The base search's own cut stands and nothing is cut after the merge."""
+
     async def ceiling_search(inp: MemorySearchInput) -> MemorySearchOutput:
         out = await _search(PLANES, [])(inp)
         if inp.namespace == "me":
             out.top_k_ceiling = 1
             out.results = out.results[:1]
+            out.candidates_total = 2
         return out
 
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", ceiling_search)
     out = await repo_decisions.memory_with_repo_decisions(BASE, repo_namespace=TRUNK)
-    assert [h.memory_key for h in out.results] == ["note-a"]  # top_k 3, ceiling 1
+    assert [h.memory_key for h in out.results] == ["note-a", "decision:evict"]
+    assert out.candidates_total == 3
 
 
-def test_a_decision_below_every_home_hit_never_displaces_one() -> None:
+def test_a_decision_below_every_home_hit_goes_last() -> None:
     base = [_hit("a", 0.8, "me", rank=0.01), _hit("b", 0.7, "me", rank=0.01)]
     extra = [_hit("d", 0.69, TRUNK, rank=0.99)]
-    out, added = repo_decisions.merge_memory_hits(base, extra, "me", 2)
-    assert [h.memory_key for h in out] == ["a", "b"] and added == []
+    out, added = repo_decisions.merge_memory_hits(base, extra, "me")
+    assert [h.memory_key for h in out] == ["a", "b", "d"] and added == extra
 
 
 @pytest.mark.asyncio
@@ -772,11 +761,9 @@ async def test_restatement_notes_are_recomputed_against_the_served_rows(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_a_decision_that_pushes_a_home_match_out_keeps_the_count_honest(
-    monkeypatch,
-) -> None:
-    """Decisions merged in may push home rows out: with no later page the
-    count stays at least the rows served and the text promises no page."""
+async def test_a_decision_pushes_no_home_match_out(monkeypatch) -> None:
+    """A home row pushed past top_k would be served on no page (the parked
+    tail starts after the home search's own rows): decisions ride above it."""
     from server.transport import mcp_tools
 
     planes = {
@@ -786,8 +773,8 @@ async def test_a_decision_that_pushes_a_home_match_out_keeps_the_count_honest(
     out = await _leg(
         monkeypatch, TRUNK, [], planes=planes, inp=BASE.model_copy(update={"top_k": 2})
     )
-    assert [h.memory_key for h in out.results] == ["note-a", "decision:evict"]  # note-b is out
-    assert out.candidates_total == 2 and out.next_page == ""
+    assert [h.memory_key for h in out.results] == ["note-a", "decision:evict", "note-b"]
+    assert out.candidates_total == 3 and out.next_page == ""
     section = out.model_dump()
     text = "\n".join(mcp_tools._memory_section_lines(section, section["results"], top_k=2))
     assert "next_page serves the rest" not in text
@@ -797,9 +784,9 @@ def test_a_decision_goes_after_the_last_home_hit_that_matched_better() -> None:
     """The home list is in rank order, not falling similarity: a decision
     goes after the last home hit at least as similar, never before one."""
     base = [_hit("a", 0.8, "me"), _hit("b", 0.3, "me"), _hit("c", 0.6, "me")]
-    out, added = repo_decisions.merge_memory_hits(base, [_hit("d", 0.5, TRUNK)], "me", 5)
+    out, added = repo_decisions.merge_memory_hits(base, [_hit("d", 0.5, TRUNK)], "me")
     assert [h.memory_key for h in out] == ["a", "b", "c", "d"]
-    out, _ = repo_decisions.merge_memory_hits(base, [_hit("e", 0.7, TRUNK)], "me", 5)
+    out, _ = repo_decisions.merge_memory_hits(base, [_hit("e", 0.7, TRUNK)], "me")
     assert [h.memory_key for h in out] == ["a", "e", "b", "c"]
 
 
