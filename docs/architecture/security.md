@@ -764,8 +764,8 @@ contact intent, so ranking does not demote the row that answers it.
 A JSON value is read scalar by scalar (`detector_text`). A key whose last one or two words
 name a PIN-like secret (three for `social_security_number`) states its digits under that
 label, so the free-text rules above decide the length. A label's words may also be written
-as one word (`pincode`, `cvv2`, `PINcode`). `pin`, `pin_code` and `pincode` read as `pin
-is <value>` (3-5 digits), `pin_number` as `pin number is <value>`, and `passcode`, `cvv`,
+as one word (`pincode`, `cvv2`, `PINcode`). `pin`, `pin_code` and `pincode` read as
+`pin is <value>` (3-5 digits), `pin_number` as `pin number is <value>`, and `passcode`, `cvv`,
 `cvc` and `security_code` (with, for example, `pass_code`, `cvv_2`, `cvc2`, `cvv_code` and
 `cvc_number`) as `<label> is <value>` (3-8 digits). An `ssn`, `ssn_number`, `ssn_no` or
 `social_security_number` key states an SSN with its dashes optional. A card number is
@@ -778,8 +778,8 @@ bare `pwd` key in a JSON value is a working directory and not one, while `PWD=..
 text still reads as an assignment) states its string value as `password: <value>` when the
 value is one token of 8+ characters holding a letter and a digit and is not a reference
 (`env:NAME`, `vault:PATH`, `secret:NAME`, `ref:NAME`, an all-caps `$NAME`, `${NAME}`, a
-value that opens with `/`, a segment, then `/` (`/etc/key1`), or one opening `~/`, `./` or
-`../`; a base64 secret of that shape reads as a path and is missed). A URL is never a
+value that opens with `/`, a segment, then `/`, such as `/etc/key1`, or one opening `~/`,
+`./` or `../`; a base64 secret of that shape reads as a path and is missed). A URL is never a
 reference, since a webhook or a presigned URL is the secret itself, so a URL that only names
 where a secret lives reads `high`, as does an ARN that names one (its `secret:` part reads
 as an assignment). A relative path without one of those prefixes (`src/app1`) still reads

@@ -13,6 +13,7 @@ import pytest
 from server.cli import decisions as cli
 from server.memory.app import decision_extract as de
 from server.memory.app import decisions as svc
+from server.memory.app.search.scoring import per_key_fetch
 from server.memory.domain import decision_extract as dx
 from server.memory.domain.corpus_synthesis import CorpusChunk, Window
 from server.memory.store import WriterRecord
@@ -2039,7 +2040,32 @@ async def test_a_confirmed_restatement_below_five_closer_hits_still_blocks(monke
 
     monkeypatch.setattr(search, "handle_memory_search", mem_search)
     report = await _run()
-    assert asked == [de._RESTATEMENT_TOP_K] and de._RESTATEMENT_TOP_K == 20
+    assert asked == [per_key_fetch(de._RESTATEMENT_TOP_K)] and de._RESTATEMENT_TOP_K == 20
+    assert world.recorded == []
+    assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_restatement_below_keys_of_many_rows_still_blocks(monkeypatch) -> None:
+    # the search serves a row per writer and session: seven closer keys of three rows each
+    # fill 21 places, and the confirmed key still counts among the 20 closest keys
+    from server.memory.app import search
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_search_per_key_cap", 3)
+    world = _World(monkeypatch, [_candidate(scenario="spilling the final DISTINCT")])
+    hits = []
+    for i in range(7):
+        world.add(f"design/near{i}", agent="alice-agent")
+        hits += [SimpleNamespace(memory_key=f"design/near{i}", similarity=0.95 - i / 100)] * 3
+    world.add("design/confirmed", agent="alice-agent", pinned=True)
+    hits.append(SimpleNamespace(memory_key="design/confirmed", similarity=0.86))
+
+    async def mem_search(inp):
+        return SimpleNamespace(results=hits[: inp.top_k])
+
+    monkeypatch.setattr(search, "handle_memory_search", mem_search)
+    report = await _run()
     assert world.recorded == []
     assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
 

@@ -683,6 +683,7 @@ async def _confirmed_restatement(
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.conflicts import resolve_conflict_floor
     from server.memory.app.search import handle_memory_search
+    from server.memory.app.search.scoring import one_per_key, per_key_fetch
 
     statement = memory_value(
         {
@@ -699,7 +700,8 @@ async def _confirmed_restatement(
             namespace=namespace,
             agent="*",
             query=statement,
-            top_k=_RESTATEMENT_TOP_K,
+            # a row per writer and session: enough of them for _RESTATEMENT_TOP_K keys
+            top_k=per_key_fetch(_RESTATEMENT_TOP_K),
             memory_type="decision",
             namespace_scope="this",
             auto_touch=False,
@@ -713,7 +715,9 @@ async def _confirmed_restatement(
     )
     threshold, _ = await resolve_conflict_floor(org, namespace, "decision")
     close = [h for h in res.results if h.memory_key != key and h.similarity >= threshold]
-    for hit in sorted(close, key=lambda h: h.similarity, reverse=True):
+    close.sort(key=lambda h: h.similarity, reverse=True)
+    # one hit per key, its most similar row's: _rows_of_key reads every row of it
+    for hit in one_per_key(close, namespace, _RESTATEMENT_TOP_K):
         # Every identity's row of the key, read exactly: a confirmed one may sit beside a
         # newer unconfirmed one.
         for row in await _rows_of_key(org, namespace, hit.memory_key):
