@@ -259,13 +259,16 @@ was `caused_by` or `influenced_by`. It writes:
 A decision recorded in a repository's trunk code namespace also reaches MCP `loom_search` from a checkout of that
 repository, for a caller who may read the namespace ([unified search](unified-search.md#reading-the-memory-section)).
 
-The memory row's value is one statement, `Category: <category>. Scenario: <scenario>. Decided <outcome> because
-<reasoning>. Rejected: <alternative>; …`, then `Realized: …` once `decision.outcome` has recorded one. Search embeds
-and excerpts it and `memory.for_file` shows it. Each part is shortened to fit the embedded excerpt, the scenario
-most, because the pre-edit line shows the start of the statement and must reach the outcome. The excerpt is
-measured as the value is stored, JSON-encoded, where a non-ASCII character takes six or more, so a Cyrillic or CJK
-part keeps about a sixth as many characters as an ASCII one. The record keeps every field in full except the
-alternatives, each kept to its first 300 characters.
+The memory row's value is one statement,
+`Category: <category>. Scenario: <scenario>. Decided <outcome> because <reasoning>. Rejected: <alternative>; …`, then
+`Realized: …` once `decision.outcome` has recorded one. A reasoning that is the outcome word for word (case, whitespace
+and the closing punctuation aside) records a ban or an invariant stated with no reason: the statement reads
+`Decided <outcome>.`, the outcome keeping the reasoning's room as well, and `context.pack` gives no `because`. Search
+embeds and excerpts it and `memory.for_file` shows it. Each part is shortened to fit the embedded excerpt, the scenario
+most, because the pre-edit line shows the start of the statement and must reach the outcome. The excerpt is measured as
+the value is stored, JSON-encoded, where a non-ASCII character takes six or more, so a Cyrillic or CJK part keeps about
+a sixth as many characters as an ASCII one. The record keeps every field in full except the alternatives, each kept to
+its first 300 characters.
 
 - **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the
   fields the statement is built from in full (not `decision_maker` or `run_id`, which the row never holds).
@@ -350,7 +353,8 @@ await agent.decision.outcome(rec["memory_key"], "no replay gaps in the quarter",
 
 `loom decisions extract` reads one [knowledge](knowledge.md) document and records the decisions it states. It runs
 in-process with no token, so it is an operator command, and it calls the configured LLM once per window of the
-document's sections, also in a dry run. Its model calls are not gated by the namespace's cost cap.
+document's sections, twice for a window read again (below), also in a dry run. Its model calls are not gated by the
+namespace's cost cap.
 
 ```bash
 loom decisions extract --org O --namespace NS --source-uri URI            # dry run: prints what it would write
@@ -366,7 +370,23 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   is shortened and ends in `…`.
 - **Prompt**: the model is asked for the reason the text gives for each choice (the cost, constraint or failure it
   avoids), never the decision restated, for nothing from a section that sums up other sections, and never to give as
-  the outcome what the text marks as former, replaced or superseded (an old default, a previous behaviour).
+  the outcome what the text marks as former, replaced or superseded (an old default, a previous behaviour). A decision
+  the text gives no reason for is left out, except a ban or an invariant stated without one: the model emits it with
+  `is_constraint` true and its own sentence as the reasoning, which the restatement check keeps (below). It says
+  nothing about images or captions: what is image-only is the filter's call below, and a section it sends, such as a
+  one-line caption over a diagram beside more text, may state a decision.
+- **Second read**: a window gets at most one extra model call, reported as `read again`. When the reply holds no
+  decision and the window's text is more than a caption (80 characters once images and link markup are removed), the
+  window is read once more with the same prompt and the second reply is the window's. When a candidate's quote is in the
+  text but its reasoning or a rejected option's reason is not (a model often joins one from two places), and no span is
+  under 12 characters, and the quote is not in a recap section, the window is read once more with those spans named,
+  asking for each such decision again with one contiguous span, or none; the first reply's other candidates stand, and
+  the failed ones are reported as dropped. Of the second reply, a candidate is checked only when it has a failed
+  decision's outcome or a reasoning none of the window's kept decisions has: a kept decision given again under a
+  reworded scenario is dropped with the line `the second read repeats a decision the first reply gave`. After an empty
+  reply, a second read that fails or comes back unreadable loses the window as any window is: the exit code reads the
+  final outcome. After a joined reason the window is answered already: a lost second read is a `read again` line, and
+  the first reply's decisions are recorded with the exit code unchanged.
 - **Image-only sections**: a section whose own text has no words (a heading alone or over an image), or holds an image
   and at most 80 characters of other text (a caption), is not sent to the model and gets the line
   `image-only, rationale not extracted`; a heading alone over its subsections is not one. The text above the first
@@ -391,7 +411,34 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   (`we`, `the`, `will`, `decided`, `chose`, `use`, `instead`, `because` and the like) are skipped in any form: "We
   decided on spilling into sorted runs." restates the outcome `spill into sorted runs`; "Sorted runs avoid random reads
   on disk." gives a reason. An outcome that carries its own reason leaves the reasoning nothing to add, so the candidate
-  is dropped, which is why the prompt asks for the outcome without its reason.
+  is dropped, which is why the prompt asks for the outcome without its reason. One exception: a ban stated with no
+  reason ("Client-side retries only; no server retry setting."), a candidate the model marks `is_constraint` whose
+  reasoning holds `only`, `no`, `never`, `must`, `not`, `always`, `at most` or `at least` as a word, whose reasoning
+  restates its outcome or is its whole quote (an outcome shorter than the sentence), and whose reasoning fits an outcome
+  (1000 characters; a longer one is judged as any other candidate), is kept with its reasoning as its outcome (a
+  reasoning with fewer words than the outcome, such as "no server retry setting" of that ban, gives way to the quote
+  when the quote holds a ban word too), so it is recorded with the `constraint` tag and reads `Decided <outcome>.` with
+  no reason. The flag alone is not enough: models mark plain descriptions as constraints too.
+- **Recaps**: a candidate whose quote is in a section with `recap`, `summary` or `background` as a word of a heading at
+  any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. The
+  section stays in the window, since its text may give a later decision's reason.
+- **Inverted alternatives**: a rejected option the candidate's own quote, the span of the chosen design, states as part
+  of the choice is left out of the record and reported
+  (`rejected option '<option>' left out: the quote states it as part of the choice`); the decision is kept. An option is
+  such when every word of it, as the restatement check compares words, is in one sentence of the quote (a sentence ends
+  at `.`, `!` or `?` before whitespace, except after `vs.`, `e.g.` or `i.e.`, at a blank line or before a list item; a
+  single line break does not end one) and that sentence holds none of `not`, `no`, `never`, `cannot`, `can't`,
+  `instead`, `rather`, `without`, `fail`, `reject`, `than`, `avoid`, `slow`, `over`, `against`, `versus`, `vs`,
+  `unlike`, `replace` (and `replaces`, `replaced`, `replacing`), `favor`, `favour` (and `favored`, `favours` and the
+  like), `prefer` (and `prefers`, `preferred`), `outperform` (and its forms), `beat`, `beats`, `compare`, `drop`, each
+  of `fail`, `reject`, `avoid`, `compare` and `drop` in any form (`fails`, `rejected`, `avoids`, `compared`, `dropped`),
+  so "We chose sorted runs over a plain set on disk." and "We prefer sorted runs to a plain set on disk." still reject
+  the set. The list leans wide on purpose: a missed contrast word drops a true alternative's `Rejected:` part, while an
+  inverted option kept would tell an agent the chosen design was rejected. The sentence that holds the option's own
+  rejection reason is not read: it is the rejection. Text outside the quote is not read either: a document often names
+  an option in one sentence ("We looked at a plain set on disk.", a list item, "benchmarked … against …") and rejects it
+  in the next. A quote "…; sharding by tenant is deferred to v2." states "Defer sharding by tenant"; "so v1 cannot evict
+  it" still rejects "evict the largest job".
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.
@@ -462,17 +509,18 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   run read it is reported as such, a race the next run settles. Either way the run goes on with the next candidate and
   the retire step.
 - **Limits**: `--max-per-section` is at least 1 and `--window-chars` at least 500; a smaller value is refused. A reply
-  cut at the model's token limit is reported as such, with the advice to lower either; a model call that fails (a
-  provider error, a timeout) loses its window only.
+  cut at the model's token limit is reported as such, with the advice to lower either; a window's first model call, or
+  its second after an empty reply, that fails (a provider error, a timeout) loses that window only; a failed second read
+  for a joined reason loses nothing, its first reply's decisions recorded.
 - **Model and exit code**: the run refuses before any model call when it would read the document with the fake model,
-  whose decisions pass the verbatim check by construction: a keyed provider (`LOOM_LLM_PROVIDER=openai` or
-  `anthropic`) with no API key set, or no provider configured at all. `LOOM_LLM_PROVIDER=fake` set explicitly runs on
-  it on purpose. Otherwise a window the fake model answers (a fallback model, `LOOM_LLM_FALLBACK_MODEL`, with no key)
-  is dropped as unread. A run whose every model call failed or came back unreadable reads nothing and retires nothing.
-  The command exits 1 when it could not read the document (no document, no chunks, no usable model, the extractor's
-  own rows unreadable before any model call, no window read), 2 when a write, or a read it needed, was refused or
-  failed (a dry run's reads count too, and so does a window the model could not answer readably while others were
-  read), else 0; a race does not change the exit code.
+  whose decisions pass the verbatim check by construction: a keyed provider (`LOOM_LLM_PROVIDER=openai` or `anthropic`)
+  with no API key set, or no provider configured at all. `LOOM_LLM_PROVIDER=fake` set explicitly runs on it on purpose.
+  Otherwise a window the fake model answers (a fallback model, `LOOM_LLM_FALLBACK_MODEL`, with no key) is dropped as
+  unread. A run whose every window's model call failed or came back unreadable, or answered nothing and failed when read
+  again, reads nothing and retires nothing. The command exits 1 when it could not read the document (no document, no
+  chunks, no usable model, the extractor's own rows unreadable before any model call, no window read), 2 when a write,
+  or a read it needed, was refused or failed (a dry run's reads count too, and so does a window the model could not
+  answer readably while others were read), else 0; a race does not change the exit code.
 
 The reasoning is the verbatim span the retire step reads: the record has no field for the quote. To confirm an
 extracted decision, a maintainer reads its identity with `memory.get` and calls `memory.pin` under it, or attests its

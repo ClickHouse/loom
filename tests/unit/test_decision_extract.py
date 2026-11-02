@@ -8,6 +8,7 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 
 from server.cli import decisions as cli
@@ -119,6 +120,8 @@ class _World:
         self.refuse_delete: Any = None
         self.deletes: list[Any] = []
         self.prompts: list[tuple[str, str]] = []
+        # Replies served before `reply`, one per call: a candidate list, or an error raised.
+        self.replies: list[Any] = []
         self._patch(monkeypatch)
         from server.settings import settings
 
@@ -148,7 +151,10 @@ class _World:
         class _LLM:
             async def complete(self, system, user, max_tokens=0, response_format=None):
                 world.prompts.append((system, user))
-                return SimpleNamespace(text=json.dumps({"decisions": world.reply}), stop_reason="")
+                reply = world.replies.pop(0) if world.replies else world.reply
+                if isinstance(reply, Exception):
+                    raise reply
+                return SimpleNamespace(text=json.dumps({"decisions": reply}), stop_reason="")
 
         async def knowledge_get(inp):
             return SimpleNamespace(found=inp.source_uri in world.docs, content=DOC)
@@ -705,7 +711,8 @@ async def test_a_chunk_with_only_an_image_is_not_sent_to_the_model(monkeypatch) 
 
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "img.png" not in prompt[1] and "[section: Spilling > Final DISTINCT]" in prompt[1]
     assert report.image_only == ["Spilling > Architecture"]
 
@@ -1898,8 +1905,8 @@ async def test_a_run_the_fallback_fake_answered_wholly_reads_nothing(monkeypatch
     _fake_fallback(monkeypatch, ["fake", "fake"])
     report = await _run(window_chars=len(BODY) + 1)
     assert report.error == (
-        "no window was read: every model call failed, was answered by the fake model, or "
-        "came back unreadable"
+        "no window was read: every model call failed, was answered by the fake model, came "
+        "back unreadable, or answered nothing and failed when read again"
     )
     assert cli.exit_code(report) == 1
     assert world.recorded == [] and world.deletes == []
@@ -2193,9 +2200,13 @@ async def test_a_reasoning_the_document_rewrapped_is_not_retired(monkeypatch) ->
 def test_the_prompt_asks_for_the_reason_and_skips_recaps_and_superseded_text() -> None:
     prompt = dx.system_prompt(3)
     assert "Never the decision restated in other words" in prompt
+    # A ban stated without a reason may be emitted, as a constraint resting on its own sentence.
+    assert "except a ban or an invariant the text states without one" in prompt
+    assert "is_constraint true and its own sentence as the reasoning" in prompt
     assert "a section that sums up or recaps other sections" in prompt
     assert "former, replaced or superseded" in prompt
-    assert "an image with its caption" in prompt
+    # The code decides what is image-only: a caption over a diagram may state a decision.
+    assert "caption" not in prompt and "an image" not in prompt
 
 
 @pytest.mark.parametrize(
@@ -2232,7 +2243,8 @@ async def test_a_captioned_diagram_is_not_sent_and_is_reported_image_only(monkey
     monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "Figure 1" not in prompt[1]
     assert report.image_only == ["Spilling > Architecture"]
 
@@ -2278,7 +2290,8 @@ async def test_a_long_sections_last_chunk_with_an_image_and_a_short_tail_is_sent
     monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "The merge reads each run once." in prompt[1]
     assert report.image_only == ["Spilling > Architecture"]
 
@@ -2399,7 +2412,8 @@ async def test_a_parent_sections_captioned_picture_is_not_sent(monkeypatch) -> N
     monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "Figure 1" not in prompt[1] and "[section: Spilling > Final DISTINCT]" in prompt[1]
     assert report.image_only == ["Spilling"]
 
@@ -2458,7 +2472,8 @@ async def test_a_badge_and_caption_preamble_is_not_sent_and_is_reported(
     monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "Build status" not in prompt[1]
     assert report.image_only == ["", "Spilling > Architecture"]
     cli.print_report(report)
@@ -2485,7 +2500,8 @@ async def test_chunks_stored_with_no_section_path_are_judged_on_their_own_text(
     monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "Build status" not in prompt[1] and BODY in prompt[1]
     assert report.image_only == ["", "Spilling > Architecture"]
 
@@ -2549,7 +2565,8 @@ async def test_a_linked_badge_and_caption_preamble_is_not_sent(monkeypatch) -> N
     monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "Build status" not in prompt[1]
     assert report.image_only == ["", "Spilling > Architecture"]
 
@@ -2625,8 +2642,12 @@ async def test_a_dropped_candidate_with_a_rewrapped_quote_names_the_quotes_secti
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     assert world.recorded == []
-    (d,) = report.dropped
-    assert (d.section, d.reason) == ("Spilling > Two", "reasoning is not in the document text")
+    # The window is read once more for the reasoning, named by the failed decision's
+    # section; the model gives the same reply.
+    assert [d.section for d in report.retried] == ["Spilling > Two"]
+    assert [(d.section, d.reason) for d in report.dropped] == [
+        ("Spilling > Two", "reasoning is not in the document text")
+    ] * 2
 
 
 @pytest.mark.parametrize(
@@ -2667,5 +2688,642 @@ async def test_a_captioned_picture_in_a_preamble_with_text_is_sent(monkeypatch) 
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     assert dx.image_only(picture) and "" not in report.image_only
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "Figure 1: the spill path." in prompt[1] and BODY in prompt[1]
+
+
+# ------------------------------------------------------------------ second reads
+
+
+def _chunks(monkeypatch, *chunks: tuple[str, tuple[str, ...]]) -> None:
+    from server.knowledge.app import document_reads
+
+    async def read(org, ns, uri):
+        return [CorpusChunk(uri, i, text, path) for i, (text, path) in enumerate(chunks)]
+
+    monkeypatch.setattr(document_reads, "document_chunks", read)
+
+
+@pytest.mark.asyncio
+async def test_an_empty_reply_is_read_once_more_and_the_second_reply_is_used(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    world.replies = [[]]
+    report = await _run()
+    assert len(world.prompts) == 2 and world.prompts[0] == world.prompts[1]
+    assert [r.action for r in report.records] == ["written"]
+    assert [(d.section, d.reason) for d in report.retried] == [(SECTION, de._EMPTY_REPLY)]
+    assert cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_an_empty_reply_over_a_caption_of_text_is_not_read_again(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    _chunks(monkeypatch, ("New planner pass", ("Planner",)))
+    report = await _run()
+    assert len(world.prompts) == 1 and report.retried == []
+    assert cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_failed_second_read_loses_the_window(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.replies = [[], httpx.ConnectError("down")]
+    report = await _run()
+    assert len(world.prompts) == 2 and world.recorded == []
+    assert report.error == (
+        "no window was read: every model call failed, was answered by the fake model, came "
+        "back unreadable, or answered nothing and failed when read again"
+    )
+    assert cli.exit_code(report) == 1
+
+
+_STITCHED_REASONING = "A plain set on disk ORDER BY."
+
+
+@pytest.mark.asyncio
+async def test_a_stitched_reasoning_is_asked_for_again_as_one_span(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    world.replies = [[_candidate(reasoning=_STITCHED_REASONING)]]
+    report = await _run()
+    assert len(world.prompts) == 2
+    note = world.prompts[1][1]
+    assert (
+        note.startswith("An earlier reply gave these decisions")
+        and json.dumps(_STITCHED_REASONING) in note
+    )
+    assert note.endswith(world.prompts[0][1])
+    assert [r.action for r in report.records] == ["written"]
+    assert [d.reason for d in report.retried] == [de._STITCHED]
+    assert [d.reason for d in report.dropped] == ["reasoning is not in the document text"]
+
+
+@pytest.mark.asyncio
+async def test_a_stitched_second_read_the_fallback_fake_answered_loses_nothing(
+    monkeypatch,
+) -> None:
+    from server.llm import client as llm_client
+    from server.settings import settings
+
+    _World(monkeypatch, [])  # its model is replaced below
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(llm_client, "provider_key_missing", lambda provider: False)
+    first = [_candidate(), _candidate(scenario="the merge", reasoning=_STITCHED_REASONING)]
+    providers = ["openai", "fake"]
+
+    class _LLM:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            text = json.dumps({"decisions": first})
+            return SimpleNamespace(text=text, stop_reason="", provider=providers.pop(0))
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _LLM())
+    report = await _run()
+    assert providers == [] and [r.action for r in report.records] == ["written"]
+    assert [d.refused for d in report.dropped] == [False]
+    assert [r.reason for r in report.retried] == [
+        de._STITCHED,
+        f"the second read was lost: {de._FAKE_ANSWER}",
+    ]
+    assert cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_second_read_repeating_a_kept_decision_writes_it_once(monkeypatch) -> None:
+    stitched = _candidate(
+        scenario="the merge", outcome="merge each run once", reasoning=_STITCHED_REASONING
+    )
+    repaired = {**stitched, "reasoning": "A plain set on disk costs random reads."}
+    world = _World(monkeypatch, [])
+    world.replies = [
+        [_candidate(), stitched],
+        # The kept decision again under a reworded scenario, then the repair.
+        [_candidate(scenario="spilling the final DISTINCT"), repaired],
+    ]
+    report = await _run()
+    assert [inp.scenario for inp in world.recorded] == [
+        _candidate()["scenario"],
+        "the merge",
+    ]
+    assert [d.reason for d in report.dropped] == [
+        "reasoning is not in the document text",
+        de._REPEATED,
+    ]
+
+
+_ONE = "We spill into sorted runs like ORDER BY. A plain set on disk costs random reads."
+_TWO = "The merge reads each run once. One pass keeps reads sequential."
+_MERGE = _candidate(
+    scenario="the merge",
+    outcome="merge each run once",
+    quote="The merge reads each run once.",
+    reasoning="One pass keeps reads sequential.",
+    alternatives=[],
+    mentions=[],
+)
+_SPILL = _candidate(
+    quote="We spill into sorted runs like ORDER BY.",
+    reasoning=_STITCHED_REASONING,
+    alternatives=[],
+    mentions=[],
+)
+
+
+async def _second_read(
+    monkeypatch, again: list[dict[str, Any]], spill: dict[str, Any] = _SPILL
+) -> tuple[Any, Any]:
+    """A window of two sections: the first reply keeps the merge and joins the spill's
+    reason; `again` is the second reply."""
+    world = _World(monkeypatch, [])
+    _chunks(monkeypatch, (_ONE, ("Spilling", "One")), (_TWO, ("Spilling", "Two")))
+    world.replies = [[spill, _MERGE], again]
+    return world, await _run()
+
+
+@pytest.mark.asyncio
+async def test_a_lost_stitched_read_is_named_by_the_failed_section(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    _chunks(monkeypatch, (_TWO, ("Spilling", "Two")), (_ONE, ("Spilling", "One")))
+    world.replies = [[_MERGE, _SPILL], httpx.ConnectError("down")]
+    report = await _run()
+    assert [inp.scenario for inp in world.recorded] == ["the merge"]
+    assert [(r.section, r.reason) for r in report.retried] == [
+        ("Spilling > One", de._STITCHED),
+        ("Spilling > One", "the second read was lost: the model call failed: ConnectError"),
+    ]
+    assert cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_repeat_in_a_later_section_is_reported_there(monkeypatch) -> None:
+    world, report = await _second_read(monkeypatch, [{**_MERGE, "scenario": "merging runs"}])
+    assert [inp.scenario for inp in world.recorded] == ["the merge"]
+    assert [(d.section, d.reason) for d in report.dropped] == [
+        ("Spilling > One", "reasoning is not in the document text"),
+        ("Spilling > Two", de._REPEATED),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_repair_with_a_reworded_outcome_and_a_new_reasoning_is_recorded(
+    monkeypatch,
+) -> None:
+    repair = {
+        **_SPILL,
+        "outcome": "spill to sorted runs on disk",
+        "reasoning": "A plain set on disk costs random reads.",
+    }
+    world, report = await _second_read(monkeypatch, [repair])
+    assert [inp.outcome for inp in world.recorded] == [
+        "merge each run once",
+        "spill to sorted runs on disk",
+    ]
+    assert [d.reason for d in report.dropped] == ["reasoning is not in the document text"]
+
+
+@pytest.mark.asyncio
+async def test_a_repair_matches_its_failed_outcome_whitespace_aside(monkeypatch) -> None:
+    # The repair rests on the kept merge decision's span: only its outcome marks it a repair.
+    spill = {**_SPILL, "outcome": "spill into\nsorted runs"}
+    repair = {**_SPILL, "outcome": "spill into sorted runs", "reasoning": _MERGE["reasoning"]}
+    world, report = await _second_read(monkeypatch, [repair], spill=spill)
+    assert [inp.outcome for inp in world.recorded] == [
+        "merge each run once",
+        "spill into sorted runs",
+    ]
+    assert de._REPEATED not in [d.reason for d in report.dropped]
+
+
+@pytest.mark.parametrize("lost", ["unreadable", "fake"])
+@pytest.mark.asyncio
+async def test_an_empty_window_whose_second_read_is_lost_is_refused(monkeypatch, lost) -> None:
+    from server.llm import client as llm_client
+    from server.settings import settings
+
+    world = _World(monkeypatch, [])
+    await _two_windows(monkeypatch)
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(llm_client, "provider_key_missing", lambda provider: False)
+    lost_reply = ("not json", "openai") if lost == "unreadable" else ("{}", "fake")
+    replies = [(json.dumps({"decisions": []}), "openai"), lost_reply]
+    replies.append((json.dumps({"decisions": [_candidate()]}), "openai"))
+
+    class _LLM:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            text, provider = replies.pop(0)
+            return SimpleNamespace(text=text, stop_reason="", provider=provider)
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _LLM())
+    report = await _run(window_chars=len(BODY) + 1)
+    # The other window is still read and recorded.
+    assert replies == [] and len(world.recorded) == 1
+    assert [r.action for r in report.records] == ["written"]
+    (d,) = report.dropped
+    assert d.section == "Spilling > Other" and d.refused
+    assert [r.reason for r in report.retried] == [de._EMPTY_REPLY]
+    assert cli.exit_code(report) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_stitched_rejected_reason_is_asked_for_again_and_repaired(monkeypatch) -> None:
+    stitched = "a plain set on disk random reads"
+    joined = [{"option": "a plain set on disk", "reason": stitched}]
+    world = _World(monkeypatch, [_candidate()])
+    world.replies = [[_candidate(alternatives=joined)]]
+    report = await _run()
+    assert len(world.prompts) == 2 and json.dumps(stitched) in world.prompts[1][1]
+    (inp,) = world.recorded
+    assert inp.alternatives == ["a plain set on disk — rejected: costs random reads"]
+    assert [r.reason for r in report.retried] == [de._STITCHED]
+
+
+@pytest.mark.asyncio
+async def test_a_window_gets_at_most_one_extra_call(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    stitched = [{"option": "a plain set on disk", "reason": "costs on disk random reads"}]
+    world.replies = [[], [_candidate(alternatives=stitched)]]
+    report = await _run()
+    assert len(world.prompts) == 2 and world.recorded == []
+    assert [d.reason for d in report.retried] == [de._EMPTY_REPLY]
+    assert [d.reason for d in report.dropped] == [
+        "the reason given for rejecting 'a plain set on disk' is not in the document text"
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"quote": "A quote the document never wrote."},
+        # A short span stays short however often the window is read.
+        {"quote": "We spill", "reasoning": _STITCHED_REASONING},
+        {"reasoning": "Runs win."},
+    ],
+)
+async def test_a_short_or_unquoted_failure_is_not_asked_for_again(monkeypatch, over) -> None:
+    world = _World(monkeypatch, [_candidate(**over)])
+    report = await _run()
+    assert len(world.prompts) == 1 and report.retried == [] and world.recorded == []
+
+
+@pytest.mark.parametrize(
+    "lost",
+    [
+        httpx.ConnectError("down"),
+        # An unreadable reply: a string where the candidates go.
+        "not json",
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_lost_second_read_for_a_stitched_reason_keeps_the_first_reply(
+    monkeypatch, lost
+) -> None:
+    from server.llm import client as llm_client
+
+    _World(monkeypatch, [])  # its model is replaced below, to answer the second read
+    first = [_candidate(), _candidate(scenario="the merge", reasoning=_STITCHED_REASONING)]
+    calls: list[str] = []
+
+    class _LLM:
+        async def complete(self, system, user, max_tokens=0, response_format=None):
+            calls.append(user)
+            if len(calls) == 1:
+                return SimpleNamespace(text=json.dumps({"decisions": first}), stop_reason="")
+            if isinstance(lost, Exception):
+                raise lost
+            return SimpleNamespace(text=lost, stop_reason="")
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _LLM())
+    report = await _run()
+    assert len(calls) == 2
+    assert [r.action for r in report.records] == ["written"]
+    assert [d.refused for d in report.dropped] == [False]
+    assert report.retried[0].reason == de._STITCHED
+    assert report.retried[1].reason.startswith("the second read was lost: ")
+    assert report.error == "" and cli.exit_code(report) == 0
+
+
+# ------------------------------------------------------------------ bans with no reason
+
+_BAN = "Client-side retries only; no server retry setting."
+
+
+def _ban(**over: Any) -> dict[str, Any]:
+    ban: dict[str, Any] = {
+        "category": "design:retries",
+        "scenario": "where requests are retried",
+        "outcome": "client-side retries only, no server retry setting",
+        "reasoning": _BAN,
+        "quote": _BAN,
+        "alternatives": [],
+        "is_constraint": True,
+        "mentions": [],
+    }
+    return _candidate(**{**ban, **over})
+
+
+@pytest.mark.parametrize(
+    ("reasoning", "is_constraint", "ban"),
+    [
+        (_BAN, True, True),
+        ("Reads must never block on a merge.", True, True),
+        ("At most one spill file is open per thread.", True, True),
+        ("The proxy retries each request.", True, False),
+        # "nothing" and "cannot" hold no word-bounded marker.
+        ("The planner cannot see nothing here.", True, False),
+        (_BAN, False, False),
+    ],
+)
+def test_a_ban_is_a_constraint_whose_reasoning_says_so(reasoning, is_constraint, ban) -> None:
+    cand = _cand(reasoning=reasoning, is_constraint=is_constraint)
+    assert dx.states_a_ban(cand) is ban
+
+
+@pytest.mark.asyncio
+async def test_a_ban_stated_with_no_reason_is_kept_as_one(monkeypatch) -> None:
+    from server.memory.domain.decision_statement import memory_value
+
+    world = _World(monkeypatch, [_ban()])
+    _chunks(monkeypatch, (f"{_BAN} The proxy adds jitter to each attempt.", ("Retries",)))
+    report = await _run()
+    assert [r.action for r in report.records] == ["written"] and report.dropped == []
+    (inp,) = world.recorded
+    assert inp.outcome == inp.reasoning == _BAN and de.CONSTRAINT_TAG in inp.tags
+    statement = memory_value({"outcome": inp.outcome, "reasoning": inp.reasoning})
+    assert statement == f"Decided {_BAN}"
+
+
+@pytest.mark.asyncio
+async def test_a_ban_whose_outcome_is_shorter_than_its_sentence_is_kept_with_no_reason(
+    monkeypatch,
+) -> None:
+    # The outcome lacks "client-side retries", so the reasoning does not restate it; the
+    # reasoning is the whole quote, so the text gives no reason.
+    world = _World(monkeypatch, [_ban(outcome="no server retry setting")])
+    _chunks(monkeypatch, (f"{_BAN} The proxy adds jitter to each attempt.", ("Retries",)))
+    report = await _run()
+    assert report.dropped == []
+    (inp,) = world.recorded
+    assert inp.outcome == inp.reasoning == _BAN
+
+
+@pytest.mark.asyncio
+async def test_a_ban_too_long_for_an_outcome_is_judged_as_any_candidate(monkeypatch) -> None:
+    long_ban = "Every client must retry " + "with its own jitter and backoff, " * 32 + "only once."
+    assert len(long_ban) > dx.OUTCOME_MAX_CHARS
+    world = _World(
+        monkeypatch, [_ban(outcome="retry with jitter", reasoning=long_ban, quote=long_ban)]
+    )
+    _chunks(monkeypatch, (long_ban, ("Retries",)))
+    report = await _run()
+    # Not a no-reason ban: it does not restate the short outcome, so it is recorded as is.
+    (inp,) = world.recorded
+    assert inp.outcome == "retry with jitter" and report.dropped == []
+
+
+def test_the_outcome_limit_is_decision_records() -> None:
+    from server.memory.api.models_decision import DecisionRecordInput
+
+    (limit,) = [
+        m.max_length
+        for m in DecisionRecordInput.model_fields["outcome"].metadata
+        if hasattr(m, "max_length")
+    ]
+    assert limit == dx.OUTCOME_MAX_CHARS
+
+
+@pytest.mark.asyncio
+async def test_a_ban_fragment_as_reasoning_gives_way_to_the_ban_quote(monkeypatch) -> None:
+    world = _World(monkeypatch, [_ban(reasoning="no server retry setting")])
+    _chunks(monkeypatch, (f"{_BAN} The proxy adds jitter to each attempt.", ("Retries",)))
+    await _run()
+    (inp,) = world.recorded
+    assert inp.outcome == inp.reasoning == _BAN
+
+
+def test_the_report_prints_each_second_read(capsys) -> None:
+    report = de.ExtractReport("doc.md", dry_run=True)
+    report.retried = [de.Retried(SECTION, de._EMPTY_REPLY), de.Retried("", de._STITCHED)]
+    cli.print_report(report)
+    out = capsys.readouterr().out
+    assert f"- read again [{SECTION}] {de._EMPTY_REPLY}\n" in out
+    assert f"- read again [(untitled)] {de._STITCHED}\n" in out
+
+
+@pytest.mark.parametrize("emitted", [True, False])
+@pytest.mark.asyncio
+async def test_a_reasonless_ban_reads_unchanged_on_a_rerun(monkeypatch, emitted) -> None:
+    ban = _ban()
+    world = _World(monkeypatch, [ban] if emitted else [])
+    _chunks(monkeypatch, (f"{_BAN} The proxy adds jitter to each attempt.", ("Retries",)))
+    # What the first run recorded: the ban sentence as both outcome and reasoning.
+    fields = {**_same_fields(ban), "outcome": _BAN}
+    world.record(
+        _key(ban),
+        fields,
+        tags=["decision", de.CONSTRAINT_TAG],
+        source_resource_id="knowledge:ns/doc.md#Retries",
+    )
+    report = await _run()
+    assert world.recorded == [] and world.deletes == [] and world.updates == []
+    assert [r.action for r in report.records] == (["unchanged"] if emitted else [])
+    assert report.retired == [] and report.flagged == [] and report.replaced == []
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"is_constraint": False},
+        # The quote holds the ban word, the stored reasoning does not.
+        {"reasoning": "Client-side retries"},
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_restatement_that_is_no_ban_is_still_dropped(monkeypatch, over) -> None:
+    world = _World(monkeypatch, [_ban(**over)])
+    _chunks(monkeypatch, (f"{_BAN} Client-side retries.", ("Retries",)))
+    report = await _run()
+    assert world.recorded == []
+    assert [d.reason for d in report.dropped] == [dx.RESTATED]
+
+
+# ------------------------------------------------------------------ recaps
+
+
+@pytest.mark.parametrize(
+    ("section", "recap"),
+    [
+        ("Design > Recap", True),
+        ("Background > Final DISTINCT", True),
+        ("Search > Improving recall in hybrid search", False),
+        ("SUMMARY", True),
+        ("Spilling > Final DISTINCT", False),
+        ("Recalling spilled blocks", False),
+        ("Current design", False),
+    ],
+)
+def test_a_recap_heading_at_any_level_marks_the_section(section, recap) -> None:
+    assert dx.in_recap(section) is recap
+
+
+@pytest.mark.asyncio
+async def test_a_recap_quote_is_dropped_and_its_text_still_gives_a_reason(monkeypatch) -> None:
+    recap = "We spill into sorted runs like ORDER BY."
+    reason = "A plain set on disk costs random reads."
+    world = _World(
+        monkeypatch,
+        [
+            _candidate(quote=recap, alternatives=[], reasoning=reason),
+            _candidate(
+                scenario="the merge",
+                quote="One merge pass reads each run.",
+                reasoning=reason,
+                alternatives=[],
+            ),
+        ],
+    )
+    _chunks(
+        monkeypatch,
+        (f"{recap} {reason}", ("Spilling", "Recap")),
+        ("One merge pass reads each run.", ("Spilling", "Merge")),
+    )
+    report = await _run()
+    assert [d.reason for d in report.dropped] == [dx.RECAP]
+    (inp,) = world.recorded
+    assert inp.reasoning == reason and inp.source_resource_id.endswith("Spilling > Merge")
+    assert "[section: Spilling > Recap]" in world.prompts[0][1]
+
+
+@pytest.mark.asyncio
+async def test_a_recap_candidate_with_a_missing_reasoning_is_not_read_again(monkeypatch) -> None:
+    recap = "We spill into sorted runs like ORDER BY."
+    world = _World(monkeypatch, [_candidate(quote=recap, reasoning=_STITCHED_REASONING)])
+    _chunks(monkeypatch, (f"{recap} A plain set on disk costs random reads.", ("Recap",)))
+    report = await _run()
+    assert len(world.prompts) == 1 and report.retried == []
+    assert [d.reason for d in report.dropped] == ["reasoning is not in the document text"]
+
+
+# ------------------------------------------------------------------ inverted alternatives
+
+
+@pytest.mark.parametrize(
+    ("quote", "option", "reason", "inverted"),
+    [
+        (
+            "We shard by time range; sharding by tenant is deferred to v2.",
+            "defer sharding by tenant",
+            "x" * 12,
+            True,
+        ),
+        (
+            "Sharding by tenant is deferred to v2. One cluster serves each tenant today.",
+            "Defer sharding by tenant",
+            "One cluster serves each tenant today.",
+            True,
+        ),
+        (
+            "The largest job runs longest, so v1 cannot evict it. Eviction picks the oldest.",
+            "evict the largest job",
+            "The largest job runs longest",
+            False,
+        ),
+        # The sentence giving the reason is the rejection itself.
+        (BODY, "a plain set on disk", "costs random reads", False),
+        ("Sharding by tenant is faster than a shared table.", "shard by tenant", "x" * 12, False),
+        ("Only filler words here.", "the", "x" * 12, False),
+        # A choice named against what it beat still rejects it.
+        ("We chose sorted runs over a plain set on disk.", "a plain set on disk", "x" * 12, False),
+        ("Sorted runs replace the hash set.", "the hash set", "x" * 12, False),
+        ("We benchmarked sorted runs against a hash set.", "a hash set", "x" * 12, False),
+        ("We prefer sorted runs to a plain set on disk.", "a plain set on disk", "x" * 12, False),
+        ("Sorted runs are favored; a hash set reads at random.", "a hash set", "x" * 12, False),
+        ("The design favours sorted runs to a hash set.", "a hash set", "x" * 12, False),
+        ("Sorted runs outperform a hash set on disk.", "a hash set", "x" * 12, False),
+        ("Sorted runs beat a hash set on disk.", "a hash set", "x" * 12, False),
+        # "vs." ends no sentence.
+        ("Sorted runs vs. a hash set on disk.", "a hash set", "x" * 12, False),
+        ("The design rejects a hash set on disk.", "a hash set", "x" * 12, False),
+        ("The merge avoids a hash set on disk.", "a hash set", "x" * 12, False),
+        ("Sorted runs, compared with a hash set, read in order.", "a hash set", "x" * 12, False),
+        # A hard-wrapped sentence keeps its negation on the next line.
+        (
+            "Sorting the runs in memory is\nnot possible: the runs exceed RAM.\n"
+            "Spilled runs merge from disk.",
+            "sort the runs in memory",
+            "Spilled runs merge from disk.",
+            False,
+        ),
+        # A list item is a sentence of its own.
+        (
+            "Plans:\n- sort the runs in memory\n- never spill twice",
+            "sort the runs in memory",
+            "never spill twice",
+            True,
+        ),
+    ],
+)
+def test_an_option_the_quote_states_as_chosen_is_inverted(quote, option, reason, inverted) -> None:
+    cand = _cand(quote=quote, alternatives=[{"option": option, "reason": reason}])
+    assert dx.inverted_options(cand) == ([option] if inverted else [])
+
+
+@pytest.mark.parametrize(
+    ("layout", "reason"),
+    [
+        (
+            "We looked at a plain set on disk. Each lookup costs a random read.",
+            "Each lookup costs a random read.",
+        ),
+        (
+            "Options:\n- a plain set on disk\n- each lookup costs a random read",
+            "each lookup costs a random read",
+        ),
+        (
+            "We benchmarked sorted runs against a plain set on disk. "
+            "Each lookup costs a random read.",
+            "Each lookup costs a random read.",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_an_option_named_outside_the_quote_stays_rejected(
+    monkeypatch, layout, reason
+) -> None:
+    quote = "We spill into sorted runs like ORDER BY."
+    alternatives = [{"option": "a plain set on disk", "reason": reason}]
+    cand = _candidate(quote=quote, reasoning=reason, alternatives=alternatives, mentions=[])
+    world = _World(monkeypatch, [cand])
+    _chunks(monkeypatch, (f"{quote}\n\n{layout}", ("Spilling",)))
+    report = await _run()
+    (inp,) = world.recorded
+    assert inp.alternatives == [f"a plain set on disk — rejected: {reason}"]
+    assert report.dropped == []
+
+
+@pytest.mark.asyncio
+async def test_an_inverted_alternative_is_left_out_and_the_decision_kept(monkeypatch) -> None:
+    text = (
+        "We shard by time range; sharding by tenant is deferred to v2. "
+        "A time range keeps each merge local to one shard."
+    )
+    cand = _candidate(
+        scenario="how tables are sharded",
+        outcome="shard by time range",
+        reasoning="A time range keeps each merge local to one shard.",
+        quote="We shard by time range; sharding by tenant is deferred to v2.",
+        alternatives=[
+            {"option": "Defer sharding by tenant", "reason": "A time range keeps each merge local"}
+        ],
+        mentions=[],
+    )
+    world = _World(monkeypatch, [cand])
+    _chunks(monkeypatch, (text, ("Sharding",)))
+    report = await _run()
+    (inp,) = world.recorded
+    assert inp.alternatives == []
+    (d,) = report.dropped
+    assert d.reason == (
+        "rejected option 'Defer sharding by tenant' left out: the quote states it as part of "
+        "the choice"
+    )
+    assert cli.exit_code(report) == 0

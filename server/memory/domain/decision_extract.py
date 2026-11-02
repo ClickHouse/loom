@@ -3,8 +3,10 @@ reply, the verbatim and restatement checks, and sorting the code names a candida
 mentions.
 
 A candidate is kept only when its quote, its reasoning and every rejected option's reason
-each sit inside one chunk the model read, whitespace aside, and its reasoning says more
-than its outcome: what reaches an agent before an edit is the document's own reason.
+each sit inside one chunk the model read, whitespace aside, its reasoning says more than
+its outcome (a ban the text gives no reason for is kept as one with none), and its quote
+is not in a recap section: what reaches an agent before an edit is the document's own
+reason. A rejected option the text states as part of the choice is left out.
 """
 
 from __future__ import annotations
@@ -52,7 +54,8 @@ SYSTEM = (
     "- reasoning: the reason the text gives for the choice (the cost, constraint or "
     "failure it avoids), an exact span of the text. Never the decision restated in other "
     "words: a span that only says what was chosen is no reasoning, and a decision whose "
-    "text gives no reason is not emitted.\n"
+    "text gives no reason is not emitted, except a ban or an invariant the text states "
+    "without one: emit it with is_constraint true and its own sentence as the reasoning.\n"
     '- alternatives: the options the text rejects, each {"option": ..., "reason": ...}, '
     "the reason an exact span of the text.\n"
     "- category: design:<component>, lower case, so decisions about one component share "
@@ -65,9 +68,8 @@ SYSTEM = (
     "- mentions: the class, function and setting names and pull request numbers the "
     "text names, as written.\n"
     "Copy the document's words; never paraphrase a quote, a reasoning or a reason. Keep "
-    "product names in quote only. Emit nothing for a section whose body is only a "
-    "heading, an image, or an image with its caption, and nothing for a section that "
-    "sums up or recaps other sections. Never give as the outcome what the text marks as "
+    "product names in quote only. Emit nothing for a section that sums up or recaps "
+    "other sections. Never give as the outcome what the text marks as "
     "former, replaced or superseded (an old default, a previous behaviour): the decision "
     "is what replaced it. At most {max_per_section} items per section; "
     '{"decisions": []} when the part records no decision.'
@@ -163,12 +165,17 @@ def has_image(body: str) -> bool:
     return bool(_IMAGE_MARKUP.search(_code_as_text(body)))
 
 
+def more_than_a_caption(body: str) -> bool:
+    """`body` holds more text than a caption, images and link markup aside."""
+    return len(caption_text(_code_as_text(body))) > CAPTION_MAX_CHARS
+
+
 def image_only(body: str) -> bool:
     """A section body with no words (`no_words`), or with an image and no more text than
     a caption."""
     if no_words(body):
         return True
-    return has_image(body) and len(caption_text(_code_as_text(body))) <= CAPTION_MAX_CHARS
+    return has_image(body) and not more_than_a_caption(body)
 
 
 @dataclass
@@ -283,6 +290,33 @@ def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
     return ""
 
 
+def unfound_reason(cand: Candidate, texts: list[str]) -> str:
+    """The reasoning or rejected option's reason that is not in the text while the quote
+    is, or '': a model often joins a reason from two places, and asked again gives one
+    span. '' when any span is too short: reading again does not lengthen it."""
+    spans = (cand.quote, cand.reasoning, *(reason for _option, reason in cand.alternatives))
+    if any(len(collapse_ws(s)) < MIN_SPAN_CHARS for s in spans):
+        return ""
+    if not find_span(cand.quote, texts):
+        return ""
+    return next((span for span in spans[1:] if not find_span(span, texts)), "")
+
+
+def stitched_note(failed: Sequence[tuple[str, str]]) -> str:
+    """What the second call of a window adds before the text: each (outcome, span) whose
+    reason span is not in the text."""
+    lines = "\n".join(
+        f"- {collapse_ws(outcome)}: {json.dumps(collapse_ws(span), ensure_ascii=False)}"
+        for outcome, span in failed
+    )
+    return (
+        "An earlier reply gave these decisions a reason that is not one span of the text: "
+        "it joins words from two places. Reply with only these decisions again, each "
+        "reasoning and each rejected option's reason one contiguous span copied from the "
+        'text, or {"decisions": []} when the text gives no such span:\n' + lines
+    )
+
+
 def document_spans(cand: Candidate, texts: list[str]) -> Candidate:
     """`cand` with each span replaced by the text's own, line breaks and all, for a
     candidate that passed the verbatim check: what is stored is the document's."""
@@ -319,6 +353,115 @@ def restates_outcome(cand: Candidate) -> bool:
     plural and tense endings and the filler words aside, is a word of the outcome. Such
     a span is the decision in the document's words, not the reason for it."""
     return _content_words(cand.reasoning) <= _content_words(cand.outcome)
+
+
+# A ban or an invariant: a constraint the text states may give no reason for it.
+_BAN_MARKER = re.compile(r"\b(?:only|no|never|must|not|always|at\s+most|at\s+least)\b", re.I)
+
+
+def states_a_ban(cand: Candidate) -> bool:
+    """A constraint whose reasoning, the span that is stored, says only, no, never, must,
+    not, always, at most or at least. The model's constraint flag alone is not enough: it
+    marks plain descriptions as constraints too."""
+    return cand.is_constraint and bool(_BAN_MARKER.search(cand.reasoning))
+
+
+# decision.record's limit on an outcome: a ban stored as its own outcome must fit it.
+OUTCOME_MAX_CHARS = 1000
+
+
+def reasonless_ban(cand: Candidate) -> bool:
+    """A ban stated with no reason: its reasoning restates its outcome, or is its whole
+    quote (an outcome shorter than the sentence adds a word the reasoning lacks). One
+    too long to be an outcome is judged as any other candidate."""
+    if not states_a_ban(cand) or len(collapse_ws(cand.reasoning)) > OUTCOME_MAX_CHARS:
+        return False
+    return restates_outcome(cand) or collapse_ws(cand.reasoning) == collapse_ws(cand.quote)
+
+
+def without_reason(cand: Candidate) -> Candidate:
+    """A ban the text states with no reason: its outcome is its reasoning, the document's
+    span on one line, which the statement reads as no stated reason. A reasoning that is
+    a fragment of the ban (fewer words than the outcome) gives way to the quote when the
+    quote states the ban too: "no server retry setting" alone loses "client-side
+    retries only"."""
+    span = cand.reasoning
+    fragment = _content_words(cand.reasoning) < _content_words(cand.outcome)
+    quote_fits = len(collapse_ws(cand.quote)) <= OUTCOME_MAX_CHARS
+    if fragment and quote_fits and _BAN_MARKER.search(cand.quote):
+        span = cand.quote
+    return replace(cand, reasoning=span, outcome=collapse_ws(span))
+
+
+# A section that restates others: its quote is no decision, though its text stays in the
+# window as a later decision's reason.
+_RECAP_HEADING = re.compile(r"\b(?:recap|summary|background)\b", re.I)
+RECAP = "the quote is in a recap, summary or background section"
+
+
+def in_recap(section: str) -> bool:
+    """A heading at any level of the breadcrumb names a recap, summary or background."""
+    return bool(_RECAP_HEADING.search(section))
+
+
+# A sentence end, a blank line, or a line break before a list item. A single line break
+# alone does not end a sentence: hard-wrapped text keeps a negation on the next line.
+_SENTENCE_END = re.compile(
+    # "vs.", "e.g." and "i.e." end no sentence.
+    r"(?<!\bvs\.)(?<!\be\.g\.)(?<!\bi\.e\.)(?<=[.!?])\s+"
+    r"|\n\s*\n\s*|\n(?=[ \t]*(?:[-*+]|\d+[.)])\s)",
+    re.I,
+)
+# Words that say a sentence rejects or contrasts what it names.
+_NEGATION = re.compile(
+    r"\b(?:not|no|never|cannot|can['’]t|instead|rather|without|fail\w*|reject\w*|than"
+    r"|avoid\w*|slow|over|against|versus|vs|unlike|replac\w*|favou?r\w*|prefer\w*"
+    r"|outperform\w*|beats?|compar\w*|drop\w*)\b",
+    re.I,
+)
+
+
+def _sentences(text: str) -> list[tuple[int, int]]:
+    """The (start, end) of each sentence of `text`."""
+    out: list[tuple[int, int]] = []
+    start = 0
+    for m in _SENTENCE_END.finditer(text):
+        out.append((start, m.start()))
+        start = m.end()
+    out.append((start, len(text)))
+    return out
+
+
+def _states_as_chosen(option: str, reason: str, text: str) -> bool:
+    """One sentence of `text` (the candidate's quote) holds every content word of
+    `option` and no negation or contrast word, and is not the sentence giving the reason
+    it was rejected."""
+    words = _content_words(option)
+    if not words:
+        return False
+    # A reason passed the verbatim check, so it has words.
+    pattern = re.compile(r"\s+".join(map(re.escape, reason.split())))
+    reasons = [(m.start(), m.end()) for m in pattern.finditer(text)]
+    for start, end in _sentences(text):
+        if any(a < end and start < b for a, b in reasons):
+            continue
+        sentence = text[start:end]
+        if words <= _content_words(sentence) and not _NEGATION.search(sentence):
+            return True
+    return False
+
+
+def inverted_options(cand: Candidate) -> list[str]:
+    """The rejected options the candidate's own quote, the chosen design's span, states
+    as part of the choice ("...; sharding by tenant is deferred to v2" read as the
+    rejected "Defer sharding by tenant"): a model inverts them. Only the quote is read: a
+    document often names an option in one sentence and rejects it in the next. "v1
+    cannot evict it" still rejects "evict the largest job"."""
+    return [
+        option
+        for option, reason in cand.alternatives
+        if _states_as_chosen(option, reason, cand.quote)
+    ]
 
 
 @dataclass(frozen=True)

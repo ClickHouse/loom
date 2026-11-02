@@ -44,6 +44,23 @@ def test_memory_value_reads_as_a_statement() -> None:
     assert stmt.memory_value({"outcome": "pin", "alternatives": "", "scenario": "s"}) == (
         "Scenario: s. Decided pin."
     )
+    # A reasoning that is the outcome, case and whitespace aside, is a ban stated with no
+    # reason: no "because".
+    ban = {
+        "outcome": "Client-side retries only; no server retry setting.",
+        "reasoning": "client-side retries only;\nno server retry setting",
+    }
+    assert stmt.memory_value(ban) == "Decided Client-side retries only; no server retry setting."
+    assert not stmt.states_reason(ban) and stmt.states_reason({"outcome": "a", "reasoning": "b"})
+    assert stmt.memory_value({"outcome": "Never retry", "reasoning": "Never retry!"}) == (
+        "Decided Never retry."
+    )
+    # With no reason stated the outcome takes the reasoning's room: a long ban keeps its end.
+    long_ban = (
+        "Every merge of a spilled run " + "reads its blocks in order, " * 8 + "and must not seek."
+    )
+    assert len(long_ban) > stmt.STATEMENT_OUTCOME_CHARS
+    assert stmt.memory_value({"outcome": long_ban, "reasoning": long_ban}) == f"Decided {long_ban}"
     # The caller's casing is kept as written, proper nouns included.
     assert stmt.memory_value({"outcome": "Postgres for the ledger", "reasoning": "ClickHouse"}) == (
         "Decided Postgres for the ledger because ClickHouse."
