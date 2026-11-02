@@ -28,7 +28,7 @@ from server.memory.app.projections import (
     resolved_entity_list,
 )
 from server.memory.app.provenance import writer_actor
-from server.memory.app.set_commit import count_attribute_tags, set_next
+from server.memory.app.set_commit import count_attribute_tags, set_next, whole_seconds
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
@@ -328,10 +328,7 @@ def _bulk_skip_gate(
     # since entries default pinned=False).
     # A lock is the same kind of invariant: memory.set 423s a value change to a read_only
     # key; a batch skips just that entry, surfaced in `skipped_locked`.
-    # Only the stored pin skips here. A pin an earlier entry asked for counts once the
-    # verdicts say that entry landed (`settle_steps`).
-    # The same bytes are not a value change: as on memory.set, no pin refuses them, and a
-    # lock refuses them only if they change the expiry (`_changes_locked_expiry`).
+    # Only the stored pin and lock refuse here; the batch's own are settled in `settle_steps`.
     if restated:
         return False
     if _bulk_locked(state, entry.memory_key, "value"):
@@ -353,16 +350,21 @@ def _bulk_skip_gate(
 
 
 def _same_labels_as_stored(state: _BulkWriteState, entry: Any) -> bool:
-    """Whether an entry repeating the stored value also keeps its sensitivity and adds no
-    pin. memory.set writes a new version when either changes, so a bulk must too. Only a
-    level the entry names counts: an extracted fact names none, and keeps the stored one."""
+    """Whether an entry repeating the stored value also keeps its sensitivity, adds no pin
+    and sets no expiry. memory.set writes a new version when any changes, so a bulk must
+    too. Only a level the entry names counts: an extracted fact names none, and keeps the
+    stored one."""
     live = state.existing_rows.get(entry.memory_key)
     stored_level = str(getattr(live, "sensitivity", "") or "")
     named_level = str(getattr(entry, "sensitivity", "") or "")
     adds_pin = bool(getattr(entry, "pinned", False)) and not state.existing_pinned.get(
         entry.memory_key
     )
-    return named_level in ("", stored_level) and not adds_pin
+    return (
+        named_level in ("", stored_level)
+        and not adds_pin
+        and getattr(entry, "ttl_seconds", None) is None
+    )
 
 
 def _stored_held(state: _BulkWriteState, memory_key: str) -> _Held:
@@ -437,7 +439,7 @@ def _changes_locked_expiry(
     key = entry.memory_key
     if state.existing_sha.get(key) != entry_sha or not _bulk_locked(state, key, "expire"):
         return False
-    if entry.ttl_seconds is not None:
+    if getattr(entry, "ttl_seconds", None) is not None:
         return True
     stored_expiry = _not_lapsed(_stored_held(state, key).expires_at, state.now_utc)
     return to_naive_utc(expires_at) != stored_expiry
@@ -525,7 +527,10 @@ def _settle_step(
     if same_bytes and held.pinned:
         row["pinned"] = 1  # the same bytes keep the pin, as on memory.set
     level = str(row.get("sensitivity") or "")
-    if same_bytes and level == held.level and bool(row["pinned"]) == held.pinned:
+    same_expiry = whole_seconds(row.get("expires_at")) == whole_seconds(
+        _not_lapsed(held.expires_at, state.now_utc)
+    )
+    if same_bytes and same_expiry and level == held.level and bool(row["pinned"]) == held.pinned:
         return StepOutcome.UNCHANGED
     if held.pinned and not same_bytes and not row["pinned"]:
         return StepOutcome.PINNED

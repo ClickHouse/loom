@@ -60,12 +60,22 @@ _PRIVATE_KEY_BLOCK = re.compile(
     r"|(?:Proc-Type:[^\n]*|DEK-Info:[^\n]*|[A-Za-z0-9+/=\r\n])*)",
     re.S,
 )
-# The words a `password=…` style assignment starts with. The sweep's prefilter is built from
-# the same list.
-ASSIGNMENT_WORDS = (
-    r"password|passwd|pwd|api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|"
-    r"auth[_-]?token|bearer|client[_-]?secret|private[_-]?key"
+# The keys a `password=…` style assignment starts with, as words. The sweep's prefilter is
+# built from the same tuples.
+ASSIGNMENT_KEYS: tuple[tuple[str, ...], ...] = (
+    ("password",),
+    ("passwd",),
+    ("pwd",),
+    ("api", "key"),
+    ("secret", "key"),
+    ("secret",),
+    ("access", "token"),
+    ("auth", "token"),
+    ("bearer",),
+    ("client", "secret"),
+    ("private", "key"),
 )
+ASSIGNMENT_WORDS = "|".join("[_-]?".join(words) for words in ASSIGNMENT_KEYS)
 
 # besides whitespace, the characters that end an assignment's value; `_keyed_credential`
 # replaces them in what it states
@@ -83,7 +93,7 @@ _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     _PRIVATE_KEY_BLOCK,
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),  # JWT
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),  # Google API key
-    # `password=…`, `api_key: …`, `secret := …`, `token = …` followed by a token-shaped
+    # `password=…`, `api_key: …`, `secret := …`, `access_token = …` followed by a token-shaped
     # value of 8+ characters; a space, quote, comma or semicolon ends it.
     re.compile(rf"(?i)\b(?:{ASSIGNMENT_WORDS})\b\s*[:=]\s*[\"']?{_ASSIGNMENT_VALUE_CHAR}{{8,}}"),
 )

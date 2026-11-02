@@ -257,6 +257,28 @@ async def test_a_ttl_only_repeat_on_a_read_only_row_is_locked(monkeypatch) -> No
     assert state.results[0].conflict_verdict == "locked"
 
 
+async def test_a_ttl_only_repeat_of_the_stored_value_sets_its_expiry(monkeypatch) -> None:
+    # memory.set writes a new version when only the expiry changes; so does a bulk entry
+    value = "Alice lives in Berlin"
+    state, plan = await _settled(
+        monkeypatch, _stored(value), {}, {"memory_key": "k", "value": value, "ttl_seconds": 60}
+    )
+    (row,) = plan.memory_rows
+    assert state.skipped_unchanged == 0
+    assert row["expires_at"] == state.now_utc + timedelta(seconds=60)
+
+
+async def test_a_ttl_only_repeat_of_a_batch_value_sets_its_expiry(monkeypatch) -> None:
+    value = "Alice lives in Berlin"
+    first = {"memory_key": "k", "value": value}
+    state, plan = await _settled(monkeypatch, None, {}, first, {**first, "ttl_seconds": 60})
+    assert [r["expires_at"] for r in plan.memory_rows] == [
+        None,
+        state.now_utc + timedelta(seconds=60),
+    ]
+    assert state.skipped_unchanged == 0
+
+
 async def test_a_repeat_after_a_value_that_did_not_land_keeps_the_stored_labels(
     monkeypatch,
 ) -> None:

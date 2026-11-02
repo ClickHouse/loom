@@ -274,7 +274,7 @@ def _apply_verdicts(
     state: _BulkWriteState, emb_idx_of: list[int], verdicts: dict[int, Any]
 ) -> BulkVerdictPlan:
     """Replay the batch now that the verdicts are known (a row an earlier entry's landed
-    pin refuses, or one its key already holds, is dropped), fold the verdicts into the
+    pin or a lock refuses, or one its key already holds, is dropped), fold the verdicts into the
     rows that land or that a verdict keeps out, then write every entry's result."""
     built = [s for s in state.steps if s.repeats is None]  # one per row, in row order
     for i, step in enumerate(built):
@@ -283,7 +283,8 @@ def _apply_verdicts(
         built[i].embedding = state.embedding_rows[pos]
     settle_steps(state)
     # In built-row order, so a repeat that lands an earlier row's copy takes that row's
-    # place in `plan.memory_rows`.
+    # place in `plan.memory_rows`, and the copy keeps that row's version: under
+    # `newest_wins` it reads as older than the rows written between the two entries.
     position = {step: i for i, step in enumerate(built)}
     judged = sorted(
         (

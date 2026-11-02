@@ -283,7 +283,7 @@ async def _lift_after_insert(
     return w.version
 
 
-def _whole_seconds(dt: datetime | None) -> datetime | None:
+def whole_seconds(dt: datetime | None) -> datetime | None:
     """`dt` as the DateTime column stores it: naive UTC, whole seconds."""
     dt = to_naive_utc(dt)
     return dt.replace(microsecond=0) if dt else None
@@ -300,10 +300,10 @@ def _only_reinforces(w: _SetWrite) -> bool:
         str(row.get("status") or "active") == str(existing.status or "active")
         and row.get("memory_type") == existing.memory_type
         and sorted(row.get("tags") or []) == sorted(existing.tags or [])
-        and _whole_seconds(row.get("expires_at")) == _whole_seconds(existing.expires_at)
+        and whole_seconds(row.get("expires_at")) == whole_seconds(existing.expires_at)
         and math.isclose(float(row.get("confidence") or 0.0), existing.confidence, rel_tol=1e-6)
-        and _whole_seconds(row.get("valid_at")) == _whole_seconds(existing.valid_at)
-        and _whole_seconds(row.get("valid_to")) == _whole_seconds(existing.valid_to)
+        and whole_seconds(row.get("valid_at")) == whole_seconds(existing.valid_at)
+        and whole_seconds(row.get("valid_to")) == whole_seconds(existing.valid_to)
         and str(row.get("sensitivity") or "") == str(existing.sensitivity or "")
         and sorted(row.get("files") or []) == sorted(existing.files or [])
         and str(row.get("source_resource_id") or "") == str(existing.source_resource_id or "")
