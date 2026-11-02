@@ -346,7 +346,7 @@ _FOOTER = (
     "removes it if you wrote it or are a maintainer; otherwise {steps}."
 )
 _RULE_STEP = "write a corrected rule for the file and tell its author"
-_DECISION_STEP = "ask a decision's author or a maintainer to record the corrected decision"
+_DECISION_STEP = "ask a maintainer to record the corrected decision with decision.record"
 
 
 def test_a_block_of_typed_decisions_says_only_how_to_correct_a_decision() -> None:
