@@ -278,18 +278,19 @@ async def test_search_target_touches_only_the_callers_identity(
     # caller's row may be acted on: never another owner's row, and never a
     # same-key row of the caller's that the search did not match.
     monkeypatch.setattr(settings, "memory_search_per_key_cap", 3)
-    _hit = _search_hit
-    record = _hit("rec", sid="s2")
+    record = _search_hit("rec", sid="s2")
     record._row_identity = None  # a record names no row: its key is read under the caller
     hits = [
         record,
-        _hit("rec"),  # the caller's own row of that key, already read once
-        _hit("both", agent="other-agent"),  # another owner's row of a key the caller holds too
-        _hit("both"),
-        _hit("mine"),
-        _hit("theirs", agent="other-agent"),
-        _hit("other_user", uid="u2"),
-        _hit("other_session", sid="s2"),
+        _search_hit("rec"),  # the caller's own row of that key, already read once
+        _search_hit(
+            "both", agent="other-agent"
+        ),  # another owner's row of a key the caller holds too
+        _search_hit("both"),
+        _search_hit("mine"),
+        _search_hit("theirs", agent="other-agent"),
+        _search_hit("other_user", uid="u2"),
+        _search_hit("other_session", sid="s2"),
     ]
 
     asked: list[Any] = []
@@ -342,7 +343,7 @@ async def test_search_target_touches_only_the_callers_identity(
 
 
 def _search_hit(
-    key: str, agent: str = "cursor", similarity: float = 0.9, *, uid: str = "-", sid: str = "-"
+    key: str, similarity: float = 0.9, *, agent: str = "cursor", uid: str = "-", sid: str = "-"
 ) -> Any:
     h = _MemorySearchHit(
         memory_key=key,
@@ -390,14 +391,14 @@ async def test_a_full_search_window_may_hold_more_of_the_callers_rows(
 ) -> None:
     # limit 10 asks for 33 hits at the per-key cap of 3, or as many as the ceiling serves
     monkeypatch.setattr(settings, "memory_search_per_key_cap", 3)
-    hits = [_search_hit("mine", "cursor"), *(_search_hit(f"k{i}", "x") for i in range(other_rows))]
+    hits = [_search_hit("mine"), *(_search_hit(f"k{i}", agent="x") for i in range(other_rows))]
     out = await _apply_search(monkeypatch, hits, ceiling=ceiling)
     assert [r.memory_key for r in out.rows] == ["mine"] and out.truncated is truncated
 
 
 @pytest.mark.asyncio
 async def test_min_score_is_a_hits_least_similarity(monkeypatch: pytest.MonkeyPatch) -> None:
-    hits = [_search_hit(k, "cursor", sim) for k, sim in (("close", 0.8), ("at", 0.7), ("far", 0.6))]
+    hits = [_search_hit(k, sim) for k, sim in (("close", 0.8), ("at", 0.7), ("far", 0.6))]
     out = await _apply_search(monkeypatch, hits, min_score=0.7)
     assert [r.memory_key for r in out.rows] == ["close", "at"]
 
