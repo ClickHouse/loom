@@ -32,17 +32,18 @@ def _row(
     valid_to: str = "NULL",
     model: str = "text-embedding-3-small",
     tags: str = "[]",
+    memory_type: str = "semantic",
 ) -> list[str]:
     """A row's vector at `version` and its stored value."""
     return [
         "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
         "memory_key, memory_type, scope, content_excerpt, embedding, memory_key_embedding, "
         "embedding_model, embedding_dim, version, status, valid_to, tags) VALUES ('clickhouse', "
-        f"'ns', 'bot', '{user}', '{session}', 'lesson_a', 'semantic', 'private', 't', {VECTOR}, "
+        f"'ns', 'bot', '{user}', '{session}', 'lesson_a', '{memory_type}', 'private', 't', {VECTOR}, "
         f"{VECTOR}, '{model}', 3072, {version}, '{status}', {valid_to}, {tags})",
         "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
         "memory_type, value, version, status) VALUES ('clickhouse', 'ns', 'bot', "
-        f"'{user}', '{session}', 'lesson_a', 'semantic', '{value}', {version}, '{status}')",
+        f"'{user}', '{session}', 'lesson_a', '{memory_type}', '{value}', {version}, '{status}')",
     ]
 
 
@@ -215,3 +216,23 @@ async def test_rows_holding_one_value_chunk_it_once(monkeypatch: pytest.MonkeyPa
     chunk = _chunk("u", LONG_V1)
     assert await _set_chunk_rows(ch, _q(), [chunk]) == _named(chunk, "s3", 3)
     assert calls == ["semantic"]
+
+
+@pytest.mark.asyncio
+async def test_one_text_under_two_types_is_chunked_twice(monkeypatch: pytest.MonkeyPatch) -> None:
+    # the chunks follow the type, so a memo keyed on the text alone would merge these rows
+    from server.memory.app.retrieval import pool
+
+    calls: list[str] = []
+    real = pool.set_chunk_identities
+
+    def counting(value: Any, memory_type: str) -> Any:
+        calls.append(memory_type)
+        return real(value, memory_type)
+
+    monkeypatch.setattr(pool, "set_chunk_identities", counting)
+    ch = _local_ch(
+        _row("u", "s1", 1, LONG_V1, memory_type="procedural"), _row("u", "s2", 2, LONG_V1)
+    )
+    await _set_chunk_rows(ch, _q(), [_chunk("u", LONG_V1)])
+    assert sorted(calls) == ["procedural", "semantic"]

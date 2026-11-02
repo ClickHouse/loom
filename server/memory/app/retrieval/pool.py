@@ -5,7 +5,6 @@ chunk-share cap and floor on the window.
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
@@ -297,10 +296,9 @@ async def _set_chunk_rows(
         row = row_key_of(q.namespace, r)
         if row not in values:
             continue
-        value, memory_type = values[row]
-        text = json.dumps(value, ensure_ascii=False, default=str)  # chunking keeps key order
+        text, memory_type = values[row]
         if (text, memory_type) not in cuts_of:
-            cuts_of[text, memory_type] = set_chunk_identities(value, memory_type)
+            cuts_of[text, memory_type] = set_chunk_identities(parse_memory_value(text), memory_type)
         cuts = cuts_of[text, memory_type]
         for c in by_writer.get((row.agent, row.user_id, row.memory_key), []):
             if (c.chunk_index, c.sha) in cuts:
@@ -311,9 +309,9 @@ async def _set_chunk_rows(
 
 async def _row_values(
     ch: _CHClient, q: SearchQuery, rows: list[dict[str, Any]]
-) -> dict[RowKey, tuple[Any, str]]:
-    """The current (value, memory_type) of each live row, read by `loom.memory`'s sort-key
-    prefix a form field at a time."""
+) -> dict[RowKey, tuple[str, str]]:
+    """The current stored value text and memory_type of each live row, read by
+    `loom.memory`'s sort-key prefix a form field at a time."""
     sql = """
         SELECT agent, user_id, session_id, memory_key, memory_type, value
         FROM loom.memory FINAL
@@ -325,10 +323,7 @@ async def _row_values(
     """
     keys = sorted({(r["agent"], r["user_id"], r["session_id"], r["memory_key"]) for r in rows})
     found = await query_all_sliced(ch, sql, {"org": q.org, "ns": q.namespace, "rows": keys}, "rows")
-    return {
-        row_key_of(q.namespace, r): (parse_memory_value(r["value"]), str(r["memory_type"]))
-        for r in found
-    }
+    return {row_key_of(q.namespace, r): (str(r["value"]), str(r["memory_type"])) for r in found}
 
 
 async def _finish_pool(ch: _CHClient, hits: list[SearchHit], q: SearchQuery) -> list[SearchHit]:
