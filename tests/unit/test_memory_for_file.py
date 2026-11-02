@@ -412,7 +412,7 @@ def test_a_row_superseding_two_rows_leaves_both_out_with_it() -> None:
     ]
 
 
-def test_two_linked_rows_of_one_time_link_one_way() -> None:
+def test_two_linked_rows_with_one_timestamp_link_one_way() -> None:
     def pair() -> list[dict[str, Any]]:
         x = _row("x", json.dumps("Keep 32."), namespace="me", memory_id="id-1")
         y = _row("y", json.dumps("Keep 64."), namespace="me", memory_id="id-2")

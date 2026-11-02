@@ -818,7 +818,7 @@ What Loom knows about ONE file, shaped for the moment before an edit: memories w
 | --- | --- | --- |
 | `path` | `str` | The path matched, normalised to repo-relative form. |
 | `total` | `int` | Number of `hits` returned (after the `top_k` cut). |
-| `hits` | `list[_MemoryForFileHit]` | Matching rows: `constraint`-tagged first, then pinned, then by confidence, then newest. |
+| `hits` | `list[_MemoryForFileHit]` | Matching rows: `constraint`-tagged first, then pinned, then by confidence, then newest; a row the conflict check linked to an older one of its namespace is placed above it. |
 | `rendered` | `str` | Prompt-ready block, cut at token_budget. |
 | `tokens_estimate` | `int` | Size of `rendered` at 4 chars per token; 0 when it is empty. |
 | `truncated` | `bool` | True when `token_budget` cut rows from `rendered`; `hits` still lists them. |

@@ -11,7 +11,8 @@ a repo-relative path or a bare filename, because stored rows use both shapes)
 or through a link to code in it (`server.memory.app.code_links`).
 
 Read-only, VIEWER. Rows tagged `constraint` sort first, then pinned, then
-confidence. `rendered` is cut at `token_budget` (its header and removal footer
+confidence; a row the conflict check linked to an older one of its namespace is
+placed above it. `rendered` is cut at `token_budget` (its header and removal footer
 always print, and its "… more" line whenever a row is left out).
 `extra_namespaces` (a repository's primary code namespace, where its team file
 rules and design decisions live) runs the same query per readable namespace,
@@ -78,7 +79,7 @@ class _MemoryForFileHit(BaseModel):
     # a team row (rule or decision) renders with it.
     actor: str = ""
     # Set when this row and an older one of the same namespace
-    # are cross-linked by the conflict check (`conflict_with`): the older's
+    # are cross-linked by the conflict check (`conflict_with`): the first older row's
     # key, author and kind (`decision`, or `rule` for any row that is not a decision).
     # This row is placed above it.
     supersedes_key: str = ""
@@ -102,7 +103,8 @@ class MemoryForFileOutput(BaseModel):
     # Number of `hits` returned (after the `top_k` cut).
     total: int
     # Matching rows: `constraint`-tagged first, then pinned, then by confidence,
-    # then newest.
+    # then newest; a row the conflict check linked to an older one of its namespace is
+    # placed above it.
     hits: list[_MemoryForFileHit]
     # Prompt-ready block, cut at token_budget. Empty when total == 0.
     rendered: str = ""
