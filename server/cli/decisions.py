@@ -53,7 +53,8 @@ def register_decisions_cli(sub: Any) -> None:
         "window of its sections, candidates kept only when their quote, reasoning and "
         "rejected options' reasons are the document's own words, written through "
         "decision.record as agent loom-decisions. A re-run revises or retires the "
-        "extractor's own unpinned rows and tags a pinned row source-changed. Dry run by "
+        "extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row "
+        "source-changed. Dry run by "
         "default (still calls the model); --apply writes.",
     )
     p_ext.add_argument("--org", required=True)
@@ -136,6 +137,6 @@ def print_report(report: ExtractReport) -> None:
         if key not in in_records:
             tag = "would tag" if report.dry_run else "tagged"
             print(
-                f"- {tag} {key} source-changed: pinned or with a recorded outcome, "
+                f"- {tag} {key} source-changed: confirmed or with a recorded outcome, "
                 "its reasoning left the document"
             )

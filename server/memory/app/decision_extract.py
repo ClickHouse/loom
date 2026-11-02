@@ -17,8 +17,8 @@ extractor's own rows instead of writing beside them:
   confirmed it, and the row is tagged `source-changed`, a tag a later run drops once the
   document says the same again;
 - it differs and its row is another writer's or another document's: nothing is written;
-- no record under the key, but a pinned decision row reads the same above the conflict
-  threshold: skipped as already recorded.
+- no record under the key, but a confirmed decision row (pinned or attested) reads the
+  same above the conflict threshold: skipped as already recorded.
 
 After the writes, the extractor deletes its unconfirmed rows citing this document whose
 reasoning (a verbatim span of the document) is no longer in its text, or whose outcome
@@ -51,10 +51,12 @@ from server.memory.domain.trust import confirmed, verification_state
 from server.memory.store import (
     Identity,
     MemoryRow,
+    actors_by_key,
     get_by_key,
     get_many_by_keys,
     list_by_namespace,
     live_writer_record,
+    memory_rows_by_identity_keys,
 )
 from server.observability.genai import llm_stage
 
@@ -113,8 +115,8 @@ class ExtractReport:
     # "<old key> -> <key>" for each extractor row deleted (or to delete) because this run
     # recorded its reasoning under another key: the model worded the scenario anew.
     replaced: list[str] = field(default_factory=list)
-    # Keys tagged (or to tag) `source-changed`: pinned rows, and rows with a recorded
-    # outcome, whose document now says otherwise.
+    # Keys tagged (or to tag) `source-changed`: confirmed rows (pinned or attested), and
+    # rows with a recorded outcome, whose document now says otherwise.
     flagged: list[str] = field(default_factory=list)
     # "<key>: refused: <code>" for each retire write the server refused, or
     # "<key>: changed while the run read it" for one that found the row moved on.
@@ -437,7 +439,7 @@ async def _reconcile(
     rec = RecordReport(key, "written", record_body(inp), signals, unresolved)
     writer = await live_writer_record(org, namespace, key)
     if writer is None:
-        peer = await _pinned_restatement(org, namespace, key, inp)
+        peer = await _confirmed_restatement(org, namespace, key, inp)
         if peer is not None:
             rec.action = "already_recorded"
             rec.note = f"already recorded by {peer.agent} under {peer.memory_key}"
@@ -521,12 +523,12 @@ async def _reconcile(
     return rec
 
 
-async def _pinned_restatement(
+async def _confirmed_restatement(
     org: str, namespace: str, key: str, inp: DecisionRecordInput
 ) -> MemoryRow | None:
-    """A pinned decision row under another key that reads as this decision: of the
-    decision hits at or above the namespace's conflict threshold, the most similar one
-    with a pinned row."""
+    """A confirmed decision row (pinned or attested) under another key that reads as this
+    decision: of the decision hits at or above the namespace's conflict threshold, the
+    most similar one with a confirmed row."""
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.conflicts import resolve_conflict_floor
     from server.memory.app.search import handle_memory_search
@@ -561,19 +563,23 @@ async def _pinned_restatement(
     threshold, _ = await resolve_conflict_floor(org, namespace, "decision")
     close = [h for h in res.results if h.memory_key != key and h.similarity >= threshold]
     for hit in sorted(close, key=lambda h: h.similarity, reverse=True):
-        # Every identity's row of the key: a pinned one may sit beside a newer unpinned one.
-        rows = await list_by_namespace(
-            Identity(org=org, namespace=namespace, agent="*", user_id="*", session_id="*"),
-            scope=WHOLE_NAMESPACE,
-            memory_type="decision",
-            pinned_only=True,
-            key_prefix=hit.memory_key,
-            limit=50,
-        )
-        pinned = next((r for r in rows if r.memory_key == hit.memory_key), None)
-        if pinned is not None:
-            return pinned
+        # Every identity's row of the key, read exactly: a confirmed one may sit beside a
+        # newer unconfirmed one.
+        for row in await _rows_of_key(org, namespace, hit.memory_key):
+            if row.memory_type == "decision" and _confirmed(row):
+                return row
     return None
+
+
+async def _rows_of_key(org: str, namespace: str, key: str) -> list[MemoryRow]:
+    """The live rows of `key` under every identity: who holds it, then those rows whole.
+    A row with no recorded actor (written before rows carried one) is not listed."""
+    holders = await actors_by_key(org, [(namespace, key)], scope=WHOLE_NAMESPACE)
+    idents = [
+        (org, namespace, h["agent"], h["user_id"], h["session_id"], key)
+        for h in holders.get((namespace, key), [])
+    ]
+    return list((await memory_rows_by_identity_keys(idents)).values())
 
 
 async def resolve_mentions(
@@ -708,8 +714,9 @@ async def _retire(
     held: dict[tuple[str, str], str],
 ) -> None:
     """Contract the extractor's own rows on this document whose reasoning left its text:
-    delete an unpinned one; tag a pinned one, or one with a recorded outcome,
-    `source-changed`. An unpinned one whose outcome and reasoning this run holds under
+    delete an unconfirmed one; tag a confirmed one (pinned or attested), or one with a
+    recorded outcome, `source-changed`. An unconfirmed one whose outcome and reasoning this
+    run holds under
     another key (`held`) is deleted too: the model worded the scenario anew, and the
     decision is not served twice. Another decision resting on the same reasoning has
     another outcome and stays. A row whose reasoning is still there stays, even when this

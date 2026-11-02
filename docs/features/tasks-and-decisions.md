@@ -366,10 +366,12 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   is shortened and ends in `…`.
 - **Verbatim check**: the model returns, per decision, a `quote` and a `reasoning` and a reason for each rejected
   option. A candidate is kept only when its quote, its reasoning and every reason are each an exact substring of one
-  chunk. At most `--max-per-section` (default 3) are kept per section. A candidate whose category and scenario hold no
-  letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with one key, or with one outcome and
-  reasoning (overlapping chunks give two windows the same text), the first is kept. A section with no words (a heading
-  alone or over an image) is not sent to the model and gets the line `image-only, rationale not extracted`.
+  chunk. Each is at least 12 characters long: a shorter span ("We", "the") is in every document, so a decision resting
+  on it could never retire. At most `--max-per-section` (default 3) are kept per section. A candidate whose category
+  and scenario hold no letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with one key, or
+  with one outcome and reasoning (overlapping chunks give two windows the same text), the first is kept. A section
+  with no words (a heading alone or over an image) is not sent to the model and gets the line
+  `image-only, rationale not extracted`.
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.
@@ -397,9 +399,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   confirmed row is tagged whoever wrote it, as long as it cites this document. A row from another document, or another
   identity's unconfirmed row, is neither revised nor tagged; its body is printed. Nor is a decision whose outcome
   `decision.outcome` recorded: `decision.record` would rebuild it without the outcome. When a verbatim field of such a
-  decision differs, its row is tagged `source-changed` as a confirmed row is. With no record under the key, a pinned
-  decision row under another key that reads the same at or above the namespace's conflict threshold skips the
-  candidate: `already recorded by <agent> under <key>`.
+  decision differs, its row is tagged `source-changed` as a confirmed row is. With no record under the key, a
+  confirmed (pinned or attested) decision row under another key that reads the same at or above the namespace's
+  conflict threshold skips the candidate: `already recorded by <agent> under <key>`.
 - **Retire**: an unconfirmed `loom-decisions` row citing the document whose reasoning is no longer in the document's
   text is deleted with `memory.delete_version`, which also retires its record; a confirmed one, or one whose outcome
   `decision.outcome` recorded, is tagged `source-changed` instead. The reasoning read is the extractor's own record: a

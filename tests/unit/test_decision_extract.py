@@ -76,6 +76,7 @@ def _row(key: str, **over: Any) -> _Row:
     )
     base.update(over)
     base.setdefault("memory_id", f"id-{key}-{base['agent']}")
+    base.setdefault("memory_type", "decision")
     return _Row(**base)
 
 
@@ -209,6 +210,27 @@ class _World:
         mp.setattr(de, "get_by_key", get_by_key)
         mp.setattr(de, "list_by_namespace", list_rows)
         mp.setattr(de, "get_many_by_keys", many)
+
+        async def actors(org, keys, *, scope):
+            return {
+                (ns, k): [
+                    {"agent": r.agent, "user_id": r.user_id, "session_id": r.session_id}
+                    for r in world.rows
+                    if r.memory_key == k
+                ]
+                for ns, k in keys
+            }
+
+        async def by_identity(idents):
+            wanted = {(i[2], i[3], i[4], i[5]) for i in idents}
+            return {
+                (r.org, r.namespace, r.agent, r.user_id, r.session_id, r.memory_key): r
+                for r in world.rows
+                if (r.agent, r.user_id, r.session_id, r.memory_key) in wanted
+            }
+
+        mp.setattr(de, "actors_by_key", actors)
+        mp.setattr(de, "memory_rows_by_identity_keys", by_identity)
         mp.setattr(search, "handle_memory_search", mem_search)
         mp.setattr(conflicts, "resolve_conflict_floor", floor)
         mp.setattr(decision, "handle_decision_record", decision_record)
@@ -250,7 +272,7 @@ def test_a_candidate_resting_on_the_documents_words_passes() -> None:
     ("over", "reason"),
     [
         ({"quote": "We spill into sorted runs, like ORDER BY."}, "quote is not in"),
-        ({"quote": "   "}, "quote is not in"),
+        ({"quote": "   "}, "quote too short"),
         ({"reasoning": "Sorted runs are faster."}, "reasoning is not in"),
         (
             {"alternatives": [{"option": "a hash set", "reason": "it uses too much memory"}]},
@@ -472,7 +494,7 @@ async def test_another_writers_unpinned_record_is_not_revised(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_a_pinned_restatement_under_another_key_is_skipped(monkeypatch) -> None:
+async def test_a_confirmed_restatement_under_another_key_is_skipped(monkeypatch) -> None:
     world = _World(monkeypatch, [_candidate()])
     world.add("design/spilling/final", agent="alice-agent", pinned=True)
     # A newer unpinned row of the key beside it does not hide the pinned one.
@@ -1416,3 +1438,28 @@ async def test_a_stale_attestation_does_not_protect_a_row(monkeypatch) -> None:
     world.record("decision:gone", {"reasoning": "gone"}, **{**_ATTESTED, "content_sha256": "sha-2"})
     report = await _run()
     assert report.retired == ["decision:gone"] and report.flagged == []
+
+
+@pytest.mark.asyncio
+async def test_an_attested_restatement_under_another_key_is_skipped(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate(scenario="spilling the final DISTINCT")])
+    world.add("decision:attested", **_ATTESTED)
+    world.search_hits = [SimpleNamespace(memory_key="decision:attested", similarity=0.9)]
+    report = await _run()
+    assert world.recorded == []
+    assert report.records[0].note == "already recorded by loom-decisions under decision:attested"
+
+
+@pytest.mark.parametrize(
+    ("over", "reason"),
+    [
+        ({"quote": "We spill.", "reasoning": "We spill."}, "quote too short to rest a decision on"),
+        ({"reasoning": "We spill"}, "reasoning too short to rest a decision on"),
+        (
+            {"alternatives": [{"option": "a hash set", "reason": "random"}]},
+            "the reason given for rejecting 'a hash set' is too short to rest on",
+        ),
+    ],
+)
+def test_a_span_too_short_to_rest_a_decision_on_is_dropped(over, reason) -> None:
+    assert dx.verbatim_failure(_cand(**over), [BODY]) == reason

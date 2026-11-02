@@ -165,6 +165,12 @@ def parse_candidates(reply: str) -> list[Candidate] | None:
     return out
 
 
+# The shortest span a decision may rest on: "We" or "the" is in every document, and a
+# reasoning that short never leaves it, so its row would never retire. Characters, so a
+# CJK span is held to the same floor.
+MIN_SPAN_CHARS = 12
+
+
 def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
     """Why `cand` fails the verbatim check against the chunk texts the model read, or ''.
     Each span must sit inside one chunk: the join between two is not the document's. A
@@ -173,11 +179,17 @@ def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
     def holds(span: str) -> bool:
         return any(span in t for t in texts)
 
-    if not cand.quote.strip() or not holds(cand.quote):
+    if len(cand.quote.strip()) < MIN_SPAN_CHARS:
+        return "quote too short to rest a decision on"
+    if not holds(cand.quote):
         return "quote is not in the document text"
+    if len(cand.reasoning.strip()) < MIN_SPAN_CHARS:
+        return "reasoning too short to rest a decision on"
     if not holds(cand.reasoning):
         return "reasoning is not in the document text"
     for option, reason in cand.alternatives:
+        if len(reason.strip()) < MIN_SPAN_CHARS:
+            return f"the reason given for rejecting {option!r} is too short to rest on"
         if not holds(reason):
             return f"the reason given for rejecting {option!r} is not in the document text"
     return ""
