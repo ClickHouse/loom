@@ -112,7 +112,8 @@ def test_the_ladder_counts_what_the_calls_show(
         day_id = _call(c, "memory.set", day)["memory_id"]
         used = {**ident, "memory_id": day_id, "outcome": "used"}
         assert _call(c, "memory.outcome", used)["recorded"] is True
-        # And by key, on a third fact.
+        # By key, on a third fact: the label names the row writer's agent, so the ledger
+        # records it under the writer, whoever gave it; it is not counted.
         tz = {**ident, "memory_key": "pref/tz", "value": "The team works in UTC"}
         _call(c, "memory.set", tz)
         by_key = {**ident, "memory_key": "pref/tz", "outcome": "positive"}
@@ -138,14 +139,14 @@ def test_the_ladder_counts_what_the_calls_show(
     # two search.query calls with a hit answered, and the ask when it did not abstain; the
     # miss and the abstaining search did not.
     assert counts["returned_hit"] == 6 + (0 if asked["abstain"] else 1)
-    # Three keys reported relied on (one by the run, one by an outcome by id, one by key),
-    # as the client's word; the label that landed nowhere is not one.
+    # Two keys reported relied on (one by the run, one by an outcome by id), as the
+    # client's word; the label by key and the one that landed nowhere are not counted.
     assert (counts["client_acknowledged"], ladder["client_acknowledged"]["source"]) == (
-        3,
+        2,
         "client",
     )
     # One graded run, as its grader reported it.
     assert (counts["task_outcome"], ladder["task_outcome"]["source"]) == (1, "client")
     # The retention is the server's (0 unless it sets one): known, whatever its value.
     assert out["ledger_from"] is not None and out["ledger_retention_days"] is not None
-    assert not [s for s in out["skipped"] if s.split(":")[0] in ("evidence", "indexed_writes")]
+    assert out["skipped"] == [], out["skipped"]
