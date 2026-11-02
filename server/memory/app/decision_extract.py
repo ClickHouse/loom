@@ -405,20 +405,27 @@ def _known_decisions(own: list[tuple[MemoryRow, dict[str, Any]]]) -> list[tuple[
 
 
 async def _read_window(
-    llm: Any, system: str, w: Window, report: ExtractReport, *, fake_chosen: bool, note: str = ""
+    llm: Any,
+    system: str,
+    w: Window,
+    report: ExtractReport,
+    *,
+    fake_chosen: bool,
+    note: str = "",
+    answered_already: bool = False,
 ) -> list[dx.Candidate] | None:
     """The model's candidates for one window, or None when the read is lost: the call
     failed, the fake model answered for a real provider, or the reply is unreadable; each
-    is a dropped line marked `refused`, a read the run needed. With a `note` (put before
-    the window's text) the read asks again for what the first reply got wrong, and the
-    window is answered already: a lost read is a `read again` line, never refused."""
+    is a dropped line marked `refused`, a read the run needed. `note` goes before the
+    window's text. When the window is `answered_already` (a second read for what the
+    first reply got wrong), a lost read is a `read again` line, never refused."""
     from server.llm.json_text import strip_code_fence
 
     first = dx.breadcrumb(w.chunks[0].section_path)
     user = f"{note}\n\n{dx.user_prompt(w)}" if note else dx.user_prompt(w)
 
     def lost(reason: str) -> None:
-        if note:
+        if answered_already:
             report.retried.append(Retried(first, f"the second read was lost: {reason}"))
         else:
             report.dropped.append(Dropped(first, reason, refused=True))
@@ -497,13 +504,41 @@ async def _candidates(
         if cands is None:
             continue
         answered += 1
+        before = len(state.kept)
         failed = _check_window(org, namespace, source_uri, w, cands, state, report)
         if failed and not retried:
             report.retried.append(Retried(first, _STITCHED))
             note = dx.stitched_note(failed)
-            again = await _read_window(llm, system, w, report, fake_chosen=fake_chosen, note=note)
-            _check_window(org, namespace, source_uri, w, again or [], state, report)
+            again = await _read_window(
+                llm, system, w, report, fake_chosen=fake_chosen, note=note, answered_already=True
+            )
+            repaired = _repairs(again or [], failed, state.kept[before:], first, report)
+            _check_window(org, namespace, source_uri, w, repaired, state, report)
     return state.kept, answered
+
+
+_REPEATED = "the second read repeats a decision the first reply gave"
+
+
+def _repairs(
+    again: list[dx.Candidate],
+    failed: list[tuple[str, str]],
+    kept: list[tuple[dx.Candidate, str, list[str]]],
+    section: str,
+    report: ExtractReport,
+) -> list[dx.Candidate]:
+    """The second read's candidates that repair a failed one: a candidate with a failed
+    outcome, or one whose reasoning none of the window's kept candidates has. A kept
+    decision given again, its scenario reworded, would be written twice."""
+    outcomes = {outcome for outcome, _span in failed}
+    reasonings = {collapse_ws(c.reasoning) for c, _section, _texts in kept}
+    out: list[dx.Candidate] = []
+    for cand in again:
+        if cand.outcome in outcomes or collapse_ws(cand.reasoning) not in reasonings:
+            out.append(cand)
+        else:
+            report.dropped.append(Dropped(section, _REPEATED, cand.quote))
+    return out
 
 
 def _check_window(

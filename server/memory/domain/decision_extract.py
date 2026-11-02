@@ -367,10 +367,15 @@ def states_a_ban(cand: Candidate) -> bool:
     return cand.is_constraint and bool(_BAN_MARKER.search(cand.reasoning))
 
 
+# decision.record's limit on an outcome: a ban stored as its own outcome must fit it.
+OUTCOME_MAX_CHARS = 1000
+
+
 def reasonless_ban(cand: Candidate) -> bool:
     """A ban stated with no reason: its reasoning restates its outcome, or is its whole
-    quote (an outcome shorter than the sentence adds a word the reasoning lacks)."""
-    if not states_a_ban(cand):
+    quote (an outcome shorter than the sentence adds a word the reasoning lacks). One
+    too long to be an outcome is judged as any other candidate."""
+    if not states_a_ban(cand) or len(collapse_ws(cand.reasoning)) > OUTCOME_MAX_CHARS:
         return False
     return restates_outcome(cand) or collapse_ws(cand.reasoning) == collapse_ws(cand.quote)
 
@@ -398,7 +403,7 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n\s*\n\s*|\n(?=[ \t]*(?:[-*+]|\d+[.)
 # Words that say a sentence rejects or contrasts what it names.
 _NEGATION = re.compile(
     r"\b(?:not|no|never|cannot|can['’]t|instead|rather|without|fails?|reject(?:ed)?|than"
-    r"|avoid|slow)\b",
+    r"|avoid|slow|over|against|versus|vs|unlike|replac\w*|favou?r|dropped)\b",
     re.I,
 )
 

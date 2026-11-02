@@ -2751,6 +2751,29 @@ async def test_a_stitched_reasoning_is_asked_for_again_as_one_span(monkeypatch) 
 
 
 @pytest.mark.asyncio
+async def test_a_second_read_repeating_a_kept_decision_writes_it_once(monkeypatch) -> None:
+    stitched = _candidate(
+        scenario="the merge", outcome="merge each run once", reasoning=_STITCHED_REASONING
+    )
+    repaired = {**stitched, "reasoning": "A plain set on disk costs random reads."}
+    world = _World(monkeypatch, [])
+    world.replies = [
+        [_candidate(), stitched],
+        # The kept decision again under a reworded scenario, then the repair.
+        [_candidate(scenario="spilling the final DISTINCT"), repaired],
+    ]
+    report = await _run()
+    assert [inp.scenario for inp in world.recorded] == [
+        _candidate()["scenario"],
+        "the merge",
+    ]
+    assert [d.reason for d in report.dropped] == [
+        "reasoning is not in the document text",
+        de._REPEATED,
+    ]
+
+
+@pytest.mark.asyncio
 async def test_a_window_gets_at_most_one_extra_call(monkeypatch) -> None:
     world = _World(monkeypatch, [_candidate()])
     stitched = [{"option": "a plain set on disk", "reason": "costs on disk random reads"}]
@@ -2880,6 +2903,31 @@ async def test_a_ban_whose_outcome_is_shorter_than_its_sentence_is_kept_with_no_
     assert inp.outcome == inp.reasoning == _BAN
 
 
+@pytest.mark.asyncio
+async def test_a_ban_too_long_for_an_outcome_is_judged_as_any_candidate(monkeypatch) -> None:
+    long_ban = "Every client must retry " + "with its own jitter and backoff, " * 32 + "only once."
+    assert len(long_ban) > dx.OUTCOME_MAX_CHARS
+    world = _World(
+        monkeypatch, [_ban(outcome="retry with jitter", reasoning=long_ban, quote=long_ban)]
+    )
+    _chunks(monkeypatch, (long_ban, ("Retries",)))
+    report = await _run()
+    # Not a no-reason ban: it does not restate the short outcome, so it is recorded as is.
+    (inp,) = world.recorded
+    assert inp.outcome == "retry with jitter" and report.dropped == []
+
+
+def test_the_outcome_limit_is_decision_records() -> None:
+    from server.memory.api.models_decision import DecisionRecordInput
+
+    (limit,) = [
+        m.max_length
+        for m in DecisionRecordInput.model_fields["outcome"].metadata
+        if hasattr(m, "max_length")
+    ]
+    assert limit == dx.OUTCOME_MAX_CHARS
+
+
 def test_the_report_prints_each_second_read(capsys) -> None:
     report = de.ExtractReport("doc.md", dry_run=True)
     report.retried = [de.Retried(SECTION, de._EMPTY_REPLY), de.Retried("", de._STITCHED)]
@@ -2991,6 +3039,10 @@ async def test_a_recap_candidate_with_a_missing_reasoning_is_not_read_again(monk
         (BODY, "a plain set on disk", "costs random reads", False),
         ("Sharding by tenant is faster than a shared table.", "shard by tenant", "x" * 12, False),
         ("Only filler words here.", "the", "x" * 12, False),
+        # A choice named against what it beat still rejects it.
+        ("We chose sorted runs over a plain set on disk.", "a plain set on disk", "x" * 12, False),
+        ("Sorted runs replace the hash set.", "the hash set", "x" * 12, False),
+        ("We benchmarked sorted runs against a hash set.", "a hash set", "x" * 12, False),
         # A hard-wrapped sentence keeps its negation on the next line.
         (
             "Sorting the runs in memory is\nnot possible: the runs exceed RAM.\n"

@@ -353,7 +353,8 @@ await agent.decision.outcome(rec["memory_key"], "no replay gaps in the quarter",
 
 `loom decisions extract` reads one [knowledge](knowledge.md) document and records the decisions it states. It runs
 in-process with no token, so it is an operator command, and it calls the configured LLM once per window of the
-document's sections, also in a dry run. Its model calls are not gated by the namespace's cost cap.
+document's sections, twice for a window read again (below), also in a dry run. Its model calls are not gated by the
+namespace's cost cap.
 
 ```bash
 loom decisions extract --org O --namespace NS --source-uri URI            # dry run: prints what it would write
@@ -376,13 +377,16 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   one-line caption over a diagram beside more text, may state a decision.
 - **Second read**: a window gets at most one extra model call, reported as `read again`. When the reply holds no
   decision and the window's text is more than a caption (80 characters once images and link markup are removed), the
-  window is read once more with the same prompt and the second reply is the window's. When a candidate's quote is in
-  the text but its reasoning or a rejected option's reason is not (a model often joins one from two places), and no
-  span is under 12 characters, the window is read once more with those spans named, asking for each such decision
-  again with one contiguous span, or none; the first reply's other candidates stand, and the failed ones are reported
-  as dropped. After an empty reply, a second read that fails or comes back unreadable loses the window as any window
-  is: the exit code reads the final outcome. After a joined reason the window is answered already: a lost second read
-  is a `read again` line, and the first reply's decisions are recorded with the exit code unchanged.
+  window is read once more with the same prompt and the second reply is the window's. When a candidate's quote is in the
+  text but its reasoning or a rejected option's reason is not (a model often joins one from two places), and no span is
+  under 12 characters, the window is read once more with those spans named, asking for each such decision again with one
+  contiguous span, or none; the first reply's other candidates stand, and the failed ones are reported as dropped. Of
+  the second reply, a candidate is read only when it has a failed decision's outcome or a reasoning none of the window's
+  kept decisions has: a kept decision given again under a reworded scenario is dropped with the line
+  `the second read repeats a decision the first reply gave`. After an empty reply, a second read that fails or comes
+  back unreadable loses the window as any window is: the exit code reads the final outcome. After a joined reason the
+  window is answered already: a lost second read is a `read again` line, and the first reply's decisions are recorded
+  with the exit code unchanged.
 - **Image-only sections**: a section whose own text has no words (a heading alone or over an image), or holds an image
   and at most 80 characters of other text (a caption), is not sent to the model and gets the line
   `image-only, rationale not extracted`; a heading alone over its subsections is not one. The text above the first
@@ -422,11 +426,12 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   such when every word of it, as the restatement check compares words, is in one sentence of the quote (a sentence ends
   at `.`, `!` or `?` before whitespace, at a blank line or before a list item; a single line break does not end one) and
   that sentence holds none of `not`, `no`, `never`, `cannot`, `can't`, `instead`, `rather`, `without`, `fail`, `fails`,
-  `reject`, `rejected`, `than`, `avoid`, `slow`. The sentence that holds the option's own rejection reason is not read:
-  it is the rejection. Text outside the quote is not read either: a document often names an option in one sentence ("We
-  looked at a plain set on disk.", a list item, "benchmarked … against …") and rejects it in the next. A quote "…;
-  sharding by tenant is deferred to v2." states "Defer sharding by tenant"; "so v1 cannot evict it" still rejects "evict
-  the largest job".
+  `reject`, `rejected`, `than`, `avoid`, `slow`, `over`, `against`, `versus`, `vs`, `unlike`, `replace` (and `replaces`,
+  `replaced`, `replacing`), `favor`, `favour`, `dropped`, so "We chose sorted runs over a plain set on disk." still
+  rejects the set. The sentence that holds the option's own rejection reason is not read: it is the rejection. Text
+  outside the quote is not read either: a document often names an option in one sentence ("We looked at a plain set on
+  disk.", a list item, "benchmarked … against …") and rejects it in the next. A quote "…; sharding by tenant is deferred
+  to v2." states "Defer sharding by tenant"; "so v1 cannot evict it" still rejects "evict the largest job".
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.
