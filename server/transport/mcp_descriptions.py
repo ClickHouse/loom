@@ -2189,7 +2189,8 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
         "operation, the planes the namespace offers, and each hint the mentor would give "
         "with the counts it fired on, plus how often past hints were followed. A call count "
         "shows that a tool ran, not that its result was used. `agent` names the agent to "
-        "describe; the dashboard's and the assistant's own calls are not counted."
+        "describe; with none it briefs the namespace's most active writer "
+        "(`agent_defaulted`). The dashboard's and the assistant's own calls are not counted."
     ),
     "memory.get": (
         "Fetch one memory by exact `memory_key`: its value, version, content_sha256, "
