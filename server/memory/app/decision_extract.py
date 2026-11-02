@@ -21,11 +21,11 @@ identity, so a re-run revises the extractor's own rows instead of writing beside
   same at or above the conflict threshold: skipped as already recorded.
 
 After the writes, the extractor deletes its unconfirmed rows citing this document whose
-reasoning (a verbatim span of the document) is no longer in its text, or whose outcome
-and reasoning this run recorded under another key. A row it keeps (confirmed, or with a
-recorded outcome) whose reasoning left is tagged `source-changed` instead. A refused
-write is reported and the run goes on. Runs in-process, with no auth context: operator
-only.
+reasoning (a span of the document, whitespace aside) is no longer in its text, or whose
+outcome and reasoning this run recorded under another key. A row it keeps (confirmed, or
+with a recorded outcome) whose reasoning left is tagged `source-changed` instead. A
+refused write is reported and the run goes on. Runs in-process, with no auth context:
+operator only.
 """
 
 from __future__ import annotations

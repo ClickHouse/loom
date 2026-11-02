@@ -56,9 +56,9 @@ def register_decisions_cli(sub: Any) -> None:
     p_ext = dsub.add_parser(
         "extract",
         help="Mine one knowledge document into decision records: one model call per window of its "
-        "sections, candidates kept only when their quote, reasoning and rejected options' "
-        "reasons are the document's own words and the reasoning says more than the outcome (a "
-        "heading over only an image and its caption is skipped), written through "
+        "sections (a heading over only an image and its caption is not sent), candidates kept "
+        "only when their quote, reasoning and rejected options' reasons are the document's "
+        "own words and the reasoning says more than the outcome, written through "
         "decision.record as agent loom-decisions. A re-run revises or retires the extractor's "
         "own unconfirmed rows and tags a confirmed (pinned or attested) row source-changed. "
         "Dry run by default (still calls the model); --apply writes. Exits 1 when it could "

@@ -296,18 +296,17 @@ _FILLER_WORDS = (
     "it its this that these those we our us they will would should must can so decide "
     "chose chosen choose use used using instead because since"
 )
-_WORD = re.compile(r"\w+")
-
-RESTATED = "reasoning only restates the outcome: it has no word the outcome lacks"
-
-
 # Compared as Snowball stems, so `spilling` meets `spill`, `stored` meets `store`, and
 # every form of a filler word is one: `deciding`, `chooses`, `used`.
 _FILLER_STEMS = frozenset(snowball_stem_tokens(_FILLER_WORDS.split()))
+_WORD = re.compile(r"\w+")
 
 
 def _content_words(text: str) -> set[str]:
     return set(snowball_stem_tokens(_WORD.findall(text.lower()))) - _FILLER_STEMS
+
+
+RESTATED = "reasoning only restates the outcome: it has no word the outcome lacks"
 
 
 def restates_outcome(cand: Candidate) -> bool:

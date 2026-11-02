@@ -365,8 +365,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   same keys. Category and scenario are shown whole, since the key is built from them; an outcome over 160 characters
   is shortened and ends in `…`.
 - **Prompt**: the model is asked for the reason the text gives for each choice (the cost, constraint or failure it
-  avoids), never the decision restated, and for nothing from a section that sums up other sections. What the text marks
-  as former, replaced or superseded (an old default, a previous behaviour) is never given as the outcome.
+  avoids), never the decision restated, for nothing from a section that sums up other sections, and never to give as
+  the outcome what the text marks as former, replaced or superseded (an old default, a previous behaviour).
 - **Image-only sections**: a section whose own text has no words (a heading alone or over an image), or holds an image
   and at most 80 characters of other text (a caption), is not sent to the model and gets the line
   `image-only, rationale not extracted`; a heading alone over its subsections is not one. The text above the first
