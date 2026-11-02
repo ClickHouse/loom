@@ -10,6 +10,7 @@ from typing import Any
 
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.ask.identity import memory_identity_where
+from server.memory.app.search_tag_filter import stamp_row_tags
 from server.memory.domain.search_types import row_identity
 
 logger = logging.getLogger(__name__)
@@ -64,8 +65,8 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
         ch = get_client()
         rows = await ch.query_all(
             f"""
-            SELECT agent, user_id, session_id, memory_key, memory_type, value, status, version,
-                   toString(created_at) AS created_at, toString(valid_at) AS valid_at
+            SELECT agent, user_id, session_id, memory_key, memory_type, value, status, tags,
+                   version, toString(created_at) AS created_at, toString(valid_at) AS valid_at
             FROM loom.memory FINAL
             WHERE {" AND ".join(where)}
               AND status = 'active'
@@ -103,6 +104,7 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
                 explanation=f"bridge:{bridge}",
             )
             hit._row_identity = row_identity(r)  # so the pool knows the row it already holds
+            stamp_row_tags(hit, r.get("tags"))  # so the hard tag belt judges this row
             out.append(hit)
         return out
     except Exception as e:  # noqa: BLE001 — additive, never fatal

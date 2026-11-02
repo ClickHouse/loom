@@ -162,3 +162,43 @@ async def test_a_bridge_row_the_pool_holds_is_not_added_twice(monkeypatch) -> No
     pooled_hit._row_identity = ("a", "u", "s1")
     pooled = PooledRows([pooled_hit], "n")
     assert [h.session_id for h in hits if pooled.add(h)] == ["s2"]
+
+
+@pytest.mark.asyncio
+async def test_a_bridge_row_without_the_hard_tag_is_dropped_by_the_belt(monkeypatch) -> None:
+    # two sessions' rows of one bridge key, one tagged: the belt judges each by its own tags
+    from server.memory.app import search_tag_filter as belt
+    from server.memory.app.ask import completion
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return [
+                {
+                    "agent": "a",
+                    "user_id": "u",
+                    "session_id": "s1",
+                    "memory_key": "k",
+                    "value": "France",
+                    "tags": ["project:x"],
+                },
+                {
+                    "agent": "a",
+                    "user_id": "u",
+                    "session_id": "s2",
+                    "memory_key": "k",
+                    "value": "Belgium",
+                    "tags": [],
+                },
+            ]
+
+    async def _no_key_read(*a: Any, **k: Any) -> dict[Any, Any]:
+        raise AssertionError("each bridge row carries its own tags")
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+    monkeypatch.setattr(belt, "read_row_tags", _no_key_read)
+    inp = SimpleNamespace(org="o", namespace="n", agent="a", user_id="u", session_id=None)
+    hits = await completion.bridge_rows_by_key(inp, "Bernard Arnault")
+    req = SimpleNamespace(org="o", namespace="n", tags=["project:x"], tags_soft=False)
+    work: dict[str, Any] = {}
+    kept = await belt.enforce_hard_tag_filter(hits, req, work, ["n"])
+    assert [h.content_excerpt for h in kept] == ["France"] and work == {"tag_filter_dropped": 1}
