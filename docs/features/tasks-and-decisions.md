@@ -375,8 +375,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.
-  Each `decision.record` and `memory.delete_version` call leaves the audit row the transport writes for that op, with
-  the actor `process:cli:decisions`; the tag write, `memory.update_by_id`, declares none, as over HTTP.
+  Each `decision.record`, and each `memory.delete_version` that deletes a row, leaves the audit row the transport
+  writes for that op, with the actor `process:cli:decisions`; the tag write, `memory.update_by_id`, declares none, as
+  over HTTP.
 - **Files**: each backticked or qualified name and each bare class name the document text holds is looked up with
   `code.symbol` in the same namespace; exactly one defining file (a class preferred over its constructor) goes into
   `files`, several or none add nothing. A repository path the quote or the reasoning writes out

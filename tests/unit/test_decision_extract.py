@@ -2059,3 +2059,9 @@ async def test_a_partly_read_document_exits_2(monkeypatch, answers, code) -> Non
     _fake_fallback(monkeypatch, answers)
     report = await _run(window_chars=len(BODY) + 1)
     assert report.error == "" and cli.exit_code(report) == code
+
+
+def test_every_printed_action_has_its_line() -> None:
+    from typing import get_args
+
+    assert set(get_args(de.Action)) - {"row_changed"} == set(cli._ACTIONS)

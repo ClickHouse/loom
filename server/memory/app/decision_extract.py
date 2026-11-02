@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import HTTPException
@@ -75,13 +75,26 @@ _PAGE = 500
 _RESTATEMENT_TOP_K = 20
 
 
+# What a candidate did to the namespace.
+Action = Literal[
+    "written",
+    "revised",
+    "unchanged",
+    "flagged",
+    "already_flagged",
+    "row_changed",
+    "not_ours",
+    "outcome_known",
+    "already_recorded",
+]
+
+
 @dataclass
 class RecordReport:
     memory_key: str
-    # written | revised | unchanged | flagged | already_flagged | row_changed | not_ours |
-    # outcome_known | already_recorded. row_changed (a tag write found its row gone or moved
-    # on) is reported in `races`; the caller keeps it out of `records`.
-    action: str
+    # row_changed (a tag write found its row gone or moved on) is reported in `races`; the
+    # caller keeps it out of `records`.
+    action: Action
     # The decision.record body, with the identity the write goes (or would go) under.
     body: dict[str, Any]
     # One line per mention looked up in the code index: name, signal, what it resolved to.
@@ -356,15 +369,14 @@ def _known_decisions(own: list[tuple[MemoryRow, dict[str, Any]]]) -> list[tuple[
     """(category, scenario, outcome) of the extractor's decisions on this document, pinned
     or not, for the prompt: a model told how a decision was worded before reuses the
     wording, so its key and its outcome stay put across runs."""
-    known: list[tuple[str, str, str]] = []
-    for _row, record in own:
-        category, scenario, outcome = (
-            str(record.get(f) or "") for f in ("category", "scenario", "outcome")
+    return [
+        (
+            str(record.get("category") or ""),
+            str(record.get("scenario") or ""),
+            str(record.get("outcome") or ""),
         )
-        known.append((category, scenario, outcome))
-        if len(known) >= dx.MAX_KNOWN_DECISIONS:
-            break
-    return known
+        for _row, record in own
+    ]
 
 
 async def _read_window(
@@ -793,7 +805,7 @@ async def _clear_if_tagged(rec: RecordReport, row: MemoryRow, dry_run: bool) -> 
     rec.note = f"{rec.note}; {note}" if rec.note else note
 
 
-async def _flag(rec: RecordReport, row: MemoryRow, dry_run: bool) -> str:
+async def _flag(rec: RecordReport, row: MemoryRow, dry_run: bool) -> Action:
     """Tag a row the document now contradicts `source-changed`; the action it reports."""
     if SOURCE_CHANGED_TAG in row.tags:
         return "already_flagged"

@@ -228,7 +228,7 @@ def sort_mentions(names: list[str], text: str, *, cap: int = 8) -> Mentions:
             # setting; one the index does not define is reported as a setting after all.
             if code_mentions(f"`{name}`"):
                 symbols.append((name, "qualified"))
-        elif _SETTING_NAME.match(name):
+        elif looks_like_setting(name):
             unresolved.append((name, "setting"))
         elif _BARE_CAMEL.match(name):
             symbols.append((name, "camelcase"))

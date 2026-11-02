@@ -12,7 +12,7 @@ from server.cli._apply import add_apply_flags
 from server.cli._ch import run_connected
 
 if TYPE_CHECKING:
-    from server.memory.app.decision_extract import ExtractReport
+    from server.memory.app.decision_extract import Action, ExtractReport
 
 # Below this a window holds a sentence or two, too little to state a decision and its reason.
 _MIN_WINDOW_CHARS = 500
@@ -36,7 +36,9 @@ def _window_chars(text: str) -> int:
     return _at_least(text, _MIN_WINDOW_CHARS)
 
 
-_ACTIONS = {
+# How each printed action reads, applied and in a dry run; row_changed is never printed (a
+# race, listed apart). A test checks every other Action has its line.
+_ACTIONS: dict[Action, tuple[str, str]] = {
     "written": ("recorded", "would record"),
     "revised": ("revised", "would revise"),
     "unchanged": ("unchanged", "unchanged"),
