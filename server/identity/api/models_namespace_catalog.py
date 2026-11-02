@@ -336,8 +336,8 @@ class NamespaceAuditSummary(BaseModel):
     live_bytes: int = 0
     # Bytes of content_excerpt the embedding rows carry (a copy of each value's head).
     excerpt_bytes: int = 0
-    # The distinct contents the history holds (a status-only version is not one), and
-    # their bytes.
+    # The versions whose content differs from the same writer's previous version (a
+    # status-only version repeats it and is not counted), and their bytes.
     version_rows: int = 0
     version_bytes: int = 0
     # Searchable-type embedding rows with no vector and a recorded embed error.

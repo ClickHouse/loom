@@ -1272,6 +1272,9 @@ async def test_the_ledger_summary_counts_a_dashboard_write_but_no_inspector_read
     await audit.summary_ledger()
     s = audit.summary
     assert (s.gets, s.searches, s.sets, s.inspector_calls) == (1, 0, 1, 2)
+    # The agent's get and the person's write in the dashboard say the ledger records the
+    # namespace; the dashboard's and the assistant's reads do not.
+    assert s.ledger_calls == 2
 
 
 # ---------------------------------------------------------------------------

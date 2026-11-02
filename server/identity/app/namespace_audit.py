@@ -118,13 +118,13 @@ _LEDGER = f"{_LEDGER_ALL} AND {_AGENT_CALL}"
 # A hot key: a named key read HOT_KEY_READS times or more in the window. One fragment for
 # the exact-key samples and the hot-key list the coordination check joins.
 _HOT_KEY = "memory_key != '' AND reads >= {hot:UInt32}"
-# The live keys of a type that is structured by design: read back whole by key on purpose.
 # The reports on a namespace: their own ledger rows say nothing about whether the window's
 # calls were recorded.
 _REPORT_OPS = (
     "('namespace.audit', 'namespace.validate', 'namespace.summary', 'namespace.inventory', "
     "'mentor.brief')"
 )
+# The live keys of a type that is structured by design: read back whole by key on purpose.
 _TYPED_KEYS = f"SELECT memory_key {_LIVE} AND memory_type IN {{structured:Array(String)}}"
 _HOT_KEYS = (
     f"SELECT memory_key, count() AS reads {_LEDGER} "
@@ -137,13 +137,13 @@ _IS_JSON_STRING_OF_JSON = (
 )
 _IS_JSON_CONTAINER = "JSONType(value) IN ('Object', 'Array')"
 
-# Over loom.memory_embeddings: a searchable row the worker gave up on (summary and check).
-# A model call the deployment held or could not bill: the row is waiting, not failing.
+# A model call the deployment held or could not bill: the row's error is not its own.
 # The embedding worker's markers (`HELD`, `customer.NO_CUSTOMER`); a unit test pins them.
 EMBED_HOLDS: tuple[str, ...] = (
     "model call held",
     "MODEL_CALL_UNATTRIBUTED: the row names no org to bill",
 )
+# Over loom.memory_embeddings: a searchable row the worker gave up on (summary and check).
 _UNEMBEDDED_ROW = (
     f"embedding_dim = 0 AND embed_last_error != '' "
     f"AND embed_last_error NOT IN {{holds:Array(String)}} AND {_SEARCHABLE}"
@@ -186,9 +186,10 @@ _TEXT: dict[str, tuple[str, str]] = {
         "older, the worker is stopped or behind, or the calls are held. Either way the rows "
         "are not found by meaning yet, through no fault of the writer.",
         "Check that the embedding worker runs and that the org's model calls are allowed: "
-        "a held row is retried on the worker's next pass, and a row whose call named no org "
-        "to bill is not retried until the deployment attributes its calls. `memory.get` "
-        "still reads them by key meanwhile. Nothing for the writer to change.",
+        "a held row is retried on the worker's next pass. A row whose call named no org to "
+        "bill is given up on; once the deployment attributes its calls, a new revision of "
+        "the row (`memory.update_by_id`) queues it again. `memory.get` still reads them by "
+        "key meanwhile.",
     ),
     "hand_rolled_index_rows": (
         f"Live rows whose value names {INDEX_ROW_MIN_KEYS}+ other live keys of the "
@@ -597,7 +598,9 @@ class _Audit:
     async def summary_ledger(self) -> None:
         r = await self.one(
             f"""
-            SELECT countIf(operation NOT IN {_REPORT_OPS} AND {_AGENT_CALL}) AS ledger_calls,
+            -- an inspector's write (a person editing in the dashboard) is a recorded call too
+            SELECT countIf(operation NOT IN {_REPORT_OPS}
+                           AND ({_AGENT_CALL} OR operation IN {_LEDGER_SETS})) AS ledger_calls,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}) AS gets,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}
                            AND memory_key IN ({_TYPED_KEYS})) AS typed_gets,

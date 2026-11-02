@@ -66,9 +66,10 @@ Read `summary` first:
 - `unembedded_rows` above zero means rows search can never find.
 
 Then read the findings. Stop when `healthy` is true and nothing is `warning` or
-`critical`: an `info` finding is a note for the writer, not a rework. A `system_state` finding (an indexing
-backlog, missing telemetry) is about the deployment, never the writer; while
-`telemetry_unavailable` is a warning, the ledger checks are in `skipped`, not clean.
+`critical`: an `info` finding is a note for the writer, not a rework. A
+`system_state` finding (an indexing backlog, missing telemetry) is about the
+deployment, never the writer; while `telemetry_unavailable` is a warning, the ledger
+checks are in `skipped`, not clean.
 
 The dashboard's namespace audit panel shows the same audit. `context.pack` carries a
 `namespace_health` block when the namespace is unhealthy (one critical finding, or two
