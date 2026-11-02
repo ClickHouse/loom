@@ -324,14 +324,19 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return rows
     placed: set[int] = set()
     out: list[dict[str, Any]] = []
-    for r in rows:
+
+    def place(r: dict[str, Any]) -> None:
+        # The rows newer than `r` go first, theirs before them, so a chain reads newest
+        # first; `placed` is set before the recursion so a cycle of links ends.
+        if id(r) in placed:
+            return
+        placed.add(id(r))
         for new in newer_of.get(id(r), []):
-            if id(new) not in placed:
-                placed.add(id(new))
-                out.append(new)
-        if id(r) not in placed:
-            placed.add(id(r))
-            out.append(r)
+            place(new)
+        out.append(r)
+
+    for r in rows:
+        place(r)
     return out
 
 

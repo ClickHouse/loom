@@ -351,13 +351,27 @@ def test_an_own_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> 
     assert text.splitlines()[-1].startswith("- … 2 more;")
 
 
+def _chain() -> list[dict[str, Any]]:
+    """a <- b <- c linked by the conflict check, newest last, in the query's order:
+    `a` (pinned) first, so the chain has to be reordered newest first."""
+    a = _row("a", json.dumps("Keep 32."), namespace="me", pinned=1)
+    b = _row("b", json.dumps("Keep 48."), namespace="me")
+    c = _row("c", json.dumps("c" * 300), namespace="me")
+    for day, row in enumerate([a, b, c], start=20):
+        row["updated_at"] = datetime(2026, 9, day, 12, 0)
+    a["conflict_with"], b["conflict_with"] = [b["memory_id"]], [a["memory_id"], c["memory_id"]]
+    c["conflict_with"] = [b["memory_id"]]
+    return mff._supersede_order([a, b, c])
+
+
+def test_a_chain_of_superseding_rows_is_placed_newest_first() -> None:
+    text, _, truncated = mff.render_block("src/a.cpp", _chain(), 10_000, home="me")
+    keys = [ln.split(" ")[1].rstrip(":") for ln in text.splitlines()[1:]]
+    assert truncated is False and keys == ["c", "b", "a"]
+
+
 def test_a_chain_of_superseded_rows_is_left_out_with_its_head() -> None:
-    rows = [
-        _superseding("c", "b", "c" * 300, "me"),
-        _superseding("b", "a", "Keep 48.", "me"),
-        _row("a", json.dumps("Keep 32."), namespace="me"),
-    ]
-    text, _, truncated = mff.render_block("src/a.cpp", rows, 60, home="me")
+    text, _, truncated = mff.render_block("src/a.cpp", _chain(), 60, home="me")
     assert truncated is True and text.splitlines()[1:] == [
         '- … 3 more; memory.for_file(path="src/a.cpp") lists them.'
     ]
