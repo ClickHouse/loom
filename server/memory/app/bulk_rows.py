@@ -350,8 +350,9 @@ def _bulk_skip_gate(
     return False
 
 
-# A restatement of a row in one of these is served again, so it is a change (memory.set).
-_SERVED_AGAIN = frozenset({"rejected", "superseded", "conflicted"})
+# A restatement writes a row in one of these back as active, as memory.set does. A
+# `proposed` row stays on trial: promoting it is not a re-extraction's call.
+_WRITTEN_BACK_ACTIVE = frozenset({"rejected", "superseded", "conflicted"})
 
 
 def _restates_stored_row(state: _BulkWriteState, entry: Any) -> bool:
@@ -366,7 +367,7 @@ def _restates_stored_row(state: _BulkWriteState, entry: Any) -> bool:
         entry.memory_key
     )
     return (
-        _stored_held(state, entry.memory_key).status not in _SERVED_AGAIN
+        str(getattr(live, "status", "") or "") not in _WRITTEN_BACK_ACTIVE
         and named_level in ("", stored_level)
         and not adds_pin
         and getattr(entry, "ttl_seconds", None) is None
@@ -540,7 +541,7 @@ def _settle_step(
     if (
         same_bytes
         and same_expiry
-        and held.status not in _SERVED_AGAIN
+        and held.status not in _WRITTEN_BACK_ACTIVE
         and level == held.level
         and bool(row["pinned"]) == held.pinned
     ):
