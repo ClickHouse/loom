@@ -444,12 +444,13 @@ def _hit_author(actors: _KeyWriters, input: ContextPackInput, h: Any) -> str:
     left were written by more than one actor the label says `unknown`, never a writer whose
     row this may not be."""
     rows = actors.get(_hit_ns_key(input, h)) or []
-    row = hit_row_key(h, input.namespace) if names_row(h) else None
+    is_fact_row = names_row(h) and getattr(h, "source", "fact") != "chunk"
+    row = hit_row_key(h, input.namespace) if is_fact_row else None
     # A fact hit names its memory row. A chunk's identity is its chunk row's, and a shared
     # hit's the promoted row's, which has no actor here: both narrow by the hit's own
     # user, session and agent fields.
     narrow: list[tuple[str, Any]]
-    if row and getattr(h, "source", "fact") != "chunk" and row.agent != SHARED_AGENT:
+    if row is not None and row.agent != SHARED_AGENT:
         narrow = [("agent", row.agent), ("user_id", row.user_id), ("session_id", row.session_id)]
     else:
         narrow = [

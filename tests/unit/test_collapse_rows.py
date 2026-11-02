@@ -36,7 +36,7 @@ def test_one_row_pooled_twice_keeps_its_stronger_hit_where_the_first_sat() -> No
 
 @pytest.mark.parametrize("passage_first", [True, False])
 def test_the_kept_hit_has_the_tags_a_leg_read_of_its_row(passage_first: bool) -> None:
-    # a hit made from a shared-scope chunk read none; the hard tag belt checks `_row_tags`
+    # a hit made from a shared-scope chunk is stamped empty: the promoted row's tags are not read
     head = _wire("k", 0.5, "the value's head", ("_shared", "-", "-"))
     head._row_tags = ("kind:lesson",)
     passage = _wire("k", 0.9, "the passage", ("_shared", "-", "-"))
@@ -55,8 +55,8 @@ def test_a_kept_hit_that_read_its_tags_keeps_them() -> None:
     assert kept is stronger and kept._row_tags == ("kind:lesson",)
 
 
-def test_two_hits_that_read_no_tags_leave_the_row_unread() -> None:
-    # unread, the hard tag belt reads the row's tags; stamped empty, it would drop the row
+def test_two_hits_whose_legs_did_not_read_tags_leave_the_row_unread() -> None:
+    # None is "not read", () "read, none": the belt point-reads an unread row, drops an empty one
     stronger = _wire("k", 0.9, "the passage", ("a", "u", "s1"))
     weaker = _wire("k", 0.5, "the value's head", ("a", "u", "s1"))
     (kept,) = collapse_rows([weaker, stronger], "n")
