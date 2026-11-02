@@ -109,7 +109,8 @@ async def test_hits_carry_their_matched_files_and_render_within_budget(
     assert "- never_allocate_here [constraint] (pinned): Do not call allocate()" in out.rendered
     assert out.truncated is True
     assert 'more; memory.for_file(path="src/a.cpp") lists them.' in out.rendered
-    assert out.tokens_estimate <= 90 + 30  # the tail line may run a little past the cap
+    assert out.tokens_estimate <= 90
+    assert "- third: Third fact about the file." in out.rendered
     # The hit carries the stored value whole; only the rendered block is cut.
     assert out.hits[1].value == "x" * 900
     assert all(len(line) <= mff._LINE_CHARS + 80 for line in out.rendered.splitlines())
@@ -327,6 +328,24 @@ def test_a_block_that_fits_whole_reserves_nothing() -> None:
     assert text.splitlines()[1:] == ["- k0: " + "a" * 94, "- k1: " + "b" * 24]
 
 
+def test_a_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:
+    newer = _row("rules/new", json.dumps("n" * 200), namespace="code-repo", tags=["constraint"])
+    newer |= {"supersedes_key": "rules/old", "supersedes": "bob", "supersedes_kind": "rule"}
+    older = _row("rules/old", json.dumps("Keep 32."), namespace="code-repo")
+    text, tokens, truncated = mff.render_block("src/a.cpp", [newer, older], 120, home="me")
+    assert truncated is True and tokens <= 120
+    assert "rules/new" not in text and "rules/old" not in text
+    assert '- … 2 more; memory.for_file(path="src/a.cpp") lists them.' in text.splitlines()
+
+
+def test_mixed_rows_stay_inside_the_budget() -> None:
+    hits = [_row(f"k{i}", json.dumps("r" * (20 + 37 * i % 200))) for i in range(12)]
+    for budget in range(50, 600):
+        text, tokens, truncated = mff.render_block("src/a.cpp", hits, budget, home="me")
+        assert len(text) <= budget * mff._CHARS_PER_TOKEN and tokens <= budget
+        assert truncated is text.splitlines()[-1].startswith("- … ")
+
+
 def test_the_more_line_fits_inside_the_budget() -> None:
     hits = [_row(f"k{i}", json.dumps("r" * 100)) for i in range(12)]
     for budget in range(50, 400):
@@ -335,7 +354,7 @@ def test_the_more_line_fits_inside_the_budget() -> None:
         assert truncated is text.splitlines()[-1].startswith("- … ")
 
 
-def test_the_last_row_needs_no_room_for_a_more_line() -> None:
+def test_a_block_filling_the_budget_prints_whole_and_one_more_character_cuts_it() -> None:
     def block(second: int, budget: int) -> tuple[str, int, bool]:
         hits = [_row("k0", json.dumps("a" * 100)), _row("k1", json.dumps("b" * second))]
         return mff.render_block("src/a.cpp", hits, budget, home="me")

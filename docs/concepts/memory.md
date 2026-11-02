@@ -273,7 +273,9 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
 not fit is left out whole while the rows after it still get their turn, and a closing
 `- … <n> more` line, which counts against the budget too, says how many were left out and
 how to list them. The header, the removal footer and the `… more` line are always printed,
-so a budget smaller than those can be exceeded:
+so a budget smaller than those can be exceeded.
+
+Each line:
 
 - A memory from an extra namespace (the repository's code namespace) is headed
   `Team rule (by <author>, <age>)`, or `Decision (by <author>, <age>)` for a decision
@@ -298,7 +300,8 @@ so a budget smaller than those can be exceeded:
 - A newer team row the conflict check linked to an older one of its type is placed above
   it and says which it supersedes (`supersedes decision` when the older is tagged
   `decision`). Two typed decisions the check linked each keep their place in the block,
-  with no such note, since each decision key is its own decision.
+  with no such note, since each decision key is its own decision. When the budget leaves
+  the newer row out, the older one is left out with it, so it never reads as current.
 
 ## Memories linked to code
 

@@ -267,14 +267,19 @@ def render_block(
     if used + sum(len(row) + 1 for row in rows) <= budget_chars:
         lines += rows
     else:
-        for i, row in enumerate(rows):
+        hidden: set[tuple[str, str]] = set()
+        for i, (h, row) in enumerate(zip(hits, rows, strict=True)):
             # A row that does not fit is left out and the later rows still get their turn,
             # so each row also needs room for a "… more" line counting every row that may
             # be left out.
             most = left_out + n - i - 1
-            tail = len(_more_line(path, most)) + 1 if most else 0
-            if used + len(row) + 1 + tail > budget_chars:
+            tail = len(_more_line(path, most)) + 1
+            ns = str(h.get("namespace") or "")
+            if (ns, h["memory_key"]) in hidden or used + len(row) + 1 + tail > budget_chars:
                 left_out += 1
+                # Without the newer row above it, the row it supersedes would read as current.
+                if h.get("supersedes_key"):
+                    hidden.add((ns, h["supersedes_key"]))
                 continue
             lines.append(row)
             used += len(row) + 1

@@ -11,11 +11,12 @@ a repo-relative path or a bare filename, because stored rows use both shapes)
 or through a link to code in it (`server.memory.app.code_links`).
 
 Read-only, VIEWER. Rows tagged `constraint` sort first, then
-pinned, then confidence. `rendered` is cut at `token_budget` so the hook
-never pays more than it asked for. `extra_namespaces` (a repository's primary code
-namespace, where its team file rules and design decisions live) runs the same query per
-readable namespace, merged in the same order, team rows marked with their author. Each
-hit carries its `source_resource_id` and its `verification` state; a decision's rendered line
+pinned, then confidence. `rendered` is cut at `token_budget` (its header,
+removal footer and "… more" line always print). `extra_namespaces` (a
+repository's primary code namespace, where its team file rules and design
+decisions live) runs the same query per readable namespace, merged in the same
+order, team rows marked with their author. Each hit carries its
+`source_resource_id` and its `verification` state; a decision's rendered line
 carries the source after its value.
 """
 
