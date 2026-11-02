@@ -294,10 +294,11 @@ it.
 `memory.set` takes as a restatement: it reinforces the row, and a pinned decision accepts it. The restatement compares
 the statement's bytes, so a row stored under another statement form is revised rather than restated by the same
 fields: a pinned one refuses the write until it is unpinned, and the pin is set again only through `memory.pin`; a row
-whose value is locked refuses it with 423 `LOCKED` until the lock ends or is released. When the writer of a pinned
-decision decides it otherwise, the call is refused with 409 `PINNED_CONFLICT` and nothing is written; an admin unpins
-it with `memory.unpin` first. The pin guards only its writer's row: another identity's decision on the same scenario
-still supersedes the record. The new record holds only what the new decision states: fields it leaves out, and an
+whose value is locked refuses it with 423 `LOCKED` until the lock ends or is released; an attested row takes the write,
+and its attestation reads stale until `memory.verify` binds it again. When the writer of a pinned decision decides it
+otherwise, the call is refused with 409 `PINNED_CONFLICT` and nothing is written; an admin unpins it with
+`memory.unpin` first. The pin guards only its writer's row: another identity's decision on the same scenario still
+supersedes the record. The new record holds only what the new decision states: fields it leaves out, and an
 earlier `realized_outcome` or `success`, are not carried over, whether it is written by `decision.record` or
 `memory.record.write`. A `decision.outcome` without `success` keeps the record's verdict.
 
