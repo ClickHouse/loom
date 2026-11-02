@@ -381,7 +381,7 @@ def image_only_sections(content: str) -> list[str]:
         nxt = sections[i + 1].path if i + 1 < len(sections) else ()
         has_children = len(nxt) > len(sec.path) and nxt[: len(sec.path)] == sec.path
         body = "\n".join(sec.lines)
-        has_image = bool(_IMAGE_MARKUP.search(body))
+        has_image = bool(_IMAGE_MARKUP.search(_code_as_text(body)))
         if image_only(body) and (has_image or (sec.path and not has_children)):
             out.append(breadcrumb(sec.path))
     return out

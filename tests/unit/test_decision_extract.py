@@ -2632,3 +2632,9 @@ async def test_a_dropped_candidate_with_a_rewrapped_quote_names_the_quotes_secti
 )
 def test_image_markup_inside_code_is_text(body: str, image_only: bool) -> None:
     assert dx.image_only(body) is image_only
+
+
+def test_image_markup_inside_code_makes_no_section_image_only() -> None:
+    fence = "```\n![]()\n```"
+    doc = f"`![1]`\n\n# Spilling\n\n{fence}\n\n## Final DISTINCT\n\n{BODY}\n"
+    assert dx.image_only_sections(doc) == []
