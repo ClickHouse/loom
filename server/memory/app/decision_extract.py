@@ -125,8 +125,6 @@ class Dropped:
 
 @dataclass
 class ExtractReport:
-    org: str
-    namespace: str
     source_uri: str
     dry_run: bool
     # Why the run read nothing and retired nothing: no document, no chunks for the current
@@ -280,7 +278,7 @@ async def extract_document(
     from server.knowledge.api.models_knowledge import KnowledgeGetInput
     from server.knowledge.app.document_reads import document_chunks, handle_knowledge_get
 
-    report = ExtractReport(org, namespace, source_uri, dry_run)
+    report = ExtractReport(source_uri, dry_run)
     if error := _no_model_error():
         report.error = error
         return report

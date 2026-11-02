@@ -1708,7 +1708,7 @@ async def test_an_unchanged_decision_is_held_by_its_stored_outcome(monkeypatch) 
 
 
 def test_an_error_goes_to_stderr(capsys) -> None:
-    report = de.ExtractReport("o", "ns", "missing.md", True, error="no live document")
+    report = de.ExtractReport("missing.md", True, error="no live document")
     cli.print_report(report)
     out = capsys.readouterr()
     assert out.out == "" and out.err == "error: no live document\n"
@@ -1793,7 +1793,7 @@ async def test_a_failed_model_call_loses_its_window_only(monkeypatch) -> None:
     [([], [], 0), (["refused: BLACKLISTED"], [], 0), ([], ["k: refused: X"], 2), (["x"], [], 0)],
 )
 def test_the_exit_code_says_whether_a_write_was_refused(dropped, refused, code) -> None:
-    report = de.ExtractReport("o", "ns", "d", False)
+    report = de.ExtractReport("d", False)
     report.dropped = [de.Dropped("s", r) for r in dropped]
     report.refused = refused
     assert cli.exit_code(report) == code
@@ -2021,7 +2021,7 @@ async def test_a_failed_record_read_stops_the_run_before_any_model_call(monkeypa
     [(True, [], 2), (False, [], 0), (False, ["decision:gone: refused: X"], 2)],
 )
 def test_a_refused_candidate_or_retire_write_exits_2(dropped, refused, code) -> None:
-    report = de.ExtractReport("o", "ns", "d", False)
+    report = de.ExtractReport("d", False)
     report.dropped = [de.Dropped("s", "refused: X" if dropped else "x", refused=dropped)]
     report.refused = refused
     assert cli.exit_code(report) == code
