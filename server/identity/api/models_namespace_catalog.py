@@ -158,7 +158,7 @@ class NamespaceSummaryOutput(BaseModel):
     recent_writes: int  # memory write calls in the activity window
     recent_recalls: int  # memory.search calls in the window
     # Distinct agents with a ledger row in the activity window; the dashboard's and the
-    # assistant toolset's reads are left out, as they are of the recalls above (a write
+    # assistant toolset's reads are left out, as they are of the recalls above (any write
     # from the dashboard counts).
     distinct_agents: int
     # Time of the newest ledger row in the activity window, the same reads left out.

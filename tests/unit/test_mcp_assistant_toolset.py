@@ -360,8 +360,9 @@ async def test_namespace_summary_counts_a_dashboard_write_but_no_inspector_read(
 
     rows = [
         call("memory.search", "bot", ""),
-        # A person editing a memory from the dashboard uses the namespace.
+        # A person editing or deleting a memory from the dashboard uses the namespace.
         call("memory.set", "alice", "loom-ui"),
+        call("memory.delete", "carol", "loom-ui"),
         # The dashboard's and the assistant's reads only look at it.
         call("memory.search", "alice", "loom-ui"),
         call("memory.search", "helper", "loom-assistant"),
@@ -381,7 +382,7 @@ async def test_namespace_summary_counts_a_dashboard_write_but_no_inspector_read(
     out = await namespace_summary.handle_namespace_summary(
         NamespaceSummaryInput(org="o", namespace="ns")
     )
-    assert (out.recent_writes, out.recent_recalls, out.distinct_agents) == (1, 1, 2)
+    assert (out.recent_writes, out.recent_recalls, out.distinct_agents) == (1, 1, 3)
 
 
 def test_a_screened_refusal_on_the_assistant_connection_carries_its_consumer(

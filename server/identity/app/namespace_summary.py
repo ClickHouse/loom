@@ -21,6 +21,13 @@ from server.memory.domain.graph_quality import is_lexical_junk_entity
 from server.observability.consumer import INSPECTOR_CONSUMERS
 
 
+def _write_ops() -> list[str]:
+    """Every op that changes state: the ledger rows an inspector's call still counts for."""
+    from server.operations.registry import ALL_OPERATIONS
+
+    return sorted(op.name for op in ALL_OPERATIONS if not op.read_only)
+
+
 async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSummaryOutput:
     ch = get_client()
     params = {"org": input.org, "ns": input.namespace}
@@ -66,27 +73,27 @@ async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSum
         return await ch.query_one(
             """
             SELECT
-                countIf(is_write)                         AS writes,
+                countIf(operation IN ('memory.set', 'memory.bulk_set',
+                                       'memory.set_from_messages',
+                                       'memory.update_by_id',
+                                       'memory.touch'))   AS writes,
                 countIf(operation = 'memory.search')      AS recalls,
                 uniqExact(agent)                          AS agents,
                 max(ts)                                   AS last_at
-            FROM (SELECT operation, agent, ts, consumer,
-                         operation IN ('memory.set', 'memory.bulk_set',
-                                       'memory.set_from_messages',
-                                       'memory.update_by_id',
-                                       'memory.touch') AS is_write
-                  FROM loom.agent_events
-                  WHERE org = {org:String}
-                    AND namespace = {ns:String}
-                    AND ts >= now() - INTERVAL {win:UInt32} SECOND)
-            -- the dashboard's and the assistant's reads inspect the namespace, not use it;
-            -- a write from the dashboard is a person using it
-            WHERE is_write OR consumer NOT IN {inspectors:Array(String)}
+            FROM loom.agent_events
+            WHERE org = {org:String}
+              AND namespace = {ns:String}
+              AND ts >= now() - INTERVAL {win:UInt32} SECOND
+              -- the dashboard's and the assistant's reads inspect the namespace, not use it;
+              -- a write from the dashboard (a set, a delete, a pin) is a person using it
+              AND (operation IN {writes:Array(String)}
+                   OR consumer NOT IN {inspectors:Array(String)})
             """,
             params={
                 **params,
                 "win": int(input.activity_seconds),
                 "inspectors": list(INSPECTOR_CONSUMERS),
+                "writes": _write_ops(),
             },
         )
 
