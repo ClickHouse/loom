@@ -340,6 +340,8 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
         {"password": "********"},
         {"api_key": "env:OPENAI_API_KEY"},
         {"pwd": "/home/alice/repo"},
+        {"PWD": "/app2"},  # an environment's working directory
+        {"pwd": "build/out1"},
         {"env": {"PWD": "/opt/app/server"}},
         {"password_hint": "first pet"},
         {"token_count": 123456789},
@@ -384,6 +386,7 @@ def test_an_ordinary_object_never_reads_as_sensitive(value: object) -> None:
         {"db_password": "p@ss,w0rd99"},
         {"password": 'ab"cd12345'},
         {"password": "config/db/pass1"},  # a relative path is not a reference
+        {"db_pwd": "hunter2xyz9"},
     ],
 )
 def test_a_credential_under_a_credential_key_reads_high(value: object) -> None:

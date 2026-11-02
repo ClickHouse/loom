@@ -192,13 +192,15 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
         owner = hit_row_key(hit, input.namespace)
         if names_row(hit) and (owner.agent, owner.user_id, owner.session_id) != mine:
             continue
+        if len(rows) >= int(input.limit):
+            return rows, True  # the over-fetch holds more of the caller's rows
         seen.add(key)
         row = await memory_repo.get_by_key(
             identity, key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
         )
         if row is not None:
             rows.append(row)
-    return rows[: int(input.limit)], False
+    return rows, False
 
 
 # ---------------------------------------------------------------- execute

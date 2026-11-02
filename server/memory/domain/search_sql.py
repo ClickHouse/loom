@@ -6,11 +6,10 @@ into WHERE clauses + bound params.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
 
 from server.core.tag_sql import tag_predicate
-from server.memory.domain.search_types import SearchHit, SearchQuery, hit_row_key, names_row
+from server.memory.domain.search_types import SearchQuery
 from server.memory.domain.temporal_sql import as_of_predicate, status_predicate, tombstone_predicate
 
 
@@ -46,22 +45,6 @@ def agent_or_shared_predicate(alias: str = "e") -> str:
     agent_col = f"{alias}.agent" if alias else "agent"
     scope_col = f"{alias}.scope" if alias else "scope"
     return f"({agent_col} = {{agent:String}} OR {scope_col} = 'shared')"
-
-
-def exclude_pooled(where: list[str], params: dict[str, Any], hits: Sequence[SearchHit]) -> None:
-    """Leave the rows `hits` already pooled out of a leg over `loom.memory_embeddings AS e`.
-    A key holds a row per writer and session, so a fact hit leaves out the row it names.
-    Chunks and records leave out nothing."""
-    rows = sorted(
-        (r.agent, r.user_id, r.session_id, r.memory_key)
-        for r in {hit_row_key(h) for h in hits if names_row(h) and h.source != "chunk"}
-    )
-    if rows:
-        where.append(
-            "(e.agent, e.user_id, e.session_id, e.memory_key)"
-            " NOT IN {pooled_rows:Array(Tuple(String, String, String, String))}"
-        )
-        params["pooled_rows"] = rows
 
 
 def _build_where(q: SearchQuery, *, ranked: bool = True) -> tuple[list[str], dict[str, Any]]:

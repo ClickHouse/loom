@@ -445,6 +445,8 @@ def _keyed_credential(key: str, value: str) -> str:
     otherwise. The value holds a letter and a digit, so a form field (`"required"`), a mask
     (`"********"`) or a placeholder (`"YOUR_API_KEY"`, `"<redacted>"`) is not a credential."""
     words = [w.lower() for w in _KEY_WORDS.findall(key)]
+    if words == ["pwd"]:
+        return ""  # an environment's working directory, not a password
     if not any(_ASSIGNMENT_KEY.fullmatch("_".join(words[-n:])) for n in (1, 2) if len(words) >= n):
         return ""
     v = value.strip()

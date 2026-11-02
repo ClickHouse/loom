@@ -11,9 +11,10 @@ from dataclasses import replace
 from typing import Any, NamedTuple
 
 from server.core.repo_base import query_all_sliced
+from server.memory.app.retrieval.side_legs import exclude_pooled
 from server.memory.app.set_chunks import set_chunk_identities
 from server.memory.domain.search_parsing import _iso_date
-from server.memory.domain.search_sql import _build_where, exclude_pooled
+from server.memory.domain.search_sql import _build_where
 from server.memory.domain.search_types import (
     RowIdentity,
     RowKey,

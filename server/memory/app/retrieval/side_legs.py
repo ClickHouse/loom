@@ -9,13 +9,38 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from server.core.ch_params import fitting
 from server.memory.app.retrieval.retry import _call_retrying_empty_block
 from server.memory.domain.search_parsing import _iso_date, _record_excerpt, _record_query_tokens
-from server.memory.domain.search_sql import _build_where, exclude_pooled
+from server.memory.domain.search_sql import _build_where
 from server.memory.domain.search_text import _GENERIC_ENTITY_FILTER
-from server.memory.domain.search_types import SearchHit, SearchQuery, _CHClient, row_identity
+from server.memory.domain.search_types import (
+    SearchHit,
+    SearchQuery,
+    _CHClient,
+    hit_row_key,
+    names_row,
+    row_identity,
+)
 
 log = logging.getLogger("server.memory.app.retrieval")
+
+
+def exclude_pooled(where: list[str], params: dict[str, Any], hits: Sequence[SearchHit]) -> None:
+    """Leave the rows `hits` already pooled out of a leg over `loom.memory_embeddings AS e`.
+    A key holds a row per writer and session, so a fact hit leaves out the row it names.
+    Chunks and records leave out nothing."""
+    rows = sorted(
+        (r.agent, r.user_id, r.session_id, r.memory_key)
+        for r in {hit_row_key(h) for h in hits if names_row(h) and h.source != "chunk"}
+    )
+    if rows:
+        where.append(
+            "(e.agent, e.user_id, e.session_id, e.memory_key)"
+            " NOT IN {pooled_rows:Array(Tuple(String, String, String, String))}"
+        )
+        # one form field: a pooled row past it may come back, and assembly collapses it
+        params["pooled_rows"] = fitting(rows)
 
 
 async def _lexical_recall_fallback(

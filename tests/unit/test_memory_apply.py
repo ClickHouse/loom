@@ -333,6 +333,15 @@ async def test_search_target_touches_only_the_callers_identity(
     ]
     # every session, so a long value's set chunks are found; over-fetched for other owners' rows
     assert (asked[0].session_id, asked[0].top_k) == (None, 30)
+    # it stops reading at `limit` and says more of the caller's rows matched
+    reads.clear()
+    out = await handle_memory_apply(
+        MemoryApplyInput(
+            **_ID, target={"search": {"query": "q3"}}, action="delete", reason="r", limit=1
+        )
+    )
+    assert [r.memory_key for r in out.rows] == ["rec"] and out.truncated is True
+    assert reads == [("cursor", "-", "-", "rec")]
 
 
 def test_apply_op_is_a_writer_op_and_audited() -> None:

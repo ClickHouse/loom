@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from server.memory.domain.search_sql import exclude_pooled
+from server.memory.app.retrieval.side_legs import exclude_pooled
 from server.memory.domain.search_types import SearchHit
 
 
