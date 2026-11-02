@@ -267,17 +267,16 @@ def render_block(
     if used + sum(len(row) + 1 for row in rows) <= budget_chars:
         lines += rows
     else:
-        hidden: set[tuple[str, str]] = set()
+        hidden: set[str] = set()  # memory_ids of rows whose superseder was left out
         for i, (h, row) in enumerate(zip(hits, rows, strict=True)):
             # Keep room for a "… more" line counting every row that may still be left out.
             most = left_out + n - i - 1
             tail = len(_more_line(path, most)) + 1
-            ns = str(h.get("namespace") or "")
-            if (ns, h["memory_key"]) in hidden or used + len(row) + 1 + tail > budget_chars:
+            if str(h.get("memory_id")) in hidden or used + len(row) + 1 + tail > budget_chars:
                 left_out += 1
                 # Without the newer row above it, the row it supersedes would read as current.
-                if h.get("supersedes_key"):
-                    hidden.add((ns, h["supersedes_key"]))
+                if h.get("supersedes_id"):
+                    hidden.add(h["supersedes_id"])
                 continue
             lines.append(row)
             used += len(row) + 1
@@ -299,7 +298,8 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Contradicting team rows (rules or decisions), reusing the conflict machinery: two rows
     of one namespace cross-linked by `conflict_with` are an older row and a newer one that
     contradicts it. The newer is placed directly above the older and carries `supersedes_key` /
-    `supersedes` / `supersedes_kind` (the older's key, author and kind). No new state: both
+    `supersedes` / `supersedes_kind` (the older's key, author and kind) and `supersedes_id`
+    (its memory_id: another writer may hold a row under the same key). No new state: both
     stay live until the older's author or a maintainer removes it, or a verdict retires it. Two
     typed decisions never pair: a decision's key is its identity, so one cross-linked to
     another is a second decision, not a newer version."""
@@ -317,6 +317,7 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             new, old = (r, peer) if _stamp(r) >= _stamp(peer) else (peer, r)
             if not new.get("supersedes_key"):
                 new["supersedes_key"] = str(old.get("memory_key") or "")
+                new["supersedes_id"] = str(old.get("memory_id"))
                 new["supersedes"] = _author(old)
                 new["supersedes_kind"] = "decision" if _is_decision(old) else "rule"
                 newer_of.setdefault(id(old), []).append(new)

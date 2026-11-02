@@ -328,14 +328,22 @@ def test_a_block_that_fits_whole_reserves_nothing() -> None:
     assert text.splitlines()[1:] == ["- k0: " + "a" * 94, "- k1: " + "b" * 24]
 
 
-def _superseding(key: str, older: str, value: str, ns: str, **over: Any) -> dict[str, Any]:
+def _superseding(
+    key: str, older: dict[str, Any], value: str, ns: str, **over: Any
+) -> dict[str, Any]:
+    """A row placed above `older` by `_supersede_order`, carrying what it supersedes."""
     row = _row(key, json.dumps(value), namespace=ns, **over)
-    return row | {"supersedes_key": older, "supersedes": "bob", "supersedes_kind": "rule"}
+    return row | {
+        "supersedes_key": older["memory_key"],
+        "supersedes_id": older["memory_id"],
+        "supersedes": "bob",
+        "supersedes_kind": "rule",
+    }
 
 
 def test_a_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:
-    newer = _superseding("rules/new", "rules/old", "n" * 200, "code-repo", tags=["constraint"])
     older = _row("rules/old", json.dumps("Keep 32."), namespace="code-repo")
+    newer = _superseding("rules/new", older, "n" * 200, "code-repo", tags=["constraint"])
     text, tokens, truncated = mff.render_block(
         "src/a.cpp", [newer, older], 120, home="me", now=_NOW
     )
@@ -344,9 +352,24 @@ def test_a_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:
     assert '- … 2 more; memory.for_file(path="src/a.cpp") lists them.' in text.splitlines()
 
 
+def test_another_writers_row_under_the_superseded_key_still_prints() -> None:
+    # Keys are unique per writer: only the row the newer one supersedes is left out with it.
+    bobs = _row("rules/build", json.dumps("Use make."), namespace="code-repo", actor="human:bob")
+    carols = _row(
+        "rules/build", json.dumps("Use ninja."), namespace="code-repo", actor="human:carol"
+    )
+    carols["memory_id"] = "id-carol-build"
+    newer = _superseding("rules/x", bobs, "n" * 200, "code-repo", actor="human:alice")
+    text, _, truncated = mff.render_block(
+        "src/a.cpp", [newer, bobs, carols], 120, home="me", now=_NOW
+    )
+    assert truncated is True and "Use make." not in text and "Use ninja." in text
+    assert '- … 2 more; memory.for_file(path="src/a.cpp") lists them.' in text.splitlines()
+
+
 def test_an_own_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:
-    newer = _superseding("new", "old", "n" * 300, "me")
     older = _row("old", json.dumps("Keep 32."), namespace="me")
+    newer = _superseding("new", older, "n" * 300, "me")
     text, _, truncated = mff.render_block("src/a.cpp", [newer, older], 60, home="me")
     assert truncated is True and "- new" not in text and "- old" not in text
     assert text.splitlines()[-1].startswith("- … 2 more;")
