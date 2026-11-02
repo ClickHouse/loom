@@ -121,7 +121,8 @@ class ExtractReport:
     # rows with a recorded outcome, whose document now says otherwise.
     flagged: list[str] = field(default_factory=list)
     # "<key>: refused: <code>" for each retire write the server refused, or
-    # "<key>: changed while the run read it" for one that found the row moved on.
+    # "<key>: rewritten since the run read it" for a delete that found the row moved on,
+    # "<key>: deleted since the run read it" for a tag write that found it gone.
     refused: list[str] = field(default_factory=list)
 
 
@@ -245,7 +246,7 @@ async def extract_document(
             continue
         written.add(rec.memory_key)
         if rec.action == "row_changed":
-            reason = "refused: the row changed while the run read it"
+            reason = "refused: the row was deleted since the run read it"
             report.dropped.append(Dropped(section, reason, cand.quote))
             continue
         report.records.append(rec)
@@ -395,11 +396,7 @@ def _same_reasons(stored: list[str], candidate: list[str]) -> bool:
     remaining = [a.rpartition(dx.REJECTED)[2] for a in candidate]
     if len(remaining) != len(stored):
         return False
-    # The alternatives holding a reason first, so a reasonless one takes what is left.
-    # Exact (uncut) ones before cut ones, so a short cut prefix cannot take the reason an
-    # exact one needs; reasonless ones last.
-    # Among cut ones, the longest stored reason first: a shorter prefix ("costs") would
-    # otherwise take the candidate a longer one ("costs random reads and") needs.
+    # Reasoned before reasonless, uncut before cut, the longest cut reason first.
     order = sorted(
         stored,
         key=lambda a: (
@@ -675,7 +672,7 @@ async def _clear_if_tagged(rec: RecordReport, row: MemoryRow, dry_run: bool) -> 
         return
     note = "would clear source-changed" if dry_run else "source-changed cleared"
     if not dry_run and not await _set_source_changed(row, False):
-        note = "source-changed not cleared: the row changed while the run read it"
+        note = "source-changed not cleared: the row was deleted since the run read it"
     rec.note = f"{rec.note}; {note}" if rec.note else note
 
 
@@ -811,7 +808,7 @@ async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool) -> N
         if SOURCE_CHANGED_TAG in row.tags:
             return
         if not report.dry_run and not await _set_source_changed(row, True):
-            report.refused.append(f"{row.memory_key}: changed while the run read it")
+            report.refused.append(f"{row.memory_key}: deleted since the run read it")
             return
         report.flagged.append(row.memory_key)
     elif await _delete_row(report, row):
@@ -838,5 +835,5 @@ async def _delete_row(report: ExtractReport, row: MemoryRow) -> bool:
         await _audit("memory.delete_version", inp)
     else:
         # Rewritten since it was read: the next run judges the new version.
-        report.refused.append(f"{row.memory_key}: changed while the run read it")
+        report.refused.append(f"{row.memory_key}: rewritten since the run read it")
     return bool(out.tombstoned)

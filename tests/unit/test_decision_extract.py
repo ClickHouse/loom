@@ -899,7 +899,7 @@ async def test_a_row_rewritten_before_its_delete_is_not_reported_retired(monkeyp
     world.moved_on.add("decision:gone")
     report = await _run()
     assert report.retired == []
-    assert report.refused == ["decision:gone: changed while the run read it"]
+    assert report.refused == ["decision:gone: rewritten since the run read it"]
 
 
 @pytest.mark.asyncio
@@ -1103,8 +1103,10 @@ async def test_a_tag_write_on_a_row_deleted_since_the_read_is_reported(monkeypat
     world.gone = {f"id-{_key(c)}-loom-decisions", "id-decision:gone-loom-decisions"}
     report = await _run()
     assert report.records == [] and report.flagged == []
-    assert [d.reason for d in report.dropped] == ["refused: the row changed while the run read it"]
-    assert report.refused == ["decision:gone: changed while the run read it"]
+    assert [d.reason for d in report.dropped] == [
+        "refused: the row was deleted since the run read it"
+    ]
+    assert report.refused == ["decision:gone: deleted since the run read it"]
 
 
 @pytest.mark.asyncio
@@ -1651,3 +1653,10 @@ async def test_an_unchanged_decision_is_held_by_its_stored_outcome(monkeypatch) 
     report = await _run()
     assert report.records[0].action == "unchanged"
     assert report.replaced == [f"decision:older -> {_key(c)}"]
+
+
+def test_an_error_goes_to_stderr(capsys) -> None:
+    report = de.ExtractReport("o", "ns", "missing.md", True, error="no live document")
+    cli.print_report(report)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == "error: no live document\n"

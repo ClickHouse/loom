@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from typing import TYPE_CHECKING, Any
 
 from server.cli._apply import add_apply_flags
@@ -102,7 +103,7 @@ def print_report(report: ExtractReport) -> None:
     """The run as a human reads it before pinning: every record with its body and the
     code-link signals, then what was dropped and why."""
     if report.error:
-        print(f"error: {report.error}")
+        print(f"error: {report.error}", file=sys.stderr)
         return
     print(
         f"{report.source_uri}: {report.windows} window(s), {len(report.records)} decision(s)"
