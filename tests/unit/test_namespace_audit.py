@@ -20,6 +20,7 @@ from server.identity.app import namespace_audit as na
 from server.identity.domain.read_scope import honours_read_scope
 from server.operations import toolsets
 from server.transport import mcp_descriptions
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
@@ -1221,3 +1222,34 @@ async def test_inspector_calls_are_left_out_of_every_ledger_count(
     for sql in ledger_sqls:
         assert "consumer NOT IN {inspectors:Array(String)}" in sql
     assert ch.params[0]["inspectors"] == ["loom-ui", "loom-assistant"]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_the_ledger_summary_counts_a_dashboard_write_but_no_inspector_read() -> None:
+    def call(operation: str, consumer: str) -> str:
+        return (
+            "INSERT INTO loom.agent_events (org, namespace, agent, operation, consumer, ts) "
+            f"VALUES ('o', 'ns', 'bot', '{operation}', '{consumer}', now())"
+        )
+
+    rows = [
+        call("memory.get", ""),
+        call("memory.get", "loom-ui"),
+        call("memory.search", "loom-assistant"),
+        # A person editing a memory from the dashboard uses the namespace.
+        call("memory.set", "loom-ui"),
+    ]
+
+    class _Local:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+            return run([ddl("agent_events"), *rows], sql, params)
+
+        async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+            found = await self.query_all(sql, params)
+            return found[0] if found else None
+
+    audit = na.new_audit(_inp(), ch=_Local())
+    await audit.summary_ledger()
+    s = audit.summary
+    assert (s.gets, s.searches, s.sets, s.inspector_calls) == (1, 0, 1, 2)

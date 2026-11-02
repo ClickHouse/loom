@@ -386,13 +386,15 @@ def attach(app: FastAPI) -> None:
                     if isinstance(client_info, dict):
                         _remember_client_for_session(session_id, client_info.get("name"))
             client_name = _resolve_client_name(req, session_id)
-            req, early = route_loom_op(req, toolset=request.query_params.get("toolset"), auth=auth)
+            # One read of the selectors, so routing, the screen and the call agree.
+            listing = _listing_params(request)
+            req, early = route_loom_op(req, toolset=listing["toolset"], auth=auth)
             if early is not None:
                 return early
             # AuthZ: identity must match the args; a namespace the JWT lacks → grants.
             if auth is not None and req.get("method") == "tools/call":
                 # An assistant connection's refusals are its own, as its calls are.
-                assistant = assistant_connection(request.query_params.get("toolset"))
+                assistant = assistant_connection(listing["toolset"])
                 screened = await _screen_tool_call(
                     req, auth, consumer=ASSISTANT_CONSUMER if assistant else ""
                 )
@@ -403,7 +405,7 @@ def attach(app: FastAPI) -> None:
                 auth,
                 client_name,
                 mcp_session_id=session_id or "",
-                **_listing_params(request),
+                **listing,
             )
 
         if isinstance(payload, list):

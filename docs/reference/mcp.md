@@ -255,15 +255,16 @@ that serves it, and give it a `viewer` token in any case. On it:
 - **Only its reads are callable.** A `tools/call` for any other tool, `loom_op` and
   `loom_search` included, answers `isError` before the handler runs, whatever the token
   allows: with code `UNKNOWN_OP`, or with the access refusal when the call names an org or
-  namespace the token cannot read, which is checked first. The token is still checked on every call, so a read
-  the person may not make is refused as on any connection. Mint the client's token with
-  the `viewer` role to make the same limit hold on every other surface.
+  namespace the token cannot read, which is checked first. The token is still checked on
+  every call, so a read the person may not make is refused as on any connection. Mint the
+  client's token with the `viewer` role to make the same limit hold on every other
+  surface.
 - **Its calls are ledgered as consumer `loom-assistant`**, whatever the call sends, a
-  refused one included.
-  `namespace.audit`, `namespace.summary`, `mentor.brief` and `knowledge.reads` leave that
-  consumer's and the dashboard's (`loom-ui`) reads out of their usage counts, so looking
-  at a namespace does not change its grade (a write from the dashboard is a person using
-  the namespace and still counts in `namespace.audit` and `namespace.summary`); `namespace.audit` reports how many it left out in
+  refused one included. `namespace.audit`, `namespace.summary`, `mentor.brief` and
+  `knowledge.reads` leave that consumer's and the dashboard's (`loom-ui`) reads out of
+  their usage counts, so looking at a namespace does not change its grade (a write from
+  the dashboard is a person using the namespace and still counts in `namespace.audit` and
+  `namespace.summary`); `namespace.audit` reports how many it left out in
   `summary.inspector_calls`. A token whose `consumer` claim names another consumer keeps
   its claim, and its calls are counted.
 - **Reads do not record usage.** `memory.search` runs with `auto_touch: false` and
