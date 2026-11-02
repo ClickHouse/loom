@@ -346,7 +346,8 @@ class NamespaceAuditSummary(BaseModel):
     gets: int = 0
     searches: int = 0
     sets: int = 0
-    # gets / max(searches, 1): the object-store gauge.
+    # (gets - typed_gets) / max(searches, 1): the object-store gauge; reads of procedures
+    # are left out.
     get_search_ratio: float = 0.0
     # The gets and searches in the window from the dashboard and the assistant
     # toolset (consumers `loom-ui`, `loom-assistant`), left out of the counts above.
@@ -354,9 +355,9 @@ class NamespaceAuditSummary(BaseModel):
     # Exact-key reads of rows whose type is structured by design (procedures): counted in
     # `gets`, left out of the object-store gauge.
     typed_gets: int = 0
-    # Live rows written or revised in the window (not in its last minute, which the ledger
-    # may not have caught up with), and the ledger's calls for the namespace in it, apart
-    # from reports on it and inspector reads: writes with no calls mean the counts above
+    # Live rows created in the window (not in its last minute, which the ledger may not
+    # have caught up with), and the ledger's calls for the namespace in it, apart from
+    # reports on it and inspector reads: rows created with no calls mean the counts above
     # were not recorded.
     written_in_window: int = 0
     ledger_calls: int = 0

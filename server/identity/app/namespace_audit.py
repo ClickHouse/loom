@@ -28,6 +28,7 @@ critical".
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 from collections.abc import Awaitable, Callable, Iterable, Sequence
@@ -62,7 +63,7 @@ log = logging.getLogger(__name__)
 # hundreds of rows past the embedder cap), each warning threshold where the pattern starts
 # costing recall on a meaningful part of the namespace.
 # ---------------------------------------------------------------------------
-# exact_key_store: gets ≥ RATIO × searches AND gets ≥ MIN_GETS is critical
+# exact_key_store: gets of non-structured rows ≥ RATIO × searches AND ≥ MIN_GETS is critical
 # (a small namespace read by key a few times is not an object store).
 EXACT_KEY_STORE_RATIO = 20.0
 EXACT_KEY_STORE_MIN_GETS = 200
@@ -156,7 +157,7 @@ _RECIPE = "docs/guides/investigation-agent-memory.md"
 _TEXT: dict[str, tuple[str, str]] = {
     # Runs first: the ledger checks read whether it found the ledger empty.
     "telemetry_unavailable": (
-        "Live rows were written in the window but the ledger holds no call for the "
+        "Live rows were created in the window but the ledger holds no call for the "
         "namespace apart from reports on it and the dashboard's or the assistant's reads: "
         "the read and search counts were not recorded, so the checks built on them are "
         "skipped rather than reported clean.",
@@ -270,8 +271,9 @@ _CONTRACT: dict[str, RuleContract] = {
         1,
         windowed=True,
         exceptions=(
-            "Only a namespace written in the window is judged: a quiet one has nothing to "
-            f"count. A write of the last {TELEMETRY_LAG_SECONDS} seconds is not judged; its "
+            "Only rows created in the window are judged: a quiet namespace has nothing to "
+            "count, and a revision (a worker's relabel among them) is not judged. A row "
+            f"created in the last {TELEMETRY_LAG_SECONDS} seconds is not judged; its "
             "ledger row may not have landed yet. Reports on the namespace (the audit's own "
             "call among them) and the dashboard's or the assistant's reads do not close a gap."
         ),
@@ -455,6 +457,14 @@ def keys_named(key: str, value: str, keys: set[str]) -> int:
     return len({tok for tok in _TOKEN_SPLIT_RE.split(value) if tok and tok != key and tok in keys})
 
 
+@functools.cache
+def _read_ops() -> tuple[str, ...]:
+    """Every read-only op: an inspector's call to one only looks at the namespace."""
+    from server.operations.registry import ALL_OPERATIONS
+
+    return tuple(sorted(op.name for op in ALL_OPERATIONS if op.read_only))
+
+
 class _Audit:
     """One report in progress: the CH client, the bound parameters, the
     summary being filled, the findings and the rules that ran or were skipped."""
@@ -486,6 +496,7 @@ class _Audit:
             "grace": int(INDEX_GRACE_SECONDS),
             "lag": int(TELEMETRY_LAG_SECONDS),
             "holds": list(EMBED_HOLDS),
+            "read_ops": list(_read_ops()),
         }
         self.summary = NamespaceAuditSummary()
         self.searchable_rows = 0
@@ -571,8 +582,10 @@ class _Audit:
             SELECT count() AS live_rows, sum(length(value)) AS live_bytes,
                    countIf({_SEARCHABLE}) AS searchable_rows,
                    countIf(memory_type = 'episodic') AS episodic_rows,
-                   countIf(updated_at >= now() - INTERVAL {{win:UInt32}} SECOND
-                           AND updated_at < now() - INTERVAL {{lag:UInt32}} SECOND)
+                   -- created, not revised: a worker's revision (a sensitivity relabel) keeps
+                   -- created_at and may leave no ledger row of its own
+                   countIf(created_at >= now() - INTERVAL {{win:UInt32}} SECOND
+                           AND created_at < now() - INTERVAL {{lag:UInt32}} SECOND)
                        AS written_in_window
             {_LIVE}
             """
@@ -598,9 +611,11 @@ class _Audit:
     async def summary_ledger(self) -> None:
         r = await self.one(
             f"""
-            -- an inspector's write (a person editing in the dashboard) is a recorded call too
+            -- an inspector's write (a person editing a memory or a profile in the dashboard)
+            -- is a recorded call too; only its reads are left out
             SELECT countIf(operation NOT IN {_REPORT_OPS}
-                           AND ({_AGENT_CALL} OR operation IN {_LEDGER_SETS})) AS ledger_calls,
+                           AND ({_AGENT_CALL}
+                                OR operation NOT IN {{read_ops:Array(String)}})) AS ledger_calls,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}) AS gets,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}
                            AND memory_key IN ({_TYPED_KEYS})) AS typed_gets,
@@ -619,7 +634,8 @@ class _Audit:
         s.searches = int(r.get("searches") or 0)
         s.sets = int(r.get("sets") or 0)
         s.inspector_calls = int(r.get("inspector_calls") or 0)
-        s.get_search_ratio = round(s.gets / max(s.searches, 1), 2)
+        # The object-store gauge: reads of procedures are a workflow, not key-value use.
+        s.get_search_ratio = round((s.gets - s.typed_gets) / max(s.searches, 1), 2)
 
     # -- checks -------------------------------------------------------------
 

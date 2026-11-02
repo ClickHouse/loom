@@ -62,7 +62,8 @@ namespace is not healthy. From anywhere else, call `namespace.audit` over HTTP o
 
 Read `summary` first:
 
-- a `get_search_ratio` in the hundreds means the namespace is used as a key-value store;
+- a `get_search_ratio` in the hundreds means the namespace is used as a key-value store
+  (reads of procedures, which are read back by key on purpose, are left out of it);
 - `unembedded_rows` above zero means rows search can never find.
 
 Then read the findings. Stop when `healthy` is true and nothing is `warning` or

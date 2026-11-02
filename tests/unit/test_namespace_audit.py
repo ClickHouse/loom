@@ -1319,6 +1319,8 @@ async def test_reads_of_structured_rows_are_left_out_of_the_object_store_gauge(
     assert exact.count == 50 and exact.severity != "critical"
     typed = _finding(out, "intentional_exact_key_reads")
     assert typed.count == 250 and typed.severity == "info" and typed.population == 300
+    # The object-store gauge leaves the procedure reads out too: 50 gets over 5 searches.
+    assert out.summary.get_search_ratio == 10.0
     summary_sql = next(s for s in ch.sqls if M_LEDGER in s)
     hot_sql = next(s for s in ch.sqls if "AS hot_reads" in s)
     for sql in (summary_sql, hot_sql):
@@ -1365,12 +1367,18 @@ class _LocalCH:
 
 
 def _memory_row(
-    key: str, *, minutes_ago: int, memory_type: str = "semantic", value: str = "v"
+    key: str,
+    *,
+    minutes_ago: int,
+    memory_type: str = "semantic",
+    value: str = "v",
+    created_minutes_ago: int | None = None,
 ) -> str:
+    created = minutes_ago if created_minutes_ago is None else created_minutes_ago
     return (
         "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
         f"memory_type, value, version, created_at, updated_at) VALUES ('o', 'ns', 'bot', '-', "
-        f"'-', '{key}', '{memory_type}', '{value}', 1, now() - INTERVAL {minutes_ago} MINUTE, "
+        f"'-', '{key}', '{memory_type}', '{value}', 1, now() - INTERVAL {created} MINUTE, "
         f"now() - INTERVAL {minutes_ago} MINUTE)"
     )
 
@@ -1387,24 +1395,34 @@ def _ledger_row(operation: str, *, key: str = "", consumer: str = "") -> str:
 async def test_an_audit_run_twice_still_sees_writes_the_ledger_never_recorded() -> None:
     # The first audit's own row, a summary and a dashboard read are in the ledger: none is
     # a call that says the window was recorded.
-    ch = _LocalCH(
-        ["memory", "agent_events"],
-        [
-            _memory_row("team/fact", minutes_ago=10),
-            _ledger_row("namespace.audit"),
-            _ledger_row("namespace.summary"),
-            _ledger_row("memory.search", consumer="loom-ui"),
-        ],
-    )
+    rows = [
+        _memory_row("team/fact", minutes_ago=10),
+        _ledger_row("namespace.audit"),
+        _ledger_row("namespace.summary"),
+        _ledger_row("memory.search", consumer="loom-ui"),
+    ]
+    ch = _LocalCH(["memory", "agent_events"], rows)
     audit = na.new_audit(_inp(window_seconds=3600), ch=ch)
     await na.run_checks(audit, ["telemetry_unavailable"])
     gap = _finding(audit, "telemetry_unavailable")
     assert gap.severity == "warning" and gap.count == 1
-    # A write through any op (a procedure added) is a recorded call: the gap closes.
-    ch.setup.append(_ledger_row("procedure.add", key="team/fact"))
-    audit = na.new_audit(_inp(window_seconds=3600), ch=ch)
+    # A write through any op is a recorded call, and so is a person's profile edit in the
+    # dashboard: either closes the gap.
+    for closer in (_ledger_row("procedure.add"), _ledger_row("profile.set", consumer="loom-ui")):
+        closed = _LocalCH(["memory", "agent_events"], [*rows, closer])
+        audit = na.new_audit(_inp(window_seconds=3600), ch=closed)
+        await na.run_checks(audit, ["telemetry_unavailable"])
+        assert _finding(audit, "telemetry_unavailable").count == 0, closer
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_workers_revision_of_an_old_row_is_not_an_unrecorded_write() -> None:
+    # Created two days ago, relabelled by a sweep ten minutes ago, with no call in the window.
+    old = _memory_row("team/fact", minutes_ago=10, created_minutes_ago=2 * 24 * 60)
+    audit = na.new_audit(_inp(window_seconds=3600), ch=_LocalCH(["memory", "agent_events"], [old]))
     await na.run_checks(audit, ["telemetry_unavailable"])
-    assert _finding(audit, "telemetry_unavailable").count == 0
+    assert _finding(audit, "telemetry_unavailable").severity == "info"
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
