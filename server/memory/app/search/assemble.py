@@ -19,6 +19,7 @@ from server.memory.app.search.scoring import rows_per_key
 from server.memory.app.search.telemetry import _staged
 from server.memory.app.search.vector_legs import _plane_fields, _stamp_leg_tags
 from server.memory.app.search_tag_filter import enforce_hard_tag_filter as _enforce_hard_tag_filter
+from server.memory.app.search_tag_filter import stamp_row_tags
 from server.memory.app.served_duplicates import hide_pool_duplicates
 from server.memory.app.served_superseded import annotate_pool_superseded
 from server.memory.domain.search_types import RowKey, hit_row_key, names_row
@@ -57,7 +58,7 @@ def collapse_rows(hits: list[_MemorySearchHit], namespace: str) -> list[_MemoryS
             winner, other = (h, kept) if h.rank_score > kept.rank_score else (kept, h)
             # one row has one set of tags: an empty one is filled from the row's other hit
             if not winner._row_tags:
-                winner._row_tags = other._row_tags
+                stamp_row_tags(winner, other._row_tags)
             out[slot[key]] = winner
     return out
 

@@ -376,8 +376,8 @@ def _record_hits(rows: list[dict[str, Any]]) -> list[SearchHit]:
                 valid_at=_iso_date(str(row.get("valid_at_iso", ""))),
                 source="record",
                 source_resource_id=record_id,
+                # no identity: a record names no loom.memory row; its session is provenance
                 session_id=str(row.get("session_id") or ""),
-                # a record is no row of loom.memory: its writer's identity names none
                 score_components={
                     "record_lexical": float(row.get("lexical_score") or 0.0),
                     "rank_score": rank_score,
