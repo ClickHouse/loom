@@ -1955,3 +1955,61 @@ async def test_a_dry_run_whose_restatement_search_fails_exits_2(monkeypatch) -> 
     assert [d.reason for d in report.dropped] == ["failed: HTTPStatusError"]
     assert report.refused == [f"{_key(c)}: failed: HTTPStatusError"]
     assert world.recorded == [] and cli.exit_code(report) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_refused_revise_leaves_its_row_for_the_next_run(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    # The row's reasoning is gone from the document; the candidate revises it, refused.
+    world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."})
+    world.refuse_record = _refusal("BLACKLISTED")
+    report = await _run()
+    assert report.refused == [f"{_key(c)}: refused: BLACKLISTED"]
+    assert world.deletes == [] and report.retired == []
+
+
+@pytest.mark.asyncio
+async def test_a_refused_tag_write_is_not_tried_again_by_retire(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, pinned=True)
+    world.refuse_update = _refusal("AMBIGUOUS_KEY")
+    report = await _run()
+    assert report.refused == [f"{_key(c)}: refused: AMBIGUOUS_KEY"]
+    assert report.flagged == []
+
+
+@pytest.mark.asyncio
+async def test_unreadable_extractor_rows_stop_the_run_before_any_model_call(monkeypatch) -> None:
+    import httpx
+
+    world = _World(monkeypatch, [_candidate()])
+
+    async def down(*a: Any, **k: Any) -> Any:
+        raise httpx.ConnectError("store down")
+
+    monkeypatch.setattr(de, "list_by_namespace", down)
+    report = await _run()
+    assert report.error == "could not read the extractor's rows: failed: ConnectError"
+    assert world.prompts == [] and world.recorded == [] and cli.exit_code(report) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failed_read_in_the_retire_step_is_reported(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"})
+    reads = 0
+    real = de.live_writer_record
+
+    async def flaky(org, ns, key, ch=None):
+        nonlocal reads
+        reads += 1
+        if reads > 1:  # the first read is the prompt's list; the retire step's fails
+            raise TimeoutError("slow")
+        return await real(org, ns, key, ch=ch)
+
+    monkeypatch.setattr(de, "live_writer_record", flaky)
+    report = await _run()
+    assert report.refused == ["decision:gone: failed: TimeoutError"]
+    assert world.deletes == [] and cli.exit_code(report) == 2

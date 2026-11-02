@@ -113,7 +113,7 @@ class ExtractReport:
     source_uri: str
     dry_run: bool
     # Why the run read nothing and retired nothing: no document, no chunks for the current
-    # embedding model, no usable model, or no window read.
+    # embedding model, no usable model, the extractor's rows unreadable, or no window read.
     error: str = ""
     windows: int = 0
     records: list[RecordReport] = field(default_factory=list)
@@ -280,8 +280,13 @@ async def extract_document(
     report.windows = len(wins)
     # One scan of the extractor's rows on this document, for the prompt and the retire
     # step; rows this run writes are skipped by the retire step.
-    own_rows = await _extractor_rows(org, namespace, source_uri)
-    known = await _known_decisions(org, namespace, own_rows)
+    try:
+        own_rows = await _extractor_rows(org, namespace, source_uri)
+        known = await _known_decisions(org, namespace, own_rows)
+    except _WRITE_ERRORS as e:
+        # Before any model call: a run that cannot see its own rows reads nothing.
+        report.error = f"could not read the extractor's rows: {_refusal(e)}"
+        return report
     kept, answered = await _candidates(
         org, namespace, source_uri, wins, max_per_section, report, known
     )
@@ -304,6 +309,8 @@ async def extract_document(
             key = svc.decision_key(cand.category, cand.scenario)
             report.dropped.append(Dropped(section, _refusal(e), cand.quote, key))
             report.refused.append(f"{key}: {_refusal(e)}")
+            # Handled this run: the retire step must not judge the key it just failed on.
+            written.add(key)
             continue
         written.add(rec.memory_key)
         if rec.race:
@@ -872,33 +879,43 @@ async def _retire(
     `source-changed` tag: it sees the reasoning alone, and the tag may stand for another
     field the document still contradicts; reconcile drops it when the verbatim fields
     match again."""
-    org, namespace = report.org, report.namespace
     for row in rows:
-        key = row.memory_key
-        if key in written:
+        if row.memory_key in written:
             continue
-        # The extractor's own record: another identity's record of the key, active or
-        # superseding ours, says nothing about whether our row's text still stands.
-        writer = await live_writer_record(org, namespace, key)
-        if writer is None or not _is_extractor(writer.agent, writer.user_id, writer.session_id):
-            continue
-        record = svc.parse_record_json(writer.record_json)
-        reasoning = str(record.get("reasoning") or "")
-        if not reasoning:
-            continue
-        restated = held.get((str(record.get("outcome") or "").strip(), reasoning.strip()))
         try:
-            # A row with a recorded outcome is kept: deleting it would lose the outcome.
-            if not _confirmed(row) and restated is not None and not _has_outcome(record):
-                if await _delete_row(report, row):
-                    report.replaced.append(f"{key} -> {restated}")
-                continue
-            if not any(reasoning in t for t in live_texts):
-                # A row with a recorded outcome is tagged, never deleted, like a pinned one.
-                keep = _confirmed(row) or _has_outcome(record)
-                await _retire_row(report, row, keep=keep)
+            await _retire_one(report, row, live_texts, held)
         except _WRITE_ERRORS as e:
-            report.refused.append(f"{key}: {_refusal(e)}")
+            report.refused.append(f"{row.memory_key}: {_refusal(e)}")
+
+
+async def _retire_one(
+    report: ExtractReport,
+    row: MemoryRow,
+    live_texts: list[str],
+    held: dict[tuple[str, str], str],
+) -> None:
+    """The retire step for one of the extractor's rows; its reads and writes raise to the
+    caller, which reports them."""
+    key = row.memory_key
+    # The extractor's own record: another identity's record of the key, active or
+    # superseding ours, says nothing about whether our row's text still stands.
+    writer = await live_writer_record(report.org, report.namespace, key)
+    if writer is None or not _is_extractor(writer.agent, writer.user_id, writer.session_id):
+        return
+    record = svc.parse_record_json(writer.record_json)
+    reasoning = str(record.get("reasoning") or "")
+    if not reasoning:
+        return
+    restated = held.get((str(record.get("outcome") or "").strip(), reasoning.strip()))
+    # A row with a recorded outcome is kept: deleting it would lose the outcome.
+    if not _confirmed(row) and restated is not None and not _has_outcome(record):
+        if await _delete_row(report, row):
+            report.replaced.append(f"{key} -> {restated}")
+        return
+    if not any(reasoning in t for t in live_texts):
+        # A row with a recorded outcome is tagged, never deleted, like a pinned one.
+        keep = _confirmed(row) or _has_outcome(record)
+        await _retire_row(report, row, keep=keep)
 
 
 async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool) -> None:
