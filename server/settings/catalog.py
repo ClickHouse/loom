@@ -2565,6 +2565,13 @@ class MemorySettings(BaseModel):
     # Max chunks per memory.set value (48 ≈ 34 KB); the tail is recorded in
     # loom.memory_drops as chunk.split/truncated.
     memory_set_chunk_max_chunks: int = 48
+    # ---- decision extraction (loom decisions extract) ----
+    # Decisions already recorded from a document that the prompt lists, so a re-run
+    # keeps their keys and wording; past this many, the rest may be read as new. 0 = none.
+    memory_decision_extract_known_max: Annotated[int, LIVE] = Field(default=30, ge=0)
+    # Closest decision keys a candidate is compared with for a confirmed row under
+    # another key that states it already (cosine only, no model call).
+    memory_decision_extract_restatement_top_k: Annotated[int, LIVE] = Field(default=20, ge=1)
     # ---- fact-leg reads of memory_embeddings ----
     # Seconds a process caches its count of patch parts on
     # loom.memory_embeddings (server/core/vectors/patch_parts.py); the fact leg
@@ -5699,6 +5706,9 @@ LLM_MAX_TOKENS: dict[str, int] = {
     "consolidate_merge": 256,
     # conversation.compact: the summary of a thread's oldest turns.
     "conversation_compact": 600,
+    # loom decisions extract: one window's decision candidates as JSON, quotes and
+    # reasons copied from the document.
+    "decision_extract": 4000,
     # the entity extractor: one memory's entities.
     "entity_extract": 160,
     # memory.search HyDE: the hypothetical answer embedded in place of the query.

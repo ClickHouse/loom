@@ -61,6 +61,7 @@ from server.memory.store import (
     memory_rows_by_identity_keys,
 )
 from server.observability.genai import llm_stage
+from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
 
@@ -71,10 +72,7 @@ DESIGN_DOC_TAG = "source-kind:design_doc"
 CONSTRAINT_TAG = "constraint"
 # A model's reading of a document, until a human pins it.
 EXTRACTED_CONFIDENCE = 0.5
-_REPLY_TOKENS = 4000
 _PAGE = 500
-# The closest decision rows the restatement check reads; cosine only, so cheap.
-_RESTATEMENT_TOP_K = 20
 
 
 # What a candidate did to the namespace.
@@ -393,8 +391,11 @@ async def _own_records(
 def _known_decisions(own: list[tuple[MemoryRow, dict[str, Any]]]) -> list[tuple[str, str, str]]:
     """(category, scenario, outcome) of the extractor's decisions on this document, pinned
     or not, for the prompt: a model told how a decision was worded before reuses the
-    wording, so its key and its outcome stay put across runs."""
-    return [
+    wording, so its key and its outcome stay put across runs. At most
+    memory_decision_extract_known_max of them, to bound the prompt."""
+    from server.settings import settings
+
+    known = [
         (
             str(record.get("category") or ""),
             str(record.get("scenario") or ""),
@@ -402,6 +403,7 @@ def _known_decisions(own: list[tuple[MemoryRow, dict[str, Any]]]) -> list[tuple[
         )
         for _row, record in own
     ]
+    return known[: settings.memory_decision_extract_known_max]
 
 
 async def _read_window(
@@ -436,7 +438,7 @@ async def _read_window(
             res = await llm.complete(
                 system,
                 user,
-                max_tokens=_REPLY_TOKENS,
+                max_tokens=llm_max_tokens("decision_extract"),
                 response_format={"type": "json_object"},
             )
     except (httpx.HTTPError, TimeoutError, LoomServerError) as e:
@@ -844,7 +846,10 @@ async def _confirmed_restatement(
     from server.memory.app.conflicts import resolve_conflict_floor
     from server.memory.app.search import handle_memory_search
     from server.memory.app.search.scoring import one_per_key, per_key_fetch
+    from server.settings import settings
 
+    # Cosine only, so cheap; read once so the fetch and the walk agree.
+    top_k = settings.memory_decision_extract_restatement_top_k
     statement = memory_value(
         {
             "category": inp.category,
@@ -860,8 +865,8 @@ async def _confirmed_restatement(
             namespace=namespace,
             agent="*",
             query=statement,
-            # a row per writer and session: enough of them for _RESTATEMENT_TOP_K keys
-            top_k=per_key_fetch(_RESTATEMENT_TOP_K),
+            # a row per writer and session: enough of them for top_k keys
+            top_k=per_key_fetch(top_k),
             memory_type="decision",
             namespace_scope="this",
             auto_touch=False,
@@ -877,7 +882,7 @@ async def _confirmed_restatement(
     close = [h for h in res.results if h.memory_key != key and h.similarity >= threshold]
     close.sort(key=lambda h: h.similarity, reverse=True)
     # _rows_of_key reads every row of a key: read each key once, at its most similar hit
-    for hit in one_per_key(close, namespace, _RESTATEMENT_TOP_K):
+    for hit in one_per_key(close, namespace, top_k):
         # Every identity's row of the key, read exactly: a confirmed one may sit beside a
         # newer unconfirmed one.
         for row in await _rows_of_key(org, namespace, hit.memory_key):

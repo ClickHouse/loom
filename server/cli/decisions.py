@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from server.memory.app.decision_extract import Action, ExtractReport
 
 # Below this a window holds a sentence or two, too little to state a decision and its reason.
+# not a setting: the floor of the --window-chars flag, which each run sets
 _MIN_WINDOW_CHARS = 500
 
 

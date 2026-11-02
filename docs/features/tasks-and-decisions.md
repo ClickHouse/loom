@@ -364,8 +364,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
 - **Windows**: the document's live chunks for the current embedding model, grouped by section, at most
   `--window-chars` (default 6000) per call. A document chunked under another embedding model has none: the command
   says to run `loom rechunk` first and writes nothing. A `--source-uri` with no live document exits 1 and writes
-  nothing. The prompt lists the category, scenario and outcome of up to 30 decisions the extractor already holds for
-  the document, and asks the model to reuse that wording for a decision the text still states, so a re-run reads the
+  nothing. The prompt lists the category, scenario and outcome of up to `LOOM_MEMORY_DECISION_EXTRACT_KNOWN_MAX`
+  (default 30) decisions the extractor already holds for the document, and asks the model to reuse that wording for a decision the text still states, so a re-run reads the
   same keys. Category and scenario are shown whole, since the key is built from them; an outcome over 160 characters
   is shortened and ends in `…`.
 - **Prompt**: the model is asked for the reason the text gives for each choice (the cost, constraint or failure it
@@ -473,8 +473,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
     printed.
   - **Its outcome recorded** (`decision.outcome`): never recorded again, since `decision.record` would rebuild it
     without the outcome; a verbatim field that differs tags it `source-changed`, as a confirmed row is.
-  - **No record under the key**: of the 20 decision rows closest to the candidate (cosine only), a confirmed one
-    under another key that reads the same at or above the namespace's conflict threshold skips the candidate:
+  - **No record under the key**: of the decision keys closest to the candidate (cosine only, the
+    `LOOM_MEMORY_DECISION_EXTRACT_RESTATEMENT_TOP_K` closest, default 20), a confirmed one under another key that reads the same at or above the namespace's conflict threshold skips the candidate:
     `already recorded by <agent> under <key>`. Otherwise the decision is recorded.
 - **The tag write**: `memory.update_by_id` by the row's `memory_id`, tags only, conditional on the value read: a value
   changed since, by `decision.outcome` or a re-record, is left alone and reported as a race. It is a new version by

@@ -123,11 +123,11 @@ class _World:
         # Replies served before `reply`, one per call: a candidate list, or an error raised.
         self.replies: list[Any] = []
         self._patch(monkeypatch)
-        from server.settings import settings
+        from server.settings import Settings, settings
 
         # LOOM_LLM_PROVIDER=fake set on purpose: the run does not refuse the fake model.
         monkeypatch.setattr(settings, "llm_provider", "fake")
-        monkeypatch.setattr(settings, "_llm_provider_source", "LOOM_LLM_PROVIDER")
+        monkeypatch.setattr(Settings, "llm_provider_inferred", lambda self: False)
 
     def add(self, key: str, **row: Any) -> _Row:
         r = _row(key, **row)
@@ -1442,6 +1442,14 @@ def test_a_long_outcome_is_shortened_and_marked_in_the_prompt() -> None:
     assert "an outcome ending in … is shortened" in prompt
 
 
+def test_the_prompt_lists_at_most_the_configured_known_decisions(monkeypatch) -> None:
+    from server.settings import settings
+
+    own = [(None, {"category": f"design:{i}", "scenario": "s", "outcome": "o"}) for i in range(3)]
+    monkeypatch.setattr(settings, "memory_decision_extract_known_max", 2)
+    assert [c for c, _, _ in de._known_decisions(own)] == ["design:0", "design:1"]  # type: ignore[arg-type]
+
+
 def test_clean_alternatives_can_keep_them_uncut() -> None:
     long = "a hash set — rejected: " + "slow " * 80
     assert len(svc.clean_alternatives([long])[0]) == svc.ALTERNATIVE_CHARS
@@ -1794,10 +1802,10 @@ async def test_a_failed_model_call_loses_its_window_only(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_an_inferred_fake_provider_refuses_before_any_model_call(monkeypatch) -> None:
-    from server.settings import settings
+    from server.settings import Settings
 
     world = _World(monkeypatch, [_candidate()])
-    monkeypatch.setattr(settings, "_llm_provider_source", "nothing set")
+    monkeypatch.setattr(Settings, "llm_provider_inferred", lambda self: True)
     report = await _run()
     assert report.error.startswith("no LLM provider is configured")
     assert world.prompts == [] and world.recorded == [] and cli.exit_code(report) == 1
@@ -2027,6 +2035,7 @@ def test_a_refused_candidate_or_retire_write_exits_2(dropped, refused, code) -> 
 @pytest.mark.asyncio
 async def test_a_confirmed_restatement_below_five_closer_hits_still_blocks(monkeypatch) -> None:
     from server.memory.app import search
+    from server.settings import settings
 
     world = _World(monkeypatch, [_candidate(scenario="spilling the final DISTINCT")])
     hits = []
@@ -2043,7 +2052,8 @@ async def test_a_confirmed_restatement_below_five_closer_hits_still_blocks(monke
 
     monkeypatch.setattr(search, "handle_memory_search", mem_search)
     report = await _run()
-    assert asked == [per_key_fetch(de._RESTATEMENT_TOP_K)] and de._RESTATEMENT_TOP_K == 20
+    top_k = settings.memory_decision_extract_restatement_top_k
+    assert asked == [per_key_fetch(top_k)] and top_k == 20
     assert world.recorded == []
     assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
 
