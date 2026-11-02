@@ -117,7 +117,7 @@ def test_unspaced_cjk_text_keeps_its_leading_content() -> None:
     assert len(json.dumps(value)) <= EXCERPT_LIMIT - len(f" (#{key})")
 
 
-def test_the_pre_edit_line_shows_the_outcome_at_full_caps() -> None:
+def test_the_pre_edit_line_shows_the_outcome_and_the_reasons_start() -> None:
     """memory.for_file prints the stored (JSON-quoted) value, cut at 220 characters."""
     from server.memory.app.for_file import _LINE_CHARS, _one_line
 
@@ -130,7 +130,7 @@ def test_the_pre_edit_line_shows_the_outcome_at_full_caps() -> None:
         }
     )
     line = _one_line(json.dumps(value), _LINE_CHARS)
-    assert outcome[:60] in line
+    assert f"Decided {outcome} because sorted runs reuse the ORDER BY merge" in line
 
 
 def test_spaced_non_ascii_text_is_cut_at_a_space() -> None:
