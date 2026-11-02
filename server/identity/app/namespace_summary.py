@@ -21,11 +21,20 @@ from server.memory.domain.graph_quality import is_lexical_junk_entity
 from server.observability.consumer import INSPECTOR_CONSUMERS
 
 
-def _write_ops() -> list[str]:
-    """Every op that changes state: the ledger rows an inspector's call still counts for."""
+def _memory_changes() -> list[str]:
+    """The memory ops that change a row (a writer's, or an audited admin's): an inspector's
+    call to one is a person using the namespace. An admin's read (`memory.dedup_list`) is
+    not one, though no viewer may call it."""
+    from server.operations.base import Role
     from server.operations.registry import ALL_OPERATIONS
 
-    return sorted(op.name for op in ALL_OPERATIONS if not op.read_only)
+    return sorted(
+        op.name
+        for op in ALL_OPERATIONS
+        if op.name.startswith("memory.")
+        and not op.read_only
+        and (op.audit or op.required_role == Role.WRITER)
+    )
 
 
 async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSummaryOutput:
@@ -85,15 +94,15 @@ async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSum
               AND namespace = {ns:String}
               AND ts >= now() - INTERVAL {win:UInt32} SECOND
               -- the dashboard's and the assistant's reads inspect the namespace, not use it;
-              -- a write from the dashboard (a set, a delete, a pin) is a person using it
-              AND (operation IN {writes:Array(String)}
+              -- a change to a memory from the dashboard (a set, a delete, a pin) uses it
+              AND (operation IN {memory_changes:Array(String)}
                    OR consumer NOT IN {inspectors:Array(String)})
             """,
             params={
                 **params,
                 "win": int(input.activity_seconds),
                 "inspectors": list(INSPECTOR_CONSUMERS),
-                "writes": _write_ops(),
+                "memory_changes": _memory_changes(),
             },
         )
 

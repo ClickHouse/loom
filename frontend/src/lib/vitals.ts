@@ -71,6 +71,7 @@ export function flushView(identity: Identity | null, build: string): void {
     org: identity.org,
     namespace: identity.namespace,
     agent: "loom-ui",
+    consumer: "loom-ui",
     route,
     lcp_ms: firstView ? lcpMs : null,
     long_task_ms: Math.round(longTaskMs),

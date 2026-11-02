@@ -230,6 +230,15 @@ export function boundedSignal(signal?: AbortSignal): AbortSignal | undefined {
   }
 }
 
+/** The dashboard's consumer: usage reports leave out a person's reads through it, while a
+ *  write the person makes still counts. A body that names its own consumer keeps it. */
+export const UI_CONSUMER = "loom-ui";
+
+function asDashboardCall(body: unknown): unknown {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return body;
+  return { consumer: UI_CONSUMER, ...(body as Record<string, unknown>) };
+}
+
 /** The one request path every authenticated call rides: the inflight counter, the view's
  *  call count, the bounded signal, and a typed ApiError (status, server code, message,
  *  request id) for any non-2xx — never a "403: {json}" string. Answers the ok Response. */
@@ -243,7 +252,7 @@ async function request(method: "GET" | "POST", path: string, body?: unknown, sig
         ? {
             method,
             headers: { "Content-Type": "application/json", ...authHeader() },
-            body: JSON.stringify(body),
+            body: JSON.stringify(asDashboardCall(body)),
             signal: boundedSignal(signal),
           }
         : { method, headers: authHeader(), signal: boundedSignal(signal) },
@@ -1271,7 +1280,7 @@ export async function leaveNamespace(org: string, namespace: string): Promise<{ 
 }
 
 export type CodeId = { org: string; namespace: string };
-export const CODE_CONSUMER = "loom-ui";
+export const CODE_CONSUMER = UI_CONSUMER;
 // Every reader of the shared repository list — the Repositories page, its cards, the
 // bell, Setup — reads these; two keys (scip_py_lag, has_maintainer) nothing reads stay on
 // the server.

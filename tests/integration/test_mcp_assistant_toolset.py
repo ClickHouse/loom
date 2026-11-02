@@ -136,18 +136,29 @@ async def test_the_assistant_reads_without_writing_or_recording_usage(
         consumers = await eventually(_http_recall, description="the HTTP recall is recorded")
         assert "loom-assistant" not in consumers
 
+        # A dashboard read, as the dashboard sends it (`consumer: loom-ui` on every call).
+        r = await c.post(
+            "/v1/memory.get",
+            json={**ident, "memory_key": "deploy/window", "consumer": "loom-ui"},
+            headers=auth,
+        )
+        assert r.status_code == 200, r.text[:400]
+
         async def _inspected() -> Any:
             r = await c.post(
                 "/v1/namespace.audit", json={"org": ORG, "namespace": ns}, headers=auth
             )
             summary = r.json()["summary"]
-            # Both ledger rows landed: the assistant's and the HTTP search's.
-            landed = summary["inspector_calls"] >= 1 and summary["searches"] >= 1
+            # Every ledger row landed: the assistant's, the dashboard's and the HTTP search's.
+            landed = summary["inspector_calls"] >= 2 and summary["searches"] >= 1
             return summary if landed else None
 
         summary = await eventually(_inspected, description="the ledger has the assistant calls")
         # The HTTP search is the namespace's one counted search; the assistant's are not.
         assert summary["searches"] == 1
+        # The one counted get is the test's own check for the refused write; the
+        # dashboard's is not counted.
+        assert summary["gets"] == 1
 
     # Every assistant call carried an MCP session id, and none opened a session run. A
     # control call on the core toolset, in an org of its own, opens one; once its run
