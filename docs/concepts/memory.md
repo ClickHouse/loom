@@ -269,7 +269,13 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
 - `files` are repository paths the memory is about; `memory.for_file` serves them before
   an edit of those files.
 
-`memory.for_file` renders one line per memory, within its token budget:
+`memory.for_file` renders one line per memory, within its token budget. A row that does
+not fit is left out whole while the rows after it still get their turn, and a closing
+`- … <n> more` line, which counts against the budget too, says how many were left out and
+how to list them. The header and the removal footer are always printed, and the `… more`
+line whenever a row is left out, so a budget smaller than those can be exceeded.
+
+Each line:
 
 - A memory from an extra namespace (the repository's code namespace) is headed
   `Team rule (by <author>, <age>)`, or `Decision (by <author>, <age>)` for a decision
@@ -288,12 +294,15 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
 - A note says when its linked code changed or went.
 - A string value is printed as text, not as the JSON it is stored as, and ends in `…`
   when the read cut it; a cut object or list prints as stored.
-- A decision with a source carries ` — source: <source_resource_id>` after its value; the
-  value's cut does not reach it, and the source has its own shorter cap.
-- A newer team row the conflict check linked to an older one of its type is placed above
-  it and says which it supersedes (`supersedes decision` when the older is tagged
+- A decision with a source carries ` — source: <source_resource_id>` after its value,
+  whole, so a `knowledge:` citation keeps its `#section` and resolves through
+  `knowledge.get`; the value's cut does not reach it.
+- A newer row the conflict check linked to an older one of its type is placed above it,
+  and a team line says which it supersedes (`supersedes decision` when the older is tagged
   `decision`). Two typed decisions the check linked each keep their place in the block,
-  with no such note, since each decision key is its own decision.
+  with no such note, since each decision key is its own decision. When the budget leaves
+  out any row that supersedes others, in any namespace, every row it supersedes is left
+  out with it, so an older row never reads as current.
 
 ## Memories linked to code
 

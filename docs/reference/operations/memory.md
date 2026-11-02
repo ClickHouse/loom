@@ -810,7 +810,7 @@ What Loom knows about ONE file, shaped for the moment before an edit: memories w
 | `path` | `str` | required | Repo-relative path ("src/Storages/MergeTreeData.cpp") or bare filename. |
 | `tags` | `list[str]` | *(computed)* | Optional tag filter (any-of), e.g. ["project:loom"] under the plugin's tag-scoped project mode. |
 | `top_k` | `int` | `8` | At most this many rows, across every namespace read. |
-| `token_budget` | `int` | `300` | Cap on the rendered block; the hook injects `rendered` verbatim. |
+| `token_budget` | `int` | `300` | Cap on the rendered block, which its header, removal footer and "… more" line can exceed; the hook injects `rendered` verbatim. |
 | `include_conflicted` | `bool` | `True` | Conflicted rows are still live facts a reader should see; duplicates, superseded and rejected rows are not. |
 | `extra_namespaces` | `list[str]` | *(computed)* | The repository's primary code namespace (its team file rules and design decisions), read beside `namespace`. |
 
@@ -818,7 +818,7 @@ What Loom knows about ONE file, shaped for the moment before an edit: memories w
 | --- | --- | --- |
 | `path` | `str` | The path matched, normalised to repo-relative form. |
 | `total` | `int` | Number of `hits` returned (after the `top_k` cut). |
-| `hits` | `list[_MemoryForFileHit]` | Matching rows: `constraint`-tagged first, then pinned, then by confidence, then newest. |
+| `hits` | `list[_MemoryForFileHit]` | Matching rows: `constraint`-tagged first, then pinned, then by confidence, then newest; a row the conflict check linked to an older one of its namespace is placed above it (two typed decisions keep their order). |
 | `rendered` | `str` | Prompt-ready block, cut at token_budget. |
 | `tokens_estimate` | `int` | Size of `rendered` at 4 chars per token; 0 when it is empty. |
 | `truncated` | `bool` | True when `token_budget` cut rows from `rendered`; `hits` still lists them. |

@@ -452,6 +452,37 @@ async def test_a_rule_contradicting_an_older_tagged_decision_names_it_a_decision
 
 
 @pytest.mark.asyncio
+async def test_a_superseded_team_row_leaves_the_block_with_its_superseder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import authz
+
+    old = _row("rules/old", json.dumps("Keep 32."), updated_at=datetime(2026, 9, 20, 12, 0))
+    new = _row(
+        "rules/new",
+        json.dumps("n" * 300),
+        memory_id="u-new",
+        conflict_with=["id-rules/old"],
+        actor="human:bob",
+    )
+    monkeypatch.setattr(mff, "get_client", lambda: _NsCH({"me": [], "code-clickhouse": [old, new]}))
+    monkeypatch.setattr(authz, "row_in_scope", _allow({"code-clickhouse"}))
+    out = await mff.handle_memory_for_file(
+        MemoryForFileInput(
+            org="o",
+            namespace="me",
+            path="src/a.cpp",
+            token_budget=100,
+            extra_namespaces=["code-clickhouse"],
+        )
+    )
+    assert [h.memory_key for h in out.hits] == ["rules/new", "rules/old"]
+    assert out.truncated is True and out.tokens_estimate <= 100
+    assert "rules/new" not in out.rendered and "rules/old" not in out.rendered
+    assert '- … 2 more; memory.for_file(path="src/a.cpp") lists them.' in out.rendered
+
+
+@pytest.mark.asyncio
 async def test_an_unreadable_or_failing_extra_namespace_is_skipped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -500,7 +531,7 @@ async def test_merged_rows_keep_top_k_and_budget(monkeypatch: pytest.MonkeyPatch
     )
     assert out.total == 4
     assert [h.memory_key for h in out.hits][:3] == ["t0", "t1", "t2"]  # pinned before unpinned
-    assert out.truncated is True and out.tokens_estimate <= 150 + 30
+    assert out.truncated is True and out.tokens_estimate <= 150
     assert "memory.delete" in out.rendered.splitlines()[-1]  # the footer survives the cut
 
 

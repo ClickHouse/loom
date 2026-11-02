@@ -109,7 +109,8 @@ async def test_hits_carry_their_matched_files_and_render_within_budget(
     assert "- never_allocate_here [constraint] (pinned): Do not call allocate()" in out.rendered
     assert out.truncated is True
     assert 'more; memory.for_file(path="src/a.cpp") lists them.' in out.rendered
-    assert out.tokens_estimate <= 90 + 30  # the tail line may run a little past the cap
+    assert out.tokens_estimate <= 90
+    assert "- third: Third fact about the file." in out.rendered
     # The hit carries the stored value whole; only the rendered block is cut.
     assert out.hits[1].value == "x" * 900
     assert all(len(line) <= mff._LINE_CHARS + 80 for line in out.rendered.splitlines())
@@ -275,9 +276,9 @@ def test_decision_lines_stay_inside_the_token_budget() -> None:
         ln.endswith(f"source: {_SOURCE} [id: {h['memory_key']}]")
         for ln, h in zip(rows, hits[: len(rows)], strict=True)
     )
-    # everything but the "… more" tail fits the budget
-    kept = [ln for ln in text.splitlines() if not ln.startswith("- … ")]
-    assert len("\n".join(kept)) <= 200 * mff._CHARS_PER_TOKEN
+    # the "… more" line and the removal footer included, the block fits the budget
+    assert text.splitlines()[-2].startswith("- … ")
+    assert len(text) <= 200 * mff._CHARS_PER_TOKEN
 
 
 def test_a_long_decision_and_a_constraint_fit_the_default_budget() -> None:
@@ -291,8 +292,178 @@ def test_a_long_decision_and_a_constraint_fit_the_default_budget() -> None:
     lines = text.splitlines()
     assert truncated is False and budget == 300
     assert lines[1].startswith("- Team rule (") and lines[1].endswith("[id: rules/r]")
-    capped = source[: mff._SOURCE_CHARS - 1] + "…"
-    assert lines[2].endswith(f"— source: {capped} [id: design/long]")
+    assert lines[2].endswith(f"— source: {source} [id: design/long]")
+
+
+def test_a_long_source_keeps_its_section() -> None:
+    # A cut source would cite another document, or the document without its section.
+    source = "knowledge:design-docs/" + "d" * 200 + ".pdf#Slide 7 > Spilling to disk"
+    line = _lines([_decision("design/long", source_resource_id=source)])[1]
+    assert line.endswith(f" — source: {source} [id: design/long]")
+
+
+def test_a_source_with_a_line_break_stays_on_its_line() -> None:
+    source = "knowledge:design-docs/a  b.pdf#Plan > Step\none\tlater"
+    line = _lines([_decision("design/nl", source_resource_id=source)])[1]
+    assert line.endswith(
+        " — source: knowledge:design-docs/a  b.pdf#Plan > Step one\tlater [id: design/nl]"
+    )
+
+
+def test_a_row_too_long_for_the_budget_does_not_hide_the_rows_after_it() -> None:
+    long = _decision("design/long", source_resource_id="knowledge:d/" + "x" * 1500)
+    short = _row("rules/short", json.dumps("Keep 64."), namespace="me")
+    text, tokens, truncated = mff.render_block("src/a.cpp", [long, short], 300, home="me", now=_NOW)
+    lines = text.splitlines()
+    assert truncated is True and tokens <= 300
+    assert "- rules/short: Keep 64." in lines and "design/long" not in text
+    assert lines[-2].startswith("- … 1 more;")
+
+
+def test_a_block_that_fits_whole_reserves_nothing() -> None:
+    # 100 and 30 characters: the block fits in 193 of 200, so nothing is reserved or cut.
+    hits = [_row("k0", json.dumps("a" * 94)), _row("k1", json.dumps("b" * 24))]
+    text, tokens, truncated = mff.render_block("src/a.cpp", hits, 50, home="me")
+    assert truncated is False and tokens <= 50
+    assert text.splitlines()[1:] == ["- k0: " + "a" * 94, "- k1: " + "b" * 24]
+
+
+def _superseding(
+    key: str, older: dict[str, Any], value: str, ns: str, **over: Any
+) -> dict[str, Any]:
+    """A row placed above `older` by `_supersede_order`, carrying what it supersedes."""
+    row = _row(key, json.dumps(value), namespace=ns, **over)
+    return row | {
+        "supersedes_key": older["memory_key"],
+        "supersedes_ids": [older["memory_id"]],
+        "supersedes": "bob",
+        "supersedes_kind": "rule",
+    }
+
+
+def test_a_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:
+    older = _row("rules/old", json.dumps("Keep 32."), namespace="code-repo")
+    newer = _superseding("rules/new", older, "n" * 200, "code-repo", tags=["constraint"])
+    text, tokens, truncated = mff.render_block(
+        "src/a.cpp", [newer, older], 120, home="me", now=_NOW
+    )
+    assert truncated is True and tokens <= 120
+    assert "rules/new" not in text and "rules/old" not in text
+    assert '- … 2 more; memory.for_file(path="src/a.cpp") lists them.' in text.splitlines()
+
+
+def test_another_writers_row_under_the_superseded_key_still_prints() -> None:
+    # Keys are unique per writer, and the caller's own namespace can return two writers'
+    # rows under one key: only the row the newer one supersedes is left out with it.
+    bobs = _row("rules/build", json.dumps("Use make."), namespace="me", agent="bob")
+    carols = _row("rules/build", json.dumps("Use ninja."), namespace="me", agent="carol")
+    carols["memory_id"] = "id-carol-build"
+    newer = _superseding("rules/x", bobs, "n" * 300, "me")
+    text, _, truncated = mff.render_block("src/a.cpp", [newer, bobs, carols], 60, home="me")
+    assert truncated is True and "Use make." not in text and "Use ninja." in text
+    assert text.splitlines()[-1] == '- … 2 more; memory.for_file(path="src/a.cpp") lists them.'
+
+
+def test_an_own_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:
+    older = _row("old", json.dumps("Keep 32."), namespace="me")
+    newer = _superseding("new", older, "n" * 300, "me")
+    text, _, truncated = mff.render_block("src/a.cpp", [newer, older], 60, home="me")
+    assert truncated is True and "- new" not in text and "- old" not in text
+    assert text.splitlines()[-1].startswith("- … 2 more;")
+
+
+def _chain() -> list[dict[str, Any]]:
+    """a <- b <- c linked by the conflict check, newest last, in the query's order:
+    `a` (pinned) first, so the chain has to be reordered newest first."""
+    a = _row("a", json.dumps("Keep 32."), namespace="me", pinned=1)
+    b = _row("b", json.dumps("Keep 48."), namespace="me")
+    c = _row("c", json.dumps("c" * 300), namespace="me")
+    for day, row in enumerate([a, b, c], start=20):
+        row["updated_at"] = datetime(2026, 9, day, 12, 0)
+    a["conflict_with"], b["conflict_with"] = [b["memory_id"]], [a["memory_id"], c["memory_id"]]
+    c["conflict_with"] = [b["memory_id"]]
+    return mff._supersede_order([a, b, c])
+
+
+def test_a_chain_of_superseding_rows_is_placed_newest_first() -> None:
+    text, _, truncated = mff.render_block("src/a.cpp", _chain(), 10_000, home="me")
+    keys = [ln.split(" ")[1].rstrip(":") for ln in text.splitlines()[1:]]
+    assert truncated is False and keys == ["c", "b", "a"]
+
+
+def test_a_chain_of_superseded_rows_is_left_out_with_its_head() -> None:
+    text, _, truncated = mff.render_block("src/a.cpp", _chain(), 60, home="me")
+    assert truncated is True and text.splitlines()[1:] == [
+        '- … 3 more; memory.for_file(path="src/a.cpp") lists them.'
+    ]
+
+
+def test_a_row_superseding_two_rows_leaves_both_out_with_it() -> None:
+    a = _row("a", json.dumps("Keep 32."), namespace="me", updated_at=datetime(2026, 9, 20))
+    d = _row("d", json.dumps("Keep 16."), namespace="me", updated_at=datetime(2026, 9, 21))
+    b = _row("b", json.dumps("b" * 300), namespace="me", updated_at=datetime(2026, 9, 22))
+    b["conflict_with"] = [a["memory_id"], d["memory_id"]]
+    a["conflict_with"], d["conflict_with"] = [b["memory_id"]], [b["memory_id"]]
+    rows = mff._supersede_order([a, d, b])
+    assert [r["memory_key"] for r in rows] == ["b", "a", "d"] and b["supersedes_key"] == "a"
+    text, _, truncated = mff.render_block("src/a.cpp", rows, 60, home="me")
+    assert truncated is True and text.splitlines()[1:] == [
+        '- … 3 more; memory.for_file(path="src/a.cpp") lists them.'
+    ]
+
+
+def test_two_linked_rows_with_one_timestamp_link_one_way() -> None:
+    def pair() -> list[dict[str, Any]]:
+        x = _row("x", json.dumps("Keep 32."), namespace="me", memory_id="id-1")
+        y = _row("y", json.dumps("Keep 64."), namespace="me", memory_id="id-2")
+        x["conflict_with"], y["conflict_with"] = ["id-2"], ["id-1"]
+        return [x, y]
+
+    rows = mff._supersede_order(pair())
+    # The larger id is the newer row: y supersedes x, and x supersedes nothing.
+    assert [r["memory_key"] for r in rows] == ["y", "x"]
+    assert rows[0]["supersedes_key"] == "x" and not rows[1].get("supersedes_key")
+    assert [r["memory_key"] for r in mff._supersede_order(pair()[::-1])] == ["y", "x"]
+
+
+def test_mixed_rows_stay_inside_the_budget() -> None:
+    hits = [_row(f"k{i}", json.dumps("r" * (20 + 37 * i % 200))) for i in range(12)]
+    for budget in range(50, 600):
+        text, tokens, truncated = mff.render_block("src/a.cpp", hits, budget, home="me")
+        assert len(text) <= budget * mff._CHARS_PER_TOKEN and tokens <= budget
+        assert truncated is text.splitlines()[-1].startswith("- … ")
+
+
+def test_the_more_line_fits_inside_the_budget() -> None:
+    hits = [_row(f"k{i}", json.dumps("r" * 100)) for i in range(12)]
+    for budget in range(50, 400):
+        text, tokens, truncated = mff.render_block("src/a.cpp", hits, budget, home="me")
+        assert len(text) <= budget * mff._CHARS_PER_TOKEN and tokens <= budget
+        assert truncated is text.splitlines()[-1].startswith("- … ")
+
+
+def test_a_block_filling_the_budget_prints_whole_and_one_more_character_cuts_it() -> None:
+    header = "Loom: 2 memories anchored to src/a.cpp — read before editing:"
+    row0 = "- k0: " + "a" * 100
+    budget = 80
+    # The three lines and the two newlines between them fill the 320 characters of 80
+    # tokens exactly.
+    row1_chars = budget * mff._CHARS_PER_TOKEN - len(header) - len(row0) - 2
+    row1 = "- k1: " + "b" * (row1_chars - len("- k1: "))
+
+    def block(second: str) -> tuple[str, int, bool]:
+        hits = [_row("k0", json.dumps("a" * 100)), _row("k1", json.dumps(second))]
+        return mff.render_block("src/a.cpp", hits, budget, home="me")
+
+    text, tokens, truncated = block(row1[6:])
+    assert text == "\n".join([header, row0, row1]) and truncated is False and tokens == budget
+    # One character more and row1 is left out, with room kept for the "… more" line.
+    text, tokens, truncated = block(row1[6:] + "b")
+    assert truncated is True and text.splitlines()[1:] == [
+        row0,
+        '- … 1 more; memory.for_file(path="src/a.cpp") lists them.',
+    ]
+    assert tokens <= budget
 
 
 @pytest.mark.asyncio

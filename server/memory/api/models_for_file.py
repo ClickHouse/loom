@@ -10,13 +10,16 @@ reach a file through the `files[]` facet the extractor fills (a match accepts
 a repo-relative path or a bare filename, because stored rows use both shapes)
 or through a link to code in it (`server.memory.app.code_links`).
 
-Read-only, VIEWER. Rows tagged `constraint` sort first, then
-pinned, then confidence. `rendered` is cut at `token_budget` so the hook
-never pays more than it asked for. `extra_namespaces` (a repository's primary code
-namespace, where its team file rules and design decisions live) runs the same query per
-readable namespace, merged in the same order, team rows marked with their author. Each
-hit carries its `source_resource_id` and its `verification` state; a decision's rendered line
-carries the source after its value.
+Read-only, VIEWER. Rows tagged `constraint` sort first, then pinned, then
+confidence; a row the conflict check linked to an older one of its namespace is
+placed above it (two typed decisions keep their order). `rendered` is cut at
+`token_budget` (its header and removal footer always print, and its "… more"
+line whenever a row is left out). `extra_namespaces` (a repository's primary
+code namespace, where its team file rules and design decisions live) runs the
+same query per readable namespace, merged in the same order, team rows marked
+with their author. Each hit carries its `source_resource_id` and its
+`verification` state; a decision's rendered line carries the source after its
+value.
 """
 
 from __future__ import annotations
@@ -40,7 +43,9 @@ class MemoryForFileInput(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=16)
     # At most this many rows, across every namespace read.
     top_k: int = Field(default=8, ge=1, le=50)
-    # Cap on the rendered block; the hook injects `rendered` verbatim.
+    # Cap on the rendered block, which its header, removal footer and "… more" line can
+    # exceed; the hook injects `rendered` verbatim. The header and footer always print, the
+    # "… more" line whenever a row is left out.
     token_budget: int = Field(default=300, ge=50, le=4000)
     # Conflicted rows are still live facts a reader should see; duplicates,
     # superseded and rejected rows are not.
@@ -75,9 +80,9 @@ class _MemoryForFileHit(BaseModel):
     # a team row (rule or decision) renders with it.
     actor: str = ""
     # Set when this row and an older one of the same namespace
-    # are cross-linked by the conflict check (`conflict_with`): the older's
+    # are cross-linked by the conflict check (`conflict_with`): the first older row's
     # key, author and kind (`decision`, or `rule` for any row that is not a decision).
-    # This row is placed directly above it.
+    # This row is placed above it.
     supersedes_key: str = ""
     supersedes: str = ""
     supersedes_kind: Literal["rule", "decision", ""] = ""
@@ -99,7 +104,8 @@ class MemoryForFileOutput(BaseModel):
     # Number of `hits` returned (after the `top_k` cut).
     total: int
     # Matching rows: `constraint`-tagged first, then pinned, then by confidence,
-    # then newest.
+    # then newest; a row the conflict check linked to an older one of its namespace is
+    # placed above it (two typed decisions keep their order).
     hits: list[_MemoryForFileHit]
     # Prompt-ready block, cut at token_budget. Empty when total == 0.
     rendered: str = ""

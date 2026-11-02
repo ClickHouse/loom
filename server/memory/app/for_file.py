@@ -33,8 +33,6 @@ log = logging.getLogger(__name__)
 
 _VALUE_BYTES = 600
 _LINE_CHARS = 220
-# A decision's source is printed after its value, capped on its own.
-_SOURCE_CHARS = 120
 # The length of a `\uXXXX` escape in the stored JSON: a cut leaves at most five of one.
 _ESCAPE_CHARS = 6
 _CODE_NOTES = {
@@ -150,12 +148,13 @@ def _is_decision(hit: dict[str, Any]) -> bool:
 
 
 def _body(hit: dict[str, Any], *, decision: bool) -> str:
-    """The value on one capped line; a decision's source follows it with its own cap,
-    so the value's cut never reaches it."""
+    """The value on one capped line; a decision's source follows it whole, so the value's
+    cut never reaches it and the citation still resolves through knowledge.get."""
     text = _one_line(_readable(hit), _LINE_CHARS)
-    source = str(hit.get("source_resource_id") or "")
+    # Only a line break would break the one-line-per-row layout; spaces stay as cited.
+    source = " ".join(str(hit.get("source_resource_id") or "").splitlines())
     if decision and source:
-        text += f" — source: {_one_line(source, _SOURCE_CHARS)}"
+        text += f" — source: {source}"
     return text
 
 
@@ -230,6 +229,10 @@ def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
     )
 
 
+def _more_line(path: str, rest: int) -> str:
+    return f'- … {rest} more; memory.for_file(path="{path}") lists them.'
+
+
 def render_block(
     path: str,
     hits: list[dict[str, Any]],
@@ -239,6 +242,8 @@ def render_block(
     now: datetime | None = None,
 ) -> tuple[str, int, bool]:
     """Prompt-ready block cut at `token_budget`. Returns (text, tokens, truncated).
+    The header and the removal footer always print, and the "… more" line whenever a row
+    is left out, so a budget smaller than those can be exceeded.
     `home` is the caller's namespace; a row from any other is a team row (rule or decision),
     rendered with its author and age, and the block ends with how to remove one."""
     if not hits:
@@ -248,25 +253,36 @@ def render_block(
     n = len(hits)
     lines = [f"Loom: {n} memor{'y' if n == 1 else 'ies'} anchored to {path} — read before editing:"]
     footer = _removal_footer(hits, home)
-    used = len(lines[0]) + 1 + (len(footer) + 1 if footer else 0)
-    truncated = False
+    # Each line after the header adds its length and the newline before it.
+    used = len(lines[0]) + (len(footer) + 1 if footer else 0)
+    rows = []
     for h in hits:
         decision = _is_decision(h)
         if _is_team(h, home):
-            line = _team_line(h, now, decision=decision)
+            rows.append(_team_line(h, now, decision=decision))
         else:
             marks = _marker(h, show_decision=decision) + _status_notes(h, decision=decision)
-            line = f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}"
-        if used + len(line) + 1 > budget_chars:
-            truncated = True
-            break
-        lines.append(line)
-        used += len(line) + 1
+            rows.append(f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}")
+    left_out = 0
+    # A block that fits whole needs no "… more" line, so nothing is reserved for one.
+    if used + sum(len(row) + 1 for row in rows) <= budget_chars:
+        lines += rows
+    else:
+        hidden: set[str] = set()  # memory_ids of rows whose superseder was left out
+        for i, (h, row) in enumerate(zip(hits, rows, strict=True)):
+            # Keep room for a "… more" line counting every row that may still be left out.
+            most = left_out + n - i - 1
+            tail = len(_more_line(path, most)) + 1
+            if str(h.get("memory_id")) in hidden or used + len(row) + 1 + tail > budget_chars:
+                left_out += 1
+                # Without the newer row above it, the row it supersedes would read as current.
+                hidden.update(h.get("supersedes_ids") or [])
+                continue
+            lines.append(row)
+            used += len(row) + 1
+    truncated = left_out > 0
     if truncated:
-        rest = n - (len(lines) - 1)
-        tail = f'- … {rest} more; memory.for_file(path="{path}") lists them.'
-        lines.append(tail)
-        used += len(tail) + 1
+        lines.append(_more_line(path, left_out))
     if footer:
         lines.append(footer)
     text = "\n".join(lines)
@@ -278,11 +294,17 @@ def _stamp(r: dict[str, Any]) -> float:
     return ts.timestamp() if isinstance(ts, datetime) else 0.0
 
 
+def _newer_key(r: dict[str, Any]) -> tuple[float, str]:
+    return _stamp(r), str(r.get("memory_id"))
+
+
 def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Contradicting team rows (rules or decisions), reusing the conflict machinery: two rows
+    """Contradicting rows (rules or decisions), reusing the conflict machinery: two rows
     of one namespace cross-linked by `conflict_with` are an older row and a newer one that
-    contradicts it. The newer is placed directly above the older and carries `supersedes_key` /
-    `supersedes` / `supersedes_kind` (the older's key, author and kind). No new state: both
+    contradicts it. The newer is placed above every older row it supersedes, newest first
+    along a chain, and carries `supersedes_key` / `supersedes` / `supersedes_kind` (the first
+    older row's key, author and kind) and `supersedes_ids` (the memory_id of every older row
+    it is linked to: another writer may hold a row under the same key). No new state: both
     stay live until the older's author or a maintainer removes it, or a verdict retires it. Two
     typed decisions never pair: a decision's key is its identity, so one cross-linked to
     another is a second decision, not a newer version."""
@@ -297,24 +319,36 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             peer = by_id.get(str(cid))
             if peer is None or peer is r or peer.get("namespace") != r.get("namespace"):
                 continue
-            new, old = (r, peer) if _stamp(r) >= _stamp(peer) else (peer, r)
+            # The id breaks a tie in time, so a pair links in one direction only.
+            if _newer_key(r) > _newer_key(peer):
+                new, old = r, peer
+            else:
+                new, old = peer, r
+            ids = new.setdefault("supersedes_ids", [])
+            if str(old.get("memory_id")) in ids:
+                continue  # the pair again, seen from its other row
+            ids.append(str(old.get("memory_id")))
+            newer_of.setdefault(id(old), []).append(new)
             if not new.get("supersedes_key"):
                 new["supersedes_key"] = str(old.get("memory_key") or "")
                 new["supersedes"] = _author(old)
                 new["supersedes_kind"] = "decision" if _is_decision(old) else "rule"
-                newer_of.setdefault(id(old), []).append(new)
     if not newer_of:
         return rows
     placed: set[int] = set()
     out: list[dict[str, Any]] = []
-    for r in rows:
+
+    def place(r: dict[str, Any]) -> None:
+        # The rows newer than `r` go first, theirs before them, so a chain reads newest first.
+        if id(r) in placed:
+            return
+        placed.add(id(r))
         for new in newer_of.get(id(r), []):
-            if id(new) not in placed:
-                placed.add(id(new))
-                out.append(new)
-        if id(r) not in placed:
-            placed.add(id(r))
-            out.append(r)
+            place(new)
+        out.append(r)
+
+    for r in rows:
+        place(r)
     return out
 
 
@@ -454,33 +488,39 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
     rows = await _merged_rows(input, path, base)
 
     hits: list[_MemoryForFileHit] = []
+    # The ids are not on the wire; render_block needs them to leave a superseded row out
+    # with its superseder.
+    to_render: list[dict[str, Any]] = []
     for r in rows:
-        hits.append(
-            _MemoryForFileHit(
-                memory_key=str(r["memory_key"]),
-                memory_type=str(r.get("memory_type") or "semantic"),
-                value=str(r.get("value") or ""),
-                value_truncated=bool(r.get("value_truncated")),
-                tags=[str(t) for t in (r.get("tags") or [])],
-                confidence=float(conf) if (conf := r.get("confidence")) is not None else 1.0,
-                pinned=bool(r.get("pinned")),
-                status=str(r.get("status_text") or "active"),
-                agent=str(r.get("agent") or ""),
-                updated_at=r.get("updated_at"),
-                namespace=str(r.get("namespace") or input.namespace),
-                actor=str(r.get("actor") or ""),
-                supersedes_key=str(r.get("supersedes_key") or ""),
-                supersedes=str(r.get("supersedes") or ""),
-                supersedes_kind=r.get("supersedes_kind") or "",
-                matched_files=[str(f) for f in (r.get("matched_files") or [])],
-                source_resource_id=str(r.get("source_resource_id") or ""),
-                verification=row_verification(r),
-                code_state=r.get("code_state", ""),
-            )
+        hit = _MemoryForFileHit(
+            memory_key=str(r["memory_key"]),
+            memory_type=str(r.get("memory_type") or "semantic"),
+            value=str(r.get("value") or ""),
+            value_truncated=bool(r.get("value_truncated")),
+            tags=[str(t) for t in (r.get("tags") or [])],
+            confidence=float(conf) if (conf := r.get("confidence")) is not None else 1.0,
+            pinned=bool(r.get("pinned")),
+            status=str(r.get("status_text") or "active"),
+            agent=str(r.get("agent") or ""),
+            updated_at=r.get("updated_at"),
+            namespace=str(r.get("namespace") or input.namespace),
+            actor=str(r.get("actor") or ""),
+            supersedes_key=str(r.get("supersedes_key") or ""),
+            supersedes=str(r.get("supersedes") or ""),
+            supersedes_kind=r.get("supersedes_kind") or "",
+            matched_files=[str(f) for f in (r.get("matched_files") or [])],
+            source_resource_id=str(r.get("source_resource_id") or ""),
+            verification=row_verification(r),
+            code_state=r.get("code_state", ""),
+        )
+        hits.append(hit)
+        to_render.append(
+            hit.model_dump()
+            | {"memory_id": r.get("memory_id"), "supersedes_ids": r.get("supersedes_ids") or []}
         )
 
     rendered, tokens, truncated = render_block(
-        path, [h.model_dump() for h in hits], input.token_budget, home=input.namespace
+        path, to_render, input.token_budget, home=input.namespace
     )
     return MemoryForFileOutput(
         path=path,
