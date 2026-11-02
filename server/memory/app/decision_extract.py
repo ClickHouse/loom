@@ -42,11 +42,8 @@ from server.memory.api.models_decision import DecisionRecordInput
 from server.memory.app import decisions as svc
 from server.memory.domain import decision_extract as dx
 from server.memory.domain.corpus_synthesis import Window, windows
-from server.memory.domain.decision_statement import (
-    SOURCE_CHANGED_TAG,
-    alternatives,
-    memory_value,
-)
+from server.memory.domain.decision_schema import SOURCE_CHANGED_TAG
+from server.memory.domain.decision_statement import alternatives, memory_value
 from server.memory.domain.trust import confirmed, verification_state
 from server.memory.store import (
     Identity,
@@ -238,9 +235,6 @@ async def extract_document(
             # step still run, and a re-run does not stop at the same place.
             report.dropped.append(Dropped(section, _refusal(e), cand.quote))
             continue
-        if rec is None:
-            report.dropped.append(Dropped(section, "does not fit decision.record", cand.quote))
-            continue
         written.add(rec.memory_key)
         if rec.action == "row_changed":
             reason = "refused: the row changed while the run read it"
@@ -326,9 +320,7 @@ async def _candidates(
             elif not reason and pair in pairs:
                 # Overlapping chunks feed one span to two windows, worded apart.
                 reason = "same decision as an earlier candidate"
-            elif (
-                not reason and _record_input(org, namespace, source_uri, cand, section, []) is None
-            ):
+            elif not reason and not _fits(org, namespace, source_uri, cand, section):
                 # Checked before it takes a slot, a key or a code lookup.
                 reason = "does not fit decision.record"
             elif not reason and per_section.get(section, 0) >= max_per_section:
@@ -345,27 +337,36 @@ async def _candidates(
 
 def _record_input(
     org: str, namespace: str, source_uri: str, cand: dx.Candidate, section: str, files: list[str]
-) -> DecisionRecordInput | None:
+) -> DecisionRecordInput:
+    """The decision.record input for a candidate; raises ValidationError when it does not
+    fit the op's field limits (`_fits` checks first)."""
     tags = [DESIGN_DOC_TAG, *([CONSTRAINT_TAG] if cand.is_constraint else [])]
+    return DecisionRecordInput(
+        org=org,
+        namespace=namespace,
+        agent=EXTRACTOR_AGENT,
+        category=cand.category,
+        scenario=cand.scenario,
+        reasoning=cand.reasoning,
+        outcome=cand.outcome,
+        # As decision.record keeps them: deduplicated, at most MAX_ALTERNATIVES.
+        alternatives=svc.clean_alternatives(cand.rejected(), cut=False),
+        confidence=EXTRACTED_CONFIDENCE,
+        tags=tags,
+        files=files,
+        source_class="derived",
+        source_resource_id=source_resource_id(namespace, source_uri, section),
+    )
+
+
+def _fits(org: str, namespace: str, source_uri: str, cand: dx.Candidate, section: str) -> bool:
+    """The candidate fits decision.record's field limits. Checked with no files: the
+    resolved files (at most one per looked-up name) fit any candidate that fits."""
     try:
-        return DecisionRecordInput(
-            org=org,
-            namespace=namespace,
-            agent=EXTRACTOR_AGENT,
-            category=cand.category,
-            scenario=cand.scenario,
-            reasoning=cand.reasoning,
-            outcome=cand.outcome,
-            # As decision.record keeps them: deduplicated, at most MAX_ALTERNATIVES.
-            alternatives=svc.clean_alternatives(cand.rejected(), cut=False),
-            confidence=EXTRACTED_CONFIDENCE,
-            tags=tags,
-            files=files,
-            source_class="derived",
-            source_resource_id=source_resource_id(namespace, source_uri, section),
-        )
+        _record_input(org, namespace, source_uri, cand, section, [])
     except ValidationError:
-        return None
+        return False
+    return True
 
 
 def record_body(inp: DecisionRecordInput) -> dict[str, Any]:
@@ -432,12 +433,10 @@ async def _reconcile(
     section: str,
     texts: list[str],
     dry_run: bool,
-) -> RecordReport | None:
+) -> RecordReport:
     """Decide what the candidate does to the namespace, and do it unless `dry_run`."""
     files, signals, unresolved, complete = await resolve_mentions(org, namespace, cand, texts)
     inp = _record_input(org, namespace, source_uri, cand, section, files)
-    if inp is None:
-        return None
     key = svc.decision_key(inp.category, inp.scenario)
     rec = RecordReport(key, "written", record_body(inp), signals, unresolved)
     writer = await live_writer_record(org, namespace, key)

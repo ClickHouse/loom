@@ -135,8 +135,9 @@ def _alternative(item: Any) -> tuple[str, str] | None:
 
 
 def parse_candidates(reply: str) -> list[Candidate] | None:
-    """The candidates of one model reply, its code fence removed; None when the reply is
-    not the asked-for JSON. An item missing a required field is skipped."""
+    """The candidates of one model reply (its code fence already removed by the caller);
+    None when the reply is not the asked-for JSON. An item missing a required field is
+    skipped."""
     try:
         data = json.loads(reply)
     except (TypeError, ValueError):

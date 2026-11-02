@@ -18,10 +18,6 @@ STATEMENT_REJECTED_CHARS = 240
 STATEMENT_REALIZED_CHARS = 170
 _ELLIPSIS = "..."
 
-# The tag on a decision row whose source document no longer says what it says;
-# memory.for_file prints it beside the row's pin marker.
-SOURCE_CHANGED_TAG = "source-changed"
-
 
 # Where a category slug may also be cut (`design:spilling-final`). Not `_`: the file
 # detector reads it as part of a word, so `schema.sql_v2` cut there would leave `schema.sql`.

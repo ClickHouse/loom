@@ -19,8 +19,12 @@ from server.memory.api.models_for_file import (
     _MemoryForFileHit,
 )
 from server.memory.domain.code_change import STATE_RANK, worst
-from server.memory.domain.decision_schema import FAILURE_TAG, SCHEMA_NAME, is_decision
-from server.memory.domain.decision_statement import SOURCE_CHANGED_TAG
+from server.memory.domain.decision_schema import (
+    FAILURE_TAG,
+    SCHEMA_NAME,
+    SOURCE_CHANGED_TAG,
+    is_decision,
+)
 from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import confirmed as is_confirmed
 from server.memory.domain.trust import row_verification
