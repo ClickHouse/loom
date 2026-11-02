@@ -482,9 +482,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
     without the outcome; a verbatim field that differs tags it `source-changed`, as a confirmed row is.
   - **No record under the key**: of the `LOOM_MEMORY_DECISION_EXTRACT_RESTATEMENT_TOP_K` (default 20) decision keys
     closest to the candidate (cosine only), a confirmed one under another key that reads the same at or above the
-    namespace's conflict threshold skips the candidate: `already recorded by <agent> under <key>`. Otherwise the
-    decision is recorded. The fetch is capped at 500 rows, so a large value or `LOOM_MEMORY_SEARCH_PER_KEY_CAP=0`
-    can read fewer keys.
+    namespace's conflict threshold skips the candidate: `already recorded by <agent> under <key>`. The query is the
+    candidate's statement, which leaves the category out, so a confirmed decision filed under another category counts.
+    Otherwise the decision is recorded. The fetch is capped at 500 rows, so a large value or
+    `LOOM_MEMORY_SEARCH_PER_KEY_CAP=0` can read fewer keys.
 - **The tag write**: `memory.update_by_id` by the row's `memory_id`, tags only, conditional on the value read: a value
   changed since, by `decision.outcome` or a re-record, is left alone and reported as a race. It is a new version by
   the extractor: the row's pin, value and attestation stay (the value's hash does not change, so the attestation still
