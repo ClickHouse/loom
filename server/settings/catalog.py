@@ -3177,8 +3177,8 @@ class MemorySearchSettings(BaseModel):
     # served window: rrf/rerank pool, pool short of top_k, an under-covered
     # identifier, or a pooled key already matching), "off".
     memory_search_key_match_mode: Annotated[Literal["always", "gated", "off"], LIVE] = "gated"
-    # Rows per memory_key the final block, key-match and the entity follow keep (0 = no cap),
-    # and the one-per-key over-fetch; block and key-match skip it for aggregational/temporal_diff.
+    # Rows of one memory_key kept by the final block, key-match and the entity follow (0 = no cap;
+    # aggregational/temporal_diff skip the first two), and one-per-key callers' over-fetch factor.
     memory_search_per_key_cap: Annotated[int, LIVE] = 3
     # How many of a writer's served rows of one key, those with the newest vectors, a pooled
     # memory.set chunk is matched against, by value, to find the row it was cut from.

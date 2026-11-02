@@ -14,12 +14,12 @@ pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary no
 _VEC = "[" + ",".join(["0.1"] * 3072) + "]"
 
 
-def _row(user: str, session: str, key: str = "user_city") -> str:
+def _row(user: str, session: str, key: str = "user_city", scope: str = "private") -> str:
     return (
         "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id,"
         " memory_key, memory_type, scope, content_excerpt, embedding, memory_key_embedding,"
         " embedding_model, embedding_dim, version) VALUES ('o', 'n', 'a',"
-        f" '{user}', '{session}', '{key}', 'semantic', 'private', 'Lives in Berlin', {_VEC},"
+        f" '{user}', '{session}', '{key}', 'semantic', '{scope}', 'Lives in Berlin', {_VEC},"
         f" {_VEC}, 'm', 3072, 1)"
     )
 
@@ -43,16 +43,12 @@ def test_the_anchor_pool_takes_tied_rows_in_row_order() -> None:
 
 
 def test_digest_descent_takes_tied_rows_in_row_order() -> None:
-    # one session's rows come off one part in sort-key order already, so this pins the
-    # result; the anchor pool case above is the one a missing tiebreak fails
-    rows = [_row(u, "s1", k) for u in ("u2", "u1") for k in ("user_location", "user_city")]
+    # two writes of one value under two keys, the later one read first: only the tiebreak
+    # takes `user_city` first
+    rows = [_row("u1", "s1", "user_city", scope="shared"), _row("u1", "s1", "user_location")]
     got = run(
         _setup(*rows),
         digest_descent_sql("org = {org:String}"),
-        {"org": "o", "qv": [0.1] * 3072, "k": 3},
+        {"org": "o", "qv": [0.1] * 3072, "k": 2},
     )
-    assert [(r["user_id"], r["memory_key"]) for r in got] == [
-        ("u1", "user_city"),
-        ("u1", "user_location"),
-        ("u2", "user_city"),
-    ]
+    assert [r["memory_key"] for r in got] == ["user_city", "user_location"]

@@ -4249,7 +4249,7 @@
         "memory_search_per_key_cap": {
           "default": 3,
           "type": "integer",
-          "description": "Rows per memory_key the final block, key-match and the entity follow keep (0 = no cap), and the one-per-key over-fetch; block and key-match skip it for aggregational/temporal_diff."
+          "description": "Rows of one memory_key kept by the final block, key-match and the entity follow (0 = no cap; aggregational/temporal_diff skip the first two), and one-per-key callers' over-fetch factor."
         },
         "memory_search_pool_multiplier_deep": {
           "default": 5,
