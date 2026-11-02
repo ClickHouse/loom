@@ -397,10 +397,12 @@ async def handle_decision_precedents(input: DecisionPrecedentsInput) -> Decision
     hits = [(h.memory_key, float(getattr(h, "similarity", 0.0) or 0.0)) for h in res.results]
     records = await _decision_records(ch, input.org, input.namespace, [k for k, _ in hits])
     rows = []
+    seen: set[str] = set()
     for key, sim in hits:
         rec = records.get(key)
-        if rec is None:
-            continue
+        if rec is None or key in seen:
+            continue  # a key served in several sessions is one decision, at its best hit
+        seen.add(key)
         if input.with_outcome_only and not rec.get("realized_outcome"):
             continue
         rows.append(_row(key, rec, sim))

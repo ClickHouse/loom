@@ -183,7 +183,6 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
         key = hit.memory_key
         if key in seen:
             continue
-        seen.add(key)
         # The search reads across sessions (and, for `-`, users and agents);
         # the write stays on the caller's identity tuple, as keys and filter
         # do. A hit that names another owner is skipped, not re-pointed at a
@@ -197,6 +196,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             )
         ):
             continue
+        seen.add(key)  # once it is the caller's: another owner's row of the key may come first
         row = await memory_repo.get_by_key(
             identity, key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
         )

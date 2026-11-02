@@ -776,11 +776,12 @@ postal code), `{"pin_count": 4}` and `{"pin": "A1"}` are not. A connector pin in
 words are an assignment word (`password`, `db_password`, `dbPassword`, `client_secret`)
 states its string value as `password: <value>` when the value is one token of 8+
 characters holding a letter and a digit and is not a reference (`env:NAME`, `vault:PATH`,
-`secret:NAME`, `ref:NAME`, `$NAME`, `${NAME}`, a value that opens with `/`, a segment,
-then `/` (`/etc/key1`), or one opening `~/`, `./` or `../`; a base64 secret of that shape
-reads as a path and is missed). A quote, comma or semicolon in the value does not cut it
-short. So `{"db": {"password": "hunter2xyz"}}` and `{"password": "admin:Passw0rd"}` are
-`high`, and `{"password": "required"}`, `{"password": "********"}`, `{"api_key":
+`secret:NAME`, `ref:NAME`, an all-caps `$NAME`, `${NAME}`, a value that opens with `/`, a
+segment, then `/` (`/etc/key1`), or one opening `~/`, `./` or `../`; a base64 secret of
+that shape reads as a path and is missed). A relative path without one of those prefixes
+(`src/app1`) still reads as a secret. A quote, comma or semicolon in the value does not
+cut it short. So `{"db": {"password": "hunter2xyz"}}` and `{"password": "admin:Passw0rd"}`
+are `high`, and `{"password": "required"}`, `{"password": "********"}`, `{"api_key":
 "YOUR_API_KEY"}` and `{"api_key": "env:OPENAI_API_KEY"}` are not. Any other key labels
 nothing. `reads_high` reads the same pairs in raw JSON text, such as a chunk of an object
 value, when the value is one quoted token or digits and dashes. The sweep's prefilter is a

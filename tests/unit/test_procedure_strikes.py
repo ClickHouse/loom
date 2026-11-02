@@ -141,7 +141,9 @@ def test_three_consecutive_failures_quarantine_and_a_success_lifts_it(
     assert _procedure_status(row) == "quarantined"
 
     async def _search(inp: Any) -> Any:
-        return NS(results=[NS(namespace="ns", memory_key="p:ship", similarity=0.9)])
+        # two sessions' rows of the key: one procedure
+        hits = [NS(namespace="ns", memory_key="p:ship", similarity=s) for s in (0.9, 0.8)]
+        return NS(results=hits)
 
     async def _rows(_ident: Any, _keys: list[str], **_k: Any) -> list[Any]:
         return [NS(memory_key="p:ship", value=row)]

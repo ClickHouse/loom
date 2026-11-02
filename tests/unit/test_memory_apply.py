@@ -292,6 +292,8 @@ async def test_search_target_touches_only_the_callers_identity(
         return h
 
     hits = [
+        _hit("both", agent="other-agent"),  # another owner's row of a key the caller holds too
+        _hit("both"),
         _hit("mine"),
         _hit("theirs", agent="other-agent"),
         _hit("other_user", uid="u2"),
@@ -316,8 +318,8 @@ async def test_search_target_touches_only_the_callers_identity(
             **_ID, target={"search": {"query": "q3"}}, action="delete", reason="r", limit=10
         )
     )
-    assert out.matched == 1 and [r.memory_key for r in out.rows] == ["mine"]
-    assert reads == [("cursor", "-", "-", "mine")]
+    assert out.matched == 2 and [r.memory_key for r in out.rows] == ["both", "mine"]
+    assert reads == [("cursor", "-", "-", "both"), ("cursor", "-", "-", "mine")]
 
 
 def test_apply_op_is_a_writer_op_and_audited() -> None:

@@ -257,11 +257,14 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
     rows_by_key = await _procedure_rows(input, keys_by_ns)
 
     matches: list[_ProcedureMatch] = []
+    seen: set[tuple[str, str]] = set()
     for hit in search_out.results:
-        row = rows_by_key.get((hit.namespace or input.namespace, hit.memory_key))
+        ns_key = (hit.namespace or input.namespace, hit.memory_key)
+        row = rows_by_key.get(ns_key)
         value = row.value if row is not None else {}
-        if row is None or not isinstance(value, dict) or "steps" not in value:
-            continue
+        if row is None or ns_key in seen or not isinstance(value, dict) or "steps" not in value:
+            continue  # the key's rows read as one procedure, at its best hit
+        seen.add(ns_key)
         is_template = bool(value.get("template", False))
         if input.templates_only and not is_template:
             continue
