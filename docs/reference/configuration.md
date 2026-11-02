@@ -1099,6 +1099,13 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_CHUNKS_MAX_PER_CALL` | `int` | `512` |  | Max ~800-char verbatim chunks one set_from_messages call writes (512 ≈ 400K chars; agent transcripts run ~190K chars a session at the median). Text past the cap is recorded in loom.memory_drops as chunk.split/truncated. |
 | `LOOM_MEMORY_SET_CHUNK_MAX_CHUNKS` | `int` | `48` |  | Max chunks per memory.set value (48 ≈ 34 KB); the tail is recorded in loom.memory_drops as chunk.split/truncated. |
 
+### Decision extraction (loom decisions extract)
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_DECISION_EXTRACT_KNOWN_MAX` | `int` | `30` | live | Decisions already recorded from a document that the prompt lists, so a re-run keeps their keys and wording; past this many, the rest may be read as new. 0 = none. |
+| `LOOM_MEMORY_DECISION_EXTRACT_RESTATEMENT_TOP_K` | `int` | `20` | live | Closest decision keys a candidate is checked against for a confirmed restatement under another key (cosine only); the fetch caps at 500 rows. |
+
 ### Fact-leg reads of memory_embeddings
 
 | Variable | Type | Default | Live | Meaning |

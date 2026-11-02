@@ -76,9 +76,8 @@ SYSTEM = (
 )
 
 
-# How many earlier decisions the prompt lists at most, and the characters of an outcome shown.
-# Category and scenario are shown whole: the key is built from them.
-MAX_KNOWN_DECISIONS = 30
+# The characters of an earlier decision's outcome the prompt shows. Category and scenario
+# are shown whole: the key is built from them.
 _KNOWN_OUTCOME_CHARS = 160
 
 
@@ -90,7 +89,7 @@ def system_prompt(max_per_section: int, known: Sequence[tuple[str, str, str]] = 
     if not known:
         return prompt
     lines = []
-    for category, scenario, outcome in known[:MAX_KNOWN_DECISIONS]:
+    for category, scenario, outcome in known:
         outcome = collapse_ws(outcome)
         if len(outcome) > _KNOWN_OUTCOME_CHARS:
             outcome = outcome[: _KNOWN_OUTCOME_CHARS - 1].rstrip() + "…"
@@ -121,6 +120,7 @@ def user_prompt(window: Window) -> str:
 
 # Text beside an image up to this long is its caption, one line naming the picture: it
 # carries no rationale, and a model asked about it invents one.
+# not a setting: the definition of a caption, which decides the sections never sent
 CAPTION_MAX_CHARS = 80
 
 
@@ -367,6 +367,7 @@ def states_a_ban(cand: Candidate) -> bool:
 
 
 # decision.record's limit on an outcome: a ban stored as its own outcome must fit it.
+# not a setting: mirrors DecisionRecordInput.outcome's max_length, which a test pins
 OUTCOME_MAX_CHARS = 1000
 
 

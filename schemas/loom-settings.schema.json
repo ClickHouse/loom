@@ -3652,6 +3652,18 @@
           "type": "number",
           "description": "Seconds a namespace's coverage-sweep override is cached."
         },
+        "memory_decision_extract_known_max": {
+          "default": 30,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Decisions already recorded from a document that the prompt lists, so a re-run keeps their keys and wording; past this many, the rest may be read as new. 0 = none."
+        },
+        "memory_decision_extract_restatement_top_k": {
+          "default": 20,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Closest decision keys a candidate is checked against for a confirmed restatement under another key (cosine only); the fetch caps at 500 rows."
+        },
         "memory_durability_verifier_max_facts_per_call": {
           "default": 60,
           "minimum": 1,

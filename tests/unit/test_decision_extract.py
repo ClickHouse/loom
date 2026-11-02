@@ -123,11 +123,11 @@ class _World:
         # Replies served before `reply`, one per call: a candidate list, or an error raised.
         self.replies: list[Any] = []
         self._patch(monkeypatch)
-        from server.settings import settings
+        from server.settings import Settings, settings
 
         # LOOM_LLM_PROVIDER=fake set on purpose: the run does not refuse the fake model.
         monkeypatch.setattr(settings, "llm_provider", "fake")
-        monkeypatch.setattr(settings, "_llm_provider_source", "LOOM_LLM_PROVIDER")
+        monkeypatch.setattr(Settings, "llm_provider_inferred", lambda self: False)
 
     def add(self, key: str, **row: Any) -> _Row:
         r = _row(key, **row)
@@ -1221,12 +1221,34 @@ async def test_the_restatement_search_makes_no_model_call(monkeypatch) -> None:
     assert world.recorded
 
 
+def _cut(cap: int) -> str:
+    return (
+        f"reply cut at the token limit ({cap}); lower --window-chars or --max-per-section, or "
+        "raise decision_extract in LOOM_LLM_MAX_TOKENS_OVERRIDES"
+    )
+
+
+def _cut_client(monkeypatch, stop: str) -> list[int]:
+    """A model that answers a cut-off reply; returns the max_tokens each call asked for."""
+    from server.llm import client as llm_client
+
+    asked: list[int] = []
+
+    class _Cut:
+        async def complete(self, *a: Any, max_tokens: int, **k: Any) -> Any:
+            asked.append(max_tokens)
+            return SimpleNamespace(text='{"decisions": [{"category": "des', stop_reason=stop)
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Cut())
+    return asked
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stop", "reason"),
     [
-        ("length", "reply cut at the token limit; lower --window-chars or --max-per-section"),
-        ("max_tokens", "reply cut at the token limit; lower --window-chars or --max-per-section"),
+        ("length", _cut(4000)),
+        ("max_tokens", _cut(4000)),
         (
             "content_filter",
             "the model's reply is not the JSON asked for (stop reason: content_filter)",
@@ -1234,17 +1256,23 @@ async def test_the_restatement_search_makes_no_model_call(monkeypatch) -> None:
     ],
 )
 async def test_a_reply_cut_short_says_why(monkeypatch, stop, reason) -> None:
-    from server.llm import client as llm_client
-
     _World(monkeypatch, [])
-
-    class _Cut:
-        async def complete(self, *a: Any, **k: Any) -> Any:
-            return SimpleNamespace(text='{"decisions": [{"category": "des', stop_reason=stop)
-
-    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Cut())
+    asked = _cut_client(monkeypatch, stop)
     report = await _run()
     assert [d.reason for d in report.dropped] == [reason]
+    assert asked == [4000]
+
+
+@pytest.mark.asyncio
+async def test_a_deployment_cap_reaches_the_call_and_the_cut_reply_names_it(monkeypatch) -> None:
+    from server.settings import settings
+
+    _World(monkeypatch, [])
+    asked = _cut_client(monkeypatch, "length")
+    monkeypatch.setattr(settings, "llm_max_tokens_overrides", '{"decision_extract": 1234}')
+    report = await _run()
+    assert asked == [1234]
+    assert [d.reason for d in report.dropped] == [_cut(1234)]
 
 
 @pytest.mark.asyncio
@@ -1440,6 +1468,20 @@ def test_a_long_outcome_is_shortened_and_marked_in_the_prompt() -> None:
     assert line.startswith("design:x | a scenario | ") and line.endswith("…")
     assert len(line.split(" | ")[2]) == 160
     assert "an outcome ending in … is shortened" in prompt
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_lists_at_most_the_configured_known_decisions(monkeypatch) -> None:
+    from server.settings import settings
+
+    world = _World(monkeypatch, [])
+    for i in range(3):
+        fields = {"category": "design", "scenario": f"known {i}", "outcome": "o"}
+        world.record(f"decision:known-{i}", fields)
+    monkeypatch.setattr(settings, "memory_decision_extract_known_max", 2)
+    await _run()
+    listed = world.prompts[0][0].split("outcome as far as it is shown:\n", 1)[1]
+    assert len(listed.splitlines()) == 2 and "known 2" not in listed
 
 
 def test_clean_alternatives_can_keep_them_uncut() -> None:
@@ -1794,10 +1836,10 @@ async def test_a_failed_model_call_loses_its_window_only(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_an_inferred_fake_provider_refuses_before_any_model_call(monkeypatch) -> None:
-    from server.settings import settings
+    from server.settings import Settings
 
     world = _World(monkeypatch, [_candidate()])
-    monkeypatch.setattr(settings, "_llm_provider_source", "nothing set")
+    monkeypatch.setattr(Settings, "llm_provider_inferred", lambda self: True)
     report = await _run()
     assert report.error.startswith("no LLM provider is configured")
     assert world.prompts == [] and world.recorded == [] and cli.exit_code(report) == 1
@@ -2025,8 +2067,14 @@ def test_a_refused_candidate_or_retire_write_exits_2(dropped, refused, code) -> 
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_restatement_below_five_closer_hits_still_blocks(monkeypatch) -> None:
+@pytest.mark.parametrize(("top_k", "blocked"), [(6, True), (5, False)])
+async def test_a_confirmed_restatement_below_five_closer_hits_blocks_within_top_k(
+    monkeypatch, top_k, blocked
+) -> None:
+    """The confirmed key is the sixth closest: a top_k of 6 reaches it, 5 stops before it
+    though the fetch (5 keys times a per-key cap of 3) still serves it."""
     from server.memory.app import search
+    from server.settings import settings
 
     world = _World(monkeypatch, [_candidate(scenario="spilling the final DISTINCT")])
     hits = []
@@ -2042,10 +2090,15 @@ async def test_a_confirmed_restatement_below_five_closer_hits_still_blocks(monke
         return SimpleNamespace(results=hits[: inp.top_k])
 
     monkeypatch.setattr(search, "handle_memory_search", mem_search)
+    monkeypatch.setattr(settings, "memory_search_per_key_cap", 3)
+    monkeypatch.setattr(settings, "memory_decision_extract_restatement_top_k", top_k)
     report = await _run()
-    assert asked == [per_key_fetch(de._RESTATEMENT_TOP_K)] and de._RESTATEMENT_TOP_K == 20
-    assert world.recorded == []
-    assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+    assert asked == [per_key_fetch(top_k)] and per_key_fetch(top_k) >= len(hits)
+    if blocked:
+        assert world.recorded == []
+        assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+    else:
+        assert len(world.recorded) == 1
 
 
 @pytest.mark.asyncio
