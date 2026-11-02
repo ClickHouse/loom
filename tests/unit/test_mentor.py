@@ -1031,6 +1031,11 @@ def test_the_namespace_retention_wins_over_the_ledger_default(
     assert out.skipped == []
     assert out.ledger_retention_days == 30
     assert "the call ledger keeps 30d of rows" in handler.render_table(out)
+    # Kept until deleted: no retention line.
+    monkeypatch.setattr(settings, "retention_agent_events_days", 0)
+    kept = _brief(monkeypatch, _CH({**_EVIDENCE_ROWS, M_RETENTION: [{"retention_days": 0}]}))
+    assert kept.ledger_retention_days == 0
+    assert "the call ledger keeps" not in handler.render_table(kept)
 
 
 def test_a_failed_retention_read_leaves_the_retention_unknown(

@@ -168,45 +168,19 @@ async def _adoption(profile: mentor_rules.MentorProfile) -> list[MentorAdoption]
 
 
 # What each rung counts, and what it does not show.
+# What each rung counts, and what it does not show; the attribution rules are in
+# docs/features/namespaces-and-sharing.md#the-mentor.
 _RUNG_MEANING: dict[UsageRungName, str] = {
-    "attempt": (
-        "calls the ledger records under this agent, answered or not (the dashboard's calls "
-        "and the briefs about the agent left out). The ledger records a call under the "
-        "agent its body names; for a call addressed by key that is the row's writer, so "
-        "another caller's read of this agent's rows by key counts here. Not counted: a "
-        "call whose body names no agent, recorded under none (a read by id, an MCP "
-        "`memory.update`, the Python SDK's `memory.update` by default), or that reads "
-        "across agents and is recorded under `*` (`memory.search` and `memory.ask` from the "
-        "SDKs, MCP's cross-agent reads, a `memory.outcome` that names no agent)"
-    ),
-    "success": "of those, calls that returned without an error; a read that found nothing counts",
-    "committed_write": (
-        "`memory.set` calls that stored a row (not a no-op, a dry run or a replay); other "
-        "write ops do not say on the ledger whether they stored one, so they are not counted"
-    ),
-    "indexed_write": (
-        "memory keys the agent first created in the window, by any write op, that have a "
-        "vector from the current embedder, in a served status and not expired"
-    ),
+    "attempt": "calls the ledger records under this agent, answered or not",
+    "success": "of those, calls without an error; a read that found nothing counts",
+    "committed_write": "`memory.set` calls that stored a row (not a no-op, dry run or replay)",
+    "indexed_write": "memory keys first written in the window that have a current vector",
     "returned_hit": (
-        "reads under this agent that answered: a `memory.search` or `memory.ask` that did "
-        "not abstain, a `search.query` with a memory, document or conversation hit (not a "
-        "profile match or a duplicate-check verdict), a get that found its key; whether "
-        "the answer reached the model or changed its work is not recorded"
+        "reads that answered (a search that did not abstain, a get that found its key); "
+        "not whether the answer reached the model"
     ),
-    "client_acknowledged": (
-        "distinct memory keys the agent reported relying on: its runs' `run.complete` "
-        "`memories_used` (keys a live row answers, chunk ids left out) and its "
-        "`memory.outcome` labels by id that said `used` or `positive` and landed on a row; "
-        "the client's own report, not verified. Not counted: a label by key (it names the "
-        "row writer's agent, so the ledger records it under the writer, while a label "
-        "claims the caller's reliance), the Python SDK's "
-        "`outcome` calls, which name no agent, and `memory.outcome_run`, which takes none"
-    ),
-    "task_outcome": (
-        "the agent's runs in the window that carry a grade (`run.grade` pass or fail), as "
-        "the grader reported it; Loom does not check a task's outcome itself"
-    ),
+    "client_acknowledged": "memory keys the agent reported relying on: its own word, unverified",
+    "task_outcome": "the agent's graded runs (`run.grade`), as the grader reported them",
 }
 
 

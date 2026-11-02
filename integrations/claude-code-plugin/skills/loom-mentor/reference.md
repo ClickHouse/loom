@@ -87,9 +87,10 @@ Returns `usage` (calls per op), `planes` (each plane with `calls`,
 `available` for this namespace, and a one-line `when`), `hints` (code,
 severity, text, `ops`, `evidence` — the counts the rule fired on) and
 `adoption` (per code: sessions where the hint reached this agent, and how
-many then called a hinted op). `usage_evidence` counts your calls rung by
-rung, from a call made to a graded run, each marked `server` (Loom saw it) or
-`client` (a caller reported it); only calls recorded under your agent count. `healthy` is "no warning-level hint". Over
+many then called a hinted op). `usage_evidence` counts your use of Loom rung
+by rung, from a call made to a graded run, each marked `server` (Loom saw it)
+or `client` (a caller reported it); the ledger rungs count only calls
+recorded under your agent. `healthy` is "no warning-level hint". Over
 HTTP: `POST /v1/mentor.brief`; from the CLI: `loom mentor --org <org>
 --namespace <ns> [--agent <a>]`.
 
