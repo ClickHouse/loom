@@ -368,7 +368,7 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   option. A candidate is kept only when its quote, its reasoning and every reason are each an exact substring of one
   chunk. Each is at least 12 characters long: a shorter span ("We", "the") is in every document, so a decision resting
   on it could never retire. At most `--max-per-section` (default 3) are kept per section. A candidate whose category
-  and scenario hold no letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with one key, or
+  or scenario holds no letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with one key, or
   with one outcome and reasoning (overlapping chunks give two windows the same text), the first is kept. A section
   with no words (a heading alone or over an image) is not sent to the model and gets the line
   `image-only, rationale not extracted`.
@@ -407,12 +407,12 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
     namespace's conflict threshold skips the candidate: `already recorded by <agent> under <key>`. Otherwise the
     decision is recorded.
 - **The tag write**: `memory.update_by_id` by the row's `memory_id`, tags only, conditional on the value read: a value
-  changed since, by `decision.outcome` or a re-record, is refused and reported. It is a new version by the extractor:
-  the row's pin, value and attestation stay (the value's hash does not change, so the attestation still binds it), and
-  its actor and age move to it, so the pre-edit line reads `by cli:decisions, just now`. It is a full revision, as any
-  `memory.update_by_id` is: the row is embedded again and meets the conflict check, so a decision with a close peer is
-  marked `conflicted` (`memory.for_file` still lists it unless `include_conflicted=false`), and a stale conflict mark
-  is cleared.
+  changed since, by `decision.outcome` or a re-record, is left alone and reported as a race. It is a new version by
+  the extractor: the row's pin, value and attestation stay (the value's hash does not change, so the attestation still
+  binds it), and its actor and age move to it, so the pre-edit line reads `by cli:decisions, just now`. It is a full
+  revision, as any `memory.update_by_id` is: the row is embedded again and meets the conflict check, so a decision
+  with a close peer is marked `conflicted` (`memory.for_file` still lists it unless `include_conflicted=false`), and a
+  stale conflict mark is cleared.
 - **Races**: `decision.record` takes no precondition, so a `decision.outcome` that lands between the run's read and
   its re-record is replaced with the rest of the record; the tag write's precondition covers the value, not a
   tags-only change in the gap.

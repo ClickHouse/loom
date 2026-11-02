@@ -201,7 +201,13 @@ class _World:
                 raise world.refuse_update
             if inp.memory_id in world.value_moved:
                 assert inp.if_match_sha256  # the write is conditional on the value read
-                raise _refusal("PRECONDITION_FAILED")
+                from fastapi import HTTPException
+
+                # As memory.update_by_id answers a hash mismatch: with the live hash.
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "PRECONDITION_FAILED", "current_sha256": "sha-new"},
+                )
             if inp.memory_id in world.gone:
                 return SimpleNamespace(updated=False)
             world.updates.append(inp)
@@ -1498,14 +1504,41 @@ def test_a_span_too_short_to_rest_a_decision_on_is_dropped(over, reason) -> None
 
 
 @pytest.mark.asyncio
-async def test_a_tag_write_on_a_value_changed_since_the_read_is_refused(monkeypatch) -> None:
+async def test_a_tag_write_on_a_value_changed_since_the_read_is_a_race(monkeypatch) -> None:
     world = _World(monkeypatch, [])
     world.record("decision:gone", {"reasoning": "gone"}, pinned=True)
     world.value_moved = {"id-decision:gone-loom-decisions"}
     report = await _run()
-    assert report.refused == ["decision:gone: refused: PRECONDITION_FAILED"]
-    assert report.flagged == [] and world.updates == []
-    assert world.rows[0].tags == ["decision"]
+    assert report.races == ["decision:gone: rewritten since the run read it"]
+    assert report.refused == [] and report.flagged == [] and world.updates == []
+    assert world.rows[0].tags == ["decision"] and cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_tag_clear_on_a_value_changed_since_the_read_is_a_race(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c), _same_fields(c), files=[HEADER], pinned=True, tags=["decision", "source-changed"]
+    )
+    world.value_moved = {f"id-{_key(c)}-loom-decisions"}
+    report = await _run()
+    (rec,) = report.records
+    assert rec.note == "source-changed not cleared: the row was rewritten since the run read it"
+    assert report.races == [f"{_key(c)}: rewritten since the run read it"]
+    assert cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_flag_on_a_value_changed_since_the_read_is_a_race(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, pinned=True)
+    world.value_moved = {f"id-{_key(c)}-loom-decisions"}
+    report = await _run()
+    assert report.records == [] and report.dropped == []
+    assert report.races == [f"{_key(c)}: rewritten since the run read it"]
+    assert cli.exit_code(report) == 0
 
 
 def test_an_exact_reason_is_matched_before_a_cut_one_takes_it() -> None:
@@ -1624,6 +1657,8 @@ async def test_a_server_error_on_a_write_is_reported_and_the_run_goes_on(
     report = await _run()
     reasons = [d.reason for d in report.dropped] + report.refused
     assert any("refused: PRECONDITION_FAILED" in r for r in reasons)
+    # A busy key carries no live hash: a refusal, not a race.
+    assert cli.exit_code(report) == 2 and report.races == []
     # The other writes still ran.
     if where != "record":
         assert len(world.recorded) == 1

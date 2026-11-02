@@ -77,7 +77,8 @@ _PAGE = 500
 class RecordReport:
     memory_key: str
     # written | revised | unchanged | flagged | already_flagged | not_ours | outcome_known |
-    # already_recorded (a tag write that found its row gone, row_changed, goes to `races`)
+    # already_recorded (a tag write that found its row gone or moved on, row_changed, goes
+    # to `races`)
     action: str
     # The decision.record body, with the identity the write goes (or would go) under.
     body: dict[str, Any]
@@ -92,6 +93,8 @@ class RecordReport:
     # The outcome that row's record holds: the candidate's when written or revised, the
     # stored one when unchanged (the model may word it anew).
     held_outcome: str = ""
+    # "deleted" or "rewritten" when a tag write found the row so since the run read it.
+    race: str = ""
 
 
 @dataclass
@@ -282,8 +285,9 @@ async def extract_document(
             report.dropped.append(Dropped(section, _refusal(e), cand.quote))
             continue
         written.add(rec.memory_key)
+        if rec.race:
+            report.races.append(f"{rec.memory_key}: {rec.race} since the run read it")
         if rec.action == "row_changed":
-            report.races.append(f"{rec.memory_key}: deleted since the run read it")
             continue
         report.records.append(rec)
         if rec.action == "flagged":
@@ -555,7 +559,7 @@ async def _reconcile(
                 else "attested; the document now says otherwise; to accept this body, send it "
                 "and attest the new decision again with memory.verify"
             )
-            rec.action = await _flag(row, dry_run)
+            rec.action = await _flag(rec, row, dry_run)
             return rec
         if not ours:
             rec.body.update(
@@ -575,7 +579,7 @@ async def _reconcile(
             # afterwards would credit the run's memories a second time. A changed verbatim
             # field is flagged, as on a pinned row; changed row fields alone are not.
             rec.note = "its outcome is recorded; re-recording would lose it"
-            rec.action = "outcome_known" if same else await _flag(row, dry_run)
+            rec.action = "outcome_known" if same else await _flag(rec, row, dry_run)
             if same:
                 # Only its row fields are stale: the document says what it says again.
                 await _clear_if_tagged(rec, row, dry_run)
@@ -716,44 +720,52 @@ async def _clear_if_tagged(rec: RecordReport, row: MemoryRow, dry_run: bool) -> 
     if SOURCE_CHANGED_TAG not in row.tags:
         return
     note = "would clear source-changed" if dry_run else "source-changed cleared"
-    if not dry_run and not await _set_source_changed(row, False):
-        note = "source-changed not cleared: the row was deleted since the run read it"
+    if not dry_run and (moved := await _set_source_changed(row, False)):
+        rec.race = moved
+        note = f"source-changed not cleared: the row was {moved} since the run read it"
     rec.note = f"{rec.note}; {note}" if rec.note else note
 
 
-async def _flag(row: MemoryRow, dry_run: bool) -> str:
+async def _flag(rec: RecordReport, row: MemoryRow, dry_run: bool) -> str:
     """Tag a row the document now contradicts `source-changed`; the action it reports."""
     if SOURCE_CHANGED_TAG in row.tags:
         return "already_flagged"
-    if not dry_run and not await _set_source_changed(row, True):
+    if not dry_run and (moved := await _set_source_changed(row, True)):
+        rec.race = moved
         return "row_changed"
     return "flagged"
 
 
-async def _set_source_changed(row: MemoryRow, on: bool) -> bool:
+async def _set_source_changed(row: MemoryRow, on: bool) -> str:
     """Add or drop the `source-changed` tag of a row, tags only, so the pin and the value
-    stay; False when the row is gone (deleted since the read). The write is a new version
-    by the extractor: the row's actor and age move to it. By its memory_id:
-    memory.update reads a `-` user or session as any, so a key two identities hold would
-    be ambiguous there."""
+    stay: '' when written, "deleted" or "rewritten" when the row was so since the run read
+    it (a race). The write is a new version by the extractor: the row's actor and age move
+    to it. By its memory_id: memory.update reads a `-` user or session as any, so a key
+    two identities hold would be ambiguous there."""
     from server.memory.api.models_crud import MemoryUpdateByIdInput
     from server.memory.app.update import handle_memory_update_by_id
     from server.memory.app.write import stored_sha256
 
     tags = [t for t in row.tags if t != SOURCE_CHANGED_TAG]
-    # Conditional on the value read: a decision.outcome or a re-record since then is
-    # refused (409 PRECONDITION_FAILED), not overwritten with tags from the old reading.
-    # The hash covers the value alone, so a tags-only write in the gap is not seen.
-    out = await handle_memory_update_by_id(
-        MemoryUpdateByIdInput(
-            org=row.org,
-            memory_id=row.memory_id,
-            tags=[*tags, SOURCE_CHANGED_TAG] if on else tags,
-            char_limit=row.char_limit,  # None would drop the row's cap
-            if_match_sha256=stored_sha256(row),
+    # Conditional on the value read: a decision.outcome or a re-record since then answers
+    # 409 PRECONDITION_FAILED with the live hash, not overwritten with tags from the old
+    # reading. The hash covers the value alone, so a tags-only write in the gap is not seen.
+    # A busy key's PRECONDITION_FAILED carries no hash: that one stays a refusal.
+    try:
+        out = await handle_memory_update_by_id(
+            MemoryUpdateByIdInput(
+                org=row.org,
+                memory_id=row.memory_id,
+                tags=[*tags, SOURCE_CHANGED_TAG] if on else tags,
+                char_limit=row.char_limit,  # None would drop the row's cap
+                if_match_sha256=stored_sha256(row),
+            )
         )
-    )
-    return bool(out.updated)
+    except HTTPException as e:
+        if isinstance(e.detail, dict) and "current_sha256" in e.detail:
+            return "rewritten"
+        raise
+    return "" if out.updated else "deleted"
 
 
 async def _audit(op_name: str, inp: Any) -> None:
@@ -856,8 +868,8 @@ async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool) -> N
     if keep:
         if SOURCE_CHANGED_TAG in row.tags:
             return
-        if not report.dry_run and not await _set_source_changed(row, True):
-            report.races.append(f"{row.memory_key}: deleted since the run read it")
+        if not report.dry_run and (moved := await _set_source_changed(row, True)):
+            report.races.append(f"{row.memory_key}: {moved} since the run read it")
             return
         report.flagged.append(row.memory_key)
     elif await _delete_row(report, row):
