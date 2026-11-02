@@ -22,14 +22,13 @@ from server.memory.domain.decision_statement import collapse_ws
 
 # How a rejected option is stored: `<option> — rejected: <reason>`.
 REJECTED = " — rejected: "
-# A Markdown image (a linked one, `[![build](badge.svg)](ci.yml)`, as a whole; or by
-# reference, `![diagram][fig1]`), an HTML image tag, or a slide export's placeholder.
+# A Markdown image (inline, or by reference: `![diagram][fig1]`), an HTML image tag, or a
+# slide export's placeholder.
 # A placeholder is `[image]`, `[Image 3]`, `[image: ...]`, `[image_1]` or `[pictures]`,
 # never followed by a link target: `[image tiles](tiles.md)`, `[image][1]` and
 # `[image]: x.png` are links, `[imagine]` a word.
 _IMAGE_MARKUP = re.compile(
-    r"\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)"
-    r"|!\[[^\]]*\]\([^)]*\)"
+    r"!\[[^\]]*\]\([^)]*\)"
     r"|!\[[^\]]*\]\[[^\]]*\]"
     r"|<img\b[^>]*>"
     r"|\[(?:image|picture)s?(?:[\s:_\d][^\]]*)?\](?![(\[:])",
@@ -125,13 +124,26 @@ def no_words(body: str) -> bool:
     return not _LETTER.search(_IMAGE_MARKUP.sub("", body))
 
 
+# Markup around an image's caption that is no text a reader sees: an HTML tag, a link's
+# target or reference label, a bare URL.
+_HTML_TAG = re.compile(r"<[^>]+>")
+_LINK_TARGET = re.compile(r"\]\([^)]*\)|\]\[[^\]]*\]")
+_URL = re.compile(r"https?://\S+")
+
+
+def caption_text(body: str) -> str:
+    """The text a reader sees beside the images: images, HTML tags, link targets and
+    reference labels, and bare URLs removed, so a badge wrapped in a link is no text."""
+    text = _HTML_TAG.sub(" ", _IMAGE_MARKUP.sub(" ", body))
+    return collapse_ws(_URL.sub(" ", _LINK_TARGET.sub("]", text)))
+
+
 def image_only(body: str) -> bool:
     """A section body with no words (`no_words`), or with an image and no more text than
     a caption."""
     if no_words(body):
         return True
-    text = collapse_ws(_IMAGE_MARKUP.sub(" ", body))
-    return bool(_IMAGE_MARKUP.search(body)) and len(text) <= CAPTION_MAX_CHARS
+    return bool(_IMAGE_MARKUP.search(body)) and len(caption_text(body)) <= CAPTION_MAX_CHARS
 
 
 @dataclass

@@ -2360,6 +2360,9 @@ def test_a_parent_section_over_a_captioned_picture_is_image_only() -> None:
     )
     # The parent with a picture is reported; a heading alone over subsections is not.
     assert dx.image_only_sections(doc) == ["Spilling"]
+    # So is a parent over a picture alone, with no words at all.
+    bare = f"# Spilling\n\n![flow](flow.png)\n\n## Final DISTINCT\n\n{BODY}\n"
+    assert dx.image_only_sections(bare) == ["Spilling"]
 
 
 @pytest.mark.asyncio
@@ -2473,16 +2476,27 @@ async def test_chunks_stored_with_no_section_path_are_judged_on_their_own_text(
 _LINKED_BADGE = "[![build](badge.svg)](https://ci.example.com/org/spill/actions/workflows/ci.yml)"
 
 
+_CI_URL = "https://ci.example.com/org/spill/actions/workflows/ci.yml"
+
+
 @pytest.mark.parametrize(
-    "body",
+    ("body", "image_only"),
     [
-        "![diagram][fig1]\n\nFigure 1: the spill path.",
+        ("![diagram][fig1]\n\nFigure 1: the spill path.", True),
         # Its link target, left over, would read as more than a caption.
-        f"{_LINKED_BADGE}\n\nBuild status for the spill code.",
+        (f"{_LINKED_BADGE}\n\nBuild status for the spill code.", True),
+        (
+            f'<a href="{_CI_URL}"><img src="badge.svg"></a>\n\nBuild status for the spill code.',
+            True,
+        ),
+        (f"[![b][badge]]({_CI_URL})\n\nBuild status for the spill code.", True),
+        ('<img src="flow.png" alt="flow">\n\nFigure 1: the spill path.', True),
+        # A link is no image: a short sentence with one is text.
+        ("See [the merge notes](https://example.com/notes) for why runs are sorted.", False),
     ],
 )
-def test_a_reference_or_linked_image_with_a_caption_is_image_only(body: str) -> None:
-    assert dx.image_only(body)
+def test_a_caption_is_counted_without_its_markup(body: str, image_only: bool) -> None:
+    assert dx.image_only(body) is image_only
 
 
 @pytest.mark.asyncio
