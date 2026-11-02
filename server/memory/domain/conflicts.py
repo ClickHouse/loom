@@ -129,11 +129,12 @@ def strip_parentheticals(text: str) -> str:
 
 # Value tokens: clock times (27:12, 5:30pm), dates, money, percentages, plain
 # numbers with optional unit suffix (5k, 10km, 3rd).
-_THOUSANDS = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
 _VALUE_RE = re.compile(
     r"(?<![A-Za-z])(?:\$|€|£)?\d+(?:[.,:]\d+)*(?:\s?(?:%|am|pm|k|km|kg|lb|lbs|mi|hrs?|min|s))?(?![A-Za-z])",
     re.IGNORECASE,
 )
+# a comma before exactly three digits: "1,000" is 1000
+_THOUSANDS = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
 
 
 def value_tokens(text: str) -> set[str]:

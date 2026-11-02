@@ -23,6 +23,12 @@ def test_value_tokens_find_times_money_and_units() -> None:
     assert value_tokens(OLD) == {"27:12", "5k"}
     assert value_tokens("paid $40 and 12% tax at 5:30pm") == {"$40", "12%", "5:30pm"}
     assert value_tokens("no numbers here") == set()
+    assert value_tokens("1,000 seats and 12,345.67 paid") == {"1000", "12345.67"}
+
+
+def test_a_thousands_separator_alone_is_no_value_update() -> None:
+    assert not vu.is_value_update("the venue has 1,000 seats", "the venue has 1000 seats")
+    assert vu.is_value_update("the venue has 1,000 seats", "the venue has 1,500 seats")
 
 
 def test_content_tokens_drop_stopwords_and_numbers() -> None:
