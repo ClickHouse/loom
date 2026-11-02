@@ -83,3 +83,39 @@ def test_decision_rows_name_their_source_and_whether_they_are_confirmed(
         time.sleep(0.2)
     assert out["hits"][1]["verification"] == "process", out
     assert out["rendered"].splitlines()[2].startswith("- design/draft [decision]: ")
+
+
+def test_a_recorded_decision_reads_as_its_statement_before_an_edit(
+    control_plane_url: str, mint_test_token: Any
+) -> None:
+    # decision.record writes the row's files, source and statement; for_file prints them.
+    token = mint_test_token(org=ORG, namespaces=["*"], roles=["writer"])
+    recorded = _post(
+        control_plane_url,
+        "decision.record",
+        token,
+        {
+            "org": ORG,
+            "namespace": "recorded",
+            "agent": "claude-code",
+            "category": "design",
+            "scenario": "Spill the final distinct?",
+            "outcome": "spill it",
+            "reasoning": "memory is bounded",
+            "files": ["src/b.cpp"],
+            "source_resource_id": SOURCE,
+        },
+    )
+    key = recorded["memory_key"]
+    request = {"org": ORG, "namespace": "recorded", "path": "src/b.cpp"}
+    out: dict[str, Any] = {}
+    for _ in range(50):
+        out = _post(control_plane_url, "memory.for_file", token, request)
+        if out["total"] == 1:
+            break
+        time.sleep(0.2)
+    assert out["total"] == 1, out
+    assert out["rendered"].splitlines()[1] == (
+        f"- {key} [decision] (unconfirmed): Category: design. Scenario: Spill the final "
+        f"distinct? Decided spill it because memory is bounded. — source: {SOURCE}"
+    )

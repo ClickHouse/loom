@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -70,6 +71,28 @@ _FILES_SQL = f"{_SELECT}  AND arrayExists(f -> {_FILE_MATCH}, files){_ORDER}"
 _LINKED_SQL = f"{_SELECT}  AND memory_id IN {{linked:Array(UUID)}}{_ORDER}"
 
 
+def _readable(hit: dict[str, Any]) -> str:
+    """The value as text: the stored JSON decoded (a string as written, anything else on one
+    line), and a cut string value from its opening quote, its escapes undone up to the cut."""
+    raw = str(hit.get("value") or "")
+    if not hit.get("value_truncated"):
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            return raw
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    if not raw.startswith('"'):
+        return raw
+    # An escape the cut split (`\u00e9` cut after `\u0`) leaves the text undecodable; drop
+    # the last few characters until it decodes.
+    for end in range(len(raw), max(len(raw) - 6, 1), -1):
+        try:
+            return str(json.loads(raw[:end] + '"'))
+        except ValueError:
+            continue
+    return raw
+
+
 def _one_line(text: str, limit: int) -> str:
     flat = " ".join(str(text).split())
     return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
@@ -111,7 +134,7 @@ def _is_decision(hit: dict[str, Any]) -> bool:
 def _body(hit: dict[str, Any]) -> str:
     """The value on one capped line; a decision's source follows it with its own cap,
     so the value's cut never reaches it."""
-    text = _one_line(hit.get("value") or "", _LINE_CHARS)
+    text = _one_line(_readable(hit), _LINE_CHARS)
     source = str(hit.get("source_resource_id") or "")
     if _is_decision(hit) and source:
         text += f" — source: {_one_line(source, _SOURCE_CHARS)}"
@@ -119,14 +142,16 @@ def _body(hit: dict[str, Any]) -> str:
 
 
 def _status_notes(hit: dict[str, Any]) -> str:
-    """`(pinned)` for a pinned row, `(unconfirmed)` for a decision nobody pinned or
-    verified (a stale attestation does not count), and a note when its linked code
-    changed or went."""
+    """`(pinned)` for a pinned row, `(unconfirmed)` for a decision not pinned or attested
+    (a stale attestation does not count), `(outcome: failed)` for a decision whose recorded
+    outcome failed, and a note when its linked code changed or went."""
     out = ""
     if hit.get("pinned"):
         out = " (pinned)"
     elif _is_decision(hit) and hit.get("verification") not in CONFIRMED_STATES:
         out = " (unconfirmed)"
+    if "decision:failure" in (hit.get("tags") or []):
+        out += " (outcome: failed)"
     return out + _CODE_NOTES.get(str(hit.get("code_state") or ""), "")
 
 
@@ -165,10 +190,9 @@ def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
     ns = str(team[0].get("namespace") or "")
     has_decision = any(_is_decision(h) for h in team)
     what = "rule or decision" if has_decision else "rule"
-    noun = "one" if has_decision else "rule"
     return (
         f'- A team {what} wrong or outdated? memory.delete(namespace="{ns}", memory_key=<id>) '
-        f"removes it if you wrote it or are an admin; otherwise write a corrected {noun} "
+        "removes it if you wrote it or are an admin; otherwise write a corrected one "
         "for the file and tell its author."
     )
 

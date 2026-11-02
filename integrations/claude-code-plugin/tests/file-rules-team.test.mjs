@@ -35,7 +35,7 @@ test("the hook asks for the team namespace when the cached repo entry has one", 
         "Loom: 2 memories anchored to src/Interpreters/GraceHashJoin.cpp — read before editing:\n" +
         "- Team rule (by alice, 3 days ago) [constraint]: Don't change the default bucket count without the join benchmark. [id: rules/join/bucket_count]\n" +
         "- my/grace_notes: I traced the spill path last week.\n" +
-        '- A team rule wrong or outdated? memory.delete(namespace="code-clickhouse", memory_key=<id>) removes it if you wrote it or are an admin; otherwise write a corrected rule for the file and tell its author.',
+        '- A team rule wrong or outdated? memory.delete(namespace="code-clickhouse", memory_key=<id>) removes it if you wrote it or are an admin; otherwise write a corrected one for the file and tell its author.',
     };
   };
   const out = await lookupFileContext({

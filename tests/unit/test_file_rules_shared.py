@@ -414,16 +414,17 @@ async def test_a_newer_conflicting_rule_is_shown_above_the_older_one(
 
 
 @pytest.mark.asyncio
-async def test_a_rule_contradicting_an_older_decision_names_it_a_decision(
+async def test_a_rule_contradicting_an_older_tagged_decision_names_it_a_decision(
     monkeypatch: pytest.MonkeyPatch,
     fixed_now: None,
 ) -> None:
     from server.auth import authz
 
+    # The conflict check links rows of one type, so the older is a rule tagged `decision`.
     old = _row(
         "design/join/buckets",
         "Decided 32 buckets.",
-        memory_type="decision",
+        tags=["decision"],
         updated_at=datetime(2026, 9, 20, 12, 0),
         memory_id="u-old",
     )

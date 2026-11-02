@@ -8,6 +8,7 @@ and says how many it left out; every caller value is a bound parameter.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime
 from typing import Any
 
@@ -209,6 +210,8 @@ _SOURCE = "knowledge:design-docs/spilling.pdf#Slide 2 > Final distinct"
 
 
 def _decision(key: str, value: str = "Decided X because Y.", **over: Any) -> dict[str, Any]:
+    """A decision row as `loom.memory` holds it: the value JSON-encoded."""
+    value = json.dumps(value)
     fields: dict[str, Any] = {
         "memory_type": "decision",
         "tags": ["decision"],
@@ -432,3 +435,23 @@ async def test_without_a_stored_hash_only_an_uncut_value_confirms(
     )
     assert out.hits[0].verification == expected
     assert ("(unconfirmed)" in out.rendered) is (expected == "stale")
+
+
+def test_a_stored_value_is_printed_as_text() -> None:
+    # memory.set stores the JSON text: no quotes, and non-ASCII as written.
+    line = _lines([_decision("design/u", "Décidé — 決定した.")])[1]
+    assert ": Décidé — 決定した. — source: " in line
+
+
+def test_a_cut_value_is_printed_from_its_opening_quote() -> None:
+    cut = _decision("design/cut", value_truncated=True)
+    cut["value"] = json.dumps("Décidé " * 100)[:600]
+    line = _lines([cut])[1]
+    assert ": Décidé Décidé" in line and '"' not in line.split(": ", 1)[1]
+
+
+def test_a_decision_whose_outcome_failed_says_so() -> None:
+    failed = _decision("design/f", tags=["decision", "decision:outcome-known", "decision:failure"])
+    assert _lines([failed])[1].startswith(
+        "- Decision (by alice, 3 days ago) (pinned) (outcome: failed): "
+    )

@@ -273,12 +273,16 @@ extra namespace (the repository's code namespace) is headed `Team rule (by <auth
 <age>)`, or `Decision (by <author>, <age>)` for a decision (`memory_type` `decision` or the
 tag `decision`). A line lists its `constraint`, `gotcha` and `decision` kinds in one
 bracket (`[constraint, decision]`; a line headed `Decision` leaves out `decision`). It
-carries `(pinned)` for a pinned row, `(unconfirmed)` for a decision nobody has pinned or
-verified in its current form, and a note when its linked code changed or went. A decision
-with a source carries ` — source: <source_resource_id>` after its value; the value's cut
-does not reach it, and the source has its own shorter cap. A newer team row the conflict
-check linked to an older one is placed above it and says which it supersedes; two typed
-decisions never pair that way, since each decision key is its own decision.
+carries `(pinned)` for a pinned row, `(unconfirmed)` for a decision not pinned or attested
+in its current form (a pin or attestation by its own writer counts), `(outcome: failed)`
+for a decision whose recorded outcome failed, and a note when its linked code changed or
+went. The value is printed as text, not as the JSON it is stored as. A decision with a
+source carries ` — source: <source_resource_id>` after its value; the value's cut does not
+reach it, and the source has its own shorter cap. A newer team row the conflict check
+linked to an older one of its type is placed above it and says which it supersedes
+(`supersedes decision` when the older is tagged `decision`). Two typed decisions the check
+linked are shown side by side with no such note, since each decision key is its own
+decision.
 
 ## Memories linked to code
 

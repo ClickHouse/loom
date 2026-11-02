@@ -20,7 +20,7 @@ agent cannot promote its own write to `human:`.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from server.core.hashing import hash_text, sha256_value_json
@@ -95,27 +95,16 @@ def verification_state(
 def row_verification(r: Mapping[str, Any]) -> VerificationState:
     """Verification state of a selected row; `value` is the stored JSON text, so it is
     hashed as selected."""
-    current = live_sha256(
-        r.get("content_sha256"),
-        r.get("value"),
-        truncated=bool(r.get("value_truncated")),
-        to_json=str,
-    )
+    whole = r.get("value") is not None and not r.get("value_truncated")
+    current = live_sha256(r.get("content_sha256"), str(r["value"]) if whole else None)
     return verification_state(r.get("verified_by") or "", r.get("verified_sha256") or "", current)
 
 
-def live_sha256(
-    stored: str | bytes | None,
-    value: Any,
-    *,
-    truncated: bool,
-    to_json: Callable[[Any], str],
-) -> str:
-    """The row's live content hash: the stored column when set, else the hash of a value that
-    was read whole (encoded with `to_json` only then), else '' (cannot be confirmed)."""
+def live_sha256(stored: str | bytes | None, value_json: str | None) -> str:
+    """The row's live content hash: the stored column when set, else the hash of the value's
+    JSON text when it was read whole (None when missing or cut), else '' (cannot be
+    confirmed)."""
     column = hash_text(stored)
     if hash_is_set(column):
         return column
-    if value is None or truncated:
-        return ""
-    return sha256_value_json(to_json(value))
+    return "" if value_json is None else sha256_value_json(value_json)

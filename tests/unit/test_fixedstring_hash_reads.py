@@ -194,11 +194,11 @@ def test_row_model_list_verification_and_pipeline_dedup_read_bytes_as_hex() -> N
     assert [f["value"] for f in out.extracted_facts] == ["other"] and out.skipped_dedup == 1
 
 
-def test_a_stored_hash_wins_without_encoding_the_value() -> None:
+def test_a_stored_hash_wins_over_the_value_and_a_cut_value_has_none() -> None:
+    from server.core.hashing import sha256_value_json
     from server.memory.domain import trust
 
-    def refuse(_: object) -> str:
-        raise AssertionError("the value must not be encoded when a hash is stored")
-
     stored = "a" * 64
-    assert trust.live_sha256(stored, object(), truncated=False, to_json=refuse) == stored
+    assert trust.live_sha256(stored, '"v"') == stored
+    assert trust.live_sha256("0", '"v"') == sha256_value_json('"v"')
+    assert trust.live_sha256("0", None) == ""

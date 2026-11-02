@@ -55,12 +55,10 @@ def _wants_usage(keep: frozenset[str] | None) -> bool:
 
 def _row_content_sha256(row: Any) -> str:
     """A MemoryRow's live hash; its `value` is decoded, so it is re-encoded."""
-    return _trust.live_sha256(
-        getattr(row, "content_sha256", None),
-        getattr(row, "value", None),
-        truncated=bool(getattr(row, "value_truncated", False)),
-        to_json=lambda v: json.dumps(v, default=str),
-    )
+    value = getattr(row, "value", None)
+    whole = value is not None and not getattr(row, "value_truncated", False)
+    value_json = json.dumps(value, default=str) if whole else None
+    return _trust.live_sha256(getattr(row, "content_sha256", None), value_json)
 
 
 def _preview_for_list(row: MemoryRow, max_chars: int) -> tuple[Any, bool]:
