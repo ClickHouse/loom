@@ -22,7 +22,8 @@ from server.memory.domain.code_change import STATE_RANK, worst
 from server.memory.domain.decision_schema import FAILURE_TAG, SCHEMA_NAME, is_decision
 from server.memory.domain.decision_statement import SOURCE_CHANGED_TAG
 from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
-from server.memory.domain.trust import CONFIRMED_STATES, row_verification
+from server.memory.domain.trust import confirmed as is_confirmed
+from server.memory.domain.trust import row_verification
 
 log = logging.getLogger(__name__)
 
@@ -161,7 +162,7 @@ def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
     `(outcome: failed)` for a decision whose recorded outcome failed, and a note when its
     linked code changed or went."""
     tags = hit.get("tags") or []
-    confirmed = bool(hit.get("pinned")) or hit.get("verification") in CONFIRMED_STATES
+    confirmed = is_confirmed(bool(hit.get("pinned")), str(hit.get("verification") or ""))
     out = ""
     if hit.get("pinned"):
         out = " (pinned)"

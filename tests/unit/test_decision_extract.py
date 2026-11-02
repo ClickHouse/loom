@@ -68,6 +68,9 @@ def _row(key: str, **over: Any) -> _Row:
         tags=["decision"],
         files=[],
         char_limit=None,
+        verified_by="",
+        verified_sha256="",
+        content_sha256="sha-1",
         version=7,
         source_resource_id=f"knowledge:ns/doc.md#{SECTION}",
     )
@@ -1330,7 +1333,8 @@ async def test_an_outcome_row_with_stale_fields_the_document_says_again_is_clear
     )
     report = await _run()
     (rec,) = report.records
-    assert rec.action == "outcome_known" and rec.note == "source-changed cleared"
+    assert rec.action == "outcome_known"
+    assert rec.note == "its outcome is recorded; re-recording would lose it; source-changed cleared"
     assert world.recorded == [] and [u.tags for u in world.updates] == [["decision"]]
 
 
@@ -1381,3 +1385,34 @@ def test_clean_alternatives_can_keep_them_uncut() -> None:
     long = "a hash set — rejected: " + "slow " * 80
     assert len(svc.clean_alternatives([long])[0]) == svc.ALTERNATIVE_CHARS
     assert svc.clean_alternatives([long, long.upper()], cut=False) == [" ".join(long.split())]
+
+
+_ATTESTED = {"verified_by": "human:alice", "verified_sha256": "sha-1", "content_sha256": "sha-1"}
+
+
+@pytest.mark.asyncio
+async def test_an_attested_row_the_document_contradicts_is_tagged_not_revised(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), {**_same_fields(c), "reasoning": "We keep a hash set."}, **_ATTESTED)
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "flagged" and world.recorded == []
+    assert "attest the new decision again with memory.verify" in rec.note
+    assert [u.tags for u in world.updates] == [["decision", "source-changed"]]
+
+
+@pytest.mark.asyncio
+async def test_an_attested_row_whose_reasoning_left_is_tagged_not_deleted(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"}, **_ATTESTED)
+    report = await _run()
+    assert world.deletes == [] and report.flagged == ["decision:gone"]
+
+
+@pytest.mark.asyncio
+async def test_a_stale_attestation_does_not_protect_a_row(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"}, **{**_ATTESTED, "content_sha256": "sha-2"})
+    report = await _run()
+    assert report.retired == ["decision:gone"] and report.flagged == []

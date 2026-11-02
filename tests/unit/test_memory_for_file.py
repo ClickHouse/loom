@@ -542,3 +542,12 @@ async def test_the_served_block_marks_a_decision_whose_source_changed(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", token_budget=300)
     )
     assert "(unconfirmed) (source changed): Decided spill." in out.rendered
+
+
+def test_an_attested_decision_whose_source_changed_reads_since_confirmation() -> None:
+    # `verification` as the handler derives it for an attestation binding the current value.
+    hit = _decision(
+        "design/a", pinned=False, tags=["decision", "source-changed"], verification="human"
+    )
+    line = _lines([hit])[1]
+    assert "(source changed since confirmation)" in line and "(unconfirmed)" not in line

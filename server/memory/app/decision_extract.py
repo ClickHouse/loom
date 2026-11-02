@@ -9,18 +9,20 @@ extractor's own rows instead of writing beside them:
 - the key's active record has the same verbatim fields (reasoning, rejected options'
   reasons; the rest is the model's wording) and its row carries the same files, source
   and constraint tag: nothing is written;
-- it differs and its row is the extractor's, unpinned and from this document: recorded
-  again (Revise), unless its outcome is recorded: then it is tagged `source-changed`;
-- it differs and its row is pinned and from this document: nothing is written, the body
-  is printed for the human who pinned it, and the row is tagged `source-changed`, a tag
-  a later run drops once the document says the same again;
+- it differs and its row is the extractor's, unconfirmed and from this document:
+  recorded again (Revise), unless its outcome is recorded: then it is tagged
+  `source-changed`;
+- it differs and its row is confirmed (pinned, or attested in its current form) and
+  from this document: nothing is written, the body is printed for the human who
+  confirmed it, and the row is tagged `source-changed`, a tag a later run drops once the
+  document says the same again;
 - it differs and its row is another writer's or another document's: nothing is written;
 - no record under the key, but a pinned decision row reads the same above the conflict
   threshold: skipped as already recorded.
 
-After the writes, the extractor deletes its unpinned rows citing this document whose
+After the writes, the extractor deletes its unconfirmed rows citing this document whose
 reasoning (a verbatim span of the document) is no longer in its text, or whose outcome
-and reasoning this run recorded under another key. A row it keeps (pinned, or with a
+and reasoning this run recorded under another key. A row it keeps (confirmed, or with a
 recorded outcome) whose reasoning left is tagged `source-changed` instead. A refused
 write is reported and the run goes on. Runs in-process, with no auth context: operator
 only.
@@ -45,6 +47,7 @@ from server.memory.domain.decision_statement import (
     alternatives,
     memory_value,
 )
+from server.memory.domain.trust import confirmed, verification_state
 from server.memory.store import (
     Identity,
     MemoryRow,
@@ -122,6 +125,13 @@ def _identity(org: str, namespace: str) -> Identity:
     return Identity(
         org=org, namespace=namespace, agent=EXTRACTOR_AGENT, user_id="-", session_id="-"
     )
+
+
+def _confirmed(row: MemoryRow) -> bool:
+    """A human stands behind the row: pinned, or attested in its current form; the rule
+    memory.for_file marks `(unconfirmed)` by."""
+    state = verification_state(row.verified_by, row.verified_sha256, row.content_sha256)
+    return confirmed(row.pinned, state)
 
 
 def _is_extractor(agent: str, user_id: str, session_id: str) -> bool:
@@ -458,20 +468,24 @@ async def _reconcile(
         same = _same_decision(record, inp)
         # Our own row is revised for its files, source or constraint tag too: a document
         # extracted before its code was indexed gains its files on a later run.
-        stale_row = row is not None and ours and not row.pinned and not _same_row(row, inp)
+        stale_row = row is not None and ours and not _confirmed(row) and not _same_row(row, inp)
         if same and not stale_row:
             rec.action = "unchanged"
             rec.holds = ours
             if row is not None and this_doc:
                 await _clear_if_tagged(rec, row, dry_run)
             return rec
-        if row is not None and row.pinned and this_doc:
-            # The human who confirmed it decides: they unpin it with memory.unpin (a pinned
-            # writer row refuses decision.record), then send this body from their own token.
+        if row is not None and _confirmed(row) and this_doc:
+            # The human who confirmed it decides, sending this body from their own token: a
+            # pinned writer row refuses decision.record, so they unpin it with memory.unpin
+            # first; an attested one takes it, and its attestation then reads stale.
             rec.body.update(agent=row.agent, user_id=row.user_id, session_id=row.session_id)
             rec.note = (
                 "pinned; the document now says otherwise; to accept this body, unpin the row "
                 "with memory.unpin, then send it"
+                if row.pinned
+                else "attested; the document now says otherwise; to accept this body, send it "
+                "and attest the new decision again with memory.verify"
             )
             rec.action = await _flag(row, dry_run)
             return rec
@@ -622,9 +636,10 @@ async def _clear_if_tagged(rec: RecordReport, row: MemoryRow, dry_run: bool) -> 
     """Drop a row's `source-changed` tag once the document says what the row says again."""
     if SOURCE_CHANGED_TAG not in row.tags:
         return
-    rec.note = "would clear source-changed" if dry_run else "source-changed cleared"
+    note = "would clear source-changed" if dry_run else "source-changed cleared"
     if not dry_run and not await _set_source_changed(row, False):
-        rec.note = "source-changed not cleared: the row changed while the run read it"
+        note = "source-changed not cleared: the row changed while the run read it"
+    rec.note = f"{rec.note}; {note}" if rec.note else note
 
 
 async def _flag(row: MemoryRow, dry_run: bool) -> str:
@@ -718,13 +733,13 @@ async def _retire(
         restated = held.get((str(record.get("outcome") or "").strip(), reasoning.strip()))
         try:
             # A row with a recorded outcome is kept: deleting it would lose the outcome.
-            if not row.pinned and restated is not None and not record.get("realized_outcome"):
+            if not _confirmed(row) and restated is not None and not record.get("realized_outcome"):
                 if await _delete_row(report, row):
                     report.replaced.append(f"{key} -> {restated}")
                 continue
             if not any(reasoning in t for t in live_texts):
                 # A row with a recorded outcome is tagged, never deleted, like a pinned one.
-                keep = row.pinned or bool(record.get("realized_outcome"))
+                keep = _confirmed(row) or bool(record.get("realized_outcome"))
                 await _retire_row(report, row, keep=keep)
         except HTTPException as e:
             report.refused.append(f"{key}: {_refusal(e)}")

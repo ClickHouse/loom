@@ -75,6 +75,12 @@ def attests(
     return verification_state(verified_by, verified_sha256, current_sha256) in CONFIRMED_STATES
 
 
+def confirmed(pinned: bool, state: str) -> bool:
+    """Whether a human stands behind the row: it is pinned, or its attestation binds its
+    current content (`state` from `verification_state`)."""
+    return pinned or state in CONFIRMED_STATES
+
+
 def verification_state(
     verified_by: str | None,
     verified_sha256: str | None,
