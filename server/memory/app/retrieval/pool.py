@@ -272,7 +272,7 @@ async def _set_chunk_rows(
         )
         values = await _row_values(ch, q, served)
     except Exception as e:  # noqa: BLE001 — naming a chunk's row never fails a search
-        log.warning("set chunk rows read failed (fail-open, its chunks drop): %s", e)
+        log.warning("set chunk rows read failed; this pool's set chunks are dropped: %s", e)
         return {}
     by_writer: dict[tuple[str, str, str], list[ChunkId]] = {}
     for c in pooled:

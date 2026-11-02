@@ -55,6 +55,14 @@ def test_a_kept_hit_that_read_its_tags_keeps_them() -> None:
     assert kept is stronger and kept._row_tags == ("kind:lesson",)
 
 
+def test_two_hits_that_read_no_tags_leave_the_row_unread() -> None:
+    # unread, the hard tag belt reads the row's tags; stamped empty, it would drop the row
+    stronger = _wire("k", 0.9, "the passage", ("a", "u", "s1"))
+    weaker = _wire("k", 0.5, "the value's head", ("a", "u", "s1"))
+    (kept,) = collapse_rows([weaker, stronger], "n")
+    assert kept is stronger and kept._row_tags is None
+
+
 def test_hits_that_name_no_row_are_left_alone() -> None:
     a, b = _wire("k", 0.5, "one"), _wire("k", 0.6, "two")
     assert collapse_rows([a, b], "n") == [a, b]
