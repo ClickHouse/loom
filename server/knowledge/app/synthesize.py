@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import TYPE_CHECKING
 
-from server.embedding import get_embedder
 from server.knowledge.api.models_knowledge import (
     KnowledgeSynthesizeInput,
     KnowledgeSynthesizeOutput,
 )
+from server.knowledge.app.document_reads import document_chunks
 from server.observability.genai import llm_stage
 
 if TYPE_CHECKING:
@@ -117,30 +116,11 @@ async def handle_knowledge_synthesize(
 async def _corpus_chunks(input: KnowledgeSynthesizeInput) -> tuple[list[CorpusChunk], int]:
     """Every active chunk of the named documents, in document order, and how
     many of the documents had any."""
-    from server.knowledge.store import chunks as knowledge_repo
-    from server.memory.domain import corpus_synthesis as cs
-
-    model_name = get_embedder().model_name
-    chunks: list[cs.CorpusChunk] = []
+    chunks: list[CorpusChunk] = []
     docs = 0
     for uri in input.source_uris:
-        rows = await knowledge_repo.list_for_doc(
-            input.org, input.namespace, uri, embedding_model=model_name
-        )
-        if rows:
+        doc_chunks = await document_chunks(input.org, input.namespace, uri)
+        if doc_chunks:
             docs += 1
-        for r in rows:
-            try:
-                raw = json.loads(r.chunk_metadata) if r.chunk_metadata else {}
-            except (TypeError, ValueError):
-                raw = {}
-            path = raw.get("section_path") if isinstance(raw, dict) else None
-            chunks.append(
-                cs.CorpusChunk(
-                    source_uri=uri,
-                    idx=int(r.chunk_idx),
-                    text=str(r.content or ""),
-                    section_path=tuple(str(p) for p in path) if isinstance(path, list) else (),
-                )
-            )
+        chunks.extend(doc_chunks)
     return chunks, docs

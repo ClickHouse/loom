@@ -270,7 +270,9 @@ alternatives, each kept to its first 300 characters.
 - **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the
   fields the statement is built from in full (not `decision_maker` or `run_id`, which the row never holds).
 - **Files**: `files` sets the row's files as on `memory.set`; unset, they are detected from the stored fields, never
-  from the shortened statement. `memory.for_file` serves the decision before an edit of a file it names.
+  from the shortened statement. `memory.for_file` serves the decision before an edit of a file it names, marked
+  `(unconfirmed)` until it is pinned or attested, and `(source changed since confirmation)` or `(source changed)`
+  once tagged `source-changed` ([how the block reads](../concepts/memory.md#tags-entities-and-files)).
 - **Source**: `source_resource_id` and `source_class` set those columns as on `memory.set`; `source_resource_id`
   cites the document the decision was taken from.
 - **Outcome**: `decision.outcome` keeps the row's files, source, declared class and the caller's tags. It sets the
@@ -343,6 +345,84 @@ rec = await agent.decision.record(
 prior = await agent.decision.precedents("how long do we keep transcripts?", category="storage")
 await agent.decision.outcome(rec["memory_key"], "no replay gaps in the quarter", success=True)
 ```
+
+### Extract decisions from a document
+
+`loom decisions extract` reads one [knowledge](knowledge.md) document and records the decisions it states. It runs
+in-process with no token, so it is an operator command, and it calls the configured LLM once per window of the
+document's sections, also in a dry run. Its model calls are not gated by the namespace's cost cap.
+
+```bash
+loom decisions extract --org O --namespace NS --source-uri URI            # dry run: prints what it would write
+loom decisions extract --org O --namespace NS --source-uri URI --apply    # writes
+```
+
+- **Windows**: the document's live chunks for the current embedding model, grouped by section, at most
+  `--window-chars` (default 6000) per call. A document chunked under another embedding model has none: the command
+  says to run `loom rechunk` first and writes nothing. A `--source-uri` with no live document exits 1 and writes
+  nothing. The prompt lists the category, scenario and outcome of up to 30 decisions the extractor already holds for
+  the document, and asks the model to reuse that wording for a decision the text still states, so a re-run reads the
+  same keys. Category and scenario are shown whole, since the key is built from them; an outcome over 160 characters
+  is shortened and ends in `…`.
+- **Verbatim check**: the model returns, per decision, a `quote` and a `reasoning` and a reason for each rejected
+  option. A candidate is kept only when its quote, its reasoning and every reason are each an exact substring of one
+  chunk. At most `--max-per-section` (default 3) are kept per section. A candidate whose category and scenario hold no
+  letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with one key, or with one outcome and
+  reasoning (overlapping chunks give two windows the same text), the first is kept. A section with no words (a heading
+  alone or over an image) is not sent to the model and gets the line `image-only, rationale not extracted`.
+- **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
+  `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
+  `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.
+- **Files**: each backticked or qualified name and each bare class name the document text holds is looked up with
+  `code.symbol` in the same namespace; exactly one defining file (a class preferred over its constructor) goes into
+  `files`, several or none add nothing. When the code index cannot be read for a name, a decision already recorded
+  keeps the files its row has, and a new one is written with the files that did resolve. Pull request numbers and
+  setting names are printed as unresolved in a dry run, for a human to add; a backticked snake_case name is looked up
+  first and reported as a setting only when the index does not define it.
+- **Reconcile**: the document says otherwise only when a verbatim field differs: the reasoning, or the set of rejected
+  options' reasons, each matched as a prefix where `decision.record` cut a long alternative at its 300-character cap.
+  The category, scenario, outcome and option wording are the model's, and a change there alone is no change. The key's
+  active record has the same verbatim fields and the extractor's row carries the same `files`, `source_resource_id`
+  and `constraint` tag: no write. A verbatim field differs, or only those row fields do (a file that resolves once the
+  code is indexed, a renamed heading), and the row is the extractor's, unpinned and from this document: recorded again
+  (the record is superseded, history keeps it). A verbatim field differs and the row is pinned and cites this
+  document: no write; the full `decision.record` body is printed with the pinned row's agent, user and session, and
+  the row is tagged `source-changed` by its `memory_id` (`memory.update_by_id`, tags only, which keeps the pin),
+  unless it already carries the tag. The tag write is a new version by the extractor: the row's pin and value stay,
+  and its actor and age move to it, so the pre-edit line reads `by cli:decisions, just now`. To accept the body, a
+  maintainer unpins the row with `memory.unpin` (`decision.record` on a pinned writer row answers 409
+  `PINNED_CONFLICT`), then sends it. A pinned row is tagged whoever wrote it, as long as it cites this document. A row
+  from another document, or another identity's unpinned row, is neither revised nor tagged; its body is printed. Nor
+  is a decision whose outcome `decision.outcome` recorded: `decision.record` would rebuild it without the outcome.
+  When a verbatim field of such a decision differs, its row is tagged `source-changed` as a pinned row is. With no
+  record under the key, a pinned decision row under another key that reads the same at or above the namespace's
+  conflict threshold skips the candidate: `already
+recorded by <agent> under <key>`.
+- **Retire**: an unpinned `loom-decisions` row citing the document whose reasoning is no longer in the document's text
+  is deleted with `memory.delete_version`, which also retires its record; a pinned one, or one whose outcome
+  `decision.outcome` recorded, is tagged `source-changed` instead. The reasoning read is the extractor's own record: a
+  key whose active record another identity wrote is left alone. An unpinned row whose outcome and reasoning this run
+  recorded under another key (the model worded the scenario differently) is deleted too, so the decision is not served
+  twice, unless its realized outcome is recorded; another decision resting on the same reasoning has another outcome
+  and stays. Otherwise a row whose reasoning is still there stays, whether or not the run emitted it again.
+- **Citing the document**: a row cites it when its `source_resource_id` starts `knowledge:<namespace>/<source_uri>#`,
+  so a heading holding `#` (`C# bindings`) is no obstacle, unless a document `<source_uri>#<part>` it also starts with
+  was ever ingested in the namespace: `doc#v2#Intro` cites `doc#v2` once that document exists.
+- **Clearing `source-changed`**: when a run's candidate for a tagged row's key has the row's verbatim fields again,
+  the run drops the tag, pinned or not, as long as the row cites this document. The retire step never drops it: it
+  reads the reasoning alone, and the tag may stand for an outcome or a rejected option the document still contradicts.
+  By hand, a maintainer drops it with `memory.update_by_id` on the row's `memory_id` with `tags` less
+  `source-changed`, or re-records the decision (after `memory.unpin`) or deletes it.
+- **Refusals**: a write the server refuses (a blacklisted decision, a row pinned during the run) is reported with its
+  code, as is a delete that finds the row rewritten since the run read it or a tag write that finds it deleted, and
+  the run goes on with the next candidate and the retire step.
+- **Limits**: `--max-per-section` is at least 1 and `--window-chars` at least 500; a smaller value is refused. A reply
+  cut at the model's token limit is reported as such, with the advice to lower either.
+
+The reasoning is the verbatim span the retire step reads: the record has no field for the quote. To confirm an
+extracted decision, a maintainer reads its identity with `memory.get` and calls `memory.pin` under it. Before an edit,
+`memory.for_file` marks an extracted row `(unconfirmed)` and `(source changed …)` as it does every decision row
+([Decisions](#decisions)).
 
 ## History policies
 

@@ -250,6 +250,7 @@ def test_no_pid_files_are_tracked() -> None:
         (argparse.Namespace(cmd="rechunk"), "cli.rechunk"),
         (argparse.Namespace(cmd="code", code_cmd="stats"), "cli.code.stats"),
         (argparse.Namespace(cmd="config", subcommand="get"), "cli.config.get"),
+        (argparse.Namespace(cmd="decisions", subcommand="extract"), "cli.decisions.extract"),
     ],
 )
 def test_dispatch_tags_every_clickhouse_query_with_the_command(

@@ -140,6 +140,8 @@ _KNOWN_STAGES: frozenset[str] = frozenset(
         "ask_synthesize_deep",
         # The background conflict resolver's one call per marked row.
         "conflict_resolver",
+        # `loom decisions extract`: one candidate call per window of a document.
+        "decision_extract",
         # tracker.duplicate_check judge over the uncertain band
         "dupcheck_judge",
         "observe_extract.event",

@@ -36,14 +36,16 @@ def decision_key(category: str, scenario: str) -> str:
     return canonical_record_key(SCHEMA_NAME, {"category": category, "scenario": scenario})
 
 
-def clean_alternatives(items: list[str]) -> list[str]:
+def clean_alternatives(items: list[str], *, cut: bool = True) -> list[str]:
+    """The alternatives a record keeps: whitespace collapsed, deduplicated in any case, at
+    most MAX_ALTERNATIVES, each cut to ALTERNATIVE_CHARS unless `cut` is False."""
     out: list[str] = []
     seen: set[str] = set()
     for a in items or []:
         t = collapse_ws(a)
         if t and t.lower() not in seen:
             seen.add(t.lower())
-            out.append(t[:ALTERNATIVE_CHARS])
+            out.append(t[:ALTERNATIVE_CHARS] if cut else t)
         if len(out) >= MAX_ALTERNATIVES:
             break
     return out

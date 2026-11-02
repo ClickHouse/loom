@@ -280,6 +280,10 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
   that a maintainer confirmed it.
 - `(unconfirmed)` marks a decision not pinned or attested in its current form (a stale
   attestation does not count), and `(outcome: failed)` one whose recorded outcome failed.
+- A decision tagged `source-changed` (its source document no longer says it; see
+  [extracting decisions](../features/tasks-and-decisions.md#extract-decisions-from-a-document))
+  reads `(source changed since confirmation)` when pinned or attested, `(source changed)`
+  when not.
 - A note says when its linked code changed or went.
 - A string value is printed as text, not as the JSON it is stored as, and ends in `…`
   when the read cut it; a cut object or list prints as stored.
