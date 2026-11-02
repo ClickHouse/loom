@@ -114,8 +114,9 @@ def exit_code(report: ExtractReport) -> int:
 
 
 def print_report(report: ExtractReport) -> None:
-    """The run as a human reads it before pinning: every record with its body and the
-    code-link signals, then what was dropped and why."""
+    """The run as a human reads it before pinning: every record with its code-link
+    signals, and its body in a dry run or when a human must act on it; then what was
+    dropped and why."""
     if report.error:
         print(f"error: {report.error}", file=sys.stderr)
         if not report.dropped:
