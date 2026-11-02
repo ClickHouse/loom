@@ -33,8 +33,6 @@ log = logging.getLogger(__name__)
 
 _VALUE_BYTES = 600
 _LINE_CHARS = 220
-# A decision's source is printed after its value, capped on its own.
-_SOURCE_CHARS = 120
 # The length of a `\uXXXX` escape in the stored JSON: a cut leaves at most five of one.
 _ESCAPE_CHARS = 6
 _CODE_NOTES = {
@@ -150,12 +148,12 @@ def _is_decision(hit: dict[str, Any]) -> bool:
 
 
 def _body(hit: dict[str, Any], *, decision: bool) -> str:
-    """The value on one capped line; a decision's source follows it with its own cap,
-    so the value's cut never reaches it."""
+    """The value on one capped line; a decision's source follows it whole, so the value's
+    cut never reaches it and the citation still resolves through knowledge.get."""
     text = _one_line(_readable(hit), _LINE_CHARS)
-    source = str(hit.get("source_resource_id") or "")
+    source = " ".join(str(hit.get("source_resource_id") or "").split())
     if decision and source:
-        text += f" — source: {_one_line(source, _SOURCE_CHARS)}"
+        text += f" — source: {source}"
     return text
 
 
@@ -230,6 +228,10 @@ def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
     )
 
 
+def _more_line(path: str, rest: int) -> str:
+    return f'- … {rest} more; memory.for_file(path="{path}") lists them.'
+
+
 def render_block(
     path: str,
     hits: list[dict[str, Any]],
@@ -250,23 +252,23 @@ def render_block(
     footer = _removal_footer(hits, home)
     used = len(lines[0]) + 1 + (len(footer) + 1 if footer else 0)
     truncated = False
-    for h in hits:
+    for i, h in enumerate(hits):
         decision = _is_decision(h)
         if _is_team(h, home):
             line = _team_line(h, now, decision=decision)
         else:
             marks = _marker(h, show_decision=decision) + _status_notes(h, decision=decision)
             line = f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}"
-        if used + len(line) + 1 > budget_chars:
+        # A row that leaves others out also needs room for the "… more" line after it.
+        rest = n - i - 1
+        tail = len(_more_line(path, rest)) + 1 if rest else 0
+        if used + len(line) + 1 + tail > budget_chars:
             truncated = True
             break
         lines.append(line)
         used += len(line) + 1
     if truncated:
-        rest = n - (len(lines) - 1)
-        tail = f'- … {rest} more; memory.for_file(path="{path}") lists them.'
-        lines.append(tail)
-        used += len(tail) + 1
+        lines.append(_more_line(path, n - (len(lines) - 1)))
     if footer:
         lines.append(footer)
     text = "\n".join(lines)

@@ -275,9 +275,9 @@ def test_decision_lines_stay_inside_the_token_budget() -> None:
         ln.endswith(f"source: {_SOURCE} [id: {h['memory_key']}]")
         for ln, h in zip(rows, hits[: len(rows)], strict=True)
     )
-    # everything but the "… more" tail fits the budget
-    kept = [ln for ln in text.splitlines() if not ln.startswith("- … ")]
-    assert len("\n".join(kept)) <= 200 * mff._CHARS_PER_TOKEN
+    # the "… more" line and the removal footer included, the block fits the budget
+    assert text.splitlines()[-2].startswith("- … ")
+    assert len(text) <= 200 * mff._CHARS_PER_TOKEN
 
 
 def test_a_long_decision_and_a_constraint_fit_the_default_budget() -> None:
@@ -291,8 +291,40 @@ def test_a_long_decision_and_a_constraint_fit_the_default_budget() -> None:
     lines = text.splitlines()
     assert truncated is False and budget == 300
     assert lines[1].startswith("- Team rule (") and lines[1].endswith("[id: rules/r]")
-    capped = source[: mff._SOURCE_CHARS - 1] + "…"
-    assert lines[2].endswith(f"— source: {capped} [id: design/long]")
+    assert lines[2].endswith(f"— source: {source} [id: design/long]")
+
+
+def test_a_long_source_keeps_its_section() -> None:
+    # A cut source would cite another document, or the document without its section.
+    source = "knowledge:design-docs/" + "d" * 200 + ".pdf#Slide 7 > Spilling to disk"
+    line = _lines([_decision("design/long", source_resource_id=source)])[1]
+    assert line.endswith(f" — source: {source} [id: design/long]")
+
+
+def test_the_more_line_fits_inside_the_budget() -> None:
+    hits = [_row(f"k{i}", json.dumps("r" * 100)) for i in range(12)]
+    for budget in range(50, 400):
+        text, tokens, truncated = mff.render_block("src/a.cpp", hits, budget, home="me")
+        assert len(text) <= budget * mff._CHARS_PER_TOKEN and tokens <= budget
+        assert truncated is text.splitlines()[-1].startswith("- … ")
+
+
+def test_the_last_row_needs_no_room_for_a_more_line() -> None:
+    def block(second: int, budget: int) -> tuple[str, int, bool]:
+        hits = [_row("k0", json.dumps("a" * 100)), _row("k1", json.dumps("b" * second))]
+        return mff.render_block("src/a.cpp", hits, budget, home="me")
+
+    # A second row that fills the budget to the character (the block counts a
+    # newline after its last line): both rows print and nothing is cut.
+    full, _, _ = block(100, 10_000)
+    second = 100 + (-(len(full) + 1)) % mff._CHARS_PER_TOKEN
+    budget = (len(block(second, 10_000)[0]) + 1) // mff._CHARS_PER_TOKEN
+    text, tokens, truncated = block(second, budget)
+    assert truncated is False and tokens == budget and "- k1: " in text
+    # One character more and it is left out, with room kept for the "… more" line.
+    text, tokens, truncated = block(second + 1, budget)
+    assert truncated is True and text.splitlines()[-1].startswith("- … 1 more")
+    assert tokens <= budget
 
 
 @pytest.mark.asyncio
