@@ -390,7 +390,16 @@ def _same_reasons(stored: list[str], candidate: list[str]) -> bool:
     # The alternatives holding a reason first, so a reasonless one takes what is left.
     # Exact (uncut) ones before cut ones, so a short cut prefix cannot take the reason an
     # exact one needs; reasonless ones last.
-    order = sorted(stored, key=lambda a: (dx.REJECTED not in a, len(a) >= svc.ALTERNATIVE_CHARS))
+    # Among cut ones, the longest stored reason first: a shorter prefix ("costs") would
+    # otherwise take the candidate a longer one ("costs random reads and") needs.
+    order = sorted(
+        stored,
+        key=lambda a: (
+            dx.REJECTED not in a,
+            len(a) >= svc.ALTERNATIVE_CHARS,
+            -len(a.rpartition(dx.REJECTED)[2]),
+        ),
+    )
     for alt in order:
         reason = alt.rpartition(dx.REJECTED)[2]
         cut = len(alt) >= svc.ALTERNATIVE_CHARS

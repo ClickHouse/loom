@@ -1539,3 +1539,29 @@ def test_the_audited_ops_declare_an_audit_row_with_the_input_as_subject() -> Non
 
     for op in (decision_record, memory_delete_version):
         assert op.audit and op.audit_subject is None
+
+
+def test_of_two_cut_reasons_sharing_a_prefix_the_longer_is_matched_first() -> None:
+    from server.memory.app.decision_extract import _same_reasons
+
+    def cut_at(reason_kept: str, full: str) -> tuple[str, str]:
+        option = "o" * (svc.ALTERNATIVE_CHARS - len(" — rejected: " + reason_kept))
+        (stored,) = svc.clean_alternatives([f"{option} — rejected: {full}"])
+        assert stored.endswith(f"rejected: {reason_kept}")
+        return stored, f"{option} — rejected: {full}"
+
+    short, short_full = cut_at("costs", "costs memory")
+    long, long_full = cut_at("costs random reads and", "costs random reads and more")
+    # Both orders: the short prefix must not take the long one's candidate first.
+    assert _same_reasons([short, long], [long_full, short_full])
+    assert _same_reasons([long, short], [short_full, long_full])
+
+
+def test_a_non_integer_cap_is_refused_with_a_reason(capsys) -> None:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd")
+    cli.register_decisions_cli(sub)
+    base = ["decisions", "extract", "--org", "o", "--namespace", "n", "--source-uri", "d"]
+    with pytest.raises(SystemExit):
+        parser.parse_args([*base, "--max-per-section", "three"])
+    assert "must be an integer, at least 1" in capsys.readouterr().err

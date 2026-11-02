@@ -18,7 +18,10 @@ _MIN_WINDOW_CHARS = 500
 
 
 def _at_least(text: str, low: int) -> int:
-    value = int(text)
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"must be an integer, at least {low}") from None
     if value < low:
         raise argparse.ArgumentTypeError(f"must be at least {low}")
     return value
@@ -54,8 +57,8 @@ def register_decisions_cli(sub: Any) -> None:
         "rejected options' reasons are the document's own words, written through "
         "decision.record as agent loom-decisions. A re-run revises or retires the "
         "extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row "
-        "source-changed. Dry run by "
-        "default (still calls the model); --apply writes.",
+        "source-changed. "
+        "Dry run by default (still calls the model); --apply writes.",
     )
     p_ext.add_argument("--org", required=True)
     p_ext.add_argument("--namespace", required=True, help="The namespace holding the document")
