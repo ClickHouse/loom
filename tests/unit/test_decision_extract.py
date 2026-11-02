@@ -1911,7 +1911,11 @@ async def test_a_run_the_fallback_fake_answered_wholly_reads_nothing(monkeypatch
     await _two_windows(monkeypatch)
     _fake_fallback(monkeypatch, ["fake", "fake"])
     report = await _run(window_chars=len(BODY) + 1)
-    assert report.error.startswith("no window was read") and cli.exit_code(report) == 1
+    assert report.error == (
+        "no window was read: every model call failed, was answered by the fake model, or "
+        "came back unreadable"
+    )
+    assert cli.exit_code(report) == 1
     assert world.recorded == [] and world.deletes == []
 
 

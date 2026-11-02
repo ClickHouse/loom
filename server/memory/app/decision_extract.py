@@ -108,7 +108,8 @@ class RecordReport:
     # The outcome that row's record holds: the candidate's when written or revised, the
     # stored one when unchanged (the model may word it anew).
     held_outcome: str = ""
-    # "deleted" or "rewritten" when a tag write found the row so since the run read it.
+    # "deleted" or "rewritten": the row a tag write found deleted or rewritten since the run
+    # read it.
     race: str = ""
 
 
@@ -315,7 +316,10 @@ async def extract_document(
     )
     if wins and not answered:
         # A run that read nothing must not retire anything.
-        report.error = "no window was read: every model call failed or its reply was unreadable"
+        report.error = (
+            "no window was read: every model call failed, was answered by the fake model, or "
+            "came back unreadable"
+        )
         return report
     written: set[str] = set()
     # (outcome, reasoning) -> key of each decision this document now holds, for the retire
@@ -625,9 +629,7 @@ async def _reconcile(
                 await _clear_if_tagged(rec, row, dry_run)
             return rec
         if row is not None and _confirmed(row) and this_doc:
-            # The human who confirmed it decides, sending this body from their own token: a
-            # pinned writer row refuses decision.record, so they unpin it with memory.unpin
-            # first; an attested one takes it, and its attestation then reads stale.
+            # The human who confirmed it decides; a pinned writer row refuses decision.record.
             rec.body.update(agent=row.agent, user_id=row.user_id, session_id=row.session_id)
             rec.note = (
                 "pinned; the document now says otherwise; to accept this body, unpin the row "
@@ -651,10 +653,8 @@ async def _reconcile(
             )
             return rec
         if row is not None and _has_outcome(record):
-            # decision.record rebuilds the record and the decision tags from the body alone,
-            # so a re-record would drop the outcome decision.outcome wrote. Re-applying it
-            # afterwards would credit the run's memories a second time. A changed verbatim
-            # field is flagged, as on a pinned row; changed row fields alone are not.
+            # decision.record rebuilds the record from the body, so a re-record would drop
+            # the outcome.
             rec.note = "its outcome is recorded; re-recording would lose it"
             rec.action = "outcome_known" if same else await _flag(rec, row, dry_run)
             if same:
@@ -815,19 +815,16 @@ async def _flag(rec: RecordReport, row: MemoryRow, dry_run: bool) -> Action:
 
 async def _set_source_changed(row: MemoryRow, on: bool) -> str:
     """Add or drop the `source-changed` tag of a row, tags only, so the pin and the value
-    stay: '' when written, "deleted" or "rewritten" when the row was so since the run read
-    it (a race). The write is a new version by the extractor: the row's actor and age move
-    to it. By its memory_id: memory.update reads a `-` user or session as any, so a key
-    two identities hold would be ambiguous there."""
+    stay: '' when written, "deleted" or "rewritten" when the row was deleted or rewritten
+    since the run read it (a race). The write is a new version by the extractor: the row's
+    actor and age move to it. By its memory_id: memory.update reads a `-` user or session
+    as any, so a key two identities hold would be ambiguous there."""
     from server.memory.api.models_crud import MemoryUpdateByIdInput
     from server.memory.app.update import handle_memory_update_by_id
     from server.memory.app.write import stored_sha256
 
     tags = [t for t in row.tags if t != SOURCE_CHANGED_TAG]
-    # Conditional on the value read: a decision.outcome or a re-record since then answers
-    # 409 PRECONDITION_FAILED with the live hash, not overwritten with tags from the old
-    # reading. The hash covers the value alone, so a tags-only write in the gap is not seen.
-    # A busy key's PRECONDITION_FAILED carries no hash: that one stays a refusal.
+    # Conditional on the value read, so a value changed since is not tagged from the old one.
     try:
         out = await handle_memory_update_by_id(
             MemoryUpdateByIdInput(
@@ -839,6 +836,7 @@ async def _set_source_changed(row: MemoryRow, on: bool) -> str:
             )
         )
     except HTTPException as e:
+        # A hash mismatch carries the live hash; a busy key's refusal does not.
         if isinstance(e.detail, dict) and "current_sha256" in e.detail:
             return "rewritten"
         raise
