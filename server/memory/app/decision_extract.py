@@ -23,7 +23,8 @@ identity, so a re-run revises the extractor's own rows instead of writing beside
   same at or above the conflict threshold: skipped as already recorded.
 
 After the writes, the extractor deletes its unconfirmed rows citing this document whose
-reasoning (a span of the document, whitespace aside) is no longer in its text, or whose
+reasoning (a span of the document) is no longer in its text, read as in the verbatim
+check, or whose
 outcome and reasoning this run recorded under another key. A row it keeps (confirmed, or
 with a recorded outcome) whose reasoning left is tagged `source-changed` instead. A
 refused write is reported and the run goes on. Runs in-process, with no auth context:
@@ -474,7 +475,7 @@ class _Kept:
     kept: list[tuple[dx.Candidate, str, list[str]]] = field(default_factory=list)
     per_section: dict[str, int] = field(default_factory=dict)
     keys: set[str] = field(default_factory=set)
-    pairs: set[tuple[str, str]] = field(default_factory=set)  # (outcome, reasoning)
+    pairs: set[tuple[str, str]] = field(default_factory=set)  # _held_key(outcome, reasoning)
 
 
 _EMPTY_REPLY = "the model's reply held no decision; the window was read once more"
@@ -613,7 +614,7 @@ def _check_window(
         cand = _drop_inverted(cand, section, report)
         state.per_section[section] = state.per_section.get(section, 0) + 1
         state.keys.add(key)
-        state.pairs.add((cand.outcome, collapse_ws(cand.reasoning)))
+        state.pairs.add(_held_key(cand.outcome, cand.reasoning))
         state.kept.append((cand, section, texts))
     return failed
 
@@ -629,7 +630,7 @@ def _duplicate_or_unfit(
         return "no letters or digits a-z, 0-9 to build a key from", ""
     if key in state.keys:
         return "same key as an earlier candidate", key
-    if (cand.outcome, collapse_ws(cand.reasoning)) in state.pairs:
+    if _held_key(cand.outcome, cand.reasoning) in state.pairs:
         # Overlapping chunks feed one span to two windows, worded apart.
         return "same decision as an earlier candidate", key
     if not _fits(org, namespace, source_uri, cand, section):

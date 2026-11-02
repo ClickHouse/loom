@@ -646,7 +646,7 @@ def test_a_span_split_across_two_chunks_is_not_found() -> None:
     ("text", "span"),
     [
         # Each line a word of the span or a label: the final word never matches.
-        ("a\nx\n" * 100_000, " ".join(["a"] * 10 + ["b"])),
+        ("a\nX\n" * 100_000, " ".join(["a"] * 10 + ["b"])),
         # Every match reads across a `not` line and is rejected, one start at a time.
         ("a\nnot\n" * 100_000, "a a a"),
     ],
@@ -708,6 +708,21 @@ def test_a_label_starting_like_the_next_word_is_read_across(text) -> None:
 )
 def test_a_line_that_is_structure_a_sentence_end_or_a_negation_is_no_label(label) -> None:
     assert dx.find_span(REPLICA_SPAN, [SPLIT.format(labels=label)]) == ""
+
+
+@pytest.mark.parametrize(
+    ("span", "text"),
+    [
+        # Narrow-wrapped prose: the lower-case line continues the sentence.
+        (
+            "We keep the index because it serves reads.",
+            "We keep the\nold\nindex because it serves reads.",
+        ),
+        (REPLICA_SPAN, SPLIT.format(labels="shard a\n")),
+    ],
+)
+def test_a_line_starting_lower_case_is_no_label(span, text) -> None:
+    assert dx.find_span(span, [text]) == ""
 
 
 def test_a_negation_line_is_not_skipped() -> None:
@@ -1629,13 +1644,15 @@ async def test_the_extractors_rows_are_read_once_per_run(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["spill into sorted runs", "Spill into sorted runs"])
 async def test_one_decision_worded_twice_across_overlapping_windows_is_written_once(
-    monkeypatch,
+    monkeypatch, outcome
 ) -> None:
     from server.knowledge.app import document_reads
 
     first = _candidate()
-    second = _candidate(scenario="spilling the final DISTINCT")
+    # The second window's outcome may differ in case only: still one decision.
+    second = _candidate(scenario="spilling the final DISTINCT", outcome=outcome)
     world = _World(monkeypatch, [])
     replies = [[first], [second]]
 
@@ -3590,6 +3607,17 @@ def test_a_recap_section_with_a_sentence_a_link_or_subsections_opens_no_span(con
 def test_a_section_titled_as_one_in_a_span_but_outside_it_is_not_covered() -> None:
     content = DECK + "\n## Old spill\n\n" + LONG + "\n"
     assert dx.recap_span_sections(content) == {"Deck > Old merge"}
+
+
+@pytest.mark.parametrize("divider", ["![overview](overview.png)\n", ""])
+def test_a_recap_span_ends_at_the_first_section_longer_than_a_slide(divider) -> None:
+    # A design document's lone diagram or empty heading: its long sections are no recap.
+    content = (
+        f"# Design\n\n## Background\n\n{divider}\n## Goals\n\n{LONG * 5}\n\n"
+        f"## Design\n\n{LONG * 5}\n\n## Alternatives\n\n{LONG * 5}\n"
+    )
+    assert len(LONG * 5) > dx.RECAP_SLIDE_CHARS
+    assert dx.recap_span_sections(content) == set()
 
 
 def test_a_recap_span_ends_at_a_heading_above_the_dividers_level() -> None:

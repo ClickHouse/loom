@@ -410,24 +410,26 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   of its words: a model copying a span drops line breaks and doubled spaces and capitalises a sentence's first word,
   and a slide or diagram converted to text puts short labels between a sentence's two halves. A label line is one to
   three words on a line of its own, with a line break before and after it (blank lines around it are read too), that
-  does not start as a list item (`-`, `*`, `+`, `1.`, `1)`), a fence or code (`` ` ``, `~`), a table row (`|`), a
-  heading (`#`) or a heading's underline (`===`, `---`), an HTML tag (`<`), a quote (`>`) or a definition (`:`); that
-  does not end in `.`, `!`, `?` or `;` (or their full-width forms), as the last line of a wrapped paragraph does; and
-  that holds none of the ban words of a reason-less ban below, nor the contrast words of the inverted-alternatives
-  check, nor a word ending in `n't`: skipping `not` would read "Retries are / not / safe" as "Retries are safe". A
-  fourth label line, a line of four words, a line that is no label, or a label inside a line ends the match. Between
-  two words, the fewest label lines that reach the next word are read, so a later line reading as that word is not
-  taken for a label. Each word of the span but the last ends where a word of the text ends, so `so` does not take the
-  start of a label `Something`. The word right after the whitespace is read before any label, so a label line whose
-  first word reads as the next word ("The proxy" over "the nearest replica") is taken as that word and the span is not
-  found. Chunk texts hold a section's body without its heading line. What is recorded is the document's own span on
-  one line, its words and case, with the label lines it read across left out: the same text on every run, and a
-  recorded span reads as the document's span again, across the same labels, when the retire step looks for it. The
-  reasoning-restates check below reads the model's span, so label words in the document's span add no reason. Each is
-  at least 12 characters long, counted on the model's span: a shorter span ("We", "the") is in every document, so a
-  decision resting on it could never retire. At most `--max-per-section` (default 3) are kept per section. A candidate
-  whose category or scenario holds no letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with
-  one key, or with one outcome and reasoning (overlapping chunks give two windows the same text), the first is kept.
+  is title-like: it does not start with a lower-case letter ("Proxy", "API", "Shard A", "3 replicas"), since a
+  lower-case line of narrow-wrapped prose continues its sentence ("We keep the / old / index"); that does not start as
+  a list item (`-`, `*`, `+`, `1.`, `1)`), a fence or code (`` ` ``, `~`), a table row (`|`), a heading (`#`) or a
+  heading's underline (`===`, `---`), an HTML tag (`<`), a quote (`>`) or a definition (`:`); that does not end in
+  `.`, `!`, `?` or `;` (or their full-width forms), as the last line of a wrapped paragraph does; and that holds none
+  of the ban words of a reason-less ban below, nor the contrast words of the inverted-alternatives check, nor a word
+  ending in `n't`: skipping `not` would read "Retries are / not / safe" as "Retries are safe". A fourth label line, a
+  line of four words, a line that is no label, or a label inside a line ends the match. Between two words, the fewest
+  label lines that reach the next word are read, so a later line reading as that word is not taken for a label. Each
+  word of the span but the last ends where a word of the text ends, so `so` does not take the start of a label
+  `Something`. The word right after the whitespace is read before any label, so a label line whose first word reads as
+  the next word ("The proxy" over "the nearest replica") is taken as that word and the span is not found. Chunk texts
+  hold a section's body without its heading line. What is recorded is the document's own span on one line, its words
+  and case, with the label lines it read across left out: the same text on every run, and a recorded span reads as the
+  document's span again, across the same labels, when the retire step looks for it. The reasoning-restates check below
+  reads the model's span, so label words in the document's span add no reason. Each is at least 12 characters long,
+  counted on the model's span: a shorter span ("We", "the") is in every document, so a decision resting on it could
+  never retire. At most `--max-per-section` (default 3) are kept per section. A candidate whose category or scenario
+  holds no letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with one key, or with one
+  outcome and reasoning (overlapping chunks give two windows the same text), the first is kept.
 - **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
   `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
   punctuation, as their English (Snowball) stems, so `stored` meets `store` and `running` meets `run`. Filler words
@@ -443,18 +445,20 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   when the quote holds a ban word too), so it is recorded with the `constraint` tag and reads `Decided <outcome>.` with
   no reason. These checks read the model's spans; the outcome recorded is the recorded reasoning, the document's span.
   The flag alone is not enough: models mark plain descriptions as constraints too.
-- **Recaps**: a candidate whose quote is in a section with `recap`, `summary` or `background` as a word of a heading at
-  any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. So is
-  one whose quote is in a section a recap divider covers: a slide deck marks a recap by a title slide and puts the recap
-  on the slides after it. A divider is a section with no subsections whose own heading names a recap, summary or
+- **Recaps**: a candidate whose quote is in a section with `recap`, `summary` or `background` as a word of a heading
+  at any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. So
+  is one whose quote is in a section a recap divider covers: a slide deck marks a recap by a title slide and puts the
+  recap on the slides after it. A divider is a section with no subsections whose own heading names a recap, summary or
   background and whose body only titles what follows: an image and at most a caption, or at most 80 characters of text
-  (as a caption is counted) with no `.`, `!`, `?` or `;` (or their full-width forms) and no link. A summary line such as
-  "Shard by tenant to bound joins." states the decisions the sections after it give, and a line that is only a link
-  points elsewhere; neither is a divider. A divider covers each section after it until the next short section (at most
-  80 characters of text, an image-only one included) or the next heading above its level. A recap-named section with
-  any other body is dropped by its own heading and covers nothing after it. A heading path that also names a section
-  outside a span (two slides with one title) is not covered: a quote is told apart by its heading path only, so the
-  decision is kept. The sections stay in the window, since their text may give a later decision's reason.
+  (as a caption is counted) with no `.`, `!`, `?` or `;` (or their full-width forms) and no link. A summary line such
+  as "Shard by tenant to bound joins." states the decisions the sections after it give, and a line that is only a link
+  points elsewhere; neither is a divider. A divider covers each slide-sized section after it (at most 600 characters
+  of text) until the next short section (at most 80 characters, an image-only one included), the first longer section,
+  or the next heading above its level: a design document's lone diagram or empty heading named Background covers
+  nothing, since its Goals or Design section is longer than a slide. A recap-named section with any other body is
+  dropped by its own heading and covers nothing after it. A heading path that also names a section outside a span (two
+  slides with one title) is not covered: a quote is told apart by its heading path only, so the decision is kept. The
+  sections stay in the window, since their text may give a later decision's reason.
 - **Inverted alternatives**: a rejected option the candidate's own quote, the span of the chosen design, states as part
   of the choice is left out of the record and reported
   (`rejected option '<option>' left out: the quote states it as part of the choice`); the decision is kept. An option is

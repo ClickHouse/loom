@@ -286,9 +286,16 @@ _NOT_A_LABEL = re.compile(
 )
 
 
+def _is_label(line: str) -> bool:
+    """A label is title-like: it does not start lower case, which a line of wrapped prose
+    continuing its sentence does ("We keep the / old / index"), and is no structure,
+    sentence end or negation (`_NOT_A_LABEL`)."""
+    return not line[:1].islower() and not _NOT_A_LABEL.search(line)
+
+
 def _only_labels(lines: str | None) -> bool:
     """The lines a match read across between two words are all labels (or none were)."""
-    return not lines or not any(_NOT_A_LABEL.search(x.strip()) for x in lines.splitlines())
+    return not lines or all(_is_label(x.strip()) for x in lines.splitlines() if x.strip())
 
 
 def _span_match(span: str, texts: Sequence[str]) -> re.Match[str] | None:
@@ -487,6 +494,10 @@ def in_recap(section: str) -> bool:
     return bool(_RECAP_HEADING.search(section))
 
 
+# The longest body a recap span covers: a slide's. A design document's section is longer,
+# so a span a lone diagram or an empty heading opens ends at it.
+# not a setting: part of what a recap divider covers, which the docs state
+RECAP_SLIDE_CHARS = 600
 # Sentence punctuation, and a link: a body holding one says something of its own.
 _SENTENCE_MARK = re.compile(r"[.!?;。！？；]")
 _LINK = re.compile(r"\]\(|\]\[|https?://|<a\s", re.I)
@@ -507,8 +518,9 @@ def recap_span_sections(content: str) -> set[str]:
     """The breadcrumbs of the sections a recap divider covers. A divider is a short
     section (no more text than a caption) with no subsections, whose own heading names a
     recap, summary or background: a slide deck marks a recap by a title slide and puts
-    the recap on the slides after it. Its span runs until the next short section, or the
-    next heading above the divider's level. A recap-named section with a longer body is
+    the recap on the slides after it. Its span runs over slide-sized sections (at most
+    RECAP_SLIDE_CHARS) until the next short section, the first longer one, or the next
+    heading above the divider's level. A recap-named section with a longer body is
     `in_recap` by its own heading and opens no span, as is one whose body holds a
     sentence or a link (`_divider_body`): a summary line states the decisions the
     sections after it give. A breadcrumb that also names a
@@ -522,7 +534,8 @@ def recap_span_sections(content: str) -> set[str]:
         nxt = sections[i + 1].path if i + 1 < len(sections) else ()
         has_children = len(nxt) > len(sec.path) and nxt[: len(sec.path)] == sec.path
         short = not more_than_a_caption("\n".join(sec.lines))
-        if divider_depth and (short or sec.depth < divider_depth):
+        slide = len(caption_text(_code_as_text("\n".join(sec.lines)))) <= RECAP_SLIDE_CHARS
+        if divider_depth and (short or not slide or sec.depth < divider_depth):
             divider_depth = 0
         if divider_depth:
             inside.add(breadcrumb(sec.path))
