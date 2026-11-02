@@ -71,11 +71,8 @@ def record_fields(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
 _TEXT_FIELDS = ("category", "scenario", "outcome", "reasoning")
 
 
-def statement_fields(payload: dict[str, Any]) -> list[str]:
-    """The statement's fields and the category, as the record stores them (alternatives at
-    their ALTERNATIVE_CHARS cut): what the row's sensitivity and attribute labels read. The
-    category is not in the statement but is in the row's tag; the row never holds
-    `decision_maker` or `run_id`."""
+def label_fields(payload: dict[str, Any]) -> list[str]:
+    """The stored fields the row's sensitivity and attribute labels read."""
     names = (*_TEXT_FIELDS, "realized_outcome")
     texts = [str(payload.get(f) or "") for f in names] + alternatives(payload)
     return [t for t in texts if t.strip()]
@@ -83,9 +80,9 @@ def statement_fields(payload: dict[str, Any]) -> list[str]:
 
 def blacklist_fields(payload: dict[str, Any]) -> list[str]:
     """Every caller-written field of the decision as the record stores it: what the
-    blacklist reads, the statement's fields plus `decision_maker` and `run_id`."""
+    blacklist reads, the label fields plus `decision_maker` and `run_id`."""
     extra = [str(payload.get(f) or "") for f in ("decision_maker", "run_id")]
-    return statement_fields(payload) + [t for t in extra if t.strip()]
+    return label_fields(payload) + [t for t in extra if t.strip()]
 
 
 def _without_cut_token(alternative: str) -> str:

@@ -279,7 +279,7 @@ async def _checked_statement(
         # An accounting hook, as in memory.set: an outage counts as `error`, re-raised.
         count_write(namespace, "error")
         raise
-    fields = svc.statement_fields(payload)
+    fields = svc.label_fields(payload)
     sensitivity = resolve_sensitivity("", detector_text([*fields, statement]))
     added: list[str] = []
     for field in fields:

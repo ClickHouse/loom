@@ -271,9 +271,9 @@ and must reach the outcome. The excerpt is measured as the value is stored, JSON
 takes six or more, so a Cyrillic or CJK part keeps about a sixth as many characters as an ASCII one. The record keeps
 every field in full except the alternatives, each kept to its first 300 characters.
 
-- **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the
-  statement's fields and the category, as the record stores them (not `decision_maker` or `run_id`, which the row
-  never holds).
+- **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the stored
+  category, scenario, outcome, reasoning, alternatives and realized outcome (not `decision_maker` or `run_id`, which
+  the row never holds).
 - **Files**: `files` sets the row's files as on `memory.set`; unset, they are detected from the stored fields, never
   from the shortened statement. `memory.for_file` serves the decision before an edit of a file it names, marked
   `(unconfirmed)` until it is pinned or attested, and `(source changed since confirmation)` or `(source changed)`
@@ -292,14 +292,15 @@ it.
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
 (`superseded_prior=true`); history keeps it. A decision recorded again word for word writes the same statement, which
 `memory.set` takes as a restatement: it reinforces the row, and a pinned decision accepts it. The restatement compares
-the statement's bytes, so a row stored under another statement form is revised rather than restated by the same
-fields: a pinned one refuses the write until it is unpinned, and the pin is set again only through `memory.pin`; a row
-whose value is locked refuses it with 423 `LOCKED` until the lock ends or is released; an attested row takes the write,
-and its attestation reads stale until `memory.verify` binds it again. When the writer of a pinned decision decides it
-otherwise, the call is refused with 409 `PINNED_CONFLICT` and nothing is written; an admin unpins it with
-`memory.unpin` first. The pin guards only its writer's row: another identity's decision on the same scenario still
-supersedes the record. The new record holds only what the new decision states: fields it leaves out, and an
-earlier `realized_outcome` or `success`, are not carried over, whether it is written by `decision.record` or
+the statement's bytes, so a row stored under another statement form is revised rather than restated by the same fields,
+whether they come from `decision.record` or from `decision.outcome`, which rebuilds the statement too. A row whose value
+is locked refuses either with 423 `LOCKED` until the lock ends or is released; an attested row takes the write, and its
+attestation reads stale until `memory.verify` binds it again; a pinned row refuses `decision.record` until it is
+unpinned, and the pin is set again only through `memory.pin`, while `decision.outcome` keeps the pin. When the writer of
+a pinned decision decides it otherwise, the call is refused with 409 `PINNED_CONFLICT` and nothing is written; an admin
+unpins it with `memory.unpin` first. The pin guards only its writer's row: another identity's decision on the same
+scenario still supersedes the record. The new record holds only what the new decision states: fields it leaves out, and
+an earlier `realized_outcome` or `success`, are not carried over, whether it is written by `decision.record` or
 `memory.record.write`. A `decision.outcome` without `success` keeps the record's verdict.
 
 The record holds the text of its last writer, the agent, user and session that recorded it, so a delete of that
