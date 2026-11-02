@@ -42,7 +42,7 @@ export interface NamespaceAuditFinding {
   remedy: string;
   // A broken stored invariant, or a pattern that may still be a legitimate design.
   // Absent from a server one release older, like every field below it.
-  kind?: "contract_violation" | "usage_heuristic";
+  kind?: "contract_violation" | "usage_heuristic" | "system_state";
   rule_version?: number;
   source_op?: string;
   // Null for a rule that reads current state rather than the ledger window.

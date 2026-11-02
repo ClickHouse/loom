@@ -66,7 +66,9 @@ Read `summary` first:
 - `unembedded_rows` above zero means rows search can never find.
 
 Then read the findings. Stop when `healthy` is true and nothing is `warning` or
-`critical`: an `info` finding is a note for the writer, not a rework.
+`critical`: an `info` finding is a note for the writer, not a rework. A `system_state` finding (an indexing
+backlog, missing telemetry) is about the deployment, never the writer; while
+`telemetry_unavailable` is a warning, the ledger checks are in `skipped`, not clean.
 
 The dashboard's namespace audit panel shows the same audit. `context.pack` carries a
 `namespace_health` block when the namespace is unhealthy (one critical finding, or two
@@ -77,14 +79,15 @@ warnings among `exact_key_store`, `double_encoded_values`, `unembedded_rows` and
 
 Write one section per finding. Only codes the audit returned get a section.
 
-| Finding                                                      | What changes                                                             | How                                                                                                                                                    |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `double_encoded_values`, `json_prefix_excerpts`, `hash_keys` | the row moves to a readable key with a claim-first value                 | decode once; claim sentence, source line, the rest as short lines; `memory.move` with `value`, `tags`, `entities`, `valid_at`, `if_match_sha256`       |
-| `oversized_values`, `episodic_blobs`                         | the body becomes a document or a blob; a one-paragraph row keeps the key | `knowledge.upsert` (Markdown, `source_uri=loom://<org>/<ns>/<key>`) or `context.offload`, then `memory.move` the old key with the paragraph as `value` |
-| `unembedded_rows`                                            | the value is split or shortened so it embeds                             | as `oversized_values`; `namespace.validate` lists the same rows under `unembedded`                                                                     |
-| `coordination_as_memory`                                     | the block goes to working memory; the old key keeps answering            | `working_memory.set`, then `memory.move` with `keep_redirect=true`                                                                                     |
-| `hand_rolled_index_rows`                                     | the rows stay readable and gain `tags`; the writer stops producing them  | tags only (`memory.update_by_id`); no move                                                                                                             |
-| `exact_key_store`, `version_churn`                           | the writer changes                                                       | list the keys for the owner                                                                                                                            |
+| Finding                                                                 | What changes                                                             | How                                                                                                                                                    |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `double_encoded_values`, `json_prefix_excerpts`, `hash_keys`            | the row moves to a readable key with a claim-first value                 | decode once; claim sentence, source line, the rest as short lines; `memory.move` with `value`, `tags`, `entities`, `valid_at`, `if_match_sha256`       |
+| `oversized_values`, `episodic_blobs`                                    | the body becomes a document or a blob; a one-paragraph row keeps the key | `knowledge.upsert` (Markdown, `source_uri=loom://<org>/<ns>/<key>`) or `context.offload`, then `memory.move` the old key with the paragraph as `value` |
+| `unembedded_rows`                                                       | the value is split or shortened so it embeds                             | as `oversized_values`; `namespace.validate` lists the same rows under `unembedded`                                                                     |
+| `coordination_as_memory`                                                | the block goes to working memory; the old key keeps answering            | `working_memory.set`, then `memory.move` with `keep_redirect=true`                                                                                     |
+| `hand_rolled_index_rows`                                                | the rows stay readable and gain `tags`; the writer stops producing them  | tags only (`memory.update_by_id`); no move                                                                                                             |
+| `exact_key_store`, `version_churn`                                      | the writer changes                                                       | list the keys for the owner                                                                                                                            |
+| `telemetry_unavailable`, `index_backlog`, `intentional_exact_key_reads` | nothing: the deployment's state, or a workflow                           | no rework; for `telemetry_unavailable` rerun once the ledger covers the window, for a stalled `index_backlog` check the embedding worker               |
 
 The mentor (`mentor.brief`) names three more shapes that are data changes. They are
 reworked under the same rules, with the hint's `evidence` as the count:

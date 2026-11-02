@@ -142,7 +142,7 @@ async def test_empty_namespace_lists_every_check_as_info_and_is_healthy(
     out, ch = await _run(monkeypatch, {})
     assert out.healthy is True and (out.criticals, out.warnings) == (0, 0)
     assert [f.code for f in out.findings] == list(na.FINDING_CODES)
-    assert len(out.findings) == 10 and out.infos == 10
+    assert len(out.findings) == 13 and out.infos == 13
     assert all(f.count == 0 and f.share == 0.0 and f.samples == [] for f in out.findings)
     assert out.skipped == []
     assert out.window_seconds == 7 * 86400 and out.summary.get_search_ratio == 0.0
@@ -476,9 +476,13 @@ async def test_a_failing_summary_read_is_skipped_and_checks_still_run(
     out, _ = await _run(
         monkeypatch, {M_LEDGER: RuntimeError("ledger down"), M_LIVE: _live(10, 100)}
     )
-    assert out.skipped == ["summary_ledger: RuntimeError"]
+    # Missing telemetry is not judged on a ledger read that failed.
+    assert out.skipped == [
+        "summary_ledger: RuntimeError",
+        "telemetry_unavailable: summary read failed",
+    ]
     assert out.summary.gets == 0 and out.summary.live_rows == 10
-    assert len(out.findings) == len(na.FINDING_CODES)
+    assert len(out.findings) == len(na.FINDING_CODES) - 1
 
 
 @pytest.mark.asyncio
@@ -592,7 +596,7 @@ def test_no_check_reads_query_text() -> None:
 
 def test_every_finding_has_text_and_a_recipe_or_op_remedy() -> None:
     remedies = ("memory.", "working_memory", "knowledge.upsert", "context.offload", "guides/")
-    assert set(na._TEXT) == set(na.FINDING_CODES) and len(na.FINDING_CODES) == 10
+    assert set(na._TEXT) == set(na.FINDING_CODES) and len(na.FINDING_CODES) == 13
     for code, (detail, remedy) in na._TEXT.items():
         assert detail.endswith(".") and len(detail) > 40, code
         assert any(r in remedy for r in remedies), code
@@ -931,7 +935,8 @@ async def test_coverage_names_a_skipped_check(monkeypatch: pytest.MonkeyPatch) -
     assert "version_churn" not in out.coverage.rules_run
 
     out, _ = await _run(monkeypatch, {M_LIVE: TimeoutError("slow")})
-    assert out.coverage.rules_skipped == ["summary_live"]
+    # Missing telemetry is judged on the live summary too.
+    assert out.coverage.rules_skipped == ["summary_live", "telemetry_unavailable"]
     assert "summary_live" not in out.coverage.rules_run
     assert out.coverage.complete is False
 
@@ -1142,7 +1147,7 @@ async def test_hot_key_completeness_compares_counts_of_one_statement(
 # code: (rule version, its built-in thresholds now, the thresholds at that version)
 _THRESHOLDS = {
     "exact_key_store": (
-        1,
+        2,
         (na.EXACT_KEY_STORE_RATIO, na.EXACT_KEY_STORE_MIN_GETS, na.HOT_KEY_READS),
         (20.0, 200, 20),
     ),
@@ -1174,7 +1179,7 @@ _THRESHOLDS = {
         (0.25, r"(^|[/:])[0-9a-fA-F]{24,}$|(^|[/:])[0-9a-fA-F]{40,}([/:]|$)"),
     ),
     "coordination_as_memory": (
-        1,
+        2,
         (
             na.HOT_KEY_READS,
             na.COORDINATION_VALUE_CHARS,
@@ -1185,10 +1190,12 @@ _THRESHOLDS = {
     ),
     "episodic_blobs": (1, (na.EPISODIC_BLOB_CHARS,), (50_000,)),
     "version_churn": (
-        1,
+        2,
         (na.VERSION_CHURN_ROWS_RATIO, na.VERSION_CHURN_BYTES_RATIO),
         (3.0, 2.0),
     ),
+    "index_backlog": (1, (na.INDEX_GRACE_SECONDS,), (600,)),
+    "telemetry_unavailable": (1, (na.TELEMETRY_LAG_SECONDS,), (60,)),
 }
 
 
@@ -1243,7 +1250,12 @@ async def test_the_ledger_summary_counts_a_dashboard_write_but_no_inspector_read
 
     class _Local:
         async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> Any:
-            return run([ddl("agent_events"), *rows], sql, params)
+            # The ledger summary also reads which keys are procedures (loom.memory).
+            return run(
+                ["SET enable_quantized_codec = 1", ddl("memory"), ddl("agent_events"), *rows],
+                sql,
+                params,
+            )
 
         async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
             found = await self.query_all(sql, params)
@@ -1253,3 +1265,69 @@ async def test_the_ledger_summary_counts_a_dashboard_write_but_no_inspector_read
     await audit.summary_ledger()
     s = audit.summary
     assert (s.gets, s.searches, s.sets, s.inspector_calls) == (1, 0, 1, 2)
+
+
+# ---------------------------------------------------------------------------
+# Missing telemetry, intentional exact-key reads and an indexing backlog are told apart
+# from misuse.
+# ---------------------------------------------------------------------------
+
+M_BACKLOG = "AS stalled"
+
+
+@pytest.mark.asyncio
+async def test_writes_with_no_ledger_skip_the_ledger_checks_instead_of_passing_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    live = {**_live(10, 1), "written_in_window": 4}
+    out, _ = await _run(monkeypatch, {M_LIVE: live, M_LEDGER: {"ledger_rows": 0}})
+    gap = _finding(out, "telemetry_unavailable")
+    assert gap.severity == "warning" and gap.kind == "system_state" and gap.count == 4
+    codes = {f.code for f in out.findings}
+    for code in ("exact_key_store", "coordination_as_memory", "intentional_exact_key_reads"):
+        assert code not in codes and f"{code}: telemetry_unavailable" in out.skipped
+    assert out.coverage.complete is False
+
+    # A ledger that has the window's calls: every check runs and the gap reads clean.
+    out, _ = await _run(monkeypatch, {M_LIVE: live, M_LEDGER: {"ledger_rows": 9}})
+    assert _finding(out, "telemetry_unavailable").count == 0
+    assert "exact_key_store" in {f.code for f in out.findings}
+    # A quiet namespace has nothing to count: no gap either.
+    out, _ = await _run(monkeypatch, {M_LIVE: _live(10, 1), M_LEDGER: {"ledger_rows": 0}})
+    assert _finding(out, "telemetry_unavailable").severity == "info"
+
+
+@pytest.mark.asyncio
+async def test_reads_of_structured_rows_are_left_out_of_the_object_store_gauge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = {"ledger_rows": 400, "gets": 300, "typed_gets": 250, "searches": 5, "sets": 0}
+    out, ch = await _run(monkeypatch, {M_LIVE: _live(10, 1), M_LEDGER: ledger})
+    exact = _finding(out, "exact_key_store")
+    assert exact.count == 50 and exact.severity != "critical"
+    typed = _finding(out, "intentional_exact_key_reads")
+    assert typed.count == 250 and typed.severity == "info" and typed.population == 300
+    summary_sql = next(s for s in ch.sqls if M_LEDGER in s)
+    hot_sql = next(s for s in ch.sqls if "AS hot_reads" in s)
+    for sql in (summary_sql, hot_sql):
+        assert "memory_type IN {structured:Array(String)}" in sql
+    # Without the typed reads the same counts are an object store.
+    out, _ = await _run(monkeypatch, {M_LIVE: _live(10, 1), M_LEDGER: {**ledger, "typed_gets": 0}})
+    assert _finding(out, "exact_key_store").severity == "critical"
+
+
+@pytest.mark.asyncio
+async def test_an_indexing_backlog_is_the_systems_state_and_warns_only_when_stalled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = [
+        {"total": 2, "stalled": 0, "memory_key": "k", "memory_id": _mid("k"), "age_seconds": 30}
+    ]
+    out, ch = await _run(monkeypatch, {M_LIVE: _live(10, 1), M_BACKLOG: pending})
+    f = _finding(out, "index_backlog")
+    assert (f.kind, f.severity, f.count) == ("system_state", "info", 2)
+    assert "stalled" not in f.samples[0]
+    assert ch.params[0]["grace"] == na.INDEX_GRACE_SECONDS
+    stalled = [{**pending[0], "stalled": 1, "age_seconds": 4000}]
+    out, _ = await _run(monkeypatch, {M_LIVE: _live(10, 1), M_BACKLOG: stalled})
+    assert _finding(out, "index_backlog").severity == "warning"

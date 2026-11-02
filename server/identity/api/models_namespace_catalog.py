@@ -336,6 +336,8 @@ class NamespaceAuditSummary(BaseModel):
     live_bytes: int = 0
     # Bytes of content_excerpt the embedding rows carry (a copy of each value's head).
     excerpt_bytes: int = 0
+    # The distinct contents the history holds (a status-only version is not one), and
+    # their bytes.
     version_rows: int = 0
     version_bytes: int = 0
     # Searchable-type embedding rows with no vector and a recorded embed error.
@@ -349,6 +351,14 @@ class NamespaceAuditSummary(BaseModel):
     # The gets and searches in the window from the dashboard and the assistant
     # toolset (consumers `loom-ui`, `loom-assistant`), left out of the counts above.
     inspector_calls: int = 0
+    # Exact-key reads of rows whose type is structured by design (procedures): counted in
+    # `gets`, left out of the object-store gauge.
+    typed_gets: int = 0
+    # Live rows written or revised in the window (not in its last minute, which the ledger
+    # may not have caught up with), and the ledger's rows for the namespace in it: writes
+    # with no ledger rows mean the counts above were not recorded.
+    written_in_window: int = 0
+    ledger_rows: int = 0
 
 
 class NamespaceAuditFinding(FindingContract):

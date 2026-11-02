@@ -14538,10 +14538,13 @@ class NamespaceAuditSummary(TypedDict, total=False):
     sets: NotRequired[int]
     get_search_ratio: NotRequired[float]
     inspector_calls: NotRequired[int]
+    typed_gets: NotRequired[int]
+    written_in_window: NotRequired[int]
+    ledger_rows: NotRequired[int]
 
 
 class NamespaceAuditFinding(TypedDict, total=False):
-    kind: Required[Literal["contract_violation", "usage_heuristic"]]
+    kind: Required[Literal["contract_violation", "usage_heuristic", "system_state"]]
     rule_version: Required[int]
     source_op: Required[str]
     window_seconds: NotRequired[Optional[int]]
@@ -15519,7 +15522,7 @@ class NamespaceValidateOutput(TypedDict, total=False):
 
 
 class NamespaceValidateFinding(TypedDict, total=False):
-    kind: Required[Literal["contract_violation", "usage_heuristic"]]
+    kind: Required[Literal["contract_violation", "usage_heuristic", "system_state"]]
     rule_version: Required[int]
     source_op: Required[str]
     window_seconds: NotRequired[Optional[int]]

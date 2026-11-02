@@ -309,6 +309,7 @@ const SEVERITY_STATE: Record<NamespaceAuditSeverity, BadgeState> = {
 const KIND_LABEL: Record<NonNullable<NamespaceAuditFinding["kind"]>, string> = {
   contract_violation: "Contract violation",
   usage_heuristic: "Usage heuristic: a hit is not proof of misuse",
+  system_state: "The deployment's state, not the writer's doing",
 };
 
 function SeverityBadge({ severity }: { severity: NamespaceAuditSeverity }) {

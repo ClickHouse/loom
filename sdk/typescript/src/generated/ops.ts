@@ -6410,10 +6410,13 @@ export interface NamespaceAuditSummary {
   sets?: number;
   get_search_ratio?: number;
   inspector_calls?: number;
+  typed_gets?: number;
+  written_in_window?: number;
+  ledger_rows?: number;
 }
 
 export interface NamespaceAuditFinding {
-  kind: "contract_violation" | "usage_heuristic";
+  kind: "contract_violation" | "usage_heuristic" | "system_state";
   rule_version: number;
   source_op: string;
   window_seconds?: number | null;
@@ -7117,7 +7120,7 @@ export interface NamespaceValidateInput {
 }
 
 export interface NamespaceValidateFinding {
-  kind: "contract_violation" | "usage_heuristic";
+  kind: "contract_violation" | "usage_heuristic" | "system_state";
   rule_version: number;
   source_op: string;
   window_seconds?: number | null;
