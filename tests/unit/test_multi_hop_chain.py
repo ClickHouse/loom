@@ -165,8 +165,9 @@ async def test_a_bridge_row_the_pool_holds_is_not_added_twice(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_bridge_hits_carry_their_own_tags_so_the_belt_reads_none(monkeypatch) -> None:
-    # two sessions' rows of one bridge key, one tagged: the belt judges each by its own tags
+async def test_the_belt_judges_each_bridge_row_by_its_stamped_tags(monkeypatch) -> None:
+    # two sessions' rows of one bridge key, one tagged; the bridge input has no tags, so both
+    # rows reach the belt, which judges each by its own tags and reads none by key
     from server.memory.app import search_tag_filter as belt
     from server.memory.app.ask import completion
 
@@ -202,24 +203,3 @@ async def test_bridge_hits_carry_their_own_tags_so_the_belt_reads_none(monkeypat
     work: dict[str, Any] = {}
     kept = await belt.enforce_hard_tag_filter(hits, req, work, ["n"])
     assert [h.content_excerpt for h in kept] == ["France"] and work == {"tag_filter_dropped": 1}
-
-
-@pytest.mark.asyncio
-async def test_a_hard_tagged_bridge_read_carries_the_tags_in_sql(monkeypatch) -> None:
-    # an untagged bridge row must not stand in for the semantic follow, which honours them
-    from server.memory.app.ask import completion
-
-    seen: list[tuple[str, dict[str, Any]]] = []
-
-    class _CH:
-        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            seen.append((sql, params))
-            return []
-
-    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
-    inp = SimpleNamespace(
-        org="o", namespace="n", agent="a", user_id="u", session_id=None, tags=["project:x"]
-    )
-    assert await completion.bridge_rows_by_key(inp, "Bernard Arnault") == []
-    ((sql, params),) = seen
-    assert "hasAny(tags, {tags:Array(String)})" in sql and params["tags"] == ["project:x"]

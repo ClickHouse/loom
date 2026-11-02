@@ -165,6 +165,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
     from server.memory.app.search.scoring import per_key_fetch
 
     assert target.search is not None
+    # No `session_id`: a session filter would leave out a long value's set chunks.
     out = await handle_memory_search(
         MemorySearchInput(
             org=input.org,
@@ -172,7 +173,6 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             agent=input.agent,
             user_id=input.user_id,
             query=target.search.query,
-            # no session filter: it would leave out a long value's set chunks
             top_k=per_key_fetch(int(input.limit)),
             namespace_scope="this",
         )

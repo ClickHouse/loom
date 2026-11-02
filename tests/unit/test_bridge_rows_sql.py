@@ -65,3 +65,16 @@ async def test_with_only_off_tag_rows_the_read_is_empty(monkeypatch) -> None:
     ch = _LocalCH(_row("s1", "bernard_arnault_net_worth", "a lot"))
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     assert await bridge_rows_by_key(_ask(tags=["project:x"]), "Bernard Arnault") == []
+
+
+@pytest.mark.asyncio
+async def test_with_no_cap_one_key_takes_up_to_the_follows_top_k(monkeypatch) -> None:
+    from server.settings import settings
+
+    ch = _LocalCH(
+        *(_row(f"s{i}", "bernard_arnault_citizen_of", "France", version=i) for i in (1, 2, 3))
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(settings, "memory_search_per_key_cap", 0)
+    hits = await bridge_rows_by_key(_ask(), "Bernard Arnault", top_k=2)
+    assert [h.session_id for h in hits] == ["s3", "s2"]
