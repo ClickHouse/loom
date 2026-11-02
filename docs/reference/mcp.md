@@ -185,10 +185,10 @@ listed or callable. See
 neither listed nor callable over MCP: the per-store searches `loom_search`
 replaces (`memory.search`, `knowledge.search`, `conversation.search`), review
 queues, snapshot and restore, policy administration, audit and cost
-dashboards, code-index ingest. On the `assistant` toolset `memory.search` and
-`knowledge.search` are listed and callable. A call to one answers `isError` with code
+dashboards, code-index ingest. A call to one answers `isError` with code
 `OP_NOT_ON_MCP` and what to use instead. They stay reachable over HTTP and the
-SDKs. The rule for hiding an op: would a typical end user, not an operator,
+SDKs. On the `assistant` toolset `memory.search` and `knowledge.search` are listed
+and callable, and a call to any other hidden op answers `UNKNOWN_OP`. The rule for hiding an op: would a typical end user, not an operator,
 reach for it in chat? A namespace-wide view can be hidden while a variant bounded
 to the caller stays on MCP: `namespace.list` is hidden and `namespace.list_mine`
 listed; `memory.extraction_status` (every batch queued in the namespace) is hidden
