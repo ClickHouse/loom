@@ -364,14 +364,23 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   the document, and asks the model to reuse that wording for a decision the text still states, so a re-run reads the
   same keys. Category and scenario are shown whole, since the key is built from them; an outcome over 160 characters
   is shortened and ends in `…`.
+- **Prompt**: the model is asked for the reason the text gives for each choice (the cost, constraint or failure it
+  avoids), never the decision restated, and for nothing from a section that sums up other sections. What the text marks
+  as former, replaced or superseded (an old default, a previous behaviour) is never given as the outcome.
 - **Verbatim check**: the model returns, per decision, a `quote` and a `reasoning` and a reason for each rejected
-  option. A candidate is kept only when its quote, its reasoning and every reason are each an exact substring of one
-  chunk. Each is at least 12 characters long: a shorter span ("We", "the") is in every document, so a decision resting
-  on it could never retire. At most `--max-per-section` (default 3) are kept per section. A candidate whose category
+  option. A candidate is kept only when its quote, its reasoning and every reason are each a substring of one chunk,
+  with every run of whitespace read as one space: a model copying a span drops line breaks and doubled spaces. What is
+  recorded is the chunk's own span, line breaks and all. Each is at least 12 characters long: a shorter span ("We",
+  "the") is in every document, so a decision resting on it could never retire.
+- **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
+  `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
+  punctuation or the endings `-s`, `-es`, `-ed` and `-ing`, and filler words (`we`, `the`, `will`, `decided`, `chose`,
+  `use`, `instead` and the like) are skipped: "We decided on spilling into sorted runs." restates the outcome
+  `spill into sorted runs`; "Sorted runs avoid random reads on disk." gives a reason. At most `--max-per-section` (default 3) are kept per section. A candidate whose category
   or scenario holds no letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with one key, or
   with one outcome and reasoning (overlapping chunks give two windows the same text), the first is kept. A section
-  with no words (a heading alone or over an image) is not sent to the model and gets the line
-  `image-only, rationale not extracted`.
+  with no words (a heading alone or over an image), or with an image and at most 80 characters of other text (a
+  caption), is not sent to the model and gets the line `image-only, rationale not extracted`.
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.
@@ -418,7 +427,7 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   its re-record is replaced with the rest of the record; the tag write's precondition covers the value, not a
   tags-only change in the gap.
 - **Retire**: an unconfirmed `loom-decisions` row citing the document whose reasoning is no longer in the document's
-  text is deleted with `memory.delete_version`, which also retires its record; a confirmed one, or one whose outcome
+  text, whitespace read as in the verbatim check, is deleted with `memory.delete_version`, which also retires its record; a confirmed one, or one whose outcome
   `decision.outcome` recorded, is tagged `source-changed` instead. The reasoning read is the extractor's own record: a
   key whose active record another identity wrote is left alone. An unconfirmed row whose outcome and reasoning this
   run recorded under another key (the model worded the scenario differently) is deleted too, so the decision is not

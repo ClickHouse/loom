@@ -41,23 +41,26 @@ _CAMEL_RE = re.compile(r"\b[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+\b")
 
 
 def _decisions_from_sections(user: str) -> dict[str, object]:
-    """One decision per section, resting on the section's first sentence copied as it is,
-    so the extractor's verbatim check passes on what the fake returns."""
+    """One decision per section of two sentences or more: the first as the outcome, the
+    second as its reasoning, both copied as they are, so the extractor's verbatim and
+    restatement checks pass on what the fake returns."""
     out: list[dict[str, object]] = []
     for m in _SECTION_RE.finditer(user):
-        first = _SENTENCE_SPLIT_RE.split(m["body"].strip(), 1)[0].split("\n", 1)[0].strip()
-        if not re.search(r"[^\W\d_]", first):
+        body = m["body"].strip()
+        parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+|\n", body) if p.strip()]
+        if len(parts) < 2 or not all(re.search(r"[^\W\d_]", p) for p in parts[:2]):
             continue
+        first, second = parts[0], parts[1]
         out.append(
             {
                 "category": "design:fake",
                 "scenario": m["name"],
                 "outcome": first[:120],
-                "reasoning": first,
+                "reasoning": second,
                 "alternatives": [],
-                "quote": first,
+                "quote": body[: body.index(second, len(first)) + len(second)],
                 "is_constraint": False,
-                "mentions": _CAMEL_RE.findall(first),
+                "mentions": _CAMEL_RE.findall(f"{first} {second}"),
             }
         )
     return {"decisions": out}

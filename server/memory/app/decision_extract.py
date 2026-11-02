@@ -1,10 +1,10 @@
 """`loom decisions extract`: mine one knowledge document into decision records.
 
 Each window of the document's live chunks goes to the model once; a candidate that is
-not the document's own words is dropped (`server.memory.domain.decision_extract`). A
-kept candidate is reconciled against what the namespace already holds, then written
-through `decision.record` under one fixed identity, so a re-run revises the
-extractor's own rows instead of writing beside them:
+not the document's own words, or whose reasoning only restates its outcome, is dropped
+(`server.memory.domain.decision_extract`). A kept candidate is reconciled against what
+the namespace already holds, then written through `decision.record` under one fixed
+identity, so a re-run revises the extractor's own rows instead of writing beside them:
 
 - the key's active record has the same verbatim fields (reasoning, rejected options'
   reasons; the rest is the model's wording) and its row carries the same files, source
@@ -299,7 +299,7 @@ async def extract_document(
         return report
     live_texts = [doc.content or "", *(c.text for c in chunks)]
     report.image_only = dx.image_only_sections(doc.content or "")
-    # A chunk with no words (an image under its heading) carries no rationale to read.
+    # A chunk with no words, or only an image and its caption, carries no rationale to read.
     wins = windows([c for c in chunks if not dx.image_only(c.text)], window_chars=window_chars)
     report.windows = len(wins)
     # One scan of the extractor's rows on this document and their records, for the prompt
@@ -424,8 +424,9 @@ async def _candidates(
     known: list[tuple[str, str, str]],
 ) -> tuple[list[tuple[dx.Candidate, str, list[str]]], int]:
     """(candidate, its section, the texts it was checked against) for every candidate
-    that passes the verbatim check, at most `max_per_section` per section; and how many
-    windows the model answered with a readable reply."""
+    that passes the verbatim and restatement checks, its spans the document's own, at
+    most `max_per_section` per section; and how many windows the model answered with a
+    readable reply."""
     from server.llm.client import get_llm_client
 
     llm = get_llm_client()
@@ -444,8 +445,12 @@ async def _candidates(
         answered += 1
         texts = [c.text for c in w.chunks]
         for cand in cands:
-            section = dx.quote_section(w, cand.quote)
             reason = dx.verbatim_failure(cand, texts)
+            if not reason:
+                cand = dx.document_spans(cand, texts)
+                if dx.restates_outcome(cand):
+                    reason = dx.RESTATED
+            section = dx.quote_section(w, cand.quote)
             try:
                 key = svc.decision_key(cand.category, cand.scenario)
             except ValueError:
@@ -941,7 +946,8 @@ async def _retire_one(
         if await _delete_row(report, row):
             report.replaced.append(f"{key} -> {restated}")
         return
-    if not any(reasoning in t for t in live_texts):
+    # Whitespace aside, as the verbatim check reads it: a re-wrapped line is the same text.
+    if not dx.find_span(reasoning, live_texts):
         # A row with a recorded outcome is tagged, never deleted, like a pinned one.
         keep = _confirmed(row) or _has_outcome(record)
         await _retire_row(report, row, keep=keep)

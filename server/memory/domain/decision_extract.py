@@ -1,9 +1,10 @@
 """The pure half of `loom decisions extract`: the candidate prompt, reading the model's
-reply, the verbatim check, and sorting the code names a candidate mentions.
+reply, the verbatim and restatement checks, and sorting the code names a candidate
+mentions.
 
 A candidate is kept only when its quote, its reasoning and every rejected option's reason
-each sit inside one chunk the model read: what reaches an agent before an edit is the
-document's own words.
+each sit inside one chunk the model read, whitespace aside, and its reasoning says more
+than its outcome: what reaches an agent before an edit is the document's own reason.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from server.code.domain.anchor import mentions as code_mentions
@@ -34,7 +35,10 @@ SYSTEM = (
     "outcome, reasoning, alternatives, quote, is_constraint and mentions.\n"
     "- quote: the exact span of the text the decision rests on, copied character for "
     "character.\n"
-    "- reasoning: why the outcome was chosen, an exact span of the text.\n"
+    "- reasoning: the reason the text gives for the choice (the cost, constraint or "
+    "failure it avoids), an exact span of the text. Never the decision restated in other "
+    "words: a span that only says what was chosen is no reasoning, and a decision whose "
+    "text gives no reason is not emitted.\n"
     '- alternatives: the options the text rejects, each {"option": ..., "reason": ...}, '
     "the reason an exact span of the text.\n"
     "- category: design:<component>, lower case, so decisions about one component share "
@@ -48,8 +52,11 @@ SYSTEM = (
     "text names, as written.\n"
     "Copy the document's words; never paraphrase a quote, a reasoning or a reason. Keep "
     "product names in quote only. Emit nothing for a section whose body is only a "
-    'heading or an image. At most {max_per_section} items per section; {"decisions": '
-    "[]} when the part records no decision."
+    "heading, an image, or an image with its caption, and nothing for a section that "
+    "sums up or recaps other sections. Never give as the outcome what the text marks as "
+    "former, replaced or superseded (an old default, a previous behaviour): the decision "
+    "is what replaced it. At most {max_per_section} items per section; "
+    '{"decisions": []} when the part records no decision.'
 )
 
 
@@ -96,9 +103,18 @@ def user_prompt(window: Window) -> str:
     return "\n\n".join(parts)
 
 
+# Text beside an image up to this long is its caption, one line naming the picture: it
+# carries no rationale, and a model asked about it invents one.
+CAPTION_MAX_CHARS = 80
+
+
 def image_only(body: str) -> bool:
-    """A section body with no words once its images are removed: a heading over a picture."""
-    return not _LETTER.search(_IMAGE_MARKUP.sub("", body))
+    """A section body with no words once its images are removed (a heading alone or over
+    a picture), or with an image and no more text than a caption."""
+    text = " ".join(_IMAGE_MARKUP.sub(" ", body).split())
+    if not _LETTER.search(text):
+        return True
+    return bool(_IMAGE_MARKUP.search(body)) and len(text) <= CAPTION_MAX_CHARS
 
 
 @dataclass
@@ -128,7 +144,7 @@ def _list(value: Any) -> list[Any]:
 
 
 def _span(value: Any) -> str:
-    """A verbatim span as the model wrote it: stripping it could make it match."""
+    """A verbatim span as the model wrote it; `document_spans` swaps in the text's own."""
     return value if isinstance(value, str) else ""
 
 
@@ -177,13 +193,26 @@ def parse_candidates(reply: str) -> list[Candidate] | None:
 MIN_SPAN_CHARS = 12
 
 
+def find_span(span: str, texts: Sequence[str]) -> str:
+    """The first text's own span that reads as `span` with each run of whitespace taken
+    as one space, or '': a model copying a span drops line breaks and doubled spaces."""
+    words = span.split()
+    if not words:
+        return ""
+    pattern = re.compile(r"\s+".join(map(re.escape, words)))
+    for text in texts:
+        if m := pattern.search(text):
+            return m.group(0)
+    return ""
+
+
 def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
     """Why `cand` fails the verbatim check against the chunk texts the model read, or ''.
     Each span must sit inside one chunk: the join between two is not the document's. A
     span of the quote is in the quote's chunk, so the chunks alone decide."""
 
     def holds(span: str) -> bool:
-        return any(span in t for t in texts)
+        return bool(find_span(span, texts))
 
     if len(cand.quote.strip()) < MIN_SPAN_CHARS:
         return "quote too short to rest a decision on"
@@ -199,6 +228,47 @@ def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
         if not holds(reason):
             return f"the reason given for rejecting {option!r} is not in the document text"
     return ""
+
+
+def document_spans(cand: Candidate, texts: list[str]) -> Candidate:
+    """`cand` with each span replaced by the text's own, line breaks and all, for a
+    candidate that passed the verbatim check: what is stored is the document's."""
+    return replace(
+        cand,
+        quote=find_span(cand.quote, texts),
+        reasoning=find_span(cand.reasoning, texts),
+        alternatives=[(option, find_span(reason, texts)) for option, reason in cand.alternatives],
+    )
+
+
+# Words that say a choice was made, or join a sentence, rather than give a reason.
+_FILLER_WORDS = frozenset(
+    "a an the and or of to in on at for with as is are be been it its this that these "
+    "those we our us they will would should must can so decide decides decided choose "
+    "chooses chose chosen use uses used using instead".split()
+)
+_WORD = re.compile(r"\w+")
+
+RESTATED = "reasoning only restates the outcome: it has no word the outcome lacks"
+
+
+def _stem(word: str) -> str:
+    """`spilling`, `spills` and `spilled` read as `spill`."""
+    for suffix in ("ing", "ed", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[: -len(suffix)]
+    return word
+
+
+def _content_words(text: str) -> set[str]:
+    return {_stem(w) for w in _WORD.findall(text.lower()) if w not in _FILLER_WORDS}
+
+
+def restates_outcome(cand: Candidate) -> bool:
+    """The reasoning adds nothing to the outcome: every word of it, case, punctuation,
+    plural and tense endings and the filler words aside, is a word of the outcome. Such
+    a span is the decision in the document's words, not the reason for it."""
+    return _content_words(cand.reasoning) <= _content_words(cand.outcome)
 
 
 @dataclass(frozen=True)

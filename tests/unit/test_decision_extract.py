@@ -2094,3 +2094,145 @@ def test_every_printed_action_has_its_line() -> None:
     from typing import get_args
 
     assert set(get_args(de.Action)) - {"row_changed"} == set(cli._ACTIONS)
+
+
+# ------------------------------------------------------------------ restated reasons, whitespace, captions
+
+
+@pytest.mark.parametrize(
+    ("outcome", "reasoning", "restated"),
+    [
+        ("spill into sorted runs", "We spill into sorted runs.", True),
+        ("spill into sorted runs", "We decided on spilling into sorted runs.", True),
+        ("Sorted runs for the spill", "We use sorted runs, instead.", True),
+        ("spill into sorted runs", "A plain set on disk costs random reads.", False),
+        ("spill into sorted runs", "Sorted runs avoid random reads on disk.", False),
+    ],
+)
+def test_a_reasoning_with_no_word_beyond_its_outcome_restates_it(
+    outcome: str, reasoning: str, restated: bool
+) -> None:
+    assert dx.restates_outcome(_cand(outcome=outcome, reasoning=reasoning)) is restated
+
+
+@pytest.mark.asyncio
+async def test_a_candidate_whose_reasoning_restates_the_outcome_is_dropped(monkeypatch) -> None:
+    restating = _candidate(
+        reasoning="We spill into sorted runs like ORDER BY.",
+        outcome=("spill into sorted runs like ORDER BY"),
+    )
+    world = _World(monkeypatch, [restating])
+    report = await _run()
+    assert world.recorded == [] and report.records == []
+    (d,) = report.dropped
+    assert (d.section, d.reason, d.refused) == (SECTION, dx.RESTATED, False)
+
+
+def test_a_span_differing_only_in_whitespace_is_the_documents() -> None:
+    text = "We spill into sorted\nruns like ORDER BY.  A plain set on disk costs random reads."
+    cand = _cand(reasoning="A plain set on disk  costs random reads.")
+    assert dx.verbatim_failure(cand, [text]) == ""
+    assert dx.find_span("sorted runs like", [text]) == "sorted\nruns like"
+    assert dx.find_span("sorted runslike", [text]) == ""
+    stored = dx.document_spans(cand, [text])
+    assert (
+        stored.quote
+        == "We spill into sorted\nruns like ORDER BY.  A plain set on disk costs random reads."
+    )
+    assert stored.reasoning == "A plain set on disk costs random reads."
+    assert stored.alternatives == [("a plain set on disk", "costs random reads")]
+
+
+@pytest.mark.asyncio
+async def test_a_span_with_other_line_breaks_is_recorded_as_the_document_writes_it(
+    monkeypatch,
+) -> None:
+    from server.knowledge.app import document_reads
+
+    wrapped = BODY.replace("A plain set on disk ", "A plain set\non disk ")
+    world = _World(monkeypatch, [_candidate(reasoning="A plain set on disk costs random reads.")])
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, wrapped, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (inp,) = world.recorded
+    assert inp.reasoning == "A plain set\non disk costs random reads."
+    assert inp.source_resource_id == f"knowledge:ns/doc.md#{SECTION}"
+    assert report.dropped == []
+
+
+@pytest.mark.asyncio
+async def test_a_reasoning_the_document_rewrapped_is_not_retired(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    # DOC has the sentence on one line; the stored span broke it.
+    world.record("decision:wrapped", {"reasoning": "A plain set on disk\ncosts random reads."})
+    report = await _run()
+    assert report.retired == [] and world.deletes == [] and report.flagged == []
+
+
+def test_the_prompt_asks_for_the_reason_and_skips_recaps_and_superseded_text() -> None:
+    prompt = dx.system_prompt(3)
+    assert "Never the decision restated in other words" in prompt
+    assert "a section that sums up or recaps other sections" in prompt
+    assert "former, replaced or superseded" in prompt
+    assert "an image with its caption" in prompt
+
+
+@pytest.mark.parametrize(
+    ("body", "image_only"),
+    [
+        ("![diagram](img.png)\n\nFigure 2: the spill path, from the sort to the merge.", True),
+        ("[image]\nThe write path", True),
+        ("![diagram](img.png)\n\n" + BODY, False),
+        # A short line with no picture is text, a decision perhaps.
+        ("Spill into sorted runs: random reads cost too much.", False),
+    ],
+)
+def test_an_image_with_only_a_caption_is_image_only(body: str, image_only: bool) -> None:
+    assert dx.image_only(body) is image_only
+
+
+@pytest.mark.asyncio
+async def test_a_captioned_diagram_is_not_sent_and_is_reported_image_only(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    caption = "![diagram](flow.png)\n\nFigure 1: how a spilled block flows back."
+    doc = DOC.replace("![diagram](img.png)\n", caption + "\n")
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT")),
+            CorpusChunk(uri, 1, caption, ("Spilling", "Architecture")),
+        ]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (prompt,) = world.prompts
+    assert "Figure 1" not in prompt[1]
+    assert report.image_only == ["Spilling > Architecture"]
+
+
+@pytest.mark.asyncio
+async def test_the_fake_model_rests_each_decision_on_a_second_sentence() -> None:
+    from server.llm import customer
+    from server.llm.fake import FakeLLMClient
+
+    w = Window(
+        [
+            CorpusChunk("d", 0, BODY, ("Spilling", "Final DISTINCT")),
+            CorpusChunk("d", 1, "One sentence only, no reason given.", ("Spilling", "Short")),
+        ]
+    )
+    with customer.for_org("o"):
+        res = await FakeLLMClient().complete(dx.system_prompt(3), dx.user_prompt(w))
+    (cand,) = dx.parse_candidates(res.text) or []
+    assert cand.outcome == "We spill into sorted runs like ORDER BY."
+    assert cand.reasoning == "A plain set on disk costs random reads."
+    assert dx.verbatim_failure(cand, [BODY]) == "" and not dx.restates_outcome(cand)
