@@ -29,6 +29,7 @@ async def search_repo_decisions(
     on any failure. The read scope the token allows is pinned inside the
     search, as for the base search."""
     from server.memory.app.search import handle_memory_search
+    from server.memory.app.search.request import _above_excerpt_k
     from server.memory.app.search.scoring import one_per_key, per_key_fetch
 
     # The base search already reads its own namespace.
@@ -45,6 +46,8 @@ async def search_repo_decisions(
         query=mem_input.query,
         # One item per decision key: ask for enough rows that `top_k` keys survive the trim.
         top_k=per_key_fetch(mem_input.top_k),
+        # Explained or elided as the caller's own search is, by its top_k, not the over-fetch.
+        explain=not _above_excerpt_k(mem_input) if mem_input.explain is None else mem_input.explain,
         tags=mem_input.tags,
         # A recorded statement fits the stored clip, and its reason comes last: an
         # excerpt would cut it. bodies="none" still serves keys only.

@@ -442,10 +442,13 @@ _KEY_CAPS_WORDS = re.compile(r"[A-Z]{2,}|[A-Z]?[a-z0-9]+")
 
 _ASSIGNMENT_KEY = re.compile(rf"(?i)(?:{ASSIGNMENT_WORDS})")
 # A value that names where a secret lives rather than holding it: `env:OPENAI_API_KEY`,
-# `vault:kv/db`, `${DB_PASSWORD}`, `$DB_PASSWORD`, a path.
+# `vault:kv/db`, `${DB_PASSWORD}`, `$DB_PASSWORD`, a URL, a path. An ARN naming a secret
+# still reads high: its `secret:` part is an assignment.
 _SECRET_REFERENCE = re.compile(
-    # a path: ~/, ./, ../ or two /-segments (a base64 secret may open with one /)
-    r"(?i)(?:env|vault|secret|ref):|\$\{|(?-i:\$[A-Z_][A-Z0-9_]*$)|~/|/[^/]+/|\.\.?/"
+    # a URL with no user:password@ part; a path: ~/, ./, ../ or two /-segments (a base64
+    # secret may open with one /)
+    r"(?i)(?:env|vault|secret|ref):|[a-z][a-z0-9+.-]*://(?![^/]*@)|\$\{"
+    r"|(?-i:\$[A-Z_][A-Z0-9_]*$)|~/|/[^/]+/|\.\.?/"
 )
 
 

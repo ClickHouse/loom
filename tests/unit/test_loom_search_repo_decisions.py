@@ -883,3 +883,16 @@ async def test_two_rows_of_one_decision_key_count_as_one_decision(monkeypatch) -
     assert got is not None
     assert [h.memory_key for h in got[0].results] == ["decision:evict", "decision:shard"]
     assert calls[0].top_k == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("top_k", "explain"), [(10, True), (20, False)])
+async def test_the_decision_pass_explains_as_the_callers_top_k_does(
+    monkeypatch, top_k, explain
+) -> None:
+    # it asks for per_key_fetch(top_k) rows, past the excerpt k, yet its hits keep or drop
+    # their score_components as the home search's do
+    calls: list[Any] = []
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search(PLANES, calls))
+    await repo_decisions.search_repo_decisions(BASE.model_copy(update={"top_k": top_k}), TRUNK)
+    assert calls[0].top_k > 15 and calls[0].explain is explain

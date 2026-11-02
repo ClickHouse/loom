@@ -287,15 +287,15 @@ async def test_a_repeat_of_a_retired_stored_value_leaves_it(monkeypatch, status)
 
 
 @pytest.mark.parametrize(
-    ("label", "column", "landed"),
+    ("label", "asked", "column", "want"),
     [
-        ("ttl_seconds", "expires_at", 60),
-        ("sensitivity", "sensitivity", "medium"),
-        ("pinned", "pinned", True),
+        ("ttl_seconds", 60, "expires_at", NOW + timedelta(seconds=60)),
+        ("sensitivity", "medium", "sensitivity", "medium"),
+        ("pinned", True, "pinned", True),
     ],
 )
 async def test_a_repeat_of_a_retired_stored_value_that_changes_a_label_writes_it_active(
-    monkeypatch, label, column, landed
+    monkeypatch, label, asked, column, want
 ) -> None:
     # A changed label is a new assertion, not a replay: the row is written, as memory.set
     # writes it, active.
@@ -303,14 +303,12 @@ async def test_a_repeat_of_a_retired_stored_value_that_changes_a_label_writes_it
     stored = _stored(
         value, status="superseded", superseded_by="22222222-2222-2222-2222-222222222222"
     )
-    state, plan = await _settled(
-        monkeypatch, stored, {}, {"memory_key": "k", "value": value, label: landed}
+    _, plan = await _settled(
+        monkeypatch, stored, {}, {"memory_key": "k", "value": value, label: asked}
     )
     (row,) = plan.memory_rows
     assert row["status"] == "active" and not row["superseded_by"]
-    if label == "ttl_seconds":
-        landed = state.now_utc + timedelta(seconds=60)
-    assert row[column] == landed
+    assert row[column] == want
 
 
 async def test_the_retention_window_alone_leaves_a_repeat_unchanged(monkeypatch) -> None:
