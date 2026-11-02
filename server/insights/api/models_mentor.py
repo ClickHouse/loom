@@ -74,7 +74,7 @@ UsageSource = Literal["server", "client"]
 
 
 class UsageRung(BaseModel):
-    """One rung of what the agent's use of Loom shows, weakest claim first.
+    """One rung of what the agent's use of Loom shows.
 
     A call made is not a call that answered, and an answer returned is not an answer
     used."""
@@ -109,9 +109,9 @@ class MentorBriefOutput(BaseModel):
     # Per hint code, sessions it was shown in and followed in, most shown first; empty when
     # no hint reached the agent or the read failed.
     adoption: list[MentorAdoption] = Field(default_factory=list)
-    # The agent's use of Loom in the window, one rung each from a call made to a graded
-    # run (read with or without a profile); empty for no agent in particular, and a rung
-    # whose read failed has no count.
+    # The agent's use of Loom in the window, one rung each, weakest claim first: from a call
+    # made to a graded run (read with or without a profile). Empty for no agent in
+    # particular; a rung whose read failed has no count.
     usage_evidence: list[UsageRung] = Field(default_factory=list)
     # Oldest ledger row of this agent in the window, of any kind; None when it holds none or
     # the read failed.

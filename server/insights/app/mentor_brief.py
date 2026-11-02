@@ -205,37 +205,36 @@ async def _usage_evidence(org: str, namespace: str, agent: str, window_seconds: 
         return _Ladder([], None, None, [])
     ch = get_client()
     who = (org, namespace, agent, window_seconds)
-    # Step → why it failed; reported in step order, whichever read fails first.
-    failed: dict[str, str] = {}
-
-    async def read[T](step: str, coro: Awaitable[T]) -> T | None:
-        try:
-            return await coro
-        except Exception as exc:  # noqa: BLE001 — a failed read leaves its rungs uncounted
-            log.warning("mentor %s read failed: %s", step, exc)
-            failed[step] = type(exc).__name__
-            return None
 
     async def indexed() -> int:
         # The embedder is resolved inside the read, so a failure is this rung's alone.
         model = get_embedder().model_name
         return await mentor_store.indexed_writes(*who, model=model, ch=ch)
 
-    calls_read, indexed_count, reported, graded, own_retention = await asyncio.gather(
-        read(
+    # Each read with the step name `skipped` reports it under, in the order they are listed.
+    reads: list[tuple[str, Awaitable[Any]]] = [
+        (
             "calls",
             mentor_store.call_evidence(
                 *who, searches=mentor_rules.SEARCHES, gets=mentor_rules.GETS, ch=ch
             ),
         ),
-        read("indexed_writes", indexed()),
-        read("reported_keys", mentor_store.reported_keys(*who, ch=ch)),
-        read("graded_runs", mentor_store.graded_runs(*who, ch=ch)),
-        read(
-            "retention",
-            mentor_store.namespace_retention_days(org, namespace, ch=ch),
-        ),
-    )
+        ("indexed_writes", indexed()),
+        ("reported_keys", mentor_store.reported_keys(*who, ch=ch)),
+        ("graded_runs", mentor_store.graded_runs(*who, ch=ch)),
+        ("retention", mentor_store.namespace_retention_days(org, namespace, ch=ch)),
+    ]
+
+    async def read(step: str, coro: Awaitable[Any]) -> tuple[Any, str]:
+        try:
+            return await coro, ""
+        except Exception as exc:  # noqa: BLE001 — a failed read leaves its rungs uncounted
+            log.warning("mentor %s read failed: %s", step, exc)
+            return None, type(exc).__name__
+
+    outcomes = await asyncio.gather(*(read(step, coro) for step, coro in reads))
+    skipped = [f"{step}: {err}" for (step, _), (_, err) in zip(reads, outcomes, strict=True) if err]
+    calls_read, indexed_count, reported, graded, own_retention = (v for v, _ in outcomes)
     calls = calls_read or {}
     # A namespace's own retention wins over the table's global one.
     retention = (
@@ -256,8 +255,6 @@ async def _usage_evidence(org: str, namespace: str, agent: str, window_seconds: 
         _rung("client_acknowledged", reported, "client"),
         _rung("task_outcome", graded, "client"),
     ]
-    steps = ("calls", "indexed_writes", "reported_keys", "graded_runs", "retention")
-    skipped = [f"{step}: {failed[step]}" for step in steps if step in failed]
     return _Ladder(rungs, calls.get("oldest_row"), retention, skipped)
 
 
@@ -357,7 +354,7 @@ def render_table(out: MentorBriefOutput) -> str:
             lines.append(f"  {a.code:<25} {a.shown_sessions:>4} → {a.followed_sessions}")
     if out.usage_evidence:
         lines.append("")
-        lines.append("evidence             count  source")
+        lines.append("usage evidence       count  source")
         for e in out.usage_evidence:
             n = "-" if e.count is None else str(e.count)
             lines.append(f"{e.rung:<20} {n:>5}  {e.source}")
