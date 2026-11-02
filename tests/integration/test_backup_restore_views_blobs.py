@@ -297,7 +297,8 @@ async def test_the_sweep_finds_only_an_old_original_no_live_document_names(
     await ch.connect()
     try:
         assert await blobs.unreferenced(org, ns, 3600, 100, ch=ch) == [shas["old"]]
-        assert await blobs.delete(org, ns, [shas["old"], shas["fresh"]], min_age_s=3600, ch=ch) == 1
+        deleted = await blobs.delete(org, ns, [shas["old"], shas["fresh"]], min_age_s=3600, ch=ch)
+        assert deleted.gone == 1
         left = ch_client.query(
             "SELECT toString(sha256) FROM loom.document_blobs WHERE org = {org:String}",
             parameters={"org": org},

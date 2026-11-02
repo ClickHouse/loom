@@ -3,7 +3,9 @@ that owns it in each scope, and the count that proves a saga left nothing.
 
 `_CENSUS` is the one registry the census, the sagas' step lists and a
 resumed saga's re-opened steps all read; `STEP_ONLY_TABLES` and
-`NO_MEMORY_CONTENT` classify the rest of the schema.
+`NO_MEMORY_CONTENT` classify the rest of the schema. One count is not a
+table's: `OBJECT_RESIDUE`, the scope's objects in the document bucket, which
+re-opens `documents.tombstone`.
 """
 
 from __future__ import annotations
@@ -14,8 +16,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from server.core import object_store
 from server.core.repo_base import _CHClient, _default_client
-from server.erasure.store.mutations import purge_mode
+from server.erasure.store.mutations import namespaces_of, purge_mode
 from server.erasure.store.predicates import (
     LIVE,
     NS_EQ,
@@ -34,8 +37,13 @@ from server.erasure.store.predicates import (
 from server.erasure.store.provider_copies import copy_residue
 from server.erasure.store.steps_memory import SESSION_OUTCOME_TABLES, TERM_AGGREGATE_TABLES
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+from server.settings import settings
 
 log = logging.getLogger(__name__)
+
+# The census key of the scope's objects in the document bucket, and the step that owns them.
+OBJECT_RESIDUE = "objects.document_originals"
+_OBJECT_OWNER = "documents.tombstone"
 
 
 # One census row per substrate: the live predicate the census counts ("1" =
@@ -546,7 +554,8 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "counters, a bounded error text and a resume cursor; `namespace` is the label of "
         "the namespace a pass reached, not a tenant axis over memory rows; the sensitivity "
         "sweep's cursor names an org, a namespace and an agent, never a user or a memory "
-        "key; no user axis, no memory row; 30-day TTL."
+        "key; the document_blob_gc cursor is a bucket key: an org, a namespace and an "
+        "original's sha256, no bytes; no user axis, no memory row; 30-day TTL."
     ),
     "loom.qa_link_candidates": (
         "issue and PR numbers of the public tracker record with scores and titles, keyed by "
@@ -683,7 +692,8 @@ def steps_to_reopen(residue: Mapping[str, Any] | str | None, scope_type: str) ->
     the census says what it left. When they disagree the census wins — the
     steps are count-first and idempotent, so re-running one over a clean
     table costs a single count(). `residue` is the ledger's per-table map
-    (JSON or dict); tables the registry does not know are ignored."""
+    (JSON or dict); `OBJECT_RESIDUE` re-opens `documents.tombstone`, and other
+    keys the registry does not know are ignored."""
     if not residue:
         return set()
     if isinstance(residue, str):
@@ -698,8 +708,9 @@ def steps_to_reopen(residue: Mapping[str, Any] | str | None, scope_type: str) ->
     hot = {str(t) for t, n in residue.items() if int(n or 0) > 0}
     if not hot:
         return set()
+    reopen = {_OBJECT_OWNER} if OBJECT_RESIDUE in hot else set()
     hot |= {"loom." + t for t in hot if not t.startswith("loom.")}
-    return {
+    return reopen | {
         step for step, tables in step_owners(scope_type).items() if any(t in hot for t in tables)
     }
 
@@ -713,7 +724,8 @@ async def residue_census(
 ) -> dict[str, int]:
     """Live rows still in scope, per substrate. One count() per table; FINAL
     on the ReplacingMergeTree tables so an un-merged tombstone row does not
-    read as live."""
+    read as live. Bucket objects are not counted here: see `object_residue`, which a
+    namespace scope's verify and `evidence_census` add."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"org": org}
     ns_list = isinstance(scope_value, (list, tuple))
@@ -744,3 +756,52 @@ async def residue_census(
         out[table] = int((row or {}).get("n") or 0)
     out.update(await copy_residue(org, scope_type, scope_value, ch=ch))
     return out
+
+
+async def evidence_census(
+    org: str,
+    scope_type: str,
+    scope_value: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> tuple[dict[str, int], Exception | None]:
+    """`residue_census` for evidence, not a verdict: the tables, then the bucket on
+    its own, so a bucket that cannot be listed (often why a step failed) costs only
+    the object count. Returns the counts and the bucket's error, if any."""
+    out = await residue_census(org, scope_type, scope_value, ch=ch)
+    if scope_type != "namespace":
+        return out, None
+    try:
+        out[OBJECT_RESIDUE] = await object_residue(org, scope_value)
+    except Exception as e:  # noqa: BLE001 — the counts above stand; the caller reports the error
+        return out, e
+    return out, None
+
+
+async def object_residue(org: str, scope_value: str | Sequence[str]) -> int:
+    """Objects left under the erased namespaces' prefixes: after the step, any
+    is residue. Each prefix counts up to one listing page of the scope's own keys
+    (`_owned_on_first_page`), so a census that runs before the step reports "at
+    least" that many rather than listing the whole namespace. With no bucket
+    configured there are none to count (a row naming one fails the step itself)."""
+    bucket = settings.document_s3_bucket
+    if not bucket:
+        return 0
+    left = 0
+    for n in namespaces_of(scope_value):
+        left += await _owned_on_first_page(bucket, org, n)
+    return left
+
+
+async def _owned_on_first_page(bucket: str, org: str, namespace: str) -> int:
+    """The scope's own keys on the first listing page under its prefix that holds
+    any: after a prefix change another scope's keys can fill the pages before them."""
+    after = ""
+    while True:
+        page = await object_store.list_page(
+            bucket, object_store.namespace_prefix(org, namespace), start_after=after
+        )
+        owned = sum(1 for o in page.objects if object_store.in_namespaces(o.key, org, {namespace}))
+        if owned or not page.more or not page.objects:
+            return owned
+        after = page.objects[-1].key

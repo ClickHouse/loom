@@ -15,27 +15,43 @@ from server.knowledge.store import blobs
 class _CH:
     def __init__(self) -> None:
         self.rows: dict[tuple[str, str, str], bytes] = {}
+        self.locations: dict[tuple[str, str, str], str] = {}
         self.inserts: list[dict[str, Any]] = []
         self.seen: list[tuple[str, dict[str, Any]]] = []
         self.uploads_deleted: list[str] = []
+        self.sizes: dict[tuple[str, str, str], int] = {}
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         assert table == "loom.document_blobs" and settings == {"async_insert": 0}
         for r in rows:
             self.inserts.append(r)
-            self.rows[(r["org"], r["namespace"], r["sha256"])] = r["data"]
+            key = (r["org"], r["namespace"], r["sha256"])
+            self.rows[key] = r["data"]
+            self.locations[key] = r["location"]
+            self.sizes[key] = r["size"]
 
     async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
         self.seen.append((sql, params))
         if "AS cutoff_ms" in sql:  # the ClickHouse clock, less the age
             return {"cutoff_ms": 1_000_000 - params["age"] * 1000}
-        data = self.rows.get((params["org"], params["ns"], params["sha"]))
-        return None if data is None else {"size": len(data)}
+        key = (params["org"], params["ns"], params["sha"])
+        if key not in self.rows:
+            return None
+        return {
+            "size": self.sizes.get(key, len(self.rows[key])),
+            "location": self.locations.get(key, ""),
+        }
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         self.seen.append((sql, params))
         assert "DISTINCT" in sql and "FROM loom.document_blobs" in sql
-        return [{"sha": s} for s in params["shas"] if (params["org"], params["ns"], s) in self.rows]
+        if sql.startswith("SELECT DISTINCT location"):  # rows naming objects: none here
+            return []
+        return [
+            {"sha": s, "location": self.locations.get((params["org"], params["ns"], s), "")}
+            for s in params["shas"]
+            if (params["org"], params["ns"], s) in self.rows
+        ]
 
     async def execute(self, sql: str, params: dict[str, Any]) -> None:
         self.seen.append((sql, params))
@@ -67,17 +83,17 @@ def test_put_stream_delete_round_trips_binary_bytes() -> None:
     ch = _CH()
     raw = bytes(range(256)) * 3
 
-    async def go() -> tuple[str, int | None, bytes, int, int | None]:
+    async def go() -> tuple[str, blobs.Stored | None, bytes, int, blobs.Stored | None]:
         sha = await blobs.put("o", "ns", raw, ch=ch)
-        size = await blobs.size("o", "ns", sha, ch=ch)
-        async with blobs.stream("o", "ns", sha, ch=ch) as chunks:
+        stored = await blobs.locate("o", "ns", sha, ch=ch)
+        async with blobs.stream("o", "ns", sha, stored=stored, ch=ch) as chunks:
             got = b"".join([c async for c in chunks])
-        n = await blobs.delete("o", "ns", [sha, sha], ch=ch)
-        return sha, size, got, n, await blobs.size("o", "ns", sha, ch=ch)
+        n = (await blobs.delete("o", "ns", [sha, sha], ch=ch)).gone
+        return sha, stored, got, n, await blobs.locate("o", "ns", sha, ch=ch)
 
-    sha, size, got, n, gone = asyncio.run(go())
+    sha, stored, got, n, gone = asyncio.run(go())
     assert sha == hashlib.sha256(raw).hexdigest()
-    assert size == len(raw) and got == raw and n == 1 and gone is None
+    assert stored == blobs.Stored(len(raw), "") and got == raw and n == 1 and gone is None
     assert ch.uploads_deleted == [sha], "who uploaded it goes with it"
     assert ch.inserts[0]["size"] == len(raw)
     stream_sql = next(sql for sql, _ in ch.seen if "RawBLOB" in sql)
@@ -88,15 +104,19 @@ def test_read_returns_the_whole_original_or_nothing() -> None:
     ch = _CH()
     raw = bytes(range(256))
     sha = asyncio.run(blobs.put("o", "ns", raw, ch=ch))
-    assert asyncio.run(blobs.read("o", "ns", sha, ch=ch)) == raw
-    assert asyncio.run(blobs.read("o", "other", sha, ch=ch)) == b""
-    assert ch.seen[-1][0].endswith("LIMIT 1 FORMAT RawBLOB")
+    stored = asyncio.run(blobs.locate("o", "ns", sha, ch=ch))
+    assert asyncio.run(blobs.read("o", "ns", sha, stored=stored, ch=ch)) == raw
+    assert asyncio.run(blobs.locate("o", "other", sha, ch=ch)) is None
+    raw_reads = [sql for sql, _ in ch.seen if "RawBLOB" in sql]
+    assert len(raw_reads) == 1 and raw_reads[0].endswith("LIMIT 1 FORMAT RawBLOB"), (
+        "a namespace with no row is not read for data"
+    )
 
 
 def test_an_original_is_read_only_in_its_own_namespace() -> None:
     ch = _CH()
     sha = asyncio.run(blobs.put("o", "ns", b"x", ch=ch))
-    assert asyncio.run(blobs.size("o", "other", sha, ch=ch)) is None
+    assert asyncio.run(blobs.locate("o", "other", sha, ch=ch)) is None
 
 
 def test_a_delete_with_a_min_age_spares_a_fresh_row_and_counts_what_went() -> None:
@@ -110,13 +130,19 @@ def test_a_delete_with_a_min_age_spares_a_fresh_row_and_counts_what_went() -> No
         ch.seen.append((sql, params))  # the restamped row survives the aged delete
 
     ch.execute = spare  # type: ignore[method-assign]
-    assert asyncio.run(blobs.delete("o", "ns", ["a"], min_age_s=3600, ch=ch)) == 0
-    (clock, _), (aged, p) = ch.seen[:2]
+    assert asyncio.run(blobs.delete("o", "ns", ["a"], min_age_s=3600, ch=ch)).gone == 0
+    ((clock, _),) = [(sql, p) for sql, p in ch.seen if "AS cutoff_ms" in sql]
+    ((aged, p),) = [
+        (sql, p) for sql, p in ch.seen if sql.startswith("DELETE FROM loom.document_blobs")
+    ]
     assert "now64(3)" in clock and "now64" not in aged  # a replicated table refuses it
     assert "created_at < fromUnixTimestamp64Milli({cutoff_ms:Int64})" in aged
     assert p["cutoff_ms"] == 1_000_000 - 3_600_000
+    assert "location = ''" in aged and "mine" not in p, (
+        "no bucket: only rows of the ClickHouse store"
+    )
     assert not any("blob_uploads" in sql for sql, _ in ch.seen), "a spared one keeps its record"
-    assert asyncio.run(blobs.delete("o", "ns", [], min_age_s=3600, ch=ch)) == 0
+    assert asyncio.run(blobs.delete("o", "ns", [], min_age_s=3600, ch=ch)).gone == 0
 
 
 def test_unreferenced_is_one_namespace_after_a_cursor() -> None:
@@ -139,3 +165,27 @@ def test_unreferenced_is_one_namespace_after_a_cursor() -> None:
 
     assert LIVE_ORIGINAL_SQL in sql
     assert seen["params"] == {"org": "o", "ns": "ns", "after": "0" * 64, "age": 60, "lim": 10}
+
+
+def test_upload_records_are_forgotten_a_bounded_number_of_keys_per_statement() -> None:
+    sent: list[int] = []
+
+    class _Recorder:
+        async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any]:
+            return {"cutoff_ms": 0}
+
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            return []  # no row holds any of the keys
+
+        async def execute(self, sql: str, params: dict[str, Any]) -> None:
+            assert sql.startswith("DELETE FROM loom.blob_uploads")
+            sent.append(len(params["keys"]))
+
+    from server.core.ch_params import chunks
+
+    keys = [("o", "ns", f"{i:064x}") for i in range(2000)]  # more than one parameter carries
+    asyncio.run(blobs.forget_uploads(keys, 3600, ch=_Recorder()))
+    assert sent == [len(c) for c in chunks(keys)] and len(sent) > 1 and sum(sent) == len(keys)
+    before = len(sent)
+    asyncio.run(blobs.forget_uploads([], 3600, ch=_Recorder()))
+    assert len(sent) == before, "no keys, no statement"

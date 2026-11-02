@@ -136,10 +136,11 @@ class ErasureRequestOutput(BaseModel):
     requested_at: datetime
     # When the saga reached its terminal state (UTC); `None` while it runs.
     completed_at: datetime | None = None
-    # Verified forgetting: live rows the post-erasure census
-    # still found in scope, per substrate; 0 / {} on a completed saga.
+    # Verified forgetting: live rows and bucket objects the post-erasure
+    # census still found in scope, per substrate; 0 / {} on a completed saga.
     residue_count: int = 0
-    # Rows still live per table after the saga, only tables with a non-zero count; `{}` on success.
+    # Rows still live per table after the saga, only tables with a non-zero count, and bucket
+    # objects left under `objects.document_originals`; `{}` on success.
     residue: dict[str, int] = Field(default_factory=dict)
     # When the residue census ran (UTC); `None` if it never ran.
     verified_at: datetime | None = None
@@ -185,7 +186,8 @@ class ErasureStatusOutput(BaseModel):
     failure_reason: str | None = None
     # Verified forgetting.
     residue_count: int = 0
-    # Rows still live per table at the last census; `{}` when none.
+    # Rows still live per table at the last census, and bucket objects left under
+    # `objects.document_originals`; `{}` when none.
     residue: dict[str, int] = Field(default_factory=dict)
     # When the last residue census ran (UTC); `None` if it has not run.
     verified_at: datetime | None = None

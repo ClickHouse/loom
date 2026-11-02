@@ -55,6 +55,7 @@ CORE_IO = (
     "server.core.hosts",
     "server.core.webhooks",
     "server.core.leases",
+    "server.core.object_store",
 )
 
 

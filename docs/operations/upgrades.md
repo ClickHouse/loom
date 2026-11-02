@@ -1,7 +1,8 @@
 # Upgrades
 
 An upgrade replaces the image and applies the migrations the new build carries. No other
-state moves: everything durable is in ClickHouse, and the code mirrors are mounted
+state moves: everything durable is in ClickHouse (and in the document bucket, for
+originals written with `LOOM_DOCUMENT_OBJECT_STORE=s3`), and the code mirrors are mounted
 unchanged. This page is the
 operator side. How a client sees unknown and removed fields is in the
 [HTTP API reference](../reference/http-api.md#unknown-and-removed-fields).
@@ -94,7 +95,9 @@ checkout.
 8. Turn on a feature the previous build cannot honour only once every replica runs
    the new build: `memory_extract_agent_learnings`, since the previous build does not
    erase `loom.learnings_supporters`
-   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 23).
+   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 23); and
+   `LOOM_DOCUMENT_OBJECT_STORE=s3`, since the previous build reads a bucket row's empty
+   `data` and answers its download `410 BLOB_GONE` (rule 9).
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
@@ -117,6 +120,10 @@ After a rollback to a build without bot token maximums, every bot's tokens last 
 and a bot that build saves keeps 3600 as its maximum; reapply a shorter or longer one
 once the newer build serves
 ([rolling upgrades](../architecture/rolling-upgrades.md), rule 26).
+Do not roll back past the build that adds the document bucket while any catalog row
+names an object in it: an older build answers those downloads `410 BLOB_GONE`, its
+erasure deletes the rows and cannot reach their objects, and its sweep never walks the
+bucket ([where originals are stored](../features/knowledge.md#where-originals-are-stored)).
 There is no migration to undo: the previous build reads and writes the newer schema.
 Its version writes to `loom.memory` and the other `ReplacingMergeTree` memory tables
 keep the columns it does not know
@@ -146,12 +153,12 @@ back on both, restore a backup taken before the upgrade.
 
 ## What stays the same across an upgrade
 
-| Across an upgrade                           | What holds                                                                        | Enforced by                               |
-| ------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------- |
-| The previous build against the new schema   | keeps reading and writing every table it knew, so a rollback needs no schema step | `tests/unit/test_migrations_additive.py`  |
-| An applied migration file                   | never edited or deleted; a correction is a new file                               | the ledger checksum; `--dry-run --strict` |
-| A client sending a field the server dropped | served; the field is named in `ignored_args`                                      | `server/transport/arg_check.py`           |
-| The previous and new build serving together | each reads what the other wrote, new columns included                             | `make test-mixed-version`                 |
+| Across an upgrade                           | What holds                                                                                                          | Enforced by                               |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| The previous build against the new schema   | keeps reading and writing every table it knew, so a rollback needs no schema step                                   | `tests/unit/test_migrations_additive.py`  |
+| An applied migration file                   | never edited or deleted; a correction is a new file                                                                 | the ledger checksum; `--dry-run --strict` |
+| A client sending a field the server dropped | served; the field is named in `ignored_args`                                                                        | `server/transport/arg_check.py`           |
+| The previous and new build serving together | each reads what the other wrote, new columns included, except a feature switched on only after the rollout (step 8) | `make test-mixed-version`                 |
 
 An upgrade can change or remove operations and fields. Check what a deployment serves
 with the capability catalogue

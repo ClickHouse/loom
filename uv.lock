@@ -798,8 +798,8 @@ scip = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
     { name = "argon2-cffi", specifier = ">=23.1" },
-    { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.35.2" },
-    { name = "boto3", marker = "extra == 'ingest'", specifier = ">=1.34" },
+    { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.36" },
+    { name = "boto3", marker = "extra == 'ingest'", specifier = ">=1.36" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "clickhouse-connect", specifier = ">=1.7" },
     { name = "clickhouse-loom-server", extras = ["aws"], marker = "extra == 'dev'" },

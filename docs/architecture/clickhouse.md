@@ -56,15 +56,20 @@ migrating user `CURRENT GRANTS ON loom_telemetry.*`, and preflight names that gr
 it is missing.
 
 **State outside ClickHouse.** Uploaded document originals are rows of `document_blobs`,
-addressed per namespace by SHA-256 (`server/knowledge/store/blobs.py`). The token signing
-keys (`signing_keys`), admin runtime overrides of rate limits, latency budgets and live
-settings (`runtime_overrides`), sign-in attempt
-counts (`auth_attempts`), graph-walk marks (`graph_projections`: the projections in flight
-and each namespace's last graph write), each namespace's last write (`namespace_write_keys`) and the supervisor lease are in ClickHouse too, so a new
-Loom pointed at this database gets every feature back. On the filesystem: the code plane's git mirrors under `var/code_repos`, a cache of
-the remotes ClickHouse records that a host without them re-clones. The root secret `LOOM_JWT_SECRET`,
-which seals the signing keys and stored credentials, is in the env. Process caches and
-file locks are listed in [system overview](system-overview.md#deployment-topology).
+addressed per namespace by SHA-256 (`server/knowledge/store/blobs.py`); with
+`LOOM_DOCUMENT_OBJECT_STORE=s3` each row is the catalog entry of an object in an
+S3-compatible bucket, which holds the bytes
+([knowledge](../features/knowledge.md#where-originals-are-stored)). The token signing keys
+(`signing_keys`), admin runtime overrides of rate limits, latency budgets and live
+settings (`runtime_overrides`), sign-in attempt counts (`auth_attempts`), graph-walk marks
+(`graph_projections`: the projections in flight and each namespace's last graph write),
+each namespace's last write (`namespace_write_keys`) and the supervisor lease are in
+ClickHouse too, so a new Loom pointed at this database, and the document bucket while rows
+name objects in it, gets every feature back. On the filesystem: the code plane's git
+mirrors under `var/code_repos`, a cache of the remotes ClickHouse records that a host
+without them re-clones. The root secret `LOOM_JWT_SECRET`, which seals the signing keys
+and stored credentials, is in the env. Process caches and file locks are listed in
+[system overview](system-overview.md#deployment-topology).
 
 ## Conventions every table follows
 
@@ -789,11 +794,12 @@ and `insert_quorum_parallel = 0`, which ClickHouse refuses for async inserts (an
 serializes every insert into a table), so a read on one replica can still miss a row
 another replica acknowledged a moment ago. The guarantees built on it, the sign-in attempt
 recounts, the single signing-key retire, `task.create`'s idempotency key (a retry finds
-the task the first call stored) and the single `code.coverage.ready` event among them,
-hold exactly on Cloud and a single server. A self-hosted replicated cluster must send
-every Loom process to one replica; `loom doctor`'s `replica_consistency` line warns while
-`loom.auth_attempts`, `loom.signing_keys`, `loom.tasks` or `loom.task_events` has more
-than one.
+the task the first call stored), the single `code.coverage.ready` event, and the document
+bucket's walk and user erasure among them, hold exactly on Cloud and a single server. A
+self-hosted replicated cluster must send every Loom process to one replica; `loom
+doctor`'s `replica_consistency` line warns while `loom.auth_attempts`,
+`loom.signing_keys`, `loom.tasks`, `loom.task_events`, `loom.document_blobs` or
+`loom.blob_uploads` has more than one.
 
 **Keeper reads.** The Keeper keys that carry state between replicas (the namespace write
 keys, graph projections and writes, claims and leases) are read through each replica's own

@@ -518,6 +518,18 @@ jobs:
           echo "control plane never became healthy"
           tail -100 server.log
           exit 1
+      # A local S3-compatible store for the document object-store tests
+      # (tests/integration/test_document_object_store_live.py).
+      - name: Start a local S3-compatible store
+        run: |
+          docker run -d --name loom-ci-s3 -p 127.0.0.1:5000:5000 \
+            motoserver/moto@sha256:32d7805d8bd4c81db789c4fff2c36f96a8837cbd8e7a3853116b6516b9490dde
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:5000/ >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:5000/ >/dev/null
+          echo "LOOM_TEST_S3_ENDPOINT=http://127.0.0.1:5000" >> "$GITHUB_ENV"
       # The whole directory on every pull request; no test is slow enough to
       # justify a separate merge-only tier.
       - name: pytest

@@ -1621,9 +1621,17 @@ Storage: document originals, per-table retention and warm-tier moves.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_DOCUMENT_BLOB_GC_ENABLED` | `bool` | `True` |  | The sweep that deletes originals no live document points at: those of deleted and re-uploaded documents, and of documents that retention (retention_documents_days, a namespace's retention_days) aged out, so the bytes leave with their rows. |
+| `LOOM_DOCUMENT_BLOB_GC_ENABLED` | `bool` | `True` |  | The sweep that deletes originals no live document points at: those of deleted and re-uploaded documents, and of documents that retention (retention_documents_days, a namespace's retention_days) aged out. Their bucket objects go with them; a walk of the bucket deletes any object left. |
+| `LOOM_DOCUMENT_BLOB_GC_OBJECT_PAGES` | `int` | `20` |  | Pages of 1,000 bucket keys the sweep's walk reads a pass, from where the last stopped: one walk takes a pass per this many thousand keys. |
 | `LOOM_DOCUMENT_BLOB_GC_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between document-original GC sweeps. |
-| `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS` | `int` | `3600` |  | Seconds an original must have gone unwritten before the sweep may remove it. A write stores its original before the document row that names it, so a younger original may belong to a write still in flight. Erasure ignores it and deletes every original of its scope. |
+| `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS` | `int` | `3600` |  | Seconds an original must have gone unwritten before the sweep may remove it. A write stores its original before the document row that names it, so a younger original may belong to a write still in flight. Erasure ignores it and deletes every original of its scope. With a bucket, the settings refuse one under a minimum: a write's upload budget plus its row insert's retries (906 s at the defaults; a much larger value leaves room for what the minimum does not count), or an unbounded write timeout, read timeout or pool wait. |
+| `LOOM_DOCUMENT_OBJECT_STORE` | `'clickhouse' \| 's3'` | `'clickhouse'` |  | Where a new original's bytes go: `clickhouse` (the row's `data`) or `s3` (an object in document_s3_bucket); an original is read from where its row says. |
+| `LOOM_DOCUMENT_S3_BUCKET` | `str` | `''` |  | The S3-compatible bucket originals are written to, read from and erased from; required with document_object_store=s3 and while any object is left under the prefix. |
+| `LOOM_DOCUMENT_S3_PREFIX` | `str` | `'loom/originals'` |  | Key prefix inside document_s3_bucket; each object is `<prefix>/<org>/<namespace>/<sha256>/<write id>`. |
+| `LOOM_DOCUMENT_S3_ENDPOINT_URL` | `str` | `''` |  | Endpoint of an S3-compatible store; empty is AWS S3 for document_s3_region. |
+| `LOOM_DOCUMENT_S3_REGION` | `str` | `''` |  | Region of document_s3_bucket; empty takes the credential chain's region. |
+| `LOOM_DOCUMENT_S3_CONNECT_TIMEOUT_S` | `float` | `5.0` |  | Seconds a request to document_s3_bucket may take to connect; past it the request fails as a store error (503). |
+| `LOOM_DOCUMENT_S3_READ_TIMEOUT_S` | `float` | `30.0` |  | Seconds a request to document_s3_bucket may take to answer (a streamed download, per chunk); past it the request fails as a store error (503). |
 
 ### Retention
 

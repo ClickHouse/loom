@@ -43,3 +43,5 @@ def test_the_task_tables_are_checked(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     doctor._doctor_replica_consistency_check(SimpleNamespace())
     assert {"tasks", "task_events"} <= set(asked[0]["tables"])
+    # The document bucket's walk and user erasure rest on it too.
+    assert {"document_blobs", "blob_uploads"} <= set(asked[0]["tables"])

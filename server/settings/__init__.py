@@ -59,6 +59,12 @@ def _named_in(dotenv_settings: PydanticBaseSettingsSource) -> str | None:
     return dotenv_settings.env_vars.get("loom_settings_file") or None
 
 
+# Seconds a document bucket write may take to store its object before the write
+# is refused: the store may date the object from the start of its upload, so the
+# upload counts toward the age the originals sweep reads.
+DOCUMENT_UPLOAD_BUDGET_S = 300  # not a setting: a bound the min-age floor relies on
+
+
 class Settings(
     ClickHouseSettings,
     ProviderSettings,
@@ -151,6 +157,53 @@ class Settings(
         return f"{self.public_base_url.strip().rstrip('/')}/v1"
 
     @model_validator(mode="after")
+    def _check_blob_age_covers_a_write(self) -> Settings:
+        """With a bucket, the originals sweep deletes an object no row names once
+        it is `document_blob_min_age_seconds` old, and a write stores its object
+        before its row insert: the age must outlast that insert, or a slow write
+        loses its bytes to the sweep. This floor is a minimum, not a proof: it
+        counts the insert's retry ladders, not every read and reconnect the client
+        may add, so keep the age well above it (the default is about four times the
+        floor). A ladder is one attempt, then up to `ch_replica_bound_retries` more;
+        the insert runs a describe of the table (a read ladder) and its own write
+        ladder, and both again after a stale column cache. The pool wait
+        (`ch_pool_wait_ms`) is counted on every attempt, an upper bound: a ladder
+        takes its connection slot once. The upload before them counts too, up to
+        DOCUMENT_UPLOAD_BUDGET_S (a slower one is refused), plus a minute for
+        reconnects."""
+        if not self.document_s3_bucket:
+            return self
+        unbounded = [
+            name
+            for name, value in (
+                ("LOOM_CH_TIMEOUT_WRITE_S", self.ch_timeout_write_s),
+                ("LOOM_CH_TIMEOUT_READ_S", self.ch_timeout_read_s),
+                ("LOOM_CH_POOL_WAIT_MS", self.ch_pool_wait_ms),
+            )
+            if value <= 0
+        ]
+        if unbounded:
+            raise ValueError(
+                f"LOOM_DOCUMENT_S3_BUCKET needs a bounded {', '.join(unbounded)}: the originals"
+                " sweep must outwait a write's row insert"
+            )
+        pool_s = self.ch_pool_wait_ms / 1000
+        ladders_s = (1 + self.ch_replica_bound_retries) * (
+            self.ch_timeout_read_s + pool_s + self.ch_timeout_write_s + pool_s
+        )
+        floor = DOCUMENT_UPLOAD_BUDGET_S + 2 * ladders_s + 60
+        if self.document_blob_min_age_seconds < floor:
+            raise ValueError(
+                f"LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS must be at least {floor:.0f} with"
+                f" LOOM_CH_TIMEOUT_WRITE_S={self.ch_timeout_write_s:g},"
+                f" LOOM_CH_TIMEOUT_READ_S={self.ch_timeout_read_s:g},"
+                f" LOOM_CH_POOL_WAIT_MS={self.ch_pool_wait_ms} and"
+                f" LOOM_CH_REPLICA_BOUND_RETRIES={self.ch_replica_bound_retries}: the originals"
+                " sweep must outwait a write's row insert"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _check_code_rerank_behind_the_gateway(self) -> Settings:
         """`builtin:cohere` calls Cohere's own API, and the code reranker fails
         open: while the gateway is required, the default may not name it."""
@@ -219,6 +272,7 @@ def log_unknown_env_keys() -> None:
 __all__ = [
     "BUILTIN_COHERE",
     "DEV_JWT_SECRET",
+    "DOCUMENT_UPLOAD_BUDGET_S",
     "EndUserIssuer",
     "Settings",
     "is_builtin_cohere",

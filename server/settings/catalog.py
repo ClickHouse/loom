@@ -4676,16 +4676,41 @@ class StorageSettings(BaseModel):
     # ---- document originals (loom.document_blobs) ----
     # The sweep that deletes originals no live document points at: those of
     # deleted and re-uploaded documents, and of documents that retention
-    # (retention_documents_days, a namespace's retention_days) aged out, so the
-    # bytes leave with their rows.
+    # (retention_documents_days, a namespace's retention_days) aged out. Their bucket
+    # objects go with them; a walk of the bucket deletes any object left.
     document_blob_gc_enabled: bool = True
+    # Pages of 1,000 bucket keys the sweep's walk reads a pass, from where the last
+    # stopped: one walk takes a pass per this many thousand keys.
+    document_blob_gc_object_pages: int = Field(default=20, ge=1)
     # Seconds between document-original GC sweeps.
     document_blob_gc_interval_seconds: int = 3600
     # Seconds an original must have gone unwritten before the sweep may remove
     # it. A write stores its original before the document row that names it, so
     # a younger original may belong to a write still in flight. Erasure ignores
-    # it and deletes every original of its scope.
+    # it and deletes every original of its scope. With a bucket, the settings refuse
+    # one under a minimum: a write's upload budget plus its row insert's retries
+    # (906 s at the defaults; a much larger value leaves room for what the minimum
+    # does not count), or an unbounded write timeout, read timeout or pool wait.
     document_blob_min_age_seconds: int = 3600
+    # Where a new original's bytes go: `clickhouse` (the row's `data`) or `s3` (an
+    # object in document_s3_bucket); an original is read from where its row says.
+    document_object_store: Literal["clickhouse", "s3"] = "clickhouse"
+    # The S3-compatible bucket originals are written to, read from and erased from;
+    # required with document_object_store=s3 and while any object is left under the prefix.
+    document_s3_bucket: str = ""
+    # Key prefix inside document_s3_bucket; each object is
+    # `<prefix>/<org>/<namespace>/<sha256>/<write id>`.
+    document_s3_prefix: str = "loom/originals"
+    # Endpoint of an S3-compatible store; empty is AWS S3 for document_s3_region.
+    document_s3_endpoint_url: str = ""
+    # Region of document_s3_bucket; empty takes the credential chain's region.
+    document_s3_region: str = ""
+    # Seconds a request to document_s3_bucket may take to connect; past it the request
+    # fails as a store error (503).
+    document_s3_connect_timeout_s: float = Field(default=5.0, gt=0)
+    # Seconds a request to document_s3_bucket may take to answer (a streamed download,
+    # per chunk); past it the request fails as a store error (503).
+    document_s3_read_timeout_s: float = Field(default=30.0, gt=0)
 
     # Opt-in retention, applied as idempotent ALTER TABLE MODIFY TTL by
     # server/storage/retention_overrides.py: a retention_*_days setting deletes a table's
@@ -4747,6 +4772,22 @@ class StorageSettings(BaseModel):
     # Seconds before a failed dashboard-asset publish round is retried, doubling up to
     # `storage_frontend_assets_retry_max_s`.
     storage_frontend_assets_retry_s: Annotated[float, LIVE] = Field(default=2.0, gt=0)
+
+    @model_validator(mode="after")
+    def _check_object_store(self) -> StorageSettings:
+        """An S3 store with no bucket would accept writes it cannot keep."""
+        if self.document_object_store == "s3" and not self.document_s3_bucket:
+            raise ValueError("LOOM_DOCUMENT_OBJECT_STORE=s3 needs LOOM_DOCUMENT_S3_BUCKET")
+        if self.document_s3_bucket != self.document_s3_bucket.strip():
+            raise ValueError("LOOM_DOCUMENT_S3_BUCKET has leading or trailing whitespace")
+        if (
+            self.document_s3_prefix.strip("/") != self.document_s3_prefix
+            or not self.document_s3_prefix
+        ):
+            raise ValueError(
+                "LOOM_DOCUMENT_S3_PREFIX must be non-empty, with no leading or trailing '/'"
+            )
+        return self
 
 
 # ===== Task ===================================================================

@@ -339,11 +339,14 @@ flowchart LR
 - **Server processes hold no durable state.** Cross-replica state (revocations, signing
   keys, runtime overrides, sign-in attempt counts, graph write marks, the supervisor lease,
   erasure checkpoints, the blacklist version, the idempotency cache) and uploaded document
-  originals live in ClickHouse. A new Loom with the same ClickHouse, env config and
-  `LOOM_JWT_SECRET` gets every feature back.
+  originals live in ClickHouse, the bytes of those written with
+  `LOOM_DOCUMENT_OBJECT_STORE=s3` in an S3-compatible bucket instead. A new Loom with the
+  same ClickHouse, env config and `LOOM_JWT_SECRET`, and that bucket while rows name objects
+  in it, gets every feature back.
 - **State outside ClickHouse.** The code plane's git mirrors under `var/code_repos` (a
   cache: a host without them re-clones) and the rate-limit buckets on the `loom-shared`
-  volume. None is the system of record.
+  volume, neither the system of record; and, while any catalog row names an object in it,
+  `LOOM_DOCUMENT_S3_BUCKET`, holding the bytes of those originals.
 - **Two containers, one image.** `dev/docker-compose.cloud.yml` runs `loom-server`
   (`LOOM_BACKGROUND_WORKERS=off`) and `loom-workers` (`auto`: it runs the workers while it
   holds the lease), so a long worker pass never shares an event loop with requests.

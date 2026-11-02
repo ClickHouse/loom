@@ -225,14 +225,6 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         input.namespace,
         input.source_uri,
     )
-    if superseded_count > 0:
-        await knowledge_repo.mark_doc_superseded(
-            input.org,
-            input.namespace,
-            input.source_uri,
-            when=now,
-        )
-
     # Blob handling — three cases:
     #   (a) caller supplied new bytes → write them; the sweep reclaims the
     #       prior blob once no live document names it.
@@ -257,6 +249,15 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
         input, _original_of(prior, author), uploader=uploader
     )
+    # Only once the original is stored: a store that fails or is busy must leave the
+    # current version searchable, not its chunks retired with no new version.
+    if superseded_count > 0:
+        await knowledge_repo.mark_doc_superseded(
+            input.org,
+            input.namespace,
+            input.source_uri,
+            when=now,
+        )
 
     from server.knowledge.store import documents as documents_repo
 

@@ -97,8 +97,9 @@ async def knowledge_download(
     return response
 
 
-# An original up to this size is read whole and the ClickHouse connection freed
-# before the answer is sent; a larger one streams under `ch.STREAM_SLOTS`.
+# An original up to this size is read whole (and a ClickHouse connection freed)
+# before the answer is sent; a larger one streams, from ClickHouse under
+# `ch.STREAM_SLOTS` or from the bucket.
 _BUFFER_MAX_BYTES = 4 * 1024 * 1024
 
 
@@ -109,20 +110,21 @@ async def _original_response(
     from server.knowledge.store import blobs
 
     sha = doc.blob_path
-    size = await blobs.size(org, namespace, sha)
-    if size is None:
+    stored = await blobs.locate(org, namespace, sha)
+    if stored is None:
         return None
+    size = stored.size
     filename = doc.original_filename or doc.source_uri or "document.bin"
     content_type = doc.blob_content_type or "application/octet-stream"
     if size <= _BUFFER_MAX_BYTES:
-        data = await blobs.read(org, namespace, sha)
-        if len(data) != size:
-            return None
+        data = await blobs.read(org, namespace, sha, stored=stored)
+        if data is None:  # missing or short of its size
+            return None  # the route reads once more, then answers 410
         return _download_response(
             data, filename=filename, content_type=content_type, inline=inline, source="blob"
         )
     return await _blob_response(
-        blobs.stream(org, namespace, sha),
+        blobs.stream(org, namespace, sha, stored=stored),
         size,
         filename=filename,
         content_type=content_type,
@@ -225,10 +227,10 @@ async def _blob_response(
     content_type: str,
     inline: bool,
 ) -> StreamingResponse | None:
-    """Stream an original from ClickHouse without holding it in memory. The
-    first chunks are read before the answer starts, so a failed read is a
-    plain error, a row deleted since its size was read is None, and the
-    preview type sees the file's opening bytes; the stream closes when the
+    """Stream an original from ClickHouse or the bucket without holding it in
+    memory. The first chunks are read before the answer starts, so a failed
+    read is a plain error, a row deleted since its size was read is None, and
+    the preview type sees the file's opening bytes; the stream closes when the
     body is sent or the client goes away."""
     stack = AsyncExitStack()
     try:

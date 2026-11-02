@@ -42,10 +42,7 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     "extraction_policies": ("builder", "test_extraction_policy.py"),
     "profile_schemas": ("builder", "test_profile_schema.py"),
     "deployment_config": ("builder", "test_deployment_config.py"),
-    "document_blobs": (
-        "insert_once",
-        "a key is its own bytes' sha256: a re-insert writes the same row",
-    ),
+    "document_blobs": ("builder", "test_document_object_store.py"),
     "runtime_overrides": ("builder", "test_runtime_overrides.py"),
     "signing_keys": ("builder", "test_signing_keyring.py"),
     "carry_acks": ("builder", "test_rmt_carry.py"),

@@ -62,3 +62,26 @@ def test_the_external_timeout_default_is_thirty_seconds() -> None:
     from server.settings import Settings
 
     assert Settings.model_fields["external_erasure_timeout_s"].default == 30.0
+
+
+async def _bucket_down(org, namespace, *, completed, row, verify=None):
+    from server.core.object_store import ObjectStoreError
+
+    async def _boom() -> int:
+        raise ObjectStoreError("object store list failed (SlowDown)", operation="list")
+
+    return [
+        await h._do_step(
+            step_name="documents.tombstone", step_fn=_boom, completed=completed, row=row
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_document_bucket_outage_is_one_warning_line(monkeypatch, caplog) -> None:
+    caplog.set_level(logging.WARNING, logger=h.log.name)
+    out, _, _ = await _run(monkeypatch, saga=_bucket_down)
+    assert out.status == "failed"
+    ours = [r for r in caplog.records if "erasure e1 failed" in r.getMessage()]
+    assert len(ours) == 1 and ours[0].levelno == logging.WARNING and ours[0].exc_info is None
+    assert "documents.tombstone" in ours[0].getMessage()

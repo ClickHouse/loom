@@ -4519,8 +4519,13 @@ settings:
 
   # The sweep that deletes originals no live document points at: those of deleted and
   # re-uploaded documents, and of documents that retention (retention_documents_days, a
-  # namespace's retention_days) aged out, so the bytes leave with their rows. [restart]
+  # namespace's retention_days) aged out. Their bucket objects go with them; a walk of
+  # the bucket deletes any object left. [restart]
   # document_blob_gc_enabled: true
+
+  # Pages of 1,000 bucket keys the sweep's walk reads a pass, from where the last
+  # stopped: one walk takes a pass per this many thousand keys. [restart]
+  # document_blob_gc_object_pages: 20
 
   # Seconds between document-original GC sweeps. [restart]
   # document_blob_gc_interval_seconds: 3600
@@ -4528,8 +4533,39 @@ settings:
   # Seconds an original must have gone unwritten before the sweep may remove it. A write
   # stores its original before the document row that names it, so a younger original may
   # belong to a write still in flight. Erasure ignores it and deletes every original of
-  # its scope. [restart]
+  # its scope. With a bucket, the settings refuse one under a minimum: a write's upload
+  # budget plus its row insert's retries (906 s at the defaults; a much larger value
+  # leaves room for what the minimum does not count), or an unbounded write timeout,
+  # read timeout or pool wait. [restart]
   # document_blob_min_age_seconds: 3600
+
+  # Where a new original's bytes go: `clickhouse` (the row's `data`) or `s3` (an object
+  # in document_s3_bucket); an original is read from where its row says. [restart]
+  # document_object_store: "clickhouse"
+
+  # The S3-compatible bucket originals are written to, read from and erased from;
+  # required with document_object_store=s3 and while any object is left under the
+  # prefix. [restart]
+  # document_s3_bucket: ""
+
+  # Key prefix inside document_s3_bucket; each object is
+  # `<prefix>/<org>/<namespace>/<sha256>/<write id>`. [restart]
+  # document_s3_prefix: "loom/originals"
+
+  # Endpoint of an S3-compatible store; empty is AWS S3 for document_s3_region.
+  # [restart]
+  # document_s3_endpoint_url: ""
+
+  # Region of document_s3_bucket; empty takes the credential chain's region. [restart]
+  # document_s3_region: ""
+
+  # Seconds a request to document_s3_bucket may take to connect; past it the request
+  # fails as a store error (503). [restart]
+  # document_s3_connect_timeout_s: 5.0
+
+  # Seconds a request to document_s3_bucket may take to answer (a streamed download, per
+  # chunk); past it the request fails as a store error (503). [restart]
+  # document_s3_read_timeout_s: 30.0
 
   # --- retention ---
   # Opt-in retention, applied as idempotent ALTER TABLE MODIFY TTL by

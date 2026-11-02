@@ -102,7 +102,13 @@ schema. These rules keep that safe. The operator procedure is in
 8. **Retiring a column or table:** stop using it in N, drop it in N+1 or later.
 9. **No state outside ClickHouse.** Anything a replica must agree on (leases, runs,
    the conflict resolver's queue, the similarity calibration, the frontend bundle of every
-   live build) is in a table, so a request can land on any replica of either build.
+   live build) is in a table, so a request can land on any replica of either build. The
+   one exception is the bytes of document originals with `LOOM_DOCUMENT_OBJECT_STORE=s3`:
+   they live in an S3-compatible bucket that every replica reads the same way, and the
+   catalog row naming each object is in ClickHouse. A build that does not read that row's
+   location answers such a download 410 and cannot erase such an object, so the store is
+   switched on after the rollout, and no rollback goes past this build while rows name
+   objects.
 10. **An exclusion N adds holds only among N's replicas.** `task.create` with an
     idempotency key and the coverage watch's ready-event delivery hold a lease from this
     build on (`insert_created_task`, `insert_ready_event`). One whose lease ran out

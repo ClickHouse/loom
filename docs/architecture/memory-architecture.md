@@ -1214,8 +1214,11 @@ restart resumes. `erasure_recovery` replays sagas stuck `in_progress`; after
 external backends (Langfuse traces and ClickStack rows) are steps
 too and fail the saga closed.
 
-The last step is a residue census over every table the read paths touch. The registry
-is in `server/erasure/store/census.py`:
+The last step is a residue census over every table the read paths touch and, with a
+document bucket configured, the bucket objects left under the erased namespaces
+(`objects.document_originals`, up to one listing page of the scope's own keys per
+namespace); a non-zero count re-opens `documents.tombstone`. The registry is in
+`server/erasure/store/census.py`:
 
 | List                | Holds                                                                                                                                                 |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1226,9 +1229,9 @@ is in `server/erasure/store/census.py`:
 The row links (`entity_triple_rows`, `entity_edge_rows`) carry the row's writer as
 `user_id`, so a user's erasure finds them after the row itself is gone.
 
-The terminal row carries `residue_count`, `residue` (per table) and `verified_at`. A
-resumed saga re-runs the owning step of any table the last census found rows in.
-`purge=true` hard-deletes: lightweight `DELETE FROM` on the tables in
+The terminal row carries `residue_count`, `residue` (per table, and the object count) and
+`verified_at`. A resumed saga re-runs the owning step of any table the last census found
+rows in. `purge=true` hard-deletes: lightweight `DELETE FROM` on the tables in
 `LIGHTWEIGHT_PURGE_TABLES`, `ALTER TABLE … DELETE` on the rest, each mutation tagged and
 polled to completion. `tests/unit/test_every_table_is_classified.py` fails on a table in
 none of the three lists.

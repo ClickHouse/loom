@@ -116,8 +116,9 @@ class GrantBusyError(LoomServerError):
 
 
 class OverloadedError(LoomServerError):
-    """503 — too busy, retry: the ClickHouse pool, an override's lock or a conversation
-    delete or compaction stayed contended. The pool: every pooled connection was busy
+    """503 — too busy, retry: the ClickHouse pool or its streams, the document
+    bucket's transfers or streams, an override's lock or a conversation delete or
+    compaction stayed contended. The pool: every pooled connection was busy
     past `ch_pool_wait_ms`; the lock: a sibling held it past its wait; a conversation
     delete or compaction: writes to the thread's embeddings kept landing. A retry is
     safe; `retry_after_s` is the hint the SDK's retry layer honours."""
@@ -192,7 +193,8 @@ class ModelCallDeferred(ModelCallRefused):
 
 
 class BackendUnavailableError(LoomServerError):
-    """503 — ClickHouse could not be reached after the bounded reconnect.
+    """503 — ClickHouse could not be reached after the bounded reconnect, or
+    the document bucket failed a read, write or delete.
 
     The public message deliberately excludes the driver URL and credentials;
     operators get the concrete connection error from health and server logs.

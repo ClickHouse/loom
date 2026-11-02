@@ -1392,7 +1392,8 @@ CREATE TABLE IF NOT EXISTS loom.document_blobs
     `sha256` FixedString(64),
     `data` String CODEC(ZSTD(3)),
     `size` UInt64,
-    `created_at` DateTime64(3) DEFAULT now64(3)
+    `created_at` DateTime64(3) DEFAULT now64(3),
+    `location` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (org, namespace, sha256)

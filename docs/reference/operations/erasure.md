@@ -77,8 +77,8 @@ GDPR Article 17 forgetting.
 | `steps` | `list[_ErasureStepResult]` | One entry per saga step with the rows it touched; a step done by an earlier attempt reads `rows_affected` 0 and a `skipped` note. |
 | `requested_at` | `datetime` | When the saga was registered (UTC). |
 | `completed_at` | `datetime \| None` | When the saga reached its terminal state (UTC); `None` while it runs. |
-| `residue_count` | `int` | Verified forgetting: live rows the post-erasure census still found in scope, per substrate; 0 / {} on a completed saga. |
-| `residue` | `dict[str, int]` | Rows still live per table after the saga, only tables with a non-zero count; `{}` on success. |
+| `residue_count` | `int` | Verified forgetting: live rows and bucket objects the post-erasure census still found in scope, per substrate; 0 / {} on a completed saga. |
+| `residue` | `dict[str, int]` | Rows still live per table after the saga, only tables with a non-zero count, and bucket objects left under `objects.document_originals`; `{}` on success. |
 | `verified_at` | `datetime \| None` | When the residue census ran (UTC); `None` if it never ran. |
 | `failure_reason` | `str` | A failed saga names the step that failed, and the steps it did complete, so the recovery worker's terminal row and an operator re-verify keep both instead of the attempts count alone. |
 | `steps_completed` | `list[str]` | Names of the steps finished so far, sorted. |
@@ -107,7 +107,7 @@ Check the status of an in-flight erasure request (queued, running, completed, fa
 | `completed_at` | `datetime \| None` | When the saga reached its terminal state (UTC); `None` while in progress. |
 | `failure_reason` | `str \| None` | The failing step and its error for a failed saga; `None` otherwise. |
 | `residue_count` | `int` | Verified forgetting. |
-| `residue` | `dict[str, int]` | Rows still live per table at the last census; `{}` when none. |
+| `residue` | `dict[str, int]` | Rows still live per table at the last census, and bucket objects left under `objects.document_originals`; `{}` when none. |
 | `verified_at` | `datetime \| None` | When the last residue census ran (UTC); `None` if it has not run. |
 
 <!-- prettier-ignore-end -->

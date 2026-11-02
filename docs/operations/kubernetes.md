@@ -130,8 +130,9 @@ helm install loom deploy/helm/loom -n loom -f deploy/helm/loom/values-eks.yaml
       - extract: { key: loom/production } # LOOM_JWT_SECRET, LOOM_CH_PASSWORD, OPENAI_API_KEY
   ```
 
-- **Identity.** The service account carries an IRSA role annotation, for Bedrock or S3
-  backups. With EKS Pod Identity, bind the role to the service account and drop it.
+- **Identity.** The service account carries an IRSA role annotation, for Bedrock, S3
+  backups or the document bucket. With EKS Pod Identity, bind the role to the service
+  account and drop it.
 - **Zones.** Pods spread over zones, then nodes, and still schedule when a zone is short.
   The spread is kept at scheduling only: after a drain two pods can share a zone until
   the next rollout or the descheduler moves one.
