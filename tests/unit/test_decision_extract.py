@@ -1221,18 +1221,34 @@ async def test_the_restatement_search_makes_no_model_call(monkeypatch) -> None:
     assert world.recorded
 
 
-_CUT = (
-    "reply cut at the token limit (4000); lower --window-chars or --max-per-section, or raise "
-    "decision_extract in LOOM_LLM_MAX_TOKENS_OVERRIDES"
-)
+def _cut(cap: int) -> str:
+    return (
+        f"reply cut at the token limit ({cap}); lower --window-chars or --max-per-section, or "
+        "raise decision_extract in LOOM_LLM_MAX_TOKENS_OVERRIDES"
+    )
+
+
+def _cut_client(monkeypatch, stop: str) -> list[int]:
+    """A model that answers a cut-off reply; returns the max_tokens each call asked for."""
+    from server.llm import client as llm_client
+
+    asked: list[int] = []
+
+    class _Cut:
+        async def complete(self, *a: Any, max_tokens: int, **k: Any) -> Any:
+            asked.append(max_tokens)
+            return SimpleNamespace(text='{"decisions": [{"category": "des', stop_reason=stop)
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Cut())
+    return asked
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stop", "reason"),
     [
-        ("length", _CUT),
-        ("max_tokens", _CUT),
+        ("length", _cut(4000)),
+        ("max_tokens", _cut(4000)),
         (
             "content_filter",
             "the model's reply is not the JSON asked for (stop reason: content_filter)",
@@ -1240,17 +1256,23 @@ _CUT = (
     ],
 )
 async def test_a_reply_cut_short_says_why(monkeypatch, stop, reason) -> None:
-    from server.llm import client as llm_client
-
     _World(monkeypatch, [])
-
-    class _Cut:
-        async def complete(self, *a: Any, **k: Any) -> Any:
-            return SimpleNamespace(text='{"decisions": [{"category": "des', stop_reason=stop)
-
-    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Cut())
+    asked = _cut_client(monkeypatch, stop)
     report = await _run()
     assert [d.reason for d in report.dropped] == [reason]
+    assert asked == [4000]
+
+
+@pytest.mark.asyncio
+async def test_a_deployment_cap_reaches_the_call_and_the_cut_reply_names_it(monkeypatch) -> None:
+    from server.settings import settings
+
+    _World(monkeypatch, [])
+    asked = _cut_client(monkeypatch, "length")
+    monkeypatch.setattr(settings, "llm_max_tokens_overrides", '{"decision_extract": 1234}')
+    report = await _run()
+    assert asked == [1234]
+    assert [d.reason for d in report.dropped] == [_cut(1234)]
 
 
 @pytest.mark.asyncio

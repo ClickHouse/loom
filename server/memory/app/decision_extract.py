@@ -214,11 +214,12 @@ async def cites_document(org: str, resource_id: str, namespace: str, source_uri:
     return True
 
 
-def _unread_reply(stop_reason: str) -> str:
-    """Why a model reply could not be read as the candidates' JSON."""
+def _unread_reply(stop_reason: str, cap: int) -> str:
+    """Why a model reply could not be read as the candidates' JSON; `cap` is the call's
+    max_tokens."""
     if stop_reason in ("length", "max_tokens"):
         return (
-            f"reply cut at the token limit ({llm_max_tokens('decision_extract')}); lower "
+            f"reply cut at the token limit ({cap}); lower "
             "--window-chars or --max-per-section, or raise decision_extract in "
             "LOOM_LLM_MAX_TOKENS_OVERRIDES"
         )
@@ -437,12 +438,14 @@ async def _read_window(
         else:
             report.dropped.append(Dropped(section, reason, refused=True))
 
+    # Read once: the override is live, and a cut reply names the cap this call used.
+    cap = llm_max_tokens("decision_extract")
     try:
         with llm_stage("decision_extract"):
             res = await llm.complete(
                 system,
                 user,
-                max_tokens=llm_max_tokens("decision_extract"),
+                max_tokens=cap,
                 response_format={"type": "json_object"},
             )
     except (httpx.HTTPError, TimeoutError, LoomServerError) as e:
@@ -455,7 +458,7 @@ async def _read_window(
         return None
     cands = dx.parse_candidates(strip_code_fence(res.text))
     if cands is None:
-        lost(_unread_reply(res.stop_reason))
+        lost(_unread_reply(res.stop_reason, cap))
     return cands
 
 

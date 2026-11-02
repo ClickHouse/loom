@@ -511,10 +511,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   run read it is reported as such, a race the next run settles. Either way the run goes on with the next candidate and
   the retire step.
 - **Limits**: `--max-per-section` is at least 1 and `--window-chars` at least 500; a smaller value is refused. A reply
-  cut at the model's token limit is reported as such, with the advice to lower either or raise `decision_extract` in
-  `LOOM_LLM_MAX_TOKENS_OVERRIDES` (default 4000); a window's first model call, or its second after an empty reply,
-  that fails (a provider error, a timeout) loses that window only; a failed second read for a joined reason loses
-  nothing, its first reply's decisions recorded.
+  cut at the model's token limit is reported with the cap it hit (`decision_extract`, 4000 unless
+  `LOOM_LLM_MAX_TOKENS_OVERRIDES` sets it) and the advice to lower either flag or raise that entry; a window's first
+  model call, or its second after an empty reply, that fails (a provider error, a timeout) loses that window only; a
+  failed second read for a joined reason loses nothing, its first reply's decisions recorded.
 - **Model and exit code**: the run refuses before any model call when it would read the document with the fake model,
   whose decisions pass the verbatim check by construction: a keyed provider (`LOOM_LLM_PROVIDER=openai` or `anthropic`)
   with no API key set, or no provider configured at all. `LOOM_LLM_PROVIDER=fake` set explicitly runs on it on purpose.
