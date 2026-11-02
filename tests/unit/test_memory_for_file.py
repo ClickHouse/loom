@@ -321,7 +321,7 @@ def test_a_row_too_long_for_the_budget_does_not_hide_the_rows_after_it() -> None
 
 
 def test_a_block_that_fits_whole_reserves_nothing() -> None:
-    # 100 and 30 characters: the block fits in 194 of 200, so nothing is cut or reordered.
+    # 100 and 30 characters: the block fits in 194 of 200, so nothing is reserved or cut.
     hits = [_row("k0", json.dumps("a" * 94)), _row("k1", json.dumps("b" * 24))]
     text, tokens, truncated = mff.render_block("src/a.cpp", hits, 50, home="me")
     assert truncated is False and tokens <= 50
