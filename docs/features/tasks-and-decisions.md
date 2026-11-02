@@ -382,7 +382,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   `files`, several or none add nothing. When the code index cannot be read for a name, a decision already recorded
   keeps the files its row has, and a new one is written with the files that did resolve. Pull request numbers and
   setting names are printed as unresolved in a dry run, for a human to add; a backticked snake_case name is looked up
-  first and reported as a setting only when the index does not define it.
+  first and reported as a setting only when the index does not define it. A name defined in several files is printed
+  as unresolved too, for a human to pick the file.
 - **Reconcile**: the document says otherwise only when a verbatim field differs: the reasoning, or the set of rejected
   options' reasons, each matched as a prefix where `decision.record` cut a long alternative at its 300-character cap.
   The category, scenario, outcome and option wording are the model's, and a change there alone is no change. A row

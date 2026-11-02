@@ -1565,3 +1565,26 @@ def test_a_non_integer_cap_is_refused_with_a_reason(capsys) -> None:
     with pytest.raises(SystemExit):
         parser.parse_args([*base, "--max-per-section", "three"])
     assert "must be an integer, at least 1" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_a_backticked_name_defined_in_two_files_is_no_setting(monkeypatch) -> None:
+    c = _candidate(mentions=["handle_decision_record"])
+    world = _World(monkeypatch, [c])
+    from server.knowledge.app import document_reads
+
+    body = BODY + " `handle_decision_record` writes it."
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, body, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    world.symbols["handle_decision_record"] = [
+        ("server/memory/app/decision.py", "handle_decision_record"),
+        ("server/legacy/decision.py", "handle_decision_record"),
+    ]
+    report = await _run(dry_run=True)
+    (rec,) = report.records
+    assert rec.signals == ["handle_decision_record: qualified, no single definition"]
+    assert rec.unresolved == ["handle_decision_record (several definitions)"]
+    assert rec.body["files"] == []

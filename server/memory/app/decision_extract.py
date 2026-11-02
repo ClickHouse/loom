@@ -607,30 +607,33 @@ async def resolve_mentions(
     files: list[str] = []
     signals: list[str] = []
     complete = True
-    unresolved_settings: list[str] = []
+    unresolved = [f"{name} ({kind})" for name, kind in mentions.unresolved]
     for name, signal in mentions.symbols:
-        path = await symbol_path(org, namespace, name)
-        if path is None:
+        definitions = await symbol_definitions(org, namespace, name)
+        path = dx.definition_path(definitions or [])
+        if definitions is None:
             complete = False
             signals.append(f"{name}: {signal}, unknown (code index unavailable)")
         elif path:
             signals.append(f"{name}: {signal}, exact -> {path}")
             if path not in files:
                 files.append(path)
+        elif definitions:
+            # Defined in several files: code all the same, for a human to pick the file.
+            unresolved.append(f"{name} (several definitions)")
+            signals.append(f"{name}: {signal}, no single definition")
         elif dx.looks_like_setting(name):
             # A backticked snake_case name the index does not define: likely a setting.
-            unresolved_settings.append(name)
+            unresolved.append(f"{name} (setting)")
             signals.append(f"{name}: {signal}, no definition; reported as a setting")
         else:
-            signals.append(f"{name}: {signal}, no single definition")
-    unresolved = [f"{name} ({kind})" for name, kind in mentions.unresolved]
-    unresolved += [f"{name} (setting)" for name in unresolved_settings]
+            signals.append(f"{name}: {signal}, no definition")
     return files, signals, unresolved, complete
 
 
-async def symbol_path(org: str, namespace: str, name: str) -> str | None:
-    """The one file defining `name` in the namespace's code index, '' when none or
-    several do, None when the index could not be read."""
+async def symbol_definitions(org: str, namespace: str, name: str) -> list[tuple[str, str]] | None:
+    """The (path, qualified name) definitions of `name` in the namespace's code index,
+    [] when none, None when the index could not be read."""
     from server.code.api.models_symbol import CodeSymbolInput
     from server.code.app.symbol import handle_code_symbol
 
@@ -650,7 +653,7 @@ async def symbol_path(org: str, namespace: str, name: str) -> str | None:
     except Exception as e:  # noqa: BLE001 — a lookup failure leaves the file out, never the record
         log.warning("decisions extract: code.symbol %s failed: %s", name, e)
         return None
-    return dx.definition_path([(u.path, u.symbol) for u in out.definitions])
+    return [(u.path, u.symbol) for u in out.definitions]
 
 
 async def _clear_if_tagged(rec: RecordReport, row: MemoryRow, dry_run: bool) -> None:
