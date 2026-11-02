@@ -1107,8 +1107,8 @@ async def _retire(
 
 def _reasoning_key(reasoning: str) -> str:
     """A reasoning as the retire step compares it with this run's: whitespace and case
-    aside, as `find_span` reads it, so a case-only change in the document under a
-    reworded scenario still names its heir."""
+    aside, so a case-only change in the document under a reworded scenario still names
+    its heir."""
     return collapse_ws(reasoning).casefold()
 
 

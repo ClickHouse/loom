@@ -270,15 +270,19 @@ _H = r"[^\S\n]"
 _LABEL_LINE = rf"{_H}*\S+(?:{_H}+\S+){{0,2}}{_H}*\n"
 _BLANK_LINES = rf"(?:{_H}*\n)*"
 # Between two words of a span: a line break, one to three label lines, blank lines
-# around them, then the next word on its own line. The lines read across are a group,
-# which `_only_labels` checks.
-_LABEL_GAP = rf"{_H}*\n({_BLANK_LINES}(?:{_LABEL_LINE}{_BLANK_LINES}){{1,{LABEL_LINES_MAX}}}){_H}*"
+# around them, then the next word on its own line. As few label lines as reach the next
+# word: a later line reading as it is not taken for a label. The lines read across are
+# a group, which `_only_labels` checks.
+_LABEL_GAP = rf"{_H}*\n({_BLANK_LINES}(?:{_LABEL_LINE}{_BLANK_LINES}){{1,{LABEL_LINES_MAX}}}?){_H}*"
 # A short line that is still no label: one that starts as a list item, a fence or code,
-# a table row, a heading, a quote or a definition (the document's structure), or one
-# that holds a ban or a negation word: skipping `not` would read "Retries are\nnot\nsafe"
-# as "Retries are safe".
+# a table row, a heading or its underline (`===`, `---`), an HTML tag, a quote or a
+# definition (the document's structure); one that ends a sentence, as the last line of
+# a wrapped paragraph does; or one that holds a ban or a negation word: skipping `not`
+# would read "Retries are\nnot\nsafe" as "Retries are safe".
 _NOT_A_LABEL = re.compile(
-    rf"^(?:[-*+`~|#>:]|\d+[.)])|\b(?:{_BAN_WORDS}|{_NEGATION_WORDS})\b|n['’]t\b", re.I
+    rf"^(?:[-*+`~|#>:=<]|\d+[.)])|[.!?;。！？；]$"
+    rf"|\b(?:{_BAN_WORDS}|{_NEGATION_WORDS})\b|n['’]t\b",
+    re.I,
 )
 
 
@@ -293,19 +297,23 @@ def find_span(span: str, texts: Sequence[str]) -> str:
     between two words. A model copying a span drops line breaks and doubled spaces,
     capitalises a sentence's first word, and skips the labels a converted slide puts
     inside a sentence. What is returned is the text's, labels included, so it is always
-    a substring of the text."""
+    a substring of the text.
+
+    Not found: a span whose next word is also the first word of a label line before it
+    ("The proxy" over "the nearest replica"). Each gap commits to the first reading that
+    reaches its next word, and a match whose labels include a line that is no label is
+    dropped for the next start; a reading only another choice at an earlier gap allows
+    is not tried."""
     words = span.split()
     if not words:
         return ""
     # Each gap and the word after it is atomic: once the next word is found, the gap is
     # not read again another way, so a failed match costs linear time in the span's
     # words, however many lines look like labels. The next word right after the
-    # whitespace is tried first, so a stored span, its labels now words of it, always
-    # finds itself again; a label that reads as the next word ("So" over "so a read")
-    # is taken as that word, and the match fails. A word ends where the document's
-    # does, so `so` never takes the start of a label `Something`; the last word may
-    # still end inside one when nothing else matches, as before: a CJK span has no
-    # spaces to end at.
+    # whitespace is tried first, so a stored span, whose labels are words of it, always
+    # finds itself again. A word ends where the document's does, so `so` never takes
+    # the start of a label `Something`; the last word may still end inside one when
+    # nothing else matches, as before: a CJK span has no spaces to end at.
     parts = [re.escape(words[0])]
     for n, word in enumerate(words[1:], start=2):
         w = re.escape(word)
@@ -317,7 +325,9 @@ def find_span(span: str, texts: Sequence[str]) -> str:
     for text in texts:
         # A match that read across a line that is no label is not the span: the next
         # start is tried. Checked here, not in the pattern, where it costs a scan of
-        # the word lists at every character of every line tried as a label.
+        # the word lists at every character of every line tried as a label. Labels are
+        # as few as reach the next word, so a longer reading of a rejected gap would
+        # hold the same line.
         start = 0
         while m := pattern.search(text, start):
             if all(map(_only_labels, m.groups())):

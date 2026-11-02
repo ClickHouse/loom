@@ -411,21 +411,23 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   and a slide or diagram converted to text puts short labels between a sentence's two halves. A label line is one to
   three words on a line of its own, with a line break before and after it (blank lines around it are read too), that
   does not start as a list item (`-`, `*`, `+`, `1.`, `1)`), a fence or code (`` ` ``, `~`), a table row (`|`), a
-  heading (`#`), a quote (`>`) or a definition (`:`), and holds none of the ban words of a reason-less ban below, nor
-  the contrast words of the inverted-alternatives check, nor a word ending in `n't`: skipping `not` would read
-  "Retries are / not / safe" as "Retries are safe". A fourth label line, a line of four words, a line that is no
-  label, or a label inside a line ends the match. Each word of the span but the last ends where a word of the text
-  ends, so `so` does not take the start of a label `Something`. The word right after the whitespace is read before any
-  label, so a recorded span, its labels now words of it, always reads as itself; a label that reads as the next word
-  ("So" over "so a read") is taken as that word and the span is not found. Chunk texts hold a section's body without
-  its heading line. What is recorded is the chunk's own span, line breaks, case and labels and all, so it stays a
-  substring of the document's text. The reasoning-restates
-  check below reads the model's span, so label words in the document's span add no reason. Each is at least 12
-  characters long, counted on the model's span: a shorter span ("We", "the") is in every document, so a decision
-  resting on it could never retire. At most `--max-per-section` (default 3)
-  are kept per section. A candidate whose category or scenario holds no letter or digit from a-z, 0-9 has no key and is
-  dropped. Of two candidates with one key, or with one outcome and reasoning (overlapping chunks give two windows the
-  same text), the first is kept.
+  heading (`#`) or a heading's underline (`===`, `---`), an HTML tag (`<`), a quote (`>`) or a definition (`:`); that
+  does not end in `.`, `!`, `?` or `;` (or their full-width forms), as the last line of a wrapped paragraph does; and
+  that holds none of the ban words of a reason-less ban below, nor the contrast words of the inverted-alternatives
+  check, nor a word ending in `n't`: skipping `not` would read "Retries are / not / safe" as "Retries are safe". A
+  fourth label line, a line of four words, a line that is no label, or a label inside a line ends the match. Between
+  two words, the fewest label lines that reach the next word are read, so a later line reading as that word is not
+  taken for a label. Each word of the span but the last ends where a word of the text ends, so `so` does not take the
+  start of a label `Something`. The word right after the whitespace is read before any label, so a recorded span, whose
+  labels are words of it, always reads as itself; a label line whose first word reads as the next word ("The proxy"
+  over "the nearest replica") is taken as that word and the span is not found. Chunk texts hold a section's body
+  without its heading line. What is recorded is the chunk's own span, line breaks, case and labels and all, so it
+  stays a substring of the document's text. The reasoning-restates check below reads the model's span, so label words
+  in the document's span add no reason. Each is at least 12 characters long, counted on the model's span: a shorter
+  span ("We", "the") is in every document, so a decision resting on it could never retire. At most
+  `--max-per-section` (default 3) are kept per section. A candidate whose category or scenario holds no letter or digit
+  from a-z, 0-9 has no key and is dropped. Of two candidates with one key, or with one outcome and reasoning
+  (overlapping chunks give two windows the same text), the first is kept.
 - **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
   `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
   punctuation, as their English (Snowball) stems, so `stored` meets `store` and `running` meets `run`. Filler words
@@ -448,8 +450,7 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   short section (an image-only one included) or the next heading above its level. A recap-named section with a longer
   body is dropped by its own heading and covers nothing after it. A heading path that also names a section outside a
   span (two slides with one title) is not covered: a quote is told apart by its heading path only, so the decision is
-  kept. The sections stay in the window, since their text may
-  give a later decision's reason.
+  kept. The sections stay in the window, since their text may give a later decision's reason.
 - **Inverted alternatives**: a rejected option the candidate's own quote, the span of the chosen design, states as part
   of the choice is left out of the record and reported
   (`rejected option '<option>' left out: the quote states it as part of the choice`); the decision is kept. An option is

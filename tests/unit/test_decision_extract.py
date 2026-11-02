@@ -641,15 +641,23 @@ def test_a_span_split_across_two_chunks_is_not_found() -> None:
     assert dx.find_span(REPLICA_SPAN, [first + "Shard A\n", second]) == ""
 
 
-def test_lines_that_all_look_like_labels_cost_linear_time() -> None:
+@pytest.mark.parametrize(
+    ("text", "span"),
+    [
+        # Each line a word of the span or a label: the final word never matches.
+        ("a\nx\n" * 100_000, " ".join(["a"] * 10 + ["b"])),
+        # Every match reads across a `not` line and is rejected, one start at a time.
+        ("a\nnot\n" * 100_000, "a a a"),
+    ],
+)
+def test_lines_that_all_look_like_labels_cost_linear_time(text, span) -> None:
     import time
 
-    # 200,000 lines, each a word of the span or a label: a matcher that tried every way
-    # to read each gap would take exponential time on the final mismatch, and one that
-    # rescanned the text per start, quadratic time.
-    text = "a\nx\n" * 100_000
+    # 200,000 lines: a matcher that tried every way to read each gap would take
+    # exponential time on the final mismatch, and one that rescanned the text per start,
+    # quadratic time.
     started = time.perf_counter()
-    assert dx.find_span(" ".join(["a"] * 10 + ["b"]), [text]) == ""
+    assert dx.find_span(span, [text]) == ""
     assert time.perf_counter() - started < 2
 
 
@@ -673,22 +681,61 @@ def test_a_label_starting_like_the_next_word_is_read_across(text) -> None:
         "don't\n",
         "never twice\n",
         "- a list item\n",
+        "+ a list item\n",
+        "* a list item\n",
         "1. first\n",
+        "1) first\n",
         "```\n",
+        "~~~\n",
         "| a | b |\n",
         "## Heading\n",
         "> quoted\n",
+        ": a definition\n",
+        "===\n",
+        "---\n",
+        "<h2>Shards</h2>\n",
+        "Shards differ.\n",
+        "Why shard?\n",
+        "One copy;\n",
+        "分片。\n",
     ],
 )
-def test_a_line_that_is_structure_or_a_negation_is_no_label(label) -> None:
+def test_a_line_that_is_structure_a_sentence_end_or_a_negation_is_no_label(label) -> None:
     assert dx.find_span(REPLICA_SPAN, [SPLIT.format(labels=label)]) == ""
+
+
+def test_a_negation_line_is_not_skipped() -> None:
     assert dx.find_span("Retries are safe", ["Retries are\nnot\nsafe"]) == ""
 
 
-def test_a_label_that_reads_as_the_next_word_is_taken_as_that_word() -> None:
+def test_a_wrapped_paragraph_end_is_not_read_across() -> None:
+    text = (
+        "We cache plans per tenant because\nplanning is costly.\n\nEach plan expires after an hour."
+    )
+    span = "We cache plans per tenant because each plan expires after an hour."
+    assert dx.find_span(span, [text]) == ""
+
+
+@pytest.mark.parametrize(
+    ("span", "text"),
+    [
+        (REPLICA_SPAN, SPLIT.format(labels="So\n")),
+        (
+            "We route each read to the nearest replica.",
+            "We route each read to\nThe proxy\nthe nearest replica.",
+        ),
+    ],
+)
+def test_a_label_line_whose_first_word_reads_as_the_next_word_ends_the_match(span, text) -> None:
     # The word after the whitespace is tried first, so a stored span finds itself; the
     # cost is this one shape, which is not found.
-    assert dx.find_span(REPLICA_SPAN, [SPLIT.format(labels="So\n")]) == ""
+    assert dx.find_span(span, [text]) == ""
+
+
+def test_the_fewest_label_lines_that_reach_the_next_word_are_read() -> None:
+    # A later "so a read" is not swallowed with the `not` line between as labels.
+    text = "region\nL\nso a read\nnot\nso a read"
+    assert dx.find_span("region so a read", [text]) == "region\nL\nso a read"
 
 
 @pytest.mark.parametrize("labels", ["Shard A\nShard B\n", "Shard\nShard A\n", "So\n"])
@@ -3323,6 +3370,21 @@ async def test_a_ban_copied_in_another_case_is_still_its_whole_quote(monkeypatch
     await _run()
     (inp,) = world.recorded
     assert inp.outcome == inp.reasoning == _BAN
+
+
+@pytest.mark.asyncio
+async def test_a_reasonless_ban_split_by_a_label_keeps_the_label_in_its_outcome(
+    monkeypatch,
+) -> None:
+    # Judged on the model's span, which is the whole quote; recorded as the document's,
+    # so the outcome reads the label word inline, as the statement shows any span.
+    text = "Client-side retries only;\nProxy\nno server retry setting."
+    world = _World(monkeypatch, [_ban(outcome="no server retry setting")])
+    _chunks(monkeypatch, (text, ("Retries",)))
+    await _run()
+    (inp,) = world.recorded
+    assert inp.reasoning == text
+    assert inp.outcome == "Client-side retries only; Proxy no server retry setting."
 
 
 @pytest.mark.asyncio
