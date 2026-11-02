@@ -274,16 +274,17 @@ extra namespace (the repository's code namespace) is headed `Team rule (by <auth
 tag `decision`). A line lists its `constraint`, `gotcha` and `decision` kinds in one
 bracket (`[constraint, decision]`; a line headed `Decision` leaves out `decision`). It
 carries `(pinned)` for a pinned row, `(unconfirmed)` for a decision not pinned or attested
-in its current form (an attestation by its own writer counts; a member of a code namespace
-may not pin a row there, so a pinned team row was pinned by an admin), `(outcome: failed)`
-for a decision whose recorded outcome failed, and a note when its linked code changed or
-went. The value is printed as text, not as the JSON it is stored as, and ends in `…` when
-the read cut it. A decision with a source carries ` — source: <source_resource_id>` after
-its value; the value's cut does not reach it, and the source has its own shorter cap. A
-newer team row the conflict check linked to an older one of its type is placed above it and
-says which it supersedes (`supersedes decision` when the older is tagged `decision`). Two
-typed decisions the check linked each keep their place in the block, with no such note,
-since each decision key is its own decision.
+in its current form (a stale attestation does not count), `(outcome: failed)` for a
+decision whose recorded outcome failed, and a note when its linked code changed or went. A
+pin is the row's own flag: a member of a code namespace can set it on a row they write
+there, so `(pinned)` on a team row is not on its own proof that a maintainer confirmed it.
+The value is printed as text, not as the JSON it is stored as, and ends in `…` when the
+read cut it. A decision with a source carries ` — source: <source_resource_id>` after its
+value; the value's cut does not reach it, and the source has its own shorter cap. A newer
+team row the conflict check linked to an older one of its type is placed above it and says
+which it supersedes (`supersedes decision` when the older is tagged `decision`). Two typed
+decisions the check linked each keep their place in the block, with no such note, since
+each decision key is its own decision.
 
 ## Memories linked to code
 

@@ -405,30 +405,3 @@ async def test_a_row_tagged_decision_is_named_a_decision_with_the_rule_steps(
     assert e.value.detail["message"].startswith(
         "memory.delete: the team decision 'rules/join/bucket_count' was written by alice"
     )
-
-
-@pytest.mark.asyncio
-async def test_a_member_may_not_pin_a_row_of_the_code_namespace(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A pin is how a team decision reads as confirmed in the pre-edit block.
-    from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import write as write_mod
-
-    ch = _wire(monkeypatch, None)
-    await _authorize("bob", "memory.set", "code-clickhouse")
-    with pytest.raises(HTTPException) as e:
-        await write_mod.handle_memory_set(
-            MemorySetInput(
-                org=ORG,
-                namespace="code-clickhouse",
-                agent="claude-code",
-                memory_key="design/spill",
-                memory_type="decision",
-                classify=False,
-                pinned=True,
-                value="Decided to spill.",
-            )
-        )
-    assert e.value.status_code == 403 and "may not pin" in e.value.detail["message"]
-    assert not ch.memory_rows()

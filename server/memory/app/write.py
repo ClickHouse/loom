@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.code.app.member_writes import admitted_as_code_member, assert_own_row
+from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _content_sha256
@@ -92,18 +92,6 @@ def _guard_existing_row(
     the refusal as a verdict instead of raising.
     """
     assert_own_row(existing, op="memory.set")  # a code-namespace member's own rows
-    if input.pinned and admitted_as_code_member():
-        # A pin is how a team row reads as confirmed; a member may not give their own one.
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "AUTH_INSUFFICIENT",
-                "message": (
-                    "memory.set: a member of this code namespace may not pin; write it "
-                    "unpinned and ask a maintainer to memory.pin it"
-                ),
-            },
-        )
     if existing is None:
         return False, None
     existing_sha = getattr(existing, "content_sha256", "") or stored_sha256(existing)
