@@ -112,7 +112,8 @@ class ExtractReport:
     namespace: str
     source_uri: str
     dry_run: bool
-    # Why nothing was extracted: no document, or no chunks for the current embedding model.
+    # Why the run read nothing and retired nothing: no document, no chunks for the current
+    # embedding model, no usable model, or no window read.
     error: str = ""
     windows: int = 0
     records: list[RecordReport] = field(default_factory=list)
@@ -126,8 +127,9 @@ class ExtractReport:
     # Keys tagged (or to tag) `source-changed`: confirmed rows (pinned or attested), and
     # rows with a recorded outcome, whose document now says otherwise.
     flagged: list[str] = field(default_factory=list)
-    # "<key>: refused: <code>" for each write the server refused (a reconcile refusal
-    # also has its `dropped` line, with the section and quote).
+    # "<key>: refused: <code>" for each write the server refused, "<key>: failed: <error>"
+    # for one a provider error stopped (a reconcile one also has its `dropped` line, with
+    # the section and quote).
     refused: list[str] = field(default_factory=list)
     # "<key>: deleted since the run read it" or "<key>: rewritten since the run read it":
     # a write that found its row gone or moved on, a race the next run settles.
@@ -221,11 +223,19 @@ def _no_model_error() -> str:
     return ""
 
 
-def _refusal(e: HTTPException | LoomServerError) -> str:
+# What a write may raise and the run reports per candidate or row: a server refusal, or
+# the embedding provider's own error (memory.set and memory.search embed in-process and
+# let an HTTP error or a timeout through as raised).
+_WRITE_ERRORS = (HTTPException, LoomServerError, httpx.HTTPError, TimeoutError)
+
+
+def _refusal(e: BaseException) -> str:
     if isinstance(e, LoomServerError):
         return f"refused: {e.code}"
-    detail: dict[str, Any] = e.detail if isinstance(e.detail, dict) else {}
-    return f"refused: {detail.get('code') or e.status_code}"
+    if isinstance(e, HTTPException):
+        detail: dict[str, Any] = e.detail if isinstance(e.detail, dict) else {}
+        return f"refused: {detail.get('code') or e.status_code}"
+    return f"failed: {type(e).__name__}"
 
 
 async def extract_document(
@@ -284,7 +294,7 @@ async def extract_document(
     for cand, section, texts in kept:
         try:
             rec = await _reconcile(org, namespace, source_uri, cand, section, texts, dry_run)
-        except (HTTPException, LoomServerError) as e:
+        except _WRITE_ERRORS as e:
             # A blacklisted or newly pinned decision, a busy key, a store that timed out:
             # the other candidates and the retire step still run, and a re-run does not
             # stop at the same place.
@@ -884,7 +894,7 @@ async def _retire(
                 # A row with a recorded outcome is tagged, never deleted, like a pinned one.
                 keep = _confirmed(row) or _has_outcome(record)
                 await _retire_row(report, row, keep=keep)
-        except (HTTPException, LoomServerError) as e:
+        except _WRITE_ERRORS as e:
             report.refused.append(f"{key}: {_refusal(e)}")
 
 

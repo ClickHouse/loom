@@ -59,9 +59,10 @@ def register_decisions_cli(sub: Any) -> None:
         "decision.record as agent loom-decisions. A re-run revises or retires the "
         "extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row "
         "source-changed. "
-        "Dry run by default (still calls the model); --apply writes. Exits 1 when nothing "
-        "was extracted, 2 when the server refused a write (a row changed since the run read it "
-        "is reported, not counted).",
+        "Dry run by default (still calls the model); --apply writes. Exits 1 when it could "
+        "not read the document (no document, no chunks, no usable model, no window read), 2 "
+        "when a write was refused or failed (a row changed since the run read it is reported, "
+        "not counted).",
     )
     p_ext.add_argument("--org", required=True)
     p_ext.add_argument("--namespace", required=True, help="The namespace holding the document")
@@ -102,9 +103,9 @@ def _cmd_extract(args: argparse.Namespace) -> int:
 
 
 def exit_code(report: ExtractReport) -> int:
-    """1 when nothing was extracted (no document, no chunks, no usable model, no window
-    read), 2 when the server refused a write, else 0. A row deleted or rewritten since the
-    run read it is reported, not counted: the next run settles it."""
+    """1 when the run could not read the document (no document, no chunks, no usable model,
+    no window read), 2 when a write was refused or failed, else 0. A row deleted or
+    rewritten since the run read it is reported, not counted: the next run settles it."""
     if report.error:
         return 1
     return 2 if report.refused else 0

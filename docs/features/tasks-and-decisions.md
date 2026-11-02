@@ -432,9 +432,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   By hand, a maintainer drops it with `memory.update_by_id` on the row's `memory_id` with `tags` less
   `source-changed`, or re-records the decision (after `memory.unpin`) or deletes it.
 - **Refusals and races**: a write the server refuses (a blacklisted decision, a row pinned during the run, a busy key,
-  a store timeout) is reported with its code; a write that finds its row deleted or rewritten since the run read it is
-  reported as such, a race the next run settles. Either way the run goes on with the next candidate and the retire
-  step.
+  a store timeout) is reported with its code, and one the embedding provider's error stops (`memory.set` and
+  `memory.search` embed in-process) with the error's name; a write that finds its row deleted or rewritten since the
+  run read it is reported as such, a race the next run settles. Either way the run goes on with the next candidate and
+  the retire step.
 - **Limits**: `--max-per-section` is at least 1 and `--window-chars` at least 500; a smaller value is refused. A reply
   cut at the model's token limit is reported as such, with the advice to lower either; a model call that fails (a
   provider error, a timeout) loses its window only.
@@ -443,17 +444,16 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   `anthropic`) with no API key set, or no provider configured at all. `LOOM_LLM_PROVIDER=fake` set explicitly runs on
   it on purpose. Otherwise a window the fake model answers (a fallback model, `LOOM_LLM_FALLBACK_MODEL`, with no key)
   is dropped as unread. A run whose every model call failed or came back unreadable reads nothing and retires nothing.
-  The command exits 1 when nothing was extracted (no document, no chunks, no usable model, no window read), 2 when the
-  server refused a write, else 0; a race does not change the exit code.
+  The command exits 1 when it could not read the document (no document, no chunks, no usable model, no window read), 2
+  when a write was refused or failed, else 0; a race does not change the exit code.
 
 The reasoning is the verbatim span the retire step reads: the record has no field for the quote. To confirm an
-extracted decision, a maintainer reads its identity with `memory.get` and calls `memory.pin` under it, or attests
-its current value with `memory.verify`. Before an edit,
-`memory.for_file` marks an extracted row `(unconfirmed)` and `(source changed …)` as it does every decision row
-([Decisions](#decisions)). Extracted into a repository's trunk code namespace, the rows also reach `loom_search` from a
-checkout of the repository, as every decision recorded there does
-([unified search](unified-search.md#reading-the-memory-section)); that surface marks no pin state, so an extracted
-row reads there as any decision does until a maintainer confirms or deletes it.
+extracted decision, a maintainer reads its identity with `memory.get` and calls `memory.pin` under it, or attests its
+current value with `memory.verify`. Before an edit, `memory.for_file` marks an extracted row `(unconfirmed)` and
+`(source changed …)` as it does every decision row ([Decisions](#decisions)). Extracted into a repository's trunk code
+namespace, the rows also reach `loom_search` from a checkout of the repository, as every decision recorded there does
+([unified search](unified-search.md#reading-the-memory-section)); that surface marks no pin state, nor whether its
+source changed, so an extracted row reads there as any decision does until a maintainer confirms or deletes it.
 
 ## History policies
 

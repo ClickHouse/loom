@@ -1907,3 +1907,29 @@ async def test_a_run_the_fallback_fake_answered_wholly_reads_nothing(monkeypatch
     report = await _run(window_chars=len(BODY) + 1)
     assert report.error.startswith("no window was read") and cli.exit_code(report) == 1
     assert world.recorded == [] and world.deletes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        "httpx",
+        "timeout",
+    ],
+)
+async def test_an_embedding_provider_error_on_a_write_is_reported(monkeypatch, error) -> None:
+    import httpx
+
+    raised: Exception = (
+        httpx.ConnectError("embedder down") if error == "httpx" else TimeoutError("slow")
+    )
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record("decision:gone", {"reasoning": "gone"})
+    world.refuse_record = raised
+    world.refuse_delete = raised
+    report = await _run()
+    name = type(raised).__name__
+    assert [d.reason for d in report.dropped] == [f"failed: {name}"]
+    assert report.refused == [f"{_key(c)}: failed: {name}", f"decision:gone: failed: {name}"]
+    assert cli.exit_code(report) == 2
