@@ -227,8 +227,9 @@ async def search_sections(
         page=page,
         floor_mode=floor_mode(),
         quality_filter=True,
-        # The memory section is the reader block memory.ask
-        # reads — dated, in ask order, whole excerpts — not key + 200 chars.
+        # The memory section is the reader block memory.ask reads (dated, in ask
+        # order, whole excerpts). It is rebuilt below from the rows kept; this
+        # search's render supplies the reader_instructions.
         render="reader",
     )
     know_input = KnowledgeSearchInput(
