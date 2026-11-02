@@ -230,8 +230,8 @@ export function boundedSignal(signal?: AbortSignal): AbortSignal | undefined {
   }
 }
 
-/** The dashboard's consumer: usage reports leave out a person's reads through it, while a
- *  write the person makes still counts. */
+/** The dashboard's consumer: usage reports leave out a person's reads through it
+ *  (`namespace.audit` and `namespace.summary` still count a change the person makes). */
 export const UI_CONSUMER = "loom-ui";
 
 // A registry op's path, `/v1/<op>`: its input takes `consumer`. The other routes

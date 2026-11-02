@@ -276,10 +276,9 @@ that serves it, and give it a `viewer` token in any case. On it:
   `memory.ask` reads across agents and `mentor.brief` briefs the namespace's top writer,
   as `memory.search`, `memory.list` and `memory.history` already read across agents. A
   read of one writer's rows, `memory.aggregate` or `memory.provenance`, is refused for the
-  missing `agent` until the call names the writer (a search hit's `agent`, with its
-  `user_id` and `session_id`, which this listing offers on every memory read and on
-  `mentor.brief`'s `agent`).
-  `memory.get` falls back to the row under any agent.
+  missing `agent` until the call names the writer: a search hit's `agent`, `user_id` and
+  `session_id`. The listing offers those arguments on every memory read, and `agent` on
+  `mentor.brief`. `memory.get` falls back to the row under any agent.
 - **Reads do not record usage.** `memory.search` runs with `auto_touch: false` and
   `memory.ask` with `reinforce: false`, whatever the call sends, so an investigation does
   not raise the recall counts that rank results; `memory.ask` also runs with
