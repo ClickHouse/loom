@@ -261,10 +261,12 @@ async def _usage_evidence(org: str, namespace: str, agent: str, window_seconds: 
 async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
     agent, writers, defaulted = await _resolve_agent(inp)
     window = int(inp.window_seconds)
-    profile, ladder = await asyncio.gather(
-        svc.mentor_profile(inp.org, inp.namespace, agent, window_seconds=window),
-        # The ladder reads no profile, so it answers when the mentor is off too.
-        _usage_evidence(inp.org, inp.namespace, agent, window),
+    profile = await svc.mentor_profile(inp.org, inp.namespace, agent, window_seconds=window)
+    # A cached profile keeps the window it was read over, which the brief
+    # reports, so the ladder counts that window. It reads no profile, so it
+    # answers when the mentor is off too.
+    ladder = await _usage_evidence(
+        inp.org, inp.namespace, agent, profile.window_seconds if profile else window
     )
     if profile is None:
         # The mentor is off (TTL 0) or the read failed and is remembered:

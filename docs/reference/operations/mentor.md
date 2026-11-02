@@ -33,7 +33,7 @@ One agent's usage profile and the store's hints.
 | `planes` | `list[MentorPlane]` | Every plane the mentor knows, with this agent's calls to it and whether it is available. |
 | `hints` | `list[MentorHint]` | The rules that fired for this agent, each with the counts that fired it; empty when none. |
 | `adoption` | `list[MentorAdoption]` | Per hint code, sessions it was shown in and followed in, most shown first; empty when no hint reached the agent or the read failed. |
-| `usage_evidence` | `list[UsageRung]` | The agent's use of Loom in the window, one rung each, weakest claim first: from a call made to a graded run (read with or without a profile). |
+| `usage_evidence` | `list[UsageRung]` | The agent's use of Loom in the window, one rung each, weakest claim first: from a call made to a graded run. |
 | `ledger_from` | `datetime \| None` | Oldest ledger row of this agent in the window, of any kind; None when it holds none or the read failed. |
 | `ledger_retention_days` | `int \| None` | Days the configured retention keeps this namespace's call ledger rows; 0 keeps them until deleted, None when the read failed. |
 | `agents` | `list[str]` | The namespace's writers in the window, most active first; the brief defaults to the first when the caller has no agent name of its own (the dashboard) — `agent_defaulted` says so. |

@@ -194,7 +194,8 @@ at session start, and a successful response carries at most one (`hint` on MCP, 
 
 A brief's `usage_evidence` lists what the agent's use of Loom shows, one rung each, with
 who recorded it (`server`: Loom saw it; `client`: a caller reported it, unverified). The
-rungs are read at each brief, not from the cached profile. Those read from the call ledger
+rungs are read at each brief, not from the cached profile, over the window the brief
+reports. Those read from the call ledger
 (`attempt`, `success`, `committed_write`, `returned_hit` and the `memory.outcome` labels)
 count the rows it records under the agent, which is the agent a call's body names (for a
 call by key, the row's writer, whoever calls): a call whose body names no agent (a read by

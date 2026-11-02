@@ -110,7 +110,7 @@ class MentorBriefOutput(BaseModel):
     # no hint reached the agent or the read failed.
     adoption: list[MentorAdoption] = Field(default_factory=list)
     # The agent's use of Loom in the window, one rung each, weakest claim first: from a call
-    # made to a graded run (read with or without a profile). Empty for no agent in
+    # made to a graded run. Empty for no agent in
     # particular; a rung whose read failed has no count.
     usage_evidence: list[UsageRung] = Field(default_factory=list)
     # Oldest ledger row of this agent in the window, of any kind; None when it holds none or

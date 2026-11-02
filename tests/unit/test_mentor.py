@@ -1020,6 +1020,32 @@ def test_mentor_brief_climbs_the_evidence_ladder_from_attempt_to_outcome(
     assert attempt_row.split()[1:3] == ["40", "server"]
 
 
+def test_the_ladder_counts_the_window_of_the_profile_the_brief_reports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.insights.api.models_mentor import MentorBriefInput
+
+    async def _p(*a: Any, **k: Any) -> Any:
+        return _fake_profile()  # cached over 7 days
+
+    windows: list[int] = []
+    real = handler._usage_evidence
+
+    async def _spy(org: str, namespace: str, agent: str, window: int) -> Any:
+        windows.append(window)
+        return await real(org, namespace, agent, window)
+
+    monkeypatch.setattr(m, "mentor_profile", _p)
+    monkeypatch.setattr(handler, "_usage_evidence", _spy)
+    monkeypatch.setattr(handler, "get_client", lambda: _CH(_EVIDENCE_ROWS))
+    out = asyncio.run(
+        handler.handle_mentor_brief(
+            MentorBriefInput(org="o", namespace="ns", agent="a", window_seconds=30 * 86400)
+        )
+    )
+    assert out.window_seconds == 604800 and windows == [604800]
+
+
 def test_the_namespace_retention_wins_over_the_ledger_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
