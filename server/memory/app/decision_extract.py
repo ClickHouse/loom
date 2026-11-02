@@ -337,8 +337,9 @@ async def extract_document(
         report.error = f"could not read the extractor's rows: {_refusal(e)}"
         return report
     known = _known_decisions(own)
+    recap = dx.recap_span_sections(doc.content or "")
     kept, answered = await _candidates(
-        org, namespace, source_uri, wins, max_per_section, report, known
+        org, namespace, source_uri, wins, max_per_section, report, known, recap
     )
     if wins and not answered:
         # A run that read nothing must not retire anything.
@@ -467,6 +468,8 @@ class _Kept:
     """The candidates kept so far in a run, and what a later one is checked against."""
 
     max_per_section: int
+    # The sections a recap divider covers: their quotes are dropped as a recap's.
+    recap: set[str]
     # (candidate, its section, the texts it was checked against)
     kept: list[tuple[dx.Candidate, str, list[str]]] = field(default_factory=list)
     per_section: dict[str, int] = field(default_factory=dict)
@@ -486,12 +489,14 @@ async def _candidates(
     max_per_section: int,
     report: ExtractReport,
     known: list[tuple[str, str, str]],
+    recap: set[str],
 ) -> tuple[list[tuple[dx.Candidate, str, list[str]]], int]:
     """(candidate, its section, the texts it was checked against) for every candidate
     that passes the checks of `_check_window` (verbatim spans, restatement with a
     reason-less ban kept, recap sections, duplicates, fit), its spans the document's own
     and its inverted rejected options removed, at most `max_per_section` per section;
-    and how many windows the model answered with a readable reply.
+    and how many windows the model answered with a readable reply. `recap` holds the
+    breadcrumbs of the sections a recap divider covers.
 
     A window gets at most one extra call: when its reply holds no decision though its
     text is more than a caption (the second reply is the window's), or when a reason is
@@ -501,7 +506,7 @@ async def _candidates(
     llm = get_llm_client()
     fake_chosen = _fake_chosen()
     system = dx.system_prompt(max_per_section, known)
-    state = _Kept(max_per_section)
+    state = _Kept(max_per_section, recap)
     answered = 0
     # An operator command: its calls are not gated by the namespace's cost cap.
     for w in wins:
@@ -554,7 +559,10 @@ def _repairs(
     texts = [c.text for c in w.chunks]
     out: list[dx.Candidate] = []
     for cand in again:
-        if collapse_ws(cand.outcome) in outcomes or collapse_ws(cand.reasoning) not in reasonings:
+        # The document's span, as a kept candidate's reasoning is: the model's copy may
+        # differ in case or skip a label line.
+        reasoning = collapse_ws(dx.find_span(cand.reasoning, texts) or cand.reasoning)
+        if collapse_ws(cand.outcome) in outcomes or reasoning not in reasonings:
             out.append(cand)
         else:
             section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
@@ -580,15 +588,19 @@ def _check_window(
         reason = dx.verbatim_failure(cand, texts)
         span = dx.unfound_reason(cand, texts) if reason else ""
         if not reason:
+            # Judged on the model's spans: a label line the document puts inside the
+            # reasoning is no word it adds to the outcome.
+            ban = dx.reasonless_ban(cand)
+            restated = not ban and dx.restates_outcome(cand)
             cand = dx.document_spans(cand, texts)
             # A reason-less ban is kept as one; any other restatement is dropped.
-            if dx.reasonless_ban(cand):
+            if ban:
                 cand = dx.without_reason(cand)
-            elif dx.restates_outcome(cand):
+            elif restated:
                 reason = dx.RESTATED
         # The quote as the chunk writes it, so a re-wrapped one still names its section.
         section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
-        if dx.in_recap(section):
+        if dx.in_recap(section) or section in state.recap:
             reason, span = reason or dx.RECAP, ""
         if span:
             failed.append((cand.outcome, span, section))

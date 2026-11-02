@@ -122,6 +122,8 @@ class _World:
         self.prompts: list[tuple[str, str]] = []
         # Replies served before `reply`, one per call: a candidate list, or an error raised.
         self.replies: list[Any] = []
+        # The live document's text, which the recap divider rule reads.
+        self.content = DOC
         self._patch(monkeypatch)
         from server.settings import Settings, settings
 
@@ -157,7 +159,7 @@ class _World:
                 return SimpleNamespace(text=json.dumps({"decisions": reply}), stop_reason="")
 
         async def knowledge_get(inp):
-            return SimpleNamespace(found=inp.source_uri in world.docs, content=DOC)
+            return SimpleNamespace(found=inp.source_uri in world.docs, content=world.content)
 
         async def chunks(org, ns, uri):
             return [CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT"))]
@@ -601,6 +603,100 @@ async def test_the_section_cap_and_a_repeated_key_drop_candidates(monkeypatch) -
         "the section already has --max-per-section 1",
     ]
     assert len(world.recorded) == 1
+
+
+# A sentence a converted slide splits with box labels on lines of their own.
+SPLIT = "Each shard keeps one replica per region\n{labels}so a read never leaves its region."
+REPLICA_SPAN = "Each shard keeps one replica per region so a read never leaves its region."
+
+
+@pytest.mark.parametrize("labels", ["Shard A\n", "Shard A\nShard B\n", "\nA\n\nB b\n  C c c\n\n"])
+def test_a_span_is_read_across_up_to_three_label_lines(labels) -> None:
+    text = SPLIT.format(labels=labels)
+    found = dx.find_span(REPLICA_SPAN, ["Another chunk.", f"Intro. {text} Next."])
+    assert found == text and found in f"Intro. {text} Next."
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        SPLIT.format(labels="A\nB\nC\nD\n"),
+        SPLIT.format(labels="Shard A of four\n"),
+        "Each shard keeps one replica per region Shard A so a read never leaves its region.",
+        "Each shard keeps one replica per region\nShard A so a read never leaves its region.",
+        "Each shard keeps one replica per region Shard A\nso a read never leaves its region.",
+    ],
+)
+def test_four_label_lines_a_long_one_or_one_inside_a_line_is_not_read_across(text) -> None:
+    assert dx.find_span(REPLICA_SPAN, [text]) == ""
+
+
+def test_a_span_is_matched_in_any_letter_case_and_found_as_written() -> None:
+    text = "intro. each shard keeps one REPLICA per region so a read never leaves its region."
+    assert dx.find_span(REPLICA_SPAN, [text]) == text[len("intro. ") :]
+
+
+def test_a_span_split_across_two_chunks_is_not_found() -> None:
+    first, second = SPLIT.format(labels="Shard A\n").split("Shard A\n")
+    assert dx.find_span(REPLICA_SPAN, [first + "Shard A\n", second]) == ""
+
+
+def test_lines_that_all_look_like_labels_cost_linear_time() -> None:
+    import time
+
+    # Every line is a word of the span or a label: a matcher that tried every way to
+    # read each gap would take exponential time on the final mismatch.
+    text = "a\n" * 20_000
+    started = time.perf_counter()
+    assert dx.find_span(" ".join(["a"] * 40 + ["b"]), [text]) == ""
+    assert time.perf_counter() - started < 2
+
+
+@pytest.mark.asyncio
+async def test_a_span_with_labels_and_another_case_is_stored_as_the_documents(monkeypatch) -> None:
+    text = SPLIT.format(labels="Shard A\nShard B\n")
+    world = _World(
+        monkeypatch,
+        [
+            _candidate(
+                quote=REPLICA_SPAN,
+                reasoning=REPLICA_SPAN.lower(),
+                outcome="one replica per region",
+                alternatives=[],
+            )
+        ],
+    )
+    _chunks(monkeypatch, (text, ("Spilling", "Final DISTINCT")))
+    world.content = f"# Spilling\n\n## Final DISTINCT\n\n{text}\n"
+    await _run()
+    (inp,) = world.recorded
+    assert inp.reasoning == text and inp.reasoning in world.content
+    # The retire step finds the stored span in the live text: the row stays.
+    world.reply = []
+    world.record("decision:replica", {"reasoning": inp.reasoning})
+    world.record("decision:gone", {"reasoning": "Each shard keeps two replicas per region."})
+    report = await _run()
+    assert report.retired == ["decision:gone"]
+
+
+@pytest.mark.asyncio
+async def test_label_words_inside_a_reasoning_are_no_reason(monkeypatch) -> None:
+    text = "We spill into sorted runs\nRun file\nlike ORDER BY."
+    world = _World(
+        monkeypatch,
+        [
+            _candidate(
+                quote=text,
+                reasoning="We spill into sorted runs like ORDER BY.",
+                outcome="spill into sorted runs like ORDER BY",
+                alternatives=[],
+            )
+        ],
+    )
+    _chunks(monkeypatch, (text, ("Spilling", "Final DISTINCT")))
+    report = await _run()
+    assert world.recorded == []
+    assert [d.reason for d in report.dropped] == [dx.RESTATED]
 
 
 # ------------------------------------------------------------------ retire
@@ -2869,7 +2965,19 @@ async def test_a_stitched_second_read_the_fallback_fake_answered_loses_nothing(
 
 
 @pytest.mark.asyncio
-async def test_a_second_read_repeating_a_kept_decision_writes_it_once(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "repeat",
+    [
+        {"scenario": "spilling the final DISTINCT"},
+        # Its reasoning copied in another case, its outcome reworded: still the kept one.
+        {
+            "scenario": "spilling the final DISTINCT",
+            "outcome": "spill to sorted runs",
+            "reasoning": "we spill into sorted runs like ORDER BY.",
+        },
+    ],
+)
+async def test_a_second_read_repeating_a_kept_decision_writes_it_once(monkeypatch, repeat) -> None:
     stitched = _candidate(
         scenario="the merge", outcome="merge each run once", reasoning=_STITCHED_REASONING
     )
@@ -2878,7 +2986,7 @@ async def test_a_second_read_repeating_a_kept_decision_writes_it_once(monkeypatc
     world.replies = [
         [_candidate(), stitched],
         # The kept decision again under a reworded scenario, then the repair.
-        [_candidate(scenario="spilling the final DISTINCT"), repaired],
+        [_candidate(**repeat), repaired],
     ]
     report = await _run()
     assert [inp.scenario for inp in world.recorded] == [
@@ -3282,6 +3390,66 @@ async def test_a_recap_candidate_with_a_missing_reasoning_is_not_read_again(monk
     report = await _run()
     assert len(world.prompts) == 1 and report.retried == []
     assert [d.reason for d in report.dropped] == ["reasoning is not in the document text"]
+
+
+LONG = "A plain set on disk costs random reads, and sorted runs merge in one pass. " * 2
+DECK = (
+    "# Deck\n\n## Intro\n\n" + LONG + "\n\n"
+    "## Background\n\nWhere we started\n\n"
+    "## Old spill\n\n" + LONG + "\n\n"
+    "## Old merge\n\n![merge](m.png)\nThe merge\n\n" + LONG + "\n\n"
+    "## Design\n\n"
+    "## New spill\n\n" + LONG + "\n"
+)
+
+
+def test_a_recap_divider_covers_the_sections_up_to_the_next_short_one() -> None:
+    assert dx.recap_span_sections(DECK) == {"Deck > Old spill", "Deck > Old merge"}
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        # A recap-named section with a body of its own is a recap by its own heading.
+        "# Deck\n\n## Summary\n\n" + LONG + "\n\n## Spill\n\n" + LONG + "\n",
+        # A heading alone over its subsections: they carry its name in their breadcrumbs.
+        "# Background\n\n## History\n\n" + LONG + "\n\n# Spill\n\n" + LONG + "\n",
+    ],
+)
+def test_a_long_recap_section_or_one_over_subsections_opens_no_span(content) -> None:
+    assert dx.recap_span_sections(content) == set()
+
+
+def test_a_recap_span_ends_at_a_heading_above_the_dividers_level() -> None:
+    content = "# A\n\n## Recap\n\n## R\n\n" + LONG + "\n\n# B\n\n" + LONG + "\n"
+    assert dx.recap_span_sections(content) == {"A > R"}
+
+
+@pytest.mark.asyncio
+async def test_a_quote_inside_a_recap_divider_span_is_dropped(monkeypatch) -> None:
+    old = "A plain set on disk costs random reads, and sorted runs merge in one pass."
+    world = _World(
+        monkeypatch,
+        [
+            _candidate(quote=old, reasoning=old, outcome="sorted runs", alternatives=[]),
+            _candidate(
+                scenario="the new spill",
+                quote=old,
+                reasoning=old,
+                outcome="sorted runs",
+                alternatives=[],
+            ),
+        ],
+    )
+    world.content = DECK
+    # The same text in a covered section and in one after the span.
+    _chunks(monkeypatch, (LONG, ("Deck", "Old spill")))
+    report = await _run()
+    assert world.recorded == [] and [d.reason for d in report.dropped] == [dx.RECAP] * 2
+    world.prompts.clear()
+    _chunks(monkeypatch, (LONG, ("Deck", "New spill")))
+    report = await _run()
+    assert len(world.recorded) == 1 and report.dropped[0].reason != dx.RECAP
 
 
 # ------------------------------------------------------------------ inverted alternatives

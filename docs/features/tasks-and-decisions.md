@@ -406,9 +406,15 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   code (`![d](f.png)` or `<img>` in a code span or block) is text. A chunk with no words is not sent either.
 - **Verbatim check**: the model returns, per decision, a `quote` and a `reasoning` and a reason for each rejected
   option. A candidate is kept only when its quote, its reasoning and every reason are each a substring of one chunk,
-  with every run of whitespace read as one space: a model copying a span drops line breaks and doubled spaces. What is
-  recorded is the chunk's own span, line breaks and all. Each is at least 12 characters long: a shorter span ("We",
-  "the") is in every document, so a decision resting on it could never retire. At most `--max-per-section` (default 3)
+  with every run of whitespace read as one space, letter case ignored, and up to 3 label lines read across between two
+  of its words: a model copying a span drops line breaks and doubled spaces and capitalises a sentence's first word,
+  and a slide or diagram converted to text puts short labels between a sentence's two halves. A label line is one to
+  three words on a line of its own, with a line break before and after it (blank lines around it are read too); a
+  fourth label line, a line of four words, or a label inside a line ends the match. What is recorded is the chunk's own
+  span, line breaks, case and labels and all, so it stays a substring of the document's text. The reasoning-restates
+  check below reads the model's span, so label words in the document's span add no reason. Each is at least 12
+  characters long, counted on the model's span: a shorter span ("We", "the") is in every document, so a decision
+  resting on it could never retire. At most `--max-per-section` (default 3)
   are kept per section. A candidate whose category or scenario holds no letter or digit from a-z, 0-9 has no key and is
   dropped. Of two candidates with one key, or with one outcome and reasoning (overlapping chunks give two windows the
   same text), the first is kept.
@@ -427,8 +433,13 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   when the quote holds a ban word too), so it is recorded with the `constraint` tag and reads `Decided <outcome>.` with
   no reason. The flag alone is not enough: models mark plain descriptions as constraints too.
 - **Recaps**: a candidate whose quote is in a section with `recap`, `summary` or `background` as a word of a heading at
-  any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. The
-  section stays in the window, since its text may give a later decision's reason.
+  any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. So is
+  one whose quote is in a section a recap divider covers: a slide deck marks a recap by a title slide and puts the recap
+  on the slides after it. A divider is a short section (at most 80 characters of text, as a caption is counted) with no
+  subsections whose own heading names a recap, summary or background; it covers each section after it until the next
+  short section (an image-only one included) or the next heading above its level. A recap-named section with a longer
+  body is dropped by its own heading and covers nothing after it. The sections stay in the window, since their text may
+  give a later decision's reason.
 - **Inverted alternatives**: a rejected option the candidate's own quote, the span of the chosen design, states as part
   of the choice is left out of the record and reported
   (`rejected option '<option>' left out: the quote states it as part of the choice`); the decision is kept. An option is

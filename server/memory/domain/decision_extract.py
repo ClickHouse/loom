@@ -3,10 +3,13 @@ reply, the verbatim and restatement checks, and sorting the code names a candida
 mentions.
 
 A candidate is kept only when its quote, its reasoning and every rejected option's reason
-each sit inside one chunk the model read, whitespace aside, its reasoning says more than
-its outcome (a ban the text gives no reason for is kept as one with none), and its quote
-is not in a recap section: what reaches an agent before an edit is the document's own
-reason. A rejected option the text states as part of the choice is left out.
+each sit inside one chunk the model read (whitespace, letter case and a few label lines
+aside, see `find_span`), its reasoning says more than its outcome (a ban the text gives no
+reason for is kept as one with none), and its quote is not in a recap section: what
+reaches an agent before an edit is the document's own reason. A recap section is one whose
+heading names a recap, summary or background, or one a short divider section so named
+opens (`recap_span_sections`). A rejected option the text states as part of the choice is
+left out.
 """
 
 from __future__ import annotations
@@ -249,13 +252,35 @@ def parse_candidates(reply: str) -> list[Candidate] | None:
 MIN_SPAN_CHARS = 12
 
 
+# The label lines a span reads across between two of its words.
+# not a setting: part of what a label line is, which the verbatim check's docs state
+LABEL_LINES_MAX = 3
+# Whitespace other than a line break.
+_H = r"[^\S\n]"
+# A label line: one to three words on a line of their own, as a slide or diagram
+# converted to text puts box labels between a sentence's two halves.
+_LABEL_LINE = rf"{_H}*\S+(?:{_H}+\S+){{0,2}}{_H}*\n"
+_BLANK_LINES = rf"(?:{_H}*\n)*"
+# Between two words of a span: a line break, one to three label lines, blank lines
+# around them, then the next word on its own line.
+_LABEL_GAP = rf"{_H}*\n{_BLANK_LINES}(?:{_LABEL_LINE}{_BLANK_LINES}){{1,{LABEL_LINES_MAX}}}{_H}*"
+
+
 def find_span(span: str, texts: Sequence[str]) -> str:
-    """The first text's own span that reads as `span` with each run of whitespace taken
-    as one space, or '': a model copying a span drops line breaks and doubled spaces."""
+    """The first text's own span that reads as `span`, or '': each run of whitespace
+    taken as one space, letter case ignored, and up to three label lines read across
+    between two words. A model copying a span drops line breaks and doubled spaces,
+    capitalises a sentence's first word, and skips the labels a converted slide puts
+    inside a sentence. What is returned is the text's, labels included, so it is always
+    a substring of the text."""
     words = span.split()
     if not words:
         return ""
-    pattern = re.compile(r"\s+".join(map(re.escape, words)))
+    # Each gap and the word after it is atomic: once the next word is found, the gap is
+    # not read again another way, so a failed match costs linear time in the span's
+    # words, however many lines look like labels.
+    rest = "".join(rf"(?>\s+{w}|{_LABEL_GAP}{w})" for w in map(re.escape, words[1:]))
+    pattern = re.compile(re.escape(words[0]) + rest, re.IGNORECASE)
     for text in texts:
         if m := pattern.search(text):
             return m.group(0)
@@ -403,6 +428,29 @@ RECAP = "the quote is in a recap, summary or background section"
 def in_recap(section: str) -> bool:
     """A heading at any level of the breadcrumb names a recap, summary or background."""
     return bool(_RECAP_HEADING.search(section))
+
+
+def recap_span_sections(content: str) -> set[str]:
+    """The breadcrumbs of the sections a recap divider covers. A divider is a short
+    section (no more text than a caption) with no subsections, whose own heading names a
+    recap, summary or background: a slide deck marks a recap by a title slide and puts
+    the recap on the slides after it. Its span runs until the next short section, or the
+    next heading above the divider's level. A recap-named section with a longer body is
+    `in_recap` by its own heading and opens no span."""
+    sections = detect_sections(content)
+    out: set[str] = set()
+    divider_depth = 0
+    for i, sec in enumerate(sections):
+        nxt = sections[i + 1].path if i + 1 < len(sections) else ()
+        has_children = len(nxt) > len(sec.path) and nxt[: len(sec.path)] == sec.path
+        short = not more_than_a_caption("\n".join(sec.lines))
+        if divider_depth and (short or sec.depth < divider_depth):
+            divider_depth = 0
+        if divider_depth:
+            out.add(breadcrumb(sec.path))
+        elif short and sec.path and not has_children and _RECAP_HEADING.search(sec.path[-1]):
+            divider_depth = sec.depth
+    return out
 
 
 # A sentence end, a blank line, or a line break before a list item. A single line break
