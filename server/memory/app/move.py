@@ -50,10 +50,6 @@ def _value_text(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, default=str)
 
 
-def _row_sha(row: MemoryRow) -> str:
-    return served_content_sha256(row.value)
-
-
 async def _load_source(input: MemoryMoveInput) -> MemoryRow:
     """The live source row, or the refusal the contract names: 400 on a
     self-move, 404 when the key is missing or tombstoned, 409
@@ -82,7 +78,7 @@ async def _load_source(input: MemoryMoveInput) -> MemoryRow:
             duplicate_of=str(source.duplicate_of or ""),
         )
     if input.if_match_sha256:
-        current = _row_sha(source)
+        current = served_content_sha256(source.value)
         if current != input.if_match_sha256:
             raise _refuse(
                 409,

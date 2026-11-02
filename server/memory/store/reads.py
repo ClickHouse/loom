@@ -1400,7 +1400,11 @@ async def live_revisions(
         params=params,
     )
     hashable = [
-        r for r in rows if r["sensitivity"] != "high" and int(r["value_len"]) <= hash_max_bytes
+        r
+        for r in rows
+        if hash_max_bytes > 0
+        and r["sensitivity"] != "high"
+        and int(r["value_len"]) <= hash_max_bytes
     ]
     hashes = await _served_hashes(org, namespace, hashable, hash_max_bytes, ch)
     for r in rows:

@@ -1058,6 +1058,15 @@ async def test_a_value_over_the_hash_bound_is_cited_without_reading_it(
     assert (
         next(p for sql, p in zip(ch.sqls, ch.params, strict=True) if M_VALUE in sql)["max"] == 100
     )
+    # 0 cites no hash: not even an empty value is read.
+    monkeypatch.setattr(settings, "namespace_report_hash_max_bytes", 0)
+    empty = {**_revision("empty", 1), "value_len": 0}
+    out, ch = await _run(
+        monkeypatch,
+        {M_LIVE: _live(1, 1), M_OVER: _value_rows(1, 0, ["empty"]), M_CITE: [empty]},
+    )
+    assert [e.content_sha256 for e in _finding(out, "oversized_values").evidence] == [""]
+    assert not any(M_VALUE in sql for sql in ch.sqls)
 
 
 @pytest.mark.asyncio

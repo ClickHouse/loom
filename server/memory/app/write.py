@@ -72,7 +72,7 @@ _WRITE_OUTCOME_UNMAPPED = "error"
 
 
 def stored_sha256(row: Any) -> str:
-    """The hash `if_match_sha256` is checked against: of the row's stored value."""
+    """The hash `if_match_sha256` is checked against: the one memory.get serves for the row."""
     return "" if row is None else served_content_sha256(row.value)
 
 
