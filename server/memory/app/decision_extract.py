@@ -508,13 +508,15 @@ async def _candidates(
         before = len(state.kept)
         failed = _check_window(org, namespace, source_uri, w, cands, state, report)
         if failed and not retried:
-            report.retried.append(Retried(first, _STITCHED))
-            note = dx.stitched_note(failed)
+            # Named by the first failed decision's section, not the window's first.
+            section = failed[0][2]
+            report.retried.append(Retried(section, _STITCHED))
+            note = dx.stitched_note([(outcome, span) for outcome, span, _ in failed])
             again = await _read_window(
                 llm,
                 system,
                 w,
-                first,
+                section,
                 report,
                 fake_chosen=fake_chosen,
                 note=note,
@@ -531,14 +533,14 @@ _REPEATED = "the second read repeats a decision the first reply gave"
 def _repairs(
     w: Window,
     again: list[dx.Candidate],
-    failed: list[tuple[str, str]],
+    failed: list[tuple[str, str, str]],
     kept: list[tuple[dx.Candidate, str, list[str]]],
     report: ExtractReport,
 ) -> list[dx.Candidate]:
     """The second read's candidates that repair a failed one: a candidate with a failed
     outcome, or one whose reasoning none of the window's kept candidates has. A kept
     decision given again, its scenario reworded, would be written twice."""
-    outcomes = {collapse_ws(outcome) for outcome, _span in failed}
+    outcomes = {collapse_ws(outcome) for outcome, _span, _section in failed}
     reasonings = {collapse_ws(c.reasoning) for c, _section, _texts in kept}
     texts = [c.text for c in w.chunks]
     out: list[dx.Candidate] = []
@@ -559,12 +561,12 @@ def _check_window(
     cands: list[dx.Candidate],
     state: _Kept,
     report: ExtractReport,
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, str]]:
     """Check one reply's candidates, keeping each that passes in `state` and reporting
-    each dropped; the (outcome, span) of each whose reason span is not in the text while
-    its quote is, for a second call."""
+    each dropped; the (outcome, span, section) of each whose reason span is not in the
+    text while its quote is, for a second call."""
     texts = [c.text for c in w.chunks]
-    failed: list[tuple[str, str]] = []
+    failed: list[tuple[str, str, str]] = []
     for cand in cands:
         reason = dx.verbatim_failure(cand, texts)
         span = dx.unfound_reason(cand, texts) if reason else ""
@@ -580,7 +582,7 @@ def _check_window(
         if dx.in_recap(section):
             reason, span = reason or dx.RECAP, ""
         if span:
-            failed.append((cand.outcome, span))
+            failed.append((cand.outcome, span, section))
         key = ""
         if not reason:
             reason, key = _duplicate_or_unfit(org, namespace, source_uri, cand, section, state)

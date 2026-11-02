@@ -2642,8 +2642,9 @@ async def test_a_dropped_candidate_with_a_rewrapped_quote_names_the_quotes_secti
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     assert world.recorded == []
-    # The window is read once more for the reasoning; the model gives the same reply.
-    assert [d.section for d in report.retried] == ["Spilling > One"]
+    # The window is read once more for the reasoning, named by the failed decision's
+    # section; the model gives the same reply.
+    assert [d.section for d in report.retried] == ["Spilling > Two"]
     assert [(d.section, d.reason) for d in report.dropped] == [
         ("Spilling > Two", "reasoning is not in the document text")
     ] * 2
@@ -2836,6 +2837,20 @@ async def _second_read(
     _chunks(monkeypatch, (_ONE, ("Spilling", "One")), (_TWO, ("Spilling", "Two")))
     world.replies = [[spill, _MERGE], again]
     return world, await _run()
+
+
+@pytest.mark.asyncio
+async def test_a_lost_stitched_read_is_named_by_the_failed_section(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    _chunks(monkeypatch, (_TWO, ("Spilling", "Two")), (_ONE, ("Spilling", "One")))
+    world.replies = [[_MERGE, _SPILL], httpx.ConnectError("down")]
+    report = await _run()
+    assert [inp.scenario for inp in world.recorded] == ["the merge"]
+    assert [(r.section, r.reason) for r in report.retried] == [
+        ("Spilling > One", de._STITCHED),
+        ("Spilling > One", "the second read was lost: the model call failed: ConnectError"),
+    ]
+    assert cli.exit_code(report) == 0
 
 
 @pytest.mark.asyncio
