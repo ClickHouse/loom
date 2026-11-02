@@ -111,6 +111,7 @@ class _Held:
     pinned: bool = False
     level: str = ""
     expires_at: datetime | None = None
+    status: str = "active"
     step: _Step | None = None
 
 
@@ -349,11 +350,15 @@ def _bulk_skip_gate(
     return False
 
 
+# A restatement of a row in one of these is served again, so it is a change (memory.set).
+_SERVED_AGAIN = frozenset({"rejected", "superseded", "conflicted"})
+
+
 def _restates_stored_row(state: _BulkWriteState, entry: Any) -> bool:
-    """Whether an entry repeating the stored value also keeps its sensitivity, adds no pin
-    and sets no expiry, so the skip gate counts it unchanged. Other fields memory.set
-    compares (tags, type, confidence, validity) are not checked. Only a level the entry
-    names counts: an extracted fact names none, and keeps the stored one."""
+    """Whether an entry repeating the stored value also keeps its status, sensitivity and
+    pin and sets no expiry, so the skip gate counts it unchanged. The other fields
+    `set_commit._only_reinforces` compares are not checked. Only a level the entry names
+    counts: an extracted fact names none, and keeps the stored one."""
     live = state.existing_rows.get(entry.memory_key)
     stored_level = str(getattr(live, "sensitivity", "") or "")
     named_level = str(getattr(entry, "sensitivity", "") or "")
@@ -361,7 +366,8 @@ def _restates_stored_row(state: _BulkWriteState, entry: Any) -> bool:
         entry.memory_key
     )
     return (
-        named_level in ("", stored_level)
+        _stored_held(state, entry.memory_key).status not in _SERVED_AGAIN
+        and named_level in ("", stored_level)
         and not adds_pin
         and getattr(entry, "ttl_seconds", None) is None
     )
@@ -375,6 +381,7 @@ def _stored_held(state: _BulkWriteState, memory_key: str) -> _Held:
         pinned=bool(state.existing_pinned.get(memory_key)),
         level=str(getattr(live, "sensitivity", "") or ""),
         expires_at=getattr(live, "expires_at", None),
+        status=str(getattr(live, "status", "") or "active"),
     )
 
 
@@ -530,7 +537,13 @@ def _settle_step(
     same_expiry = whole_seconds(row.get("expires_at")) == whole_seconds(
         _not_lapsed(held.expires_at, state.now_utc)
     )
-    if same_bytes and same_expiry and level == held.level and bool(row["pinned"]) == held.pinned:
+    if (
+        same_bytes
+        and same_expiry
+        and held.status not in _SERVED_AGAIN
+        and level == held.level
+        and bool(row["pinned"]) == held.pinned
+    ):
         return StepOutcome.UNCHANGED
     if held.pinned and not same_bytes and not row["pinned"]:
         return StepOutcome.PINNED

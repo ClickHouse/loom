@@ -258,7 +258,7 @@ async def test_a_ttl_only_repeat_on_a_read_only_row_is_locked(monkeypatch) -> No
 
 
 async def test_a_ttl_only_repeat_of_the_stored_value_sets_its_expiry(monkeypatch) -> None:
-    # memory.set writes a new version when only the expiry changes; so does a bulk entry
+    # memory.set writes a new version when only the expiry changes; so does a bulk entry.
     value = "Alice lives in Berlin"
     state, plan = await _settled(
         monkeypatch, _stored(value), {}, {"memory_key": "k", "value": value, "ttl_seconds": 60}
@@ -266,6 +266,17 @@ async def test_a_ttl_only_repeat_of_the_stored_value_sets_its_expiry(monkeypatch
     (row,) = plan.memory_rows
     assert state.skipped_unchanged == 0
     assert row["expires_at"] == state.now_utc + timedelta(seconds=60)
+
+
+@pytest.mark.parametrize("status", ["superseded", "rejected"])
+async def test_a_repeat_of_a_retired_stored_value_serves_it_again(monkeypatch, status) -> None:
+    # memory.set writes the restated row back as active; so does a bulk entry.
+    value = "Alice lives in Berlin"
+    state, plan = await _settled(
+        monkeypatch, _stored(value, status=status), {}, {"memory_key": "k", "value": value}
+    )
+    (row,) = plan.memory_rows
+    assert state.skipped_unchanged == 0 and row["status"] == "active"
 
 
 async def test_a_ttl_only_repeat_of_a_batch_value_sets_its_expiry(monkeypatch) -> None:
