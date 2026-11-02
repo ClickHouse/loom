@@ -204,7 +204,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             if len(rows) > limit:  # one row past `limit`: more matched
                 return rows[:limit], True
     # a full window, as large as the search served it, may hold back rows of the caller's
-    window = min(top_k, out.top_k_ceiling or top_k)
+    window = out.top_k_ceiling or top_k
     return rows, len(out.results) >= window
 
 

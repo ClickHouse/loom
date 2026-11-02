@@ -17,6 +17,7 @@ import pytest
 from pydantic import ValidationError
 
 from server.memory.api.models_apply import MemoryApplyInput
+from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.apply_ops import handle_memory_apply
 from server.memory.store import MemoryRow
 from server.settings import settings
@@ -276,22 +277,8 @@ async def test_search_target_touches_only_the_callers_identity(
     # also exists under the caller's own identity. Only the hit that IS the
     # caller's row may be acted on: never another owner's row, and never a
     # same-key row of the caller's that the search did not match.
-    from server.memory.api.models_search import _MemorySearchHit
-
-    def _hit(key: str, *, agent: str = "cursor", uid: str = "-", sid: str = "-") -> Any:
-        h = _MemorySearchHit(
-            memory_key=key,
-            memory_type="semantic",
-            content_excerpt=key,
-            distance=0.1,
-            similarity=0.9,
-            score=0.9,
-            user_id=uid,
-            session_id=sid,
-        )
-        h._row_identity = (agent, uid, sid)  # as every fact leg stamps it
-        return h
-
+    monkeypatch.setattr(settings, "memory_search_per_key_cap", 3)
+    _hit = _search_hit
     record = _hit("rec", sid="s2")
     record._row_identity = None  # a record names no row: its key is read under the caller
     hits = [
@@ -354,23 +341,27 @@ async def test_search_target_touches_only_the_callers_identity(
     assert asked[0].top_k == 2 and out.truncated is True
 
 
-def _search_hit(key: str, agent: str, similarity: float = 0.9) -> Any:
-    from server.memory.api.models_search import _MemorySearchHit
-
+def _search_hit(
+    key: str, agent: str = "cursor", similarity: float = 0.9, *, uid: str = "-", sid: str = "-"
+) -> Any:
     h = _MemorySearchHit(
         memory_key=key,
         memory_type="semantic",
         content_excerpt=key,
         distance=1 - similarity,
         similarity=similarity,
+        user_id=uid,
+        session_id=sid,
     )
-    h._row_identity = (agent, "-", "-")
+    h._row_identity = (agent, uid, sid)  # as every fact leg stamps it
     return h
 
 
-async def _apply_search(monkeypatch: pytest.MonkeyPatch, hits: list[Any], **search: Any) -> Any:
+async def _apply_search(
+    monkeypatch: pytest.MonkeyPatch, hits: list[Any], *, ceiling: int = 0, **search: Any
+) -> Any:
     async def _search(_: Any) -> Any:
-        return SimpleNamespace(results=hits, top_k_ceiling=search.pop("ceiling", 0))
+        return SimpleNamespace(results=hits, top_k_ceiling=ceiling)
 
     async def _get_by_key(identity: Any, key: str, **_: Any) -> MemoryRow | None:
         return _row(key, agent=identity.agent)
@@ -392,7 +383,7 @@ async def _apply_search(monkeypatch: pytest.MonkeyPatch, hits: list[Any], **sear
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("other_rows", "ceiling", "truncated"),
-    [(32, 0, True), (31, 0, False), (19, 20, True)],  # 20: a token's top_k ceiling
+    [(32, 0, True), (31, 0, False), (19, 20, True), (18, 20, False)],  # 20: a token's ceiling
 )
 async def test_a_full_search_window_may_hold_more_of_the_callers_rows(
     monkeypatch: pytest.MonkeyPatch, other_rows: int, ceiling: int, truncated: bool
@@ -406,9 +397,9 @@ async def test_a_full_search_window_may_hold_more_of_the_callers_rows(
 
 @pytest.mark.asyncio
 async def test_min_score_is_a_hits_least_similarity(monkeypatch: pytest.MonkeyPatch) -> None:
-    hits = [_search_hit("close", "cursor", 0.8), _search_hit("far", "cursor", 0.6)]
+    hits = [_search_hit(k, "cursor", sim) for k, sim in (("close", 0.8), ("at", 0.7), ("far", 0.6))]
     out = await _apply_search(monkeypatch, hits, min_score=0.7)
-    assert [r.memory_key for r in out.rows] == ["close"]
+    assert [r.memory_key for r in out.rows] == ["close", "at"]
 
 
 def test_apply_op_is_a_writer_op_and_audited() -> None:
