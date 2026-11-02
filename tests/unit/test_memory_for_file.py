@@ -328,19 +328,18 @@ def test_a_block_that_fits_whole_reserves_nothing() -> None:
     assert text.splitlines()[1:] == ["- k0: " + "a" * 94, "- k1: " + "b" * 24]
 
 
+def _superseding(key: str, older: str, value: str, ns: str, **over: Any) -> dict[str, Any]:
+    row = _row(key, json.dumps(value), namespace=ns, **over)
+    return row | {"supersedes_key": older, "supersedes": "bob", "supersedes_kind": "rule"}
+
+
 def test_a_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:
-    newer = _row("rules/new", json.dumps("n" * 200), namespace="code-repo", tags=["constraint"])
-    newer |= {"supersedes_key": "rules/old", "supersedes": "bob", "supersedes_kind": "rule"}
+    newer = _superseding("rules/new", "rules/old", "n" * 200, "code-repo", tags=["constraint"])
     older = _row("rules/old", json.dumps("Keep 32."), namespace="code-repo")
     text, tokens, truncated = mff.render_block("src/a.cpp", [newer, older], 120, home="me")
     assert truncated is True and tokens <= 120
     assert "rules/new" not in text and "rules/old" not in text
     assert '- … 2 more; memory.for_file(path="src/a.cpp") lists them.' in text.splitlines()
-
-
-def _superseding(key: str, older: str, value: str, ns: str) -> dict[str, Any]:
-    row = _row(key, json.dumps(value), namespace=ns)
-    return row | {"supersedes_key": older, "supersedes": "bob", "supersedes_kind": "rule"}
 
 
 def test_an_own_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:

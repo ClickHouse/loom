@@ -500,7 +500,7 @@ async def test_merged_rows_keep_top_k_and_budget(monkeypatch: pytest.MonkeyPatch
     )
     assert out.total == 4
     assert [h.memory_key for h in out.hits][:3] == ["t0", "t1", "t2"]  # pinned before unpinned
-    assert out.truncated is True and out.tokens_estimate <= 150 + 30
+    assert out.truncated is True and out.tokens_estimate <= 150
     assert "memory.delete" in out.rendered.splitlines()[-1]  # the footer survives the cut
 
 
