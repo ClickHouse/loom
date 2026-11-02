@@ -255,7 +255,9 @@ async def _set_chunk_rows(
     key with the newest vectors (`memory_search_set_chunk_rows` of them; a status change
     re-writes a vector too), the first whose current value cuts that chunk
     (`set_chunk_identities`). A chunk none of them cuts, or every chunk when a
-    read fails, names none. Private scope only (`fold_shared_set_chunks` reads no row)."""
+    read fails, names none. Two writers of one chunk share its row, stamped with the last of
+    them, so it names that writer's row. Private scope only (`fold_shared_set_chunks` reads
+    no row)."""
     pooled = {cid for h in hits if _is_set_chunk(h) and (cid := _chunk_id(h)) is not None}
     if not pooled:
         return {}
