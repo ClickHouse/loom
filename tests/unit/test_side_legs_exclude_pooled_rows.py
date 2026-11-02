@@ -72,3 +72,16 @@ async def test_an_unmatched_row_carries_its_version() -> None:
     )
     (hit,) = await _fetch_unmatched_candidates(ch, _q(), [], limit=5)
     assert hit.version == 9
+
+
+def test_the_pooled_rows_fit_one_form_field() -> None:
+    from server.core.ch_params import FIELD_BYTES, chunks
+
+    where: list[str] = []
+    params: dict = {}
+    hits = [_hit("k" * 200 + str(i), ("a", "u", "s1")) for i in range(1000)]
+    exclude_pooled(where, params, hits)
+    bound = params["pooled_rows"]
+    every = sorted(("a", "u", "s1", h.memory_key) for h in hits)
+    assert 0 < len(bound) < len(every) and bound == every[: len(bound)]
+    assert next(chunks(bound, limit=FIELD_BYTES)) == bound

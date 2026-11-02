@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, NamedTuple
 
+from server.core.ch_params import fitting
 from server.core.repo_base import query_all_sliced
 from server.memory.app.retrieval.side_legs import exclude_pooled
 from server.memory.app.set_chunks import set_chunk_identities
@@ -42,8 +43,8 @@ async def _recency_backfill(
     rows, not the newest — the re-rank can only order what the legs
     fetched, so the newest run never reaches it. The scope is the subject here, so the newest rows in
     it are candidates by construction; without a hard tag the read is left
-    alone. Rows already in the pool are excluded; the new rows enter at the
-    pool's lowest rank score — in scope, so as good as the weakest candidate
+    alone. Rows already in the pool are excluded, up to one form field of them; the new
+    rows enter at the pool's lowest rank score — in scope, so as good as the weakest candidate
     — and win only through the recency boost. Fail-open."""
     weight = float(q.recency_pool_weight)
     if not (q.recency_intent and weight > 0.0 and int(q.top_k) > 0):
@@ -258,7 +259,8 @@ async def _set_chunk_rows(
         return {}
     # served whatever its vector: a row whose embedding is still pending has its chunks
     where, params = _build_where(q, ranked=False)
-    params["set_rows"] = sorted({(c.agent, c.user_id, c.memory_key) for c in pooled})
+    # one form field: a chunk of a writer and key past it names no row and drops
+    params["set_rows"] = fitting(sorted({(c.agent, c.user_id, c.memory_key) for c in pooled}))
     params["per_key"] = int(settings.memory_search_set_chunk_rows)
     try:
         served = await ch.query_all(

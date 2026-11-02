@@ -19,7 +19,8 @@ tagged q3-migration" or "lock every runbook I wrote last week".
 
 Resolution is one primary-key-pinned read (org, namespace, agent[, user,
 session]) with the filters and `LIMIT n + 1` so truncation is reported,
-or one search call capped at `limit`. Execution goes through the same
+or one search call, over-fetched per key, read up to one past `limit` of
+the caller's rows. Execution goes through the same
 handlers a single-row call uses — delete, touch, lock — so every guard
 (locks, policy, blacklist) fires per row; a 423 becomes a `refused` row,
 never a failed batch. Label and demote are the two writes loom had no
@@ -192,14 +193,14 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
         owner = hit_row_key(hit, input.namespace)
         if names_row(hit) and (owner.agent, owner.user_id, owner.session_id) != mine:
             continue
-        if len(rows) >= int(input.limit):
-            return rows, True  # the over-fetch holds more of the caller's rows
         seen.add(key)
         row = await memory_repo.get_by_key(
             identity, key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
         )
         if row is not None:
             rows.append(row)
+            if len(rows) > int(input.limit):  # one row past `limit`: more matched
+                return rows[: int(input.limit)], True
     return rows, False
 
 

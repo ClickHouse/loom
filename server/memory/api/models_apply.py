@@ -201,6 +201,6 @@ class MemoryApplyOutput(BaseModel):
     noop: int = 0
     # Rows whose write raised; each row's `detail` says why.
     failed: int = 0
-    truncated: bool = False  # the filter matched more than `limit`
+    truncated: bool = False  # more rows matched than `limit`
     # One entry per matched row: its identity, status, new version and detail.
     rows: list[ApplyRow] = Field(default_factory=list)

@@ -340,7 +340,7 @@ def test_an_update_labels_a_token_on_its_own_line(monkeypatch: pytest.MonkeyPatc
         {"password": "********"},
         {"api_key": "env:OPENAI_API_KEY"},
         {"pwd": "/home/alice/repo"},
-        {"PWD": "/app2"},  # an environment's working directory
+        {"PWD": "/workspace1"},  # an environment's working directory, not a password
         {"pwd": "build/out1"},
         {"env": {"PWD": "/opt/app/server"}},
         {"password_hint": "first pet"},
