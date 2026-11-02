@@ -1,23 +1,30 @@
-"""mentor.brief handler: the profile, the planes, the hints with evidence, and adoption —
-hints shown vs followed per code."""
+"""mentor.brief handler: the profile, the planes, the hints and the counts that fired
+them, adoption (hints shown vs followed per code), and the usage evidence ladder."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Awaitable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from server.core.ch import get_client
+from server.embedding import get_embedder
 from server.insights.api.models_mentor import (
     MentorAdoption,
     MentorBriefInput,
     MentorBriefOutput,
     MentorHint,
     MentorPlane,
+    UsageRung,
+    UsageRungName,
+    UsageSource,
 )
 from server.insights.app import mentor as svc
 from server.insights.app import mentor_rules
 from server.insights.store import mentor as mentor_store
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -160,10 +167,109 @@ async def _adoption(profile: mentor_rules.MentorProfile) -> list[MentorAdoption]
     ]
 
 
+# What each rung counts, and what it does not show; the attribution rules are in
+# docs/features/namespaces-and-sharing.md#the-mentor.
+_RUNG_MEANING: dict[UsageRungName, str] = {
+    "attempt": (
+        "calls the ledger records under this agent, answered or not; not calls that name no "
+        "agent or read across agents (`*`), as an MCP `memory.search` does by default"
+    ),
+    "success": "of those, calls without an error; a read that found nothing counts",
+    "committed_write": "`memory.set` calls that stored a row (not a no-op, dry run or replay)",
+    "indexed_write": "memories first written in the window that have a current vector",
+    "returned_hit": (
+        "reads that answered (a search that did not abstain, a get that found its key); "
+        "not whether the answer reached the model"
+    ),
+    "client_acknowledged": "memory keys the agent reported relying on: its own word, unverified",
+    "task_outcome": "the agent's graded runs (`run.grade`), as the grader reported them",
+}
+
+
+def _rung(rung: UsageRungName, count: int | None, source: UsageSource) -> UsageRung:
+    return UsageRung(rung=rung, count=count, source=source, meaning=_RUNG_MEANING[rung])
+
+
+class _Ladder(NamedTuple):
+    rungs: list[UsageRung]
+    ledger_from: datetime | None
+    retention_days: int | None
+    skipped: list[str]
+
+
+async def _usage_evidence(org: str, namespace: str, agent: str, window_seconds: int) -> _Ladder:
+    """The evidence ladder, the oldest ledger row in the window, how long the ledger keeps
+    this namespace's rows, and the reads that failed ("step: reason"). Read at each brief,
+    not from the cached profile; the five reads run at once and stand alone: a failed one
+    leaves its rungs without a count."""
+    if agent in ANONYMOUS_AGENTS:
+        # No agent in particular: the ledger's `-` and `*` rows are everyone's unattributed
+        # calls, not one agent's.
+        return _Ladder([], None, None, [])
+    ch = get_client()
+    who = (org, namespace, agent, window_seconds)
+
+    async def indexed() -> int:
+        # The embedder is resolved inside the read, so a failure is this rung's alone.
+        model = get_embedder().model_name
+        return await mentor_store.indexed_writes(*who, model=model, ch=ch)
+
+    # Each read with the step name `skipped` reports it under, in the order they are listed.
+    reads: list[tuple[str, Awaitable[Any]]] = [
+        (
+            "calls",
+            mentor_store.call_evidence(
+                *who, searches=mentor_rules.SEARCHES, gets=mentor_rules.GETS, ch=ch
+            ),
+        ),
+        ("indexed_writes", indexed()),
+        ("reported_keys", mentor_store.reported_keys(*who, ch=ch)),
+        ("graded_runs", mentor_store.graded_runs(*who, ch=ch)),
+        ("retention", mentor_store.namespace_retention_days(org, namespace, ch=ch)),
+    ]
+
+    async def read(step: str, coro: Awaitable[Any]) -> tuple[Any, str]:
+        try:
+            return await coro, ""
+        except Exception as exc:  # noqa: BLE001 — a failed read leaves its rungs uncounted
+            log.warning("mentor %s read failed: %s", step, exc)
+            return None, type(exc).__name__
+
+    outcomes = await asyncio.gather(*(read(step, coro) for step, coro in reads))
+    skipped = [f"{step}: {err}" for (step, _), (_, err) in zip(reads, outcomes, strict=True) if err]
+    calls_read, indexed_count, reported, graded, own_retention = (v for v, _ in outcomes)
+    calls = calls_read or {}
+    # A namespace's own retention wins over the table's global one.
+    retention = (
+        None
+        if own_retention is None
+        else own_retention or int(settings.retention_agent_events_days)
+    )
+
+    def counted(key: str) -> int | None:
+        return int(calls[key]) if key in calls else None
+
+    rungs = [
+        _rung("attempt", counted("attempts"), "server"),
+        _rung("success", counted("successes"), "server"),
+        _rung("committed_write", counted("committed_writes"), "server"),
+        _rung("indexed_write", indexed_count, "server"),
+        _rung("returned_hit", counted("returned_hits"), "server"),
+        _rung("client_acknowledged", reported, "client"),
+        _rung("task_outcome", graded, "client"),
+    ]
+    return _Ladder(rungs, calls.get("oldest_row"), retention, skipped)
+
+
 async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
     agent, writers, defaulted = await _resolve_agent(inp)
-    profile = await svc.mentor_profile(
-        inp.org, inp.namespace, agent, window_seconds=int(inp.window_seconds)
+    window = int(inp.window_seconds)
+    profile = await svc.mentor_profile(inp.org, inp.namespace, agent, window_seconds=window)
+    # A cached profile keeps the window it was read over, which the brief
+    # reports, so the ladder counts that window. It uses none of the profile's
+    # counts, so it answers when the mentor is off too.
+    ladder = await _usage_evidence(
+        inp.org, inp.namespace, agent, profile.window_seconds if profile else window
     )
     if profile is None:
         # The mentor is off (TTL 0) or the read failed and is remembered:
@@ -177,7 +283,10 @@ async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
             sessions=0,
             agents=writers,
             agent_defaulted=defaulted,
-            skipped=["profile: unavailable"],
+            usage_evidence=ladder.rungs,
+            ledger_from=ladder.ledger_from,
+            ledger_retention_days=ladder.retention_days,
+            skipped=["profile: unavailable", *ladder.skipped],
             healthy=True,
         )
     hints = [
@@ -201,9 +310,12 @@ async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
         planes=_planes(profile),
         hints=hints,
         adoption=await _adoption(profile),
+        usage_evidence=ladder.rungs,
+        ledger_from=ladder.ledger_from,
+        ledger_retention_days=ladder.retention_days,
         agents=writers,
         agent_defaulted=defaulted,
-        skipped=list(profile.skipped),
+        skipped=[*profile.skipped, *ladder.skipped],
         healthy=not any(h.severity in ("warning", "critical") for h in profile.hints),
     )
 
@@ -216,7 +328,7 @@ def _defaulted_note(out: MentorBriefOutput) -> str:
 
 
 def render_table(out: MentorBriefOutput) -> str:
-    """The CLI's view: usage, planes, hints, adoption."""
+    """The CLI's view: usage, planes, hints, adoption, the usage evidence ladder."""
     lines = [
         f"mentor.brief {out.org}/{out.namespace} agent={out.agent}"
         f"{_defaulted_note(out)} "
@@ -245,6 +357,16 @@ def render_table(out: MentorBriefOutput) -> str:
         lines.append("adoption (sessions shown → followed)")
         for a in out.adoption:
             lines.append(f"  {a.code:<25} {a.shown_sessions:>4} → {a.followed_sessions}")
+    if out.usage_evidence:
+        lines.append("")
+        lines.append("usage evidence       count  source")
+        for e in out.usage_evidence:
+            n = "-" if e.count is None else str(e.count)
+            lines.append(f"{e.rung:<20} {n:>5}  {e.source}")
+        if out.ledger_retention_days:
+            lines.append(f"the call ledger keeps {out.ledger_retention_days}d of rows")
+        lines.append("")
+        lines.extend(f"{e.rung}: {e.meaning}" for e in out.usage_evidence)
     if out.skipped:
         lines.append("")
         lines.append("skipped: " + "; ".join(out.skipped))

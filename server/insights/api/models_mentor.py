@@ -61,6 +61,34 @@ class MentorAdoption(BaseModel):
     followed_sessions: int = 0
 
 
+UsageRungName = Literal[
+    "attempt",
+    "success",
+    "committed_write",
+    "indexed_write",
+    "returned_hit",
+    "client_acknowledged",
+    "task_outcome",
+]
+UsageSource = Literal["server", "client"]
+
+
+class UsageRung(BaseModel):
+    """One rung of what the agent's use of Loom shows.
+
+    A call made is not a call that answered, and an answer returned is not an answer
+    used."""
+
+    rung: UsageRungName
+    # How many in the window; None when the read failed.
+    count: int | None = None
+    # Who recorded it: `server` (Loom saw it happen) or `client` (a caller reported it,
+    # unverified).
+    source: UsageSource
+    # What the count is, and what it does not show.
+    meaning: str
+
+
 class MentorBriefOutput(BaseModel):
     org: str
     namespace: str
@@ -81,13 +109,23 @@ class MentorBriefOutput(BaseModel):
     # Per hint code, sessions it was shown in and followed in, most shown first; empty when
     # no hint reached the agent or the read failed.
     adoption: list[MentorAdoption] = Field(default_factory=list)
+    # The agent's use of Loom in the window, one rung each, weakest claim first: from a call
+    # made to a graded run. Empty for no agent in particular; a rung whose read failed has no
+    # count.
+    usage_evidence: list[UsageRung] = Field(default_factory=list)
+    # Oldest ledger row of this agent in the window, of any kind; None when it holds none or
+    # the read failed.
+    ledger_from: datetime | None = None
+    # Days the configured retention keeps this namespace's call ledger rows; 0 keeps them
+    # until deleted, None when the read failed.
+    ledger_retention_days: int | None = None
     # The namespace's writers in the window, most active first; the brief
     # defaults to the first when the caller has no agent name of its own
     # (the dashboard) — `agent_defaulted` says so.
     agents: list[str] = Field(default_factory=list)
     # True when the caller named no real agent and the brief picked the top writer in `agents`.
     agent_defaulted: bool = False
-    # Facts the profile could not read, as "step: reason".
+    # Facts the brief could not read, as "step: reason".
     skipped: list[str] = Field(default_factory=list)
     # No warning or critical hint.
     healthy: bool = True

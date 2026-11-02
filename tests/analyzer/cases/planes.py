@@ -891,6 +891,24 @@ async def _grants_repo(ch: RecordingCH, c: dict[str, Any]) -> None:
     await grants_repo.member_count(ORG, ["col-a", "col-b"], ch=ch)
 
 
+async def _mentor_evidence(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The evidence ladder `mentor.brief` reads at each brief."""
+    from server.insights.app import mentor_rules
+    from server.insights.store import mentor as mentor_store
+
+    who = (ORG, NS, "agent-a", 604800)
+    await mentor_store.call_evidence(
+        *who,
+        searches=mentor_rules.SEARCHES,
+        gets=mentor_rules.GETS,
+        ch=ch,
+    )
+    await mentor_store.indexed_writes(*who, model="fake-ngram-1024", ch=ch)
+    await mentor_store.reported_keys(*who, ch=ch)
+    await mentor_store.graded_runs(*who, ch=ch)
+    await mentor_store.namespace_retention_days(ORG, NS, ch=ch)
+
+
 def cases() -> list[Case]:
     out = [
         Case(
@@ -922,6 +940,16 @@ def cases() -> list[Case]:
     )
     out.append(Case("profiles", "server.memory.store.profile_sources", _profiles, {}))
     out.append(Case("grants_repo", "server.identity.store.grants", _grants_repo, {}))
+    out.append(
+        Case(
+            "mentor_evidence",
+            "server.insights.store.mentor",
+            _mentor_evidence,
+            {},
+            # Each read is an aggregate: one row, every column it reads back.
+            rows=lambda sql, params: [{"n": 0, "retention_days": 0}],
+        )
+    )
     out.append(
         Case(
             "memory_list_score",

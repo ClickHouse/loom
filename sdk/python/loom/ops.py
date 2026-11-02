@@ -14419,6 +14419,9 @@ class MentorBriefOutput(TypedDict, total=False):
     planes: NotRequired[list["MentorPlane"]]
     hints: NotRequired[list["MentorHint"]]
     adoption: NotRequired[list["MentorAdoption"]]
+    usage_evidence: NotRequired[list["UsageRung"]]
+    ledger_from: NotRequired[Optional[str]]
+    ledger_retention_days: NotRequired[Optional[int]]
     agents: NotRequired[list[str]]
     agent_defaulted: NotRequired[bool]
     skipped: NotRequired[list[str]]
@@ -14445,6 +14448,25 @@ class MentorAdoption(TypedDict, total=False):
     code: Required[str]
     shown_sessions: NotRequired[int]
     followed_sessions: NotRequired[int]
+
+
+class UsageRung(TypedDict, total=False):
+    "One rung of what the agent's use of Loom shows."
+
+    rung: Required[
+        Literal[
+            "attempt",
+            "success",
+            "committed_write",
+            "indexed_write",
+            "returned_hit",
+            "client_acknowledged",
+            "task_outcome",
+        ]
+    ]
+    count: NotRequired[Optional[int]]
+    source: Required[Literal["server", "client"]]
+    meaning: Required[str]
 
 
 class MentorGuideInput(TypedDict, total=False):

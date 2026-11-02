@@ -227,3 +227,37 @@ def test_every_memory_ask_identifier_key_reaches_the_row() -> None:
         projected["out_source"] == "synthesized" and projected["out_route_reason"] == "weak_top_hit"
     )
     assert "out_timeline_rows" in projected and "out_summary_hits" in projected
+
+
+def test_a_sectioned_search_records_its_hits_across_sections() -> None:
+    from server.memory.api.models_loom_search import SearchOutput
+    from server.observability.event_args import project_result
+
+    answered = SearchOutput(
+        memory={"results": [{"memory_key": "a"}, {"memory_key": "b"}]},
+        knowledge={"results": [{"source_uri": "doc.md"}]},
+        conversations={"error": "timeout", "results": []},
+    )
+    assert project_result(answered)["out_section_hits"] == "3"
+    assert project_result(SearchOutput(memory={"results": []}))["out_section_hits"] == "0"
+    # An abstaining memory section keeps its hits as evidence, not as an answer; the
+    # profile section answers nearly any query by meaning, so it is not counted.
+    abstained = SearchOutput(
+        memory={"abstain": True, "results": [{"memory_key": "a"}]},
+        profile={"results": [{"label": "role"}]},
+        tracker={"verdict": "duplicate", "results": [{"number": 7}]},
+    )
+    # The duplicate-check verdict answers whether a defect is filed, not a recall.
+    assert project_result(abstained)["out_section_hits"] == "0"
+    # A result with no sections records nothing.
+    assert "out_section_hits" not in project_result({"results": [1, 2]})
+
+
+def test_an_outcome_records_whether_its_label_landed() -> None:
+    from server.memory.api.models_temporal import MemoryOutcomeOutput
+    from server.observability.event_args import project_result
+
+    landed = MemoryOutcomeOutput(recorded=True, evidence_count_after=1)
+    missed = MemoryOutcomeOutput(recorded=False, evidence_count_after=0)
+    assert project_result(landed)["out_recorded"] == "true"
+    assert project_result(missed)["out_recorded"] == "false"

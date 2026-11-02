@@ -11,6 +11,7 @@ Everything here runs against a fake store: no ClickHouse.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -21,6 +22,7 @@ from server.insights.app import mentor_brief as handler
 from server.insights.app import mentor_rules
 from server.observability import ledger
 from server.settings import settings
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
 class _CH:
@@ -29,6 +31,7 @@ class _CH:
     def __init__(self, by_marker: dict[str, Any] | None = None):
         self.by_marker = by_marker or {}
         self.sqls: list[str] = []
+        self.params: list[dict[str, Any] | None] = []
 
     def _answer(self, sql: str) -> Any:
         for marker, rows in self.by_marker.items():
@@ -40,11 +43,13 @@ class _CH:
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None):
         self.sqls.append(sql)
+        self.params.append(params)
         rows = self._answer(sql)
         return list(rows) if rows else []
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None):
         self.sqls.append(sql)
+        self.params.append(params)
         rows = self._answer(sql)
         if isinstance(rows, list):
             return rows[0] if rows else None
@@ -948,16 +953,239 @@ def test_mentor_brief_returns_the_profile_planes_and_adoption(
     assert "code_index_unused" in table and "adoption" in table and "code index" in table
 
 
+M_EVIDENCE = "AS returned_hits"
+M_INDEXED = "FROM loom.memory_embeddings FINAL"
+M_RETENTION = "SELECT retention_days FROM loom.namespaces"
+M_REPORTED = "SELECT uniqExact(k) AS n FROM ("
+M_GRADED = "SELECT count() AS n FROM loom.agent_runs FINAL"
+# Every evidence read answering, for a test about one of them.
+_EVIDENCE_ROWS: dict[str, Any] = {
+    M_EVIDENCE: [{"attempts": 1, "successes": 1, "committed_writes": 0, "returned_hits": 0}],
+    M_INDEXED: [{"n": 0}],
+    M_REPORTED: [{"n": 0}],
+    M_GRADED: [{"n": 0}],
+}
+
+
+def _brief(monkeypatch: pytest.MonkeyPatch, ch: _CH, **facts: Any) -> Any:
+    from server.insights.api.models_mentor import MentorBriefInput
+
+    async def _p(*a: Any, **k: Any) -> Any:
+        return _fake_profile(facts=facts)
+
+    monkeypatch.setattr(m, "mentor_profile", _p)
+    monkeypatch.setattr(handler, "get_client", lambda: ch)
+    return asyncio.run(
+        handler.handle_mentor_brief(MentorBriefInput(org="o", namespace="ns", agent="a"))
+    )
+
+
+def test_mentor_brief_climbs_the_evidence_ladder_from_attempt_to_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {
+        "attempts": 40,
+        "successes": 37,
+        "committed_writes": 12,
+        "returned_hits": 9,
+        "oldest_row": datetime(2026, 1, 2),
+    }
+    ch = _CH(
+        {
+            M_EVIDENCE: [calls],
+            M_INDEXED: [{"n": 11}],
+            M_REPORTED: [{"n": 4}],
+            M_GRADED: [{"n": 2}],
+            M_RETENTION: [{"retention_days": 0}],
+        }
+    )
+    # The cached profile's own count is not what the ladder reports: it reads live.
+    out = _brief(monkeypatch, ch, credited_keys=99)
+    ladder = {e.rung: (e.count, e.source) for e in out.usage_evidence}
+    assert list(ladder) == [
+        "attempt",
+        "success",
+        "committed_write",
+        "indexed_write",
+        "returned_hit",
+        "client_acknowledged",
+        "task_outcome",
+    ]
+    assert ladder["attempt"] == (40, "server") and ladder["success"] == (37, "server")
+    assert ladder["committed_write"] == (12, "server") and ladder["returned_hit"] == (9, "server")
+    assert ladder["indexed_write"] == (11, "server")
+    # What the agent said it relied on is its own report.
+    assert ladder["client_acknowledged"] == (4, "client")
+    # Graded runs are the grader's report, not something Loom checked.
+    assert ladder["task_outcome"] == (2, "client")
+    assert out.ledger_from == datetime(2026, 1, 2)
+    rows = handler.render_table(out).splitlines()
+    (attempt_row,) = [r for r in rows if r.startswith("attempt ")]
+    assert attempt_row.split()[1:3] == ["40", "server"]
+
+
+def test_the_ladder_counts_the_window_of_the_profile_the_brief_reports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.insights.api.models_mentor import MentorBriefInput
+
+    async def _p(*a: Any, **k: Any) -> Any:
+        return _fake_profile()  # cached over 7 days
+
+    ch = _CH(_EVIDENCE_ROWS)
+    monkeypatch.setattr(m, "mentor_profile", _p)
+    monkeypatch.setattr(handler, "get_client", lambda: ch)
+    out = asyncio.run(
+        handler.handle_mentor_brief(
+            MentorBriefInput(org="o", namespace="ns", agent="a", window_seconds=30 * 86400)
+        )
+    )
+    assert out.window_seconds == 604800
+    windows = {
+        marker: p["win"]
+        for sql, p in zip(ch.sqls, ch.params, strict=True)
+        for marker in (M_EVIDENCE, M_INDEXED, M_REPORTED, M_GRADED)
+        if marker in sql and p
+    }
+    assert windows == dict.fromkeys((M_EVIDENCE, M_INDEXED, M_REPORTED, M_GRADED), 604800)
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_indexed_writes_count_memories_first_created_in_the_window() -> None:
+    from server.insights.store import mentor as store
+
+    def memory(user: str, key: str, days_ago: int, version: int) -> str:
+        return (
+            "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
+            f"value, version, created_at) VALUES ('o', 'ns', 'a', '{user}', '-', '{key}', 'v', "
+            f"{version}, now() - INTERVAL {days_ago} DAY)"
+        )
+
+    def embedding(user: str, key: str, dim: int, version: int) -> str:
+        # Written now, as every version's embedding row is; the codec needs full vectors.
+        return (
+            "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
+            "memory_key, embedding_model, embedding_dim, embedding, memory_key_embedding, "
+            "status, version, created_at) SELECT 'o', 'ns', 'a', "
+            f"'{user}', '-', '{key}', 'm', {dim}, v, v, 'active', {version}, now() "
+            "FROM (SELECT arrayWithConstant(3072, toBFloat16(0)) AS v)"
+        )
+
+    class _Local:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+            setup = ["SET enable_quantized_codec = 1", ddl("memory"), ddl("memory_embeddings")]
+            return run([*setup, *rows], sql, params)
+
+    rows = [
+        # u1's old key, revised today: not created in the window.
+        memory("u1", "pref/tz", 60, 2),
+        embedding("u1", "pref/tz", 3072, 2),
+        # u2 created the same key today and it is not embedded yet.
+        memory("u2", "pref/tz", 0, 1),
+        embedding("u2", "pref/tz", 0, 1),
+        # u3, u4 and u5 each created and embedded the same key today: three memories.
+        *(
+            row
+            for user in ("u3", "u4", "u5")
+            for row in (memory(user, "pref/lang", 0, 1), embedding(user, "pref/lang", 3072, 1))
+        ),
+    ]
+    n = asyncio.run(store.indexed_writes("o", "ns", "a", 7 * 86400, model="m", ch=_Local()))
+    assert n == 3
+
+
+def test_the_namespace_retention_wins_over_the_ledger_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "retention_agent_events_days", 30)
+    ch = _CH({**_EVIDENCE_ROWS, M_RETENTION: [{"retention_days": 7}]})
+    assert _brief(monkeypatch, ch).ledger_retention_days == 7
+    ch = _CH({**_EVIDENCE_ROWS, M_RETENTION: [{"retention_days": 0}]})
+    out = _brief(monkeypatch, ch)
+    assert out.skipped == []
+    assert out.ledger_retention_days == 30
+    assert "the call ledger keeps 30d of rows" in handler.render_table(out)
+    # Kept until deleted: no retention line.
+    monkeypatch.setattr(settings, "retention_agent_events_days", 0)
+    kept = _brief(monkeypatch, _CH({**_EVIDENCE_ROWS, M_RETENTION: [{"retention_days": 0}]}))
+    assert kept.ledger_retention_days == 0
+    assert "the call ledger keeps" not in handler.render_table(kept)
+
+
+def test_a_failed_retention_read_leaves_the_retention_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out = _brief(monkeypatch, _CH({**_EVIDENCE_ROWS, M_RETENTION: RuntimeError("down")}))
+    assert out.ledger_retention_days is None and "retention: RuntimeError" in out.skipped
+
+
+def test_an_embedder_that_fails_leaves_only_the_indexed_rung_uncounted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken() -> Any:
+        raise RuntimeError("no embedder")
+
+    monkeypatch.setattr(handler, "get_embedder", broken)
+    ch = _CH({**_EVIDENCE_ROWS, M_RETENTION: [{"retention_days": 0}]})
+    out = _brief(monkeypatch, ch)
+    ladder = {e.rung: e.count for e in out.usage_evidence}
+    assert ladder["indexed_write"] is None and ladder["attempt"] == 1
+    assert out.skipped == ["indexed_writes: RuntimeError"]
+
+
+def test_a_brief_about_no_agent_in_particular_has_no_ladder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.insights.api.models_mentor import MentorBriefInput
+
+    async def _p(*a: Any, **k: Any) -> Any:
+        return _fake_profile(agent="-")
+
+    monkeypatch.setattr(m, "mentor_profile", _p)
+    ch = _CH(_EVIDENCE_ROWS)
+    monkeypatch.setattr(handler, "get_client", lambda: ch)
+    out = asyncio.run(
+        handler.handle_mentor_brief(MentorBriefInput(org="o", namespace="ns", agent="-"))
+    )
+    assert out.usage_evidence == [] and not [q for q in ch.sqls if M_EVIDENCE in q]
+
+
+def test_a_failed_evidence_read_leaves_its_rungs_uncounted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _CH(
+        {
+            **_EVIDENCE_ROWS,
+            M_INDEXED: [{"n": 3}],
+            M_RETENTION: [{"retention_days": 0}],
+            M_EVIDENCE: RuntimeError("down"),
+            M_REPORTED: RuntimeError("x"),
+        }
+    )
+    out = _brief(monkeypatch, ch)
+    ladder = {e.rung: e.count for e in out.usage_evidence}
+    assert ladder["attempt"] is None and ladder["returned_hit"] is None
+    assert ladder["client_acknowledged"] is None
+    # The other reads still answer.
+    assert ladder["indexed_write"] == 3 and ladder["task_outcome"] == 0
+    assert out.skipped == ["calls: RuntimeError", "reported_keys: RuntimeError"]
+    assert out.ledger_from is None and out.ledger_retention_days == 0
+
+
 def test_mentor_brief_when_the_mentor_is_off_is_an_honest_empty_brief(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.insights.api.models_mentor import MentorBriefInput
 
     monkeypatch.setattr(settings, "mentor_ttl_seconds", 0, raising=False)
+    ch = _CH({**_EVIDENCE_ROWS, M_RETENTION: [{"retention_days": 0}]})
+    monkeypatch.setattr(handler, "get_client", lambda: ch)
     out = asyncio.run(
         handler.handle_mentor_brief(MentorBriefInput(org="o", namespace="ns", agent="a"))
     )
     assert out.healthy is True and out.hints == [] and out.skipped == ["profile: unavailable"]
+    # The ladder reads no profile, so it still answers.
+    assert {e.rung: e.count for e in out.usage_evidence}["attempt"] == 1
 
 
 def test_planes_cover_every_registered_op_prefix() -> None:

@@ -192,6 +192,34 @@ at session start, and a successful response carries at most one (`hint` on MCP, 
 `LOOM_MENTOR_MAX_HINTS_PER_SESSION`. `loom mentor --org … --namespace … --agent …` prints the whole brief. See the
 [mentor ops](../reference/operations/mentor.md).
 
+A brief's `usage_evidence` lists what the agent's use of Loom shows, one rung each, with
+who recorded it (`server`: Loom saw it; `client`: a caller reported it, unverified). The
+rungs are read at each brief, not from the cached profile, over the window the brief
+reports. Those read from the call ledger
+(`attempt`, `success`, `committed_write`, `returned_hit` and the `memory.outcome` labels)
+count the rows it records under the agent, which is the agent a call's body names (for a
+call by key, the row's writer, whoever calls): a call whose body names no agent (a read by
+id, an MCP `memory.update`, the Python SDK's `memory.update` by default) or that reads
+across agents and is recorded under `*` (`memory.search` and `memory.ask` from the SDKs,
+MCP's cross-agent reads, a `memory.outcome` that names no agent) is not counted. The
+ladder uses none of the profile's counts, so it answers when the mentor is off too; a
+brief about no agent in particular has no ladder.
+
+| Rung                  | Source   | Counts                                                                                                                                                                                                                                                                                              |
+| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `attempt`             | `server` | calls made, answered or not; not the dashboard's, a brief, or the verdict a deferred `memory.ask` leaves                                                                                                                                                                                            |
+| `success`             | `server` | those that returned without an error; a read that found nothing counts                                                                                                                                                                                                                              |
+| `committed_write`     | `server` | `memory.set` calls that stored a row: not a no-op, a dry run or a replay                                                                                                                                                                                                                            |
+| `indexed_write`       | `server` | memories first created in the window (one per user, session and key), by any write op, with a vector from the current embedder, in a served status and not expired                                                                                                                                  |
+| `returned_hit`        | `server` | a `memory.search` or `memory.ask` that did not abstain, a `search.query` with a memory, document or conversation hit, a get that found its key                                                                                                                                                      |
+| `client_acknowledged` | `client` | distinct memory keys the agent reported relying on: `run.complete` `memories_used` and a `memory.outcome` by id that said `used` or `positive` and landed on a row; not a label by key (recorded under the row writer's agent), the Python SDK's `outcome` calls (no agent) or `memory.outcome_run` |
+| `task_outcome`        | `client` | the agent's runs graded `pass` or `fail` (`run.grade`), as the grader reported it                                                                                                                                                                                                                   |
+
+A returned hit does not show that the answer reached the model or changed its work.
+`ledger_from` is the agent's oldest ledger row in the window, and `ledger_retention_days`
+how long the configured retention keeps the namespace's ledger rows (0: until deleted); a
+window longer than that leaves the rungs read from the ledger covering less than it names.
+
 [`mentor.guide`](../reference/operations/mentor.md#mentorguide) returns how to use Loom, written for a model: the
 `loom` skill in `skills/loom/`, as `part` `skill` (the loop and the rules), `reference` (every plane with its ops) or
 `all`. It is the same for every caller, so any viewer token may read it, including one narrowed to a user, and an end user's over HTTP.

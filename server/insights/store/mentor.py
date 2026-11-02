@@ -1,7 +1,9 @@
 """The mentor's reads: the agent's calls in the window from `loom.agent_events`
 (sort key `(org, namespace, agent, ts)`: bounded scans) and the namespace facts a
 rule needs — its live memory rows, documents, records, runs and the grants the
-agent reads code under. Each method is one statement (two for the credited-keys
+agent reads code under — and the usage-evidence ladder `mentor.brief` reads at each
+brief (call outcomes, indexed keys, reported keys, graded runs, the namespace's
+retention). Each method is one statement (two for the credited-keys
 pair) and returns plain values; the mentor decides what they mean."""
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from server.core.grant_sql import LIVE_GRANT
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
 from server.memory.domain.namespace_shapes import STRUCTURED_TYPES
+from server.memory.domain.temporal_sql import served_status_sql
 from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL as _TRANSCRIPT_ROW
 
 _TRACKER_TAG_RE = "(^|[^a-z])(test|tests|flaky|ci|regression|crash|failure|failing)([^a-z]|$)"
@@ -37,6 +40,15 @@ _REAL_SESSION = "session_id NOT IN ('', '-', '*')"
 # that is structured by design (procedures are graphs).
 _SEARCHABLE_ROW = (
     "memory_type NOT IN {ns_types:Array(String)} AND memory_type NOT IN {structured:Array(String)}"
+)
+
+
+# The keys the agent's runs in the window reported relying on (`run.complete`
+# `memories_used`: memory keys and `chunk:` ids), one row per key credited.
+_CREDITED_KEYS = (
+    "SELECT arrayJoin(memories_used) AS k FROM loom.agent_runs FINAL "
+    f"WHERE {_SCOPE} AND agent = {{agent:String}} "
+    "AND started_at >= now() - INTERVAL {win:UInt32} SECOND"
 )
 
 
@@ -180,12 +192,7 @@ class ProfileReads:
         how many, how many chunk ids, how many no live row answers."""
         r = await self._one(
             f"""
-            WITH credited AS (
-                SELECT arrayJoin(memories_used) AS k
-                FROM loom.agent_runs FINAL
-                WHERE {_SCOPE} AND agent = {{agent:String}}
-                  AND started_at >= now() - INTERVAL {{win:UInt32}} SECOND
-            )
+            WITH credited AS ({_CREDITED_KEYS})
             SELECT count() AS credited_keys,
                    countIf(startsWith(k, 'chunk:')) AS credited_chunk_keys,
                    countIf(NOT startsWith(k, 'chunk:') AND k NOT IN (
@@ -462,3 +469,150 @@ async def last_calls(
             },
         )
     )
+
+
+# A call the evidence ladder counts as the agent's: a request row (not a deferred verdict
+# a call left behind), not the dashboard's traffic, and not a brief, which is ledgered
+# under the agent it names.
+_COUNTED_CALL = "kind = 'request' AND consumer != 'loom-ui' AND operation != 'mentor.brief'"
+
+
+async def call_evidence(
+    org: str,
+    namespace: str,
+    agent: str,
+    window_seconds: int,
+    *,
+    searches: tuple[str, ...],
+    gets: tuple[str, ...],
+    ch: _CHClient | None = None,
+) -> dict[str, Any]:
+    """What the agent's calls in the window show, from the call ledger: attempts,
+    successes, `memory.set` calls that stored a row (`noop` false: a merge or a dry run
+    answers true), reads that answered (`abstain` false, a hit, a found key), and the
+    oldest row the ledger still holds for the agent. Each count needs the result column
+    that shows it, so an idempotent replay, which records no result, counts as an attempt
+    and nothing more."""
+    ch = ch or _default_client()
+    # An aggregate with no GROUP BY answers exactly one row.
+    (row,) = await ch.query_all(
+        f"""
+        SELECT countIf({_COUNTED_CALL}) AS attempts,
+               countIf({_COUNTED_CALL} AND success) AS successes,
+               countIf({_COUNTED_CALL} AND success AND operation = 'memory.set'
+                       AND args['out_noop'] = 'false') AS committed_writes,
+               countIf({_COUNTED_CALL} AND success AND (
+                   (operation IN {_in(searches)} AND args['out_abstain'] = 'false')
+                   OR (operation = 'search.query'
+                       AND toUInt64OrZero(args['out_section_hits']) > 0)
+                   OR (operation IN {_in(gets)} AND (args['out_found'] = 'true'
+                       OR toUInt64OrZero(args['out_found_n']) > 0)))) AS returned_hits,
+               minOrNull(ts) AS oldest_row
+        FROM loom.agent_events
+        WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN}
+        """,
+        params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
+    )
+    return row
+
+
+async def indexed_writes(
+    org: str,
+    namespace: str,
+    agent: str,
+    window_seconds: int,
+    *,
+    model: str,
+    ch: _CHClient | None = None,
+) -> int:
+    """Memories the agent first created in the window, by any write op, one per user,
+    session and key, that have a search vector from `model` (the deployment's embedder; a
+    row still waiting has `embedding_dim = 0`), in a served status and not past
+    `expires_at`. An embedding row's `created_at` is its version's write, so when a memory
+    was first created is read from `loom.memory`, which carries it forward across
+    versions."""
+    ch = ch or _default_client()
+    (row,) = await ch.query_all(
+        f"""
+        SELECT uniqExact(user_id, session_id, memory_key) AS n
+        FROM loom.memory_embeddings FINAL
+        WHERE {_SCOPE} AND agent = {{agent:String}} AND tombstoned_at IS NULL
+          AND (user_id, session_id, memory_key) IN (
+              SELECT user_id, session_id, memory_key FROM loom.memory
+              WHERE {_SCOPE} AND agent = {{agent:String}}
+                AND created_at >= now() - INTERVAL {{win:UInt32}} SECOND
+          )
+          AND embedding_model = {{model:String}} AND embedding_dim > 0
+          AND {served_status_sql()} AND (expires_at IS NULL OR expires_at > now())
+        -- Pruning granules by the key set costs about 1 GiB for 300,000 keys; the scope
+        -- prefix already bounds the scan.
+        SETTINGS use_index_for_in_with_subqueries = 0
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "win": int(window_seconds),
+            "model": model,
+        },
+    )
+    return int(row["n"])
+
+
+async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
+    """The namespace's own `retention_days` (0 when it sets none or is not registered)."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        f"SELECT retention_days FROM loom.namespaces FINAL WHERE {_SCOPE} LIMIT 1",
+        params={"org": org, "ns": namespace},
+    )
+    return int(row["retention_days"]) if row else 0
+
+
+async def reported_keys(
+    org: str, namespace: str, agent: str, window_seconds: int, *, ch: _CHClient | None = None
+) -> int:
+    """How many distinct memory keys the agent reported relying on in the window: its runs'
+    `run.complete` `memories_used` (which keeps only keys a live row answers; `chunk:` ids,
+    which name a passage rather than a memory, left out) and its `memory.outcome` labels by
+    id that said `used` or `positive` and landed on a row, resolved to that row's key.
+
+    A label by key is not counted: it resolves under the row writer's `agent`, so the ledger
+    records it under the writer, whoever gave it, and a label claims the caller's reliance."""
+    ch = ch or _default_client()
+    (row,) = await ch.query_all(
+        f"""
+        SELECT uniqExact(k) AS n FROM (
+            SELECT k FROM ({_CREDITED_KEYS}) WHERE NOT startsWith(k, 'chunk:')
+            UNION ALL
+            -- A memory's key never changes across its versions, so any version answers.
+            SELECT memory_key AS k FROM loom.memory
+            WHERE {_SCOPE} AND memory_id IN (
+                SELECT toUUIDOrZero(args['memory_id']) FROM loom.agent_events
+                WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN} AND {_COUNTED_CALL}
+                  AND success AND operation = 'memory.outcome'
+                  AND args['out_recorded'] = 'true' AND args['outcome'] IN ('used', 'positive')
+                  AND args['memory_id'] != ''
+            )
+        )
+        """,
+        params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
+    )
+    return int(row["n"])
+
+
+async def graded_runs(
+    org: str, namespace: str, agent: str, window_seconds: int, *, ch: _CHClient | None = None
+) -> int:
+    """How many of the agent's runs that started in the window carry a grade (`run.grade`
+    pass or fail)."""
+    ch = ch or _default_client()
+    (row,) = await ch.query_all(
+        f"""
+        SELECT count() AS n FROM loom.agent_runs FINAL
+        WHERE {_SCOPE} AND agent = {{agent:String}} AND grade != ''
+          AND started_at >= now() - INTERVAL {{win:UInt32}} SECOND
+        """,
+        params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
+    )
+    return int(row["n"])

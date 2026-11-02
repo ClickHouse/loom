@@ -137,6 +137,9 @@ IDENTIFIER_KEYS: frozenset[str] = frozenset(
         # `out_noop='true'` is the noop row; dry_run is the argument.
         "conflict_verdict",
         "noop",
+        # Whether an outcome label landed on a row (`memory.outcome` answers false for a
+        # row it did not find), so a label counts only when it did.
+        "recorded",
         # The write's advice to the agent about its VALUE
         # (today "value is base64-encoded (…)"), so the share of agents that
         # encode is one GROUP BY on the prefix.
@@ -612,13 +615,21 @@ def request_work_stage_columns(work: Any) -> dict[str, str]:
     return _retrieval_work_columns({"stage_ms": part})
 
 
+# The plane sections of a sectioned search's answer (`search.query`) whose hits say it
+# answered a recall. `profile` is left out: it falls back to matching by meaning, so it
+# answers nearly any query; so is `tracker`, the duplicate-check verdict on a defect
+# report, which answers whether the defect is filed, not what is remembered.
+_SEARCH_SECTIONS = ("memory", "knowledge", "conversations")
+
+
 def _read_outcome_columns(result: dict[str, Any]) -> dict[str, str]:
     """Whether a read ANSWERED, not just whether it ran. A `memory.get`
     that misses and a `bulk_get` whose keys are not there both return 200 and
     land as `success = 1`, so the ledger alone cannot show misses. `out_found` (true/false) rides a
     single-row read; `out_found_n` / `out_missing_n` ride a bulk read, so a
-    found rate per operation per agent is one aggregate over the ledger.
-    Counts only — the keys themselves stay in the response."""
+    found rate per operation per agent is one aggregate over the ledger;
+    `out_section_hits` rides a sectioned search. Counts only — the keys themselves stay
+    in the response."""
     out: dict[str, str] = {}
     found = result.get("found")
     if isinstance(found, bool):
@@ -628,6 +639,17 @@ def _read_outcome_columns(result: dict[str, Any]) -> dict[str, str]:
     if isinstance(missing, list) and isinstance(results, dict):
         out[RESULT_PREFIX + "found_n"] = str(len(results))
         out[RESULT_PREFIX + "missing_n"] = str(len(missing))
+    # A sectioned search (`search.query`) answers with a hit list per plane and no top-level
+    # `abstain`: the hits across its sections say whether it answered. A section that
+    # abstained keeps its below-threshold hits as evidence; they are not an answer.
+    sections = [sec for sec in (result.get(k) for k in _SEARCH_SECTIONS) if isinstance(sec, dict)]
+    if any("results" in sec for sec in sections):
+        hits = sum(
+            len(sec["results"])
+            for sec in sections
+            if isinstance(sec.get("results"), list) and sec.get("abstain") is not True
+        )
+        out[RESULT_PREFIX + "section_hits"] = str(hits)
     return out
 
 
