@@ -300,10 +300,10 @@ def _newer_key(r: dict[str, Any]) -> tuple[float, str]:
 def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Contradicting team rows (rules or decisions), reusing the conflict machinery: two rows
     of one namespace cross-linked by `conflict_with` are an older row and a newer one that
-    contradicts it. The newer is placed directly above the older and carries `supersedes_key` /
-    `supersedes` / `supersedes_kind` (the first older row's key, author and kind) and
-    `supersedes_ids` (the memory_id of every older row it is linked to: another writer may
-    hold a row under the same key). No new state: both
+    contradicts it. The newer is placed above every older row it supersedes, newest first
+    along a chain, and carries `supersedes_key` / `supersedes` / `supersedes_kind` (the first
+    older row's key, author and kind) and `supersedes_ids` (the memory_id of every older row
+    it is linked to: another writer may hold a row under the same key). No new state: both
     stay live until the older's author or a maintainer removes it, or a verdict retires it. Two
     typed decisions never pair: a decision's key is its identity, so one cross-linked to
     another is a second decision, not a newer version."""
@@ -338,8 +338,7 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
 
     def place(r: dict[str, Any]) -> None:
-        # The rows newer than `r` go first, theirs before them, so a chain reads newest
-        # first; `placed` is set before the recursion so a cycle of links ends.
+        # The rows newer than `r` go first, theirs before them, so a chain reads newest first.
         if id(r) in placed:
             return
         placed.add(id(r))
