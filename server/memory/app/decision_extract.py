@@ -859,7 +859,6 @@ async def _confirmed_restatement(
     top_k = settings.memory_decision_extract_restatement_top_k
     statement = memory_value(
         {
-            "category": inp.category,
             "scenario": inp.scenario,
             "outcome": inp.outcome,
             "reasoning": inp.reasoning,

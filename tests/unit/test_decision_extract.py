@@ -549,6 +549,34 @@ async def test_a_confirmed_restatement_under_another_key_is_skipped(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_a_confirmed_decision_in_another_category_is_a_restatement(monkeypatch) -> None:
+    """The statement leaves the category out, so the same decision filed under another
+    category reads the same and is skipped."""
+    from server.memory.app import search
+    from server.memory.domain.decision_statement import memory_value
+
+    c = _candidate()
+    filed_elsewhere = {**_same_fields(c), "category": "design:distinct"}
+    other_key = svc.decision_key("design:distinct", c["scenario"])
+    world = _World(monkeypatch, [c])
+    pinned = world.add(other_key, agent="alice-agent", pinned=True)
+    pinned.value = memory_value(filed_elsewhere)
+
+    async def mem_search(inp):
+        hits = [r for r in world.rows if r.value == inp.query]
+        return SimpleNamespace(
+            results=[SimpleNamespace(memory_key=r.memory_key, similarity=1.0) for r in hits]
+        )
+
+    monkeypatch.setattr(search, "handle_memory_search", mem_search)
+    report = await _run()
+    assert world.recorded == [] and world.updates == []
+    (rec,) = report.records
+    assert rec.action == "already_recorded"
+    assert rec.note == f"already recorded by alice-agent under {other_key}"
+
+
+@pytest.mark.asyncio
 async def test_a_close_unpinned_or_distant_pinned_peer_does_not_stop_the_write(
     monkeypatch,
 ) -> None:

@@ -118,8 +118,8 @@ def test_a_recorded_decision_reads_as_its_statement_before_an_edit(
     out = _poll(control_plane_url, token, request, lambda out: out["total"] == 1)
     assert out["total"] == 1, out
     assert out["rendered"].splitlines()[1] == (
-        f"- {key} [decision] (unconfirmed): Category: design. Scenario: Spill the final "
-        f"distinct? Decided spill it because memory is bounded. — source: {SOURCE}"
+        f"- {key} [decision] (unconfirmed): Spill the final distinct? "
+        f"Decided spill it because memory is bounded. — source: {SOURCE}"
     )
 
 
@@ -150,5 +150,5 @@ def test_a_long_recorded_decision_prints_as_text(
     assert out["total"] == 1, out
     assert out["hits"][0]["value_truncated"] is True
     line = out["rendered"].splitlines()[1]
-    assert line.endswith("…") and ": Category: design. Scenario: Réécrire la jointure ?" in line
+    assert line.endswith("…") and ": Réécrire la jointure ? Decided" in line
     assert "\\u" not in line and '"' not in line

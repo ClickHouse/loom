@@ -9,20 +9,13 @@ import pytest
 
 from server.memory.app import decisions as svc
 from server.memory.domain import decision_statement as stmt
-from server.memory.domain.files import detect_value_files
 
 
-def test_a_long_category_slug_is_cut_at_a_separator() -> None:
-    slug = "design:" + "-".join(["spilling"] * 11)  # 105 characters, within the 120 limit
-    value = stmt.memory_value({"category": slug, "outcome": "pin"})
-    category = value.split(" Decided")[0].removeprefix("Category: ")
-    assert category.startswith("design:spilling-spilling") and category.endswith("spilling...")
-    assert len(category) <= stmt.STATEMENT_CATEGORY_CHARS
-    # `_` is never a cut: the detector reads `schema.sql_migrations` as one word, but
-    # `schema.sql...` as a file the decision never names.
-    slug = "storage:schema.sql_" + "m" * 60
-    value = stmt.memory_value({"category": slug, "outcome": "pin"})
-    assert "schema.sql..." not in value and detect_value_files(value) == []
+def test_the_statement_leaves_out_the_category_and_field_labels() -> None:
+    value = stmt.memory_value(
+        {"category": "storage:schema.sql", "scenario": "Spill to disk?", "outcome": "pin"}
+    )
+    assert value == "Spill to disk? Decided pin."
 
 
 def test_memory_value_reads_as_a_statement() -> None:
@@ -36,13 +29,13 @@ def test_memory_value_reads_as_a_statement() -> None:
         }
     )
     assert value == (
-        "Category: deploy. Scenario: Roll back or hotfix the image? "
+        "Roll back or hotfix the image? "
         "Decided rollback because Rollback is 2 minutes; the fix is untested. "
         "Rejected: hotfix forward — rejected: untested; wait."
     )
     # A stored record joins alternatives with newlines; no reasoning, no alternatives.
     assert stmt.memory_value({"outcome": "pin", "alternatives": "", "scenario": "s"}) == (
-        "Scenario: s. Decided pin."
+        "s. Decided pin."
     )
     # A reasoning that is the outcome, case and whitespace aside, is a ban stated with no
     # reason: no "because".
@@ -72,11 +65,11 @@ def test_memory_value_reads_as_a_statement() -> None:
 
 
 def test_the_pre_edit_line_reaches_the_outcome() -> None:
-    # memory.for_file prints a statement's first 220 characters: a long category and
-    # scenario are clipped, so the outcome is always in that line.
+    # memory.for_file prints a statement's first 220 characters: a long scenario is
+    # clipped, so the outcome is always in that line.
     value = stmt.memory_value({"scenario": "Roll back?", "outcome": "roll back " * 100})
     assert "Decided roll back" in value[:60]
-    long = stmt.memory_value({"category": "c " * 60, "scenario": "s " * 1000, "outcome": "pin"})
+    long = stmt.memory_value({"scenario": "s " * 1000, "outcome": "pin"})
     assert "Decided pin" in long[:220]
 
 
@@ -92,7 +85,6 @@ def test_a_statement_with_every_part_at_its_cap_is_embedded_whole(ch: str) -> No
 
     word = ch + " "  # one-character words: each part is cut at its cap or one below
     payload = {
-        "category": word * 120,
         "scenario": word * 1000,
         "outcome": word * 1000,
         "reasoning": word * 2000,
@@ -112,32 +104,30 @@ def test_unspaced_cjk_text_keeps_its_leading_content() -> None:
 
     value = stmt.memory_value(
         {
-            "category": "部署",
             "scenario": "回" * 500,
             "outcome": "決" * 500,
             "reasoning": "理" * 1000,
         }
     )
-    assert "Scenario: 回回" in value and "Decided 決決" in value and "because 理理" in value
+    assert value.startswith("回回") and "Decided 決決" in value and "because 理理" in value
     key = svc.decision_key("c", "s")
     assert len(json.dumps(value)) <= EXCERPT_LIMIT - len(f" (#{key})")
 
 
-def test_the_pre_edit_line_shows_the_outcome_at_full_caps() -> None:
+def test_the_pre_edit_line_shows_the_outcome_and_the_reasons_start() -> None:
     """memory.for_file prints the stored (JSON-quoted) value, cut at 220 characters."""
     from server.memory.app.for_file import _LINE_CHARS, _one_line
 
     outcome = "spill into sorted runs and merge them with a fan-in of eight"
     value = stmt.memory_value(
         {
-            "category": "design:" + "-".join(["spilling"] * 11),
             "scenario": "how the final DISTINCT spills to disk " * 10,
             "outcome": outcome,
             "reasoning": "sorted runs reuse the ORDER BY merge " * 20,
         }
     )
     line = _one_line(json.dumps(value), _LINE_CHARS)
-    assert outcome[:60] in line
+    assert f"Decided {outcome} because sorted runs reuse the ORDER BY merge" in line
 
 
 def test_spaced_non_ascii_text_is_cut_at_a_space() -> None:
@@ -150,47 +140,38 @@ def test_spaced_non_ascii_text_is_cut_at_a_space() -> None:
 def test_every_statement_part_drops_its_trailing_punctuation() -> None:
     value = stmt.memory_value(
         {
-            "category": "deploy",
             "scenario": "rollback:",
             "outcome": "pin the image",
             "reasoning": "it is fast;",
             "realized_outcome": ".",
         }
     )
-    assert "Scenario: rollback." in value
+    assert value.startswith("rollback. Decided pin the image")
     assert "because it is fast." in value
     assert "Realized: ." in value
 
 
 def test_spaced_korean_is_cut_at_a_space() -> None:
     reasoning = "데이터베이스를 사용합니다 " * 40
-    value = stmt.memory_value(
-        {"category": "c", "scenario": "s", "outcome": "o", "reasoning": reasoning}
-    )
+    value = stmt.memory_value({"scenario": "s", "outcome": "o", "reasoning": reasoning})
     kept = value.split("because ", 1)[1].split("...", 1)[0]
     assert set(kept.split()) <= {"데이터베이스를", "사용합니다"}
 
 
 def test_a_cut_list_ends_without_its_separator() -> None:
     alts = [f"option {i} rejected for a stated reason" for i in range(10)]
-    value = stmt.memory_value(
-        {"category": "c", "scenario": "s", "outcome": "o", "alternatives": alts}
-    )
+    value = stmt.memory_value({"scenario": "s", "outcome": "o", "alternatives": alts})
     assert ";..." not in value
 
 
 def test_a_cut_part_drops_a_trailing_dash() -> None:
     alts = [f"hotfix forward {i} — rejected" for i in range(20)]
-    value = stmt.memory_value(
-        {"category": "c", "scenario": "s", "outcome": "o", "alternatives": alts}
-    )
+    value = stmt.memory_value({"scenario": "s", "outcome": "o", "alternatives": alts})
     assert "—..." not in value and "-..." not in value
 
 
 def test_a_part_ending_in_a_spaced_full_stop_leaves_no_space() -> None:
-    value = stmt.memory_value(
-        {"category": "c", "scenario": "s", "outcome": "use x .", "alternatives": ["a", "b ."]}
-    )
+    value = stmt.memory_value({"scenario": "s", "outcome": "use x .", "alternatives": ["a", "b ."]})
     assert "Decided use x." in value and "Rejected: a; b." in value
 
 
@@ -211,26 +192,26 @@ def test_a_punctuation_only_alternative_is_kept_as_written() -> None:
         (
             "scenario",
             "使用 ClickHouse 存储日志数据" + "存储日志数据" * 20,
-            "Scenario: 使用 ClickHouse 存储",
+            "使用 ClickHouse 存储",
         ),
         # Nor does a spaced CJK word.
         ("reasoning", "原因 " + "存储日志数据" * 100, "because 原因 存储日志数据存储"),
         # Unspaced Korean after an ASCII term is cut at the space, never mid-word.
-        ("scenario", "CI 파이프라인설정을변경합니다", "Scenario: CI..."),
+        ("scenario", "CI 파이프라인설정을변경합니다", "CI... Decided o"),
         # Full-width sentence punctuation is not doubled.
-        ("scenario", "部署失败怎么办？", "Scenario: 部署失败怎么办？ "),
+        ("scenario", "部署失败怎么办？", "部署失败怎么办？ Decided o"),
         ("outcome", "使用ClickHouse。", "Decided 使用ClickHouse."),
     ],
 )
 def test_wide_text_keeps_its_head_and_no_half_word(field: str, text: str, shown: str) -> None:
-    payload = {"category": "c", "scenario": "s", "outcome": "o", field: text}
+    payload = {"scenario": "s", "outcome": "o", field: text}
     assert shown in stmt.memory_value(payload)
 
 
 def test_a_cyrillic_scenario_is_clipped_by_its_encoded_length() -> None:
     """The caps count the stored, JSON-encoded form, where each Cyrillic letter takes six."""
-    value = stmt.memory_value({"category": "c", "scenario": "Решение " * 40, "outcome": "o"})
-    assert "Scenario: Решение..." in value
+    value = stmt.memory_value({"scenario": "Решение " * 40, "outcome": "o"})
+    assert value.startswith("Решение... Decided o")
 
 
 @pytest.mark.parametrize(
@@ -245,7 +226,7 @@ def test_a_cyrillic_scenario_is_clipped_by_its_encoded_length() -> None:
     ],
 )
 def test_a_part_keeps_a_trailing_ellipsis_and_no_other_ending(outcome: str, shown: str) -> None:
-    value = stmt.memory_value({"category": "c", "scenario": "s", "outcome": outcome})
+    value = stmt.memory_value({"scenario": "s", "outcome": outcome})
     assert value.endswith(f"Decided {shown}")
 
 

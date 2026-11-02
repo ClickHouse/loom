@@ -260,18 +260,20 @@ A decision recorded in a repository's trunk code namespace also reaches MCP `loo
 repository, for a caller who may read the namespace ([unified search](unified-search.md#reading-the-memory-section)).
 
 The memory row's value is one statement,
-`Category: <category>. Scenario: <scenario>. Decided <outcome> because <reasoning>. Rejected: <alternative>; …`, then
-`Realized: …` once `decision.outcome` has recorded one. A reasoning that is the outcome word for word (case, whitespace
-and the closing punctuation aside) records a ban or an invariant stated with no reason: the statement reads
-`Decided <outcome>.`, the outcome keeping the reasoning's room as well, and `context.pack` gives no `because`. Search
-embeds and excerpts it and `memory.for_file` shows it. Each part is shortened to fit the embedded excerpt, the scenario
-most, because the pre-edit line shows the start of the statement and must reach the outcome. The excerpt is measured as
-the value is stored, JSON-encoded, where a non-ASCII character takes six or more, so a Cyrillic or CJK part keeps about
-a sixth as many characters as an ASCII one. The record keeps every field in full except the alternatives, each kept to
-its first 300 characters.
+`<scenario>. Decided <outcome> because <reasoning>. Rejected: <alternative>; …`, then `Realized: …` once
+`decision.outcome` has recorded one. The category is not in it: it stays on the record and in the row's
+`decision:category:<category>` tag, which is what a filter by category reads. A reasoning that is the outcome word for
+word (case, whitespace and the closing punctuation aside) records a ban or an invariant stated with no reason: the
+statement reads `Decided <outcome>.`, the outcome keeping the reasoning's room as well, and `context.pack` gives no
+`because`. Search embeds and excerpts it and `memory.for_file` shows it, so it opens with the scenario. Each part is
+shortened to fit the embedded excerpt, the scenario most, because the pre-edit line shows the start of the statement
+and must reach the outcome. The excerpt is measured as the value is stored, JSON-encoded, where a non-ASCII character
+takes six or more, so a Cyrillic or CJK part keeps about a sixth as many characters as an ASCII one. The record keeps
+every field in full except the alternatives, each kept to its first 300 characters.
 
-- **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the
-  fields the statement is built from in full (not `decision_maker` or `run_id`, which the row never holds).
+- **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the stored
+  category, scenario, outcome, reasoning, alternatives and realized outcome (not `decision_maker` or `run_id`, which
+  the row never holds).
 - **Files**: `files` sets the row's files as on `memory.set`; unset, they are detected from the stored fields, never
   from the shortened statement. `memory.for_file` serves the decision before an edit of a file it names, marked
   `(unconfirmed)` until it is pinned or attested, and `(source changed since confirmation)` or `(source changed)`
@@ -289,11 +291,16 @@ it.
 
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
 (`superseded_prior=true`); history keeps it. A decision recorded again word for word writes the same statement, which
-`memory.set` takes as a restatement: it reinforces the row, and a pinned decision accepts it. When the writer of a
-pinned decision decides it otherwise, the call is refused with 409 `PINNED_CONFLICT` and nothing is written; an admin
+`memory.set` takes as a restatement: it reinforces the row, and a pinned decision accepts it. The restatement compares
+the statement's bytes, so a row stored under another statement form is revised rather than restated by the same fields,
+whether they come from `decision.record` or from `decision.outcome`, which rebuilds the statement too. A row whose value
+is locked refuses either with 423 `LOCKED` until the lock ends or is released; an attested row takes the write, and its
+attestation reads stale until `memory.verify` binds it again; a pinned row refuses `decision.record` until it is
+unpinned, and the pin is set again only through `memory.pin`, while `decision.outcome` keeps the pin. When the writer of
+a pinned decision decides it otherwise, the call is refused with 409 `PINNED_CONFLICT` and nothing is written; an admin
 unpins it with `memory.unpin` first. The pin guards only its writer's row: another identity's decision on the same
-scenario still supersedes the record. The new record holds only what the new decision states: fields it leaves out,
-and an earlier `realized_outcome` or `success`, are not carried over, whether it is written by `decision.record` or
+scenario still supersedes the record. The new record holds only what the new decision states: fields it leaves out, and
+an earlier `realized_outcome` or `success`, are not carried over, whether it is written by `decision.record` or
 `memory.record.write`. A `decision.outcome` without `success` keeps the record's verdict.
 
 The record holds the text of its last writer, the agent, user and session that recorded it, so a delete of that
@@ -475,9 +482,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
     without the outcome; a verbatim field that differs tags it `source-changed`, as a confirmed row is.
   - **No record under the key**: of the `LOOM_MEMORY_DECISION_EXTRACT_RESTATEMENT_TOP_K` (default 20) decision keys
     closest to the candidate (cosine only), a confirmed one under another key that reads the same at or above the
-    namespace's conflict threshold skips the candidate: `already recorded by <agent> under <key>`. Otherwise the
-    decision is recorded. The fetch is capped at 500 rows, so a large value or `LOOM_MEMORY_SEARCH_PER_KEY_CAP=0`
-    can read fewer keys.
+    namespace's conflict threshold skips the candidate: `already recorded by <agent> under <key>`. The query is the
+    candidate's statement, which leaves the category out, so a confirmed decision filed under another category counts.
+    Otherwise the decision is recorded. The fetch is capped at 500 rows, so a large value or
+    `LOOM_MEMORY_SEARCH_PER_KEY_CAP=0` can read fewer keys.
 - **The tag write**: `memory.update_by_id` by the row's `memory_id`, tags only, conditional on the value read: a value
   changed since, by `decision.outcome` or a re-record, is left alone and reported as a race. It is a new version by
   the extractor: the row's pin, value and attestation stay (the value's hash does not change, so the attestation still
