@@ -476,7 +476,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   - **No record under the key**: of the `LOOM_MEMORY_DECISION_EXTRACT_RESTATEMENT_TOP_K` (default 20) decision keys
     closest to the candidate (cosine only), a confirmed one under another key that reads the same at or above the
     namespace's conflict threshold skips the candidate: `already recorded by <agent> under <key>`. Otherwise the
-    decision is recorded.
+    decision is recorded. The search behind it fetches at most 500 rows, so above 500 /
+    `LOOM_MEMORY_SEARCH_PER_KEY_CAP` keys it may read fewer.
 - **The tag write**: `memory.update_by_id` by the row's `memory_id`, tags only, conditional on the value read: a value
   changed since, by `decision.outcome` or a re-record, is left alone and reported as a race. It is a new version by
   the extractor: the row's pin, value and attestation stay (the value's hash does not change, so the attestation still

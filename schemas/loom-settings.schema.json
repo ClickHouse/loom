@@ -3660,10 +3660,9 @@
         },
         "memory_decision_extract_restatement_top_k": {
           "default": 20,
-          "maximum": 500,
           "minimum": 1,
           "type": "integer",
-          "description": "Closest decision keys a candidate is compared with for a confirmed row under another key that states it already (cosine only, no model call). At most 500, memory.search's top_k bound (SEARCH_TOP_K_MAX)."
+          "description": "Closest decision keys a candidate is compared with for a confirmed row under another key that states it already (cosine only, no model call). The search fetches at most 500 rows (SEARCH_TOP_K_MAX), so above 500 / memory_search_per_key_cap fewer keys may be read."
         },
         "memory_durability_verifier_max_facts_per_call": {
           "default": 60,

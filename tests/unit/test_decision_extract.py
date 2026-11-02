@@ -2033,7 +2033,12 @@ def test_a_refused_candidate_or_retire_write_exits_2(dropped, refused, code) -> 
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_restatement_below_five_closer_hits_still_blocks(monkeypatch) -> None:
+@pytest.mark.parametrize(("top_k", "blocked"), [(7, True), (5, False)])
+async def test_a_confirmed_restatement_below_five_closer_hits_blocks_within_top_k(
+    monkeypatch, top_k, blocked
+) -> None:
+    """The confirmed key is the sixth closest: a top_k of 7 reaches it, 5 stops before it
+    though the fetch (5 keys times a per-key cap of 3) still serves it."""
     from server.memory.app import search
     from server.settings import settings
 
@@ -2051,11 +2056,15 @@ async def test_a_confirmed_restatement_below_five_closer_hits_still_blocks(monke
         return SimpleNamespace(results=hits[: inp.top_k])
 
     monkeypatch.setattr(search, "handle_memory_search", mem_search)
-    monkeypatch.setattr(settings, "memory_decision_extract_restatement_top_k", 7)
+    monkeypatch.setattr(settings, "memory_search_per_key_cap", 3)
+    monkeypatch.setattr(settings, "memory_decision_extract_restatement_top_k", top_k)
     report = await _run()
-    assert asked == [per_key_fetch(7)]
-    assert world.recorded == []
-    assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+    assert asked == [per_key_fetch(top_k)] and per_key_fetch(top_k) >= len(hits)
+    if blocked:
+        assert world.recorded == []
+        assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+    else:
+        assert len(world.recorded) == 1
 
 
 @pytest.mark.asyncio
