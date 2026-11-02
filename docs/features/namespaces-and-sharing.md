@@ -154,7 +154,7 @@ entry.
 
 The report's `coverage` lists the rules that ran (`rules_run`) and those that could not
 (`rules_skipped`, also in `skipped` with the reason). Both name the evidence read
-(`evidence`) and, for `namespace.audit`, its summary reads, which every finding is
+(`evidence`) and, for `namespace.audit`, its summary reads, which most findings are
 measured against. `complete` is false when any of them was skipped.
 
 `loom audit-namespace` runs `namespace.audit` from the shell; the

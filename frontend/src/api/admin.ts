@@ -47,7 +47,8 @@ export interface NamespaceAuditFinding {
   window_seconds?: number | null;
   population?: number | null;
   sample_limit?: number;
-  // False when `samples` list only some of the matching rows.
+  // False when the cap cut the samples or they cannot name every match (hot keys
+  // against all gets).
   samples_complete?: boolean;
   // The live revision of each row the samples name: identifiers only, never a value.
   evidence?: Array<{
