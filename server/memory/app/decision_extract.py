@@ -375,7 +375,7 @@ async def extract_document(
         if rec.action == "flagged":
             report.flagged.append(rec.memory_key)
         if rec.holds:
-            held.setdefault((rec.held_outcome, collapse_ws(cand.reasoning)), rec.memory_key)
+            held.setdefault((rec.held_outcome, _reasoning_key(cand.reasoning)), rec.memory_key)
     await _retire(report, own, live_texts, written, held)
     return report
 
@@ -1105,6 +1105,13 @@ async def _retire(
             report.refused.append(f"{row.memory_key}: {_refusal(e)}")
 
 
+def _reasoning_key(reasoning: str) -> str:
+    """A reasoning as the retire step compares it with this run's: whitespace and case
+    aside, as `find_span` reads it, so a case-only change in the document under a
+    reworded scenario still names its heir."""
+    return collapse_ws(reasoning).casefold()
+
+
 async def _retire_one(
     report: ExtractReport,
     row: MemoryRow,
@@ -1118,13 +1125,14 @@ async def _retire_one(
     reasoning = str(record.get("reasoning") or "")
     if not reasoning:
         return
-    restated = held.get((str(record.get("outcome") or "").strip(), collapse_ws(reasoning)))
+    restated = held.get((str(record.get("outcome") or "").strip(), _reasoning_key(reasoning)))
     # A row with a recorded outcome is kept: deleting it would lose the outcome.
     if not _confirmed(row) and restated is not None and not _has_outcome(record):
         if await _delete_row(report, row):
             report.replaced.append(f"{key} -> {restated}")
         return
-    # Whitespace aside, as the verbatim check reads it: a re-wrapped line is the same text.
+    # As the verbatim check reads it: a re-wrapped line, a change of case or a label line
+    # read across is the same text.
     if not dx.find_span(reasoning, live_texts):
         # A row with a recorded outcome is tagged, never deleted, like a pinned one.
         keep = _confirmed(row) or _has_outcome(record)

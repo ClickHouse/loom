@@ -409,9 +409,17 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   with every run of whitespace read as one space, letter case ignored, and up to 3 label lines read across between two
   of its words: a model copying a span drops line breaks and doubled spaces and capitalises a sentence's first word,
   and a slide or diagram converted to text puts short labels between a sentence's two halves. A label line is one to
-  three words on a line of its own, with a line break before and after it (blank lines around it are read too); a
-  fourth label line, a line of four words, or a label inside a line ends the match. What is recorded is the chunk's own
-  span, line breaks, case and labels and all, so it stays a substring of the document's text. The reasoning-restates
+  three words on a line of its own, with a line break before and after it (blank lines around it are read too), that
+  does not start as a list item (`-`, `*`, `+`, `1.`, `1)`), a fence or code (`` ` ``, `~`), a table row (`|`), a
+  heading (`#`), a quote (`>`) or a definition (`:`), and holds none of the ban words of a reason-less ban below, nor
+  the contrast words of the inverted-alternatives check, nor a word ending in `n't`: skipping `not` would read
+  "Retries are / not / safe" as "Retries are safe". A fourth label line, a line of four words, a line that is no
+  label, or a label inside a line ends the match. Each word of the span but the last ends where a word of the text
+  ends, so `so` does not take the start of a label `Something`. The word right after the whitespace is read before any
+  label, so a recorded span, its labels now words of it, always reads as itself; a label that reads as the next word
+  ("So" over "so a read") is taken as that word and the span is not found. Chunk texts hold a section's body without
+  its heading line. What is recorded is the chunk's own span, line breaks, case and labels and all, so it stays a
+  substring of the document's text. The reasoning-restates
   check below reads the model's span, so label words in the document's span add no reason. Each is at least 12
   characters long, counted on the model's span: a shorter span ("We", "the") is in every document, so a decision
   resting on it could never retire. At most `--max-per-section` (default 3)
@@ -438,7 +446,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   on the slides after it. A divider is a short section (at most 80 characters of text, as a caption is counted) with no
   subsections whose own heading names a recap, summary or background; it covers each section after it until the next
   short section (an image-only one included) or the next heading above its level. A recap-named section with a longer
-  body is dropped by its own heading and covers nothing after it. The sections stay in the window, since their text may
+  body is dropped by its own heading and covers nothing after it. A heading path that also names a section outside a
+  span (two slides with one title) is not covered: a quote is told apart by its heading path only, so the decision is
+  kept. The sections stay in the window, since their text may
   give a later decision's reason.
 - **Inverted alternatives**: a rejected option the candidate's own quote, the span of the chosen design, states as part
   of the choice is left out of the record and reported
@@ -508,13 +518,13 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   its re-record is replaced with the rest of the record; the tag write's precondition covers the value, not a
   tags-only change in the gap.
 - **Retire**: an unconfirmed `loom-decisions` row citing the document whose reasoning is no longer in the document's
-  text, whitespace read as in the verbatim check, is deleted with `memory.delete_version`, which also retires its
-  record; a confirmed one, or one whose outcome `decision.outcome` recorded, is tagged `source-changed` instead. The
-  reasoning read is the extractor's own record: a key whose active record another identity wrote is left alone. An
-  unconfirmed row whose outcome and reasoning (whitespace aside) this run recorded under another key (the model worded
-  the scenario differently) is deleted too, so the decision is not served twice, unless its realized outcome is
-  recorded; another decision resting on the same reasoning has another outcome and stays. Otherwise a row whose
-  reasoning is still there stays, whether or not the run emitted it again.
+  text, read as in the verbatim check, is deleted with `memory.delete_version`, which also retires its record; a
+  confirmed one, or one whose outcome `decision.outcome` recorded, is tagged `source-changed` instead. The reasoning
+  read is the extractor's own record: a key whose active record another identity wrote is left alone. An unconfirmed
+  row whose outcome and reasoning (the reasoning's whitespace and letter case aside) this run recorded under another
+  key (the model worded the scenario differently) is deleted too, so the decision is not served twice, unless its
+  realized outcome is recorded; another decision resting on the same reasoning has another outcome and stays.
+  Otherwise a row whose reasoning is still there stays, whether or not the run emitted it again.
 - **Citing the document**: a row cites it when its `source_resource_id` starts `knowledge:<namespace>/<source_uri>#`,
   so a heading holding `#` (`C# bindings`) is no obstacle, unless a document `<source_uri>#<part>` it also starts with
   was ever ingested in the namespace: `doc#v2#Intro` cites `doc#v2` once that document exists.

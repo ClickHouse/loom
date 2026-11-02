@@ -255,6 +255,14 @@ MIN_SPAN_CHARS = 12
 # The label lines a span reads across between two of its words.
 # not a setting: part of what a label line is, which the verbatim check's docs state
 LABEL_LINES_MAX = 3
+# Words of a ban or an invariant (`states_a_ban`), and words that say a sentence
+# rejects or contrasts what it names (`inverted_options`).
+_BAN_WORDS = r"only|no|never|must|not|always|at\s+most|at\s+least"
+_NEGATION_WORDS = (
+    r"not|no|never|cannot|can['’]t|instead|rather|without|fail\w*|reject\w*|than"
+    r"|avoid\w*|slow|over|against|versus|vs|unlike|replac\w*|favou?r\w*|prefer\w*"
+    r"|outperform\w*|beats?|compar\w*|drop\w*"
+)
 # Whitespace other than a line break.
 _H = r"[^\S\n]"
 # A label line: one to three words on a line of their own, as a slide or diagram
@@ -262,8 +270,21 @@ _H = r"[^\S\n]"
 _LABEL_LINE = rf"{_H}*\S+(?:{_H}+\S+){{0,2}}{_H}*\n"
 _BLANK_LINES = rf"(?:{_H}*\n)*"
 # Between two words of a span: a line break, one to three label lines, blank lines
-# around them, then the next word on its own line.
-_LABEL_GAP = rf"{_H}*\n{_BLANK_LINES}(?:{_LABEL_LINE}{_BLANK_LINES}){{1,{LABEL_LINES_MAX}}}{_H}*"
+# around them, then the next word on its own line. The lines read across are a group,
+# which `_only_labels` checks.
+_LABEL_GAP = rf"{_H}*\n({_BLANK_LINES}(?:{_LABEL_LINE}{_BLANK_LINES}){{1,{LABEL_LINES_MAX}}}){_H}*"
+# A short line that is still no label: one that starts as a list item, a fence or code,
+# a table row, a heading, a quote or a definition (the document's structure), or one
+# that holds a ban or a negation word: skipping `not` would read "Retries are\nnot\nsafe"
+# as "Retries are safe".
+_NOT_A_LABEL = re.compile(
+    rf"^(?:[-*+`~|#>:]|\d+[.)])|\b(?:{_BAN_WORDS}|{_NEGATION_WORDS})\b|n['’]t\b", re.I
+)
+
+
+def _only_labels(lines: str | None) -> bool:
+    """The lines a match read across between two words are all labels (or none were)."""
+    return not lines or not any(_NOT_A_LABEL.search(x.strip()) for x in lines.splitlines())
 
 
 def find_span(span: str, texts: Sequence[str]) -> str:
@@ -278,12 +299,30 @@ def find_span(span: str, texts: Sequence[str]) -> str:
         return ""
     # Each gap and the word after it is atomic: once the next word is found, the gap is
     # not read again another way, so a failed match costs linear time in the span's
-    # words, however many lines look like labels.
-    rest = "".join(rf"(?>\s+{w}|{_LABEL_GAP}{w})" for w in map(re.escape, words[1:]))
-    pattern = re.compile(re.escape(words[0]) + rest, re.IGNORECASE)
+    # words, however many lines look like labels. The next word right after the
+    # whitespace is tried first, so a stored span, its labels now words of it, always
+    # finds itself again; a label that reads as the next word ("So" over "so a read")
+    # is taken as that word, and the match fails. A word ends where the document's
+    # does, so `so` never takes the start of a label `Something`; the last word may
+    # still end inside one when nothing else matches, as before: a CJK span has no
+    # spaces to end at.
+    parts = [re.escape(words[0])]
+    for n, word in enumerate(words[1:], start=2):
+        w = re.escape(word)
+        if n < len(words):
+            parts.append(rf"(?>\s+{w}(?=\s)|{_LABEL_GAP}{w}(?=\s))")
+        else:
+            parts.append(rf"(?>\s+{w}(?!\w)|{_LABEL_GAP}{w}(?!\w)|\s+{w})")
+    pattern = re.compile("".join(parts), re.IGNORECASE)
     for text in texts:
-        if m := pattern.search(text):
-            return m.group(0)
+        # A match that read across a line that is no label is not the span: the next
+        # start is tried. Checked here, not in the pattern, where it costs a scan of
+        # the word lists at every character of every line tried as a label.
+        start = 0
+        while m := pattern.search(text, start):
+            if all(map(_only_labels, m.groups())):
+                return m.group(0)
+            start = m.start() + 1
     return ""
 
 
@@ -296,7 +335,7 @@ def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
         return bool(find_span(span, texts))
 
     def short(span: str) -> bool:
-        # Measured as the document's span reads, whitespace runs one space.
+        # Measured on the span as the model gave it, whitespace runs one space.
         return len(collapse_ws(span)) < MIN_SPAN_CHARS
 
     if short(cand.quote):
@@ -381,7 +420,7 @@ def restates_outcome(cand: Candidate) -> bool:
 
 
 # A ban or an invariant: a constraint the text states may give no reason for it.
-_BAN_MARKER = re.compile(r"\b(?:only|no|never|must|not|always|at\s+most|at\s+least)\b", re.I)
+_BAN_MARKER = re.compile(rf"\b(?:{_BAN_WORDS})\b", re.I)
 
 
 def states_a_ban(cand: Candidate) -> bool:
@@ -402,7 +441,8 @@ def reasonless_ban(cand: Candidate) -> bool:
     too long to be an outcome is judged as any other candidate."""
     if not states_a_ban(cand) or len(collapse_ws(cand.reasoning)) > OUTCOME_MAX_CHARS:
         return False
-    return restates_outcome(cand) or collapse_ws(cand.reasoning) == collapse_ws(cand.quote)
+    whole_quote = collapse_ws(cand.reasoning).casefold() == collapse_ws(cand.quote).casefold()
+    return restates_outcome(cand) or whole_quote
 
 
 def without_reason(cand: Candidate) -> Candidate:
@@ -436,9 +476,12 @@ def recap_span_sections(content: str) -> set[str]:
     recap, summary or background: a slide deck marks a recap by a title slide and puts
     the recap on the slides after it. Its span runs until the next short section, or the
     next heading above the divider's level. A recap-named section with a longer body is
-    `in_recap` by its own heading and opens no span."""
+    `in_recap` by its own heading and opens no span. A breadcrumb that also names a
+    section outside a span is left out: a quote is told apart by its breadcrumb only, and
+    a decision is kept rather than lost."""
     sections = detect_sections(content)
-    out: set[str] = set()
+    inside: set[str] = set()
+    outside: set[str] = set()
     divider_depth = 0
     for i, sec in enumerate(sections):
         nxt = sections[i + 1].path if i + 1 < len(sections) else ()
@@ -447,10 +490,12 @@ def recap_span_sections(content: str) -> set[str]:
         if divider_depth and (short or sec.depth < divider_depth):
             divider_depth = 0
         if divider_depth:
-            out.add(breadcrumb(sec.path))
-        elif short and sec.path and not has_children and _RECAP_HEADING.search(sec.path[-1]):
+            inside.add(breadcrumb(sec.path))
+            continue
+        outside.add(breadcrumb(sec.path))
+        if short and sec.path and not has_children and _RECAP_HEADING.search(sec.path[-1]):
             divider_depth = sec.depth
-    return out
+    return inside - outside
 
 
 # A sentence end, a blank line, or a line break before a list item. A single line break
@@ -461,13 +506,7 @@ _SENTENCE_END = re.compile(
     r"|\n\s*\n\s*|\n(?=[ \t]*(?:[-*+]|\d+[.)])\s)",
     re.I,
 )
-# Words that say a sentence rejects or contrasts what it names.
-_NEGATION = re.compile(
-    r"\b(?:not|no|never|cannot|can['’]t|instead|rather|without|fail\w*|reject\w*|than"
-    r"|avoid\w*|slow|over|against|versus|vs|unlike|replac\w*|favou?r\w*|prefer\w*"
-    r"|outperform\w*|beats?|compar\w*|drop\w*)\b",
-    re.I,
-)
+_NEGATION = re.compile(rf"\b(?:{_NEGATION_WORDS})\b", re.I)
 
 
 def _sentences(text: str) -> list[tuple[int, int]]:
@@ -489,7 +528,7 @@ def _states_as_chosen(option: str, reason: str, text: str) -> bool:
     if not words:
         return False
     # A reason passed the verbatim check, so it has words.
-    pattern = re.compile(r"\s+".join(map(re.escape, reason.split())))
+    pattern = re.compile(r"\s+".join(map(re.escape, reason.split())), re.IGNORECASE)
     reasons = [(m.start(), m.end()) for m in pattern.finditer(text)]
     for start, end in _sentences(text):
         if any(a < end and start < b for a, b in reasons):

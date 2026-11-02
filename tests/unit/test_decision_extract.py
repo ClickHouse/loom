@@ -644,12 +644,57 @@ def test_a_span_split_across_two_chunks_is_not_found() -> None:
 def test_lines_that_all_look_like_labels_cost_linear_time() -> None:
     import time
 
-    # Every line is a word of the span or a label: a matcher that tried every way to
-    # read each gap would take exponential time on the final mismatch.
-    text = "a\n" * 20_000
+    # 200,000 lines, each a word of the span or a label: a matcher that tried every way
+    # to read each gap would take exponential time on the final mismatch, and one that
+    # rescanned the text per start, quadratic time.
+    text = "a\nx\n" * 100_000
     started = time.perf_counter()
-    assert dx.find_span(" ".join(["a"] * 40 + ["b"]), [text]) == ""
+    assert dx.find_span(" ".join(["a"] * 10 + ["b"]), [text]) == ""
     assert time.perf_counter() - started < 2
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A label that starts like the next word: `so` is not the start of `Something`.
+        SPLIT.format(labels="Something\n"),
+        "Each shard keeps one replica per region so\nAPI\na read never leaves its region.",
+        "Each shard keeps one replica per region so\nIndex\na read never leaves its region.",
+    ],
+)
+def test_a_label_starting_like_the_next_word_is_read_across(text) -> None:
+    assert dx.find_span(REPLICA_SPAN, [text]) == text
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "not\n",
+        "don't\n",
+        "never twice\n",
+        "- a list item\n",
+        "1. first\n",
+        "```\n",
+        "| a | b |\n",
+        "## Heading\n",
+        "> quoted\n",
+    ],
+)
+def test_a_line_that_is_structure_or_a_negation_is_no_label(label) -> None:
+    assert dx.find_span(REPLICA_SPAN, [SPLIT.format(labels=label)]) == ""
+    assert dx.find_span("Retries are safe", ["Retries are\nnot\nsafe"]) == ""
+
+
+def test_a_label_that_reads_as_the_next_word_is_taken_as_that_word() -> None:
+    # The word after the whitespace is tried first, so a stored span finds itself; the
+    # cost is this one shape, which is not found.
+    assert dx.find_span(REPLICA_SPAN, [SPLIT.format(labels="So\n")]) == ""
+
+
+@pytest.mark.parametrize("labels", ["Shard A\nShard B\n", "Shard\nShard A\n", "So\n"])
+def test_a_found_span_with_labels_finds_itself(labels) -> None:
+    text = SPLIT.format(labels=labels)
+    assert dx.find_span(text, [text]) == text
 
 
 @pytest.mark.asyncio
@@ -1058,6 +1103,22 @@ async def test_a_rerun_that_words_the_scenario_anew_leaves_one_live_row(monkeypa
     assert report.replaced == [f"{_key(first)} -> {_key(second)}"]
     assert [d.memory_key for d in world.deletes] == [_key(first)]
     assert report.retired == []
+
+
+@pytest.mark.asyncio
+async def test_a_case_only_change_under_a_reworded_scenario_leaves_one_live_row(
+    monkeypatch,
+) -> None:
+    first = _candidate()
+    world = _World(monkeypatch, [])
+    # Recorded when the document wrote the sentence in upper case.
+    world.record(_key(first), {**_same_fields(first), "reasoning": first["reasoning"].upper()})
+    second = _candidate(scenario="spilling the final DISTINCT")
+    world.reply = [second]
+    report = await _run()
+    assert [r.action for r in report.records] == ["written"]
+    assert report.replaced == [f"{_key(first)} -> {_key(second)}"]
+    assert [d.memory_key for d in world.deletes] == [_key(first)]
 
 
 @pytest.mark.asyncio
@@ -3256,6 +3317,15 @@ async def test_a_ban_whose_outcome_is_shorter_than_its_sentence_is_kept_with_no_
 
 
 @pytest.mark.asyncio
+async def test_a_ban_copied_in_another_case_is_still_its_whole_quote(monkeypatch) -> None:
+    world = _World(monkeypatch, [_ban(outcome="no server retry setting", reasoning=_BAN.lower())])
+    _chunks(monkeypatch, (f"{_BAN} The proxy adds jitter to each attempt.", ("Retries",)))
+    await _run()
+    (inp,) = world.recorded
+    assert inp.outcome == inp.reasoning == _BAN
+
+
+@pytest.mark.asyncio
 async def test_a_ban_too_long_for_an_outcome_is_judged_as_any_candidate(monkeypatch) -> None:
     long_ban = "Every client must retry " + "with its own jitter and backoff, " * 32 + "only once."
     assert len(long_ban) > dx.OUTCOME_MAX_CHARS
@@ -3420,6 +3490,11 @@ def test_a_long_recap_section_or_one_over_subsections_opens_no_span(content) -> 
     assert dx.recap_span_sections(content) == set()
 
 
+def test_a_section_titled_as_one_in_a_span_but_outside_it_is_not_covered() -> None:
+    content = DECK + "\n## Old spill\n\n" + LONG + "\n"
+    assert dx.recap_span_sections(content) == {"Deck > Old merge"}
+
+
 def test_a_recap_span_ends_at_a_heading_above_the_dividers_level() -> None:
     content = "# A\n\n## Recap\n\n## R\n\n" + LONG + "\n\n# B\n\n" + LONG + "\n"
     assert dx.recap_span_sections(content) == {"A > R"}
@@ -3500,6 +3575,13 @@ async def test_a_quote_inside_a_recap_divider_span_is_dropped(monkeypatch) -> No
             "Spilled runs merge from disk.",
             "sort the runs in memory",
             "Spilled runs merge from disk.",
+            False,
+        ),
+        # The reason found in another case is still the sentence that rejects it.
+        (
+            "We shard by time. Sharding by tenant splits every join.",
+            "shard by tenant",
+            "sharding by tenant splits every join.",
             False,
         ),
         # A list item is a sentence of its own.
