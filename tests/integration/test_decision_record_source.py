@@ -50,7 +50,7 @@ async def test_decision_row_carries_files_source_and_class(agent, ch_client) -> 
     )
     key = out["memory_key"]
     statement = (
-        "Category: design:spilling. Scenario: how the final DISTINCT spills to disk. "
+        "how the final DISTINCT spills to disk. "
         "Decided spill into sorted runs and merge them because sorted runs reuse the "
         "ORDER BY merge. Rejected: a hash set on disk — rejected: random reads."
     )
@@ -88,10 +88,14 @@ async def test_decisions_that_read_alike_each_keep_a_live_row(agent, ch_client) 
     # (memory_conflict_resolver_enabled) and the CI server runs no workers, so nothing
     # judges these rows after they are written.
     head = "x" * 130
-    base = dict(reasoning="it takes two minutes", outcome="roll back")
+    # A reason long enough that the shared statement, not the key each embedded text
+    # ends with, decides how close two of these decisions are.
+    reasoning = "a rollback takes two minutes and the previous image is known to be good"
+    base = dict(reasoning=reasoning, outcome="roll back")
     keys = [
         (await agent.decision.record(category=c, scenario=s, **base))["memory_key"]
         for c, s in (
+            # The same statement: the category is in the key, not the text.
             ("deploy", "a bad image"),
             ("storage", "a bad image"),
             # These two differ only past the statement's 80-character scenario clip.

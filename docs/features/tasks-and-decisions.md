@@ -260,15 +260,16 @@ A decision recorded in a repository's trunk code namespace also reaches MCP `loo
 repository, for a caller who may read the namespace ([unified search](unified-search.md#reading-the-memory-section)).
 
 The memory row's value is one statement,
-`Category: <category>. Scenario: <scenario>. Decided <outcome> because <reasoning>. Rejected: <alternative>; …`, then
-`Realized: …` once `decision.outcome` has recorded one. A reasoning that is the outcome word for word (case, whitespace
-and the closing punctuation aside) records a ban or an invariant stated with no reason: the statement reads
-`Decided <outcome>.`, the outcome keeping the reasoning's room as well, and `context.pack` gives no `because`. Search
-embeds and excerpts it and `memory.for_file` shows it. Each part is shortened to fit the embedded excerpt, the scenario
-most, because the pre-edit line shows the start of the statement and must reach the outcome. The excerpt is measured as
-the value is stored, JSON-encoded, where a non-ASCII character takes six or more, so a Cyrillic or CJK part keeps about
-a sixth as many characters as an ASCII one. The record keeps every field in full except the alternatives, each kept to
-its first 300 characters.
+`<scenario>. Decided <outcome> because <reasoning>. Rejected: <alternative>; …`, then `Realized: …` once
+`decision.outcome` has recorded one. The category is not in it: it stays on the record and in the row's
+`decision:category:<category>` tag, which is what a filter by category reads. A reasoning that is the outcome word for
+word (case, whitespace and the closing punctuation aside) records a ban or an invariant stated with no reason: the
+statement reads `Decided <outcome>.`, the outcome keeping the reasoning's room as well, and `context.pack` gives no
+`because`. Search embeds and excerpts it and `memory.for_file` shows it, so the statement carries no field labels.
+Each part is shortened to fit the embedded excerpt, the scenario most, because the pre-edit line shows the start of the
+statement and must reach the outcome. The excerpt is measured as the value is stored, JSON-encoded, where a non-ASCII
+character takes six or more, so a Cyrillic or CJK part keeps about a sixth as many characters as an ASCII one. The
+record keeps every field in full except the alternatives, each kept to its first 300 characters.
 
 - **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the
   fields the statement is built from in full (not `decision_maker` or `run_id`, which the row never holds).

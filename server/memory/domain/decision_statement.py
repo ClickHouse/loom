@@ -10,7 +10,6 @@ from typing import Any
 
 # Caps counted JSON-encoded, so the longest statement fits the excerpt less its key
 # suffix, and memory.for_file's line reaches the outcome.
-STATEMENT_CATEGORY_CHARS = 40
 STATEMENT_SCENARIO_CHARS = 80
 STATEMENT_OUTCOME_CHARS = 200
 STATEMENT_REASONING_CHARS = 360
@@ -19,9 +18,6 @@ STATEMENT_REALIZED_CHARS = 170
 _ELLIPSIS = "..."
 
 
-# Where a category slug may also be cut (`design:spilling-final`). Not `_`: the file
-# detector reads it as part of a word, so `schema.sql_v2` cut there would leave `schema.sql`.
-_SLUG_BOUNDARIES = " :/-"
 # What a part ends without: its own full stop, comma, semicolon or colon, ASCII or
 # full-width, would double the statement's punctuation.
 _PART_ENDINGS = " .,;:。，、；："
@@ -63,10 +59,10 @@ def _wide_cut(text: str, end: int, cut: int) -> int:
     return next((i for i in range(end, cut, -1) if _wide_pair(text[i - 1], text[i])), cut)
 
 
-def _clip(text: str, limit: int, boundaries: str = " ") -> str:
+def _clip(text: str, limit: int) -> str:
     """`text` cut to `limit` JSON-encoded characters, ending in an ellipsis when cut.
 
-    The cut falls on the last of `boundaries`, so no half token (`guide.md` of
+    The cut falls on the last space, so no half token (`guide.md` of
     `guide.mdx`) reads as a file of its own. Wide (CJK) text may be cut between two wide
     characters instead, when that is later, but never between two Hangul syllables
     (Korean spaces its words, so it is cut at a space). With neither before the limit nothing
@@ -81,8 +77,8 @@ def _clip(text: str, limit: int, boundaries: str = " ") -> str:
         if used > limit - len(_ELLIPSIS):
             break
         end += 1
-    last_boundary = max(0, *(text.rfind(b, 0, end + 1) for b in boundaries))
-    cut = _wide_cut(text, end, last_boundary)
+    last_space = max(0, text.rfind(" ", 0, end + 1))
+    cut = _wide_cut(text, end, last_space)
     return text[:cut].rstrip(_CUT_ENDINGS) + _ELLIPSIS
 
 
@@ -120,20 +116,17 @@ def states_reason(payload: dict[str, Any]) -> bool:
 
 
 def memory_value(payload: dict[str, Any]) -> str:
-    """The decision as one statement, a short category and scenario then the outcome
-    and the reason, for the memory row that search embeds and memory.for_file shows.
+    """The decision as one statement, the scenario as a sentence then the outcome and
+    the reason, for the memory row that search embeds and memory.for_file shows.
 
-    Each part is clipped so the statement fits the embedded excerpt; nothing parses
-    this text.
+    The category is left out: it is on the record and in the row's tag, and a slug or a
+    field label is noise to search and to the pre-edit line. Each part is clipped so the
+    statement fits the embedded excerpt; nothing parses this text.
     """
-    category = _part(payload.get("category"))
     scenario = _part(payload.get("scenario"))
     parts = []
-    if category:
-        short = _clip(category, STATEMENT_CATEGORY_CHARS, _SLUG_BOUNDARIES)
-        parts.append(_sentence(f"Category: {short}"))
     if scenario:
-        parts.append(_sentence(f"Scenario: {_clip(scenario, STATEMENT_SCENARIO_CHARS)}"))
+        parts.append(_sentence(_clip(scenario, STATEMENT_SCENARIO_CHARS)))
     stated = states_reason(payload)
     # With no reason stated, the outcome takes the reasoning's room: a long ban keeps its
     # "must not".

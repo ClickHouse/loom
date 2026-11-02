@@ -268,8 +268,7 @@ def test_record_writes_schema_once_record_memory_and_edges(env) -> None:
     mem = calls["set"][0]
     assert mem.memory_type == "decision" and mem.memory_key == key and mem.run_id == "r1"
     assert mem.value.startswith(
-        "Category: Deploy. Scenario: Roll back or hotfix the 26.5 image? "
-        "Decided rollback because Rollback is"
+        "Roll back or hotfix the 26.5 image? Decided rollback because Rollback is"
     )
     assert "Rejected: hotfix forward; wait." in mem.value
     assert "decision:category:deploy" in mem.tags and mem.source_trace == "run:r1"
