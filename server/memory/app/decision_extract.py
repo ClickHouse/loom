@@ -299,11 +299,8 @@ async def extract_document(
         return report
     live_texts = [doc.content or "", *(c.text for c in chunks)]
     report.image_only = dx.image_only_sections(doc.content or "")
-    # An image-only section, or a chunk with no words, carries no rationale to read. The
-    # caption rule is judged on whole sections: a long section's last chunk may hold an
-    # image and a short tail of its text.
-    # A chunk on the empty path is skipped only if its own text is image-only: a document
-    # with no heading stores every chunk there.
+    # A section judged image-only is not sent; on the empty path (a document with no
+    # heading) each chunk is judged on its own text.
     skipped = set(report.image_only)
 
     def sent(c: CorpusChunk) -> bool:

@@ -2564,3 +2564,22 @@ async def test_a_headingless_document_of_a_captioned_picture_is_not_sent(
     assert report.image_only == [""]
     cli.print_report(report)
     assert "image-only, rationale not extracted: (untitled)" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_reason_the_document_rewrapped_is_no_change(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    # Stored on one line, as decision.record keeps an alternative.
+    world.record(_key(c), _same_fields(c), files=[HEADER])
+
+    async def chunks(org, ns, uri):
+        wrapped = BODY.replace("costs random reads", "costs random\nreads")
+        return [CorpusChunk(uri, 0, wrapped, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    assert [r.action for r in report.records] == ["unchanged"]
+    assert world.recorded == [] and world.updates == [] and world.deletes == []
