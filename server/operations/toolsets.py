@@ -387,6 +387,11 @@ ASSISTANT_FORCED_ARGS: dict[str, dict[str, object]] = {
 }
 
 
+# The assistant reads of one writer's rows: they match the writer exactly, so a call that
+# names no `agent` is refused, and the listing marks it required.
+ASSISTANT_NAMED_AGENT_OPS: frozenset[str] = frozenset({"memory.aggregate", "memory.provenance"})
+
+
 def is_assistant(toolset: str | None) -> bool:
     """Whether a connection's ``?toolset=`` is the assistant toolset."""
     return toolset_parts(toolset) == (ASSISTANT_TOOLSET,)

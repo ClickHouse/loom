@@ -25,7 +25,12 @@ from server.core.naming import named
 from server.identity.app.caller_home import home_namespace
 from server.observability.consumer import ASSISTANT_CONSUMER
 from server.operations.base import Operation
-from server.operations.toolsets import _MCP_HIDDEN_OPS, ASSISTANT_FORCED_ARGS, MCP_ASSISTANT_OPS
+from server.operations.toolsets import (
+    _MCP_HIDDEN_OPS,
+    ASSISTANT_FORCED_ARGS,
+    ASSISTANT_NAMED_AGENT_OPS,
+    MCP_ASSISTANT_OPS,
+)
 from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
 from server.transport._common import begin_call, bind_request, validation_note
@@ -549,21 +554,15 @@ async def _bind_caller_identity(
             arguments["agent"] = "*"
     # The assistant writes nothing, so its client's own agent holds no rows. A read it names
     # no agent for keeps the op's own default (`memory.ask` across agents, `mentor.brief`
-    # the namespace's top writer); a read of one writer's rows (`memory.aggregate`,
-    # `memory.provenance`) is refused for the missing `agent` rather than answering empty.
-    # `memory.get` falls back to the row under any agent itself.
+    # the namespace's top writer); a read of one writer's rows (ASSISTANT_NAMED_AGENT_OPS)
+    # is refused for the missing `agent` rather than answering empty. `memory.get` keeps
+    # the client's agent and falls back to the row under any agent itself.
     agent_field = op.input_model.model_fields.get("agent")
-    if (
-        assistant_call()
-        and not explicit_agent
-        and agent_field is not None
-        and op.name not in _MCP_CROSS_AGENT_READS
-        and op.name != "memory.get"
-    ):
-        if isinstance(agent_field.default, str):
-            arguments["agent"] = agent_field.default
-        else:
+    if assistant_call() and not explicit_agent and agent_field is not None:
+        if op.name in ASSISTANT_NAMED_AGENT_OPS:
             arguments.pop("agent", None)
+        elif isinstance(agent_field.default, str) and op.name not in _MCP_CROSS_AGENT_READS:
+            arguments["agent"] = agent_field.default
     return request_id, defaults
 
 

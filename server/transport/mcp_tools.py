@@ -20,6 +20,7 @@ from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import (
     _MCP_HIDDEN_OPS,
     ASSISTANT_FORCED_ARGS,
+    ASSISTANT_NAMED_AGENT_OPS,
     MCP_ASSISTANT_OPS,
     SYNTHETIC_TOOL_OPS,
     canonical_toolset,
@@ -317,7 +318,12 @@ def _with_identity(schema: dict[str, Any], op: Any) -> dict[str, Any]:
         for arg, text in _ASSISTANT_IDENTITY_ARGS.items()
         if arg in fields
     }
-    return {**schema, "properties": {**props, **named}} if named else schema
+    if not named:
+        return schema
+    out = {**schema, "properties": {**props, **named}}
+    if op.name in ASSISTANT_NAMED_AGENT_OPS:
+        out["required"] = [*schema.get("required", []), "agent"]
+    return out
 
 
 def _without_forced(schema: dict[str, Any], forced: dict[str, object]) -> dict[str, Any]:

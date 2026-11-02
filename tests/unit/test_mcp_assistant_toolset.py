@@ -18,6 +18,7 @@ import server.transport.mcp as mcp
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.operations.toolsets import (
     ASSISTANT_FORCED_ARGS,
+    ASSISTANT_NAMED_AGENT_OPS,
     MCP_ASSISTANT_OPS,
     MCP_TOOLSETS,
     is_assistant,
@@ -580,6 +581,20 @@ def test_every_argument_an_assistant_description_asks_for_is_listed(
     provenance = listed["loom_memory_provenance"]["inputSchema"]["properties"]
     # The writer's whole identity, so a row written in a session or for a user is found.
     assert {"agent", "user_id", "session_id"} <= set(provenance)
+    # A read that is refused without the writer lists it as required.
+    for name in ASSISTANT_NAMED_AGENT_OPS:
+        schema = listed[OPERATIONS_BY_NAME[name].mcp_tool_name]["inputSchema"]
+        assert "agent" in schema["required"], name
     for tool in ("loom_code_search", "loom_namespace_inventory"):
         props = set(listed[tool]["inputSchema"]["properties"])
         assert not {"agent", "user_id", "session_id"} & props, tool
+
+
+def test_every_roster_read_of_one_writer_is_named() -> None:
+    """A roster read whose `agent` is required and that neither reads across agents nor
+    falls back by itself must be one the assistant refuses without a writer."""
+    for name in MCP_ASSISTANT_OPS:
+        field = OPERATIONS_BY_NAME[name].input_model.model_fields.get("agent")
+        exact = field is not None and field.is_required()
+        exempt = name in mcp_call._MCP_CROSS_AGENT_READS or name == "memory.get"
+        assert (exact and not exempt) == (name in ASSISTANT_NAMED_AGENT_OPS), name
