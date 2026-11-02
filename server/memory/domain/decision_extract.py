@@ -367,6 +367,14 @@ def states_a_ban(cand: Candidate) -> bool:
     return cand.is_constraint and bool(_BAN_MARKER.search(cand.reasoning))
 
 
+def reasonless_ban(cand: Candidate) -> bool:
+    """A ban stated with no reason: its reasoning restates its outcome, or is its whole
+    quote (an outcome shorter than the sentence adds a word the reasoning lacks)."""
+    if not states_a_ban(cand):
+        return False
+    return restates_outcome(cand) or collapse_ws(cand.reasoning) == collapse_ws(cand.quote)
+
+
 def without_reason(cand: Candidate) -> Candidate:
     """A ban the text states with no reason: its outcome is its reasoning, the document's
     span on one line, which the statement reads as no stated reason."""
@@ -407,8 +415,9 @@ def _sentences(text: str) -> list[tuple[int, int]]:
 
 
 def _states_as_chosen(option: str, reason: str, text: str) -> bool:
-    """One sentence of `text` holds every content word of `option` and no negation or
-    contrast word, and is not the sentence giving the reason it was rejected."""
+    """One sentence of `text` (the candidate's quote) holds every content word of
+    `option` and no negation or contrast word, and is not the sentence giving the reason
+    it was rejected."""
     words = _content_words(option)
     if not words:
         return False
@@ -424,14 +433,16 @@ def _states_as_chosen(option: str, reason: str, text: str) -> bool:
     return False
 
 
-def inverted_options(cand: Candidate, texts: Sequence[str]) -> list[str]:
-    """The rejected options the text states as part of the choice ("Sharding by tenant is
-    deferred to v2" read as the rejected "Defer sharding by tenant"): a model inverts
-    them. "v1 cannot evict it" still rejects "evict the largest job"."""
+def inverted_options(cand: Candidate) -> list[str]:
+    """The rejected options the candidate's own quote, the chosen design's span, states
+    as part of the choice ("...; sharding by tenant is deferred to v2" read as the
+    rejected "Defer sharding by tenant"): a model inverts them. Only the quote is read: a
+    document often names an option in one sentence and rejects it in the next. "v1
+    cannot evict it" still rejects "evict the largest job"."""
     return [
         option
         for option, reason in cand.alternatives
-        if any(_states_as_chosen(option, reason, text) for text in texts)
+        if _states_as_chosen(option, reason, cand.quote)
     ]
 
 

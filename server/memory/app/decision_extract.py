@@ -128,7 +128,7 @@ class Dropped:
 
 @dataclass
 class Retried:
-    """A window read a second time: its first section and why."""
+    """A second read of a window, or its loss: the window's first section and why."""
 
     section: str
     reason: str
@@ -145,8 +145,8 @@ class ExtractReport:
     records: list[RecordReport] = field(default_factory=list)
     dropped: list[Dropped] = field(default_factory=list)
     image_only: list[str] = field(default_factory=list)
-    # A window read a second time, and why: its reply held no decision, or a reason that
-    # is not one span of the text. A window gets at most one extra call.
+    # A second read of a window, or its loss, and why: its reply held no decision, or a
+    # reason that is not one span of the text. A window gets at most one extra call.
     retried: list[Retried] = field(default_factory=list)
     # Keys deleted (or, in a dry run, to delete): the extractor's rows whose text left.
     retired: list[str] = field(default_factory=list)
@@ -471,9 +471,10 @@ async def _candidates(
     known: list[tuple[str, str, str]],
 ) -> tuple[list[tuple[dx.Candidate, str, list[str]]], int]:
     """(candidate, its section, the texts it was checked against) for every candidate
-    that passes the verbatim and restatement checks, its spans the document's own, at
-    most `max_per_section` per section; and how many windows the model answered with a
-    readable reply.
+    that passes the checks of `_check_window` (verbatim spans, restatement with a
+    reason-less ban kept, recap sections, duplicates, fit), its spans the document's own
+    and its inverted rejected options removed, at most `max_per_section` per section;
+    and how many windows the model answered with a readable reply.
 
     A window gets at most one extra call: when its reply holds no decision though its
     text is more than a caption (the second reply is the window's), or when a reason is
@@ -524,12 +525,12 @@ def _check_window(
         span = dx.unfound_reason(cand, texts) if reason else ""
         if not reason:
             cand = dx.document_spans(cand, texts)
-            if dx.restates_outcome(cand):
-                # A ban the text gives no reason for is kept as one; the rest is dropped.
-                if dx.states_a_ban(cand):
-                    cand = dx.without_reason(cand)
-                else:
-                    reason = dx.RESTATED
+            # A ban the text gives no reason for is kept as one; any other restatement is
+            # dropped.
+            if dx.reasonless_ban(cand):
+                cand = dx.without_reason(cand)
+            elif dx.restates_outcome(cand):
+                reason = dx.RESTATED
         # The quote as the chunk writes it, so a re-wrapped one still names its section.
         section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
         if dx.in_recap(section):
@@ -542,7 +543,7 @@ def _check_window(
         if reason:
             report.dropped.append(Dropped(section, reason, cand.quote))
             continue
-        cand = _drop_inverted(cand, section, texts, report)
+        cand = _drop_inverted(cand, section, report)
         state.per_section[section] = state.per_section.get(section, 0) + 1
         state.keys.add(key)
         state.pairs.add((cand.outcome, collapse_ws(cand.reasoning)))
@@ -572,14 +573,12 @@ def _duplicate_or_unfit(
     return "", key
 
 
-def _drop_inverted(
-    cand: dx.Candidate, section: str, texts: list[str], report: ExtractReport
-) -> dx.Candidate:
+def _drop_inverted(cand: dx.Candidate, section: str, report: ExtractReport) -> dx.Candidate:
     """`cand` without the rejected options the text states as part of the choice, each
     reported; the decision itself stays."""
-    inverted = dx.inverted_options(cand, texts)
+    inverted = dx.inverted_options(cand)
     for option in inverted:
-        reason = f"rejected option {option!r} left out: the text states it as part of the choice"
+        reason = f"rejected option {option!r} left out: the quote states it as part of the choice"
         report.dropped.append(Dropped(section, reason, cand.quote))
     if not inverted:
         return cand

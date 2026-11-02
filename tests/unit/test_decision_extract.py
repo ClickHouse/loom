@@ -2866,6 +2866,29 @@ async def test_a_ban_stated_with_no_reason_is_kept_as_one(monkeypatch) -> None:
     assert statement == f"Decided {_BAN}"
 
 
+@pytest.mark.asyncio
+async def test_a_ban_whose_outcome_is_shorter_than_its_sentence_is_kept_with_no_reason(
+    monkeypatch,
+) -> None:
+    # The outcome lacks "client-side retries", so the reasoning does not restate it; the
+    # reasoning is the whole quote, so the text gives no reason.
+    world = _World(monkeypatch, [_ban(outcome="no server retry setting")])
+    _chunks(monkeypatch, (f"{_BAN} The proxy adds jitter to each attempt.", ("Retries",)))
+    report = await _run()
+    assert report.dropped == []
+    (inp,) = world.recorded
+    assert inp.outcome == inp.reasoning == _BAN
+
+
+def test_the_report_prints_each_second_read(capsys) -> None:
+    report = de.ExtractReport("doc.md", dry_run=True)
+    report.retried = [de.Retried(SECTION, de._EMPTY_REPLY), de.Retried("", de._STITCHED)]
+    cli.print_report(report)
+    out = capsys.readouterr().out
+    assert f"- read again [{SECTION}] {de._EMPTY_REPLY}\n" in out
+    assert f"- read again [(untitled)] {de._STITCHED}\n" in out
+
+
 @pytest.mark.parametrize(
     "over",
     [
@@ -2944,8 +2967,14 @@ async def test_a_recap_candidate_with_a_missing_reasoning_is_not_read_again(monk
 
 
 @pytest.mark.parametrize(
-    ("text", "option", "reason", "inverted"),
+    ("quote", "option", "reason", "inverted"),
     [
+        (
+            "We shard by time range; sharding by tenant is deferred to v2.",
+            "defer sharding by tenant",
+            "x" * 12,
+            True,
+        ),
         (
             "Sharding by tenant is deferred to v2. One cluster serves each tenant today.",
             "Defer sharding by tenant",
@@ -2979,22 +3008,55 @@ async def test_a_recap_candidate_with_a_missing_reasoning_is_not_read_again(monk
         ),
     ],
 )
-def test_an_option_the_text_states_as_chosen_is_inverted(text, option, reason, inverted) -> None:
-    cand = _cand(alternatives=[{"option": option, "reason": reason}])
-    assert dx.inverted_options(cand, [text]) == ([option] if inverted else [])
+def test_an_option_the_quote_states_as_chosen_is_inverted(quote, option, reason, inverted) -> None:
+    cand = _cand(quote=quote, alternatives=[{"option": option, "reason": reason}])
+    assert dx.inverted_options(cand) == ([option] if inverted else [])
+
+
+@pytest.mark.parametrize(
+    ("layout", "reason"),
+    [
+        (
+            "We looked at a plain set on disk. Each lookup costs a random read.",
+            "Each lookup costs a random read.",
+        ),
+        (
+            "Options:\n- a plain set on disk\n- each lookup costs a random read",
+            "each lookup costs a random read",
+        ),
+        (
+            "We benchmarked sorted runs against a plain set on disk. "
+            "Each lookup costs a random read.",
+            "Each lookup costs a random read.",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_an_option_named_outside_the_quote_stays_rejected(
+    monkeypatch, layout, reason
+) -> None:
+    quote = "We spill into sorted runs like ORDER BY."
+    alternatives = [{"option": "a plain set on disk", "reason": reason}]
+    cand = _candidate(quote=quote, reasoning=reason, alternatives=alternatives, mentions=[])
+    world = _World(monkeypatch, [cand])
+    _chunks(monkeypatch, (f"{quote}\n\n{layout}", ("Spilling",)))
+    report = await _run()
+    (inp,) = world.recorded
+    assert inp.alternatives == [f"a plain set on disk — rejected: {reason}"]
+    assert report.dropped == []
 
 
 @pytest.mark.asyncio
 async def test_an_inverted_alternative_is_left_out_and_the_decision_kept(monkeypatch) -> None:
     text = (
-        "We shard by time range. Sharding by tenant is deferred to v2. "
+        "We shard by time range; sharding by tenant is deferred to v2. "
         "A time range keeps each merge local to one shard."
     )
     cand = _candidate(
         scenario="how tables are sharded",
         outcome="shard by time range",
         reasoning="A time range keeps each merge local to one shard.",
-        quote="We shard by time range.",
+        quote="We shard by time range; sharding by tenant is deferred to v2.",
         alternatives=[
             {"option": "Defer sharding by tenant", "reason": "A time range keeps each merge local"}
         ],
@@ -3007,7 +3069,7 @@ async def test_an_inverted_alternative_is_left_out_and_the_decision_kept(monkeyp
     assert inp.alternatives == []
     (d,) = report.dropped
     assert d.reason == (
-        "rejected option 'Defer sharding by tenant' left out: the text states it as part of "
+        "rejected option 'Defer sharding by tenant' left out: the quote states it as part of "
         "the choice"
     )
     assert cli.exit_code(report) == 0

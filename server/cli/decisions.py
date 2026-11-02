@@ -62,11 +62,10 @@ def register_decisions_cli(sub: Any) -> None:
         "the document's own words, the reasoning says more than the outcome (a ban may give "
         "no reason) and the quote is not in a recap, summary or background section, written "
         "through decision.record as agent loom-decisions. A re-run revises or retires the "
-        "extractor's "
-        "own unconfirmed rows and tags a confirmed (pinned or attested) row source-changed. "
-        "Dry run by default (still calls the model); --apply writes. Exits 1 when it could "
-        "not read the document (no document, no chunks, no usable model, its own rows "
-        "unreadable, no window read), 2 when a write, or a read it needed (a window "
+        "extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row "
+        "source-changed. Dry run by default (still calls the model); --apply writes. Exits 1 "
+        "when it could not read the document (no document, no chunks, no usable model, its "
+        "own rows unreadable, no window read), 2 when a write, or a read it needed (a window "
         "included), was refused or failed (a row changed since the run read it is reported, "
         "not counted).",
     )
