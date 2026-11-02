@@ -145,7 +145,7 @@ def print_report(report: ExtractReport) -> None:
         quote = f": {d.quote[:120]!r}" if d.quote else ""
         print(f"- dropped [{d.section or '(untitled)'}] {d.reason}{quote}")
     for section in report.image_only:
-        print(f"- image-only, rationale not extracted: {section}")
+        print(f"- image-only, rationale not extracted: {section or '(untitled)'}")
     retire = "would delete" if report.dry_run else "deleted"
     for key in report.retired:
         print(f"- {retire} {key}: its reasoning is no longer in the document")

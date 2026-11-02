@@ -376,8 +376,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   dropped. Of two candidates with one key, or with one outcome and reasoning (overlapping chunks give two windows the
   same text), the first is kept. A section whose own text has no words (a heading alone or over an image), or holds an
   image and at most 80 characters of other text (a caption), is not sent to the model and gets the line
-  `image-only, rationale not extracted`; a heading alone over its subsections is not one. A chunk with no words is not
-  sent either.
+  `image-only, rationale not extracted`; a heading alone over its subsections is not one. So is the text above the
+  first heading, or a document with no heading, when it holds an image and at most a caption, reported as
+  `(untitled)`. An image is a Markdown or HTML image or a placeholder such as `[image]`, `[Image 3]` or
+  `[image: ...]`. A chunk with no words is not sent either.
 - **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
   `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
   punctuation; the endings `-s`, `-es`, `-ed` and `-ing` are cut, then a final `e` is dropped and a final double

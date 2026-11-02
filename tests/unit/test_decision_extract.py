@@ -2384,6 +2384,57 @@ async def test_a_parent_sections_captioned_picture_is_not_sent(monkeypatch) -> N
     assert report.image_only == ["Spilling"]
 
 
-def test_a_link_named_like_an_image_placeholder_is_text() -> None:
-    assert not dx.image_only("[image tiles](tiles.md)")
-    assert dx.image_only("[image: the spill path]")
+@pytest.mark.parametrize(
+    ("body", "image"),
+    [
+        ("[image]", True),
+        ("[Image 3]", True),
+        ("[image: the spill path]", True),
+        ("[image1]", True),
+        ("[image_1]", True),
+        ("[images]", True),
+        ("[pictures]", True),
+        ("[image tiles](tiles.md)", False),
+        ("[imagine the merge]", False),
+    ],
+)
+def test_an_image_placeholder_stands_alone(body: str, image: bool) -> None:
+    # A caption-length text beside it decides: with a placeholder the body is image-only.
+    assert dx.image_only(f"{body}\n\nThe spill path.") is image
+
+
+def test_a_preamble_or_a_headingless_document_of_a_picture_is_image_only() -> None:
+    badge = "![build](badge.svg)\n\nBuild status for the spill code."
+    assert dx.image_only_sections(f"{badge}\n\n# Spilling\n\n{BODY}\n") == [""]
+    assert dx.image_only_sections(badge) == [""]
+    assert dx.image_only_sections(f"Intro line.\n\n# Spilling\n\n{BODY}\n") == []
+    assert dx.image_only_sections(BODY) == []
+
+
+@pytest.mark.asyncio
+async def test_a_badge_and_caption_preamble_is_not_sent_and_is_reported(
+    monkeypatch, capsys
+) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    badge = "![build](badge.svg)\n\nBuild status for the spill code."
+    doc = f"{badge}\n\n{DOC}"
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, badge, ()),
+            CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (prompt,) = world.prompts
+    assert "Build status" not in prompt[1]
+    assert report.image_only == ["", "Spilling > Architecture"]
+    cli.print_report(report)
+    assert "image-only, rationale not extracted: (untitled)" in capsys.readouterr().out

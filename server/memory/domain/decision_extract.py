@@ -16,16 +16,18 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from server.code.domain.anchor import mentions as code_mentions
-from server.knowledge.domain.chunking import SEPARATOR, detect_sections
+from server.knowledge.domain.chunking import SEPARATOR, Section, detect_sections
 from server.memory.domain.corpus_synthesis import Window
 from server.memory.domain.decision_statement import collapse_ws
 
 # How a rejected option is stored: `<option> — rejected: <reason>`.
 REJECTED = " — rejected: "
 # A Markdown image, an HTML image tag, or a slide export's image placeholder.
-# The placeholder stands alone: `[image tiles](tiles.md)` is a link.
+# A placeholder is `[image]`, `[Image 3]`, `[image: ...]`, `[image_1]` or `[pictures]`,
+# never followed by a link target: `[image tiles](tiles.md)` is a link, `[imagine]` a word.
 _IMAGE_MARKUP = re.compile(
-    r"!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>|\[(?:image|picture)\b[^\]]*\](?!\()", re.I
+    r"!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>|\[(?:image|picture)s?(?:[\s:_\d][^\]]*)?\](?!\()",
+    re.I,
 )
 _LETTER = re.compile(r"[^\W\d_]")
 _PR_NUMBER = re.compile(r"^(?:#|PR\s*#?)\d+$", re.I)
@@ -348,15 +350,17 @@ def image_only_sections(content: str) -> list[str]:
     """The breadcrumbs of the document's sections whose own text carries no rationale: a
     heading alone, over a picture, or over a picture and a caption of up to
     CAPTION_MAX_CHARS. A heading alone over its subsections is not one; a heading over a
-    picture and then subsections is. The run neither sends nor reads these sections."""
-    sections = detect_sections(content)
+    picture and then subsections is. The text above the first heading, or a document with
+    no heading, counts when it holds a picture; its breadcrumb is ''. The run neither
+    sends nor reads these sections."""
+    sections = detect_sections(content) or [Section(path=(), depth=0, start=0, lines=[content])]
     out: list[str] = []
     for i, sec in enumerate(sections):
         nxt = sections[i + 1].path if i + 1 < len(sections) else ()
         has_children = len(nxt) > len(sec.path) and nxt[: len(sec.path)] == sec.path
         body = "\n".join(sec.lines)
         has_image = bool(_IMAGE_MARKUP.search(body))
-        if sec.path and image_only(body) and (has_image or not has_children):
+        if image_only(body) and (has_image or (sec.path and not has_children)):
             out.append(breadcrumb(sec.path))
     return out
 
