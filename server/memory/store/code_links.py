@@ -689,7 +689,8 @@ async def stale_of_served(
     )
     return await (ch or _default_client()).query_all(
         f"""
-        SELECT l.memory_key AS memory_key, l.code_namespace AS code_namespace,
+        SELECT l.memory_key AS memory_key, toString(l.memory_id) AS memory_id,
+               l.code_namespace AS code_namespace,
                l.path AS path, l.qualified_name AS qualified_name, l.state AS state,
                l.changed_since AS changed_since, l.checked_at AS checked_at,
                uniqExact(l.memory_id) OVER () AS total

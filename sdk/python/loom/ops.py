@@ -14519,6 +14519,7 @@ class NamespaceAuditOutput(TypedDict, total=False):
     summary: Required["NamespaceAuditSummary"]
     findings: Required[list["NamespaceAuditFinding"]]
     skipped: NotRequired[list[str]]
+    coverage: Required["ReportCoverage"]
     healthy: Required[bool]
     criticals: Required[int]
     warnings: Required[int]
@@ -14539,6 +14540,16 @@ class NamespaceAuditSummary(TypedDict, total=False):
 
 
 class NamespaceAuditFinding(TypedDict, total=False):
+    kind: Required[Literal["contract_violation", "usage_heuristic"]]
+    rule_version: Required[int]
+    source_op: Required[str]
+    window_seconds: NotRequired[Optional[int]]
+    population: NotRequired[Optional[int]]
+    sample_limit: Required[int]
+    samples_complete: Required[bool]
+    evidence: NotRequired[list["FindingEvidence"]]
+    exceptions: NotRequired[str]
+    uncertainty: NotRequired[str]
     code: Required[str]
     severity: Required[Literal["info", "warning", "critical"]]
     count: Required[int]
@@ -14547,6 +14558,29 @@ class NamespaceAuditFinding(TypedDict, total=False):
     samples: NotRequired[list[dict[str, Any]]]
     detail: Required[str]
     remedy: Required[str]
+
+
+class FindingEvidence(TypedDict, total=False):
+    "One live revision a finding's sample names, read once the report's checks have run."
+
+    memory_key: Required[str]
+    memory_id: Required[str]
+    version: Required[int]
+    content_sha256: Required[str]
+    agent: Required[str]
+    user_id: Required[str]
+    session_id: Required[str]
+    memory_type: Required[str]
+    source_class: Required[str]
+    updated_at: Required[str]  # date-time as ISO-8601 text
+
+
+class ReportCoverage(TypedDict, total=False):
+    "Which rules a report ran and which it skipped."
+
+    rules_run: NotRequired[list[str]]
+    rules_skipped: NotRequired[list[str]]
+    complete: Required[bool]
 
 
 class NamespaceBrowseInput(TypedDict, total=False):
@@ -15479,10 +15513,21 @@ class NamespaceValidateOutput(TypedDict, total=False):
     findings: Required[list["NamespaceValidateFinding"]]
     skipped: NotRequired[list[str]]
     keys_scoped: NotRequired[int]
+    coverage: Required["ReportCoverage"]
     checked_at: Required[str]  # date-time as ISO-8601 text
 
 
 class NamespaceValidateFinding(TypedDict, total=False):
+    kind: Required[Literal["contract_violation", "usage_heuristic"]]
+    rule_version: Required[int]
+    source_op: Required[str]
+    window_seconds: NotRequired[Optional[int]]
+    population: NotRequired[Optional[int]]
+    sample_limit: Required[int]
+    samples_complete: Required[bool]
+    evidence: NotRequired[list["FindingEvidence"]]
+    exceptions: NotRequired[str]
+    uncertainty: NotRequired[str]
     check: Required[str]
     severity: Required[Literal["error", "warning", "info"]]
     count: Required[int]

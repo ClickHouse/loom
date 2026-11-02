@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from server.identity.api.models_findings import FindingContract, ReportCoverage
+
 
 class NamespaceTaxonomyInput(BaseModel):
     """The de-facto taxonomy of a namespace — tags + entities across its
@@ -254,8 +256,7 @@ class NamespaceValidateInput(BaseModel):
 
     org: str
     namespace: str
-    # Sample rows per finding, 0 to 50; each count rides its sample rows, so 0 also reports
-    # every count as 0.
+    # Sample rows per finding, 0 to 50; 0 lists none and still counts every finding.
     sample_limit: int = Field(default=5, ge=0, le=50)
     # A conflicted row older than this is a review that never happened.
     conflict_age_seconds: int = Field(default=7 * 86400, ge=0, le=365 * 86400)
@@ -273,7 +274,7 @@ class NamespaceValidateInput(BaseModel):
     keys: list[str] = Field(default_factory=list, max_length=200)
 
 
-class _NamespaceValidateFinding(BaseModel):
+class _NamespaceValidateFinding(FindingContract):
     check: str
     severity: _ValidateSeverity
     count: int
@@ -296,12 +297,15 @@ class NamespaceValidateOutput(BaseModel):
     infos: int
     # One entry per check that ran, including checks whose count is 0.
     findings: list[_NamespaceValidateFinding]
-    # Checks that could not run, as "check: reason".
+    # Rules that could not run (checks, the evidence read), as "name: reason".
     skipped: list[str] = Field(default_factory=list)
     # How many keys the report was scoped to (0 = whole
     # namespace), so a caller can tell a per-task report from a full one.
     keys_scoped: int = 0
-    # When the report was computed (UTC).
+    # Which rules ran and which were skipped: the checks and the evidence read.
+    coverage: ReportCoverage
+    # When the report started (UTC, to the second): a cited revision updated at or after
+    # it may have changed mid-report.
     checked_at: datetime
 
 
@@ -342,7 +346,7 @@ class NamespaceAuditSummary(BaseModel):
     get_search_ratio: float = 0.0
 
 
-class NamespaceAuditFinding(BaseModel):
+class NamespaceAuditFinding(FindingContract):
     code: str
     severity: _AuditSeverity
     count: int
@@ -360,7 +364,8 @@ class NamespaceAuditFinding(BaseModel):
 class NamespaceAuditOutput(BaseModel):
     org: str
     namespace: str
-    # When the report was computed (UTC).
+    # When the report started (UTC, to the second): a cited revision updated at or after
+    # it may have changed mid-report.
     computed_at: datetime
     # The ledger window the counts cover, in seconds (echoes the request).
     window_seconds: int
@@ -368,8 +373,10 @@ class NamespaceAuditOutput(BaseModel):
     summary: NamespaceAuditSummary
     # One entry per check that ran; a clean check is an `info` finding with count 0.
     findings: list[NamespaceAuditFinding]
-    # Checks that could not run, as "code: reason".
+    # Rules that could not run (checks, summary reads, the evidence read), as "name: reason".
     skipped: list[str] = Field(default_factory=list)
+    # Which rules ran and which were skipped: checks, summary reads, the evidence read.
+    coverage: ReportCoverage
     # No critical finding.
     healthy: bool
     # Findings graded `critical`.

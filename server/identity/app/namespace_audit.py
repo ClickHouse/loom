@@ -30,17 +30,18 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Awaitable, Callable, Iterable
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.datetimes import naive_utc_now_seconds
 from server.identity.api.models_namespace_catalog import (
     NamespaceAuditFinding,
     NamespaceAuditInput,
     NamespaceAuditOutput,
     NamespaceAuditSummary,
 )
+from server.identity.app.report_rules import RuleContract, RuleLog, attach_evidence
 from server.memory.domain.excerpt import EXCERPT_LIMIT
 from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
 from server.memory.domain.namespace_shapes import (
@@ -101,10 +102,13 @@ _SCOPE = "org = {org:String} AND namespace = {ns:String}"
 _LIVE = f"FROM loom.memory FINAL WHERE {_SCOPE} AND tombstoned_at IS NULL"
 _SEARCHABLE = "memory_type NOT IN {ns_types:Array(String)}"
 _LEDGER = f"FROM loom.agent_events WHERE {_SCOPE} AND ts >= now() - INTERVAL {{win:UInt32}} SECOND"
+# A hot key: a named key read HOT_KEY_READS times or more in the window. One fragment for
+# the exact-key samples and the hot-key list the coordination check joins.
+_HOT_KEY = "memory_key != '' AND reads >= {hot:UInt32}"
 _HOT_KEYS = (
     f"SELECT memory_key, count() AS reads {_LEDGER} "
-    f"AND operation IN {_LEDGER_GETS} AND memory_key != '' "
-    "GROUP BY memory_key HAVING reads >= {hot:UInt32}"
+    f"AND operation IN {_LEDGER_GETS} "
+    f"GROUP BY memory_key HAVING {_HOT_KEY}"
 )
 # JSON value shapes. JSONType returns '' / 'Null' for non-JSON text.
 _IS_JSON_STRING_OF_JSON = (
@@ -112,6 +116,8 @@ _IS_JSON_STRING_OF_JSON = (
 )
 _IS_JSON_CONTAINER = "JSONType(value) IN ('Object', 'Array')"
 
+# Over loom.memory_embeddings: a searchable row the worker gave up on (summary and check).
+_UNEMBEDDED_ROW = f"embedding_dim = 0 AND embed_last_error != '' AND {_SEARCHABLE}"
 # Remedies point at the recipe: docs/guides/investigation-agent-memory.md.
 _RECIPE = "docs/guides/investigation-agent-memory.md"
 
@@ -194,6 +200,87 @@ _TEXT: dict[str, tuple[str, str]] = {
 
 FINDING_CODES: tuple[str, ...] = tuple(_TEXT)
 
+# Each code's contract (`RuleContract`). The version goes up when the
+# code's predicate or built-in threshold changes; a setting it reads is not versioned.
+_STRUCTURED_EXCLUDED = (
+    "Procedural rows (structured by design) and non-searchable types (episodic, profile) "
+    "are not checked."
+)
+_CONTRACT: dict[str, RuleContract] = {
+    "exact_key_store": RuleContract(
+        "usage_heuristic",
+        1,
+        windowed=True,
+        uncertainty=(
+            "A workflow that reads known keys on purpose shows the same ratio, and the ledger "
+            "counts calls, not whether a result reached the model."
+        ),
+    ),
+    "hand_rolled_index_rows": RuleContract(
+        "usage_heuristic",
+        1,
+        exceptions=(
+            f"Skipped above the index-row scan cap; values are read up to {INDEX_ROW_VALUE_CLIP} "
+            "bytes."
+        ),
+        uncertainty="A row that lists related keys for a person to read matches too.",
+    ),
+    "double_encoded_values": RuleContract(
+        "usage_heuristic",
+        1,
+        uncertainty="A value meant to hold a JSON document as a string matches too.",
+    ),
+    "json_prefix_excerpts": RuleContract(
+        "usage_heuristic",
+        1,
+        exceptions=_STRUCTURED_EXCLUDED,
+        uncertainty=(
+            "The rule checks length and shape, not whether the claim sits inside the embedded "
+            "prefix."
+        ),
+    ),
+    "oversized_values": RuleContract(
+        "usage_heuristic",
+        1,
+        exceptions=_STRUCTURED_EXCLUDED,
+        uncertainty=(
+            "A long value written on purpose matches too; length alone does not make it a document."
+        ),
+    ),
+    "unembedded_rows": RuleContract(
+        "contract_violation",
+        1,
+        exceptions=(
+            "Non-searchable types are not checked, and a row with no recorded embed error is "
+            "not counted."
+        ),
+    ),
+    "hash_keys": RuleContract(
+        "usage_heuristic",
+        1,
+        exceptions="A hex id under 40 chars in the middle of a key is not counted.",
+        uncertainty="A key that is a content hash by design (a cache keyed by digest) matches too.",
+    ),
+    "coordination_as_memory": RuleContract(
+        "usage_heuristic",
+        1,
+        windowed=True,
+        uncertainty="A short fact read often for a good reason matches the read-count arm.",
+    ),
+    "episodic_blobs": RuleContract(
+        "usage_heuristic",
+        1,
+        exceptions="Only episodic rows are checked.",
+        uncertainty="A long episodic note written once and kept on purpose matches too.",
+    ),
+    "version_churn": RuleContract(
+        "usage_heuristic",
+        1,
+        uncertainty="A fact that really changes often leaves a long history that is not waste.",
+    ),
+}
+
+
 # Sample rows from a `count() OVER ()` query: the aggregate columns ride every row and are split
 # off. A value-bearing column is dropped even if a query ever selected one: samples carry keys
 # and counts, never content.
@@ -240,29 +327,29 @@ def _split(rows: list[dict[str, Any]], limit: int) -> tuple[int, int, list[dict[
     return total, total_bytes, samples
 
 
-def count_index_rows(
-    rows: list[tuple[str, str]], *, min_keys: int = INDEX_ROW_MIN_KEYS
-) -> list[tuple[str, int]]:
-    """Keys whose value names ≥ `min_keys` OTHER keys of the same set, as a
-    delimited token (a JSON string, a whitespace- or comma-separated list).
-    O(total value bytes): tokens are looked up in the key set, never the
-    reverse."""
-    keys = {k for k, _ in rows}
-    out: list[tuple[str, int]] = []
-    for key, value in rows:
-        seen: set[str] = set()
-        for tok in _TOKEN_SPLIT_RE.split(value):
-            if tok and tok != key and tok in keys:
-                seen.add(tok)
-        if len(seen) >= min_keys:
-            out.append((key, len(seen)))
-    out.sort(key=lambda kv: (-kv[1], kv[0]))
-    return out
+def index_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Sample rows {memory_key, memory_id, keys_named}, never the value, for each input row
+    (memory_key, memory_id, value) whose value names INDEX_ROW_MIN_KEYS or more other keys
+    of the set, most keys first. Judged row by row: a key held under several
+    identities is an index under one of them only when that row's own value is."""
+    keys = {str(r["memory_key"]) for r in rows}
+    hits = [
+        (n, str(r["memory_key"]), str(r["memory_id"]))
+        for r in rows
+        if (n := keys_named(str(r["memory_key"]), str(r["value"]), keys)) >= INDEX_ROW_MIN_KEYS
+    ]
+    hits.sort(key=lambda h: (-h[0], h[1], h[2]))
+    return [{"memory_key": k, "memory_id": mid, "keys_named": n} for n, k, mid in hits]
+
+
+def keys_named(key: str, value: str, keys: set[str]) -> int:
+    """How many keys of `keys` other than `key` itself `value` names as a delimited token."""
+    return len({tok for tok in _TOKEN_SPLIT_RE.split(value) if tok and tok != key and tok in keys})
 
 
 class _Audit:
     """One report in progress: the CH client, the bound parameters, the
-    summary being filled, the findings and the skipped list."""
+    summary being filled, the findings and the rules that ran or were skipped."""
 
     def __init__(self, ch: Any, inp: NamespaceAuditInput) -> None:
         self.ch = ch
@@ -274,6 +361,7 @@ class _Audit:
             # sample rows: at least one row is read and `add` trims the samples to what was
             # asked for (the health summary asks for none).
             "lim": max(1, int(inp.sample_limit)),
+            "lim_past": int(inp.sample_limit) + 1,
             "win": int(inp.window_seconds),
             "hot": int(HOT_KEY_READS),
             "ns_types": sorted(NON_SEARCHABLE_TYPES),
@@ -291,7 +379,14 @@ class _Audit:
         self.searchable_rows = 0
         self.episodic_rows = 0
         self.findings: list[NamespaceAuditFinding] = []
-        self.skipped: list[str] = []
+        # The summary reads and checks that ran or were skipped: every finding is measured
+        # against a summary read, so they are rules of the report too.
+        self.rules = RuleLog()
+
+    def measured(self, step: str, population: int) -> int | None:
+        """`population` when the summary read it comes from ran; None when it was never
+        measured."""
+        return population if self.rules.has_run(step) else None
 
     async def rows(self, sql: str) -> list[dict[str, Any]]:
         return list(await self.ch.query_all(sql, params=self.params))
@@ -309,8 +404,12 @@ class _Audit:
         samples: list[dict[str, Any]],
         *,
         bytes_: int = 0,
+        population: int | None = None,
+        samples_complete: bool | None = None,
     ) -> None:
         detail, remedy = _TEXT[code]
+        rule = _CONTRACT[code]
+        kept = samples[: self.inp.sample_limit]
         self.findings.append(
             NamespaceAuditFinding(
                 code=code,
@@ -318,11 +417,26 @@ class _Audit:
                 count=int(count),
                 share=float(min(1.0, max(0.0, share))),
                 bytes=int(bytes_),
-                samples=samples[: self.inp.sample_limit],
+                samples=kept,
                 detail=detail,
                 remedy=remedy,
+                kind=rule.kind,
+                rule_version=rule.version,
+                source_op="namespace.audit",
+                window_seconds=int(self.inp.window_seconds) if rule.windowed else None,
+                population=population,
+                sample_limit=int(self.inp.sample_limit),
+                samples_complete=(
+                    int(count) <= len(kept) if samples_complete is None else samples_complete
+                ),
+                exceptions=rule.exceptions,
+                uncertainty=rule.uncertainty,
             )
         )
+
+    def listed_all(self, rows: list[dict[str, Any]]) -> bool:
+        """Whether a read that asked for one row past the cap (`lim_past`) kept every row."""
+        return len(rows) <= self.inp.sample_limit
 
     async def guarded(self, name: str, step: Callable[[], Awaitable[None]]) -> None:
         """Run one step; a failure lands in `skipped`, never raises."""
@@ -330,7 +444,10 @@ class _Audit:
             await step()
         except Exception as exc:  # noqa: BLE001 — advisory report; one failed check must not sink the rest
             log.warning("namespace.audit %s skipped: %s", name, exc)
-            self.skipped.append(f"{name}: {type(exc).__name__}")
+            self.rules.skip(name, type(exc).__name__)
+            return
+        if not self.rules.was_skipped(name):  # a step may skip itself (a scan cap)
+            self.rules.ran(name)
 
     # -- summary ------------------------------------------------------------
 
@@ -352,8 +469,7 @@ class _Audit:
         r = await self.one(
             f"""
             SELECT sum(length(content_excerpt)) AS excerpt_bytes,
-                   countIf(embedding_dim = 0 AND embed_last_error != ''
-                           AND {_SEARCHABLE}) AS unembedded_rows
+                   countIf({_UNEMBEDDED_ROW}) AS unembedded_rows
             FROM loom.memory_embeddings FINAL
             WHERE {_SCOPE} AND tombstoned_at IS NULL
             """
@@ -380,34 +496,61 @@ class _Audit:
 
     async def exact_key_store(self) -> None:
         s = self.summary
-        rows = await self.rows(f"{_HOT_KEYS} ORDER BY reads DESC, memory_key LIMIT {{lim:UInt32}}")
+        # Complete only when the hot keys account for every get, both counted in one scan.
+        rows = await self.rows(
+            f"""
+            SELECT memory_key, reads, window_gets, sum(reads) OVER () AS hot_reads
+            FROM (SELECT memory_key, count() AS reads, sum(count()) OVER () AS window_gets
+                  {_LEDGER} AND operation IN {_LEDGER_GETS}
+                  GROUP BY memory_key)
+            WHERE {_HOT_KEY}
+            ORDER BY reads DESC, memory_key LIMIT {{lim_past:UInt32}}
+            """
+        )
         samples = [{"memory_key": r["memory_key"], "reads": int(r["reads"])} for r in rows]
+        # A failed ledger summary leaves `gets` at 0, which no listing can be complete for.
+        if not self.rules.has_run("summary_ledger"):
+            covered = False
+        elif rows:
+            covered = int(rows[0]["hot_reads"]) >= int(rows[0]["window_gets"])
+        else:
+            covered = s.gets == 0
         critical = (
             s.gets >= EXACT_KEY_STORE_MIN_GETS and s.gets >= EXACT_KEY_STORE_RATIO * s.searches
         )
         severity = "critical" if critical else _grade(s.gets, 0.0)
-        self.add("exact_key_store", severity, s.gets, _share(s.gets, s.gets + s.searches), samples)
+        self.add(
+            "exact_key_store",
+            severity,
+            s.gets,
+            _share(s.gets, s.gets + s.searches),
+            samples,
+            population=self.measured("summary_ledger", s.gets + s.searches),
+            samples_complete=self.listed_all(rows) and covered,
+        )
 
     async def hand_rolled_index_rows(self) -> None:
         live = self.summary.live_rows
         if live > settings.namespace_audit_index_row_scan_cap:
-            self.skipped.append(
-                f"hand_rolled_index_rows: {live} live rows exceed the "
-                f"{settings.namespace_audit_index_row_scan_cap}-row scan cap"
+            self.rules.skip(
+                "hand_rolled_index_rows",
+                f"{live} live rows exceed the "
+                f"{settings.namespace_audit_index_row_scan_cap}-row scan cap",
             )
             return
         rows = await self.rows(
-            f"SELECT memory_key, substring(value, 1, {{index_clip:UInt32}}) AS value {_LIVE}"
+            "SELECT memory_key, toString(memory_id) AS memory_id, "
+            f"substring(value, 1, {{index_clip:UInt32}}) AS value {_LIVE}"
         )
-        hits = count_index_rows([(str(r["memory_key"]), str(r["value"])) for r in rows])
-        samples = [{"memory_key": k, "keys_named": n} for k, n in hits]
-        share = _share(len(hits), live)
+        samples = index_rows(rows)
+        share = _share(len(samples), live)
         self.add(
             "hand_rolled_index_rows",
-            _grade(len(hits), share, warning_any=True),
-            len(hits),
+            _grade(len(samples), share, warning_any=True),
+            len(samples),
             share,
             samples,
+            population=self.measured("summary_live", live),
         )
 
     async def _value_check(
@@ -425,7 +568,7 @@ class _Audit:
         rows = await self.rows(
             f"""
             SELECT count() OVER () AS total, sum(length(value)) OVER () AS total_bytes,
-                   memory_key, length(value) AS value_chars
+                   memory_key, toString(memory_id) AS memory_id, length(value) AS value_chars
             {_LIVE} AND {predicate}
             ORDER BY value_chars DESC, memory_key
             LIMIT {{lim:UInt32}}
@@ -440,7 +583,8 @@ class _Audit:
             warning_share=warning_share,
             warning_any=warning_any,
         )
-        self.add(code, severity, total, share, samples, bytes_=total_bytes)
+        measured = self.measured("summary_live", population)
+        self.add(code, severity, total, share, samples, bytes_=total_bytes, population=measured)
 
     async def double_encoded_values(self) -> None:
         await self._value_check(
@@ -487,25 +631,32 @@ class _Audit:
     async def unembedded_rows(self) -> None:
         rows = await self.rows(
             f"""
-            SELECT count() OVER () AS total, memory_key,
+            SELECT count() OVER () AS total, memory_key, agent, user_id, session_id,
                    substring(splitByChar(':', embed_last_error)[1], 1, 80) AS error_class
             FROM loom.memory_embeddings FINAL
-            WHERE {_SCOPE} AND tombstoned_at IS NULL AND embedding_dim = 0
-              AND embed_last_error != '' AND {_SEARCHABLE}
+            WHERE {_SCOPE} AND tombstoned_at IS NULL AND {_UNEMBEDDED_ROW}
             ORDER BY memory_key
             LIMIT {{lim:UInt32}}
             """
         )
         total, _bytes, samples = _split(rows, self.inp.sample_limit)
         share = _share(total, self.searchable_rows)
-        self.add("unembedded_rows", _grade(total, share, warning_any=True), total, share, samples)
+        self.add(
+            "unembedded_rows",
+            _grade(total, share, warning_any=True),
+            total,
+            share,
+            samples,
+            population=self.measured("summary_live", self.searchable_rows),
+        )
 
     async def coordination_as_memory(self) -> None:
         rows = await self.rows(
             f"""
             SELECT count() OVER () AS total, sum(length(m.value)) OVER () AS total_bytes,
-                   m.memory_key AS memory_key, length(m.value) AS value_chars, l.reads AS reads
-            FROM (SELECT memory_key, value {_LIVE}) AS m
+                   m.memory_key AS memory_key, m.memory_id AS memory_id,
+                   length(m.value) AS value_chars, l.reads AS reads
+            FROM (SELECT memory_key, toString(memory_id) AS memory_id, value {_LIVE}) AS m
             LEFT JOIN ({_HOT_KEYS}) AS l ON m.memory_key = l.memory_key
             WHERE (length(m.value) < {{coord_chars:UInt32}}
                     AND length(splitByWhitespace(m.value)) < {{coord_words:UInt32}}
@@ -524,6 +675,7 @@ class _Audit:
             share,
             samples,
             bytes_=total_bytes,
+            population=self.measured("summary_live", self.summary.live_rows),
         )
 
     async def version_churn(self) -> None:
@@ -535,7 +687,7 @@ class _Audit:
                   FROM loom.memory_versions FINAL WHERE {_SCOPE}
                   GROUP BY memory_key)
             ORDER BY bytes DESC, memory_key
-            LIMIT {{lim:UInt32}}
+            LIMIT {{lim_past:UInt32}}
             """
         )
         total, total_bytes, samples = _split(rows, self.inp.sample_limit)
@@ -548,9 +700,20 @@ class _Audit:
         # Share: the part of the version history that is not the live head.
         share = _share(total - s.live_rows, total)
         severity = "warning" if churn else _grade(total, share)
-        self.add("version_churn", severity, total, share, samples, bytes_=total_bytes)
+        self.add(
+            "version_churn",
+            severity,
+            total,
+            share,
+            samples,
+            bytes_=total_bytes,
+            population=total,
+            samples_complete=self.listed_all(rows),
+        )
 
 
+# Rules of the report too: every population comes from one of these reads (version_churn
+# uses the live summary for its share), so a skipped one leaves findings measured against zero.
 _SUMMARY_STEPS: tuple[str, ...] = ("summary_live", "summary_embeddings", "summary_ledger")
 
 
@@ -578,8 +741,12 @@ async def run_checks(
 
 
 async def handle_namespace_audit(input: NamespaceAuditInput) -> NamespaceAuditOutput:
+    # Taken before the reads, to the second as updated_at is: a cited row updated at or
+    # after it may have been revised mid-report.
+    computed_at = naive_utc_now_seconds()
     audit = new_audit(input)
     await run_checks(audit, FINDING_CODES)
+    await attach_evidence(input.org, input.namespace, audit.findings, audit.rules, ch=audit.ch)
 
     criticals = sum(1 for f in audit.findings if f.severity == "critical")
     warnings = sum(1 for f in audit.findings if f.severity == "warning")
@@ -587,11 +754,12 @@ async def handle_namespace_audit(input: NamespaceAuditInput) -> NamespaceAuditOu
     return NamespaceAuditOutput(
         org=input.org,
         namespace=input.namespace,
-        computed_at=datetime.now(UTC).replace(tzinfo=None),
+        computed_at=computed_at,
         window_seconds=int(input.window_seconds),
         summary=audit.summary,
         findings=audit.findings,
-        skipped=audit.skipped,
+        skipped=audit.rules.skipped,
+        coverage=audit.rules.coverage,
         healthy=criticals == 0,
         criticals=criticals,
         warnings=warnings,
@@ -599,9 +767,12 @@ async def handle_namespace_audit(input: NamespaceAuditInput) -> NamespaceAuditOu
     )
 
 
+_KIND_LABEL = {"contract_violation": "contract", "usage_heuristic": "heuristic"}
+
+
 def render_table(out: NamespaceAuditOutput) -> str:
-    """The CLI table: summary line, one row per finding (code, severity,
-    count, share, first sample), then the skipped checks."""
+    """The CLI table: summary line, one row per finding (code, severity, kind,
+    count, share, first sample), then the skipped rules."""
     s = out.summary
     lines = [
         f"namespace.audit {out.org}/{out.namespace} — window {out.window_seconds // 86400}d, "
@@ -611,11 +782,17 @@ def render_table(out: NamespaceAuditOutput) -> str:
         f"{s.version_bytes:,} B; excerpts {s.excerpt_bytes:,} B; unembedded {s.unembedded_rows}; "
         f"gets {s.gets} / searches {s.searches} / sets {s.sets} (ratio {s.get_search_ratio})",
         "",
-        f"  {'code':<24} {'severity':<9} {'count':>8} {'share':>6}  first sample",
+        f"  {'code':<24} {'severity':<9} {'kind':<9} {'count':>8} {'share':>6}  first sample",
     ]
     for f in out.findings:
-        first = ", ".join(f"{k}={v}" for k, v in f.samples[0].items()) if f.samples else "-"
-        lines.append(f"  {f.code:<24} {f.severity:<9} {f.count:>8} {f.share:>6.0%}  {first}")
+        first = "-"
+        if f.samples:
+            # memory_id only joins a sample to its evidence entry
+            first = ", ".join(f"{k}={v}" for k, v in f.samples[0].items() if k != "memory_id")
+        kind = _KIND_LABEL[f.kind]
+        lines.append(
+            f"  {f.code:<24} {f.severity:<9} {kind:<9} {f.count:>8} {f.share:>6.0%}  {first}"
+        )
     for sk in out.skipped:
         lines.append(f"  skipped: {sk}")
     return "\n".join(lines)

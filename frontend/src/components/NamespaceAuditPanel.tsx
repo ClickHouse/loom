@@ -303,6 +303,12 @@ const SEVERITY_STATE: Record<NamespaceAuditSeverity, BadgeState> = {
   info: "neutral",
 };
 
+// How each finding kind reads in the expanded row.
+const KIND_LABEL: Record<NonNullable<NamespaceAuditFinding["kind"]>, string> = {
+  contract_violation: "Contract violation",
+  usage_heuristic: "Usage heuristic: a hit is not proof of misuse",
+};
+
 function SeverityBadge({ severity }: { severity: NamespaceAuditSeverity }) {
   return <Badge text={severity} state={SEVERITY_STATE[severity] ?? "neutral"} size="sm" />;
 }
@@ -378,16 +384,33 @@ function FindingRows({
             <p className="mt-1.5 text-text-muted">
               <span className="font-medium text-text">Remedy:</span> {f.remedy}
             </p>
+            {/* A server one release older answers without the evidence fields. */}
+            {f.kind && (
+              <p className="mt-1.5 text-xs text-text-muted" data-testid="audit-finding-kind">
+                {[
+                  KIND_LABEL[f.kind],
+                  `rule v${f.rule_version}`,
+                  f.uncertainty && `May still be fine: ${f.uncertainty}`,
+                  f.exceptions && `Scope: ${f.exceptions}`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            )}
             {f.bytes > 0 && (
               <p className="mt-1.5 text-xs text-text-muted tabular">{formatBytes(f.bytes)} across the matching rows</p>
             )}
             {f.samples.length > 0 && (
               <div className="mt-2">
-                <div className="text-xs text-text-muted mb-1">Samples · {f.samples.length}</div>
+                <div className="text-xs text-text-muted mb-1">
+                  Samples · {f.samples.length}
+                  {f.samples_complete === false && " · not every match is listed"}
+                </div>
                 <ul className="space-y-0.5">
                   {f.samples.map((sample, i) => {
                     const key = sampleKey(sample);
-                    const rest = Object.entries(sample).filter(([k]) => k !== "memory_key");
+                    // memory_id joins the sample to its evidence entry; the key names it here.
+                    const rest = Object.entries(sample).filter(([k]) => k !== "memory_key" && k !== "memory_id");
                     return (
                       <li key={i} className="flex flex-wrap items-center gap-x-2 text-xs">
                         {key ? (

@@ -43,6 +43,11 @@ def sha256_value_json(value_json: str) -> str:
         return hashlib.sha256(value_json.encode("utf-8")).hexdigest()
 
 
+def served_content_sha256(value: Any) -> str:
+    """The content hash memory.get serves for a decoded value: '' for none."""
+    return "" if value is None else sha256_value_json(json.dumps(value, default=str))
+
+
 def canonical_document_text(text: str) -> str:
     """Canonicalize a document for hash dedup: NFKC, strip, collapse whitespace.
 

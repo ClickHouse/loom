@@ -7,6 +7,7 @@ still return. Severity totals drive `healthy`; `strict` folds warnings in.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -275,6 +276,7 @@ async def test_stale_code_links_count_memories_and_sample_the_links_read(
     def link(key: str) -> dict[str, Any]:
         return {
             "memory_key": key,
+            "memory_id": f"00000000-0000-0000-0000-0000000000{len(key):02d}",
             "qualified_name": f"m::{key}",
             "path": "src/m.py",
             "state": "missing",
@@ -295,3 +297,82 @@ async def test_stale_code_links_count_memories_and_sample_the_links_read(
     assert stale.count == 2 and [s["memory_key"] for s in stale.samples] == ["new"]
     await nv.handle_namespace_validate(_inp())
     assert asked == [(["old", "new"], 1), (None, 5)]
+
+
+def test_every_check_declares_its_kind_version_and_uncertainty() -> None:
+    assert set(nv._CONTRACT) == {*nv._CHECKS, "code_links_stale"}
+    assert {r.kind for r in nv._CONTRACT.values()} == {
+        "contract_violation",
+        "usage_heuristic",
+    }
+    assert all(r.version >= 1 for r in nv._CONTRACT.values())
+    # Every heuristic says why a hit may still be a legitimate design.
+    assert all(r.uncertainty for r in nv._CONTRACT.values() if r.kind == "usage_heuristic")
+    # Every error-severity check is a broken stored invariant, never a heuristic.
+    for name, (severity, _detail, _sql) in nv._CHECKS.items():
+        if severity == "error":
+            assert nv._CONTRACT[name].kind == "contract_violation", name
+
+
+@pytest.mark.asyncio
+async def test_findings_carry_the_contract_and_cite_the_live_revisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision = {
+        "memory_key": "k1",
+        "id": "00000000-0000-0000-0000-000000000001",
+        "version": 7,
+        "sensitivity": "",
+        "value_len": 10,
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "memory_type": "semantic",
+        "source_class": "tool",
+        "updated_at": datetime(2026, 1, 1),
+    }
+    ch = _CH(
+        {
+            "verified_sha256 != content_sha256": [
+                {"total": 2, "memory_key": "k1", "memory_id": revision["id"]},
+                {
+                    "total": 2,
+                    "memory_key": "gone",
+                    "memory_id": "00000000-0000-0000-0000-0000000000ff",
+                },
+            ],
+            "IN {identities:Array(Tuple(String, String, String, String))}": [revision],
+        }
+    )
+    monkeypatch.setattr(nv, "get_client", lambda: ch)
+    out = await nv.handle_namespace_validate(_inp(sample_limit=5))
+    f = next(f for f in out.findings if f.check == "stale_verification")
+    assert (f.kind, f.rule_version, f.source_op) == ("contract_violation", 1, "namespace.validate")
+    assert f.samples_complete is True and f.sample_limit == 5 and f.window_seconds is None
+    # A sampled row no longer live is not cited.
+    assert [(e.memory_key, e.version) for e in f.evidence] == [("k1", 7)]
+    assert out.coverage.complete and "stale_verification" in out.coverage.rules_run
+
+
+@pytest.mark.asyncio
+async def test_no_samples_asked_still_counts_and_is_not_a_complete_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _CH({"verified_sha256 != content_sha256": [{"total": 4, "memory_key": "k1"}]})
+    monkeypatch.setattr(nv, "get_client", lambda: ch)
+    out = await nv.handle_namespace_validate(_inp(sample_limit=0))
+    stale = next(f for f in out.findings if f.check == "stale_verification")
+    assert stale.count == 4 and stale.samples == [] and stale.samples_complete is False
+    assert all(p["lim"] == 1 for p in ch.params if "lim" in p)
+
+
+def test_the_time_cue_pattern_is_pinned_to_its_rule_version() -> None:
+    # Editing the pattern without raising the check's version fails here.
+    assert nv._CONTRACT["unanchored_time_cue"].version == 1
+    assert nv._TIME_CUE_RE == (
+        r"\b(yesterday|tomorrow|tonight|recently|last (week|month|year|weekend|night|"
+        r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)|next (week|month|year)|"
+        r"\d+ (days?|weeks?|months?|years?) ago|(in|since|by|on) (january|february|march|"
+        r"april|may|june|july|august|september|october|november|december)\b|"
+        r"\b(19|20)\d\d)\b"
+    )

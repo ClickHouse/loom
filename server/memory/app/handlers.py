@@ -8,7 +8,6 @@ session-scoped and not embedded.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -20,7 +19,7 @@ from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.errors import BackendUnavailableError, ValidationError
-from server.core.hashing import sha256_value_json as _content_sha256_of_stored
+from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
@@ -166,9 +165,7 @@ async def _fetch_relevant_existing_memories(
         if r is None or value_reads_high(r.value):
             continue
         # sha over canonical JSON so the caller can hash-dedup extractions.
-        sha = _content_sha256_of_stored(
-            json.dumps(r.value, default=str) if r.value is not None else "",
-        )
+        sha = served_content_sha256(r.value)
         out.append(
             {
                 "memory_key": h.memory_key,
@@ -467,11 +464,7 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
 
     # content_sha256 isn't stored on loom.memory; compute from canonical
     # JSON so the wire shape matches the SDK precondition.
-    sha = (
-        _content_sha256_of_stored(json.dumps(row.value, default=str))
-        if row.value is not None
-        else ""
-    )
+    sha = served_content_sha256(row.value)
     recall_by_agent: list[_RecallByAgent] = []
     if input.include_recall_breakdown:
         # Keyed on row.memory_id (resolved against the full identity tuple);
@@ -1375,11 +1368,7 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
     # A caller that only names the row (the dashboard's conflict peer) never reads a
     # high value, so nothing sensitive was read and nothing is audited.
     omit_value = high and input.omit_high_value
-    sha = (
-        _content_sha256_of_stored(json.dumps(row.value, default=str))
-        if row.value is not None
-        else ""
-    )
+    sha = served_content_sha256(row.value)
     if high and not omit_value:
         # Key-only read of a 'high' row: audited. Never raises.
         from server.observability import audit as _audit

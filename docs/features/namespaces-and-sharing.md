@@ -124,6 +124,39 @@ user's, documents and members are counted namespace-wide as `knowledge.*` and
 `grants.list` read them, and records (one per key, whoever wrote it last) and integrations
 are not counted.
 
+Every `namespace.audit` and `namespace.validate` finding carries the same evidence fields,
+so the CLI, the dashboard and an MCP client read one shape:
+
+| Field                              | Meaning                                                                                                                                                                                                                                                                                                          |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kind`                             | `contract_violation` when a stored value breaks a declared invariant or attestation; `usage_heuristic` when a pattern usually costs recall or storage but a legitimate design can match it. A heuristic hit is a warning, not proof of misuse.                                                                   |
+| `rule_version`, `source_op`        | The rule's version (raised when its predicate or built-in threshold changes, so two reports are compared only at the same version; a setting or request input the rule reads, such as `confidence_floor` or the value size advisory, is not versioned) and the operation that computed it.                       |
+| `window_seconds`                   | The ledger window a usage rule counted over; null for a rule that reads current state.                                                                                                                                                                                                                           |
+| `population`, `count`              | The denominator of `share` (the rows or calls the finding is measured against, which may include rows the rule leaves out by design), and how many matched. `namespace.validate` checks report a count with no denominator and leave `population` null, as does an audit finding whose summary read was skipped. |
+| `sample_limit`, `samples_complete` | The sample cap, and whether the samples list every match. A sampled finding is not a complete listing.                                                                                                                                                                                                           |
+| `evidence`                         | The live revision of each row a sample names (below). Never the value.                                                                                                                                                                                                                                           |
+| `exceptions`, `uncertainty`        | What the rule leaves out by design, and why a hit may still be correct.                                                                                                                                                                                                                                          |
+
+Each `evidence` entry is the live revision of a row a sample names, read once the checks
+have run: `memory_key`, `memory_id`, `version`, `content_sha256` (the hash `memory.get`
+serves; empty for a high-sensitivity row, for a value longer than
+`LOOM_NAMESPACE_REPORT_HASH_MAX_BYTES` (64 KiB;
+[configuration](../reference/configuration.md)), or for a row that changed while the
+report read it), the identity columns, `memory_type`, `source_class` and `updated_at`. A
+sample names its row by `memory_id`, or by its identity columns when it comes from the
+embedding table, and a key held under several identities cites only the one that
+matched. A row revised after the checks ran is cited at its newer revision; its
+`updated_at` is then at or after the report's `computed_at` or `checked_at` (whole
+seconds). A write that changes only a row's status can keep its `updated_at`, so the
+comparison is a hint, not proof. A sample that names no single row (an `exact_key_store`
+hot key, a `version_churn` key) and a row no longer live (an orphan vector) have no
+entry.
+
+The report's `coverage` lists the rules that ran (`rules_run`) and those that could not
+(`rules_skipped`, also in `skipped` with the reason). Both name the evidence read
+(`evidence`) and, for `namespace.audit`, its summary reads, which every finding is
+measured against. `complete` is false when any of them was skipped.
+
 `loom audit-namespace` runs `namespace.audit` from the shell; the
 [optimize a namespace guide](../guides/optimize-namespace.md) turns its findings into a
 reviewed rework plan. Vocabulary is registered with `namespace.register_category`,

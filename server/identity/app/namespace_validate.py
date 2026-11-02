@@ -29,15 +29,16 @@ from __future__ import annotations
 import functools
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.datetimes import naive_utc_now_seconds
 from server.identity.api.models_namespace_catalog import (
     NamespaceValidateInput,
     NamespaceValidateOutput,
     _NamespaceValidateFinding,
 )
+from server.identity.app.report_rules import RuleContract, RuleLog, attach_evidence
 
 log = logging.getLogger(__name__)
 
@@ -84,8 +85,9 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "(memory.update_by_id) so both tables carry the same entity list.",
         f"""
         SELECT count() OVER () AS total, a.memory_key AS memory_key,
+               toString(a.memory_id) AS memory_id,
                a.ents AS memory_entities, b.ents AS embedding_entities
-        FROM (SELECT {_IDENT}, arraySort(entities) AS ents {_LIVE}) AS a
+        FROM (SELECT {_IDENT}, memory_id, arraySort(entities) AS ents {_LIVE}) AS a
         INNER JOIN (SELECT {_IDENT}, arraySort(entities) AS ents
                     FROM loom.memory_embeddings FINAL
                     WHERE org = {{org:String}} AND namespace = {{ns:String}}
@@ -106,7 +108,8 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "or memory.reindex to rebuild the embedding table from loom.memory.",
         f"""
         WITH m AS (
-            SELECT {_IDENT}, argMax(status, version) AS ms
+            SELECT {_IDENT}, argMax(status, version) AS ms,
+                   argMax(memory_id, version) AS mid
             FROM loom.memory
             WHERE org = {{org:String}} AND namespace = {{ns:String}} AND tombstoned_at IS NULL
               AND {_KEYS}
@@ -118,7 +121,7 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
               AND {_KEYS}
             GROUP BY {_IDENT})
         SELECT count() OVER () AS total, m.memory_key AS memory_key,
-               m.session_id AS session_id, m.ms AS memory_status,
+               toString(m.mid) AS memory_id, m.session_id AS session_id, m.ms AS memory_status,
                e.es AS embedding_status
         FROM m INNER JOIN e USING ({_IDENT})
         WHERE m.ms != e.es
@@ -150,8 +153,9 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "(embed_last_error on the embedding row) or call memory.reindex.",
         f"""
         SELECT count() OVER () AS total, a.memory_key AS memory_key,
+               toString(a.memory_id) AS memory_id,
                dateDiff('second', a.created_at, now()) AS age_seconds
-        FROM (SELECT {_IDENT}, created_at {_LIVE}
+        FROM (SELECT {_IDENT}, memory_id, created_at {_LIVE}
               -- a high row is never embedded, by design
               AND sensitivity != 'high'
               AND created_at < now() - INTERVAL {{grace:UInt32}} SECOND) AS a
@@ -170,6 +174,7 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "conflicts.resolve (keep / replace / allow) or in the dashboard's Review queue.",
         f"""
         SELECT count() OVER () AS total, memory_key,
+               toString(memory_id) AS memory_id,
                dateDiff('day', updated_at, now()) AS age_days,
                length(conflict_with) AS peers
         {_LIVE} AND status = 'conflicted'
@@ -185,8 +190,8 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "memory.resolve_orphan_duplicates re-activates these.",
         f"""
         SELECT count() OVER () AS total, a.memory_key AS memory_key,
-               a.duplicate_of AS duplicate_of
-        FROM (SELECT memory_key, duplicate_of {_LIVE} AND status = 'duplicate') AS a
+               toString(a.memory_id) AS memory_id, a.duplicate_of AS duplicate_of
+        FROM (SELECT memory_key, memory_id, duplicate_of {_LIVE} AND status = 'duplicate') AS a
         LEFT ANTI JOIN (SELECT toString(memory_id) AS mid {_LIVE}
                         AND status = 'active') AS b
           ON a.duplicate_of = b.mid
@@ -201,8 +206,9 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "it. memory.restore reactivates the row if the successor is gone for good.",
         f"""
         SELECT count() OVER () AS total, a.memory_key AS memory_key,
-               a.superseded_by AS superseded_by
-        FROM (SELECT memory_key, superseded_by {_LIVE} AND status = 'superseded') AS a
+               toString(a.memory_id) AS memory_id, a.superseded_by AS superseded_by
+        FROM (SELECT memory_key, memory_id, superseded_by {_LIVE}
+              AND status = 'superseded') AS a
         LEFT ANTI JOIN (SELECT toString(memory_id) AS mid {_LIVE}
                         AND status = 'active') AS b
           ON a.superseded_by = b.mid
@@ -216,7 +222,8 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "is still ranked as current. Write the successor fact, or tombstone "
         "it, so as-of reads and live reads agree.",
         f"""
-        SELECT count() OVER () AS total, memory_key, valid_to,
+        SELECT count() OVER () AS total, memory_key,
+               toString(memory_id) AS memory_id, valid_to,
                dateDiff('day', valid_to, now()) AS days_past
         {_LIVE} AND status = 'active' AND valid_to IS NOT NULL AND valid_to < now()
         ORDER BY valid_to ASC
@@ -228,7 +235,8 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "A row past its expires_at that has not been tombstoned. The "
         "retention sweep has not run for this namespace, or it is off.",
         f"""
-        SELECT count() OVER () AS total, memory_key, expires_at
+        SELECT count() OVER () AS total, memory_key,
+               toString(memory_id) AS memory_id, expires_at
         {_LIVE} AND expires_at IS NOT NULL AND expires_at < now()
         ORDER BY expires_at ASC
         LIMIT {{lim:UInt32}}
@@ -241,7 +249,8 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "badge no longer holds. Re-verify the current content with memory.verify, "
         "or revoke it, so readers stop seeing an attestation that is not live.",
         f"""
-        SELECT count() OVER () AS total, memory_key, verified_by, verified_at,
+        SELECT count() OVER () AS total, memory_key,
+               toString(memory_id) AS memory_id, verified_by, verified_at,
                dateDiff('day', verified_at, now()) AS attested_days_ago
         {_LIVE} AND verified_by != ''
           AND (verified_sha256 = '' OR content_sha256 IN ('', '0')
@@ -256,7 +265,8 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "source_resource_id: an inference stored with nothing behind it. "
         "Either attach the source it came from or let it expire.",
         f"""
-        SELECT count() OVER () AS total, memory_key, confidence, agent
+        SELECT count() OVER () AS total, memory_key,
+               toString(memory_id) AS memory_id, confidence, agent
         {_LIVE} AND status = 'active' AND confidence < {{floor:Float32}}
           AND source_trace = '' AND source_resource_id = ''
         ORDER BY confidence ASC, memory_key
@@ -272,7 +282,8 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "Re-anchor it: memory.update_by_id with valid_at set to the event date, "
         "or re-ingest with observation_date so the extractor resolves the cue.",
         f"""
-        SELECT count() OVER () AS total, memory_key, toString(valid_at) AS said_on,
+        SELECT count() OVER () AS total, memory_key,
+               toString(memory_id) AS memory_id, toString(valid_at) AS said_on,
                substring(JSONExtractString(value), 1, 160) AS text
         {_LIVE} AND status = 'active' AND temporal_anchor IS NULL
           -- a high row's text is readable by key only: never quoted or matched here
@@ -293,13 +304,87 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "memory.update_by_id the fact with the real quote, or tombstone it "
         "via memory.delete when the source does not support it.",
         f"""
-        SELECT count() OVER () AS total, memory_key, agent, evidence
+        SELECT count() OVER () AS total, memory_key,
+               toString(memory_id) AS memory_id, agent, evidence
         {_LIVE} AND status = 'active' AND grounding = 'unresolved'
           -- the evidence quote is the high row's own text
           AND sensitivity != 'high'
         ORDER BY created_at DESC, memory_key
         LIMIT {{lim:UInt32}}
         """,
+    ),
+}
+
+
+# Each check's contract (`RuleContract`). The version goes up when the
+# check's predicate or built-in threshold changes; a request input it reads is not.
+_CONTRACT: dict[str, RuleContract] = {
+    "divergent_entities": RuleContract("contract_violation", 1),
+    "divergent_status": RuleContract("contract_violation", 1),
+    "orphan_vectors": RuleContract("contract_violation", 1),
+    "unembedded": RuleContract(
+        "contract_violation",
+        1,
+        exceptions=(
+            "High-sensitivity rows are never embedded and are not checked; a row younger than "
+            "embed_grace_seconds is the worker's normal lag and is not counted."
+        ),
+        uncertainty=(
+            "With the embedding worker stopped or backlogged, every new row ages into this check."
+        ),
+    ),
+    "conflicted_aging": RuleContract(
+        "usage_heuristic",
+        1,
+        exceptions="A conflict younger than conflict_age_seconds is not counted.",
+        uncertainty="The age threshold is a review expectation, not a stored contract.",
+    ),
+    "orphan_duplicates": RuleContract("contract_violation", 1),
+    "superseded_dangling": RuleContract("contract_violation", 1),
+    "stale_valid_to": RuleContract("contract_violation", 1),
+    "expired_live": RuleContract(
+        "contract_violation",
+        1,
+        uncertainty=(
+            "A row the retention sweep has not reached yet is counted until the sweep runs."
+        ),
+    ),
+    "stale_verification": RuleContract("contract_violation", 1),
+    "unsourced_low_confidence": RuleContract(
+        "usage_heuristic",
+        1,
+        exceptions="Only active rows below confidence_floor are checked.",
+        uncertainty=(
+            "A low-confidence inference kept on purpose, with its reasoning in the text, "
+            "matches too."
+        ),
+    ),
+    "unanchored_time_cue": RuleContract(
+        "usage_heuristic",
+        1,
+        exceptions=(
+            "High-sensitivity rows and types other than semantic, episodic and preference are "
+            "not checked."
+        ),
+        uncertainty="The cue list is a pattern match: 'in May' can name a person, not a date.",
+    ),
+    "unresolved_evidence": RuleContract(
+        "usage_heuristic",
+        1,
+        exceptions="High-sensitivity rows are not checked.",
+        uncertainty="A faithful paraphrase of the cited turns is still counted.",
+    ),
+    # Its predicate is the code-link store's (`stale_of_served`): a change there raises this
+    # version too.
+    "code_links_stale": RuleContract(
+        "usage_heuristic",
+        1,
+        exceptions=(
+            "Only repositories the caller may read, and links made from the current revision."
+        ),
+        uncertainty=(
+            "A memory that still holds after its code changed is counted until someone checks it."
+        ),
     ),
 }
 
@@ -342,6 +427,7 @@ async def _code_links_stale(params: dict[str, Any]) -> list[dict[str, Any]]:
         {
             "total": a["total"],
             "memory_key": a["memory_key"],
+            "memory_id": a["memory_id"],
             "symbol": a["qualified_name"],
             "path": a["path"],
             "state": a["state"],
@@ -352,11 +438,16 @@ async def _code_links_stale(params: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def handle_namespace_validate(input: NamespaceValidateInput) -> NamespaceValidateOutput:
+    # Taken before the reads, to the second as updated_at is: a cited row updated at or
+    # after it may have been revised mid-report.
+    checked_at = naive_utc_now_seconds()
     ch = get_client()
     params: dict[str, Any] = {
         "org": input.org,
         "ns": input.namespace,
-        "lim": int(input.sample_limit),
+        # LIMIT 0 would return no rows, and each check's total rides its sample rows: read
+        # at least one and trim the samples to what was asked for.
+        "lim": max(1, int(input.sample_limit)),
         "age": int(input.conflict_age_seconds),
         "grace": int(input.embed_grace_seconds),
         "floor": float(input.confidence_floor),
@@ -365,7 +456,7 @@ async def handle_namespace_validate(input: NamespaceValidateInput) -> NamespaceV
     }
 
     findings: list[_NamespaceValidateFinding] = []
-    skipped: list[str] = []
+    rules = RuleLog()
 
     async def run(
         name: str,
@@ -377,9 +468,11 @@ async def handle_namespace_validate(input: NamespaceValidateInput) -> NamespaceV
             rows = await query()
         except Exception as exc:  # noqa: BLE001 — advisory report; one failed check must not sink the rest
             log.warning("namespace.validate %s skipped: %s", name, exc)
-            skipped.append(f"{name}: {type(exc).__name__}")
+            rules.skip(name, type(exc).__name__)
             return
+        rules.ran(name)
         total, samples = _sample_rows(rows, input.sample_limit)
+        rule = _CONTRACT[name]
         findings.append(
             _NamespaceValidateFinding(
                 check=name,
@@ -387,6 +480,13 @@ async def handle_namespace_validate(input: NamespaceValidateInput) -> NamespaceV
                 count=total,
                 samples=samples,
                 detail=detail,
+                kind=rule.kind,
+                rule_version=rule.version,
+                source_op="namespace.validate",
+                sample_limit=int(input.sample_limit),
+                samples_complete=total <= len(samples),
+                exceptions=rule.exceptions,
+                uncertainty=rule.uncertainty,
             )
         )
 
@@ -394,6 +494,7 @@ async def handle_namespace_validate(input: NamespaceValidateInput) -> NamespaceV
     for name, (severity, detail, sql) in _CHECKS.items():
         await run(name, severity, detail, functools.partial(ch.query_all, sql, params=params))
     await run("code_links_stale", *_CODE_LINKS_STALE, functools.partial(_code_links_stale, params))
+    await attach_evidence(input.org, input.namespace, findings, rules, ch=ch)
 
     errors = sum(f.count for f in findings if f.severity == "error")
     warnings = sum(f.count for f in findings if f.severity == "warning")
@@ -408,7 +509,8 @@ async def handle_namespace_validate(input: NamespaceValidateInput) -> NamespaceV
         warnings=warnings,
         infos=infos,
         findings=findings,
-        skipped=skipped,
+        skipped=rules.skipped,
         keys_scoped=len(input.keys),
-        checked_at=datetime.now(UTC).replace(tzinfo=None),
+        coverage=rules.coverage,
+        checked_at=checked_at,
     )

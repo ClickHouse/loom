@@ -101,10 +101,10 @@ async def _compute(org: str, namespace: str, window_seconds: int) -> NamespaceHe
     )
     audit = na.new_audit(inp)
     await na.run_checks(audit, HEALTH_CHECKS, summary_steps=HEALTH_SUMMARY_STEPS)
-    if audit.skipped:
+    if audit.rules.skipped:
         # A check that could not run leaves the answer unknown; a "healthy"
         # built from zero counts would be cached for an hour and be wrong.
-        log.warning("namespace_health %s/%s: %s", org, namespace, "; ".join(audit.skipped))
+        log.warning("namespace_health %s/%s: %s", org, namespace, "; ".join(audit.rules.skipped))
         return None
     findings = tuple(
         HealthFinding(

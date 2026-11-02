@@ -25,7 +25,6 @@ Rules, all enforced here rather than trusted from the body:
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -36,7 +35,7 @@ from server.auth.authz import row_in_scope
 from server.auth.context import current_auth
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
-from server.core.hashing import sha256_value_json
+from server.core.hashing import served_content_sha256
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import MemoryVerifyInput, MemoryVerifyOutput
 from server.memory.domain import trust
@@ -107,9 +106,7 @@ def current_content_sha256(row: MemoryRow) -> str:
     The stored `content_sha256` can hold the column DEFAULT; the value
     itself is always present, so derive from that.
     """
-    if row.value is None:
-        return ""
-    return sha256_value_json(json.dumps(row.value, default=str))
+    return served_content_sha256(row.value)
 
 
 async def handle_memory_verify(input: MemoryVerifyInput) -> MemoryVerifyOutput:

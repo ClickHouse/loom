@@ -86,8 +86,8 @@ async def stale_links(
     """Up to `limit` of the namespace's changed, unresolved and missing links into
     repositories the caller may read, of its served memories (those under `keys` when
     given) as they are now, one per memory, newest check first; each with its memory_key,
-    code_namespace, path, qualified_name, state, changed_since, checked_at and `total`,
-    the number of memories they are of."""
+    memory_id, code_namespace, path, qualified_name, state, changed_since, checked_at and
+    `total`, the number of memories they are of."""
     trunk = code.trunk_namespace(org, namespace)
     tagged = [] if trunk else _tag_namespaces(org)
     seen = await readable_namespaces(org, {trunk, *(cns for _, cns in tagged)} - {""})

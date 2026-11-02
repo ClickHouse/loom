@@ -453,6 +453,43 @@ async def _keys_and_fence(ch: RecordingCH, c: dict[str, Any]) -> None:
     await categories.link_states(ORG, NS, ["k1", "k2"], ch=ch)
 
 
+# The citation read's answer: one row, so the keyed value read runs.
+_CITED_ROWS = rows_by_substring(
+    {
+        "AS id, version, sensitivity": [
+            {
+                "memory_key": "k",
+                "id": "00000000-0000-0000-0000-000000000001",
+                "version": 1,
+                "sensitivity": "",
+                "value_len": 10,
+                "agent": AGENT,
+                "user_id": "-",
+                "session_id": "-",
+                "memory_type": "semantic",
+                "source_class": "tool",
+                "updated_at": _AS_OF,
+            }
+        ],
+    }
+)
+
+
+async def _live_revisions(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory.store.reads import live_revisions
+
+    # namespace.audit / namespace.validate's citation read, by id and by identity
+    await live_revisions(
+        ORG,
+        NS,
+        scope=WHOLE_NAMESPACE,
+        memory_ids=["00000000-0000-0000-0000-000000000001"],
+        identities=[(AGENT, "-", "-", "k")],
+        hash_max_bytes=1 << 16,
+        ch=ch,
+    )
+
+
 async def _memory_workers(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory import store as M
 
@@ -643,6 +680,7 @@ def cases() -> list[Case]:
             rows=_STUB_ROWS,
         ),
         Case("memory_repo.keys_and_fence", MR, _keys_and_fence, {}),
+        Case("memory_repo.live_revisions", MR, _live_revisions, {}, rows=_CITED_ROWS),
         Case("deep_evidence", DE, _deep_evidence, {}),
         Case(
             "code_links.stale_of_served",

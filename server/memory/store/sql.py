@@ -1,6 +1,7 @@
 """Statement fragments and the read-your-writes switch shared by the reads
-and writes of the package: the full-row projection over loom.memory FINAL,
-the sequential-consistency suffix, and the identity-key tuple type.
+and writes of the package: the served-value expression, the full-row projection
+over loom.memory FINAL, the sequential-consistency suffix, and the identity-key
+tuple type.
 """
 
 from __future__ import annotations
@@ -8,16 +9,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+# The value memory.get serves: the native JSON column when populated, else the stored text.
+SERVED_VALUE = "if(length(toString(value_json)) > 2, toString(value_json), value)"
+
 # Full-row projection over loom.memory FINAL, shared by get_by_key/get_by_id.
 # Mirrors every column build_memory_version_row carries forward (single read
 # source of truth — keep in sync with the builder in `rows`).
-_MEMORY_FINAL_PROJECTION = """
+_MEMORY_FINAL_PROJECTION = f"""
         SELECT
             memory_id,
             org, namespace, agent, user_id, session_id,
             memory_key, memory_type,
-            -- Prefer the native JSON column when populated; fall back to value.
-            if(length(toString(value_json)) > 2, toString(value_json), value) AS value,
+            {SERVED_VALUE} AS value,
             -- The stored bytes, for version rows: the preferred form
             -- above is a rendering, not what the writer wrote.
             value AS value_text,
