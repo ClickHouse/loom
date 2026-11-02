@@ -181,8 +181,8 @@ class _BulkWriteState:
     n_unknown: int = 0
     # The write's clock: a row's expiry is settled against it at build and at replay.
     now_utc: datetime = field(default_factory=lambda: datetime.now(UTC))
-    # Keys whose row the replay settled to land without the vector its level takes: the
-    # key's older vector must not answer for it.
+    # Keys a step was relabelled to have no vector for, whether or not that step lands:
+    # `_vectors_to_retire` retires the key's older vector only when its winning row has none.
     vectorless_keys: set[str] = field(default_factory=set)
 
 

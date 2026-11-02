@@ -52,7 +52,7 @@ def _local_ch(*rows: list[str]) -> LocalCH:
     return LocalCH(*EMBEDDINGS, ddl("memory"), *(statement for row in rows for statement in row))
 
 
-def _chunk(user: str, value: str, index: int = 0) -> SearchHit:
+def _chunk(user: str, value: Any, index: int = 0) -> SearchHit:
     """The pooled hit of `value`'s chunk `index`, as the chunk leg builds it."""
     passage = plan_set_chunks(value, "semantic")[0][index][0]
     (sha,) = {s for i, s in set_chunk_identities(value, "semantic") if i == index}
@@ -230,7 +230,5 @@ async def test_one_text_under_two_types_is_cut_by_each_type() -> None:
     }
     text = json.dumps(procedure)
     ch = _local_ch(_row("u", "s1", 1, text), _row("u", "s2", 2, text, memory_type="procedural"))
-    passage = plan_set_chunks(procedure, "semantic")[0][0][0]
-    (sha,) = {s for i, s in set_chunk_identities(procedure, "semantic") if i == 0}
-    chunk = replace(_chunk("u", LONG_V1), content_excerpt=passage, chunk_sha256=sha)
+    chunk = _chunk("u", procedure)  # a chunk of its semantic (JSON) text
     assert await _set_chunk_rows(ch, _q(), [chunk]) == _named(chunk, "s1", 1)
