@@ -405,6 +405,11 @@ blacklisted entry is skipped, not raised; pinned and locked keys come back in
 `skipped_pinned` and `skipped_locked`. One hash-only `memory.bulk_set` audit row records
 the write.
 
+An entry that repeats a key's stored bytes writes a version only when it names a new
+sensitivity, adds a pin or sets `ttl_seconds`; otherwise it counts in `skipped_unchanged`.
+Other fields, status among them, are not compared: a replayed extraction batch must not
+revive a superseded, rejected or proposed row over the write that retired it.
+
 `memory.import` (`handle_memory_import` in `memory/app/memory_import.py`) writes through
 `handle_memory_bulk_set`, so an imported item meets every check above. The bulk write's
 live-row lookup reads the caller's session only and skips tombstones, so first the import

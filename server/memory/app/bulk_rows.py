@@ -75,7 +75,7 @@ class StepOutcome(StrEnum):
     """What a step comes to once the batch is replayed (`settle_steps`)."""
 
     LAND = "land"
-    RELABEL = "relabel"  # lands: the same bytes with a new label or status, a restatement
+    RELABEL = "relabel"  # lands: the same bytes with a new label, still a restatement
     UNCHANGED = "unchanged"
     PINNED = "pinned"  # refused: the key holds a pinned value
     LOCKED = "locked"  # refused: it would change a locked row's expiry
@@ -111,7 +111,6 @@ class _Held:
     pinned: bool = False
     level: str = ""
     expires_at: datetime | None = None
-    status: str = "active"
     step: _Step | None = None
 
 
@@ -351,9 +350,10 @@ def _bulk_skip_gate(
 
 
 def _restates_stored_row(state: _BulkWriteState, entry: Any) -> bool:
-    """Whether an entry repeating the stored value also keeps its status, sensitivity and
-    pin and sets no expiry, so the skip gate counts it unchanged. The other fields
-    `set_commit._only_reinforces` compares are not checked. Only a level the entry names
+    """Whether an entry repeating the stored value also keeps its sensitivity and pin and
+    sets no expiry, so the skip gate counts it unchanged. The other fields
+    `set_commit._only_reinforces` compares, status among them, are not checked: a replayed
+    extraction must not revive a row a later write retired. Only a level the entry names
     counts: an extracted fact names none, and keeps the stored one."""
     live = state.existing_rows.get(entry.memory_key)
     stored_level = str(getattr(live, "sensitivity", "") or "")
@@ -362,9 +362,7 @@ def _restates_stored_row(state: _BulkWriteState, entry: Any) -> bool:
         entry.memory_key
     )
     return (
-        # a restatement writes any other status back as active, as memory.set does
-        str(getattr(live, "status", "") or "active") == "active"
-        and named_level in ("", stored_level)
+        named_level in ("", stored_level)
         and not adds_pin
         and getattr(entry, "ttl_seconds", None) is None
     )
@@ -378,7 +376,6 @@ def _stored_held(state: _BulkWriteState, memory_key: str) -> _Held:
         pinned=bool(state.existing_pinned.get(memory_key)),
         level=str(getattr(live, "sensitivity", "") or ""),
         expires_at=getattr(live, "expires_at", None),
-        status=str(getattr(live, "status", "") or "active"),
     )
 
 
@@ -534,13 +531,7 @@ def _settle_step(
     same_expiry = whole_seconds(row.get("expires_at")) == whole_seconds(
         _not_lapsed(held.expires_at, state.now_utc)
     )
-    if (
-        same_bytes
-        and same_expiry
-        and held.status == "active"
-        and level == held.level
-        and bool(row["pinned"]) == held.pinned
-    ):
+    if same_bytes and same_expiry and level == held.level and bool(row["pinned"]) == held.pinned:
         return StepOutcome.UNCHANGED
     if held.pinned and not same_bytes and not row["pinned"]:
         return StepOutcome.PINNED

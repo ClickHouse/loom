@@ -268,27 +268,22 @@ async def test_a_ttl_only_repeat_of_the_stored_value_sets_its_expiry(monkeypatch
     assert row["expires_at"] == state.now_utc + timedelta(seconds=60)
 
 
-@pytest.mark.parametrize(
-    "status", ["superseded", "rejected", "conflicted", "proposed", "duplicate"]
-)
-async def test_a_repeat_of_a_non_active_stored_value_writes_it_active(monkeypatch, status) -> None:
-    # memory.set writes the restated row back as active; so does a bulk entry.
+@pytest.mark.parametrize("status", ["superseded", "rejected", "proposed"])
+async def test_a_repeat_of_a_retired_stored_value_leaves_it(monkeypatch, status) -> None:
+    # A replayed extraction says the same bytes again; it must not revive the row over
+    # the write that retired it, as memory.import leaves such a key.
     from server.memory.app.bulk_rows import StepOutcome
 
     value = "Alice lives in Berlin"
     stored = _stored(value, status=status)
     again = {"memory_key": "k", "value": value}
     state, plan = await _settled(monkeypatch, stored, {}, again)
-    assert [s.outcome for s in state.steps] == [StepOutcome.RELABEL]
-    (row,) = plan.memory_rows
-    assert row["status"] == "active" and state.skipped_unchanged == 0
-    # past the skip gate: after another value of k that did not land
+    assert plan.memory_rows == [] and state.skipped_unchanged == 1
     other = {"memory_key": "k", "value": "Alice lives in Paris"}
     merge = {0: NS(verdict="merge", existing_memory_id="X", peers=[])}
     state, plan = await _settled(monkeypatch, stored, merge, other, again)
-    assert [s.outcome for s in state.steps] == [StepOutcome.KEPT_OUT, StepOutcome.RELABEL]
-    (row,) = plan.memory_rows
-    assert row["status"] == "active"
+    assert [s.outcome for s in state.steps] == [StepOutcome.KEPT_OUT, StepOutcome.UNCHANGED]
+    assert plan.memory_rows == []
 
 
 async def test_a_ttl_only_repeat_of_a_batch_value_sets_its_expiry(monkeypatch) -> None:
