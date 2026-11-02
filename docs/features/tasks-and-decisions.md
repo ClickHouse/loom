@@ -375,8 +375,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   are kept per section. A candidate whose category or scenario holds no letter or digit from a-z, 0-9 has no key and is
   dropped. Of two candidates with one key, or with one outcome and reasoning (overlapping chunks give two windows the
   same text), the first is kept. A leaf section with no words (a heading alone or over an image), or with an image and
-  at most 80 characters of other text (a caption), is not sent to the model and gets the line `image-only, rationale not
-extracted`. A chunk with no words is not sent either.
+  at most 80 characters of other text (a caption), is not sent to the model and gets the line
+  `image-only, rationale not extracted`. A chunk with no words is not sent either.
 - **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
   `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
   punctuation; the endings `-s`, `-es`, `-ed` and `-ing` are cut, then a final `e` is dropped and a final double

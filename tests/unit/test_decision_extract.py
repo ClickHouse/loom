@@ -1486,6 +1486,13 @@ async def test_an_attested_restatement_under_another_key_is_skipped(monkeypatch)
     [
         ({"quote": "We spill.", "reasoning": "We spill."}, "quote too short to rest a decision on"),
         ({"reasoning": "We spill"}, "reasoning too short to rest a decision on"),
+        # 12 characters as the model wrote them, 9 as the document has them.
+        ({"reasoning": "We    spill."}, "reasoning too short to rest a decision on"),
+        ({"quote": "We    spill."}, "quote too short to rest a decision on"),
+        (
+            {"alternatives": [{"option": "a hash set", "reason": "random    read"}]},
+            "the reason given for rejecting 'a hash set' is too short to rest on",
+        ),
         (
             {"alternatives": [{"option": "a hash set", "reason": "random"}]},
             "the reason given for rejecting 'a hash set' is too short to rest on",

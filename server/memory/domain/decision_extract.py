@@ -219,16 +219,20 @@ def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
     def holds(span: str) -> bool:
         return bool(find_span(span, texts))
 
-    if len(cand.quote.strip()) < MIN_SPAN_CHARS:
+    def short(span: str) -> bool:
+        # Measured as the document's span reads, whitespace runs one space.
+        return len(" ".join(span.split())) < MIN_SPAN_CHARS
+
+    if short(cand.quote):
         return "quote too short to rest a decision on"
     if not holds(cand.quote):
         return "quote is not in the document text"
-    if len(cand.reasoning.strip()) < MIN_SPAN_CHARS:
+    if short(cand.reasoning):
         return "reasoning too short to rest a decision on"
     if not holds(cand.reasoning):
         return "reasoning is not in the document text"
     for option, reason in cand.alternatives:
-        if len(reason.strip()) < MIN_SPAN_CHARS:
+        if short(reason):
             return f"the reason given for rejecting {option!r} is too short to rest on"
         if not holds(reason):
             return f"the reason given for rejecting {option!r} is not in the document text"
