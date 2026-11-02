@@ -60,7 +60,8 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
         return []
     where, params = identity
     if hard_tags := request_hard_tags(search_input):
-        # as every search fact leg does: no untagged row stands in for the semantic follow
+        # the hard tags, as the fact legs carry them: an off-tag row must not stand in for
+        # the semantic follow
         where, params = [*where, tag_predicate("")], {**params, "tags": hard_tags}
     try:
         from server.core.ch import get_client

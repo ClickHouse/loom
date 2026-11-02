@@ -165,7 +165,7 @@ async def test_a_bridge_row_the_pool_holds_is_not_added_twice(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_a_bridge_row_without_the_hard_tag_is_dropped_by_the_belt(monkeypatch) -> None:
+async def test_bridge_hits_carry_their_own_tags_so_the_belt_reads_none(monkeypatch) -> None:
     # two sessions' rows of one bridge key, one tagged: the belt judges each by its own tags
     from server.memory.app import search_tag_filter as belt
     from server.memory.app.ask import completion
