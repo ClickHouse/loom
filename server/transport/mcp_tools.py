@@ -294,20 +294,29 @@ def resolve_toolset(requested: str | None, configured: str | None) -> str:
     return requested_l if requested_l and is_toolset(requested_l) else configured_l
 
 
-def _with_agent(schema: dict[str, Any], op: Any) -> dict[str, Any]:
-    """`schema` with the op's `agent` argument listed again: the other toolsets hide it
-    (the caller's own agent fills in), but an assistant read names the writer it reads
-    (`memory.aggregate`, `memory.provenance`) or the agent it describes (`mentor.brief`)."""
-    field = op.input_model.model_fields.get("agent")
+# The identity arguments an assistant read lists: the other toolsets hide them, since the
+# caller's own identity fills in, but the assistant writes nothing and reads other writers'
+# rows, so it names the row a search hit showed it.
+_ASSISTANT_IDENTITY_ARGS: dict[str, str] = {
+    "agent": "The agent the read is about: a search hit's `agent` names its row's writer.",
+    "user_id": "The user the row belongs to: a search hit's `user_id`.",
+    "session_id": "The session the row belongs to: a search hit's `session_id`.",
+}
+
+
+def _with_identity(schema: dict[str, Any], op: Any) -> dict[str, Any]:
+    """`schema` with the op's identity arguments listed again, for a memory or mentor read
+    (a code read's identity is the code plane's, never the caller's)."""
     props = schema.get("properties")
-    if field is None or not isinstance(props, dict):
+    if not isinstance(props, dict) or op.name.startswith("code."):
         return schema
-    agent: dict[str, Any] = {
-        "type": "string",
-        "description": field.description
-        or "The agent whose rows the read covers: a search hit's `agent` names its writer.",
+    fields = op.input_model.model_fields
+    named = {
+        arg: {"type": "string", "description": text}
+        for arg, text in _ASSISTANT_IDENTITY_ARGS.items()
+        if arg in fields
     }
-    return {**schema, "properties": {**props, "agent": agent}}
+    return {**schema, "properties": {**props, **named}} if named else schema
 
 
 def _without_forced(schema: dict[str, Any], forced: dict[str, object]) -> dict[str, Any]:
@@ -433,7 +442,7 @@ async def _tools_descriptor(
             input_schema = strip_model_docstring(input_schema)
         if is_assistant(toolset):
             input_schema = _without_forced(input_schema, ASSISTANT_FORCED_ARGS.get(op.name, {}))
-            input_schema = _with_agent(input_schema, op)
+            input_schema = _with_identity(input_schema, op)
         descriptor: dict[str, Any] = {
             "name": op.mcp_tool_name,
             "description": desc,

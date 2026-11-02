@@ -577,4 +577,7 @@ def test_every_argument_an_assistant_description_asks_for_is_listed(
         # A strict client sends only listed properties: an argument the text asks for
         # (the writer's `agent` on an aggregate) must be one it can send.
         assert inputs <= set(props), (name, inputs - set(props))
-    assert "agent" in listed["loom_memory_aggregate"]["inputSchema"]["properties"]
+    provenance = listed["loom_memory_provenance"]["inputSchema"]["properties"]
+    # The writer's whole identity, so a row written in a session or for a user is found.
+    assert {"agent", "user_id", "session_id"} <= set(provenance)
+    assert "agent" not in listed["loom_code_search"]["inputSchema"]["properties"]
