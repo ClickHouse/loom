@@ -206,8 +206,6 @@ def test_an_assistant_result_is_the_full_output() -> None:
 def test_no_listed_description_names_a_tool_the_listing_lacks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import re
-
     monkeypatch.setattr(settings, "mcp_code_tools", False)
     descriptors = asyncio.run(mcp._tools_descriptor(toolset="assistant"))
     listed = {d["name"] for d in descriptors}
@@ -252,8 +250,8 @@ def test_the_listing_offers_no_argument_the_connection_overwrites(
         props = by_name[OPERATIONS_BY_NAME[op_name].mcp_tool_name]["inputSchema"]["properties"]
         assert not set(forced) & set(props), op_name
     # Other listings keep them.
-    core = {d["name"]: d for d in asyncio.run(mcp._tools_descriptor(toolset="atomic"))}
-    assert "reinforce" in core["loom_memory_ask"]["inputSchema"]["properties"]
+    atomic = {d["name"]: d for d in asyncio.run(mcp._tools_descriptor(toolset="atomic"))}
+    assert "reinforce" in atomic["loom_memory_ask"]["inputSchema"]["properties"]
 
 
 def test_an_unknown_tool_name_writes_no_ledger_row(

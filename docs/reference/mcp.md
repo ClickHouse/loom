@@ -260,7 +260,8 @@ that serves it, and give it a `viewer` token in any case. On it:
   client's token with the `viewer` role to make the same limit hold on every other
   surface.
 - **Its calls are ledgered as consumer `loom-assistant`**, whatever the call sends, a
-  refused one included. `namespace.audit`, `namespace.summary`, `mentor.brief` and
+  refused call to a registry tool included (an unknown tool name writes no row).
+  `namespace.audit`, `namespace.summary`, `mentor.brief` and
   `knowledge.reads` leave that consumer's and the dashboard's (`loom-ui`) reads out of
   their usage counts, so looking at a namespace does not change its grade (a write from
   the dashboard is a person using the namespace and still counts in `namespace.audit` and
