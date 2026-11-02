@@ -1,0 +1,45 @@
+"""The key-match arm's statement, run on clickhouse-local against the real
+`loom.memory_embeddings`: at most `per_key` rows of a key, in one order however the parts
+are read."""
+
+from __future__ import annotations
+
+import pytest
+
+from server.memory.app.search.sql import key_match_sql
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+
+pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+
+_VEC = "[" + ",".join(["0.1"] * 3072) + "]"
+
+
+def _row(session: str) -> str:
+    return (
+        "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id,"
+        " memory_key, memory_type, scope, content_excerpt, embedding, memory_key_embedding,"
+        " embedding_model, embedding_dim, version) VALUES ('o', 'n', 'a', 'u',"
+        f" '{session}', 'user_task_worktree', 'semantic', 'private', 'the worktree', {_VEC},"
+        f" {_VEC}, 'm', 3072, 1)"
+    )
+
+
+def test_rows_of_one_key_that_tie_keep_one_order() -> None:
+    # one value in four sessions: the same strength and the same vector
+    setup = [
+        "SET enable_quantized_codec = 1",
+        ddl("memory_embeddings"),
+        *(_row(s) for s in ("s4", "s2", "s3", "s1")),
+    ]
+    sql = key_match_sql("e.org = {org:String} AND e.tombstoned_at IS NULL")
+    params = {
+        "org": "o",
+        "ns": "n",
+        "stems": ["user", "task", "worktre"],
+        "qv": [0.1] * 3072,
+        "min_strength": 0.0,
+        "per_key": 3,
+        "limit": 10,
+    }
+    rows = run(setup, sql, params)
+    assert [r["session_id"] for r in rows] == ["s1", "s2", "s3"]

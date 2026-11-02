@@ -207,7 +207,9 @@ def key_match_sql(where_sql: str) -> str:
         WHERE {where_sql}
           AND (matched >= 2 OR (matched >= 1 AND matched = key_parts))
           AND strength >= {{min_strength:Float64}}
-        ORDER BY strength DESC, cosineDistance(e.embedding, {{qv:Array(Float32)}}) ASC
+        -- the rows of a key tie on strength, and on distance when they hold one value
+        ORDER BY strength DESC, cosineDistance(e.embedding, {{qv:Array(Float32)}}) ASC,
+                 e.agent, e.user_id, e.session_id
         LIMIT {{per_key:UInt32}} BY e.memory_key
         LIMIT {{limit:UInt32}}
     """
