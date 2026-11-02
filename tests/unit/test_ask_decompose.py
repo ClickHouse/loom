@@ -211,7 +211,9 @@ async def test_a_part_adds_another_sessions_row_of_a_pooled_key(
     from types import SimpleNamespace
 
     def row(session: str) -> Any:
-        return SimpleNamespace(memory_key="k", session_id=session, similarity=0.5)
+        hit = SimpleNamespace(memory_key="k", session_id=session, similarity=0.5)
+        hit._row_identity = ("a", "u", session)
+        return hit
 
     async def _search(inp: Any) -> Any:
         return SimpleNamespace(results=[row("s1"), row("s2")])
@@ -222,3 +224,19 @@ async def test_a_part_adds_another_sessions_row_of_a_pooled_key(
         _SearchInput(query=q), q, [row("s1")], llm=_LLM("part one\npart two"), mode="always"
     )
     assert [h.session_id for h in merged] == ["s1", "s2"]
+
+
+def test_the_pool_takes_a_new_row_but_not_a_key_read_or_record_of_a_pooled_key() -> None:
+    from types import SimpleNamespace
+
+    def hit(key: str, identity: Any = None) -> Any:
+        h = SimpleNamespace(memory_key=key, session_id="")
+        h._row_identity = identity
+        return h
+
+    seen = retrieval_legs.PoolSeen([hit("k", ("a", "u", "s1"))], "n")
+    assert seen.add(hit("k", ("a", "u", "s2")))  # another session's row of the key
+    assert not seen.add(hit("k", ("a", "u", "s1")))  # the same row again
+    assert not seen.add(hit("k"))  # a key read or a record of a pooled key
+    assert seen.add(hit("j"))  # a key the pool does not hold
+    assert not seen.add(hit("j"))

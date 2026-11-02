@@ -70,6 +70,7 @@ async def test_handler_searches_examples_reads_labels_and_votes(
     )
     # over-fetched so one row per example still leaves k*2 examples
     assert seen["search"].tags == ["example"] and seen["search"].top_k == 12
+    assert seen["search"].bodies == "full"  # examples stay whole at any k
     # The labels are the hits' own row tags, read in each hit's namespace by the search
     assert seen["search"].search_mode == "semantic" and seen["search"].include_tags is True
     assert [d.memory_key for d in out.demonstrations] == ["e1", "e2"]  # k=2, unlabelled skipped

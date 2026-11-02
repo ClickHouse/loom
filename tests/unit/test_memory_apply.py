@@ -300,7 +300,10 @@ async def test_search_target_touches_only_the_callers_identity(
         _hit("other_session", sid="s2"),
     ]
 
-    async def _search(_: Any) -> Any:
+    asked: list[Any] = []
+
+    async def _search(inp: Any) -> Any:
+        asked.append(inp)
         return SimpleNamespace(results=hits)
 
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
@@ -320,6 +323,7 @@ async def test_search_target_touches_only_the_callers_identity(
     )
     assert out.matched == 2 and [r.memory_key for r in out.rows] == ["both", "mine"]
     assert reads == [("cursor", "-", "-", "both"), ("cursor", "-", "-", "mine")]
+    assert (asked[0].session_id, asked[0].top_k) == ("-", 10)  # the caller's session only
 
 
 def test_apply_op_is_a_writer_op_and_audited() -> None:

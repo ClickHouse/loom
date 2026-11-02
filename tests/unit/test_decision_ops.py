@@ -323,7 +323,10 @@ def test_a_decision_served_in_two_sessions_is_one_precedent(env, monkeypatch) ->
     asyncio.run(h.handle_decision_record(record_input()))
     (key,) = ch.records
 
+    asked: list[int] = []
+
     async def two_rows(inp):
+        asked.append(inp.top_k)
         hits = [SimpleNamespace(memory_key=key, similarity=s) for s in (0.9, 0.8)]
         return SimpleNamespace(results=hits, embedding_model="fake")
 
@@ -332,6 +335,7 @@ def test_a_decision_served_in_two_sessions_is_one_precedent(env, monkeypatch) ->
         h.handle_decision_precedents(DecisionPrecedentsInput(org="o", namespace="n", query="q"))
     )
     assert [p.similarity for p in out.precedents] == [pytest.approx(0.9)]
+    assert asked == [30]  # ten precedents at three rows each
 
 
 def test_chain_walks_authored_edges_and_attaches_decisions(env) -> None:

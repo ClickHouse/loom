@@ -11,7 +11,7 @@ from typing import Any
 from server.memory.app.ask.question_shapes import (
     looks_multihop,
 )
-from server.memory.domain.search_types import hit_row_key
+from server.memory.domain.search_types import hit_row_key, names_row
 from server.settings.budgets import llm_max_tokens
 
 logger = logging.getLogger(__name__)
@@ -194,6 +194,31 @@ async def decompose_question(llm: Any, question: str, *, max_parts: int = 4) -> 
         return []
 
 
+class PoolSeen:
+    """What an ask pool holds, for merging more hits into it: a hit that names its row is
+    new when that row is not pooled, one that names none (a record, a key read) when no
+    hit of its key is."""
+
+    def __init__(self, hits: list[Any], namespace: str) -> None:
+        self.namespace = namespace
+        self.rows = {hit_row_key(h, namespace) for h in hits}
+        self.keys = {(r.namespace, r.memory_key) for r in self.rows}
+
+    def add(self, hit: Any) -> bool:
+        """Note `hit` and say whether it was new."""
+        row = hit_row_key(hit, self.namespace)
+        if not row.memory_key:
+            return False
+        new = (
+            row not in self.rows
+            if names_row(hit)
+            else (row.namespace, row.memory_key) not in self.keys
+        )
+        self.rows.add(row)
+        self.keys.add((row.namespace, row.memory_key))
+        return new
+
+
 async def decomposed_retrieval(
     search_input: Any,
     question: str,
@@ -219,8 +244,7 @@ async def decomposed_retrieval(
     if not parts:
         return [], ranked
     merged = list(ranked)
-    ns = str(search_input.namespace)
-    have = {hit_row_key(h, ns) for h in merged}
+    seen = PoolSeen(merged, str(search_input.namespace))
     for part in parts:
         try:
             sub = await handle_memory_search(
@@ -231,11 +255,7 @@ async def decomposed_retrieval(
             if stats is not None:
                 stats["failed"] = int(stats.get("failed", 0)) + 1
             continue
-        for h in sub.results or []:
-            row = hit_row_key(h, ns)
-            if row.memory_key and row not in have:
-                have.add(row)
-                merged.append(h)
+        merged.extend(h for h in sub.results or [] if seen.add(h))
     return parts, merged
 
 
