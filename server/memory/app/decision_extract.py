@@ -302,7 +302,8 @@ async def extract_document(
     # An image-only section, or a chunk with no words, carries no rationale to read. The
     # caption rule is judged on whole sections: a long section's last chunk may hold an
     # image and a short tail of its text.
-    # An empty-path chunk must be image-only itself: a chunker with no heading stores all so.
+    # A chunk on the empty path is skipped only if its own text is image-only: a document
+    # with no heading stores every chunk there.
     skipped = set(report.image_only)
 
     def sent(c: CorpusChunk) -> bool:
