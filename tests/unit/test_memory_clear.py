@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.clickhouse_local import CLICKHOUSE, EMBEDDINGS, ddl, run
 
 
 @pytest.mark.asyncio
@@ -225,6 +225,27 @@ async def test_clear_star_user_tombstones_without_a_user_filter(
 
 
 # (agent, user_id, session_id, memory_key, lock_mode) rows; the first is always locked.
+def _setup(rows: list[tuple[str, str, str, str, str]]) -> list[str]:
+    """The memory and embedding rows of `rows` ((agent, user, session, key, lock_mode))."""
+    cols = "org, namespace, agent, user_id, session_id, memory_key, version"
+    return [
+        *EMBEDDINGS,
+        ddl("memory"),
+        *(
+            f"INSERT INTO loom.memory ({cols}, memory_id, lock_mode)"
+            f" SELECT 'o', 'n', '{a}', '{u}', '{s}', '{k}', 1, generateUUIDv4(), '{mode}'"
+            for a, u, s, k, mode in rows
+        ),
+        *(
+            f"INSERT INTO loom.memory_embeddings ({cols}, embedding, memory_key_embedding)"
+            f" SELECT 'o', 'n', '{a}', '{u}', '{s}', '{k}', 1,"
+            # Both vector columns at the codec's declared dimension.
+            " arrayWithConstant(3072, 0.), arrayWithConstant(3072, 0.)"
+            for a, u, s, k, _ in rows
+        ),
+    ]
+
+
 _STAR_AGENT_ROWS = [
     ("A", "u1", "-", "K", "read_only"),
     ("B", "u1", "-", "K", ""),
@@ -267,24 +288,7 @@ async def test_a_clear_keeps_vectors_only_for_the_locked_identity_in_clickhouse(
     from server.memory.app.handlers import handle_memory_clear
     from tests.unit.ch_fake import RecordingCH
 
-    cols = "org, namespace, agent, user_id, session_id, memory_key, version"
-    setup = [
-        "SET enable_quantized_codec = 1",
-        ddl("memory"),
-        ddl("memory_embeddings"),
-        *(
-            f"INSERT INTO loom.memory ({cols}, memory_id, lock_mode)"
-            f" SELECT 'o', 'n', '{a}', '{u}', '{s}', '{k}', 1, generateUUIDv4(), '{mode}'"
-            for a, u, s, k, mode in rows
-        ),
-        *(
-            f"INSERT INTO loom.memory_embeddings ({cols}, embedding, memory_key_embedding)"
-            f" SELECT 'o', 'n', '{a}', '{u}', '{s}', '{k}', 1,"
-            # Both vector columns at the codec's declared dimension.
-            " arrayWithConstant(3072, 0.), arrayWithConstant(3072, 0.)"
-            for a, u, s, k, _ in rows
-        ),
-    ]
+    setup = _setup(rows)
     ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 1}], times=1)
     ch.on("SELECT count() AS n", [{"n": 1}])
     # the locked identities are read from the same tables the mutation then runs on
@@ -331,23 +335,7 @@ async def test_a_bucketed_clear_keeps_every_locked_identitys_vector_in_clickhous
     from tests.unit.ch_fake import RecordingCH
 
     monkeypatch.setattr(lifecycle, "_LOCKED_PER_MUTATION", 1)
-    cols = "org, namespace, agent, user_id, session_id, memory_key, version"
-    setup = [
-        "SET enable_quantized_codec = 1",
-        ddl("memory"),
-        ddl("memory_embeddings"),
-        *(
-            f"INSERT INTO loom.memory ({cols}, memory_id, lock_mode)"
-            f" SELECT 'o', 'n', '{a}', '{u}', '{s}', '{k}', 1, generateUUIDv4(), '{mode}'"
-            for a, u, s, k, mode in _BUCKETED_ROWS
-        ),
-        *(
-            f"INSERT INTO loom.memory_embeddings ({cols}, embedding, memory_key_embedding)"
-            f" SELECT 'o', 'n', '{a}', '{u}', '{s}', '{k}', 1,"
-            " arrayWithConstant(3072, 0.), arrayWithConstant(3072, 0.)"
-            for a, u, s, k, _ in _BUCKETED_ROWS
-        ),
-    ]
+    setup = _setup(_BUCKETED_ROWS)
     run(setup, "SELECT 1", path=tmp_path)
     ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 4}], times=1)
     ch.on("SELECT count() AS n", [{"n": 1}])

@@ -250,3 +250,37 @@ def test_a_late_review_on_the_older_of_two_decided_candidates_survives(tmp_path)
         (b, "rejected", "", 101),
         (b, "promoted", '"s"', 150),
     ]
+
+
+def test_a_rerun_binds_the_same_delete_slices_whatever_order_it_reads(monkeypatch) -> None:
+    # the mutation tag hashes the bound values, so a resumed step finds its own mutations
+    from server.core.ch_params import chunks
+
+    ids = [f"00000000-0000-0000-0000-{i:012d}" for i in range(40)]
+    latest = [_candidate(c, "pending" if i % 2 else "approved", "", 1) for i, c in enumerate(ids)]
+    bound: list[list[Any]] = []
+
+    async def record(table: str, *, params: dict[str, Any], **_: Any) -> int:
+        bound.append([params.get("cids") or params.get("decided")])
+        return 0
+
+    class _Reads:
+        def __init__(self, order: list[dict[str, Any]]) -> None:
+            self.order = order
+
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            if "SELECT DISTINCT candidate_id" in sql:
+                return [{"candidate_id": r["candidate_id"]} for r in self.order]
+            return self.order if "SELECT * FROM loom.learnings_queue" in sql else []
+
+        async def insert(self, *a: Any, **k: Any) -> None:
+            return None
+
+    monkeypatch.setattr(ledger_steps, "delete_scoped", record)
+    monkeypatch.setattr(ledger_steps, "chunks", lambda v: chunks(v, limit=400))  # several slices
+    runs = []
+    for order in (latest, latest[::-1]):
+        bound.clear()
+        asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=_Reads(order)))
+        runs.append(list(bound))
+    assert len(runs[0]) > 3 and runs[0] == runs[1]
