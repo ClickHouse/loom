@@ -253,8 +253,7 @@ class SearchHit:
     # against gold evidence sessions, an agent groups hits by the
     # conversation they came from. "" for rows without one and for the
     # summary / derived / code planes; a chunk hit carries its row's session, a
-    # record hit its own.
-    # Surfaced on the wire model.
+    # record hit its own. Surfaced on the wire model.
     session_id: str = ""
     # Who said it: the `speaker:<name>` tag the extractor writes on a fact
     # whose cited turns all come from one named speaker; "" when the fact is
