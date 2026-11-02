@@ -355,10 +355,11 @@ class NamespaceAuditSummary(BaseModel):
     # `gets`, left out of the object-store gauge.
     typed_gets: int = 0
     # Live rows written or revised in the window (not in its last minute, which the ledger
-    # may not have caught up with), and the ledger's rows for the namespace in it: writes
-    # with no ledger rows mean the counts above were not recorded.
+    # may not have caught up with), and the ledger's write rows for the namespace in it
+    # (memory changes and worker writes): writes with no write rows mean the counts above
+    # were not recorded.
     written_in_window: int = 0
-    ledger_rows: int = 0
+    ledger_writes: int = 0
 
 
 class NamespaceAuditFinding(FindingContract):

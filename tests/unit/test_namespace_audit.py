@@ -1172,7 +1172,14 @@ _THRESHOLDS = {
         (tuple(sorted(na.STRUCTURED_TYPES)), tuple(sorted(na.NON_SEARCHABLE_TYPES))),
         (("procedural",), ("episodic", "profile")),
     ),
-    "unembedded_rows": (1, (tuple(sorted(na.NON_SEARCHABLE_TYPES)),), (("episodic", "profile"),)),
+    "unembedded_rows": (
+        2,
+        (tuple(sorted(na.NON_SEARCHABLE_TYPES)), na.EMBED_HOLDS),
+        (
+            ("episodic", "profile"),
+            ("model call held", "MODEL_CALL_UNATTRIBUTED: the row names no org to bill"),
+        ),
+    ),
     "hash_keys": (
         1,
         (na.HASH_KEY_WARNING_SHARE, na._HASH_KEY_SEGMENT_RE),
@@ -1280,20 +1287,22 @@ async def test_writes_with_no_ledger_skip_the_ledger_checks_instead_of_passing_t
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     live = {**_live(10, 1), "written_in_window": 4}
-    out, _ = await _run(monkeypatch, {M_LIVE: live, M_LEDGER: {"ledger_rows": 0}})
+    out, _ = await _run(monkeypatch, {M_LIVE: live, M_LEDGER: {"ledger_writes": 0}})
     gap = _finding(out, "telemetry_unavailable")
     assert gap.severity == "warning" and gap.kind == "system_state" and gap.count == 4
     codes = {f.code for f in out.findings}
-    for code in ("exact_key_store", "coordination_as_memory", "intentional_exact_key_reads"):
+    for code in ("exact_key_store", "intentional_exact_key_reads"):
         assert code not in codes and f"{code}: telemetry_unavailable" in out.skipped
     assert out.coverage.complete is False
+    # coordination_as_memory still runs its key-segment arm, which reads no ledger.
+    assert "coordination_as_memory" in codes
 
     # A ledger that has the window's calls: every check runs and the gap reads clean.
-    out, _ = await _run(monkeypatch, {M_LIVE: live, M_LEDGER: {"ledger_rows": 9}})
+    out, _ = await _run(monkeypatch, {M_LIVE: live, M_LEDGER: {"ledger_writes": 9}})
     assert _finding(out, "telemetry_unavailable").count == 0
     assert "exact_key_store" in {f.code for f in out.findings}
     # A quiet namespace has nothing to count: no gap either.
-    out, _ = await _run(monkeypatch, {M_LIVE: _live(10, 1), M_LEDGER: {"ledger_rows": 0}})
+    out, _ = await _run(monkeypatch, {M_LIVE: _live(10, 1), M_LEDGER: {"ledger_writes": 0}})
     assert _finding(out, "telemetry_unavailable").severity == "info"
 
 
@@ -1301,7 +1310,7 @@ async def test_writes_with_no_ledger_skip_the_ledger_checks_instead_of_passing_t
 async def test_reads_of_structured_rows_are_left_out_of_the_object_store_gauge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ledger = {"ledger_rows": 400, "gets": 300, "typed_gets": 250, "searches": 5, "sets": 0}
+    ledger = {"ledger_writes": 400, "gets": 300, "typed_gets": 250, "searches": 5, "sets": 0}
     out, ch = await _run(monkeypatch, {M_LIVE: _live(10, 1), M_LEDGER: ledger})
     exact = _finding(out, "exact_key_store")
     assert exact.count == 50 and exact.severity != "critical"
@@ -1331,3 +1340,140 @@ async def test_an_indexing_backlog_is_the_systems_state_and_warns_only_when_stal
     stalled = [{**pending[0], "stalled": 1, "age_seconds": 4000}]
     out, _ = await _run(monkeypatch, {M_LIVE: _live(10, 1), M_BACKLOG: stalled})
     assert _finding(out, "index_backlog").severity == "warning"
+
+
+# ---------------------------------------------------------------------------
+# The new predicates on real rows (clickhouse-local).
+# ---------------------------------------------------------------------------
+
+
+class _LocalCH:
+    """Runs every statement on clickhouse-local over the given tables and rows."""
+
+    def __init__(self, tables: list[str], rows: list[str]) -> None:
+        self.setup = ["SET enable_quantized_codec = 1", *[ddl(t) for t in tables], *rows]
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        return run(self.setup, sql, params)
+
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        found = await self.query_all(sql, params)
+        return found[0] if found else None
+
+
+def _memory_row(
+    key: str, *, minutes_ago: int, memory_type: str = "semantic", value: str = "v"
+) -> str:
+    return (
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
+        f"memory_type, value, version, created_at, updated_at) VALUES ('o', 'ns', 'bot', '-', "
+        f"'-', '{key}', '{memory_type}', '{value}', 1, now() - INTERVAL {minutes_ago} MINUTE, "
+        f"now() - INTERVAL {minutes_ago} MINUTE)"
+    )
+
+
+def _ledger_row(operation: str, *, key: str = "", consumer: str = "") -> str:
+    return (
+        "INSERT INTO loom.agent_events (org, namespace, agent, operation, memory_key, consumer, ts) "
+        f"VALUES ('o', 'ns', 'bot', '{operation}', '{key}', '{consumer}', now())"
+    )
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_an_audit_run_twice_still_sees_writes_the_ledger_never_recorded() -> None:
+    # The first audit's own row, a summary and a search are in the ledger; no write is.
+    ch = _LocalCH(
+        ["memory", "agent_events"],
+        [
+            _memory_row("team/fact", minutes_ago=10),
+            _ledger_row("namespace.audit"),
+            _ledger_row("namespace.summary"),
+            _ledger_row("memory.search"),
+        ],
+    )
+    audit = na.new_audit(_inp(window_seconds=3600), ch=ch)
+    await na.run_checks(audit, ["telemetry_unavailable"])
+    gap = _finding(audit, "telemetry_unavailable")
+    assert gap.severity == "warning" and gap.count == 1
+    # Once a write is ledgered the gap closes.
+    ch.setup.append(_ledger_row("memory.set", key="team/fact"))
+    audit = na.new_audit(_inp(window_seconds=3600), ch=ch)
+    await na.run_checks(audit, ["telemetry_unavailable"])
+    assert _finding(audit, "telemetry_unavailable").count == 0
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_version_churn_counts_each_writers_distinct_contents() -> None:
+    def version(user: str, version: int, sha: str) -> str:
+        return (
+            "INSERT INTO loom.memory_versions (org, namespace, agent, user_id, session_id, "
+            f"memory_key, value, version, content_sha256) VALUES ('o', 'ns', 'bot', '{user}', "
+            f"'-', 'pref/tz', 'UTC', {version}, '{sha * 64}')"
+        )
+
+    rows = [
+        # u1 wrote once, then two status changes copied the same value.
+        version("u1", 1, "a"),
+        version("u1", 2, "a"),
+        version("u1", 3, "a"),
+        # u2 holds the same key with the same content: a version of its own.
+        version("u2", 1, "a"),
+    ]
+    audit = na.new_audit(_inp(), ch=_LocalCH(["memory_versions"], rows))
+    await audit.version_churn()
+    assert _finding(audit, "version_churn").count == 2
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_hot_short_procedure_is_not_coordination_state() -> None:
+    reads = [
+        _ledger_row("memory.get", key=k) for k in ("runbook/restart", "lease/x") for _ in range(25)
+    ]
+    rows = [
+        _memory_row("runbook/restart", minutes_ago=10, memory_type="procedural", value="drain"),
+        _memory_row("lease/x", minutes_ago=10, value="held"),
+        *reads,
+    ]
+    audit = na.new_audit(_inp(window_seconds=3600), ch=_LocalCH(["memory", "agent_events"], rows))
+    await audit.coordination_as_memory()
+    f = _finding(audit, "coordination_as_memory")
+    assert [s["memory_key"] for s in f.samples] == ["lease/x"]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_held_model_call_is_a_backlog_and_an_empty_row_is_neither() -> None:
+    def stub(key: str, error: str) -> str:
+        return (
+            "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
+            "memory_key, embedding_model, embedding_dim, embedding, memory_key_embedding, "
+            f"embed_last_error, status, version) SELECT 'o', 'ns', 'bot', '-', '-', '{key}', 'm', "
+            f"0, v, v, '{error}', 'active', 1 FROM (SELECT arrayWithConstant(3072, toBFloat16(0)) AS v)"
+        )
+
+    rows = [
+        _memory_row("held/row", minutes_ago=30),
+        stub("held/row", na.EMBED_HOLDS[0]),
+        _memory_row("failed/row", minutes_ago=30),
+        stub("failed/row", "ValueError: input too long"),
+        _memory_row("empty/row", minutes_ago=30, value=""),
+    ]
+    ch = _LocalCH(["memory", "memory_embeddings"], rows)
+    audit = na.new_audit(_inp(), ch=ch)
+    await audit.summary_live()
+    await audit.index_backlog()
+    await audit.unembedded_rows()
+    backlog = _finding(audit, "index_backlog")
+    assert [s["memory_key"] for s in backlog.samples] == ["held/row"]
+    assert backlog.severity == "warning"  # older than the grace
+    assert [s["memory_key"] for s in _finding(audit, "unembedded_rows").samples] == ["failed/row"]
+
+
+def test_the_held_markers_are_the_embedding_workers() -> None:
+    from server.llm.customer import NO_CUSTOMER
+    from server.memory.workers.embedding import HELD
+
+    assert na.EMBED_HOLDS == (HELD, NO_CUSTOMER)

@@ -44,7 +44,9 @@ Show `summary` as one line (`live_rows`, `live_bytes`, `version_bytes`,
 `unembedded_rows`, `gets` / `searches` / `sets`, `get_search_ratio`) and the
 findings as a table: `code | severity | count | share | bytes | remedy`. If
 `healthy` is true and no finding is `warning` or `critical`, say so and stop
-— an `info` finding is a note for the writer, not a rework.
+— an `info` finding is a note for the writer, not a rework. A finding of kind
+`system_state` (`telemetry_unavailable`, `index_backlog`) is the deployment's
+state, never a rework: name it to the owner and leave it out of the plan.
 
 ## Step 2 — write the plan, one section per finding
 

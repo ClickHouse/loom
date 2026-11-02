@@ -23,7 +23,7 @@ from server.observability.consumer import INSPECTOR_CONSUMERS
 
 
 @functools.cache
-def _memory_changes() -> tuple[str, ...]:
+def memory_change_ops() -> tuple[str, ...]:
     """The memory ops that change a row, not read_only and called by a writer or audited: an
     inspector's call to one is a person using the namespace."""
     from server.operations.base import Role
@@ -105,7 +105,7 @@ async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSum
                 **params,
                 "win": int(input.activity_seconds),
                 "inspectors": list(INSPECTOR_CONSUMERS),
-                "memory_changes": list(_memory_changes()),
+                "memory_changes": list(memory_change_ops()),
             },
         )
 

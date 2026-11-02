@@ -9,7 +9,7 @@ table consistent and recall useless. Each of those facts is derivable from `loom
 `loom.agent_events` with SQL; this op says it, so the namespace owner can run it and the
 optimize skill can act on it.
 
-Ten checks, each one read over existing tables scoped to (org, namespace).
+Thirteen checks, each one read over existing tables scoped to (org, namespace).
 No mutation, no new storage. A check that fails to run is reported in
 `skipped` and the rest still return. Samples carry keys and counts only,
 never a value.
@@ -41,6 +41,7 @@ from server.identity.api.models_namespace_catalog import (
     NamespaceAuditOutput,
     NamespaceAuditSummary,
 )
+from server.identity.app.namespace_summary import memory_change_ops
 from server.identity.app.report_rules import RuleContract, RuleLog, attach_evidence
 from server.memory.domain.excerpt import EXCERPT_LIMIT
 from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
@@ -132,14 +133,23 @@ _IS_JSON_STRING_OF_JSON = (
 _IS_JSON_CONTAINER = "JSONType(value) IN ('Object', 'Array')"
 
 # Over loom.memory_embeddings: a searchable row the worker gave up on (summary and check).
-_UNEMBEDDED_ROW = f"embedding_dim = 0 AND embed_last_error != '' AND {_SEARCHABLE}"
+# A model call the deployment held or could not bill: the row is waiting, not failing.
+# The embedding worker's markers (`HELD`, `customer.NO_CUSTOMER`); a unit test pins them.
+EMBED_HOLDS: tuple[str, ...] = (
+    "model call held",
+    "MODEL_CALL_UNATTRIBUTED: the row names no org to bill",
+)
+_UNEMBEDDED_ROW = (
+    f"embedding_dim = 0 AND embed_last_error != '' "
+    f"AND embed_last_error NOT IN {{holds:Array(String)}} AND {_SEARCHABLE}"
+)
 # Remedies point at the recipe: docs/guides/investigation-agent-memory.md.
 _RECIPE = "docs/guides/investigation-agent-memory.md"
 
 # code: (detail, remedy). One sentence each — what the check found means,
 # and what to do about it.
 _TEXT: dict[str, tuple[str, str]] = {
-    # First: the ledger checks after it read whether the ledger holds the window.
+    # Runs first: the ledger checks read whether it found the ledger empty.
     "telemetry_unavailable": (
         "Live rows were written in the window but the ledger holds no call for the "
         "namespace: the read and search counts were not recorded, so the checks built on "
@@ -168,8 +178,9 @@ _TEXT: dict[str, tuple[str, str]] = {
         f"worker has not reached. Within {INDEX_GRACE_SECONDS // 60} minutes of a write "
         "that is normal lag; older, the worker is stopped or behind. Either way the rows "
         "are not found by meaning yet, through no fault of the writer.",
-        "Check the embedding worker and its backlog; `memory.reindex` re-queues the rows. "
-        "Nothing for the writer to change.",
+        "Check that the embedding worker runs and that the org's model calls are allowed; "
+        "the worker picks these rows up on its next pass, and `memory.get` still reads them "
+        "by key meanwhile. Nothing for the writer to change.",
     ),
     "hand_rolled_index_rows": (
         f"Live rows whose value names {INDEX_ROW_MIN_KEYS}+ other live keys of the "
@@ -252,7 +263,8 @@ _CONTRACT: dict[str, RuleContract] = {
         exceptions=(
             "Only a namespace written in the window is judged: a quiet one has nothing to "
             f"count. A write of the last {TELEMETRY_LAG_SECONDS} seconds is not judged; its "
-            "ledger row may not have landed yet."
+            "ledger row may not have landed yet. Reads and the audit's own call are not "
+            "write rows and do not hide a gap."
         ),
     ),
     "exact_key_store": RuleContract(
@@ -275,17 +287,20 @@ _CONTRACT: dict[str, RuleContract] = {
         windowed=True,
         uncertainty=(
             "Only the structured-by-design types are recognised; other workflows that read by "
-            "key on purpose still count in exact_key_store."
+            "key on purpose still count in exact_key_store. A read is matched by key, so a "
+            "read of another writer's row under a procedure's key counts as one."
         ),
     ),
     "index_backlog": RuleContract(
         "system_state",
         1,
-        exceptions="Non-searchable and high-sensitivity rows are never embedded and are not "
-        "counted.",
+        exceptions=(
+            "Non-searchable, high-sensitivity and empty rows are never embedded and are not "
+            "counted."
+        ),
         uncertainty=(
             "A row whose embedding row was written but not yet merged can read as pending for "
-            "a moment."
+            "a moment, and a row with a vector from another embedder counts as reached."
         ),
     ),
     "hand_rolled_index_rows": RuleContract(
@@ -321,10 +336,11 @@ _CONTRACT: dict[str, RuleContract] = {
     ),
     "unembedded_rows": RuleContract(
         "contract_violation",
-        1,
+        # 2: a model call the deployment held or could not bill is not the row's error.
+        2,
         exceptions=(
-            "Non-searchable types are not checked, and a row with no recorded embed error is "
-            "not counted."
+            "Non-searchable types are not checked, a row with no recorded embed error is not "
+            "counted, and nor is one whose model call was held or unbilled (index_backlog)."
         ),
     ),
     "hash_keys": RuleContract(
@@ -338,7 +354,10 @@ _CONTRACT: dict[str, RuleContract] = {
         # 2: a structured-by-design row read often by key is not coordination state.
         2,
         windowed=True,
-        exceptions="A row whose type is structured by design is not counted on its reads.",
+        exceptions=(
+            "A row whose type is structured by design is not counted on its reads; while "
+            "telemetry_unavailable warns, only the key-segment arm runs."
+        ),
         uncertainty="A short fact read often for a good reason matches the read-count arm.",
     ),
     "episodic_blobs": RuleContract(
@@ -456,6 +475,8 @@ class _Audit:
             "index_clip": int(INDEX_ROW_VALUE_CLIP),
             "grace": int(INDEX_GRACE_SECONDS),
             "lag": int(TELEMETRY_LAG_SECONDS),
+            "memory_changes": list(memory_change_ops()),
+            "holds": list(EMBED_HOLDS),
         }
         self.summary = NamespaceAuditSummary()
         self.searchable_rows = 0
@@ -568,7 +589,8 @@ class _Audit:
     async def summary_ledger(self) -> None:
         r = await self.one(
             f"""
-            SELECT count() AS ledger_rows,
+            SELECT countIf(operation IN {{memory_changes:Array(String)}} OR kind = 'worker')
+                       AS ledger_writes,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}) AS gets,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}
                            AND memory_key IN ({_TYPED_KEYS})) AS typed_gets,
@@ -581,7 +603,7 @@ class _Audit:
             """
         )
         s = self.summary
-        s.ledger_rows = int(r.get("ledger_rows") or 0)
+        s.ledger_writes = int(r.get("ledger_writes") or 0)
         s.typed_gets = int(r.get("typed_gets") or 0)
         s.gets = int(r.get("gets") or 0)
         s.searches = int(r.get("searches") or 0)
@@ -605,7 +627,9 @@ class _Audit:
         if not (self.rules.has_run("summary_live") and self.rules.has_run("summary_ledger")):
             self.rules.skip("telemetry_unavailable", "summary read failed")
             return
-        self.telemetry_gap = s.written_in_window > 0 and s.ledger_rows == 0
+        # Writes, not any row: the audit's own call, a summary or a dashboard read in the
+        # window is a ledger row, and would hide that the writes were never recorded.
+        self.telemetry_gap = s.written_in_window > 0 and s.ledger_writes == 0
         count = s.written_in_window if self.telemetry_gap else 0
         self.add(
             "telemetry_unavailable",
@@ -638,11 +662,16 @@ class _Audit:
             FROM (SELECT a.memory_key AS memory_key, toString(a.memory_id) AS memory_id,
                          dateDiff('second', a.updated_at, now()) AS age_seconds
                   FROM (SELECT agent, user_id, session_id, memory_key, memory_id, updated_at
-                        {_LIVE} AND {_SEARCHABLE} AND sensitivity != 'high') AS a
+                        {_LIVE} AND {_SEARCHABLE} AND sensitivity != 'high'
+                          AND length(value) > 0) AS a
+                  -- reached: a vector, or an error of the row's own (a held or unbilled
+                  -- model call is the deployment's, and still waiting)
                   LEFT ANTI JOIN (SELECT agent, user_id, session_id, memory_key
                                   FROM loom.memory_embeddings FINAL
                                   WHERE {_SCOPE} AND tombstoned_at IS NULL
-                                    AND (embedding_dim > 0 OR embed_last_error != '')) AS b
+                                    AND (embedding_dim > 0 OR (embed_last_error != ''
+                                         AND embed_last_error NOT IN {{holds:Array(String)}}))
+                                 ) AS b
                     ON a.agent = b.agent AND a.user_id = b.user_id
                    AND a.session_id = b.session_id AND a.memory_key = b.memory_key)
             ORDER BY age_seconds DESC, memory_key
@@ -821,8 +850,17 @@ class _Audit:
         )
 
     async def coordination_as_memory(self) -> None:
-        if self.ledger_missing("coordination_as_memory"):
-            return
+        # With no ledger for the window the read-count arm has nothing to count; the
+        # key-segment arm reads only loom.memory and still runs.
+        read_arm = (
+            "0"
+            if self.telemetry_gap
+            else """(length(m.value) < {coord_chars:UInt32}
+                    AND length(splitByWhitespace(m.value)) < {coord_words:UInt32}
+                    AND l.reads >= {hot:UInt32}
+                    -- a structured row is read back whole by key by design
+                    AND m.memory_type NOT IN {structured:Array(String)})"""
+        )
         rows = await self.rows(
             f"""
             SELECT count() OVER () AS total, sum(length(m.value)) OVER () AS total_bytes,
@@ -831,11 +869,7 @@ class _Audit:
             FROM (SELECT memory_key, toString(memory_id) AS memory_id, value, memory_type
                   {_LIVE}) AS m
             LEFT JOIN ({_HOT_KEYS}) AS l ON m.memory_key = l.memory_key
-            WHERE (length(m.value) < {{coord_chars:UInt32}}
-                    AND length(splitByWhitespace(m.value)) < {{coord_words:UInt32}}
-                    AND l.reads >= {{hot:UInt32}}
-                    -- a structured row is read back whole by key by design
-                    AND m.memory_type NOT IN {{structured:Array(String)}})
+            WHERE {read_arm}
                OR hasAny(splitByChar('/', lower(m.memory_key)), {{coord_segs:Array(String)}})
             ORDER BY reads DESC, memory_key
             LIMIT {{lim:UInt32}}
@@ -863,7 +897,7 @@ class _Audit:
                   -- supersession) copies the value but rewrites nothing
                   FROM (SELECT memory_key, content_sha256, any(length(value)) AS chars
                         FROM loom.memory_versions FINAL WHERE {_SCOPE}
-                        GROUP BY memory_key, content_sha256)
+                        GROUP BY agent, user_id, session_id, memory_key, content_sha256)
                   GROUP BY memory_key)
             ORDER BY bytes DESC, memory_key
             LIMIT {{lim_past:UInt32}}
@@ -970,7 +1004,7 @@ def render_table(out: NamespaceAuditOutput) -> str:
             else ""
         ),
         "",
-        f"  {'code':<24} {'severity':<9} {'kind':<9} {'count':>8} {'share':>6}  first sample",
+        f"  {'code':<28} {'severity':<9} {'kind':<9} {'count':>8} {'share':>6}  first sample",
     ]
     for f in out.findings:
         first = "-"
@@ -979,7 +1013,7 @@ def render_table(out: NamespaceAuditOutput) -> str:
             first = ", ".join(f"{k}={v}" for k, v in f.samples[0].items() if k != "memory_id")
         kind = _KIND_LABEL[f.kind]
         lines.append(
-            f"  {f.code:<24} {f.severity:<9} {kind:<9} {f.count:>8} {f.share:>6.0%}  {first}"
+            f"  {f.code:<28} {f.severity:<9} {kind:<9} {f.count:>8} {f.share:>6.0%}  {first}"
         )
     for sk in out.skipped:
         lines.append(f"  skipped: {sk}")

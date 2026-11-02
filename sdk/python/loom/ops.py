@@ -14540,7 +14540,7 @@ class NamespaceAuditSummary(TypedDict, total=False):
     inspector_calls: NotRequired[int]
     typed_gets: NotRequired[int]
     written_in_window: NotRequired[int]
-    ledger_rows: NotRequired[int]
+    ledger_writes: NotRequired[int]
 
 
 class NamespaceAuditFinding(TypedDict, total=False):
