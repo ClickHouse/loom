@@ -44,6 +44,7 @@ from server.memory.domain.context_layout import (
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
 from server.memory.domain.memory_types import excluded_from_unfiltered_search
 from server.memory.domain.search_types import hit_row_key, names_row
+from server.memory.store.shared import SHARED_AGENT
 
 log = logging.getLogger(__name__)
 
@@ -443,14 +444,17 @@ def _hit_author(actors: _KeyWriters, input: ContextPackInput, h: Any) -> str:
     left were written by more than one actor the label says `unknown`, never a writer whose
     row this may not be."""
     rows = actors.get(_hit_ns_key(input, h)) or []
-    narrow: tuple[tuple[str, Any], ...] = (
-        ("user_id", getattr(h, "user_id", "")),
-        ("session_id", getattr(h, "session_id", "")),
-        ("agent", getattr(h, "_row_agent", None)),
-    )
-    if names_row(h) and getattr(h, "source", "fact") != "chunk":  # a chunk names a chunk row
-        row = hit_row_key(h, input.namespace)
-        narrow = (("agent", row.agent), ("user_id", row.user_id), ("session_id", row.session_id))
+    row = hit_row_key(h, input.namespace)
+    # A fact hit names its memory row. A chunk's identity is its chunk row's, and a shared
+    # hit's the promoted row's, which has no actor here: both narrow as before.
+    if names_row(h) and getattr(h, "source", "fact") != "chunk" and row.agent != SHARED_AGENT:
+        narrow = [("agent", row.agent), ("user_id", row.user_id), ("session_id", row.session_id)]
+    else:
+        narrow = [
+            ("user_id", getattr(h, "user_id", "")),
+            ("session_id", getattr(h, "session_id", "")),
+            ("agent", getattr(h, "_row_agent", None) or ""),
+        ]
     for col, value in narrow:
         if value:
             rows = [r for r in rows if r[col] == value]

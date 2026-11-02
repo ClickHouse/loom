@@ -57,7 +57,7 @@ def collapse_rows(hits: list[_MemorySearchHit], namespace: str) -> list[_MemoryS
             kept = out[slot[key]]
             winner, other = (h, kept) if h.rank_score > kept.rank_score else (kept, h)
             # one row has one set of tags: an empty one is filled from the row's other hit
-            if not winner._row_tags:
+            if not winner._row_tags and other._row_tags is not None:
                 stamp_row_tags(winner, other._row_tags)
             out[slot[key]] = winner
     return out

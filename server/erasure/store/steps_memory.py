@@ -893,8 +893,8 @@ async def erase_blobs_by_user(org: str, user_id: str, *, ch: _CHClient | None = 
     `blob_erased_at` on every document of the user's that had one, then delete
     the record of their uploads. Returns the originals deleted.
 
-    Each slice of originals is read again right before its DELETE, so one another
-    writer's document has named since the first read stays."""
+    Each slice of originals is read again right before its DELETE, so an original that
+    another writer's document named since the first read stays."""
     ch = ch or _default_client()
     n = 0
     for part in chunks(await _users_own_blobs(org, user_id, ch)):
