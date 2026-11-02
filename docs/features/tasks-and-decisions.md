@@ -380,12 +380,12 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   heading, or a document with no heading, is skipped the same way when it holds an image and at most a caption; it is
   reported as `(untitled)`. An image is a Markdown or HTML image or a placeholder such as `[image]`, `[Image 3]` or
   `[image: ...]`. A chunk with no words is not sent either.
-- **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
-  `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
-  punctuation; the endings `-s`, `-es`, `-ed` and `-ing` are cut, then a final `e` is dropped and a final double
-  consonant undoubled, so `stored` meets `store` and `running` meets `run`. Filler words (`we`, `the`, `will`,
-  `decided`, `chose`, `use`, `instead` and the like) are skipped in any form: "We decided on spilling into sorted runs." restates
-  the outcome `spill into sorted runs`; "Sorted runs avoid random reads on disk." gives a reason.
+- **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line `reasoning
+only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without punctuation;
+  the endings `-s`, `-es`, `-ed` and `-ing` are cut, then a final `e` is dropped and a final double consonant undoubled,
+  so `stored` meets `store` and `running` meets `run`. Filler words (`we`, `the`, `will`, `decided`, `chose`, `use`,
+  `instead` and the like) are skipped in any form: "We decided on spilling into sorted runs." restates the outcome
+  `spill into sorted runs`; "Sorted runs avoid random reads on disk." gives a reason.
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.
