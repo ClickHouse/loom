@@ -195,7 +195,10 @@ def _unread_reply(stop_reason: str) -> str:
     return f"{reason} (stop reason: {stop_reason})" if stop_reason else reason
 
 
-_FAKE_ANSWER = "answered by the fake model; set the fallback model's key or LOOM_LLM_PROVIDER=fake"
+_FAKE_ANSWER = (
+    "answered by the fake model; set the fallback model's key, or LOOM_LLM_PROVIDER=fake "
+    "to run on it on purpose"
+)
 
 
 def _no_model_error() -> str:
