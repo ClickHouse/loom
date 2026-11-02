@@ -8,6 +8,7 @@ No new storage. Read-only.
 from __future__ import annotations
 
 import asyncio
+import functools
 from typing import Any
 
 from server.core.ch import get_client
@@ -21,18 +22,21 @@ from server.memory.domain.graph_quality import is_lexical_junk_entity
 from server.observability.consumer import INSPECTOR_CONSUMERS
 
 
-def _memory_changes() -> list[str]:
+@functools.cache
+def _memory_changes() -> tuple[str, ...]:
     """The memory ops that change a row, not read_only and called by a writer or audited: an
     inspector's call to one is a person using the namespace."""
     from server.operations.base import Role
     from server.operations.registry import ALL_OPERATIONS
 
-    return sorted(
-        op.name
-        for op in ALL_OPERATIONS
-        if op.name.startswith("memory.")
-        and not op.read_only
-        and (op.audit or op.required_role == Role.WRITER)
+    return tuple(
+        sorted(
+            op.name
+            for op in ALL_OPERATIONS
+            if op.name.startswith("memory.")
+            and not op.read_only
+            and (op.audit or op.required_role == Role.WRITER)
+        )
     )
 
 
@@ -101,7 +105,7 @@ async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSum
                 **params,
                 "win": int(input.activity_seconds),
                 "inspectors": list(INSPECTOR_CONSUMERS),
-                "memory_changes": _memory_changes(),
+                "memory_changes": list(_memory_changes()),
             },
         )
 

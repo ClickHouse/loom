@@ -181,22 +181,22 @@ result. `Operation.mcp_tool` names it, so no second `loom_search_query` tool is
 listed or callable. See
 [unified search](../features/unified-search.md#searchquery-over-http-and-the-sdks).
 
-**Hidden ops** (`_MCP_HIDDEN_OPS` in `server/operations/toolsets.py`) are
-neither listed nor callable over MCP: the per-store searches `loom_search`
-replaces (`memory.search`, `knowledge.search`, `conversation.search`), review
-queues, snapshot and restore, policy administration, audit and cost
-dashboards, code-index ingest. A call to one answers `isError` with code
-`OP_NOT_ON_MCP` and what to use instead. They stay reachable over HTTP and the
-SDKs. On the `assistant` toolset `memory.search` and `knowledge.search` are listed
-and callable, and a call to any other hidden op answers `UNKNOWN_OP`. The rule for hiding an op: would a typical end user, not an operator,
-reach for it in chat? A namespace-wide view can be hidden while a variant bounded
-to the caller stays on MCP: `namespace.list` is hidden and `namespace.list_mine`
-listed; `memory.extraction_status` (every batch queued in the namespace) is hidden
-and `memory.extraction_status_mine` (the batches the caller queued, by `queue_id`,
-at most 20 a call) is callable by name or through `loom_op` on every toolset but
-`assistant`, `readonly` included. Its write twin, `memory.extraction_retry_mine`, replays
-the caller's failed batches once more; `loom_op` routes it on every toolset but
-`readonly` and `assistant`.
+**Hidden ops** (`_MCP_HIDDEN_OPS` in `server/operations/toolsets.py`) are neither
+listed nor callable over MCP: the per-store searches `loom_search` replaces
+(`memory.search`, `knowledge.search`, `conversation.search`), review queues,
+snapshot and restore, policy administration, audit and cost dashboards, code-index
+ingest. A call to one answers `isError` with code `OP_NOT_ON_MCP` and what to use
+instead. They stay reachable over HTTP and the SDKs. On the `assistant` toolset
+`memory.search` and `knowledge.search` are listed and callable, and a call to any
+other hidden op answers `UNKNOWN_OP`. The rule for hiding an op: would a typical end
+user, not an operator, reach for it in chat? A namespace-wide view can be hidden
+while a variant bounded to the caller stays on MCP: `namespace.list` is hidden and
+`namespace.list_mine` listed; `memory.extraction_status` (every batch queued in the
+namespace) is hidden and `memory.extraction_status_mine` (the batches the caller
+queued, by `queue_id`, at most 20 a call) is callable by name or through `loom_op`
+on every toolset except `assistant` (`readonly` included). Its write twin,
+`memory.extraction_retry_mine`, replays the caller's failed batches once more;
+`loom_op` routes it on every toolset but `readonly` and `assistant`.
 
 ### Toolsets
 
