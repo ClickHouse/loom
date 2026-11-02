@@ -417,17 +417,15 @@ async def test_only_the_merged_decisions_are_credited_once(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_candidates_total_counts_the_merged_decisions(monkeypatch) -> None:
-    async def counted(total: int):
-        async def search(inp: MemorySearchInput) -> MemorySearchOutput:
-            out = await _search(PLANES, [])(inp)
-            if inp.namespace == "me":
-                out.candidates_total = total
-            return out
+    async def search(inp: MemorySearchInput) -> MemorySearchOutput:
+        out = await _search(PLANES, [])(inp)
+        if inp.namespace == "me":
+            out.candidates_total = 10
+        return out
 
-        monkeypatch.setattr("server.memory.app.search.handle_memory_search", search)
-        return await repo_decisions.memory_with_repo_decisions(BASE, repo_namespace=TRUNK)
-
-    assert (await counted(10)).candidates_total == 11  # the home pool's count plus the decision
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", search)
+    out = await repo_decisions.memory_with_repo_decisions(BASE, repo_namespace=TRUNK)
+    assert out.candidates_total == 11  # the home pool's count plus the decision
 
 
 @pytest.mark.asyncio

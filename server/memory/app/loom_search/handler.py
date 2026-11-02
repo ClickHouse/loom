@@ -27,8 +27,8 @@ async def handle_search(input: SearchInput) -> SearchOutput:
         read, _ = await namespaces_to_search(input.org, input.namespace, namespace_scope)
     except Exception as e:  # noqa: BLE001 — no fan-out namespaces narrows the search, never widens
         log.warning("search namespace resolution failed (non-fatal): %s", e)
-        # Consent is narrowed below over the addressed namespace alone, so no
-        # leg may read wider than it.
+        # Consent is narrowed below over the addressed namespace (plus the code
+        # scope's repository namespace), so no leg reads wider than its consent.
         read, namespace_scope = [input.namespace], "this"
     # Under a code scope the repository's documents and decisions are read too (on a later
     # page, its documents only).
