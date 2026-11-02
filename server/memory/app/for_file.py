@@ -275,8 +275,7 @@ def render_block(
             if str(h.get("memory_id")) in hidden or used + len(row) + 1 + tail > budget_chars:
                 left_out += 1
                 # Without the newer row above it, the row it supersedes would read as current.
-                if h.get("supersedes_id"):
-                    hidden.add(h["supersedes_id"])
+                hidden.update(h.get("supersedes_ids") or [])
                 continue
             lines.append(row)
             used += len(row) + 1
@@ -294,12 +293,17 @@ def _stamp(r: dict[str, Any]) -> float:
     return ts.timestamp() if isinstance(ts, datetime) else 0.0
 
 
+def _newer_key(r: dict[str, Any]) -> tuple[float, str]:
+    return _stamp(r), str(r.get("memory_id"))
+
+
 def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Contradicting team rows (rules or decisions), reusing the conflict machinery: two rows
     of one namespace cross-linked by `conflict_with` are an older row and a newer one that
     contradicts it. The newer is placed directly above the older and carries `supersedes_key` /
-    `supersedes` / `supersedes_kind` (the older's key, author and kind) and `supersedes_id`
-    (its memory_id: another writer may hold a row under the same key). No new state: both
+    `supersedes` / `supersedes_kind` (the first older row's key, author and kind) and
+    `supersedes_ids` (the memory_id of every older row it is linked to: another writer may
+    hold a row under the same key). No new state: both
     stay live until the older's author or a maintainer removes it, or a verdict retires it. Two
     typed decisions never pair: a decision's key is its identity, so one cross-linked to
     another is a second decision, not a newer version."""
@@ -314,13 +318,20 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             peer = by_id.get(str(cid))
             if peer is None or peer is r or peer.get("namespace") != r.get("namespace"):
                 continue
-            new, old = (r, peer) if _stamp(r) >= _stamp(peer) else (peer, r)
+            # The id breaks a tie in time, so a pair links in one direction only.
+            if _newer_key(r) > _newer_key(peer):
+                new, old = r, peer
+            else:
+                new, old = peer, r
+            ids = new.setdefault("supersedes_ids", [])
+            if str(old.get("memory_id")) in ids:
+                continue  # the pair again, seen from its other row
+            ids.append(str(old.get("memory_id")))
+            newer_of.setdefault(id(old), []).append(new)
             if not new.get("supersedes_key"):
                 new["supersedes_key"] = str(old.get("memory_key") or "")
-                new["supersedes_id"] = str(old.get("memory_id"))
                 new["supersedes"] = _author(old)
                 new["supersedes_kind"] = "decision" if _is_decision(old) else "rule"
-                newer_of.setdefault(id(old), []).append(new)
     if not newer_of:
         return rows
     placed: set[int] = set()
@@ -505,7 +516,7 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
         hits.append(hit)
         shown.append(
             hit.model_dump()
-            | {"memory_id": r.get("memory_id"), "supersedes_id": r.get("supersedes_id")}
+            | {"memory_id": r.get("memory_id"), "supersedes_ids": r.get("supersedes_ids") or []}
         )
 
     rendered, tokens, truncated = render_block(

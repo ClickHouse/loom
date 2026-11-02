@@ -335,7 +335,7 @@ def _superseding(
     row = _row(key, json.dumps(value), namespace=ns, **over)
     return row | {
         "supersedes_key": older["memory_key"],
-        "supersedes_id": older["memory_id"],
+        "supersedes_ids": [older["memory_id"]],
         "supersedes": "bob",
         "supersedes_kind": "rule",
     }
@@ -396,6 +396,34 @@ def test_a_chain_of_superseded_rows_is_left_out_with_its_head() -> None:
     assert truncated is True and text.splitlines()[1:] == [
         '- … 3 more; memory.for_file(path="src/a.cpp") lists them.'
     ]
+
+
+def test_a_row_superseding_two_rows_leaves_both_out_with_it() -> None:
+    a = _row("a", json.dumps("Keep 32."), namespace="me", updated_at=datetime(2026, 9, 20))
+    d = _row("d", json.dumps("Keep 16."), namespace="me", updated_at=datetime(2026, 9, 21))
+    b = _row("b", json.dumps("b" * 300), namespace="me", updated_at=datetime(2026, 9, 22))
+    b["conflict_with"] = [a["memory_id"], d["memory_id"]]
+    a["conflict_with"], d["conflict_with"] = [b["memory_id"]], [b["memory_id"]]
+    rows = mff._supersede_order([a, d, b])
+    assert [r["memory_key"] for r in rows] == ["b", "a", "d"] and b["supersedes_key"] == "a"
+    text, _, truncated = mff.render_block("src/a.cpp", rows, 60, home="me")
+    assert truncated is True and text.splitlines()[1:] == [
+        '- … 3 more; memory.for_file(path="src/a.cpp") lists them.'
+    ]
+
+
+def test_two_linked_rows_of_one_time_link_one_way() -> None:
+    def pair() -> list[dict[str, Any]]:
+        x = _row("x", json.dumps("Keep 32."), namespace="me", memory_id="id-1")
+        y = _row("y", json.dumps("Keep 64."), namespace="me", memory_id="id-2")
+        x["conflict_with"], y["conflict_with"] = ["id-2"], ["id-1"]
+        return [x, y]
+
+    rows = mff._supersede_order(pair())
+    # The larger id is the newer row: y supersedes x, and x supersedes nothing.
+    assert [r["memory_key"] for r in rows] == ["y", "x"]
+    assert rows[0]["supersedes_key"] == "x" and not rows[1].get("supersedes_key")
+    assert [r["memory_key"] for r in mff._supersede_order(pair()[::-1])] == ["y", "x"]
 
 
 def test_mixed_rows_stay_inside_the_budget() -> None:
