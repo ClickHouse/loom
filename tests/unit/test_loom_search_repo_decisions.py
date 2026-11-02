@@ -843,3 +843,16 @@ async def test_a_search_addressed_to_the_repository_labels_nothing(monkeypatch) 
         monkeypatch, out, explain=True, namespace=TRUNK, namespace_scope="this"
     )
     assert payload["memory"]["reader_block"].startswith("[undated] [decision:evict] (decision) ")
+
+
+def test_every_served_row_gets_a_why_line_above_top_k() -> None:
+    """Decisions ride above top_k, so the explain lines cover the whole section."""
+    from server.transport import mcp_tools
+
+    rows = [
+        {"memory_key": "note-a", "explanation": "home"},
+        {"memory_key": "decision:evict", "explanation": "repository decision"},
+    ]
+    section = {"results": rows, "reader_block": "[d] [note-a] a\n\n[d] [decision:evict] b"}
+    text = "\n".join(mcp_tools._memory_section_lines(section, rows, top_k=1, explain=True))
+    assert "[decision:evict] why: repository decision" in text

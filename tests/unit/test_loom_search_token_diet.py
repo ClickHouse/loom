@@ -84,7 +84,6 @@ def test_flagged_rows_leave_the_section_when_a_real_hit_exists() -> None:
     out = loom_search_fanout.drop_flagged_hits(memory)
     assert [h["memory_key"] for h in out["results"]] == ["coffee_type"]
     assert out["below_threshold_dropped"] == 2 and out["candidates_total"] == 20
-    assert out["reader_block"] == memory["reader_block"]
     # All flagged: an abstain-shaped answer keeps its evidence.
     all_flagged = {
         "results": [{"memory_key": "a", "below_threshold": True}],

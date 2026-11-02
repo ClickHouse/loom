@@ -123,7 +123,7 @@ async def memory_with_repo_decisions(
 
     if not repo_namespace:
         return await handle_memory_search(mem_input)
-    extra = asyncio.ensure_future(search_repo_decisions(mem_input, repo_namespace))
+    extra = asyncio.create_task(search_repo_decisions(mem_input, repo_namespace))
     try:
         base = await handle_memory_search(mem_input)
     except BaseException:

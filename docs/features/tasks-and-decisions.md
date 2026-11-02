@@ -256,6 +256,9 @@ was `caused_by` or `influenced_by`. It writes:
 - a searchable memory row of type `decision` under the same key;
 - an edge from each `caused_by` / `influenced_by` key to the decision.
 
+A decision recorded in a repository's trunk code namespace also reaches MCP `loom_search` from a checkout of that
+repository, for a caller who may read the namespace ([unified search](unified-search.md#reading-the-memory-section)).
+
 The memory row's value is one statement, `Category: <category>. Scenario: <scenario>. Decided <outcome> because
 <reasoning>. Rejected: <alternative>; …`, then `Realized: …` once `decision.outcome` has recorded one. Search embeds
 and excerpts it and `memory.for_file` shows it. Each part is shortened to fit the embedded excerpt, the scenario

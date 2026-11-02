@@ -561,7 +561,7 @@ def _memory_section_lines(
             # Under explain=true the block is followed by one
             # `why` line per hit, in block order, so the reader keeps the
             # paragraphs it scores on and gets the ranking terms beside them.
-            whys = [(str(h.get("memory_key") or ""), why_note(h)) for h in mem_hits[:top_k]]
+            whys = [(str(h.get("memory_key") or ""), why_note(h)) for h in mem_hits]
             whys = [(k, w) for k, w in whys if w]
             if whys:
                 out.append("Why each was served:")

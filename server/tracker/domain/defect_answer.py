@@ -80,7 +80,7 @@ def _text_of(h: dict[str, Any]) -> str:
 
 def drop_loom_output(payload: dict[str, Any]) -> int:
     """Remove memory and conversation hits that quote Loom's own output;
-    the number removed."""
+    the number removed. The rows kept are the same dict objects."""
     removed = 0
     for name in ("memory", "conversations"):
         sec = payload.get(name)
@@ -98,7 +98,8 @@ def verdict_leads(payload: dict[str, Any]) -> dict[str, int]:
     """When the tracker leg answered, the other sections shrink to what can
     still inform a filing decision: at most VERDICT_MEMORY_MAX memory rows, a
     knowledge row only at VERDICT_KNOWLEDGE_MIN_SIMILARITY (one, clipped), no
-    conversation turns. Returns the counts withheld; {} when no verdict."""
+    conversation turns. The rows kept are the same dict objects. Returns the
+    counts withheld; {} when no verdict."""
     tracker = payload.get("tracker")
     if not isinstance(tracker, dict) or not tracker.get("verdict"):
         return {}
