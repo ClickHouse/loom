@@ -524,7 +524,7 @@ async def _pack_decisions_from_hits(
         line += (f" {made}" if made else "") + f" {scenario}"
         if outcome:
             line += f" → decided: {outcome}"
-        if reasoning and states_reason(rec):
+        if states_reason(rec):
             line += f" (because {reasoning[:160]})"
         if realized:
             succ = rec.get("success")

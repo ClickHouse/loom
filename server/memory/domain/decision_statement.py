@@ -112,8 +112,8 @@ def _part(value: Any) -> str:
 
 
 def states_reason(payload: dict[str, Any]) -> bool:
-    """The reasoning says more than the outcome. One that is the outcome word for word,
-    case and whitespace aside, records a ban or an invariant stated with no reason."""
+    """The reasoning is not the outcome itself, case and whitespace aside. One that is
+    records a ban or an invariant stated with no reason."""
     reasoning = _part(payload.get("reasoning"))
     return bool(reasoning) and reasoning.casefold() != _part(payload.get("outcome")).casefold()
 
@@ -133,8 +133,12 @@ def memory_value(payload: dict[str, Any]) -> str:
         parts.append(_sentence(f"Category: {short}"))
     if scenario:
         parts.append(_sentence(f"Scenario: {_clip(scenario, STATEMENT_SCENARIO_CHARS)}"))
-    outcome = _clip(_part(payload.get("outcome")), STATEMENT_OUTCOME_CHARS)
-    reasoning = _part(payload.get("reasoning")) if states_reason(payload) else ""
+    stated = states_reason(payload)
+    # With no reason stated, the outcome takes the reasoning's room: a long ban keeps its
+    # "must not".
+    room = STATEMENT_OUTCOME_CHARS + (0 if stated else STATEMENT_REASONING_CHARS)
+    outcome = _clip(_part(payload.get("outcome")), room)
+    reasoning = _part(payload.get("reasoning")) if stated else ""
     reasoning = _LEADING_BECAUSE.sub("", reasoning)
     reasoning = _clip(reasoning, STATEMENT_REASONING_CHARS)
     text = f"Decided {outcome} because {reasoning}" if reasoning else f"Decided {outcome}"

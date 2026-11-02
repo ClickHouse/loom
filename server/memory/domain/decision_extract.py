@@ -293,13 +293,13 @@ def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
 def unfound_reason(cand: Candidate, texts: list[str]) -> str:
     """The reasoning or rejected option's reason that is not in the text while the quote
     is, or '': a model often joins a reason from two places, and asked again gives one
-    span."""
+    span. '' when any span is too short: reading again does not lengthen it."""
+    spans = (cand.quote, cand.reasoning, *(reason for _option, reason in cand.alternatives))
+    if any(len(collapse_ws(s)) < MIN_SPAN_CHARS for s in spans):
+        return ""
     if not find_span(cand.quote, texts):
         return ""
-    for span in (cand.reasoning, *(reason for _option, reason in cand.alternatives)):
-        if not find_span(span, texts):
-            return span
-    return ""
+    return next((span for span in spans[1:] if not find_span(span, texts)), "")
 
 
 def stitched_note(failed: Sequence[tuple[str, str]]) -> str:
@@ -383,8 +383,9 @@ def in_recap(section: str) -> bool:
     return bool(_RECAP_HEADING.search(section))
 
 
-# A sentence end or a line break.
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n")
+# A sentence end, a blank line, or a line break before a list item. A single line break
+# alone does not end a sentence: hard-wrapped text keeps a negation on the next line.
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n\s*\n\s*|\n(?=[ \t]*(?:[-*+]|\d+[.)])\s)")
 # Words that say a sentence rejects or contrasts what it names.
 _NEGATION = re.compile(
     r"\b(?:not|no|never|cannot|can['’]t|instead|rather|without|fails?|reject(?:ed)?|than"
@@ -394,7 +395,7 @@ _NEGATION = re.compile(
 
 
 def _sentences(text: str) -> list[tuple[int, int]]:
-    """The (start, end) of each sentence or line of `text`."""
+    """The (start, end) of each sentence of `text`."""
     out: list[tuple[int, int]] = []
     start = 0
     for m in _SENTENCE_END.finditer(text):
@@ -410,8 +411,9 @@ def _states_as_chosen(option: str, reason: str, text: str) -> bool:
     words = _content_words(option)
     if not words:
         return False
-    pattern = re.compile(r"\s+".join(map(re.escape, reason.split()))) if reason.split() else None
-    reasons = [(m.start(), m.end()) for m in pattern.finditer(text)] if pattern else []
+    # A reason passed the verbatim check, so it has words.
+    pattern = re.compile(r"\s+".join(map(re.escape, reason.split())))
+    reasons = [(m.start(), m.end()) for m in pattern.finditer(text)]
     for start, end in _sentences(text):
         if any(a < end and start < b for a, b in reasons):
             continue

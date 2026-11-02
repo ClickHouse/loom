@@ -262,7 +262,8 @@ repository, for a caller who may read the namespace ([unified search](unified-se
 The memory row's value is one statement, `Category: <category>. Scenario: <scenario>. Decided <outcome> because
 <reasoning>. Rejected: <alternative>; …`, then `Realized: …` once `decision.outcome` has recorded one. A reasoning
 that is the outcome word for word (case and whitespace aside) records a ban or an invariant stated with no reason: the
-statement reads `Decided <outcome>.` and `context.pack` gives no `because`. Search embeds
+statement reads `Decided <outcome>.`, the outcome keeping the reasoning's room as well, and `context.pack` gives no
+`because`. Search embeds
 and excerpts it and `memory.for_file` shows it. Each part is shortened to fit the embedded excerpt, the scenario
 most, because the pre-edit line shows the start of the statement and must reach the outcome. The excerpt is
 measured as the value is stored, JSON-encoded, where a non-ASCII character takes six or more, so a Cyrillic or CJK
@@ -376,10 +377,12 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
 - **Second read**: a window gets at most one extra model call, reported as `read again`. When the reply holds no
   decision and the window's text is more than a caption (80 characters once images and link markup are removed), the
   window is read once more with the same prompt and the second reply is the window's. When a candidate's quote is in
-  the text but its reasoning or a rejected option's reason is not (a model often joins one from two places), the
-  window is read once more with those spans named, asking for each such decision again with one contiguous span, or
-  none; the first reply's other candidates stand, and the failed ones are reported as dropped. A window whose second
-  read fails or comes back unreadable is lost as any window is: the exit code reads the final outcome.
+  the text but its reasoning or a rejected option's reason is not (a model often joins one from two places), and no
+  span is under 12 characters, the window is read once more with those spans named, asking for each such decision
+  again with one contiguous span, or none; the first reply's other candidates stand, and the failed ones are reported
+  as dropped. After an empty reply, a second read that fails or comes back unreadable loses the window as any window
+  is: the exit code reads the final outcome. After a joined reason the window is answered already: a lost second read
+  is a `read again` line, and the first reply's decisions are recorded with the exit code unchanged.
 - **Image-only sections**: a section whose own text has no words (a heading alone or over an image), or holds an image
   and at most 80 characters of other text (a caption), is not sent to the model and gets the line
   `image-only, rationale not extracted`; a heading alone over its subsections is not one. The text above the first
@@ -415,7 +418,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   later decision's reason.
 - **Inverted alternatives**: a rejected option the text states as part of the choice is left out of the record and
   reported (`rejected option '<option>' left out: the text states it as part of the choice`); the decision is kept. An
-  option is such when every word of it, as the restatement check compares words, is in one sentence of the window and
+  option is such when every word of it, as the restatement check compares words, is in one sentence of the window (a sentence ends at `.`, `!` or `?`
+  before whitespace, at a blank line or before a list item; a single line break does not end one) and
   that sentence holds none of `not`, `no`, `never`, `cannot`, `can't`, `instead`, `rather`, `without`, `fail`,
   `fails`, `reject`, `rejected`, `than`, `avoid`, `slow`. The sentence that holds the option's own rejection reason is
   not read: it is the rejection. "Sharding by tenant is deferred to v2." states "Defer sharding by tenant"; "so v1

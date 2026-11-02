@@ -8,6 +8,7 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 
 from server.cli import decisions as cli
@@ -2765,10 +2766,56 @@ async def test_a_window_gets_at_most_one_extra_call(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_short_or_unquoted_failure_is_not_asked_for_again(monkeypatch) -> None:
-    world = _World(monkeypatch, [_candidate(quote="A quote the document never wrote.")])
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"quote": "A quote the document never wrote."},
+        # A short span stays short however often the window is read.
+        {"quote": "We spill", "reasoning": _STITCHED_REASONING},
+        {"reasoning": "Runs win."},
+    ],
+)
+async def test_a_short_or_unquoted_failure_is_not_asked_for_again(monkeypatch, over) -> None:
+    world = _World(monkeypatch, [_candidate(**over)])
     report = await _run()
-    assert len(world.prompts) == 1 and report.retried == []
+    assert len(world.prompts) == 1 and report.retried == [] and world.recorded == []
+
+
+@pytest.mark.parametrize(
+    "lost",
+    [
+        httpx.ConnectError("down"),
+        # An unreadable reply: a string where the candidates go.
+        "not json",
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_lost_second_read_for_a_stitched_reason_keeps_the_first_reply(
+    monkeypatch, lost
+) -> None:
+    from server.llm import client as llm_client
+
+    _World(monkeypatch, [])  # its model is replaced below, to answer the second read
+    first = [_candidate(), _candidate(scenario="the merge", reasoning=_STITCHED_REASONING)]
+    calls: list[str] = []
+
+    class _LLM:
+        async def complete(self, system, user, max_tokens=0, response_format=None):
+            calls.append(user)
+            if len(calls) == 1:
+                return SimpleNamespace(text=json.dumps({"decisions": first}), stop_reason="")
+            if isinstance(lost, Exception):
+                raise lost
+            return SimpleNamespace(text=lost, stop_reason="")
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _LLM())
+    report = await _run()
+    assert len(calls) == 2
+    assert [r.action for r in report.records] == ["written"]
+    assert [d.refused for d in report.dropped] == [False]
+    assert report.retried[0].reason == de._STITCHED
+    assert report.retried[1].reason.startswith("the second read was lost: ")
+    assert report.error == "" and cli.exit_code(report) == 0
 
 
 # ------------------------------------------------------------------ bans with no reason
@@ -2900,6 +2947,21 @@ async def test_a_recap_quote_is_dropped_and_its_text_still_gives_a_reason(monkey
         (BODY, "a plain set on disk", "costs random reads", False),
         ("Sharding by tenant is faster than a shared table.", "shard by tenant", "x" * 12, False),
         ("Only filler words here.", "the", "x" * 12, False),
+        # A hard-wrapped sentence keeps its negation on the next line.
+        (
+            "Sorting the runs in memory is\nnot possible: the runs exceed RAM.\n"
+            "Spilled runs merge from disk.",
+            "sort the runs in memory",
+            "Spilled runs merge from disk.",
+            False,
+        ),
+        # A list item is a sentence of its own.
+        (
+            "Plans:\n- sort the runs in memory\n- never spill twice",
+            "sort the runs in memory",
+            "never spill twice",
+            True,
+        ),
     ],
 )
 def test_an_option_the_text_states_as_chosen_is_inverted(text, option, reason, inverted) -> None:

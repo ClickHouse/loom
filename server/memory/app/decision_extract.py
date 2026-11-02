@@ -127,6 +127,14 @@ class Dropped:
 
 
 @dataclass
+class Retried:
+    """A window read a second time: its first section and why."""
+
+    section: str
+    reason: str
+
+
+@dataclass
 class ExtractReport:
     source_uri: str
     dry_run: bool
@@ -139,7 +147,7 @@ class ExtractReport:
     image_only: list[str] = field(default_factory=list)
     # A window read a second time, and why: its reply held no decision, or a reason that
     # is not one span of the text. A window gets at most one extra call.
-    retried: list[Dropped] = field(default_factory=list)
+    retried: list[Retried] = field(default_factory=list)
     # Keys deleted (or, in a dry run, to delete): the extractor's rows whose text left.
     retired: list[str] = field(default_factory=list)
     # "<old key> -> <key>" for each extractor row deleted (or to delete) because this run
@@ -399,14 +407,22 @@ def _known_decisions(own: list[tuple[MemoryRow, dict[str, Any]]]) -> list[tuple[
 async def _read_window(
     llm: Any, system: str, w: Window, report: ExtractReport, *, fake_chosen: bool, note: str = ""
 ) -> list[dx.Candidate] | None:
-    """The model's candidates for one window, or None when the window is lost: the call
+    """The model's candidates for one window, or None when the read is lost: the call
     failed, the fake model answered for a real provider, or the reply is unreadable; each
-    is a dropped line marked `refused`, a read the run needed. `note` goes before the
-    window's text."""
+    is a dropped line marked `refused`, a read the run needed. With a `note` (put before
+    the window's text) the read asks again for what the first reply got wrong, and the
+    window is answered already: a lost read is a `read again` line, never refused."""
     from server.llm.json_text import strip_code_fence
 
     first = dx.breadcrumb(w.chunks[0].section_path)
     user = f"{note}\n\n{dx.user_prompt(w)}" if note else dx.user_prompt(w)
+
+    def lost(reason: str) -> None:
+        if note:
+            report.retried.append(Retried(first, f"the second read was lost: {reason}"))
+        else:
+            report.dropped.append(Dropped(first, reason, refused=True))
+
     try:
         with llm_stage("decision_extract"):
             res = await llm.complete(
@@ -417,17 +433,15 @@ async def _read_window(
             )
     except (httpx.HTTPError, TimeoutError, LoomServerError) as e:
         # A provider error, a timeout or a refused call loses this window only.
-        report.dropped.append(
-            Dropped(first, f"the model call failed: {type(e).__name__}", refused=True)
-        )
+        lost(f"the model call failed: {type(e).__name__}")
         return None
     if not fake_chosen and res.provider == "fake":
         # A fallback with no key answered: its decisions pass the check by construction.
-        report.dropped.append(Dropped(first, _FAKE_ANSWER, refused=True))
+        lost(_FAKE_ANSWER)
         return None
     cands = dx.parse_candidates(strip_code_fence(res.text))
     if cands is None:
-        report.dropped.append(Dropped(first, _unread_reply(res.stop_reason), refused=True))
+        lost(_unread_reply(res.stop_reason))
     return cands
 
 
@@ -477,14 +491,14 @@ async def _candidates(
         cands = await _read_window(llm, system, w, report, fake_chosen=fake_chosen)
         retried = cands == [] and dx.more_than_a_caption("\n\n".join(c.text for c in w.chunks))
         if retried:
-            report.retried.append(Dropped(first, _EMPTY_REPLY))
+            report.retried.append(Retried(first, _EMPTY_REPLY))
             cands = await _read_window(llm, system, w, report, fake_chosen=fake_chosen)
         if cands is None:
             continue
         answered += 1
         failed = _check_window(org, namespace, source_uri, w, cands, state, report)
         if failed and not retried:
-            report.retried.append(Dropped(first, _STITCHED))
+            report.retried.append(Retried(first, _STITCHED))
             note = dx.stitched_note(failed)
             again = await _read_window(llm, system, w, report, fake_chosen=fake_chosen, note=note)
             _check_window(org, namespace, source_uri, w, again or [], state, report)
@@ -522,13 +536,15 @@ def _check_window(
             reason, span = reason or dx.RECAP, ""
         if span:
             failed.append((cand.outcome, span))
-        reason = reason or _duplicate_or_unfit(org, namespace, source_uri, cand, section, state)
+        key = ""
+        if not reason:
+            reason, key = _duplicate_or_unfit(org, namespace, source_uri, cand, section, state)
         if reason:
             report.dropped.append(Dropped(section, reason, cand.quote))
             continue
         cand = _drop_inverted(cand, section, texts, report)
         state.per_section[section] = state.per_section.get(section, 0) + 1
-        state.keys.add(svc.decision_key(cand.category, cand.scenario))
+        state.keys.add(key)
         state.pairs.add((cand.outcome, collapse_ws(cand.reasoning)))
         state.kept.append((cand, section, texts))
     return failed
@@ -536,24 +552,24 @@ def _check_window(
 
 def _duplicate_or_unfit(
     org: str, namespace: str, source_uri: str, cand: dx.Candidate, section: str, state: _Kept
-) -> str:
-    """Why a candidate that passed the text checks is still dropped, or ''."""
+) -> tuple[str, str]:
+    """(why a candidate that passed the text checks is still dropped, or ''; its key)."""
     try:
         key = svc.decision_key(cand.category, cand.scenario)
     except ValueError:
         # The key keeps letters and digits a-z, 0-9 only (a CJK scenario has none).
-        return "no letters or digits a-z, 0-9 to build a key from"
+        return "no letters or digits a-z, 0-9 to build a key from", ""
     if key in state.keys:
-        return "same key as an earlier candidate"
+        return "same key as an earlier candidate", key
     if (cand.outcome, collapse_ws(cand.reasoning)) in state.pairs:
         # Overlapping chunks feed one span to two windows, worded apart.
-        return "same decision as an earlier candidate"
+        return "same decision as an earlier candidate", key
     if not _fits(org, namespace, source_uri, cand, section):
         # Checked before it takes a slot, a key or a code lookup.
-        return "does not fit decision.record"
+        return "does not fit decision.record", key
     if state.per_section.get(section, 0) >= state.max_per_section:
-        return f"the section already has --max-per-section {state.max_per_section}"
-    return ""
+        return f"the section already has --max-per-section {state.max_per_section}", key
+    return "", key
 
 
 def _drop_inverted(

@@ -148,8 +148,8 @@ def print_report(report: ExtractReport) -> None:
     for d in report.dropped:
         quote = f": {d.quote[:120]!r}" if d.quote else ""
         print(f"- dropped [{d.section or '(untitled)'}] {d.reason}{quote}")
-    for d in report.retried:
-        print(f"- read again [{d.section or '(untitled)'}] {d.reason}")
+    for r in report.retried:
+        print(f"- read again [{r.section or '(untitled)'}] {r.reason}")
     for section in report.image_only:
         print(f"- image-only, rationale not extracted: {section or '(untitled)'}")
     retire = "would delete" if report.dry_run else "deleted"
