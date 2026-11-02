@@ -28,6 +28,7 @@ async def search_repo_decisions(
     to add, when the search abstains, or on any failure. The read scope the
     token allows is pinned inside the search, as for the base search."""
     from server.memory.app.search import handle_memory_search
+    from server.memory.app.search.scoring import one_per_key, per_key_fetch
 
     # The base search already reads its own namespace.
     if repo_namespace == mem_input.namespace or not mem_input.query.strip():
@@ -41,7 +42,8 @@ async def search_repo_decisions(
         # The fact legs only: session digests do not filter on memory_type.
         legs=["memory"],
         query=mem_input.query,
-        top_k=mem_input.top_k,
+        # One item per decision key: ask for enough rows that `top_k` keys survive the trim.
+        top_k=per_key_fetch(mem_input.top_k),
         tags=mem_input.tags,
         # A recorded statement fits the stored clip, and its reason comes last: an
         # excerpt would cut it. bodies="none" still serves keys only.
@@ -73,6 +75,7 @@ async def search_repo_decisions(
         return None
     # Only decision rows: no computed row, digest or entity summary from this pass.
     decisions = [h for h in out.results if h.memory_type == "decision" and h.source == "fact"]
+    decisions = one_per_key(decisions, repo_namespace, mem_input.top_k)
     settled = out._settled_input
     if out.abstain or not decisions or settled is None:
         return None

@@ -282,8 +282,8 @@ def _apply_verdicts(
     for pos, i in enumerate(emb_idx_of):
         built[i].embedding = state.embedding_rows[pos]
     settle_steps(state)
-    # The written rows come out in the order the rows were built, so a repeat that lands an
-    # earlier row's copy takes that row's place in `plan.memory_rows`.
+    # In built-row order, so a repeat that lands an earlier row's copy takes that row's
+    # place in `plan.memory_rows`.
     position = {step: i for i, step in enumerate(built)}
     judged = sorted(
         (

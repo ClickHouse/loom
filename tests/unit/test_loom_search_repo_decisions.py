@@ -23,6 +23,7 @@ from server.memory.api.models_search import (
     _MemorySearchHit,
 )
 from server.memory.app.ask.reader_render import render_reader_block
+from server.memory.app.search.scoring import per_key_fetch
 from server.memory.app.search.telemetry import credit_merged_hits
 from server.memory.domain.search_types import SearchHit
 from tests.unit.memory_search_fakes import install_search_fakes
@@ -384,7 +385,8 @@ async def test_the_decision_search_is_merged_llm_free_and_carries_the_tokens_rea
         assert (settled.user_id, settled.read_scope) == ("alice", "own_user")
         assert (settled.search_mode, settled.hyde, settled.rerank) == ("semantic", False, "none")
         # the defaults fill only what the pass left unset
-        assert (settled.top_k, settled.legs, settled.memory_type) == (3, ["memory"], "decision")
+        fetch = per_key_fetch(BASE.top_k)
+        assert (settled.top_k, settled.legs, settled.memory_type) == (fetch, ["memory"], "decision")
         assert settled.floor_mode == "drop"
         assert _is_llm_free(settled) and settled._merged_into_parent
         # an own_user token that names no user is refused, and the leg answers nothing
@@ -858,3 +860,25 @@ def test_every_served_row_gets_a_why_line_above_top_k() -> None:
     section = {"results": rows, "reader_block": "[d] [note-a] a\n\n[d] [decision:evict] b"}
     text = "\n".join(mcp_tools._memory_section_lines(section, rows, top_k=1, explain=True))
     assert "[decision:evict] why: repository decision" in text
+
+
+@pytest.mark.asyncio
+async def test_two_rows_of_one_decision_key_count_as_one_decision(monkeypatch) -> None:
+    from server.settings import settings
+
+    # the search serves a row per writer and session: one key can fill two places
+    monkeypatch.setattr(settings, "memory_search_per_key_cap", 2)
+    rows = [
+        _hit("decision:evict", 0.9, mtype="decision"),
+        _hit("decision:evict", 0.8, mtype="decision"),
+        _hit("decision:shard", 0.7, mtype="decision"),
+        _hit("decision:ttl", 0.6, mtype="decision"),
+    ]
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        "server.memory.app.search.handle_memory_search", _search({TRUNK: rows}, calls)
+    )
+    got = await repo_decisions.search_repo_decisions(BASE.model_copy(update={"top_k": 2}), TRUNK)
+    assert got is not None
+    assert [h.memory_key for h in got[0].results] == ["decision:evict", "decision:shard"]
+    assert calls[0].top_k == 4
