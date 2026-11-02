@@ -42,8 +42,8 @@ tables keyed by `(org, namespace)`.
   several at once (`code.grep mode=presence namespaces=[…]`).
 - Names are `[a-z0-9-]`: `code-<repo>` for the default branch,
   `code-<repo>-<branch-slug>` for others (`code-myrepo-2-4`).
-- A code namespace has `kind=code`. It holds the repository's team file rules and design
-  decisions, written by its members, and is hidden from memory pickers. Access follows
+- A code namespace has `kind=code`. It holds the repository's team file rules, written by
+  its members, and its design decisions, and is hidden from memory pickers. Access follows
   the usual grant rules ([identities and namespaces](../../concepts/identities-and-namespaces.md)).
 
 What the index holds, per namespace:

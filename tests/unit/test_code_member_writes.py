@@ -364,19 +364,25 @@ def test_outside_the_member_rule_the_check_is_a_no_op() -> None:
 @pytest.mark.asyncio
 async def test_a_refused_member_is_sent_to_the_decisions_author() -> None:
     # A member cannot call decision.record, so the hint names who can.
-    from types import SimpleNamespace
-
-    from server.code.app.member_writes import refusal_hint
-
-    row = SimpleNamespace(
-        memory_key="decision:k",
-        namespace="code-clickhouse",
-        actor="human:alice",
-        memory_type="decision",
-    )
-    (step,) = refusal_hint(row, op="memory.delete")["next"]
+    row = _row("human:alice", memory_type="decision", memory_key="decision:k")
+    (step,) = cmw.refusal_hint(row, op="memory.delete")["next"]
     assert step.startswith("ask alice or a maintainer of 'code-clickhouse'")
     assert "decision.record" in step and "memory.set" not in step
     assert not await cmw.code_member_may_write(
         _auth("bob"), "decision.record", ORG, "code-clickhouse"
     )
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_names_a_decision_and_its_one_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import handlers as mem_handlers
+
+    _wire(monkeypatch, _row("human:alice", memory_type="decision"))
+    await _authorize("bob", "memory.delete", "code-clickhouse")
+    with pytest.raises(HTTPException) as e:
+        await mem_handlers.handle_memory_delete(_delete_input())
+    message = e.value.detail["message"]
+    assert "the team decision 'rules/join/bucket_count' was written by alice" in message
+    assert message.endswith(e.value.detail["hint"]["next"][0] + ".")

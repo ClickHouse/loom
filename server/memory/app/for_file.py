@@ -202,7 +202,7 @@ def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
     what = "rule or decision" if has_decision else "rule"
     instead = (
         "write a corrected rule for the file, or ask a decision's author or a maintainer to "
-        "record it again"
+        "record the corrected decision"
         if has_decision
         else "write a corrected rule for the file and tell its author"
     )

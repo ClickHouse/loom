@@ -97,16 +97,20 @@ def _author(actor: str) -> str:
 
 def refusal_hint(existing: Any, *, op: str) -> dict[str, Any]:
     """The structured `hint` a refused member write carries (the refusal says how to
-    make it right), so any client can show who wrote the rule and what a member can do
-    instead."""
+    make it right), so any client can show who wrote the row and what a member can do
+    instead. `kind` follows the pre-edit block (a row typed or tagged `decision` is a
+    decision); only a typed decision changes the steps, since a newer rule supersedes a
+    tagged one."""
     key = str(getattr(existing, "memory_key", "") or "")
     ns = str(getattr(existing, "namespace", "") or "")
     author = _author(str(getattr(existing, "actor", "") or "")) or "another member"
-    if getattr(existing, "memory_type", "") == "decision":
-        # A member cannot call decision.record, and no rule is shown above a decision.
+    typed_decision = getattr(existing, "memory_type", "") == "decision"
+    tagged = "decision" in (getattr(existing, "tags", None) or [])
+    if typed_decision:
+        # A member cannot call decision.record, and no rule is shown above a typed decision.
         steps = [
             f"ask {author} or a maintainer of {ns!r}: they can record the corrected decision "
-            f"with decision.record or memory.delete {key!r}"
+            f"with decision.record, or remove it with memory.delete {key!r}"
         ]
     else:
         steps = [
@@ -116,6 +120,7 @@ def refusal_hint(existing: Any, *, op: str) -> dict[str, Any]:
         ]
     return {
         "code": "TEAM_RULE_NOT_YOURS",
+        "kind": "decision" if typed_decision or tagged else "rule",
         "author": author,
         "memory_key": key,
         "namespace": ns,
@@ -138,13 +143,13 @@ def assert_own_row(existing: Any, *, op: str) -> None:
     if mine and str(getattr(existing, "actor", "") or "") == mine:
         return
     hint = refusal_hint(existing, op=op)
-    kind = "decision" if getattr(existing, "memory_type", "") == "decision" else "rule"
     raise HTTPException(
         status_code=403,
         detail={
             "code": "AUTH_INSUFFICIENT",
             "message": (
-                f"{op}: the team {kind} {hint['memory_key']!r} was written by {hint['author']}; "
+                f"{op}: the team {hint['kind']} {hint['memory_key']!r} was written by "
+                f"{hint['author']}; "
                 "a member of this code namespace may change only the rows they wrote. "
                 f"Instead: {'; or '.join(hint['next'])}."
             ),

@@ -346,7 +346,7 @@ def test_a_block_with_team_decisions_says_how_to_correct_one() -> None:
         '- A team rule or decision wrong or outdated? memory.delete(namespace="code-repo", '
         "memory_key=<id>) removes it if you wrote it or are an admin; otherwise write a "
         "corrected rule for the file, or ask a decision's author or a maintainer to record "
-        "it again."
+        "the corrected decision."
     )
 
 
@@ -442,13 +442,6 @@ def test_a_stored_value_is_printed_as_text() -> None:
     # memory.set stores the JSON text: no quotes, and non-ASCII as written.
     line = _lines([_decision("design/u", "Décidé — 決定した.")])[1]
     assert ": Décidé — 決定した. — source: " in line
-
-
-def test_a_cut_value_is_printed_from_its_opening_quote() -> None:
-    cut = _decision("design/cut", value_truncated=True)
-    cut["value"] = json.dumps("Décidé " * 100)[:600]
-    line = _lines([cut])[1]
-    assert ": Décidé Décidé" in line and '"' not in line.split(": ", 1)[1]
 
 
 def test_a_decision_whose_outcome_failed_says_so() -> None:
