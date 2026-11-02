@@ -379,8 +379,8 @@ class _Audit:
         self.searchable_rows = 0
         self.episodic_rows = 0
         self.findings: list[NamespaceAuditFinding] = []
-        # The summary reads and checks that ran or were skipped: every finding is measured
-        # against a summary read, so they are rules of the report too.
+        # The summary reads and checks that ran or were skipped; the summary reads are rules
+        # of the report too, since most findings are measured against one.
         self.rules = RuleLog()
 
     def measured(self, step: str, population: int) -> int | None:
@@ -712,8 +712,8 @@ class _Audit:
         )
 
 
-# Rules of the report too: every population comes from one of these reads (version_churn
-# uses the live summary for its share), so a skipped one leaves findings measured against zero.
+# Rules of the report too: most findings' share and population come from one of these
+# reads; a skipped one leaves the population null.
 _SUMMARY_STEPS: tuple[str, ...] = ("summary_live", "summary_embeddings", "summary_ledger")
 
 

@@ -1353,6 +1353,8 @@ async def identity_tally(
 
 # A memory row within its namespace: (agent, user_id, session_id, memory_key).
 RowKey = tuple[str, str, str, str]
+# One revision of a row: its RowKey and version.
+RevisionKey = tuple[str, str, str, str, int]
 
 
 async def live_revisions(
@@ -1410,17 +1412,17 @@ async def live_revisions(
     for r in rows:
         r["memory_id"] = r.pop("id")
         del r["sensitivity"], r["value_len"]
-        r["content_sha256"] = hashes.get(_row_key(r), "")
+        r["content_sha256"] = hashes.get(_revision_key(r), "")
     return rows
 
 
-def _row_key(r: dict[str, Any]) -> tuple[str, str, str, str, int]:
+def _revision_key(r: dict[str, Any]) -> RevisionKey:
     return (r["agent"], r["user_id"], r["session_id"], r["memory_key"], r["version"])
 
 
 async def _served_hashes(
     org: str, namespace: str, revisions: list[dict[str, Any]], max_bytes: int, ch: _CHClient
-) -> dict[tuple[str, str, str, str, int], str]:
+) -> dict[RevisionKey, str]:
     """The hash memory.get serves for each revision, by its row key and version: the hash
     of the value it serves, not the stored column, which can differ for an object (the
     JSON column drops a null field). The value is read by each row's whole sorting key
@@ -1442,4 +1444,4 @@ async def _served_hashes(
         params={"org": org, "ns": namespace, "keys": keys, "cap": len(keys), "max": max_bytes},
     )
     # Decoded as memory.get decodes it: a string value is stored raw, not as JSON.
-    return {_row_key(r): served_content_sha256(parse_memory_value(r["value"])) for r in rows}
+    return {_revision_key(r): served_content_sha256(parse_memory_value(r["value"])) for r in rows}

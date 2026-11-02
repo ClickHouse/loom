@@ -54,8 +54,8 @@ class FindingContract(BaseModel):
     population: int | None = None
     # The sample cap the report ran with.
     sample_limit: int
-    # True when the samples list every matching row; a sampled finding is not a
-    # complete listing. Required, so no finding claims completeness by default.
+    # False when the cap cut the samples or they cannot name every match (hot keys
+    # against all gets). Required, so no finding claims completeness by default.
     samples_complete: bool
     # The live revision of each row the samples matched, read after the checks under the
     # request's read scope; a sample that names no single row has none.
