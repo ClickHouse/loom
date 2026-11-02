@@ -2229,8 +2229,8 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "knowledge.get": (
         "Fetch one document by `source_uri` (latest version; `include_superseded=true` "
-        "reads a soft-deleted one). Cite the source_uri, its version and the section you "
-        "quote."
+        "reads a soft-deleted one). Cite the source_uri with its `doc_id` (or "
+        "`ingested_at`), and quote the passage you rely on."
     ),
     "code.search": (
         "Search the shared code index of a repository by concept ('quota enforcement'). "

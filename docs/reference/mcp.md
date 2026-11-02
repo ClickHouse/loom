@@ -244,7 +244,7 @@ diagnostic shape costs several thousand tokens for a short answer.
 
 `?toolset=assistant` is the connection a chat client uses to investigate Loom on behalf
 of the signed-in person: what a namespace holds, how it is used, and cited answers over
-memory, documents and code. The value must be exactly `assistant`: a misspelling or a
+memory, documents and code. The value names `assistant` alone (in any case): a misspelling or a
 union such as `assistant+core` does not resolve and the connection gets the deployment's
 default listing, with no error. The URL the operator configures and a `viewer` token
 carry the guarantee, not the client. A replica one release older does not know the value

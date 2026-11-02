@@ -418,3 +418,72 @@ def test_a_screened_refusal_on_the_assistant_connection_carries_its_consumer(
         ("ORG_MISMATCH", "loom-assistant"),
         ("NAMESPACE_NOT_ACCESSIBLE", "loom-assistant"),
     ]
+
+
+@pytest.mark.parametrize(("query", "assistant"), [("?toolset=assistant", True), ("", False)])
+def test_the_endpoint_ledgers_a_screened_refusal_as_the_connections(
+    monkeypatch: pytest.MonkeyPatch, query: str, assistant: bool
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.auth.jwt import mint_token
+    from server.observability import events
+
+    emitted: list[Any] = []
+
+    class _Emitter:
+        def emit(self, event: Any) -> None:
+            emitted.append(event)
+
+    monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
+    monkeypatch.setattr("server.observability.ledger.get_emitter", lambda: _Emitter())
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "identity_provider", "")
+    monkeypatch.setattr(settings, "mcp_auth_mode", "required")
+    app = FastAPI()
+    mcp.attach(app)
+    tok = mint_token(
+        subject="viewer@dev", org="dev", namespaces=["alpha"], roles=["viewer"], ttl_seconds=300
+    )
+    call = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "loom_memory_get", "arguments": {"org": "other", "memory_key": "k"}},
+    }
+    r = TestClient(app).post(f"/mcp{query}", json=call, headers={"Authorization": f"Bearer {tok}"})
+    assert r.json()["result"]["structuredContent"]["code"] == "ORG_MISMATCH"
+    (row,) = [e for e in emitted if e.error_code == "ORG_MISMATCH"]
+    # On the assistant connection the refusal is its own; elsewhere the token's class.
+    assert (row.consumer == "loom-assistant") is assistant
+
+
+def _model_fields(model: Any, out: set[str], seen: set[Any]) -> set[str]:
+    """Every field name of `model` and of the models nested in its fields."""
+    from pydantic import BaseModel
+
+    for arg in get_args(model):
+        _model_fields(arg, out, seen)
+    if isinstance(model, type) and issubclass(model, BaseModel) and model not in seen:
+        seen.add(model)
+        for name, field in model.model_fields.items():
+            out.add(name)
+            _model_fields(field.annotation, out, seen)
+    return out
+
+
+def test_every_field_an_assistant_description_names_is_served() -> None:
+    from server.transport.mcp_descriptions import ASSISTANT_TOOL_DESCRIPTIONS
+    from server.transport.mcp_tools import TOOLS_BY_NAME
+
+    for name, text in ASSISTANT_TOOL_DESCRIPTIONS.items():
+        # The op's own fields, and those of a tool the text sends the model to.
+        ops = [OPERATIONS_BY_NAME[name]]
+        ops += [TOOLS_BY_NAME[t] for t in re.findall(r"loom_[a-z_]+", text) if t in TOOLS_BY_NAME]
+        served: set[str] = set()
+        for op in ops:
+            _model_fields(op.input_model, served, set())
+            _model_fields(op.output_model, served, set())
+        named = set(re.findall(r"`([a-z_0-9]+)", text)) - {"true", "false"}
+        assert named <= served, (name, named - served)
