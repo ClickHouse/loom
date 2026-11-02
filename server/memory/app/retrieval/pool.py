@@ -76,7 +76,9 @@ async def _recency_backfill(
             e.tags AS tags
         FROM loom.memory_embeddings AS e FINAL
         WHERE {" AND ".join(where)}
-        ORDER BY coalesce(e.valid_at, e.temporal_anchor, e.created_at) DESC, e.memory_key ASC
+        -- rows that tie are taken in row order
+        ORDER BY coalesce(e.valid_at, e.temporal_anchor, e.created_at) DESC,
+                 e.memory_key ASC, e.agent, e.user_id, e.session_id
         LIMIT {{newest_limit:UInt32}}
     """
     try:

@@ -128,7 +128,8 @@ async def _lexical_recall_fallback(
             e.tags AS tags
         FROM loom.memory_embeddings AS e FINAL
         WHERE {where_sql}
-        ORDER BY lex_score DESC, distance ASC, e.memory_key ASC
+        -- rows that tie are taken in row order
+        ORDER BY lex_score DESC, distance ASC, e.memory_key ASC, e.agent, e.user_id, e.session_id
         LIMIT {{limit:UInt32}}
         SETTINGS query_plan_direct_read_from_text_index = 0
     """
@@ -458,7 +459,9 @@ async def _fetch_unmatched_candidates(
             e.tags AS tags
         FROM loom.memory_embeddings AS e FINAL
         {where_sql}
-        ORDER BY reinforcement_count DESC, confidence DESC, freshness DESC
+        -- rows that tie are taken in row order
+        ORDER BY reinforcement_count DESC, confidence DESC, freshness DESC,
+                 e.memory_key, e.agent, e.user_id, e.session_id
         LIMIT {{unmatched_limit:UInt32}}
     """
     try:
