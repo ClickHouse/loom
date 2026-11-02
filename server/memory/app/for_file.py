@@ -19,8 +19,7 @@ from server.memory.api.models_for_file import (
     _MemoryForFileHit,
 )
 from server.memory.domain.code_change import STATE_RANK, worst
-from server.memory.domain.decision_schema import FAILURE_TAG, is_decision
-from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
+from server.memory.domain.decision_schema import FAILURE_TAG, SCHEMA_NAME, is_decision
 from server.memory.domain.trust import CONFIRMED_STATES, row_verification
 
 log = logging.getLogger(__name__)
@@ -29,7 +28,7 @@ _VALUE_BYTES = 600
 _LINE_CHARS = 220
 # A decision's source is printed after its value, capped on its own.
 _SOURCE_CHARS = 120
-# The length of a `\uXXXX` escape in the stored JSON.
+# The length of a `\uXXXX` escape in the stored JSON: a cut leaves at most five of one.
 _ESCAPE_CHARS = 6
 _CODE_NOTES = {
     "changed": " (its code changed since it was written: check before relying on it)",
@@ -88,8 +87,7 @@ def _readable(hit: dict[str, Any]) -> str:
         )
     if not raw.startswith('"'):
         return raw
-    # An escape the cut split (`\u00e9` cut after `\u0`) leaves the text undecodable; an
-    # escape is six characters, so dropping at most five of the last ones decodes it.
+    # An escape the cut split (`\u00e9` cut after `\u0`) leaves the text undecodable.
     for end in range(len(raw), max(len(raw) - _ESCAPE_CHARS, 1), -1):
         try:
             text: str = json.loads(raw[:end] + '"')
@@ -168,11 +166,11 @@ def _status_notes(hit: dict[str, Any], decision: bool) -> str:
     return out + _CODE_NOTES.get(str(hit.get("code_state") or ""), "")
 
 
-def _marker(hit: dict[str, Any], decision: bool, *, headed: bool = False) -> str:
-    """` [constraint, decision]`: the row's kinds; `decision` is left out when the
-    line's head already says `Decision`."""
+def _marker(hit: dict[str, Any], show_decision: bool) -> str:
+    """` [constraint, decision]`: the row's kinds; `decision` only when `show_decision`
+    (a team line's head already says `Decision`)."""
     kinds = [t for t in (hit.get("tags") or []) if t in ("constraint", "gotcha")]
-    if decision and not headed:
+    if show_decision:
         kinds.append("decision")
     return f" [{', '.join(kinds)}]" if kinds else ""
 
@@ -190,7 +188,7 @@ def _team_line(hit: dict[str, Any], now: datetime, decision: bool) -> str:
         who = f"{who}; {sup}" if who else sup
     label = "Decision" if decision else "Team rule"
     head = f"{label} ({who})" if who else label
-    marks = _marker(hit, decision, headed=decision) + _status_notes(hit, decision)
+    marks = _marker(hit, False) + _status_notes(hit, decision)
     return f"- {head}{marks}: {_body(hit, decision)} [id: {hit['memory_key']}]"
 
 
@@ -200,16 +198,16 @@ def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
     if not team:
         return ""
     ns = str(team[0].get("namespace") or "")
-    has_decision = any(_is_decision(h) for h in team)
-    what = "rule or decision" if has_decision else "rule"
-    instead = (
-        "write a corrected rule for the file, or ask a maintainer to record the corrected decision"
-        if has_decision
-        else "write a corrected rule for the file and tell its author"
-    )
+    what = "rule or decision" if any(_is_decision(h) for h in team) else "rule"
+    # A newer rule supersedes a rule or a tagged decision, never a typed one.
+    steps = []
+    if any(h.get("memory_type") != SCHEMA_NAME for h in team):
+        steps.append("write a corrected rule for the file and tell its author")
+    if any(h.get("memory_type") == SCHEMA_NAME for h in team):
+        steps.append("for a decision, ask a maintainer to record the corrected decision")
     return (
         f'- A team {what} wrong or outdated? memory.delete(namespace="{ns}", memory_key=<id>) '
-        f"removes it if you wrote it or are an admin; otherwise {instead}."
+        f"removes it if you wrote it or are a maintainer; otherwise {'; or '.join(steps)}."
     )
 
 
@@ -272,12 +270,13 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_id = {str(r.get("memory_id")): r for r in rows if r.get("memory_id")}
     newer_of: dict[int, list[dict[str, Any]]] = {}
     for r in rows:
+        # The conflict check links rows of one type only, so a typed decision's peers are
+        # decisions too.
+        if r.get("memory_type") == SCHEMA_NAME:
+            continue
         for cid in r.get("conflict_with") or []:
             peer = by_id.get(str(cid))
             if peer is None or peer is r or peer.get("namespace") != r.get("namespace"):
-                continue
-            # The conflict check links rows of one type only.
-            if r.get("memory_type") in KEY_IDENTIFIED_TYPES:
                 continue
             new, old = (r, peer) if _stamp(r) >= _stamp(peer) else (peer, r)
             if not new.get("supersedes_key"):

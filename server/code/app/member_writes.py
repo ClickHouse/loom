@@ -1,4 +1,4 @@
-"""Members of a repository's code namespace write its team file rules.
+"""Members of a repository's code namespace write its team rows: file rules and decisions.
 
 A code namespace (a `code-*` entry of the code-repo registry) grants its members
 `viewer`: the index is read-only reference data. A repository's shared file rules live
@@ -135,7 +135,7 @@ def refusal_hint(existing: Any, *, op: str) -> dict[str, Any]:
 def assert_own_row(existing: Any, *, op: str) -> None:
     """The second check: under the member rule, a row written by another principal (its
     server-stamped `actor`) is refused 403 — a member revises and deletes only their own
-    rules — with a `hint` naming the author, the key and what the member can do instead.
+    rows — with a `hint` naming the author, the key and what the member can do instead.
     A no-op for a call the ordinary gate admitted (an admin), or when there is no row."""
     if existing is None or not _member_write.get():
         return

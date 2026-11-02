@@ -148,6 +148,7 @@ def test_a_long_recorded_decision_prints_as_text(
     request = {"org": ORG, "namespace": "recorded-long", "path": "src/c.cpp"}
     out = _poll(control_plane_url, token, request, lambda out: out["total"] == 1)
     assert out["total"] == 1, out
+    assert out["hits"][0]["value_truncated"] is True
     line = out["rendered"].splitlines()[1]
-    assert ": Category: design. Scenario: Réécrire la jointure ?" in line
+    assert line.endswith("…") and ": Category: design. Scenario: Réécrire la jointure ?" in line
     assert "\\u" not in line and '"' not in line

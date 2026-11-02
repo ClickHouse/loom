@@ -282,8 +282,9 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
   attestation does not count), and `(outcome: failed)` one whose recorded outcome failed.
 - A note says when its linked code changed or went.
 - A string value is printed as text, not as the JSON it is stored as, and ends in `…`
-  when the read cut it; a cut object or list prints as stored. A decision with a source carries ` — source: <source_resource_id>` after
-  its value; the value's cut does not reach it, and the source has its own shorter cap.
+  when the read cut it; a cut object or list prints as stored.
+- A decision with a source carries ` — source: <source_resource_id>` after its value; the
+  value's cut does not reach it, and the source has its own shorter cap.
 - A newer team row the conflict check linked to an older one of its type is placed above
   it and says which it supersedes (`supersedes decision` when the older is tagged
   `decision`). Two typed decisions the check linked each keep their place in the block,

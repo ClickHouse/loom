@@ -341,13 +341,24 @@ def test_two_cross_linked_typed_decisions_are_two_decisions() -> None:
     assert not any(r.get("supersedes_key") for r in rows)
 
 
-def test_a_block_with_team_decisions_says_how_to_correct_one() -> None:
+_FOOTER = (
+    '- A team {what} wrong or outdated? memory.delete(namespace="code-repo", memory_key=<id>) '
+    "removes it if you wrote it or are a maintainer; otherwise {steps}."
+)
+_RULE_STEP = "write a corrected rule for the file and tell its author"
+_DECISION_STEP = "for a decision, ask a maintainer to record the corrected decision"
+
+
+def test_a_block_of_typed_decisions_says_only_how_to_correct_a_decision() -> None:
     footer = _lines([_decision("design/a"), _decision("design/b")])[-1]
-    assert footer == (
-        '- A team rule or decision wrong or outdated? memory.delete(namespace="code-repo", '
-        "memory_key=<id>) removes it if you wrote it or are an admin; otherwise write a "
-        "corrected rule for the file, or ask a maintainer to record the corrected decision."
-    )
+    assert footer == _FOOTER.format(what="rule or decision", steps=_DECISION_STEP)
+
+
+def test_a_block_of_rules_and_decisions_says_both() -> None:
+    rule = _decision("rules/r", "Keep 64.", memory_type="semantic", tags=["constraint"])
+    footer = _lines([rule, _decision("design/a")])[-1]
+    steps = f"{_RULE_STEP}; or {_DECISION_STEP}"
+    assert footer == _FOOTER.format(what="rule or decision", steps=steps)
 
 
 def test_a_typed_decision_without_the_tag_is_marked_in_its_own_namespace() -> None:
