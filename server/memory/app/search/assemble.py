@@ -65,12 +65,16 @@ def collapse_rows(hits: list[_MemorySearchHit], namespace: str) -> list[_MemoryS
 
 async def _drop_excluded_and_duplicates(ctx: SearchContext) -> None:
     """The pool trims that run after every leg folded in and before the window is cut: the
-    caller's `exclude_keys`, the `duplicate` rows and their canonicals, then the hard tag belt —
+    caller's `exclude_keys`, one hit per row (`collapse_rows`), the `duplicate` rows and their
+    canonicals, then the hard tag belt —
     last, because the canonical a duplicate is exchanged for entered the pool through no leg's
     WHERE and is the row the belt exists to judge; on the whole fused pool, so a dropped row
     leaves no hole in top_k and a parked page's tail is as clean as the first page."""
     _drop_excluded_keys(ctx)
+    pooled = len(ctx.all_hits)
     ctx.all_hits = collapse_rows(ctx.all_hits, ctx.input.namespace)
+    if collapsed := pooled - len(ctx.all_hits):
+        ctx.actual_work["rows_collapsed"] = collapsed
     if getattr(ctx.input, "quality_filter", False):
         from server.memory.domain.fact_quality import drop_junk_and_restatements
 
