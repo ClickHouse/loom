@@ -161,6 +161,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
         return rows[: int(input.limit)], truncated
     # search
     from server.memory.app.search import handle_memory_search
+    from server.memory.app.search.scoring import per_key_fetch
 
     assert target.search is not None
     out = await handle_memory_search(
@@ -170,7 +171,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             agent=input.agent,
             user_id=input.user_id,
             query=target.search.query,
-            top_k=int(input.limit),
+            top_k=per_key_fetch(int(input.limit)),  # other owners' rows of a key are skipped
             namespace_scope="this",
         )
     )

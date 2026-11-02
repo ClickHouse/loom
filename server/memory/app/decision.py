@@ -382,20 +382,21 @@ async def handle_decision_precedents(input: DecisionPrecedentsInput) -> Decision
 
     ch = get_client()
     tags = [_category_tag(input.category)] if input.category.strip() else []
+    want = max(input.top_k * 2, 10)  # room for records without an outcome
     res = await handle_memory_search(
         MemorySearchInput(
             org=input.org,
             namespace=input.namespace,
             agent=input.agent or "*",
             query=input.query,
-            top_k=per_key_fetch(max(input.top_k * 2, 10)),
+            top_k=per_key_fetch(want),
             memory_type="decision",
             tags=tags,
             namespace_scope="this",
             auto_touch=False,
         )
     )
-    best = one_per_key(res.results, input.namespace, max(input.top_k * 2, 10))
+    best = one_per_key(res.results, input.namespace, want)
     hits = [(h.memory_key, float(getattr(h, "similarity", 0.0) or 0.0)) for h in best]
     records = await _decision_records(ch, input.org, input.namespace, [k for k, _ in hits])
     rows = []

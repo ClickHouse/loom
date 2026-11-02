@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from server.memory.api.models_search import MemorySearchInput
+from server.memory.api.models_search import SEARCH_TOP_K_MAX, MemorySearchInput
 from server.memory.domain.search_types import RANK_SCORE_PRE_RERANK
 from server.settings import settings
 
@@ -186,7 +186,7 @@ def rows_per_key(query_shape: str) -> int:
     return int(settings.memory_search_per_key_cap)
 
 
-def one_per_key(hits: list[Any], namespace: str, top_k: int) -> list[Any]:
+def one_per_key(hits: list[Any], namespace: str, top_k: int | None = None) -> list[Any]:
     """The best hit of each (namespace, memory_key), at most `top_k` of them, for a caller
     that reads one item per key: the search serves a row per writer and session."""
     seen: set[tuple[str, str]] = set()
@@ -200,5 +200,8 @@ def one_per_key(hits: list[Any], namespace: str, top_k: int) -> list[Any]:
 
 
 def per_key_fetch(top_k: int) -> int:
-    """How many hits to ask for so `one_per_key` can still return `top_k` keys."""
-    return min(500, top_k * max(1, rows_per_key("")))
+    """How many hits to ask for so `one_per_key` can still return `top_k` keys. It holds
+    under a positive per-key cap; with no cap, or for an aggregational query, one key can
+    fill more of the window."""
+    cap = max(1, int(settings.memory_search_per_key_cap))
+    return min(SEARCH_TOP_K_MAX, top_k * cap)

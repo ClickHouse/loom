@@ -54,6 +54,7 @@ from server.memory.app.ask.supersession import (
     superseded_rows_for_pool,
 )
 from server.memory.app.ask.synthesis import _publish_window_keys
+from server.memory.domain.search_types import hit_row_key
 
 logger = logging.getLogger(__name__)
 
@@ -283,16 +284,17 @@ async def _widen_by_question(
     # to — the loss ledger's "no ages in memories" with all eight ages stored.
     _parts = split_compound_question(getattr(search_input, "query", "") or "")
     if len(_parts) > 1:
-        _have = {getattr(h, "memory_key", "") for h in run.ranked}
+        ns = str(search_input.namespace)
+        _have = {hit_row_key(h, ns) for h in run.ranked}
         for _part in _parts[1:]:
             try:
                 _sub = await handle_memory_search(_with(search_input, query=_part))
             except Exception:  # noqa: BLE001 — additive
                 continue
             for h in _sub.results or []:
-                k = getattr(h, "memory_key", "")
-                if k and k not in _have:
-                    _have.add(k)
+                row = hit_row_key(h, ns)
+                if row.memory_key and row not in _have:
+                    _have.add(row)
                     run.ranked.append(h)
     # Multi-hop decomposition: a question whose answer needs
     # two facts in sequence gets one embedding that sits between them and a
@@ -324,7 +326,8 @@ async def _widen_by_question(
     chain_question = False
     if is_chain_question(question):
         chain_question = True
-        _have_keys = {getattr(h, "memory_key", "") for h in run.ranked}
+        ns = str(search_input.namespace)
+        _have_rows = {hit_row_key(h, ns) for h in run.ranked}
         for _bridge in bridge_entities(
             run.ranked,
             question,
@@ -351,9 +354,9 @@ async def _widen_by_question(
                     continue
             added = 0
             for h in _sub_hits:
-                k = getattr(h, "memory_key", "")
-                if k and k not in _have_keys:
-                    _have_keys.add(k)
+                row = hit_row_key(h, ns)
+                if row.memory_key and row not in _have_rows:
+                    _have_rows.add(row)
                     run.ranked.append(h)
                     added += 1
             run.entity_followed.append(_bridge)

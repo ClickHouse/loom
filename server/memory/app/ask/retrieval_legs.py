@@ -11,6 +11,7 @@ from typing import Any
 from server.memory.app.ask.question_shapes import (
     looks_multihop,
 )
+from server.memory.domain.search_types import hit_row_key
 from server.settings.budgets import llm_max_tokens
 
 logger = logging.getLogger(__name__)
@@ -218,7 +219,8 @@ async def decomposed_retrieval(
     if not parts:
         return [], ranked
     merged = list(ranked)
-    have = {getattr(h, "memory_key", "") for h in merged}
+    ns = str(search_input.namespace)
+    have = {hit_row_key(h, ns) for h in merged}
     for part in parts:
         try:
             sub = await handle_memory_search(
@@ -230,9 +232,9 @@ async def decomposed_retrieval(
                 stats["failed"] = int(stats.get("failed", 0)) + 1
             continue
         for h in sub.results or []:
-            k = getattr(h, "memory_key", "")
-            if k and k not in have:
-                have.add(k)
+            row = hit_row_key(h, ns)
+            if row.memory_key and row not in have:
+                have.add(row)
                 merged.append(h)
     return parts, merged
 

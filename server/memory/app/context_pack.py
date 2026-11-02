@@ -480,7 +480,7 @@ async def _pack_decisions_from_hits(
 
     input = st.input
     # a decision recorded in several sessions is one line
-    decision_hits = one_per_key(decision_hits, input.namespace, len(decision_hits))
+    decision_hits = one_per_key(decision_hits, input.namespace)
     keys = [str(h.memory_key) for h in decision_hits]
     records: dict[str, dict[str, Any]] = {}
     # The records are read by key alone, across users: a bounded read keeps the hit's excerpt.

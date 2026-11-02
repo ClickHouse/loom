@@ -201,3 +201,24 @@ def test_decompose_failed_and_pool_k_ride_the_ledger() -> None:
     assert projected["out_decompose_failed"] == "2"
     assert projected["out_pool_k"] == "30"
     assert MemoryAskOutput(answer="", source="abstained").decompose_failed == 0
+
+
+@pytest.mark.asyncio
+async def test_a_part_adds_another_sessions_row_of_a_pooled_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # a key holds a row per session: a part that finds the other session's row adds it
+    from types import SimpleNamespace
+
+    def row(session: str) -> Any:
+        return SimpleNamespace(memory_key="k", session_id=session, similarity=0.5)
+
+    async def _search(inp: Any) -> Any:
+        return SimpleNamespace(results=[row("s1"), row("s2")])
+
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
+    q = "How long after Caroline adopted her dog did she move to Boston?"
+    _, merged = await retrieval_legs.decomposed_retrieval(
+        _SearchInput(query=q), q, [row("s1")], llm=_LLM("part one\npart two"), mode="always"
+    )
+    assert [h.session_id for h in merged] == ["s1", "s2"]

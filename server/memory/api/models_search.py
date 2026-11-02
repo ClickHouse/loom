@@ -22,6 +22,9 @@ from server.operations.base import MCP_HIDDEN
 # ============================================================
 
 
+SEARCH_TOP_K_MAX = 500  # the most hits one memory.search returns
+
+
 class MemorySearchInput(BaseModel):
     """Semantic search over the agent's own memory.
 
@@ -284,7 +287,7 @@ class MemorySearchInput(BaseModel):
     role: str = Field(default="", max_length=64)
     # At most this many hits to return (capped at 500, and lower by a per-token
     # ceiling reported in `top_k_ceiling`).
-    top_k: int = Field(default=5, ge=1, le=500)
+    top_k: int = Field(default=5, ge=1, le=SEARCH_TOP_K_MAX)
     # Key-embedding axis. True: a row's distance is the closer
     # of its value and key embeddings (the stored default). False: value
     # embedding only, so the fact leg reads one vector column instead of two
