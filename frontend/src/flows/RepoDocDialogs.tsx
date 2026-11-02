@@ -25,8 +25,6 @@ import { Loading } from "../components/ui/Loading";
 import { readDocumentFile, slugify, type ReadDocument } from "../lib/docFiles";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 
-const UI_CONSUMER = "loom-ui";
-
 /** `repo-doc://Org/repo/<slug>`, suffixed `-2`, `-3`… past the URIs taken. */
 export function repoDocUri(repo: string, title: string, taken: ReadonlySet<string>): string {
   const base = `repo-doc://${repo}/${slugify(title)}`;
@@ -253,7 +251,7 @@ export function RepoDocViewer({
   const [downloading, setDownloading] = useState(false);
   useEffect(() => {
     let live = true;
-    getKnowledge({ org, namespace }, doc.source_uri, { consumer: UI_CONSUMER })
+    getKnowledge({ org, namespace }, doc.source_uri)
       .then((d) => {
         if (live)
           setState(

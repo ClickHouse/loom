@@ -128,14 +128,11 @@ export interface KnowledgeDocument {
 export async function getKnowledge(
   id: Pick<Identity, "org" | "namespace">,
   sourceUri: string,
-  opts: { consumer?: string } = {},
 ): Promise<KnowledgeDocument> {
   return post<KnowledgeDocument>("/v1/knowledge.get", {
     org: id.org,
     namespace: id.namespace,
     source_uri: sourceUri,
-    // A person previewing from the dashboard is not an agent read
-    ...(opts.consumer ? { consumer: opts.consumer } : {}),
   });
 }
 

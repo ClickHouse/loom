@@ -74,4 +74,14 @@ describe("the dashboard's consumer", () => {
     const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init.body)));
     expect(bodies.map((b) => b.consumer)).toEqual(["loom-ui", "someone-else"]);
   });
+
+  it("leaves a route that is not an op as it is: the model setup refuses an unknown field", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { resetModelConfiguration, retryModelConfiguration } = await import("./api/models");
+    await resetModelConfiguration("v1");
+    await retryModelConfiguration("c1");
+    const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init.body)));
+    expect(bodies).toEqual([{ expected_version: "v1" }, { config_id: "c1" }]);
+  });
 });

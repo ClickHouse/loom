@@ -17,8 +17,6 @@ describe("generateMcpConfig", () => {
       }),
     );
     await generateMcpConfig("claude-code", { namespace: "support", ttl_days: 30 });
-    expect(bodies).toEqual([
-      { consumer: "loom-ui", client: "claude-code", persist: true, namespace: "support", ttl_days: 30 },
-    ]);
+    expect(bodies).toEqual([{ client: "claude-code", persist: true, namespace: "support", ttl_days: 30 }]);
   });
 });

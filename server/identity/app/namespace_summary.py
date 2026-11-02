@@ -22,9 +22,8 @@ from server.observability.consumer import INSPECTOR_CONSUMERS
 
 
 def _memory_changes() -> list[str]:
-    """The memory ops that change a row (a writer's, or an audited admin's): an inspector's
-    call to one is a person using the namespace. An admin's read (`memory.dedup_list`) is
-    not one, though no viewer may call it."""
+    """The memory ops that change a row, not read_only and called by a writer or audited: an
+    inspector's call to one is a person using the namespace."""
     from server.operations.base import Role
     from server.operations.registry import ALL_OPERATIONS
 
