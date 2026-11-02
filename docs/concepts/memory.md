@@ -270,9 +270,9 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
 
 `memory.for_file` renders one line per memory, within its token budget:
 
-- A memory from an extra namespace (the repository's code namespace) is headed `Team rule
-(by <author>, <age>)`, or `Decision (by <author>, <age>)` for a decision (`memory_type`
-  `decision` or the tag `decision`).
+- A memory from an extra namespace (the repository's code namespace) is headed
+  `Team rule (by <author>, <age>)`, or `Decision (by <author>, <age>)` for a decision
+  (`memory_type` `decision` or the tag `decision`).
 - A line lists its `constraint`, `gotcha` and `decision` kinds in one bracket
   (`[constraint, decision]`; a line headed `Decision` leaves out `decision`).
 - `(pinned)` marks a pinned row. A pin is the row's own flag: a member of a code namespace
@@ -281,8 +281,8 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
 - `(unconfirmed)` marks a decision not pinned or attested in its current form (a stale
   attestation does not count), and `(outcome: failed)` one whose recorded outcome failed.
 - A note says when its linked code changed or went.
-- The value is printed as text, not as the JSON it is stored as, and ends in `…` when the
-  read cut it. A decision with a source carries ` — source: <source_resource_id>` after
+- A string value is printed as text, not as the JSON it is stored as, and ends in `…`
+  when the read cut it; a cut object or list prints as stored. A decision with a source carries ` — source: <source_resource_id>` after
   its value; the value's cut does not reach it, and the source has its own shorter cap.
 - A newer team row the conflict check linked to an older one of its type is placed above
   it and says which it supersedes (`supersedes decision` when the older is tagged

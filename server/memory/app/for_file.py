@@ -29,6 +29,8 @@ _VALUE_BYTES = 600
 _LINE_CHARS = 220
 # A decision's source is printed after its value, capped on its own.
 _SOURCE_CHARS = 120
+# The length of a `\uXXXX` escape in the stored JSON.
+_ESCAPE_CHARS = 6
 _CODE_NOTES = {
     "changed": " (its code changed since it was written: check before relying on it)",
     "unresolved": " (its code was renamed or removed and could not be followed: check it)",
@@ -88,7 +90,7 @@ def _readable(hit: dict[str, Any]) -> str:
         return raw
     # An escape the cut split (`\u00e9` cut after `\u0`) leaves the text undecodable; an
     # escape is six characters, so dropping at most five of the last ones decodes it.
-    for end in range(len(raw), max(len(raw) - len("\\u0000"), 1), -1):
+    for end in range(len(raw), max(len(raw) - _ESCAPE_CHARS, 1), -1):
         try:
             text: str = json.loads(raw[:end] + '"')
         except ValueError:
@@ -139,43 +141,43 @@ def _is_team(hit: dict[str, Any], home: str) -> bool:
 
 
 def _is_decision(hit: dict[str, Any]) -> bool:
-    return is_decision(str(hit.get("memory_type") or ""), list(hit.get("tags") or []))
+    return is_decision(str(hit.get("memory_type") or ""), hit.get("tags") or [])
 
 
-def _body(hit: dict[str, Any]) -> str:
+def _body(hit: dict[str, Any], decision: bool) -> str:
     """The value on one capped line; a decision's source follows it with its own cap,
     so the value's cut never reaches it."""
     text = _one_line(_readable(hit), _LINE_CHARS)
     source = str(hit.get("source_resource_id") or "")
-    if _is_decision(hit) and source:
+    if decision and source:
         text += f" — source: {_one_line(source, _SOURCE_CHARS)}"
     return text
 
 
-def _status_notes(hit: dict[str, Any]) -> str:
+def _status_notes(hit: dict[str, Any], decision: bool) -> str:
     """`(pinned)` for a pinned row, `(unconfirmed)` for a decision not pinned or attested
     (a stale attestation does not count), `(outcome: failed)` for a decision whose recorded
     outcome failed, and a note when its linked code changed or went."""
     out = ""
     if hit.get("pinned"):
         out = " (pinned)"
-    elif _is_decision(hit) and hit.get("verification") not in CONFIRMED_STATES:
+    elif decision and hit.get("verification") not in CONFIRMED_STATES:
         out = " (unconfirmed)"
-    if _is_decision(hit) and FAILURE_TAG in (hit.get("tags") or []):
+    if decision and FAILURE_TAG in (hit.get("tags") or []):
         out += " (outcome: failed)"
     return out + _CODE_NOTES.get(str(hit.get("code_state") or ""), "")
 
 
-def _marker(hit: dict[str, Any], *, headed: bool = False) -> str:
+def _marker(hit: dict[str, Any], decision: bool, *, headed: bool = False) -> str:
     """` [constraint, decision]`: the row's kinds; `decision` is left out when the
     line's head already says `Decision`."""
     kinds = [t for t in (hit.get("tags") or []) if t in ("constraint", "gotcha")]
-    if _is_decision(hit) and not headed:
+    if decision and not headed:
         kinds.append("decision")
     return f" [{', '.join(kinds)}]" if kinds else ""
 
 
-def _team_line(hit: dict[str, Any], now: datetime) -> str:
+def _team_line(hit: dict[str, Any], now: datetime, decision: bool) -> str:
     """`- Team rule (by alice, 3 days ago) [constraint]: … [id: key]`
     — who wrote it and when, so a wrong rule is attributable and removable;
     a newer rule that contradicts an older one says which it supersedes.
@@ -186,11 +188,10 @@ def _team_line(hit: dict[str, Any], now: datetime) -> str:
         author = hit.get("supersedes") or "another member"
         sup = f"supersedes {hit.get('supersedes_kind')} by {author}"
         who = f"{who}; {sup}" if who else sup
-    decision = _is_decision(hit)
     label = "Decision" if decision else "Team rule"
     head = f"{label} ({who})" if who else label
-    marker = _marker(hit, headed=decision)
-    return f"- {head}{marker}{_status_notes(hit)}: {_body(hit)} [id: {hit['memory_key']}]"
+    marks = _marker(hit, decision, headed=decision) + _status_notes(hit, decision)
+    return f"- {head}{marks}: {_body(hit, decision)} [id: {hit['memory_key']}]"
 
 
 def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
@@ -202,8 +203,7 @@ def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
     has_decision = any(_is_decision(h) for h in team)
     what = "rule or decision" if has_decision else "rule"
     instead = (
-        "write a corrected rule for the file, or ask a decision's author or a maintainer to "
-        "record the corrected decision"
+        "write a corrected rule for the file, or ask a maintainer to record the corrected decision"
         if has_decision
         else "write a corrected rule for the file and tell its author"
     )
@@ -234,11 +234,12 @@ def render_block(
     used = len(lines[0]) + 1 + (len(footer) + 1 if footer else 0)
     truncated = False
     for h in hits:
-        line = (
-            _team_line(h, now)
-            if _is_team(h, home)
-            else f"- {h['memory_key']}{_marker(h)}{_status_notes(h)}: {_body(h)}"
-        )
+        decision = _is_decision(h)
+        if _is_team(h, home):
+            line = _team_line(h, now, decision)
+        else:
+            notes = _status_notes(h, decision)
+            line = f"- {h['memory_key']}{_marker(h, decision)}{notes}: {_body(h, decision)}"
         if used + len(line) + 1 > budget_chars:
             truncated = True
             break
@@ -275,8 +276,8 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             peer = by_id.get(str(cid))
             if peer is None or peer is r or peer.get("namespace") != r.get("namespace"):
                 continue
-            memory_type = r.get("memory_type")
-            if memory_type in KEY_IDENTIFIED_TYPES and peer.get("memory_type") == memory_type:
+            # The conflict check links rows of one type only.
+            if r.get("memory_type") in KEY_IDENTIFIED_TYPES:
                 continue
             new, old = (r, peer) if _stamp(r) >= _stamp(peer) else (peer, r)
             if not new.get("supersedes_key"):

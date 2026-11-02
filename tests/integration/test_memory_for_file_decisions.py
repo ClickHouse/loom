@@ -4,6 +4,7 @@ rendered in the pre-edit block with its head, its confirmation state and its sou
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -22,7 +23,9 @@ def _post(base: str, op: str, token: str, body: dict[str, Any]) -> dict[str, Any
     return r.json()
 
 
-def _poll(base: str, token: str, request: dict[str, Any], done: Any) -> dict[str, Any]:
+def _poll(
+    base: str, token: str, request: dict[str, Any], done: Callable[[dict[str, Any]], bool]
+) -> dict[str, Any]:
     """memory.for_file until `done(out)` holds (the write is visible), or the last answer."""
     out: dict[str, Any] = {}
     for _ in range(50):

@@ -107,13 +107,14 @@ def refusal_hint(existing: Any, *, op: str) -> dict[str, Any]:
     author = _author(str(getattr(existing, "actor", "") or "")) or "another member"
     memory_type = str(getattr(existing, "memory_type", "") or "")
     typed_decision = memory_type == SCHEMA_NAME
-    decision = is_decision(memory_type, list(getattr(existing, "tags", None) or []))
+    decision = is_decision(memory_type, getattr(existing, "tags", None) or [])
     if typed_decision:
         # A member cannot call decision.record, and no rule is shown above a typed decision.
+        # memory.update changes the row and not the decision's record, which the next
+        # decision.outcome writes back, so only a recorded decision corrects it.
         steps = [
-            f"ask {author} (who can revise it with memory.update) or a maintainer of {ns!r} "
-            f"(who can record the corrected decision with decision.record, or memory.delete "
-            f"{key!r})"
+            f"ask {author} (who can memory.delete {key!r}) or a maintainer of {ns!r} (who "
+            "can record the corrected decision with decision.record and delete this one)"
         ]
     else:
         steps = [

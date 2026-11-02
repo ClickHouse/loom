@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
 SCHEMA_NAME = "decision"
@@ -14,7 +15,7 @@ SUCCESS_TAG = "decision:success"
 FAILURE_TAG = "decision:failure"
 
 
-def is_decision(memory_type: str, tags: list[str]) -> bool:
+def is_decision(memory_type: str, tags: Collection[str]) -> bool:
     """A row typed `decision`, or tagged so."""
     return memory_type == SCHEMA_NAME or DECISION_TAG in tags
 

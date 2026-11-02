@@ -294,7 +294,7 @@ def _update_embedding_row(
     provenance, attestation) is read from it; the rest are carried from `existing`, else
     FINAL surfaces zeroed columns over the prior real values."""
     import server.memory.store as memory_repo
-    from server.memory.domain.trust import verification_state
+    from server.memory.domain.trust import CONFIRMED_STATES, verification_state
 
     return memory_repo.build_embedding_row(
         org=memory_row["org"],
@@ -343,7 +343,7 @@ def _update_embedding_row(
                 memory_row["verified_sha256"],
                 memory_row["content_sha256"],
             )
-            in ("human", "process")
+            in CONFIRMED_STATES
         ),
         # The conflict resolver's owed mark when the check asks it to look.
         conflict_checked_at=conflict_checked_at,

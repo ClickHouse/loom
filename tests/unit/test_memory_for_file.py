@@ -346,8 +346,7 @@ def test_a_block_with_team_decisions_says_how_to_correct_one() -> None:
     assert footer == (
         '- A team rule or decision wrong or outdated? memory.delete(namespace="code-repo", '
         "memory_key=<id>) removes it if you wrote it or are an admin; otherwise write a "
-        "corrected rule for the file, or ask a decision's author or a maintainer to record "
-        "the corrected decision."
+        "corrected rule for the file, or ask a maintainer to record the corrected decision."
     )
 
 
@@ -492,3 +491,9 @@ def test_a_cut_value_shorter_than_the_line_still_ends_in_an_ellipsis() -> None:
 def test_a_rule_tagged_with_a_failure_is_not_a_failed_decision() -> None:
     rule = _row("rules/r", json.dumps("Keep it."), tags=["constraint", "decision:failure"])
     assert "(outcome: failed)" not in _lines([rule])[1]
+
+
+def test_a_cut_object_value_prints_as_stored() -> None:
+    raw = json.dumps({"k": "v" * 700})[:600]
+    hit = _decision("design/o", value_truncated=True) | {"value": raw}
+    assert raw[:40] in _lines([hit])[1]

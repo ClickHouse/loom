@@ -366,8 +366,8 @@ async def test_a_refused_member_is_sent_to_the_decisions_author() -> None:
     # A member cannot call decision.record, so the hint names who can.
     row = _row("human:alice", memory_type="decision", memory_key="decision:k")
     (step,) = cmw.refusal_hint(row, op="memory.delete")["next"]
-    assert step.startswith("ask alice (who can revise it with memory.update) or a maintainer")
-    assert "decision.record" in step and "memory.set" not in step
+    assert step.startswith("ask alice (who can memory.delete 'decision:k') or a maintainer")
+    assert "decision.record" in step and "memory.update" not in step
     assert not await cmw.code_member_may_write(
         _auth("bob"), "decision.record", ORG, "code-clickhouse"
     )
