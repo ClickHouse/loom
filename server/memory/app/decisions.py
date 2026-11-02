@@ -72,9 +72,10 @@ _TEXT_FIELDS = ("category", "scenario", "outcome", "reasoning")
 
 
 def statement_fields(payload: dict[str, Any]) -> list[str]:
-    """The fields the statement is built from, as the record stores them (alternatives at
-    their ALTERNATIVE_CHARS cut): what the row's sensitivity and attribute labels read (the
-    row never holds `decision_maker` or `run_id`)."""
+    """The statement's fields and the category, as the record stores them (alternatives at
+    their ALTERNATIVE_CHARS cut): what the row's sensitivity and attribute labels read. The
+    category is not in the statement but is in the row's tag; the row never holds
+    `decision_maker` or `run_id`."""
     names = (*_TEXT_FIELDS, "realized_outcome")
     texts = [str(payload.get(f) or "") for f in names] + alternatives(payload)
     return [t for t in texts if t.strip()]

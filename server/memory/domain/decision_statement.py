@@ -118,9 +118,8 @@ def memory_value(payload: dict[str, Any]) -> str:
     """The decision as one statement, the scenario as a sentence then the outcome and
     the reason, for the memory row that search embeds and memory.for_file shows.
 
-    The category is left out: it is on the record and in the row's tag, and a slug or a
-    `Scenario:` label is noise to search and to the pre-edit line. Each part is clipped so the
-    statement fits the embedded excerpt; nothing parses this text.
+    The category is left out: it is on the record and in the row's tag. Each part is
+    clipped so the statement fits the embedded excerpt; nothing parses this text.
     """
     scenario = _part(payload.get("scenario"))
     parts = []
