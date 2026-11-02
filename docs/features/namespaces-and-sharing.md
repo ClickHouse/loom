@@ -192,16 +192,17 @@ at session start, and a successful response carries at most one (`hint` on MCP, 
 `LOOM_MENTOR_MAX_HINTS_PER_SESSION`. `loom mentor --org … --namespace … --agent …` prints the whole brief. See the
 [mentor ops](../reference/operations/mentor.md).
 
-A brief's `usage_evidence` lists what the agent's use of Loom shows, one rung each, with who
-recorded it (`server`: Loom saw it; `client`: a caller reported it, unverified). The rungs
-are read at each brief, not from the cached profile. Those read from the call ledger
+A brief's `usage_evidence` lists what the agent's use of Loom shows, one rung each, with
+who recorded it (`server`: Loom saw it; `client`: a caller reported it, unverified). The
+rungs are read at each brief, not from the cached profile. Those read from the call ledger
 (`attempt`, `success`, `committed_write`, `returned_hit` and the `memory.outcome` labels)
-count only the rows it records under the agent: a call whose body names no agent (a read
-by id, an MCP `memory.update`, the Python SDK's `memory.update` by default) or that reads
+count the rows it records under the agent, which is the agent a call's body names (for a
+call by key, the row's writer, whoever calls): a call whose body names no agent (a read by
+id, an MCP `memory.update`, the Python SDK's `memory.update` by default) or that reads
 across agents and is recorded under `*` (`memory.search` and `memory.ask` from the SDKs,
-MCP's cross-agent reads, a `memory.outcome` that names no agent) is not counted. The ladder
-reads no profile, so it answers when the mentor is off too; a brief about no agent in
-particular has no ladder.
+MCP's cross-agent reads, a `memory.outcome` that names no agent) is not counted. The
+ladder reads no profile, so it answers when the mentor is off too; a brief about no agent
+in particular has no ladder.
 
 | Rung                  | Source   | Counts                                                                                                                                                                                                                                                                                              |
 | --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -171,11 +171,13 @@ async def _adoption(profile: mentor_rules.MentorProfile) -> list[MentorAdoption]
 _RUNG_MEANING: dict[UsageRungName, str] = {
     "attempt": (
         "calls the ledger records under this agent, answered or not (the dashboard's calls "
-        "and the briefs about the agent left out). Not counted: a call whose body names no "
-        "agent, which the ledger records under none (a read by id, an MCP `memory.update`, "
-        "the Python SDK's `memory.update` by default), or that reads across agents and is "
-        "recorded under `*` (`memory.search` and `memory.ask` from the SDKs, MCP's "
-        "cross-agent reads, a `memory.outcome` that names no agent)"
+        "and the briefs about the agent left out). The ledger records a call under the "
+        "agent its body names; for a call addressed by key that is the row's writer, so "
+        "another caller's read of this agent's rows by key counts here. Not counted: a "
+        "call whose body names no agent, recorded under none (a read by id, an MCP "
+        "`memory.update`, the Python SDK's `memory.update` by default), or that reads "
+        "across agents and is recorded under `*` (`memory.search` and `memory.ask` from the "
+        "SDKs, MCP's cross-agent reads, a `memory.outcome` that names no agent)"
     ),
     "success": "of those, calls that returned without an error; a read that found nothing counts",
     "committed_write": (
@@ -197,7 +199,8 @@ _RUNG_MEANING: dict[UsageRungName, str] = {
         "`memories_used` (keys a live row answers, chunk ids left out) and its "
         "`memory.outcome` labels by id that said `used` or `positive` and landed on a row; "
         "the client's own report, not verified. Not counted: a label by key (it names the "
-        "row writer's agent, so the ledger records it under the writer), the Python SDK's "
+        "row writer's agent, so the ledger records it under the writer, while a label "
+        "claims the caller's reliance), the Python SDK's "
         "`outcome` calls, which name no agent, and `memory.outcome_run`, which takes none"
     ),
     "task_outcome": (

@@ -566,7 +566,7 @@ async def reported_keys(
     id that said `used` or `positive` and landed on a row, resolved to that row's key.
 
     A label by key is not counted: it resolves under the row writer's `agent`, so the ledger
-    records it under the writer, whoever gave it."""
+    records it under the writer, whoever gave it, and a label claims the caller's reliance."""
     ch = ch or _default_client()
     (row,) = await ch.query_all(
         f"""
@@ -584,7 +584,7 @@ async def reported_keys(
             )
         )
         """,
-        {"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
+        params={"org": org, "ns": namespace, "agent": agent, "win": int(window_seconds)},
     )
     return int(row["n"])
 
