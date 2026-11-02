@@ -268,7 +268,7 @@ async def test_a_ttl_only_repeat_of_the_stored_value_sets_its_expiry(monkeypatch
     assert row["expires_at"] == state.now_utc + timedelta(seconds=60)
 
 
-@pytest.mark.parametrize("status", ["superseded", "rejected"])
+@pytest.mark.parametrize("status", ["superseded", "rejected", "conflicted"])
 async def test_a_repeat_of_a_retired_stored_value_serves_it_again(monkeypatch, status) -> None:
     # memory.set writes the restated row back as active; so does a bulk entry.
     value = "Alice lives in Berlin"
