@@ -34,6 +34,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -191,6 +192,22 @@ def _unread_reply(stop_reason: str) -> str:
     return f"{reason} (stop reason: {stop_reason})" if stop_reason else reason
 
 
+def _no_model_error() -> str:
+    """Why the run must not start: the configured provider has no key, so the client falls
+    back to the fake model, whose decisions pass the verbatim check by construction and
+    would be recorded as the document's. A provider configured as `fake` runs."""
+    from server.llm.client import provider_key_missing
+    from server.settings import settings
+
+    if not provider_key_missing(settings.llm_provider):
+        return ""
+    return (
+        f"LOOM_LLM_PROVIDER={settings.llm_provider} has no API key set, so the run would "
+        "read the document with the fake model; set the key, or LOOM_LLM_PROVIDER=fake to "
+        "run on it on purpose"
+    )
+
+
 def _refusal(e: HTTPException | LoomServerError) -> str:
     if isinstance(e, LoomServerError):
         return f"refused: {e.code}"
@@ -213,6 +230,9 @@ async def extract_document(
     from server.knowledge.app.document_reads import document_chunks, handle_knowledge_get
 
     report = ExtractReport(org, namespace, source_uri, dry_run)
+    if error := _no_model_error():
+        report.error = error
+        return report
     doc = await handle_knowledge_get(
         KnowledgeGetInput(org=org, namespace=namespace, source_uri=source_uri)
     )
@@ -308,14 +328,19 @@ async def _candidates(
     pairs: set[tuple[str, str]] = set()  # (outcome, reasoning) of each kept candidate
     # An operator command: its calls are not gated by the namespace's cost cap.
     for w in wins:
-        with llm_stage("decision_extract"):
-            res = await llm.complete(
-                system,
-                dx.user_prompt(w),
-                max_tokens=_REPLY_TOKENS,
-                response_format={"type": "json_object"},
-            )
         first = dx.breadcrumb(w.chunks[0].section_path)
+        try:
+            with llm_stage("decision_extract"):
+                res = await llm.complete(
+                    system,
+                    dx.user_prompt(w),
+                    max_tokens=_REPLY_TOKENS,
+                    response_format={"type": "json_object"},
+                )
+        except (httpx.HTTPError, TimeoutError, LoomServerError) as e:
+            # A provider error, a timeout or a refused call loses this window only.
+            report.dropped.append(Dropped(first, f"the model call failed: {type(e).__name__}"))
+            continue
         cands = dx.parse_candidates(strip_code_fence(res.text))
         if cands is None:
             report.dropped.append(Dropped(first, _unread_reply(res.stop_reason)))
@@ -738,7 +763,9 @@ async def _audit(op_name: str, inp: Any) -> None:
 
 async def _extractor_rows(org: str, namespace: str, source_uri: str) -> list[MemoryRow]:
     """The extractor's live decision rows citing this document, whole: listed a page at a
-    time (the listing carries no source), each page read back in one bulk read."""
+    time (the listing carries no source), each page read back in one bulk read. The cost
+    grows with every decision the extractor holds in the namespace, not with this
+    document's: no store read filters on `source_resource_id`."""
     ident = _identity(org, namespace)
     out: list[MemoryRow] = []
     offset = 0

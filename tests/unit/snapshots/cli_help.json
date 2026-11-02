@@ -119,7 +119,7 @@
  ],
  "loom decisions": [
   "usage: loom decisions [-h] {extract} ...",
-  "positional arguments: {extract} extract Mine one knowledge document into decision records: one model call per window of its sections, candidates kept only when their quote, reasoning and rejected options' reasons are the document's own words, written through decision.record as agent loom- decisions. A re-run revises or retires the extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row source-changed. Dry run by default (still calls the model); --apply writes.",
+  "positional arguments: {extract} extract Mine one knowledge document into decision records: one model call per window of its sections, candidates kept only when their quote, reasoning and rejected options' reasons are the document's own words, written through decision.record as agent loom- decisions. A re-run revises or retires the extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row source-changed. Dry run by default (still calls the model); --apply writes. Exits 1 when nothing was extracted, 2 when the server refused a write.",
   "options: -h, --help show this help message and exit"
  ],
  "loom decisions extract": [

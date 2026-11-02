@@ -1677,3 +1677,70 @@ def test_a_list_field_the_model_filled_with_something_else_reads_empty() -> None
     reply = json.dumps({"decisions": [_candidate(mentions=3, alternatives=True)]})
     (cand,) = dx.parse_candidates(reply) or []
     assert cand.mentions == [] and cand.alternatives == []
+
+
+@pytest.mark.asyncio
+async def test_a_keyed_provider_without_its_key_refuses_before_any_model_call(
+    monkeypatch,
+) -> None:
+    from server.llm import client as llm_client
+    from server.settings import settings
+
+    world = _World(monkeypatch, [_candidate()])
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(llm_client, "provider_key_missing", lambda provider: True)
+    report = await _run()
+    assert report.error.startswith("LOOM_LLM_PROVIDER=openai has no API key set")
+    assert world.prompts == [] and world.recorded == []
+    assert cli.exit_code(report) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_provider_configured_as_fake_runs(monkeypatch) -> None:
+    from server.settings import settings
+
+    world = _World(monkeypatch, [_candidate()])
+    monkeypatch.setattr(settings, "llm_provider", "fake")
+    report = await _run()
+    assert report.error == "" and len(world.recorded) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failed_model_call_loses_its_window_only(monkeypatch) -> None:
+    import httpx
+
+    from server.knowledge.app import document_reads
+    from server.llm import client as llm_client
+
+    world = _World(monkeypatch, [])
+    replies: list[Any] = [httpx.ReadTimeout("slow"), [_candidate()]]
+
+    class _Flaky:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            reply = replies.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+            return SimpleNamespace(text=json.dumps({"decisions": reply}), stop_reason="")
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Other")),
+            CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Flaky())
+    report = await _run(window_chars=len(BODY) + 1)
+    assert [d.reason for d in report.dropped] == ["the model call failed: ReadTimeout"]
+    assert len(world.recorded) == 1
+
+
+@pytest.mark.parametrize(
+    ("dropped", "refused", "code"),
+    [([], [], 0), (["refused: BLACKLISTED"], [], 2), ([], ["k: refused: X"], 2), (["x"], [], 0)],
+)
+def test_the_exit_code_says_whether_a_write_was_refused(dropped, refused, code) -> None:
+    report = de.ExtractReport("o", "ns", "d", False)
+    report.dropped = [de.Dropped("s", r) for r in dropped]
+    report.refused = refused
+    assert cli.exit_code(report) == code
