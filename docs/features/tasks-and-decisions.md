@@ -502,17 +502,18 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   run read it is reported as such, a race the next run settles. Either way the run goes on with the next candidate and
   the retire step.
 - **Limits**: `--max-per-section` is at least 1 and `--window-chars` at least 500; a smaller value is refused. A reply
-  cut at the model's token limit is reported as such, with the advice to lower either; a model call that fails (a
-  provider error, a timeout) loses its window only.
+  cut at the model's token limit is reported as such, with the advice to lower either; a window's first model call, or
+  its second after an empty reply, that fails (a provider error, a timeout) loses that window only; a failed second read
+  for a joined reason loses nothing, its first reply's decisions recorded.
 - **Model and exit code**: the run refuses before any model call when it would read the document with the fake model,
-  whose decisions pass the verbatim check by construction: a keyed provider (`LOOM_LLM_PROVIDER=openai` or
-  `anthropic`) with no API key set, or no provider configured at all. `LOOM_LLM_PROVIDER=fake` set explicitly runs on
-  it on purpose. Otherwise a window the fake model answers (a fallback model, `LOOM_LLM_FALLBACK_MODEL`, with no key)
-  is dropped as unread. A run whose every model call failed or came back unreadable reads nothing and retires nothing.
-  The command exits 1 when it could not read the document (no document, no chunks, no usable model, the extractor's
-  own rows unreadable before any model call, no window read), 2 when a write, or a read it needed, was refused or
-  failed (a dry run's reads count too, and so does a window the model could not answer readably while others were
-  read), else 0; a race does not change the exit code.
+  whose decisions pass the verbatim check by construction: a keyed provider (`LOOM_LLM_PROVIDER=openai` or `anthropic`)
+  with no API key set, or no provider configured at all. `LOOM_LLM_PROVIDER=fake` set explicitly runs on it on purpose.
+  Otherwise a window the fake model answers (a fallback model, `LOOM_LLM_FALLBACK_MODEL`, with no key) is dropped as
+  unread. A run whose every window's model call failed or came back unreadable, or answered nothing and failed when read
+  again, reads nothing and retires nothing. The command exits 1 when it could not read the document (no document, no
+  chunks, no usable model, the extractor's own rows unreadable before any model call, no window read), 2 when a write,
+  or a read it needed, was refused or failed (a dry run's reads count too, and so does a window the model could not
+  answer readably while others were read), else 0; a race does not change the exit code.
 
 The reasoning is the verbatim span the retire step reads: the record has no field for the quote. To confirm an
 extracted decision, a maintainer reads its identity with `memory.get` and calls `memory.pin` under it, or attests its

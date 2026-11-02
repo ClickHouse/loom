@@ -340,8 +340,8 @@ async def extract_document(
     if wins and not answered:
         # A run that read nothing must not retire anything.
         report.error = (
-            "no window was read: every model call failed, was answered by the fake model, or "
-            "came back unreadable"
+            "no window was read: every model call failed, was answered by the fake model, "
+            "came back unreadable, or answered nothing and failed when read again"
         )
         return report
     written: set[str] = set()

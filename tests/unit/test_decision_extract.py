@@ -1905,8 +1905,8 @@ async def test_a_run_the_fallback_fake_answered_wholly_reads_nothing(monkeypatch
     _fake_fallback(monkeypatch, ["fake", "fake"])
     report = await _run(window_chars=len(BODY) + 1)
     assert report.error == (
-        "no window was read: every model call failed, was answered by the fake model, or "
-        "came back unreadable"
+        "no window was read: every model call failed, was answered by the fake model, came "
+        "back unreadable, or answered nothing and failed when read again"
     )
     assert cli.exit_code(report) == 1
     assert world.recorded == [] and world.deletes == []
@@ -2730,7 +2730,11 @@ async def test_a_failed_second_read_loses_the_window(monkeypatch) -> None:
     world.replies = [[], httpx.ConnectError("down")]
     report = await _run()
     assert len(world.prompts) == 2 and world.recorded == []
-    assert report.error.startswith("no window was read") and cli.exit_code(report) == 1
+    assert report.error == (
+        "no window was read: every model call failed, was answered by the fake model, came "
+        "back unreadable, or answered nothing and failed when read again"
+    )
+    assert cli.exit_code(report) == 1
 
 
 _STITCHED_REASONING = "A plain set on disk ORDER BY."
@@ -2748,6 +2752,35 @@ async def test_a_stitched_reasoning_is_asked_for_again_as_one_span(monkeypatch) 
     assert [r.action for r in report.records] == ["written"]
     assert [d.reason for d in report.retried] == [de._STITCHED]
     assert [d.reason for d in report.dropped] == ["reasoning is not in the document text"]
+
+
+@pytest.mark.asyncio
+async def test_a_stitched_second_read_the_fallback_fake_answered_loses_nothing(
+    monkeypatch,
+) -> None:
+    from server.llm import client as llm_client
+    from server.settings import settings
+
+    _World(monkeypatch, [])  # its model is replaced below
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(llm_client, "provider_key_missing", lambda provider: False)
+    first = [_candidate(), _candidate(scenario="the merge", reasoning=_STITCHED_REASONING)]
+    providers = ["openai", "fake"]
+
+    class _LLM:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            text = json.dumps({"decisions": first})
+            return SimpleNamespace(text=text, stop_reason="", provider=providers.pop(0))
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _LLM())
+    report = await _run()
+    assert providers == [] and [r.action for r in report.records] == ["written"]
+    assert [d.refused for d in report.dropped] == [False]
+    assert [r.reason for r in report.retried] == [
+        de._STITCHED,
+        f"the second read was lost: {de._FAKE_ANSWER}",
+    ]
+    assert cli.exit_code(report) == 0
 
 
 @pytest.mark.asyncio
