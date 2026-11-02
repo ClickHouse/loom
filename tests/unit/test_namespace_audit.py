@@ -1400,6 +1400,8 @@ async def test_an_audit_run_twice_still_sees_writes_the_ledger_never_recorded() 
         _ledger_row("namespace.audit"),
         _ledger_row("namespace.summary"),
         _ledger_row("memory.search", consumer="loom-ui"),
+        # A page view in the dashboard is a write-flagged op that changes no data.
+        _ledger_row("ui.vitals", consumer="loom-ui"),
     ]
     ch = _LocalCH(["memory", "agent_events"], rows)
     audit = na.new_audit(_inp(window_seconds=3600), ch=ch)

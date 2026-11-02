@@ -22,7 +22,7 @@ export interface NamespaceAuditSummary {
   gets: number;
   searches: number;
   sets: number;
-  // gets / max(searches, 1): the object-store gauge.
+  // (gets - typed_gets) / max(searches, 1): the object-store gauge, procedure reads left out.
   get_search_ratio: number;
   // Dashboard and assistant calls in the window, left out of the counts above.
   inspector_calls: number;
@@ -40,7 +40,8 @@ export interface NamespaceAuditFinding {
   samples: Array<Record<string, unknown>>;
   detail: string;
   remedy: string;
-  // A broken stored invariant, or a pattern that may still be a legitimate design.
+  // A broken stored invariant, a pattern that may still be a legitimate design, or the
+  // deployment's own state rather than anything the writer did.
   // Absent from a server one release older, like every field below it.
   kind?: "contract_violation" | "usage_heuristic" | "system_state";
   rule_version?: number;

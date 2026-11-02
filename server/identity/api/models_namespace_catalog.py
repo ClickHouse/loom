@@ -340,7 +340,8 @@ class NamespaceAuditSummary(BaseModel):
     # status-only version repeats it and is not counted), and their bytes.
     version_rows: int = 0
     version_bytes: int = 0
-    # Searchable-type embedding rows with no vector and a recorded embed error.
+    # Searchable-type embedding rows with no vector and an embed error of their own (a
+    # model call the deployment held or could not bill is not counted: index_backlog).
     unembedded_rows: int = 0
     # Ledger counts over `window_seconds`.
     gets: int = 0

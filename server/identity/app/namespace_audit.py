@@ -158,12 +158,13 @@ _TEXT: dict[str, tuple[str, str]] = {
     # Runs first: the ledger checks read whether it found the ledger empty.
     "telemetry_unavailable": (
         "Live rows were created in the window but the ledger holds no call for the "
-        "namespace apart from reports on it and the dashboard's or the assistant's reads: "
-        "the read and search counts were not recorded, so the checks built on them are "
-        "skipped rather than reported clean.",
+        "namespace apart from reports on it and the dashboard's or the assistant's reads "
+        "and page views: the read and search counts were not recorded, so the checks built "
+        "on them are skipped rather than reported clean.",
         "Check that the server writes its event ledger (loom.agent_events) and keeps it "
-        "for the window (LOOM_RETENTION_AGENT_EVENTS_DAYS), then rerun with a window the "
-        "ledger covers; `memory.list` still shows the rows themselves.",
+        "for the window (LOOM_RETENTION_AGENT_EVENTS_DAYS), or whether the rows were written "
+        "in-process (`loom import-recall` or `import-brain` without `--base-url`), then "
+        "rerun with a window the ledger covers; `memory.list` still shows the rows.",
     ),
     "exact_key_store": (
         "Exact-key reads (memory.get, memory.bulk_get) counted against searches "
@@ -275,7 +276,12 @@ _CONTRACT: dict[str, RuleContract] = {
             "count, and a revision (a worker's relabel among them) is not judged. A row "
             f"created in the last {TELEMETRY_LAG_SECONDS} seconds is not judged; its "
             "ledger row may not have landed yet. Reports on the namespace (the audit's own "
-            "call among them) and the dashboard's or the assistant's reads do not close a gap."
+            "call among them) and the dashboard's or the assistant's reads and page views do "
+            "not close a gap; their data writes do."
+        ),
+        uncertainty=(
+            "Rows written in-process, by an importer run without `--base-url` or a worker "
+            "that creates keys, leave no ledger row and read as a gap in a quiet namespace."
         ),
     ),
     "exact_key_store": RuleContract(
@@ -458,11 +464,20 @@ def keys_named(key: str, value: str, keys: set[str]) -> int:
 
 
 @functools.cache
-def _read_ops() -> tuple[str, ...]:
-    """Every read-only op: an inspector's call to one only looks at the namespace."""
+def _data_writes() -> tuple[str, ...]:
+    """The ops that change a namespace's data: not read_only, and called by a writer or
+    audited. An inspector's call to anything else (a read, the dashboard's page-view
+    vitals) only looks at the namespace."""
+    from server.operations.base import Role
     from server.operations.registry import ALL_OPERATIONS
 
-    return tuple(sorted(op.name for op in ALL_OPERATIONS if op.read_only))
+    return tuple(
+        sorted(
+            op.name
+            for op in ALL_OPERATIONS
+            if not op.read_only and (op.audit or op.required_role == Role.WRITER)
+        )
+    )
 
 
 class _Audit:
@@ -496,7 +511,7 @@ class _Audit:
             "grace": int(INDEX_GRACE_SECONDS),
             "lag": int(TELEMETRY_LAG_SECONDS),
             "holds": list(EMBED_HOLDS),
-            "read_ops": list(_read_ops()),
+            "data_writes": list(_data_writes()),
         }
         self.summary = NamespaceAuditSummary()
         self.searchable_rows = 0
@@ -612,10 +627,10 @@ class _Audit:
         r = await self.one(
             f"""
             -- an inspector's write (a person editing a memory or a profile in the dashboard)
-            -- is a recorded call too; only its reads are left out
+            -- is a recorded call too; its reads and page views are left out
             SELECT countIf(operation NOT IN {_REPORT_OPS}
                            AND ({_AGENT_CALL}
-                                OR operation NOT IN {{read_ops:Array(String)}})) AS ledger_calls,
+                                OR operation IN {{data_writes:Array(String)}})) AS ledger_calls,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}) AS gets,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}
                            AND memory_key IN ({_TYPED_KEYS})) AS typed_gets,
