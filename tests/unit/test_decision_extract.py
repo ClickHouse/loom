@@ -114,6 +114,7 @@ class _World:
         # memory_ids whose value moved on since the run read them.
         self.value_moved: set[str] = set()
         self.refuse_update: Any = None
+        self.refuse_delete: Any = None
         self.deletes: list[Any] = []
         self.prompts: list[tuple[str, str]] = []
         self._patch(monkeypatch)
@@ -201,6 +202,8 @@ class _World:
             return SimpleNamespace(updated=True)
 
         async def delete_version(inp):
+            if world.refuse_delete:
+                raise world.refuse_delete
             world.deletes.append(inp)
             return SimpleNamespace(tombstoned=inp.memory_key not in world.moved_on)
 
@@ -1588,3 +1591,63 @@ async def test_a_backticked_name_defined_in_two_files_is_no_setting(monkeypatch)
     assert rec.signals == ["handle_decision_record: qualified, no single definition"]
     assert rec.unresolved == ["handle_decision_record (several definitions)"]
     assert rec.body["files"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["record", "update", "delete"])
+async def test_a_server_error_on_a_write_is_reported_and_the_run_goes_on(
+    monkeypatch, where
+) -> None:
+    from server.core.errors import PreconditionFailedError
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record("decision:gone", {"reasoning": "gone"})
+    world.record("decision:flag", {"reasoning": "gone"}, pinned=True)
+    busy = PreconditionFailedError("the key is busy")
+    setattr(world, f"refuse_{where}", busy)
+    report = await _run()
+    reasons = [d.reason for d in report.dropped] + report.refused
+    assert any("refused: PRECONDITION_FAILED" in r for r in reasons)
+    # The other writes still ran.
+    if where != "record":
+        assert len(world.recorded) == 1
+    if where != "delete":
+        assert report.retired == ["decision:gone"]
+    if where != "update":
+        assert report.flagged == ["decision:flag"]
+
+
+@pytest.mark.asyncio
+async def test_a_path_the_document_writes_out_is_a_file(monkeypatch) -> None:
+    from server.knowledge.app import document_reads
+
+    body = "We keep the merge in src/Storages/MergeTreeData.cpp because it owns the parts."
+    c = _candidate(
+        quote=body,
+        reasoning="We keep the merge in src/Storages/MergeTreeData.cpp because it owns the parts.",
+        alternatives=[],
+        mentions=[],
+    )
+    world = _World(monkeypatch, [c])
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, body, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    await _run()
+    (inp,) = world.recorded
+    assert inp.files == ["src/Storages/MergeTreeData.cpp"]
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_decision_is_held_by_its_stored_outcome(monkeypatch) -> None:
+    # This run words the outcome anew under the old key (no change), and an older row
+    # under a reworded key holds the stored outcome: it is the duplicate to replace.
+    c = _candidate()
+    world = _World(monkeypatch, [{**c, "outcome": "spill sorted runs to disk"}])
+    world.record(_key(c), _same_fields(c), files=[HEADER])
+    world.record("decision:older", _same_fields(c), files=[HEADER])
+    report = await _run()
+    assert report.records[0].action == "unchanged"
+    assert report.replaced == [f"decision:older -> {_key(c)}"]

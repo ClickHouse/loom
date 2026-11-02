@@ -37,6 +37,7 @@ from typing import Any
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from server.core.errors import LoomServerError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_decision import DecisionRecordInput
 from server.memory.app import decisions as svc
@@ -44,6 +45,7 @@ from server.memory.domain import decision_extract as dx
 from server.memory.domain.corpus_synthesis import Window, windows
 from server.memory.domain.decision_schema import SOURCE_CHANGED_TAG
 from server.memory.domain.decision_statement import alternatives, memory_value
+from server.memory.domain.files import detect_value_files, normalize_files
 from server.memory.domain.trust import confirmed, verification_state
 from server.memory.store import (
     Identity,
@@ -86,6 +88,9 @@ class RecordReport:
     # The extractor's own row on this document now holds the decision (written, revised,
     # or unchanged and ours), so the retire step may count it as the reworded one's heir.
     holds: bool = False
+    # The outcome that row's record holds: the candidate's when written or revised, the
+    # stored one when unchanged (the model may word it anew).
+    held_outcome: str = ""
 
 
 @dataclass
@@ -178,7 +183,9 @@ def _unread_reply(stop_reason: str) -> str:
     return f"{reason} (stop reason: {stop_reason})" if stop_reason else reason
 
 
-def _refusal(e: HTTPException) -> str:
+def _refusal(e: HTTPException | LoomServerError) -> str:
+    if isinstance(e, LoomServerError):
+        return f"refused: {e.code}"
     detail: dict[str, Any] = e.detail if isinstance(e.detail, dict) else {}
     return f"refused: {detail.get('code') or e.status_code}"
 
@@ -230,9 +237,10 @@ async def extract_document(
     for cand, section, texts in kept:
         try:
             rec = await _reconcile(org, namespace, source_uri, cand, section, texts, dry_run)
-        except HTTPException as e:
-            # A blacklisted or newly pinned decision: the other candidates and the retire
-            # step still run, and a re-run does not stop at the same place.
+        except (HTTPException, LoomServerError) as e:
+            # A blacklisted or newly pinned decision, a busy key, a store that timed out:
+            # the other candidates and the retire step still run, and a re-run does not
+            # stop at the same place.
             report.dropped.append(Dropped(section, _refusal(e), cand.quote))
             continue
         written.add(rec.memory_key)
@@ -244,7 +252,7 @@ async def extract_document(
         if rec.action == "flagged":
             report.flagged.append(rec.memory_key)
         if rec.holds:
-            held.setdefault((cand.outcome.strip(), cand.reasoning.strip()), rec.memory_key)
+            held.setdefault((rec.held_outcome, cand.reasoning.strip()), rec.memory_key)
     await _retire(report, own_rows, live_texts, written, held)
     return report
 
@@ -306,7 +314,7 @@ async def _candidates(
             continue
         texts = [c.text for c in w.chunks]
         for cand in cands:
-            section = dx.quote_section(w, cand.quote) if cand.quote else first
+            section = dx.quote_section(w, cand.quote)
             reason = dx.verbatim_failure(cand, texts)
             try:
                 key = svc.decision_key(cand.category, cand.scenario)
@@ -445,6 +453,9 @@ async def _reconcile(
 ) -> RecordReport:
     """Decide what the candidate does to the namespace, and do it unless `dry_run`."""
     files, signals, unresolved, complete = await resolve_mentions(org, namespace, cand, texts)
+    # A path the document writes out (`src/Storages/MergeTreeData.cpp`) is a file too; the
+    # explicit list turns off decision.record's own detection, so it is merged in here.
+    files = normalize_files([*files, *detect_value_files(f"{cand.quote}\n{cand.reasoning}")])
     inp = _record_input(org, namespace, source_uri, cand, section, files)
     key = svc.decision_key(inp.category, inp.scenario)
     rec = RecordReport(key, "written", record_body(inp), signals, unresolved)
@@ -486,6 +497,7 @@ async def _reconcile(
         if same and not stale_row:
             rec.action = "unchanged"
             rec.holds = ours
+            rec.held_outcome = str(record.get("outcome") or "").strip()
             if row is not None and this_doc:
                 await _clear_if_tagged(rec, row, dry_run)
             return rec
@@ -528,6 +540,7 @@ async def _reconcile(
             return rec
         rec.action = "revised"
     rec.holds = True
+    rec.held_outcome = inp.outcome.strip()
     if not dry_run:
         from server.memory.app.decision import handle_decision_record
 
@@ -787,7 +800,7 @@ async def _retire(
                 # A row with a recorded outcome is tagged, never deleted, like a pinned one.
                 keep = _confirmed(row) or bool(record.get("realized_outcome"))
                 await _retire_row(report, row, keep=keep)
-        except HTTPException as e:
+        except (HTTPException, LoomServerError) as e:
             report.refused.append(f"{key}: {_refusal(e)}")
 
 
