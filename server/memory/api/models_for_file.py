@@ -57,7 +57,8 @@ class MemoryForFileInput(BaseModel):
 class _MemoryForFileHit(BaseModel):
     memory_key: str
     memory_type: str
-    # First 600 chars of the value; the full row is a memory.get away.
+    # The stored JSON text, cut at 600 bytes; `rendered` prints it decoded. The full row is a
+    # memory.get away.
     value: str
     tags: list[str] = Field(default_factory=list)
     confidence: float = 1.0

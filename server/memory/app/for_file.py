@@ -19,6 +19,7 @@ from server.memory.api.models_for_file import (
     _MemoryForFileHit,
 )
 from server.memory.domain.code_change import STATE_RANK, worst
+from server.memory.domain.decision_schema import FAILURE_TAG
 from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import CONFIRMED_STATES, row_verification
 
@@ -79,7 +80,7 @@ def _readable(hit: dict[str, Any]) -> str:
         try:
             value = json.loads(raw)
         except ValueError:
-            return raw
+            return raw  # a value not stored as JSON (memory.set always encodes one)
         return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     if not raw.startswith('"'):
         return raw
@@ -87,9 +88,11 @@ def _readable(hit: dict[str, Any]) -> str:
     # the last few characters until it decodes.
     for end in range(len(raw), max(len(raw) - 6, 1), -1):
         try:
-            return str(json.loads(raw[:end] + '"'))
+            text: str = json.loads(raw[:end] + '"')
         except ValueError:
             continue
+        # A cut between the two escapes of a surrogate pair leaves half of one.
+        return text[:-1] if text and "\ud800" <= text[-1] <= "\udbff" else text
     return raw
 
 
@@ -150,7 +153,7 @@ def _status_notes(hit: dict[str, Any]) -> str:
         out = " (pinned)"
     elif _is_decision(hit) and hit.get("verification") not in CONFIRMED_STATES:
         out = " (unconfirmed)"
-    if "decision:failure" in (hit.get("tags") or []):
+    if FAILURE_TAG in (hit.get("tags") or []):
         out += " (outcome: failed)"
     return out + _CODE_NOTES.get(str(hit.get("code_state") or ""), "")
 
@@ -443,8 +446,13 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
             )
         )
 
+    # The renderer decodes a value it knows was cut; the hit does not carry that flag.
+    rows_out = [
+        h.model_dump() | {"value_truncated": bool(r.get("value_truncated"))}
+        for h, r in zip(hits, rows or [], strict=True)
+    ]
     rendered, tokens, truncated = render_block(
-        path, [h.model_dump() for h in hits], input.token_budget, home=input.namespace
+        path, rows_out, input.token_budget, home=input.namespace
     )
     return MemoryForFileOutput(
         path=path,

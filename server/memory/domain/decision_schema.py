@@ -6,6 +6,13 @@ from typing import Any
 
 SCHEMA_NAME = "decision"
 
+# The tags a decision's memory row carries: its marker, and after decision.outcome the
+# outcome-known mark and its success or failure.
+DECISION_TAG = "decision"
+OUTCOME_KNOWN_TAG = "decision:outcome-known"
+SUCCESS_TAG = "decision:success"
+FAILURE_TAG = "decision:failure"
+
 # category + scenario identify a decision: re-deciding the same scenario supersedes the
 # earlier record (history keeps it), which is what "what is our current decision on X"
 # needs; precedent search still sees every decision row because memory.search reads the

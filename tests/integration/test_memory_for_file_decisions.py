@@ -119,3 +119,38 @@ def test_a_recorded_decision_reads_as_its_statement_before_an_edit(
         f"- {key} [decision] (unconfirmed): Category: design. Scenario: Spill the final "
         f"distinct? Decided spill it because memory is bounded. — source: {SOURCE}"
     )
+
+
+def test_a_long_recorded_decision_prints_as_text(
+    control_plane_url: str, mint_test_token: Any
+) -> None:
+    # A statement past 600 stored bytes is cut by memory.for_file's select and still printed
+    # decoded: no quotes, no escapes.
+    token = mint_test_token(org=ORG, namespaces=["*"], roles=["writer"])
+    _post(
+        control_plane_url,
+        "decision.record",
+        token,
+        {
+            "org": ORG,
+            "namespace": "recorded-long",
+            "agent": "claude-code",
+            "category": "design",
+            "scenario": "Réécrire la jointure ?",
+            "outcome": "réécrire",
+            "reasoning": "la mémoire est bornée " * 15,
+            "alternatives": ["garder la jointure actuelle", "attendre la prochaine version"],
+            "files": ["src/c.cpp"],
+        },
+    )
+    request = {"org": ORG, "namespace": "recorded-long", "path": "src/c.cpp"}
+    out: dict[str, Any] = {}
+    for _ in range(50):
+        out = _post(control_plane_url, "memory.for_file", token, request)
+        if out["total"] == 1:
+            break
+        time.sleep(0.2)
+    assert out["total"] == 1, out
+    line = out["rendered"].splitlines()[1]
+    assert ": Category: design. Scenario: Réécrire la jointure ?" in line
+    assert "\\u" not in line and '"' not in line

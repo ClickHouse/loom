@@ -455,3 +455,26 @@ def test_a_decision_whose_outcome_failed_says_so() -> None:
     assert _lines([failed])[1].startswith(
         "- Decision (by alice, 3 days ago) (pinned) (outcome: failed): "
     )
+
+
+async def test_a_value_cut_by_the_select_is_printed_as_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The select cuts the stored JSON at 600 bytes and flags it; the handler's block decodes it.
+    stored = json.dumps("Décidé " * 120)[:600]
+    ch = _CH([_decision("design/long", namespace=None, value_truncated=1) | {"value": stored}])
+    monkeypatch.setattr(mff, "get_client", lambda: ch)
+    out = await mff.handle_memory_for_file(
+        MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
+    )
+    line = out.rendered.splitlines()[1]
+    assert "(pinned): Décidé Décidé" in line and "\\u" not in line and '"' not in line
+
+
+@pytest.mark.parametrize("cut", [0, 1, 6, 11])
+def test_a_cut_inside_a_surrogate_pair_leaves_no_half_of_it(cut: int) -> None:
+    stored = json.dumps("a" * 10 + "😀" * 5)
+    hit = _decision("design/e", value_truncated=True) | {"value": stored[: len(stored) - 1 - cut]}
+    line = _lines([hit])[1]
+    line.encode("utf-8")
+    assert ": aaaaaaaaaa" in line

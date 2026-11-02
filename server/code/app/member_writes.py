@@ -95,6 +95,20 @@ def _author(actor: str) -> str:
     return actor
 
 
+def _correction(existing: Any, ns: str) -> str:
+    """How a member corrects someone else's row: a decision by recording it again, a rule by
+    writing a newer one that is shown above it."""
+    if getattr(existing, "memory_type", "") == "decision":
+        return (
+            f"record the corrected decision with decision.record in {ns!r} (the same category "
+            "and scenario): its record replaces this one's"
+        )
+    return (
+        f"write a corrected rule for the same file with memory.set in {ns!r} (a new key, "
+        "files set, tag constraint): it is shown above this one for everyone"
+    )
+
+
 def refusal_hint(existing: Any, *, op: str) -> dict[str, Any]:
     """The structured `hint` a refused member write carries (the refusal says how to
     make it right), so any client can show who wrote the rule and what a member can do
@@ -108,8 +122,7 @@ def refusal_hint(existing: Any, *, op: str) -> dict[str, Any]:
         "memory_key": key,
         "namespace": ns,
         "next": [
-            f"write a corrected rule for the same file with memory.set in {ns!r} (a new key, "
-            "files set, tag constraint): it is shown above this one for everyone",
+            _correction(existing, ns),
             f"tell {author} or a maintainer of {ns!r}: they can memory.delete {key!r}",
         ],
     }

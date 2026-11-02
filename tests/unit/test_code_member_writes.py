@@ -359,3 +359,18 @@ def test_outside_the_member_rule_the_check_is_a_no_op() -> None:
     cmw.assert_own_row(_row("human:alice"), op="memory.delete")  # admin / ordinary writer
     cmw._member_write.set(True)
     cmw.assert_own_row(None, op="memory.set")  # a new rule: nothing to own yet
+
+
+def test_a_refused_member_is_told_to_record_a_decision_again() -> None:
+    from types import SimpleNamespace
+
+    from server.code.app.member_writes import refusal_hint
+
+    row = SimpleNamespace(
+        memory_key="decision:k",
+        namespace="code-clickhouse",
+        actor="human:alice",
+        memory_type="decision",
+    )
+    first = refusal_hint(row, op="memory.delete")["next"][0]
+    assert "decision.record" in first and "shown above" not in first
