@@ -106,8 +106,7 @@ _BUFFER_MAX_BYTES = 4 * 1024 * 1024
 async def _original_response(
     org: str, namespace: str, doc: documents_repo.DocumentRow, *, inline: bool
 ) -> Response | None:
-    """The answer carrying `doc`'s original, or None when no row or object holds it
-    whole."""
+    """The answer carrying `doc`'s original, or None when no row or object holds it whole."""
     from server.knowledge.store import blobs
 
     sha = doc.blob_path
