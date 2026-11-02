@@ -2105,6 +2105,9 @@ def test_every_printed_action_has_its_line() -> None:
         ("spill into sorted runs", "We spill into sorted runs.", True),
         ("spill into sorted runs", "We decided on spilling into sorted runs.", True),
         ("Sorted runs for the spill", "We use sorted runs, instead.", True),
+        ("store offsets", "Offsets are stored.", True),
+        ("run the merge per part", "Running the merge per part.", True),
+        ("process each part", "Each part processes.", True),
         ("spill into sorted runs", "A plain set on disk costs random reads.", False),
         ("spill into sorted runs", "Sorted runs avoid random reads on disk.", False),
     ],
@@ -2119,7 +2122,7 @@ def test_a_reasoning_with_no_word_beyond_its_outcome_restates_it(
 async def test_a_candidate_whose_reasoning_restates_the_outcome_is_dropped(monkeypatch) -> None:
     restating = _candidate(
         reasoning="We spill into sorted runs like ORDER BY.",
-        outcome=("spill into sorted runs like ORDER BY"),
+        outcome="spill into sorted runs like ORDER BY",
     )
     world = _World(monkeypatch, [restating])
     report = await _run()
@@ -2236,3 +2239,30 @@ async def test_the_fake_model_rests_each_decision_on_a_second_sentence() -> None
     assert cand.outcome == "We spill into sorted runs like ORDER BY."
     assert cand.reasoning == "A plain set on disk costs random reads."
     assert dx.verbatim_failure(cand, [BODY]) == "" and not dx.restates_outcome(cand)
+
+
+@pytest.mark.asyncio
+async def test_a_long_sections_last_chunk_with_an_image_and_a_short_tail_is_sent(
+    monkeypatch,
+) -> None:
+    from server.knowledge.app import document_reads
+
+    world = _World(monkeypatch, [])
+    tail = "![a long diagram name](figures/spill-merge-flow.png)\n\nThe merge reads each run once."
+    doc = DOC.replace(BODY, f"{BODY}\n\n{tail}")
+
+    async def knowledge_get(inp):
+        return SimpleNamespace(found=True, content=doc)
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT")),
+            CorpusChunk(uri, 1, tail, ("Spilling", "Final DISTINCT")),
+        ]
+
+    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    report = await _run()
+    (prompt,) = world.prompts
+    assert "The merge reads each run once." in prompt[1]
+    assert report.image_only == ["Spilling > Architecture"]

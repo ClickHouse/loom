@@ -299,8 +299,16 @@ async def extract_document(
         return report
     live_texts = [doc.content or "", *(c.text for c in chunks)]
     report.image_only = dx.image_only_sections(doc.content or "")
-    # A chunk with no words, or only an image and its caption, carries no rationale to read.
-    wins = windows([c for c in chunks if not dx.image_only(c.text)], window_chars=window_chars)
+    # An image-only section, or a chunk with no words, carries no rationale to read. The
+    # caption rule is judged on whole sections: a long section's last chunk may hold an
+    # image and a short tail of its text.
+    skipped = set(report.image_only)
+    sent = [
+        c
+        for c in chunks
+        if dx.breadcrumb(c.section_path) not in skipped and not dx.no_words(c.text)
+    ]
+    wins = windows(sent, window_chars=window_chars)
     report.windows = len(wins)
     # One scan of the extractor's rows on this document and their records, for the prompt
     # and the retire step; rows this run writes are skipped by the retire step.

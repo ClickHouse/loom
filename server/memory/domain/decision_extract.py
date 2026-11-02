@@ -108,12 +108,17 @@ def user_prompt(window: Window) -> str:
 CAPTION_MAX_CHARS = 80
 
 
+def no_words(body: str) -> bool:
+    """No letters once its images are removed: a heading alone or over a picture."""
+    return not _LETTER.search(_IMAGE_MARKUP.sub("", body))
+
+
 def image_only(body: str) -> bool:
-    """A section body with no words once its images are removed (a heading alone or over
-    a picture), or with an image and no more text than a caption."""
-    text = " ".join(_IMAGE_MARKUP.sub(" ", body).split())
-    if not _LETTER.search(text):
+    """A section body with no words (`no_words`), or with an image and no more text than
+    a caption."""
+    if no_words(body):
         return True
+    text = " ".join(_IMAGE_MARKUP.sub(" ", body).split())
     return bool(_IMAGE_MARKUP.search(body)) and len(text) <= CAPTION_MAX_CHARS
 
 
@@ -253,10 +258,17 @@ RESTATED = "reasoning only restates the outcome: it has no word the outcome lack
 
 
 def _stem(word: str) -> str:
-    """`spilling`, `spills` and `spilled` read as `spill`."""
+    """`spilling`, `spills` and `spilled` read as `spill`; `store` and `stored` as `stor`,
+    `run` and `running` as `run`: an ending cut, then a final `e` dropped and a final
+    double consonant undoubled."""
     for suffix in ("ing", "ed", "es", "s"):
         if word.endswith(suffix) and len(word) - len(suffix) >= 3:
-            return word[: -len(suffix)]
+            word = word[: -len(suffix)]
+            break
+    if len(word) > 3 and word.endswith("e"):
+        word = word[:-1]
+    if len(word) > 3 and word[-1] == word[-2] and word[-1] not in "aeiou":
+        word = word[:-1]
     return word
 
 
@@ -325,8 +337,9 @@ def definition_path(definitions: list[tuple[str, str]]) -> str:
 
 
 def image_only_sections(content: str) -> list[str]:
-    """The breadcrumbs of the document's sections with no words: a heading alone or over a
-    picture, whose rationale no text carries. A heading with subsections is not one."""
+    """The breadcrumbs of the document's leaf sections whose rationale no text carries: a
+    heading alone, over a picture, or over a picture and a caption of up to
+    CAPTION_MAX_CHARS. A heading with subsections is not one."""
     sections = detect_sections(content)
     out: list[str] = []
     for i, sec in enumerate(sections):

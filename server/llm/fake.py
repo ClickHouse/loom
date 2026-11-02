@@ -32,6 +32,8 @@ _SCHEMA_ENUM_RE = re.compile(
 # Plain-arg form used in Stage 2/3 prompts:  - field_name: type_spec
 _PLAIN_FIELD_RE = re.compile(r"-\s+(?P<name>\w+):\s+(?P<type>[\w\s]+)$", re.M)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+# A sentence end or a line break: the parts the fake decision answer is cut into.
+_SENTENCE_OR_LINE_RE = re.compile(r"(?<=[.!?])\s+|\n")
 # server.memory.domain.decision_extract's candidate prompt.
 _DECISION_ANCHOR = "You extract design decisions"
 _SECTION_RE = re.compile(
@@ -47,7 +49,7 @@ def _decisions_from_sections(user: str) -> dict[str, object]:
     out: list[dict[str, object]] = []
     for m in _SECTION_RE.finditer(user):
         body = m["body"].strip()
-        parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+|\n", body) if p.strip()]
+        parts = [p.strip() for p in _SENTENCE_OR_LINE_RE.split(body) if p.strip()]
         if len(parts) < 2 or not all(re.search(r"[^\W\d_]", p) for p in parts[:2]):
             continue
         first, second = parts[0], parts[1]
