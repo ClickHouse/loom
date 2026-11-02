@@ -413,10 +413,11 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   on disk." gives a reason. An outcome that carries its own reason leaves the reasoning nothing to add, so the candidate
   is dropped, which is why the prompt asks for the outcome without its reason. One exception: a ban stated with no
   reason ("Client-side retries only; no server retry setting."), a candidate the model marks `is_constraint` whose
-  reasoning holds `only`, `no`, `never`, `must`, `not`, `always`, `at most` or `at least` as a word, and whose reasoning
-  restates its outcome or is its whole quote (an outcome shorter than the sentence), is kept with its reasoning as its
-  outcome, so it is recorded with the `constraint` tag and reads `Decided <outcome>.` with no reason. The flag alone is
-  not enough: models mark plain descriptions as constraints too.
+  reasoning holds `only`, `no`, `never`, `must`, `not`, `always`, `at most` or `at least` as a word, whose reasoning
+  restates its outcome or is its whole quote (an outcome shorter than the sentence), and whose reasoning fits an outcome
+  (1000 characters; a longer one is judged as any other candidate), is kept with its reasoning as its outcome, so it is
+  recorded with the `constraint` tag and reads `Decided <outcome>.` with no reason. The flag alone is not enough: models
+  mark plain descriptions as constraints too.
 - **Recaps**: a candidate whose quote is in a section with `recap`, `summary` or `background` as a word of a heading at
   any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. The
   section stays in the window, since its text may give a later decision's reason.

@@ -361,9 +361,8 @@ _BAN_MARKER = re.compile(r"\b(?:only|no|never|must|not|always|at\s+most|at\s+lea
 
 def states_a_ban(cand: Candidate) -> bool:
     """A constraint whose reasoning, the span that is stored, says only, no, never, must,
-    not, always, at most or at least: kept with no reason when that reasoning restates
-    it. The model's constraint flag alone is not enough: it marks plain descriptions as
-    constraints too."""
+    not, always, at most or at least. The model's constraint flag alone is not enough: it
+    marks plain descriptions as constraints too."""
     return cand.is_constraint and bool(_BAN_MARKER.search(cand.reasoning))
 
 
