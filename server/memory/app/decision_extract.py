@@ -824,7 +824,8 @@ async def _set_source_changed(row: MemoryRow, on: bool) -> str:
     from server.memory.app.write import stored_sha256
 
     tags = [t for t in row.tags if t != SOURCE_CHANGED_TAG]
-    # Conditional on the value read, so a value changed since is not tagged from the old one.
+    # Conditional on the value read, so a value changed since is not tagged from the old one;
+    # the hash covers the value only, so a tags-only edit since the read is overwritten.
     try:
         out = await handle_memory_update_by_id(
             MemoryUpdateByIdInput(

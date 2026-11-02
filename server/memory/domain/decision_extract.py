@@ -53,7 +53,7 @@ SYSTEM = (
 )
 
 
-# The most earlier decisions the prompt lists, and the characters of an outcome shown.
+# How many earlier decisions the prompt lists at most, and the characters of an outcome shown.
 # Category and scenario are shown whole: the key is built from them.
 MAX_KNOWN_DECISIONS = 30
 _KNOWN_OUTCOME_CHARS = 160
