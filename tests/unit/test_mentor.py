@@ -1773,3 +1773,25 @@ def test_the_shown_codes_leave_with_the_profile_the_cache_evicts(monkeypatch) ->
     m._cache_put(("o", "ns", "a3"), 300.0, _fake_profile(agent="a3", facts=shown))
     assert ("o", "ns", "a1") not in m._cache
     assert set(m._profile_shown) == {("o", "ns", "a2"), ("o", "ns", "a3")}
+
+
+def test_every_profile_ledger_read_leaves_the_inspectors_out() -> None:
+    from server.insights.store.mentor import ProfileReads
+
+    ch = _CH()
+    reads = ProfileReads(
+        "o",
+        "ns",
+        "a",
+        3600,
+        ops={"sets": m.SETS, "gets": m.GETS, "searches": m.SEARCHES, "packs": m.PACKS},
+        limits={"ttl": 60, "large": 1, "huge": 2, "advisory": 3, "clip": 4, "episodic_chars": 5},
+        ch=ch,
+    )
+    # One read of the agent's own calls and one of the namespace's.
+    asyncio.run(reads.op_counts())
+    asyncio.run(reads.namespace_ledger())
+    assert len(ch.sqls) == 2
+    for sql, params in zip(ch.sqls, ch.params, strict=True):
+        assert "consumer NOT IN {inspectors:Array(String)}" in sql
+        assert params["inspectors"] == ["loom-ui", "loom-assistant"]

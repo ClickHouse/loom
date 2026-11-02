@@ -21,7 +21,9 @@ The `loom-optimize` skill in the [Claude Code](../features/integrations/claude-c
 | `sample_limit`     | 5               |
 
 It returns `summary` (`live_rows`, `live_bytes`, `excerpt_bytes`, `version_rows`,
-`version_bytes`, `unembedded_rows`, `gets`, `searches`, `sets`, `get_search_ratio`),
+`version_bytes`, `unembedded_rows`, `gets`, `searches`, `sets`, `get_search_ratio`, and
+`inspector_calls`: the dashboard's and the assistant toolset's gets, searches and sets,
+left out of the counts),
 `findings[]` (`code`, `severity`, `count`, `share`, `bytes`, `samples[]`, `detail`,
 `remedy`), `skipped` (rules that could not run: checks, summary reads, the evidence
 read; the rest still return), `coverage`, `healthy` ("no critical finding"), and the

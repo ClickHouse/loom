@@ -155,11 +155,12 @@ class NamespaceSummaryOutput(BaseModel):
     type_counts: list[_NamespaceTypeCount]
     # Entities with the highest co-occurrence degree over live graph edges.
     top_entities: list[_NamespaceTopEntity]
-    recent_writes: int  # memory writes in the activity window
-    recent_recalls: int  # search.auto_touch bumps in the window
-    # Distinct agents with a ledger row in the activity window.
+    recent_writes: int  # memory write calls in the activity window
+    recent_recalls: int  # memory.search calls in the window
+    # Distinct agents with a ledger row in the activity window; the dashboard's and the
+    # assistant toolset's calls are left out, as they are of the two counts above.
     distinct_agents: int
-    # Time of the newest ledger row in the activity window.
+    # Time of the newest ledger row in the activity window, the same calls left out.
     last_activity_at: datetime | None
 
 
