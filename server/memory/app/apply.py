@@ -51,6 +51,7 @@ from server.memory.api.models_crud import MemoryDeleteInput, MemoryTouchInput
 from server.memory.api.models_lock import MemoryLockInput
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.domain import lock as _lock
+from server.memory.domain.search_types import hit_row_key, names_row
 from server.memory.store.inserts import insert_memory_versions
 
 log = logging.getLogger(__name__)
@@ -178,6 +179,7 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
     )
     rows = []
     seen: set[str] = set()
+    mine = (input.agent, input.user_id, input.session_id)
     for hit in out.results:
         score = float(getattr(hit, "score", 0.0) or 0.0)
         if target.search.min_score is not None and score < target.search.min_score:
@@ -187,16 +189,10 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             continue
         # The search reads across sessions (and, for `-`, users and agents);
         # the write stays on the caller's identity tuple, as keys and filter
-        # do. A hit that names another owner is skipped, not re-pointed at a
-        # same-key row of the caller's.
-        if any(
-            owner and owner != mine
-            for owner, mine in (
-                (getattr(hit, "_row_agent", None), input.agent),
-                (hit.user_id, input.user_id),
-                (hit.session_id, input.session_id),
-            )
-        ):
+        # do. A hit of another owner's row is skipped, not re-pointed at a
+        # same-key row of the caller's. A record names no row: its key is the caller's.
+        found = hit_row_key(hit, input.namespace)
+        if names_row(hit) and (found.agent, found.user_id, found.session_id) != mine:
             continue
         # seen only on the caller's own row: another owner's row of the key may come first
         seen.add(key)

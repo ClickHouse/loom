@@ -196,8 +196,8 @@ async def decompose_question(llm: Any, question: str, *, max_parts: int = 4) -> 
 
 class PooledRows:
     """The rows an ask pool holds, for merging more hits into it: a hit that names its row
-    is new when that row is not pooled, and a record, which names none, when no hit of its
-    key is."""
+    is new when that row is not pooled, and one that names none (a record, a digest) when
+    no hit of its key is."""
 
     def __init__(self, hits: list[Any], namespace: str) -> None:
         self.namespace = namespace
@@ -232,7 +232,7 @@ async def decomposed_retrieval(
 ) -> tuple[list[str], list[Any]]:
     """Retrieve each sub-question on its own and union the
     hits into `ranked` (whole-question hits first, then per part in order,
-    deduplicated by memory_key). Returns (sub_questions, merged). A part
+    merged by row through `PooledRows`). Returns (sub_questions, merged). A part
     whose retrieval raises is skipped (fail-open) and counted in
     `stats["failed"]` — the count rides the response and the
     ledger, so a lever that stops working is a number, not a log line."""

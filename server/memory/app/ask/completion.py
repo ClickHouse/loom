@@ -59,7 +59,7 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
     where, params = identity
     try:
         from server.core.ch import get_client
-        from server.memory.api.models_search import _MemorySearchHit
+        from server.settings import settings
 
         ch = get_client()
         rows = await ch.query_all(
@@ -74,9 +74,16 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
               AND sensitivity != 'high'
               AND memory_key LIKE {{pat:String}}
             ORDER BY version DESC
+            -- one attribute written in many sessions leaves room for the bridge's others
+            LIMIT {{per_key:UInt32}} BY memory_key
             LIMIT {{lim:UInt32}}
             """,
-            params={**params, "pat": f"%{slug}%", "lim": int(top_k)},
+            params={
+                **params,
+                "pat": f"%{slug}%",
+                "per_key": int(settings.memory_search_per_key_cap) or int(top_k),
+                "lim": int(top_k),
+            },
         )
         out: list[Any] = []
         for r in rows:
@@ -92,7 +99,7 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
                 status=str(r.get("status") or ""),
                 version=int(r.get("version") or 0),
                 source="fact",
-                session_id=str(r["session_id"]),
+                session_id=str(r.get("session_id") or ""),
                 explanation=f"bridge:{bridge}",
             )
             hit._row_identity = row_identity(r)  # so the pool knows the row it already holds

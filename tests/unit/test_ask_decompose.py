@@ -234,9 +234,9 @@ def test_the_pool_takes_a_new_row_but_not_a_record_of_a_pooled_key() -> None:
         h._row_identity = identity
         return h
 
-    seen = retrieval_legs.PooledRows([hit("k", ("a", "u", "s1"))], "n")
-    assert seen.add(hit("k", ("a", "u", "s2")))  # another session's row of the key
-    assert not seen.add(hit("k", ("a", "u", "s1")))  # the same row again
-    assert not seen.add(hit("k"))  # a record of a pooled key names no row
-    assert seen.add(hit("j"))  # a key the pool does not hold
-    assert not seen.add(hit("j"))
+    pooled = retrieval_legs.PooledRows([hit("k", ("a", "u", "s1"))], "n")
+    assert pooled.add(hit("k", ("a", "u", "s2")))  # another session's row of the key
+    assert not pooled.add(hit("k", ("a", "u", "s1")))  # the same row again
+    assert not pooled.add(hit("k"))  # a record of a pooled key names no row
+    assert pooled.add(hit("j"))  # a key the pool does not hold
+    assert not pooled.add(hit("j"))

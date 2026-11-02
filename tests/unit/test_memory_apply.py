@@ -288,7 +288,7 @@ async def test_search_target_touches_only_the_callers_identity(
             user_id=uid,
             session_id=sid,
         )
-        h._row_agent = agent
+        h._row_identity = (agent, uid, sid)  # as every fact leg stamps it
         return h
 
     hits = [

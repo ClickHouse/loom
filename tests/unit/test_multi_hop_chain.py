@@ -6,6 +6,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from server.memory.app.ask.completion import bridge_entities
 from server.memory.app.ask.prompts import _CHAIN_NOTE
 from server.memory.app.ask.question_shapes import is_chain_question
@@ -133,25 +135,29 @@ def test_bridges_come_from_fact_rows_before_chunks() -> None:
     assert bridge_entities(hits, q, limit=2)[0] == "Bernard Arnault"
 
 
-def test_a_bridge_row_read_by_key_names_its_row(monkeypatch) -> None:
-    # so the ask pool sees the row it already holds, and keeps each session's row of a key
-    import asyncio
-    from types import SimpleNamespace
-
+@pytest.mark.asyncio
+async def test_a_bridge_row_the_pool_holds_is_not_added_twice(monkeypatch) -> None:
+    # each session's row of a key names its row, and one key cannot fill the read
     from server.memory.app.ask import completion
+    from server.memory.app.ask.retrieval_legs import PooledRows
+    from server.settings import settings
+
+    asked: dict[str, Any] = {}
 
     class _CH:
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            assert "agent, user_id, session_id" in sql
+            asked.update(params)
             return [
                 {"agent": "a", "user_id": "u", "session_id": s, "memory_key": "k", "value": "v"}
                 for s in ("s1", "s2")
             ]
 
+    monkeypatch.setattr(settings, "memory_search_per_key_cap", 3)
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
     inp = SimpleNamespace(org="o", namespace="n", agent="a", user_id="u", session_id=None)
-    hits = asyncio.run(completion.bridge_rows_by_key(inp, "Bernard Arnault"))
-    assert [(h._row_identity, h.session_id) for h in hits] == [
-        (("a", "u", "s1"), "s1"),
-        (("a", "u", "s2"), "s2"),
-    ]
+    hits = await completion.bridge_rows_by_key(inp, "Bernard Arnault")
+    assert (asked["per_key"], asked["lim"]) == (3, 6)
+    pooled_hit = SimpleNamespace(memory_key="k", session_id="s1")
+    pooled_hit._row_identity = ("a", "u", "s1")
+    pooled = PooledRows([pooled_hit], "n")
+    assert [h.session_id for h in hits if pooled.add(h)] == ["s2"]
