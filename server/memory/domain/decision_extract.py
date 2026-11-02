@@ -6,10 +6,8 @@ A candidate is kept only when its quote, its reasoning and every rejected option
 each sit inside one chunk the model read (whitespace, letter case and a few label lines
 aside, see `find_span`), its reasoning says more than its outcome (a ban the text gives no
 reason for is kept as one with none), and its quote is not in a recap section: what
-reaches an agent before an edit is the document's own reason. A recap section is one whose
-heading names a recap, summary or background, or one a short divider section so named
-opens (`recap_span_sections`). A rejected option the text states as part of the choice is
-left out.
+reaches an agent before an edit is the document's own reason. A rejected option the text
+states as part of the choice is left out.
 """
 
 from __future__ import annotations
@@ -471,10 +469,9 @@ def reasonless_ban(cand: Candidate) -> bool:
 def without_reason(cand: Candidate) -> Candidate:
     """A ban the text states with no reason: its outcome is its reasoning, which the
     statement reads as no stated reason. Read on the model's spans; the caller stores
-    the document's. A reasoning that is
-    a fragment of the ban (fewer words than the outcome) gives way to the quote when the
-    quote states the ban too: "no server retry setting" alone loses "client-side
-    retries only"."""
+    the document's. A reasoning that is a fragment of the ban (fewer words than the
+    outcome) gives way to the quote when the quote states the ban too: "no server retry
+    setting" alone loses "client-side retries only"."""
     span = cand.reasoning
     fragment = _content_words(cand.reasoning) < _content_words(cand.outcome)
     quote_fits = len(collapse_ws(cand.quote)) <= OUTCOME_MAX_CHARS
@@ -492,64 +489,6 @@ RECAP = "the quote is in a recap, summary or background section"
 def in_recap(section: str) -> bool:
     """A heading at any level of the breadcrumb names a recap, summary or background."""
     return bool(_RECAP_HEADING.search(section))
-
-
-# The longest body a recap span covers: a slide's. A design document's section is longer,
-# so a span a lone diagram or an empty heading opens ends at it.
-# not a setting: part of what a recap divider covers, which the docs state
-RECAP_SLIDE_CHARS = 600
-# Sentence punctuation, and a link: a body holding one says something of its own.
-_SENTENCE_MARK = re.compile(r"[.!?;。！？；]")
-_LINK = re.compile(r"\]\(|\]\[|https?://|<a\s", re.I)
-
-
-def _divider_body(body: str) -> bool:
-    """A body that only titles what follows: an image and at most a caption, or a short
-    line with no sentence punctuation and no link ("Where we started")."""
-    if image_only(body):
-        return True
-    text = _IMAGE_MARKUP.sub(" ", _code_as_text(body))
-    if _LINK.search(text) or more_than_a_caption(body):
-        return False
-    return not _SENTENCE_MARK.search(caption_text(text))
-
-
-def recap_span_sections(content: str) -> set[str]:
-    """The breadcrumbs of the sections a recap divider covers. A divider is a short
-    section (no more text than a caption) with no subsections, whose own heading names a
-    recap, summary or background: a slide deck marks a recap by a title slide and puts
-    the recap on the slides after it. Its span runs over slide-sized sections (at most
-    RECAP_SLIDE_CHARS) until the next short section, the first longer one, or the next
-    heading above the divider's level. A recap-named section with a longer body is
-    `in_recap` by its own heading and opens no span, as is one whose body holds a
-    sentence or a link (`_divider_body`): a summary line states the decisions the
-    sections after it give. A breadcrumb that also names a
-    section outside a span is left out: a quote is told apart by its breadcrumb only, and
-    a decision is kept rather than lost."""
-    sections = detect_sections(content)
-    inside: set[str] = set()
-    outside: set[str] = set()
-    divider_depth = 0
-    for i, sec in enumerate(sections):
-        nxt = sections[i + 1].path if i + 1 < len(sections) else ()
-        has_children = len(nxt) > len(sec.path) and nxt[: len(sec.path)] == sec.path
-        short = not more_than_a_caption("\n".join(sec.lines))
-        slide = len(caption_text(_code_as_text("\n".join(sec.lines)))) <= RECAP_SLIDE_CHARS
-        if divider_depth and (short or not slide or sec.depth < divider_depth):
-            divider_depth = 0
-        if divider_depth:
-            inside.add(breadcrumb(sec.path))
-            continue
-        outside.add(breadcrumb(sec.path))
-        body = "\n".join(sec.lines)
-        if (
-            sec.path
-            and not has_children
-            and _divider_body(body)
-            and _RECAP_HEADING.search(sec.path[-1])
-        ):
-            divider_depth = sec.depth
-    return inside - outside
 
 
 # A sentence end, a blank line, or a line break before a list item. A single line break

@@ -445,20 +445,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   when the quote holds a ban word too), so it is recorded with the `constraint` tag and reads `Decided <outcome>.` with
   no reason. These checks read the model's spans; the outcome recorded is the recorded reasoning, the document's span.
   The flag alone is not enough: models mark plain descriptions as constraints too.
-- **Recaps**: a candidate whose quote is in a section with `recap`, `summary` or `background` as a word of a heading
-  at any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. So
-  is one whose quote is in a section a recap divider covers: a slide deck marks a recap by a title slide and puts the
-  recap on the slides after it. A divider is a section with no subsections whose own heading names a recap, summary or
-  background and whose body only titles what follows: an image and at most a caption, or at most 80 characters of text
-  (as a caption is counted) with no `.`, `!`, `?` or `;` (or their full-width forms) and no link. A summary line such
-  as "Shard by tenant to bound joins." states the decisions the sections after it give, and a line that is only a link
-  points elsewhere; neither is a divider. A divider covers each slide-sized section after it (at most 600 characters
-  of text) until the next short section (at most 80 characters, an image-only one included), the first longer section,
-  or the next heading above its level: a design document's lone diagram or empty heading named Background covers
-  nothing, since its Goals or Design section is longer than a slide. A recap-named section with any other body is
-  dropped by its own heading and covers nothing after it. A heading path that also names a section outside a span (two
-  slides with one title) is not covered: a quote is told apart by its heading path only, so the decision is kept. The
-  sections stay in the window, since their text may give a later decision's reason.
+- **Recaps**: a candidate whose quote is in a section with `recap`, `summary` or `background` as a word of a heading at
+  any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. The
+  section stays in the window, since its text may give a later decision's reason.
 - **Inverted alternatives**: a rejected option the candidate's own quote, the span of the chosen design, states as part
   of the choice is left out of the record and reported
   (`rejected option '<option>' left out: the quote states it as part of the choice`); the decision is kept. An option is
@@ -530,10 +519,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   text, read as in the verbatim check, is deleted with `memory.delete_version`, which also retires its record; a
   confirmed one, or one whose outcome `decision.outcome` recorded, is tagged `source-changed` instead. The reasoning
   read is the extractor's own record: a key whose active record another identity wrote is left alone. An unconfirmed
-  row whose outcome and reasoning (the reasoning's whitespace and letter case aside) this run recorded under another
-  key (the model worded the scenario differently) is deleted too, so the decision is not served twice, unless its
-  realized outcome is recorded; another decision resting on the same reasoning has another outcome and stays.
-  Otherwise a row whose reasoning is still there stays, whether or not the run emitted it again.
+  row whose outcome and reasoning (whitespace and letter case aside) this run recorded under another key (the model
+  worded the scenario differently) is deleted too, so the decision is not served twice, unless its realized outcome is
+  recorded; another decision resting on the same reasoning has another outcome and stays. Otherwise a row whose
+  reasoning is still there stays, whether or not the run emitted it again.
 - **Citing the document**: a row cites it when its `source_resource_id` starts `knowledge:<namespace>/<source_uri>#`,
   so a heading holding `#` (`C# bindings`) is no obstacle, unless a document `<source_uri>#<part>` it also starts with
   was ever ingested in the namespace: `doc#v2#Intro` cites `doc#v2` once that document exists.

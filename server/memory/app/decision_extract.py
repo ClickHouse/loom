@@ -24,11 +24,10 @@ identity, so a re-run revises the extractor's own rows instead of writing beside
 
 After the writes, the extractor deletes its unconfirmed rows citing this document whose
 reasoning (a span of the document) is no longer in its text, read as in the verbatim
-check, or whose
-outcome and reasoning this run recorded under another key. A row it keeps (confirmed, or
-with a recorded outcome) whose reasoning left is tagged `source-changed` instead. A
-refused write is reported and the run goes on. Runs in-process, with no auth context:
-operator only.
+check, or whose outcome and reasoning this run recorded under another key. A row it keeps
+(confirmed, or with a recorded outcome) whose reasoning left is tagged `source-changed`
+instead. A refused write is reported and the run goes on. Runs in-process, with no auth
+context: operator only.
 """
 
 from __future__ import annotations
@@ -338,9 +337,8 @@ async def extract_document(
         report.error = f"could not read the extractor's rows: {_refusal(e)}"
         return report
     known = _known_decisions(own)
-    recap = dx.recap_span_sections(doc.content or "")
     kept, answered = await _candidates(
-        org, namespace, source_uri, wins, max_per_section, report, known, recap
+        org, namespace, source_uri, wins, max_per_section, report, known
     )
     if wins and not answered:
         # A run that read nothing must not retire anything.
@@ -469,8 +467,6 @@ class _Kept:
     """The candidates kept so far in a run, and what a later one is checked against."""
 
     max_per_section: int
-    # The sections a recap divider covers: their quotes are dropped as a recap's.
-    recap: set[str]
     # (candidate, its section, the texts it was checked against)
     kept: list[tuple[dx.Candidate, str, list[str]]] = field(default_factory=list)
     per_section: dict[str, int] = field(default_factory=dict)
@@ -490,14 +486,12 @@ async def _candidates(
     max_per_section: int,
     report: ExtractReport,
     known: list[tuple[str, str, str]],
-    recap: set[str],
 ) -> tuple[list[tuple[dx.Candidate, str, list[str]]], int]:
     """(candidate, its section, the texts it was checked against) for every candidate
     that passes the checks of `_check_window` (verbatim spans, restatement with a
     reason-less ban kept, recap sections, duplicates, fit), its spans the document's own
     and its inverted rejected options removed, at most `max_per_section` per section;
-    and how many windows the model answered with a readable reply. `recap` holds the
-    breadcrumbs of the sections a recap divider covers.
+    and how many windows the model answered with a readable reply.
 
     A window gets at most one extra call: when its reply holds no decision though its
     text is more than a caption (the second reply is the window's), or when a reason is
@@ -507,7 +501,7 @@ async def _candidates(
     llm = get_llm_client()
     fake_chosen = _fake_chosen()
     system = dx.system_prompt(max_per_section, known)
-    state = _Kept(max_per_section, recap)
+    state = _Kept(max_per_section)
     answered = 0
     # An operator command: its calls are not gated by the namespace's cost cap.
     for w in wins:
@@ -601,7 +595,7 @@ def _check_window(
                 cand = replace(cand, outcome=cand.reasoning)
         # The quote as the chunk writes it, so a re-wrapped one still names its section.
         section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
-        if dx.in_recap(section) or section in state.recap:
+        if dx.in_recap(section):
             reason, span = reason or dx.RECAP, ""
         if span:
             failed.append((cand.outcome, span, section))
@@ -611,7 +605,7 @@ def _check_window(
         if reason:
             report.dropped.append(Dropped(section, reason, cand.quote))
             continue
-        cand = _drop_inverted(cand, section, report)
+        cand = _drop_inverted(cand, section, texts, report)
         state.per_section[section] = state.per_section.get(section, 0) + 1
         state.keys.add(key)
         state.pairs.add(_held_key(cand.outcome, cand.reasoning))
@@ -641,10 +635,19 @@ def _duplicate_or_unfit(
     return "", key
 
 
-def _drop_inverted(cand: dx.Candidate, section: str, report: ExtractReport) -> dx.Candidate:
+def _drop_inverted(
+    cand: dx.Candidate, section: str, texts: list[str], report: ExtractReport
+) -> dx.Candidate:
     """`cand` without the rejected options the text states as part of the choice, each
-    reported; the decision itself stays."""
-    inverted = dx.inverted_options(cand)
+    reported; the decision itself stays. Read on the document's own text, line breaks
+    and all: the stored quote is on one line, without the list items and blank lines
+    that end a sentence."""
+    raw = replace(
+        cand,
+        quote=dx.find_span(cand.quote, texts) or cand.quote,
+        alternatives=[(o, dx.find_span(r, texts) or r) for o, r in cand.alternatives],
+    )
+    inverted = dx.inverted_options(raw)
     for option in inverted:
         reason = f"rejected option {option!r} left out: the quote states it as part of the choice"
         report.dropped.append(Dropped(section, reason, cand.quote))

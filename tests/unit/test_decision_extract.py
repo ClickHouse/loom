@@ -123,7 +123,7 @@ class _World:
         self.prompts: list[tuple[str, str]] = []
         # Replies served before `reply`, one per call: a candidate list, or an error raised.
         self.replies: list[Any] = []
-        # The live document's text, which the recap divider rule reads.
+        # The live document's text, which the retire step reads.
         self.content = DOC
         self._patch(monkeypatch)
         from server.settings import Settings, settings
@@ -3568,90 +3568,6 @@ async def test_a_recap_candidate_with_a_missing_reasoning_is_not_read_again(monk
     assert [d.reason for d in report.dropped] == ["reasoning is not in the document text"]
 
 
-LONG = "A plain set on disk costs random reads, and sorted runs merge in one pass. " * 2
-DECK = (
-    "# Deck\n\n## Intro\n\n" + LONG + "\n\n"
-    "## Background\n\nWhere we started\n\n"
-    "## Old spill\n\n" + LONG + "\n\n"
-    "## Old merge\n\n![merge](m.png)\nThe merge\n\n" + LONG + "\n\n"
-    "## Design\n\n"
-    "## New spill\n\n" + LONG + "\n"
-)
-
-
-def test_a_recap_divider_covers_the_sections_up_to_the_next_short_one() -> None:
-    assert dx.recap_span_sections(DECK) == {"Deck > Old spill", "Deck > Old merge"}
-
-
-@pytest.mark.parametrize(
-    "content",
-    [
-        # A recap-named section with a body of its own is a recap by its own heading.
-        "# Deck\n\n## Summary\n\n" + LONG + "\n\n## Spill\n\n" + LONG + "\n",
-        # A summary line states the decisions the sections after it give.
-        "# Design\n\n## Summary\n\nShard by tenant to bound joins.\n\n## Sharding\n\n"
-        + LONG
-        + "\n\n## Replication\n\n"
-        + LONG
-        + "\n",
-        # A pointer elsewhere is no divider either.
-        "# Design\n\n## Background\n\nSee [the RFC](rfc.md)\n\n## Sharding\n\n" + LONG + "\n",
-        # A heading alone over its subsections: they carry its name in their breadcrumbs.
-        "# Background\n\n## History\n\n" + LONG + "\n\n# Spill\n\n" + LONG + "\n",
-    ],
-)
-def test_a_recap_section_with_a_sentence_a_link_or_subsections_opens_no_span(content) -> None:
-    assert dx.recap_span_sections(content) == set()
-
-
-def test_a_section_titled_as_one_in_a_span_but_outside_it_is_not_covered() -> None:
-    content = DECK + "\n## Old spill\n\n" + LONG + "\n"
-    assert dx.recap_span_sections(content) == {"Deck > Old merge"}
-
-
-@pytest.mark.parametrize("divider", ["![overview](overview.png)\n", ""])
-def test_a_recap_span_ends_at_the_first_section_longer_than_a_slide(divider) -> None:
-    # A design document's lone diagram or empty heading: its long sections are no recap.
-    content = (
-        f"# Design\n\n## Background\n\n{divider}\n## Goals\n\n{LONG * 5}\n\n"
-        f"## Design\n\n{LONG * 5}\n\n## Alternatives\n\n{LONG * 5}\n"
-    )
-    assert len(LONG * 5) > dx.RECAP_SLIDE_CHARS
-    assert dx.recap_span_sections(content) == set()
-
-
-def test_a_recap_span_ends_at_a_heading_above_the_dividers_level() -> None:
-    content = "# A\n\n## Recap\n\n## R\n\n" + LONG + "\n\n# B\n\n" + LONG + "\n"
-    assert dx.recap_span_sections(content) == {"A > R"}
-
-
-@pytest.mark.asyncio
-async def test_a_quote_inside_a_recap_divider_span_is_dropped(monkeypatch) -> None:
-    old = "A plain set on disk costs random reads, and sorted runs merge in one pass."
-    world = _World(
-        monkeypatch,
-        [
-            _candidate(quote=old, reasoning=old, outcome="sorted runs", alternatives=[]),
-            _candidate(
-                scenario="the new spill",
-                quote=old,
-                reasoning=old,
-                outcome="sorted runs",
-                alternatives=[],
-            ),
-        ],
-    )
-    world.content = DECK
-    # The same text in a covered section and in one after the span.
-    _chunks(monkeypatch, (LONG, ("Deck", "Old spill")))
-    report = await _run()
-    assert world.recorded == [] and [d.reason for d in report.dropped] == [dx.RECAP] * 2
-    world.prompts.clear()
-    _chunks(monkeypatch, (LONG, ("Deck", "New spill")))
-    report = await _run()
-    assert len(world.recorded) == 1 and report.dropped[0].reason != dx.RECAP
-
-
 # ------------------------------------------------------------------ inverted alternatives
 
 
@@ -3754,6 +3670,30 @@ async def test_an_option_named_outside_the_quote_stays_rejected(
     (inp,) = world.recorded
     assert inp.alternatives == [f"a plain set on disk — rejected: {reason}"]
     assert report.dropped == []
+
+
+@pytest.mark.asyncio
+async def test_an_option_a_list_item_states_is_inverted_on_the_documents_lines(monkeypatch) -> None:
+    # The stored quote is on one line; the list items that end its sentences are read
+    # from the document's own text.
+    quote = "Plans:\n- sort the runs in memory\n- never spill twice"
+    cand = _candidate(
+        scenario="how runs are kept",
+        outcome="keep runs in memory",
+        reasoning="never spill twice",
+        quote=quote,
+        alternatives=[{"option": "sort the runs in memory", "reason": "never spill twice"}],
+        mentions=[],
+    )
+    world = _World(monkeypatch, [cand])
+    _chunks(monkeypatch, (quote, ("Runs",)))
+    report = await _run()
+    (inp,) = world.recorded
+    assert inp.alternatives == []
+    assert [d.reason for d in report.dropped] == [
+        "rejected option 'sort the runs in memory' left out: the quote states it as part of "
+        "the choice"
+    ]
 
 
 @pytest.mark.asyncio
