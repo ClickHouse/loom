@@ -3240,6 +3240,10 @@ async def test_a_recap_candidate_with_a_missing_reasoning_is_not_read_again(monk
         ("The design favours sorted runs to a hash set.", "a hash set", "x" * 12, False),
         ("Sorted runs outperform a hash set on disk.", "a hash set", "x" * 12, False),
         ("Sorted runs beat a hash set on disk.", "a hash set", "x" * 12, False),
+        # "vs." ends no sentence.
+        ("Sorted runs vs. a hash set on disk.", "a hash set", "x" * 12, False),
+        ("The design rejects a hash set on disk.", "a hash set", "x" * 12, False),
+        ("The merge avoids a hash set on disk.", "a hash set", "x" * 12, False),
         ("Sorted runs, compared with a hash set, read in order.", "a hash set", "x" * 12, False),
         # A hard-wrapped sentence keeps its negation on the next line.
         (

@@ -426,18 +426,19 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   of the choice is left out of the record and reported
   (`rejected option '<option>' left out: the quote states it as part of the choice`); the decision is kept. An option is
   such when every word of it, as the restatement check compares words, is in one sentence of the quote (a sentence ends
-  at `.`, `!` or `?` before whitespace, at a blank line or before a list item; a single line break does not end one) and
-  that sentence holds none of `not`, `no`, `never`, `cannot`, `can't`, `instead`, `rather`, `without`, `fail`, `fails`,
-  `reject`, `rejected`, `than`, `avoid`, `slow`, `over`, `against`, `versus`, `vs`, `unlike`, `replace` (and `replaces`,
-  `replaced`, `replacing`), `favor`, `favour` (and `favored`, `favours` and the like), `prefer` (and `prefers`,
-  `preferred`), `outperform` (and its forms), `beat`, `beats`, `compared`, `dropped`, so "We chose sorted runs over a
-  plain set on disk." and "We prefer sorted runs to a plain set on disk." still reject the set. The list leans wide on
-  purpose: a missed contrast word drops a true alternative's `Rejected:` part, while an inverted option kept would tell
-  an agent the chosen design was rejected. The sentence that holds the option's own rejection reason is not read: it is
-  the rejection. Text outside the quote is not read either: a document often names an option in one sentence ("We looked
-  at a plain set on disk.", a list item, "benchmarked … against …") and rejects it in the next. A quote "…; sharding by
-  tenant is deferred to v2." states "Defer sharding by tenant"; "so v1 cannot evict it" still rejects "evict the largest
-  job".
+  at `.`, `!` or `?` before whitespace, except after `vs.`, `e.g.` or `i.e.`, at a blank line or before a list item; a
+  single line break does not end one) and that sentence holds none of `not`, `no`, `never`, `cannot`, `can't`,
+  `instead`, `rather`, `without`, `fail`, `reject`, `than`, `avoid`, `slow`, `over`, `against`, `versus`, `vs`,
+  `unlike`, `replace` (and `replaces`, `replaced`, `replacing`), `favor`, `favour` (and `favored`, `favours` and the
+  like), `prefer` (and `prefers`, `preferred`), `outperform` (and its forms), `beat`, `beats`, `compare`, `drop`, each
+  of `fail`, `reject`, `avoid`, `compare` and `drop` in any form (`fails`, `rejected`, `avoids`, `compared`, `dropped`),
+  so "We chose sorted runs over a plain set on disk." and "We prefer sorted runs to a plain set on disk." still reject
+  the set. The list leans wide on purpose: a missed contrast word drops a true alternative's `Rejected:` part, while an
+  inverted option kept would tell an agent the chosen design was rejected. The sentence that holds the option's own
+  rejection reason is not read: it is the rejection. Text outside the quote is not read either: a document often names
+  an option in one sentence ("We looked at a plain set on disk.", a list item, "benchmarked … against …") and rejects it
+  in the next. A quote "…; sharding by tenant is deferred to v2." states "Defer sharding by tenant"; "so v1 cannot evict
+  it" still rejects "evict the largest job".
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.

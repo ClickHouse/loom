@@ -406,12 +406,17 @@ def in_recap(section: str) -> bool:
 
 # A sentence end, a blank line, or a line break before a list item. A single line break
 # alone does not end a sentence: hard-wrapped text keeps a negation on the next line.
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n\s*\n\s*|\n(?=[ \t]*(?:[-*+]|\d+[.)])\s)")
+_SENTENCE_END = re.compile(
+    # "vs.", "e.g." and "i.e." end no sentence.
+    r"(?<!\bvs\.)(?<!\be\.g\.)(?<!\bi\.e\.)(?<=[.!?])\s+"
+    r"|\n\s*\n\s*|\n(?=[ \t]*(?:[-*+]|\d+[.)])\s)",
+    re.I,
+)
 # Words that say a sentence rejects or contrasts what it names.
 _NEGATION = re.compile(
-    r"\b(?:not|no|never|cannot|can['’]t|instead|rather|without|fails?|reject(?:ed)?|than"
-    r"|avoid|slow|over|against|versus|vs|unlike|replac\w*|favou?r\w*|prefer\w*"
-    r"|outperform\w*|beats?|compared|dropped)\b",
+    r"\b(?:not|no|never|cannot|can['’]t|instead|rather|without|fail\w*|reject\w*|than"
+    r"|avoid\w*|slow|over|against|versus|vs|unlike|replac\w*|favou?r\w*|prefer\w*"
+    r"|outperform\w*|beats?|compar\w*|drop\w*)\b",
     re.I,
 )
 
