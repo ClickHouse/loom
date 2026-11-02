@@ -260,7 +260,9 @@ A decision recorded in a repository's trunk code namespace also reaches MCP `loo
 repository, for a caller who may read the namespace ([unified search](unified-search.md#reading-the-memory-section)).
 
 The memory row's value is one statement, `Category: <category>. Scenario: <scenario>. Decided <outcome> because
-<reasoning>. Rejected: <alternative>; …`, then `Realized: …` once `decision.outcome` has recorded one. Search embeds
+<reasoning>. Rejected: <alternative>; …`, then `Realized: …` once `decision.outcome` has recorded one. A reasoning
+that is the outcome word for word (case and whitespace aside) records a ban or an invariant stated with no reason: the
+statement reads `Decided <outcome>.` and `context.pack` gives no `because`. Search embeds
 and excerpts it and `memory.for_file` shows it. Each part is shortened to fit the embedded excerpt, the scenario
 most, because the pre-edit line shows the start of the statement and must reach the outcome. The excerpt is
 measured as the value is stored, JSON-encoded, where a non-ASCII character takes six or more, so a Cyrillic or CJK
@@ -366,7 +368,16 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   is shortened and ends in `…`.
 - **Prompt**: the model is asked for the reason the text gives for each choice (the cost, constraint or failure it
   avoids), never the decision restated, for nothing from a section that sums up other sections, and never to give as
-  the outcome what the text marks as former, replaced or superseded (an old default, a previous behaviour).
+  the outcome what the text marks as former, replaced or superseded (an old default, a previous behaviour). It says
+  nothing about images or captions: what is image-only is the filter's call below, and a section it sends, such as a
+  one-line caption over a diagram beside more text, may state a decision.
+- **Second read**: a window gets at most one extra model call, reported as `read again`. When the reply holds no
+  decision and the window's text is more than a caption (80 characters once images and link markup are removed), the
+  window is read once more with the same prompt and the second reply is the window's. When a candidate's quote is in
+  the text but its reasoning or a rejected option's reason is not (a model often joins one from two places), the
+  window is read once more with those spans named, asking for each such decision again with one contiguous span, or
+  none; the first reply's other candidates stand, and the failed ones are reported as dropped. A window whose second
+  read fails or comes back unreadable is lost as any window is: the exit code reads the final outcome.
 - **Image-only sections**: a section whose own text has no words (a heading alone or over an image), or holds an image
   and at most 80 characters of other text (a caption), is not sent to the model and gets the line
   `image-only, rationale not extracted`; a heading alone over its subsections is not one. The text above the first
@@ -391,7 +402,22 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   (`we`, `the`, `will`, `decided`, `chose`, `use`, `instead`, `because` and the like) are skipped in any form: "We
   decided on spilling into sorted runs." restates the outcome `spill into sorted runs`; "Sorted runs avoid random reads
   on disk." gives a reason. An outcome that carries its own reason leaves the reasoning nothing to add, so the candidate
-  is dropped, which is why the prompt asks for the outcome without its reason.
+  is dropped, which is why the prompt asks for the outcome without its reason. One exception: a ban stated with no
+  reason ("Client-side retries only; no server retry setting."), a candidate the model marks `is_constraint` whose
+  quote holds `only`, `no`, `never`, `must`, `not`, `always`, `at most` or `at least` as a word, is kept with its
+  reasoning as its outcome, so it is recorded with the `constraint` tag and reads `Decided <outcome>.` with no reason.
+  The flag alone is not enough: models mark plain descriptions as constraints too.
+- **Recaps**: a candidate whose quote is in a section with `recap`, `recall`, `summary` or `background` as a word of
+  a heading at any level of its breadcrumb is dropped with the line
+  `the quote is in a recap, summary or background section`. The section stays in the window, since its text may give a
+  later decision's reason.
+- **Inverted alternatives**: a rejected option the text states as part of the choice is left out of the record and
+  reported (`rejected option '<option>' left out: the text states it as part of the choice`); the decision is kept. An
+  option is such when every word of it, as the restatement check compares words, is in one sentence of the window and
+  that sentence holds none of `not`, `no`, `never`, `cannot`, `can't`, `instead`, `rather`, `without`, `fail`,
+  `fails`, `reject`, `rejected`, `than`, `avoid`, `slow`. The sentence that holds the option's own rejection reason is
+  not read: it is the rejection. "Sharding by tenant is deferred to v2." states "Defer sharding by tenant"; "so v1
+  cannot evict it" still rejects "evict the largest job".
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.

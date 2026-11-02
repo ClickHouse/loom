@@ -202,3 +202,22 @@ def test_only_sections_rejects_unknown_names() -> None:
 
     with pytest.raises(ValidationError):
         ContextPackInput(org="o", namespace="ns", agent="a", only_sections=["impact"])  # type: ignore[list-item]
+
+
+def test_a_decision_whose_reasoning_is_its_outcome_gives_no_because(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _dead_other_sections(monkeypatch)
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search_stub([_DECISION]))
+    ban = "Client-side retries only; no server retry setting."
+
+    async def _records(ch: Any, org: str, ns: str, keys: list[str]) -> dict[str, Any]:
+        return {"d1": {"scenario": "where requests are retried", "outcome": ban, "reasoning": ban}}
+
+    monkeypatch.setattr("server.memory.app.decision._decision_records", _records)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: object())
+    out = asyncio.run(
+        handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="retries"))
+    )
+    dec = out.sections["decisions"]
+    assert f"→ decided: {ban}" in dec and "because" not in dec

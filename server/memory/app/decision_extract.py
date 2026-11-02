@@ -1,7 +1,9 @@
 """`loom decisions extract`: mine one knowledge document into decision records.
 
-Each window of the document's live chunks goes to the model once; a candidate that is
-not the document's own words, or whose reasoning only restates its outcome, is dropped
+Each window of the document's live chunks goes to the model once, and once more when its
+reply holds no decision or a reason that is not one span of the text. A candidate that is
+not the document's own words, whose reasoning only restates its outcome (a ban stated
+with no reason aside), or whose quote is in a recap section, is dropped
 (`server.memory.domain.decision_extract`). A kept candidate is reconciled against what
 the namespace already holds, then written through `decision.record` under one fixed
 identity, so a re-run revises the extractor's own rows instead of writing beside them:
@@ -31,7 +33,7 @@ operator only.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 import httpx
@@ -135,6 +137,9 @@ class ExtractReport:
     records: list[RecordReport] = field(default_factory=list)
     dropped: list[Dropped] = field(default_factory=list)
     image_only: list[str] = field(default_factory=list)
+    # A window read a second time, and why: its reply held no decision, or a reason that
+    # is not one span of the text. A window gets at most one extra call.
+    retried: list[Dropped] = field(default_factory=list)
     # Keys deleted (or, in a dry run, to delete): the extractor's rows whose text left.
     retired: list[str] = field(default_factory=list)
     # "<old key> -> <key>" for each extractor row deleted (or to delete) because this run
@@ -392,19 +397,21 @@ def _known_decisions(own: list[tuple[MemoryRow, dict[str, Any]]]) -> list[tuple[
 
 
 async def _read_window(
-    llm: Any, system: str, w: Window, report: ExtractReport, *, fake_chosen: bool
+    llm: Any, system: str, w: Window, report: ExtractReport, *, fake_chosen: bool, note: str = ""
 ) -> list[dx.Candidate] | None:
     """The model's candidates for one window, or None when the window is lost: the call
     failed, the fake model answered for a real provider, or the reply is unreadable; each
-    is a dropped line marked `refused`, a read the run needed."""
+    is a dropped line marked `refused`, a read the run needed. `note` goes before the
+    window's text."""
     from server.llm.json_text import strip_code_fence
 
     first = dx.breadcrumb(w.chunks[0].section_path)
+    user = f"{note}\n\n{dx.user_prompt(w)}" if note else dx.user_prompt(w)
     try:
         with llm_stage("decision_extract"):
             res = await llm.complete(
                 system,
-                dx.user_prompt(w),
+                user,
                 max_tokens=_REPLY_TOKENS,
                 response_format={"type": "json_object"},
             )
@@ -424,6 +431,22 @@ async def _read_window(
     return cands
 
 
+@dataclass
+class _Kept:
+    """The candidates kept so far in a run, and what a later one is checked against."""
+
+    max_per_section: int
+    # (candidate, its section, the texts it was checked against)
+    kept: list[tuple[dx.Candidate, str, list[str]]] = field(default_factory=list)
+    per_section: dict[str, int] = field(default_factory=dict)
+    keys: set[str] = field(default_factory=set)
+    pairs: set[tuple[str, str]] = field(default_factory=set)  # (outcome, reasoning)
+
+
+_EMPTY_REPLY = "the model's reply held no decision; the window was read once more"
+_STITCHED = "a reason is not one span of the text; the window was read once more for those"
+
+
 async def _candidates(
     org: str,
     namespace: str,
@@ -436,57 +459,116 @@ async def _candidates(
     """(candidate, its section, the texts it was checked against) for every candidate
     that passes the verbatim and restatement checks, its spans the document's own, at
     most `max_per_section` per section; and how many windows the model answered with a
-    readable reply."""
+    readable reply.
+
+    A window gets at most one extra call: when its reply holds no decision though its
+    text is more than a caption (the second reply is the window's), or when a reason is
+    not one span of the text while its quote is (the second reply adds to the first)."""
     from server.llm.client import get_llm_client
 
     llm = get_llm_client()
     fake_chosen = _fake_chosen()
     system = dx.system_prompt(max_per_section, known)
-    kept: list[tuple[dx.Candidate, str, list[str]]] = []
+    state = _Kept(max_per_section)
     answered = 0
-    per_section: dict[str, int] = {}
-    keys: set[str] = set()
-    pairs: set[tuple[str, str]] = set()  # (outcome, reasoning) of each kept candidate
     # An operator command: its calls are not gated by the namespace's cost cap.
     for w in wins:
+        first = dx.breadcrumb(w.chunks[0].section_path)
         cands = await _read_window(llm, system, w, report, fake_chosen=fake_chosen)
+        retried = cands == [] and dx.more_than_a_caption("\n\n".join(c.text for c in w.chunks))
+        if retried:
+            report.retried.append(Dropped(first, _EMPTY_REPLY))
+            cands = await _read_window(llm, system, w, report, fake_chosen=fake_chosen)
         if cands is None:
             continue
         answered += 1
-        texts = [c.text for c in w.chunks]
-        for cand in cands:
-            reason = dx.verbatim_failure(cand, texts)
-            if not reason:
-                cand = dx.document_spans(cand, texts)
-                if dx.restates_outcome(cand):
+        failed = _check_window(org, namespace, source_uri, w, cands, state, report)
+        if failed and not retried:
+            report.retried.append(Dropped(first, _STITCHED))
+            note = dx.stitched_note(failed)
+            again = await _read_window(llm, system, w, report, fake_chosen=fake_chosen, note=note)
+            _check_window(org, namespace, source_uri, w, again or [], state, report)
+    return state.kept, answered
+
+
+def _check_window(
+    org: str,
+    namespace: str,
+    source_uri: str,
+    w: Window,
+    cands: list[dx.Candidate],
+    state: _Kept,
+    report: ExtractReport,
+) -> list[tuple[str, str]]:
+    """Check one reply's candidates, keeping each that passes in `state` and reporting
+    each dropped; the (outcome, span) of each whose reason span is not in the text while
+    its quote is, for a second call."""
+    texts = [c.text for c in w.chunks]
+    failed: list[tuple[str, str]] = []
+    for cand in cands:
+        reason = dx.verbatim_failure(cand, texts)
+        span = dx.unfound_reason(cand, texts) if reason else ""
+        if not reason:
+            cand = dx.document_spans(cand, texts)
+            if dx.restates_outcome(cand):
+                # A ban the text gives no reason for is kept as one; the rest is dropped.
+                if dx.states_a_ban(cand):
+                    cand = dx.without_reason(cand)
+                else:
                     reason = dx.RESTATED
-            # The quote as the chunk writes it, so a re-wrapped one still names its section.
-            section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
-            try:
-                key = svc.decision_key(cand.category, cand.scenario)
-            except ValueError:
-                # The key keeps letters and digits a-z, 0-9 only (a CJK scenario has none).
-                key = ""
-                reason = reason or "no letters or digits a-z, 0-9 to build a key from"
-            pair = (cand.outcome, collapse_ws(cand.reasoning))
-            if not reason and key in keys:
-                reason = "same key as an earlier candidate"
-            elif not reason and pair in pairs:
-                # Overlapping chunks feed one span to two windows, worded apart.
-                reason = "same decision as an earlier candidate"
-            elif not reason and not _fits(org, namespace, source_uri, cand, section):
-                # Checked before it takes a slot, a key or a code lookup.
-                reason = "does not fit decision.record"
-            elif not reason and per_section.get(section, 0) >= max_per_section:
-                reason = f"the section already has --max-per-section {max_per_section}"
-            if reason:
-                report.dropped.append(Dropped(section, reason, cand.quote))
-                continue
-            per_section[section] = per_section.get(section, 0) + 1
-            keys.add(key)
-            pairs.add(pair)
-            kept.append((cand, section, texts))
-    return kept, answered
+        # The quote as the chunk writes it, so a re-wrapped one still names its section.
+        section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
+        if dx.in_recap(section):
+            reason, span = reason or dx.RECAP, ""
+        if span:
+            failed.append((cand.outcome, span))
+        reason = reason or _duplicate_or_unfit(org, namespace, source_uri, cand, section, state)
+        if reason:
+            report.dropped.append(Dropped(section, reason, cand.quote))
+            continue
+        cand = _drop_inverted(cand, section, texts, report)
+        state.per_section[section] = state.per_section.get(section, 0) + 1
+        state.keys.add(svc.decision_key(cand.category, cand.scenario))
+        state.pairs.add((cand.outcome, collapse_ws(cand.reasoning)))
+        state.kept.append((cand, section, texts))
+    return failed
+
+
+def _duplicate_or_unfit(
+    org: str, namespace: str, source_uri: str, cand: dx.Candidate, section: str, state: _Kept
+) -> str:
+    """Why a candidate that passed the text checks is still dropped, or ''."""
+    try:
+        key = svc.decision_key(cand.category, cand.scenario)
+    except ValueError:
+        # The key keeps letters and digits a-z, 0-9 only (a CJK scenario has none).
+        return "no letters or digits a-z, 0-9 to build a key from"
+    if key in state.keys:
+        return "same key as an earlier candidate"
+    if (cand.outcome, collapse_ws(cand.reasoning)) in state.pairs:
+        # Overlapping chunks feed one span to two windows, worded apart.
+        return "same decision as an earlier candidate"
+    if not _fits(org, namespace, source_uri, cand, section):
+        # Checked before it takes a slot, a key or a code lookup.
+        return "does not fit decision.record"
+    if state.per_section.get(section, 0) >= state.max_per_section:
+        return f"the section already has --max-per-section {state.max_per_section}"
+    return ""
+
+
+def _drop_inverted(
+    cand: dx.Candidate, section: str, texts: list[str], report: ExtractReport
+) -> dx.Candidate:
+    """`cand` without the rejected options the text states as part of the choice, each
+    reported; the decision itself stays."""
+    inverted = dx.inverted_options(cand, texts)
+    for option in inverted:
+        reason = f"rejected option {option!r} left out: the text states it as part of the choice"
+        report.dropped.append(Dropped(section, reason, cand.quote))
+    if not inverted:
+        return cand
+    kept = [(o, r) for o, r in cand.alternatives if o not in inverted]
+    return replace(cand, alternatives=kept)
 
 
 def _record_input(

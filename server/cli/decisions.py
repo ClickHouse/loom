@@ -56,9 +56,11 @@ def register_decisions_cli(sub: Any) -> None:
     p_ext = dsub.add_parser(
         "extract",
         help="Mine one knowledge document into decision records: one model call per window of its "
-        "sections (a heading over only an image and its caption is not sent), candidates kept "
-        "only when their quote, reasoning and rejected options' reasons are the document's "
-        "own words and the reasoning says more than the outcome, written through "
+        "sections, two when the first reply holds no decision or a reason that is not one span "
+        "of the text (a heading over only an image and its caption is not sent), candidates "
+        "kept only when their quote, reasoning and rejected options' reasons are the "
+        "document's own words, the reasoning says more than the outcome (a ban may give no "
+        "reason) and the quote is not in a recap section, written through "
         "decision.record as agent loom-decisions. A re-run revises or retires the extractor's "
         "own unconfirmed rows and tags a confirmed (pinned or attested) row source-changed. "
         "Dry run by default (still calls the model); --apply writes. Exits 1 when it could "
@@ -146,6 +148,8 @@ def print_report(report: ExtractReport) -> None:
     for d in report.dropped:
         quote = f": {d.quote[:120]!r}" if d.quote else ""
         print(f"- dropped [{d.section or '(untitled)'}] {d.reason}{quote}")
+    for d in report.retried:
+        print(f"- read again [{d.section or '(untitled)'}] {d.reason}")
     for section in report.image_only:
         print(f"- image-only, rationale not extracted: {section or '(untitled)'}")
     retire = "would delete" if report.dry_run else "deleted"

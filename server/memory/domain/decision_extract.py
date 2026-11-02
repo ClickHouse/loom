@@ -3,8 +3,10 @@ reply, the verbatim and restatement checks, and sorting the code names a candida
 mentions.
 
 A candidate is kept only when its quote, its reasoning and every rejected option's reason
-each sit inside one chunk the model read, whitespace aside, and its reasoning says more
-than its outcome: what reaches an agent before an edit is the document's own reason.
+each sit inside one chunk the model read, whitespace aside, its reasoning says more than
+its outcome (a ban the text gives no reason for is kept as one with none), and its quote
+is not in a recap section: what reaches an agent before an edit is the document's own
+reason. A rejected option the text states as part of the choice is left out.
 """
 
 from __future__ import annotations
@@ -65,9 +67,8 @@ SYSTEM = (
     "- mentions: the class, function and setting names and pull request numbers the "
     "text names, as written.\n"
     "Copy the document's words; never paraphrase a quote, a reasoning or a reason. Keep "
-    "product names in quote only. Emit nothing for a section whose body is only a "
-    "heading, an image, or an image with its caption, and nothing for a section that "
-    "sums up or recaps other sections. Never give as the outcome what the text marks as "
+    "product names in quote only. Emit nothing for a section that sums up or recaps "
+    "other sections. Never give as the outcome what the text marks as "
     "former, replaced or superseded (an old default, a previous behaviour): the decision "
     "is what replaced it. At most {max_per_section} items per section; "
     '{"decisions": []} when the part records no decision.'
@@ -163,12 +164,17 @@ def has_image(body: str) -> bool:
     return bool(_IMAGE_MARKUP.search(_code_as_text(body)))
 
 
+def more_than_a_caption(body: str) -> bool:
+    """`body` holds more text than a caption, images and link markup aside."""
+    return len(caption_text(_code_as_text(body))) > CAPTION_MAX_CHARS
+
+
 def image_only(body: str) -> bool:
     """A section body with no words (`no_words`), or with an image and no more text than
     a caption."""
     if no_words(body):
         return True
-    return has_image(body) and len(caption_text(_code_as_text(body))) <= CAPTION_MAX_CHARS
+    return has_image(body) and not more_than_a_caption(body)
 
 
 @dataclass
@@ -283,6 +289,33 @@ def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
     return ""
 
 
+def unfound_reason(cand: Candidate, texts: list[str]) -> str:
+    """The reasoning or rejected option's reason that is not in the text while the quote
+    is, or '': a model often joins a reason from two places, and asked again gives one
+    span."""
+    if not find_span(cand.quote, texts):
+        return ""
+    for span in (cand.reasoning, *(reason for _option, reason in cand.alternatives)):
+        if not find_span(span, texts):
+            return span
+    return ""
+
+
+def stitched_note(failed: Sequence[tuple[str, str]]) -> str:
+    """What the second call of a window adds before the text: each (outcome, span) whose
+    reason span is not in the text."""
+    lines = "\n".join(
+        f"- {collapse_ws(outcome)}: {json.dumps(collapse_ws(span), ensure_ascii=False)}"
+        for outcome, span in failed
+    )
+    return (
+        "In your last reply these decisions have a reason that is not one span of the text: "
+        "it joins words from two places. Reply with only these decisions again, each "
+        "reasoning and each rejected option's reason one contiguous span copied from the "
+        'text, or {"decisions": []} when the text gives no such span:\n' + lines
+    )
+
+
 def document_spans(cand: Candidate, texts: list[str]) -> Candidate:
     """`cand` with each span replaced by the text's own, line breaks and all, for a
     candidate that passed the verbatim check: what is stored is the document's."""
@@ -319,6 +352,83 @@ def restates_outcome(cand: Candidate) -> bool:
     plural and tense endings and the filler words aside, is a word of the outcome. Such
     a span is the decision in the document's words, not the reason for it."""
     return _content_words(cand.reasoning) <= _content_words(cand.outcome)
+
+
+# A ban or an invariant: a constraint the text states may give no reason for it.
+_BAN_MARKER = re.compile(r"\b(?:only|no|never|must|not|always|at\s+most|at\s+least)\b", re.I)
+
+
+def states_a_ban(cand: Candidate) -> bool:
+    """A constraint whose quote says only, no, never, must, not, always, at most or at
+    least: kept with no reason when its reasoning restates it. The model's constraint
+    flag alone is not enough: it marks plain descriptions as constraints too."""
+    return cand.is_constraint and bool(_BAN_MARKER.search(cand.quote))
+
+
+def without_reason(cand: Candidate) -> Candidate:
+    """A ban the text states with no reason: its outcome is its reasoning, the document's
+    span on one line, which the statement reads as no stated reason."""
+    return replace(cand, outcome=collapse_ws(cand.reasoning))
+
+
+# A section that restates others: its quote is no decision, though its text stays in the
+# window as a later decision's reason.
+_RECAP_HEADING = re.compile(r"\b(?:recap|recall|summary|background)\b", re.I)
+RECAP = "the quote is in a recap, summary or background section"
+
+
+def in_recap(section: str) -> bool:
+    """A heading at any level of the breadcrumb names a recap, summary or background."""
+    return bool(_RECAP_HEADING.search(section))
+
+
+# A sentence end or a line break.
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n")
+# Words that say a sentence rejects or contrasts what it names.
+_NEGATION = re.compile(
+    r"\b(?:not|no|never|cannot|can['’]t|instead|rather|without|fails?|reject(?:ed)?|than"
+    r"|avoid|slow)\b",
+    re.I,
+)
+
+
+def _sentences(text: str) -> list[tuple[int, int]]:
+    """The (start, end) of each sentence or line of `text`."""
+    out: list[tuple[int, int]] = []
+    start = 0
+    for m in _SENTENCE_END.finditer(text):
+        out.append((start, m.start()))
+        start = m.end()
+    out.append((start, len(text)))
+    return out
+
+
+def _states_as_chosen(option: str, reason: str, text: str) -> bool:
+    """One sentence of `text` holds every content word of `option` and no negation or
+    contrast word, and is not the sentence giving the reason it was rejected."""
+    words = _content_words(option)
+    if not words:
+        return False
+    pattern = re.compile(r"\s+".join(map(re.escape, reason.split()))) if reason.split() else None
+    reasons = [(m.start(), m.end()) for m in pattern.finditer(text)] if pattern else []
+    for start, end in _sentences(text):
+        if any(a < end and start < b for a, b in reasons):
+            continue
+        sentence = text[start:end]
+        if words <= _content_words(sentence) and not _NEGATION.search(sentence):
+            return True
+    return False
+
+
+def inverted_options(cand: Candidate, texts: Sequence[str]) -> list[str]:
+    """The rejected options the text states as part of the choice ("Sharding by tenant is
+    deferred to v2" read as the rejected "Defer sharding by tenant"): a model inverts
+    them. "v1 cannot evict it" still rejects "evict the largest job"."""
+    return [
+        option
+        for option, reason in cand.alternatives
+        if any(_states_as_chosen(option, reason, text) for text in texts)
+    ]
 
 
 @dataclass(frozen=True)

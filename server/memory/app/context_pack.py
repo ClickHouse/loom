@@ -41,6 +41,7 @@ from server.memory.domain.context_layout import (
     label_part,
     one_item,
 )
+from server.memory.domain.decision_statement import states_reason
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
 from server.memory.domain.memory_types import excluded_from_unfiltered_search
 from server.memory.domain.search_types import hit_row_key, names_row
@@ -523,7 +524,7 @@ async def _pack_decisions_from_hits(
         line += (f" {made}" if made else "") + f" {scenario}"
         if outcome:
             line += f" → decided: {outcome}"
-        if reasoning:
+        if reasoning and states_reason(rec):
             line += f" (because {reasoning[:160]})"
         if realized:
             succ = rec.get("success")

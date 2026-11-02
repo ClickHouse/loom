@@ -119,6 +119,8 @@ class _World:
         self.refuse_delete: Any = None
         self.deletes: list[Any] = []
         self.prompts: list[tuple[str, str]] = []
+        # Replies served before `reply`, one per call: a candidate list, or an error raised.
+        self.replies: list[Any] = []
         self._patch(monkeypatch)
         from server.settings import settings
 
@@ -148,7 +150,10 @@ class _World:
         class _LLM:
             async def complete(self, system, user, max_tokens=0, response_format=None):
                 world.prompts.append((system, user))
-                return SimpleNamespace(text=json.dumps({"decisions": world.reply}), stop_reason="")
+                reply = world.replies.pop(0) if world.replies else world.reply
+                if isinstance(reply, Exception):
+                    raise reply
+                return SimpleNamespace(text=json.dumps({"decisions": reply}), stop_reason="")
 
         async def knowledge_get(inp):
             return SimpleNamespace(found=inp.source_uri in world.docs, content=DOC)
@@ -705,7 +710,8 @@ async def test_a_chunk_with_only_an_image_is_not_sent_to_the_model(monkeypatch) 
 
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "img.png" not in prompt[1] and "[section: Spilling > Final DISTINCT]" in prompt[1]
     assert report.image_only == ["Spilling > Architecture"]
 
@@ -2195,7 +2201,8 @@ def test_the_prompt_asks_for_the_reason_and_skips_recaps_and_superseded_text() -
     assert "Never the decision restated in other words" in prompt
     assert "a section that sums up or recaps other sections" in prompt
     assert "former, replaced or superseded" in prompt
-    assert "an image with its caption" in prompt
+    # The code decides what is image-only: a caption over a diagram may state a decision.
+    assert "caption" not in prompt and "an image" not in prompt
 
 
 @pytest.mark.parametrize(
@@ -2232,7 +2239,8 @@ async def test_a_captioned_diagram_is_not_sent_and_is_reported_image_only(monkey
     monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "Figure 1" not in prompt[1]
     assert report.image_only == ["Spilling > Architecture"]
 
@@ -2278,7 +2286,8 @@ async def test_a_long_sections_last_chunk_with_an_image_and_a_short_tail_is_sent
     monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "The merge reads each run once." in prompt[1]
     assert report.image_only == ["Spilling > Architecture"]
 
@@ -2399,7 +2408,8 @@ async def test_a_parent_sections_captioned_picture_is_not_sent(monkeypatch) -> N
     monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "Figure 1" not in prompt[1] and "[section: Spilling > Final DISTINCT]" in prompt[1]
     assert report.image_only == ["Spilling"]
 
@@ -2458,7 +2468,8 @@ async def test_a_badge_and_caption_preamble_is_not_sent_and_is_reported(
     monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "Build status" not in prompt[1]
     assert report.image_only == ["", "Spilling > Architecture"]
     cli.print_report(report)
@@ -2485,7 +2496,8 @@ async def test_chunks_stored_with_no_section_path_are_judged_on_their_own_text(
     monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "Build status" not in prompt[1] and BODY in prompt[1]
     assert report.image_only == ["", "Spilling > Architecture"]
 
@@ -2549,7 +2561,8 @@ async def test_a_linked_badge_and_caption_preamble_is_not_sent(monkeypatch) -> N
     monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "Build status" not in prompt[1]
     assert report.image_only == ["", "Spilling > Architecture"]
 
@@ -2625,8 +2638,11 @@ async def test_a_dropped_candidate_with_a_rewrapped_quote_names_the_quotes_secti
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     assert world.recorded == []
-    (d,) = report.dropped
-    assert (d.section, d.reason) == ("Spilling > Two", "reasoning is not in the document text")
+    # The window is read once more for the reasoning; the model gives the same reply.
+    assert [d.section for d in report.retried] == ["Spilling > One"]
+    assert [(d.section, d.reason) for d in report.dropped] == [
+        ("Spilling > Two", "reasoning is not in the document text")
+    ] * 2
 
 
 @pytest.mark.parametrize(
@@ -2667,5 +2683,251 @@ async def test_a_captioned_picture_in_a_preamble_with_text_is_sent(monkeypatch) 
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     assert dx.image_only(picture) and "" not in report.image_only
-    (prompt,) = world.prompts
+    prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
+    assert retry == prompt
     assert "Figure 1: the spill path." in prompt[1] and BODY in prompt[1]
+
+
+# ------------------------------------------------------------------ second reads
+
+
+def _chunks(monkeypatch, *chunks: tuple[str, tuple[str, ...]]) -> None:
+    from server.knowledge.app import document_reads
+
+    async def read(org, ns, uri):
+        return [CorpusChunk(uri, i, text, path) for i, (text, path) in enumerate(chunks)]
+
+    monkeypatch.setattr(document_reads, "document_chunks", read)
+
+
+@pytest.mark.asyncio
+async def test_an_empty_reply_is_read_once_more_and_the_second_reply_is_used(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    world.replies = [[]]
+    report = await _run()
+    assert len(world.prompts) == 2 and world.prompts[0] == world.prompts[1]
+    assert [r.action for r in report.records] == ["written"]
+    assert [(d.section, d.reason) for d in report.retried] == [(SECTION, de._EMPTY_REPLY)]
+    assert cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_an_empty_reply_over_a_caption_of_text_is_not_read_again(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    _chunks(monkeypatch, ("New planner pass", ("Planner",)))
+    report = await _run()
+    assert len(world.prompts) == 1 and report.retried == []
+    assert cli.exit_code(report) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_failed_second_read_loses_the_window(monkeypatch) -> None:
+    import httpx
+
+    world = _World(monkeypatch, [])
+    world.replies = [[], httpx.ConnectError("down")]
+    report = await _run()
+    assert len(world.prompts) == 2 and world.recorded == []
+    assert report.error.startswith("no window was read") and cli.exit_code(report) == 1
+
+
+_STITCHED_REASONING = "A plain set on disk ORDER BY."
+
+
+@pytest.mark.asyncio
+async def test_a_stitched_reasoning_is_asked_for_again_as_one_span(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    world.replies = [[_candidate(reasoning=_STITCHED_REASONING)]]
+    report = await _run()
+    assert len(world.prompts) == 2
+    note = world.prompts[1][1]
+    assert note.startswith("In your last reply") and json.dumps(_STITCHED_REASONING) in note
+    assert note.endswith(world.prompts[0][1])
+    assert [r.action for r in report.records] == ["written"]
+    assert [d.reason for d in report.retried] == [de._STITCHED]
+    assert [d.reason for d in report.dropped] == ["reasoning is not in the document text"]
+
+
+@pytest.mark.asyncio
+async def test_a_window_gets_at_most_one_extra_call(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    stitched = [{"option": "a plain set on disk", "reason": "costs on disk random reads"}]
+    world.replies = [[], [_candidate(alternatives=stitched)]]
+    report = await _run()
+    assert len(world.prompts) == 2 and world.recorded == []
+    assert [d.reason for d in report.retried] == [de._EMPTY_REPLY]
+    assert [d.reason for d in report.dropped] == [
+        "the reason given for rejecting 'a plain set on disk' is not in the document text"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_short_or_unquoted_failure_is_not_asked_for_again(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate(quote="A quote the document never wrote.")])
+    report = await _run()
+    assert len(world.prompts) == 1 and report.retried == []
+
+
+# ------------------------------------------------------------------ bans with no reason
+
+_BAN = "Client-side retries only; no server retry setting."
+
+
+def _ban(**over: Any) -> dict[str, Any]:
+    ban: dict[str, Any] = {
+        "category": "design:retries",
+        "scenario": "where requests are retried",
+        "outcome": "client-side retries only, no server retry setting",
+        "reasoning": _BAN,
+        "quote": _BAN,
+        "alternatives": [],
+        "is_constraint": True,
+        "mentions": [],
+    }
+    return _candidate(**{**ban, **over})
+
+
+@pytest.mark.parametrize(
+    ("quote", "is_constraint", "ban"),
+    [
+        (_BAN, True, True),
+        ("Reads must never block on a merge.", True, True),
+        ("At most one spill file is open per thread.", True, True),
+        ("The proxy retries each request.", True, False),
+        # "nothing" and "cannot" hold no word-bounded marker.
+        ("The planner cannot see nothing here.", True, False),
+        (_BAN, False, False),
+    ],
+)
+def test_a_ban_is_a_constraint_whose_quote_says_so(quote, is_constraint, ban) -> None:
+    cand = _cand(quote=quote, is_constraint=is_constraint)
+    assert dx.states_a_ban(cand) is ban
+
+
+@pytest.mark.asyncio
+async def test_a_ban_stated_with_no_reason_is_kept_as_one(monkeypatch) -> None:
+    from server.memory.domain.decision_statement import memory_value
+
+    world = _World(monkeypatch, [_ban()])
+    _chunks(monkeypatch, (f"{_BAN} The proxy adds jitter to each attempt.", ("Retries",)))
+    report = await _run()
+    assert [r.action for r in report.records] == ["written"] and report.dropped == []
+    (inp,) = world.recorded
+    assert inp.outcome == inp.reasoning == _BAN and de.CONSTRAINT_TAG in inp.tags
+    statement = memory_value({"outcome": inp.outcome, "reasoning": inp.reasoning})
+    assert statement == f"Decided {_BAN}"
+
+
+@pytest.mark.parametrize("over", [{"is_constraint": False}, {"quote": "Client-side retries."}])
+@pytest.mark.asyncio
+async def test_a_restatement_that_is_no_ban_is_still_dropped(monkeypatch, over) -> None:
+    world = _World(monkeypatch, [_ban(**over)])
+    _chunks(monkeypatch, (f"{_BAN} Client-side retries.", ("Retries",)))
+    report = await _run()
+    assert world.recorded == []
+    assert [d.reason for d in report.dropped] == [dx.RESTATED]
+
+
+# ------------------------------------------------------------------ recaps
+
+
+@pytest.mark.parametrize(
+    ("section", "recap"),
+    [
+        ("Design > Recap", True),
+        ("Background > Final DISTINCT", True),
+        ("Spilling > A quick recall of v1", True),
+        ("SUMMARY", True),
+        ("Spilling > Final DISTINCT", False),
+        ("Recalling spilled blocks", False),
+        ("Current design", False),
+    ],
+)
+def test_a_recap_heading_at_any_level_marks_the_section(section, recap) -> None:
+    assert dx.in_recap(section) is recap
+
+
+@pytest.mark.asyncio
+async def test_a_recap_quote_is_dropped_and_its_text_still_gives_a_reason(monkeypatch) -> None:
+    recap = "We spill into sorted runs like ORDER BY."
+    reason = "A plain set on disk costs random reads."
+    world = _World(
+        monkeypatch,
+        [
+            _candidate(quote=recap, alternatives=[], reasoning=reason),
+            _candidate(
+                scenario="the merge",
+                quote="One merge pass reads each run.",
+                reasoning=reason,
+                alternatives=[],
+            ),
+        ],
+    )
+    _chunks(
+        monkeypatch,
+        (f"{recap} {reason}", ("Spilling", "Recap")),
+        ("One merge pass reads each run.", ("Spilling", "Merge")),
+    )
+    report = await _run()
+    assert [d.reason for d in report.dropped] == [dx.RECAP]
+    (inp,) = world.recorded
+    assert inp.reasoning == reason and inp.source_resource_id.endswith("Spilling > Merge")
+    assert "[section: Spilling > Recap]" in world.prompts[0][1]
+
+
+# ------------------------------------------------------------------ inverted alternatives
+
+
+@pytest.mark.parametrize(
+    ("text", "option", "reason", "inverted"),
+    [
+        (
+            "Sharding by tenant is deferred to v2. One cluster serves each tenant today.",
+            "Defer sharding by tenant",
+            "One cluster serves each tenant today.",
+            True,
+        ),
+        (
+            "The largest job runs longest, so v1 cannot evict it. Eviction picks the oldest.",
+            "evict the largest job",
+            "The largest job runs longest",
+            False,
+        ),
+        # The sentence giving the reason is the rejection itself.
+        (BODY, "a plain set on disk", "costs random reads", False),
+        ("Sharding by tenant is faster than a shared table.", "shard by tenant", "x" * 12, False),
+        ("Only filler words here.", "the", "x" * 12, False),
+    ],
+)
+def test_an_option_the_text_states_as_chosen_is_inverted(text, option, reason, inverted) -> None:
+    cand = _cand(alternatives=[{"option": option, "reason": reason}])
+    assert dx.inverted_options(cand, [text]) == ([option] if inverted else [])
+
+
+@pytest.mark.asyncio
+async def test_an_inverted_alternative_is_left_out_and_the_decision_kept(monkeypatch) -> None:
+    text = (
+        "We shard by time range. Sharding by tenant is deferred to v2. "
+        "A time range keeps each merge local to one shard."
+    )
+    cand = _candidate(
+        scenario="how tables are sharded",
+        outcome="shard by time range",
+        reasoning="A time range keeps each merge local to one shard.",
+        quote="We shard by time range.",
+        alternatives=[
+            {"option": "Defer sharding by tenant", "reason": "A time range keeps each merge local"}
+        ],
+        mentions=[],
+    )
+    world = _World(monkeypatch, [cand])
+    _chunks(monkeypatch, (text, ("Sharding",)))
+    report = await _run()
+    (inp,) = world.recorded
+    assert inp.alternatives == []
+    (d,) = report.dropped
+    assert d.reason == (
+        "rejected option 'Defer sharding by tenant' left out: the text states it as part of "
+        "the choice"
+    )
+    assert cli.exit_code(report) == 0
