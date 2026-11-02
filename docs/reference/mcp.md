@@ -277,7 +277,8 @@ that serves it, and give it a `viewer` token in any case. On it:
   as `memory.search`, `memory.list` and `memory.history` already read across agents. A
   read of one writer's rows, `memory.aggregate` or `memory.provenance`, is refused for the
   missing `agent` until the call names the writer (a search hit's `agent`, with its
-  `user_id` and `session_id`, which this listing offers on every memory read).
+  `user_id` and `session_id`, which this listing offers on every memory read and on
+  `mentor.brief`'s `agent`).
   `memory.get` falls back to the row under any agent.
 - **Reads do not record usage.** `memory.search` runs with `auto_touch: false` and
   `memory.ask` with `reinforce: false`, whatever the call sends, so an investigation does

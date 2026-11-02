@@ -305,10 +305,11 @@ _ASSISTANT_IDENTITY_ARGS: dict[str, str] = {
 
 
 def _with_identity(schema: dict[str, Any], op: Any) -> dict[str, Any]:
-    """`schema` with the op's identity arguments listed again, for a memory or mentor read
-    (a code read's identity is the code plane's, never the caller's)."""
+    """`schema` with the op's identity arguments listed again, for a memory or mentor read.
+    A code read's identity is the code plane's, and a namespace read's user narrows only
+    under its own `read_scope`, so neither lists them."""
     props = schema.get("properties")
-    if not isinstance(props, dict) or op.name.startswith("code."):
+    if not isinstance(props, dict) or not op.name.startswith(("memory.", "mentor.")):
         return schema
     fields = op.input_model.model_fields
     named = {

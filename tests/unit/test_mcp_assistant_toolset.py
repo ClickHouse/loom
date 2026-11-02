@@ -580,4 +580,6 @@ def test_every_argument_an_assistant_description_asks_for_is_listed(
     provenance = listed["loom_memory_provenance"]["inputSchema"]["properties"]
     # The writer's whole identity, so a row written in a session or for a user is found.
     assert {"agent", "user_id", "session_id"} <= set(provenance)
-    assert "agent" not in listed["loom_code_search"]["inputSchema"]["properties"]
+    for tool in ("loom_code_search", "loom_namespace_inventory"):
+        props = set(listed[tool]["inputSchema"]["properties"])
+        assert not {"agent", "user_id", "session_id"} & props, tool
