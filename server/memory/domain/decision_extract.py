@@ -258,9 +258,9 @@ RESTATED = "reasoning only restates the outcome: it has no word the outcome lack
 
 
 def _stem(word: str) -> str:
-    """`spilling`, `spills` and `spilled` read as `spill`; `store` and `stored` as `stor`,
-    `run` and `running` as `run`: an ending cut, then a final `e` dropped and a final
-    double consonant undoubled."""
+    """`spilling`, `spills` and `spilled` read as one stem, as do `store` and `stored`, and
+    `run` and `running`: an ending cut, then a final `e` dropped and a final double
+    consonant undoubled."""
     for suffix in ("ing", "ed", "es", "s"):
         if word.endswith(suffix) and len(word) - len(suffix) >= 3:
             word = word[: -len(suffix)]

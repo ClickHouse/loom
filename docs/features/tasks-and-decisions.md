@@ -371,11 +371,12 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   option. A candidate is kept only when its quote, its reasoning and every reason are each a substring of one chunk,
   with every run of whitespace read as one space: a model copying a span drops line breaks and doubled spaces. What is
   recorded is the chunk's own span, line breaks and all. Each is at least 12 characters long: a shorter span ("We",
-  "the") is in every document, so a decision resting on it could never retire. At most `--max-per-section` (default 3) are kept per section. A candidate whose category or scenario holds no letter or digit from a-z, 0-9 has no key
-  and is dropped. Of two candidates with one key, or with one outcome and reasoning (overlapping chunks give two
-  windows the same text), the first is kept. A leaf section with no words (a heading alone or over an image), or with
-  an image and at most 80 characters of other text (a caption), is not sent to the model and gets the line
-  `image-only, rationale not extracted`. A chunk with no words is not sent either.
+  "the") is in every document, so a decision resting on it could never retire. At most `--max-per-section` (default 3)
+  are kept per section. A candidate whose category or scenario holds no letter or digit from a-z, 0-9 has no key and is
+  dropped. Of two candidates with one key, or with one outcome and reasoning (overlapping chunks give two windows the
+  same text), the first is kept. A leaf section with no words (a heading alone or over an image), or with an image and
+  at most 80 characters of other text (a caption), is not sent to the model and gets the line `image-only, rationale not
+extracted`. A chunk with no words is not sent either.
 - **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
   `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
   punctuation; the endings `-s`, `-es`, `-ed` and `-ing` are cut, then a final `e` is dropped and a final double
@@ -398,9 +399,11 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   name defined in several files is printed as unresolved too, for a human to pick the file.
 - **Reconcile**: the document says otherwise only when a verbatim field differs: the reasoning, or the set of rejected
   options' reasons, each matched as a prefix where `decision.record` cut a long alternative at its 300-character cap.
-  The category, scenario, outcome and option wording are the model's, and a change there alone is no change. A row
-  counts as confirmed when it is pinned or attested in its current form (`memory.verify`), the rule `memory.for_file`
-  marks `(unconfirmed)` by. By the row the key's active record belongs to:
+  The category, scenario, outcome and option wording are the model's, and a change there alone is no change. Nor is a
+  change in whitespace alone (a re-wrapped line): the row keeps its stored span, which the retire step still finds,
+  and `decision.record` stores rejected options' reasons on one line already. A row counts as confirmed when it is
+  pinned or attested in its current form (`memory.verify`), the rule `memory.for_file` marks `(unconfirmed)` by. By
+  the row the key's active record belongs to:
   - **The extractor's own, unconfirmed, from this document**: same verbatim fields and the same `files`,
     `source_resource_id` and `constraint` tag: no write. A verbatim field differs, or only those row fields do (a file
     that resolves once the code is indexed, a renamed heading): recorded again (the record is superseded, history
@@ -429,11 +432,12 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   tags-only change in the gap.
 - **Retire**: an unconfirmed `loom-decisions` row citing the document whose reasoning is no longer in the document's
   text, whitespace read as in the verbatim check, is deleted with `memory.delete_version`, which also retires its
-  record; a confirmed one, or one whose outcome `decision.outcome` recorded, is tagged `source-changed` instead. The reasoning read is the extractor's own record: a
-  key whose active record another identity wrote is left alone. An unconfirmed row whose outcome and reasoning this
-  run recorded under another key (the model worded the scenario differently) is deleted too, so the decision is not
-  served twice, unless its realized outcome is recorded; another decision resting on the same reasoning has another
-  outcome and stays. Otherwise a row whose reasoning is still there stays, whether or not the run emitted it again.
+  record; a confirmed one, or one whose outcome `decision.outcome` recorded, is tagged `source-changed` instead. The
+  reasoning read is the extractor's own record: a key whose active record another identity wrote is left alone. An
+  unconfirmed row whose outcome and reasoning (whitespace aside) this run recorded under another key (the model worded
+  the scenario differently) is deleted too, so the decision is not served twice, unless its realized outcome is
+  recorded; another decision resting on the same reasoning has another outcome and stays. Otherwise a row whose
+  reasoning is still there stays, whether or not the run emitted it again.
 - **Citing the document**: a row cites it when its `source_resource_id` starts `knowledge:<namespace>/<source_uri>#`,
   so a heading holding `#` (`C# bindings`) is no obstacle, unless a document `<source_uri>#<part>` it also starts with
   was ever ingested in the namespace: `doc#v2#Intro` cites `doc#v2` once that document exists.

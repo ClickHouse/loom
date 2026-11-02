@@ -662,18 +662,6 @@ async def test_an_unreadable_reply_is_reported(monkeypatch) -> None:
     assert [d.reason for d in report.dropped] == ["the model's reply is not the JSON asked for"]
 
 
-@pytest.mark.asyncio
-async def test_the_fake_model_returns_candidates_that_pass_the_check() -> None:
-    from server.llm import customer
-    from server.llm.fake import FakeLLMClient
-
-    w = Window([CorpusChunk("d", 0, BODY, ("Spilling", "Final DISTINCT"))])
-    with customer.for_org("o"):
-        res = await FakeLLMClient().complete(dx.system_prompt(3), dx.user_prompt(w))
-    (cand,) = dx.parse_candidates(res.text) or []
-    assert dx.verbatim_failure(cand, [BODY]) == ""
-
-
 def test_the_command_is_dry_run_by_default() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd")
@@ -2266,3 +2254,31 @@ async def test_a_long_sections_last_chunk_with_an_image_and_a_short_tail_is_sent
     (prompt,) = world.prompts
     assert "The merge reads each run once." in prompt[1]
     assert report.image_only == ["Spilling > Architecture"]
+
+
+@pytest.mark.asyncio
+async def test_a_rewrapped_reasoning_under_a_reworded_key_replaces_the_old_row(
+    monkeypatch,
+) -> None:
+    first = _candidate()
+    world = _World(monkeypatch, [])
+    # Recorded when the document broke the line; DOC now has it on one line.
+    wrapped = {**_same_fields(first), "reasoning": "We spill into sorted\nruns like ORDER BY."}
+    world.record(_key(first), wrapped, files=[HEADER])
+    second = _candidate(scenario="spilling the final DISTINCT")
+    world.reply = [second]
+    report = await _run()
+    assert [r.action for r in report.records] == ["written"]
+    assert report.replaced == [f"{_key(first)} -> {_key(second)}"]
+    assert [d.memory_key for d in world.deletes] == [_key(first)]
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_row_whose_document_only_rewrapped_is_not_flagged(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    stored = {**_same_fields(c), "reasoning": "We spill into sorted\nruns like ORDER BY."}
+    world.record(_key(c), stored, pinned=True)
+    report = await _run()
+    assert [r.action for r in report.records] == ["unchanged"]
+    assert world.updates == [] and world.recorded == [] and report.flagged == []

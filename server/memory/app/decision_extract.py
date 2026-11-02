@@ -45,7 +45,7 @@ from server.memory.app import decisions as svc
 from server.memory.domain import decision_extract as dx
 from server.memory.domain.corpus_synthesis import Window, windows
 from server.memory.domain.decision_schema import SOURCE_CHANGED_TAG
-from server.memory.domain.decision_statement import alternatives, memory_value
+from server.memory.domain.decision_statement import alternatives, collapse_ws, memory_value
 from server.memory.domain.files import detect_value_files, normalize_files
 from server.memory.domain.trust import confirmed, row_content_sha256, verification_state
 from server.memory.store import (
@@ -356,7 +356,7 @@ async def extract_document(
         if rec.action == "flagged":
             report.flagged.append(rec.memory_key)
         if rec.holds:
-            held.setdefault((rec.held_outcome, cand.reasoning.strip()), rec.memory_key)
+            held.setdefault((rec.held_outcome, collapse_ws(cand.reasoning)), rec.memory_key)
     await _retire(report, own, live_texts, written, held)
     return report
 
@@ -567,8 +567,9 @@ def _same_decision(record: dict[str, Any], inp: DecisionRecordInput) -> bool:
     """The document still says what the record says: the verbatim fields, the reasoning
     and the rejected options' reasons, as decision.record stores them, are the same. The
     model words the category, scenario, outcome and options anew on each run; a change
-    there alone is no change in the document."""
-    if str(record.get("reasoning") or "") != inp.reasoning.strip():
+    there alone is no change in the document. Nor is a change in whitespace: a re-wrapped
+    line leaves every row as it is, the stored span still found by the retire step."""
+    if collapse_ws(str(record.get("reasoning") or "")) != collapse_ws(inp.reasoning):
         return False
     return _same_reasons(alternatives(record), inp.alternatives)
 
@@ -948,7 +949,7 @@ async def _retire_one(
     reasoning = str(record.get("reasoning") or "")
     if not reasoning:
         return
-    restated = held.get((str(record.get("outcome") or "").strip(), reasoning.strip()))
+    restated = held.get((str(record.get("outcome") or "").strip(), collapse_ws(reasoning)))
     # A row with a recorded outcome is kept: deleting it would lose the outcome.
     if not _confirmed(row) and restated is not None and not _has_outcome(record):
         if await _delete_row(report, row):
