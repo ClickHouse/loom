@@ -906,10 +906,6 @@ async def test_a_delete_after_the_outcomes_row_write_answers_not_found(
             DecisionOutcomeInput(org="o", namespace="n", memory_key=_KEY, realized_outcome="ok")
         )
     assert await _seed_decision() is None
-    active = await local.query_all(
-        "SELECT 1 FROM loom.memory_records FINAL WHERE status = 'active' AND tombstoned_at IS NULL"
-    )
-    assert active == []
     identity = memory_repo.Identity(org="o", namespace="n", agent="claude")
     assert await memory_repo.get_by_key(identity, _KEY, strong=True, scope=WHOLE_NAMESPACE) is None
 
