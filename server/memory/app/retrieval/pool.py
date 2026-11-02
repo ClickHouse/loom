@@ -265,7 +265,7 @@ async def _set_chunk_rows(
                   IN {{set_rows:Array(Tuple(String, String, String))}}
             GROUP BY e.agent, e.user_id, e.session_id, e.memory_key
             HAVING argMax({" AND ".join(where)}, e.version)
-            ORDER BY version DESC
+            ORDER BY version DESC, agent, user_id, session_id  -- ties keep one order
             LIMIT {{per_key:UInt32}} BY agent, user_id, memory_key
             """,
             params=params,
