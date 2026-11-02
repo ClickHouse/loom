@@ -124,14 +124,18 @@ def test_order_is_reestablished_by_the_shared_sort_key() -> None:
 
 
 def test_finish_pool_folds_before_the_chunk_cap_and_floor(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With the fold on, a fact-only namespace under the deployment floor sees
-    no chunk ids at all; with it off, the old behaviour stands."""
+    """The fold runs before the chunk cap and floor: a fact-only namespace under the
+    deployment floor sees no chunk ids at all."""
     from server.settings import settings
 
     async def no_backfill(ch, q, hits):
         return hits
 
+    async def no_row_read(*a, **k):
+        raise AssertionError("shared scope reads no set-chunk row")
+
     monkeypatch.setattr(S, "_recency_backfill", no_backfill)
+    monkeypatch.setattr(S, "_set_chunk_rows", no_row_read)
     monkeypatch.setattr(settings, "memory_search_chunk_min_share", 0.4)
     # shared scope folds the chunks by key: the order of fold and cap is the subject
     q = SimpleNamespace(

@@ -164,42 +164,41 @@ def fold_set_chunks(hits: list[SearchHit], rows: Mapping[ChunkId, SetChunkRow]) 
     `rows` names (`_set_chunk_rows`): onto the row when it is pooled, as its hit when it is
     not. A chunk `rows` names no row for is dropped: no served row's value cuts it."""
 
-    def named(h: SearchHit) -> tuple[SetChunkRow, tuple[str, ...]] | None:
+    def named(h: SearchHit) -> SetChunkRow | None:
         cid = _chunk_id(h)
-        found = rows.get(cid) if cid is not None else None
-        return None if found is None else (found, (*found.identity, str(h.parent_memory_key)))
+        return rows.get(cid) if cid is not None else None
 
-    return _fold(hits, named, lambda h: None if h.identity is None else (*h.identity, h.memory_key))
+    return _fold(hits, named, lambda who, key: None if who is None else (*who, key))
 
 
 def fold_shared_set_chunks(hits: list[SearchHit]) -> list[SearchHit]:
     """Under shared scope, where the writer's private row is never served, a chunk folds onto
     a pooled fact of its key, or becomes the hit of the key's promoted row."""
-    return _fold(
-        hits,
-        lambda h: (_SHARED_SET_CHUNK_ROW, (str(h.parent_memory_key),)),
-        lambda h: (h.memory_key,),
-    )
+    return _fold(hits, lambda h: _SHARED_SET_CHUNK_ROW, lambda who, key: (key,))
 
 
 def _fold(
     hits: list[SearchHit],
-    named: Callable[[SearchHit], tuple[SetChunkRow, tuple[str, ...]] | None],
-    fact_at: Callable[[SearchHit], tuple[str, ...] | None],
+    named: Callable[[SearchHit], SetChunkRow | None],
+    place: Callable[[RowIdentity | None, str], tuple[str, ...] | None],
 ) -> list[SearchHit]:
-    """Fold each set chunk onto the pooled fact at the position `named` gives it, or add it
-    as that row's hit; `fact_at` places each pooled fact."""
+    """Fold each set chunk onto the pooled hit of the row `named` gives it, or add it as
+    that row's hit (a chunk `named` gives none is dropped). `place` keys a row, pooled or
+    named, by its identity and key, so a chunk meets its pooled row."""
     if not hits or not any(_is_set_chunk(h) for h in hits):
         return hits
     out = [h for h in hits if not _is_set_chunk(h)]
     at: dict[tuple[str, ...], int] = {}
     for pos, h in enumerate(out):
-        if (getattr(h, "source", "") or "fact") != "chunk" and (place := fact_at(h)) is not None:
-            at.setdefault(place, pos)
+        pooled_at = place(h.identity, h.memory_key)
+        if (getattr(h, "source", "") or "fact") != "chunk" and pooled_at is not None:
+            at.setdefault(pooled_at, pos)
     for h in hits:
-        if not _is_set_chunk(h) or (found := named(h)) is None:
+        if not _is_set_chunk(h) or (row := named(h)) is None:
             continue
-        row, target = found
+        target = place(row.identity, str(h.parent_memory_key))
+        if target is None:
+            continue
         if target in at:
             parent = out[at[target]]
             out[at[target]] = replace(parent, **_folded_fields(parent, h))

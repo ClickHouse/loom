@@ -981,9 +981,10 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    private-scope pool holds such a chunk. A chunk none of those rows' values cuts is
    dropped, and so is every chunk of the pool when the read fails. Under shared scope
    (`fold_shared_set_chunks`) a chunk folds onto a pooled fact of its key, or becomes the
-   hit of the key's promoted row `(_shared, -, -)`. The match recomputes a row's chunks with the running build's chunker
-   (`set_chunks.py`): a change to its geometry leaves stored chunks unmatched until their
-   keys are re-set, and a lower chunk cap those past it.
+   hit of the key's promoted row `(_shared, -, -)`. The match recomputes a row's chunks
+   with the running build's chunker (`set_chunks.py`): a change to its geometry leaves
+   stored chunks unmatched until their keys are re-set, and a lower chunk cap those past
+   it.
 
    Additive pools follow: sub-queries, set expansion, the entity and date anchor pool
    (`anchor_pool.py`) and the key-match arm (`key_match.py`). The assembler folds in the
