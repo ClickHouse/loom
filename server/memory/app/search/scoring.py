@@ -191,13 +191,15 @@ def one_per_key(hits: list[Any], namespace: str, top_k: int | None = None) -> li
     ranked list), at most `top_k` of them, for a caller that reads one item per key: the
     search serves a row per writer and session."""
     seen: set[tuple[str, str]] = set()
-    out = []
+    out: list[Any] = []
     for h in hits:
+        if top_k is not None and len(out) >= top_k:
+            break
         key = (str(getattr(h, "namespace", "") or namespace), str(h.memory_key))
         if key not in seen:
             seen.add(key)
             out.append(h)
-    return out[:top_k]
+    return out
 
 
 def per_key_fetch(top_k: int) -> int:

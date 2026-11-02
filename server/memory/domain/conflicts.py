@@ -142,7 +142,7 @@ def value_tokens(text: str) -> set[str]:
     out: set[str] = set()
     for m in _VALUE_RE.finditer(text or ""):
         # lowercased, no space before a unit ("5 k" reads as "5k"); a currency sign stays
-        token = m.group(0).strip().lower().replace(" ", "")
+        token = re.sub(r"\s", "", m.group(0)).lower()
         out.add(_THOUSANDS.sub("", token))
     return out
 

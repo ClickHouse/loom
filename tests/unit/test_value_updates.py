@@ -24,6 +24,7 @@ def test_value_tokens_find_times_money_and_units() -> None:
     assert value_tokens("paid $40 and 12% tax at 5:30pm") == {"$40", "12%", "5:30pm"}
     assert value_tokens("no numbers here") == set()
     assert value_tokens("1,000 seats and 12,345.67 paid") == {"1000", "12345.67"}
+    assert value_tokens("ran 5\u00a0km") == value_tokens("ran 5km") == {"5km"}
 
 
 def test_a_thousands_separator_alone_is_no_value_update() -> None:
