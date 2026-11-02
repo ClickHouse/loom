@@ -10,15 +10,14 @@ reach a file through the `files[]` facet the extractor fills (a match accepts
 a repo-relative path or a bare filename, because stored rows use both shapes)
 or through a link to code in it (`server.memory.app.code_links`).
 
-Read-only, VIEWER. Rows tagged `constraint` sort first, then
-pinned, then confidence. `rendered` is cut at `token_budget` (its header and
-removal footer always print, and its "… more" line whenever a row is left
-out). `extra_namespaces` (a
-repository's primary code namespace, where its team file rules and design
-decisions live) runs the same query per readable namespace, merged in the same
-order, team rows marked with their author. Each hit carries its
-`source_resource_id` and its `verification` state; a decision's rendered line
-carries the source after its value.
+Read-only, VIEWER. Rows tagged `constraint` sort first, then pinned, then
+confidence. `rendered` is cut at `token_budget` (its header and removal footer
+always print, and its "… more" line whenever a row is left out).
+`extra_namespaces` (a repository's primary code namespace, where its team file
+rules and design decisions live) runs the same query per readable namespace,
+merged in the same order, team rows marked with their author. Each hit carries
+its `source_resource_id` and its `verification` state; a decision's rendered
+line carries the source after its value.
 """
 
 from __future__ import annotations

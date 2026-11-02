@@ -336,7 +336,9 @@ def _superseding(key: str, older: str, value: str, ns: str, **over: Any) -> dict
 def test_a_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:
     newer = _superseding("rules/new", "rules/old", "n" * 200, "code-repo", tags=["constraint"])
     older = _row("rules/old", json.dumps("Keep 32."), namespace="code-repo")
-    text, tokens, truncated = mff.render_block("src/a.cpp", [newer, older], 120, home="me")
+    text, tokens, truncated = mff.render_block(
+        "src/a.cpp", [newer, older], 120, home="me", now=_NOW
+    )
     assert truncated is True and tokens <= 120
     assert "rules/new" not in text and "rules/old" not in text
     assert '- … 2 more; memory.for_file(path="src/a.cpp") lists them.' in text.splitlines()
