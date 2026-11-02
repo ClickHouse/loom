@@ -398,10 +398,10 @@ async def test_the_decision_search_is_merged_llm_free_and_carries_the_tokens_rea
 
 @pytest.mark.asyncio
 async def test_only_the_merged_decisions_are_credited_once(monkeypatch) -> None:
-    credited: list[tuple[str, list[str]]] = []
+    credited: list[tuple[str, int, list[str]]] = []
 
     async def credit(inp: MemorySearchInput, hits: list[_MemorySearchHit]) -> None:
-        credited.append((inp.namespace, [h.memory_key for h in hits]))
+        credited.append((inp.namespace, inp.top_k, [h.memory_key for h in hits]))
 
     monkeypatch.setattr("server.memory.app.search.telemetry.credit_merged_hits", credit)
     planes = {
@@ -414,7 +414,8 @@ async def test_only_the_merged_decisions_are_credited_once(monkeypatch) -> None:
     }
     out = await _leg(monkeypatch, TRUNK, [], planes=planes)
     assert [h.memory_key for h in out.results] == ["note-a", "decision:kept", "decision:seen"]
-    assert credited == [(TRUNK, ["decision:kept"])]
+    # with the caller's top_k, not the pass's over-fetch
+    assert credited == [(TRUNK, BASE.top_k, ["decision:kept"])]
 
 
 @pytest.mark.asyncio

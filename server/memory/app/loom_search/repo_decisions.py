@@ -85,7 +85,8 @@ async def search_repo_decisions(
         # Another namespace's row, as the fan-out marks one.
         h.score_components["foreign"] = 1.0
     out.results = decisions
-    return out, settled
+    # Credited with the window the caller asked for, not the over-fetch.
+    return out, settled.model_copy(update={"top_k": mem_input.top_k})
 
 
 def merge_memory_hits(
@@ -95,8 +96,9 @@ def merge_memory_hits(
     own order (rank order, not always falling similarity); each `extra` hit
     goes after the last base hit whose similarity is at least its own (the
     rank scores of two searches do not compare). One hit per (namespace,
-    memory_key). Nothing is cut: the extra hits are bounded by their own
-    search's `top_k`, and a base hit pushed out would be served on no page."""
+    memory_key). Nothing is cut: the extra hits are bounded by the caller's
+    `top_k` (`search_repo_decisions` keeps one per key), and a base hit pushed
+    out would be served on no page."""
     seen = {(h.namespace or home_ns, h.memory_key) for h in base}
     # slots[i]: the extra hits that go after the first i base hits
     slots: list[list[_MemorySearchHit]] = [[] for _ in range(len(base) + 1)]
