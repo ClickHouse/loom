@@ -301,6 +301,24 @@ def test_a_long_source_keeps_its_section() -> None:
     assert line.endswith(f" — source: {source} [id: design/long]")
 
 
+def test_a_source_with_a_line_break_stays_on_its_line() -> None:
+    source = "knowledge:design-docs/a  b.pdf#Plan > Step\none\tlater"
+    line = _lines([_decision("design/nl", source_resource_id=source)])[1]
+    assert line.endswith(
+        " — source: knowledge:design-docs/a  b.pdf#Plan > Step one\tlater [id: design/nl]"
+    )
+
+
+def test_a_row_too_long_for_the_budget_does_not_hide_the_rows_after_it() -> None:
+    long = _decision("design/long", source_resource_id="knowledge:d/" + "x" * 1500)
+    short = _row("rules/short", json.dumps("Keep 64."), namespace="me")
+    text, tokens, truncated = mff.render_block("src/a.cpp", [long, short], 300, home="me", now=_NOW)
+    lines = text.splitlines()
+    assert truncated is True and tokens <= 300
+    assert "- rules/short: Keep 64." in lines and "design/long" not in text
+    assert lines[-2].startswith("- … 1 more;")
+
+
 def test_the_more_line_fits_inside_the_budget() -> None:
     hits = [_row(f"k{i}", json.dumps("r" * 100)) for i in range(12)]
     for budget in range(50, 400):

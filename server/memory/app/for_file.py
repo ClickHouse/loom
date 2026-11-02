@@ -151,7 +151,8 @@ def _body(hit: dict[str, Any], *, decision: bool) -> str:
     """The value on one capped line; a decision's source follows it whole, so the value's
     cut never reaches it and the citation still resolves through knowledge.get."""
     text = _one_line(_readable(hit), _LINE_CHARS)
-    source = " ".join(str(hit.get("source_resource_id") or "").split())
+    # Only a line break would break the one-line-per-row layout; spaces stay as cited.
+    source = " ".join(str(hit.get("source_resource_id") or "").splitlines())
     if decision and source:
         text += f" — source: {source}"
     return text
@@ -251,7 +252,7 @@ def render_block(
     lines = [f"Loom: {n} memor{'y' if n == 1 else 'ies'} anchored to {path} — read before editing:"]
     footer = _removal_footer(hits, home)
     used = len(lines[0]) + 1 + (len(footer) + 1 if footer else 0)
-    truncated = False
+    left_out = 0
     for i, h in enumerate(hits):
         decision = _is_decision(h)
         if _is_team(h, home):
@@ -259,16 +260,18 @@ def render_block(
         else:
             marks = _marker(h, show_decision=decision) + _status_notes(h, decision=decision)
             line = f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}"
-        # A row that leaves others out also needs room for the "… more" line after it.
-        rest = n - i - 1
-        tail = len(_more_line(path, rest)) + 1 if rest else 0
+        # A row that does not fit is left out and the later rows still get their turn, so
+        # each row also needs room for a "… more" line counting every row that may be left out.
+        most = left_out + n - i - 1
+        tail = len(_more_line(path, most)) + 1 if most else 0
         if used + len(line) + 1 + tail > budget_chars:
-            truncated = True
-            break
+            left_out += 1
+            continue
         lines.append(line)
         used += len(line) + 1
+    truncated = left_out > 0
     if truncated:
-        lines.append(_more_line(path, n - (len(lines) - 1)))
+        lines.append(_more_line(path, left_out))
     if footer:
         lines.append(footer)
     text = "\n".join(lines)
