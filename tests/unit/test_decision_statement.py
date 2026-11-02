@@ -52,6 +52,9 @@ def test_memory_value_reads_as_a_statement() -> None:
     }
     assert stmt.memory_value(ban) == "Decided Client-side retries only; no server retry setting."
     assert not stmt.states_reason(ban) and stmt.states_reason({"outcome": "a", "reasoning": "b"})
+    assert stmt.memory_value({"outcome": "Never retry", "reasoning": "Never retry!"}) == (
+        "Decided Never retry."
+    )
     # With no reason stated the outcome takes the reasoning's room: a long ban keeps its end.
     long_ban = (
         "Every merge of a spilled run " + "reads its blocks in order, " * 8 + "and must not seek."

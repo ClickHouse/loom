@@ -379,14 +379,14 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   decision and the window's text is more than a caption (80 characters once images and link markup are removed), the
   window is read once more with the same prompt and the second reply is the window's. When a candidate's quote is in the
   text but its reasoning or a rejected option's reason is not (a model often joins one from two places), and no span is
-  under 12 characters, the window is read once more with those spans named, asking for each such decision again with one
-  contiguous span, or none; the first reply's other candidates stand, and the failed ones are reported as dropped. Of
-  the second reply, a candidate is read only when it has a failed decision's outcome or a reasoning none of the window's
-  kept decisions has: a kept decision given again under a reworded scenario is dropped with the line
-  `the second read repeats a decision the first reply gave`. After an empty reply, a second read that fails or comes
-  back unreadable loses the window as any window is: the exit code reads the final outcome. After a joined reason the
-  window is answered already: a lost second read is a `read again` line, and the first reply's decisions are recorded
-  with the exit code unchanged.
+  under 12 characters, and the quote is not in a recap section, the window is read once more with those spans named,
+  asking for each such decision again with one contiguous span, or none; the first reply's other candidates stand, and
+  the failed ones are reported as dropped. Of the second reply, a candidate is checked only when it has a failed
+  decision's outcome or a reasoning none of the window's kept decisions has: a kept decision given again under a
+  reworded scenario is dropped with the line `the second read repeats a decision the first reply gave`. After an empty
+  reply, a second read that fails or comes back unreadable loses the window as any window is: the exit code reads the
+  final outcome. After a joined reason the window is answered already: a lost second read is a `read again` line, and
+  the first reply's decisions are recorded with the exit code unchanged.
 - **Image-only sections**: a section whose own text has no words (a heading alone or over an image), or holds an image
   and at most 80 characters of other text (a caption), is not sent to the model and gets the line
   `image-only, rationale not extracted`; a heading alone over its subsections is not one. The text above the first

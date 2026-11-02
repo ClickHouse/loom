@@ -3069,6 +3069,26 @@ def test_the_report_prints_each_second_read(capsys) -> None:
     assert f"- read again [(untitled)] {de._STITCHED}\n" in out
 
 
+@pytest.mark.parametrize("emitted", [True, False])
+@pytest.mark.asyncio
+async def test_a_reasonless_ban_reads_unchanged_on_a_rerun(monkeypatch, emitted) -> None:
+    ban = _ban()
+    world = _World(monkeypatch, [ban] if emitted else [])
+    _chunks(monkeypatch, (f"{_BAN} The proxy adds jitter to each attempt.", ("Retries",)))
+    # What the first run recorded: the ban sentence as both outcome and reasoning.
+    fields = {**_same_fields(ban), "outcome": _BAN}
+    world.record(
+        _key(ban),
+        fields,
+        tags=["decision", de.CONSTRAINT_TAG],
+        source_resource_id="knowledge:ns/doc.md#Retries",
+    )
+    report = await _run()
+    assert world.recorded == [] and world.deletes == [] and world.updates == []
+    assert [r.action for r in report.records] == (["unchanged"] if emitted else [])
+    assert report.retired == [] and report.flagged == [] and report.replaced == []
+
+
 @pytest.mark.parametrize(
     "over",
     [

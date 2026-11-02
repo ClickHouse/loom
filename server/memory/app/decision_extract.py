@@ -416,11 +416,11 @@ async def _read_window(
     answered_already: bool = False,
 ) -> list[dx.Candidate] | None:
     """The model's candidates for one window, whose first section is `first`, or None
-    when the read is lost: the call
-    failed, the fake model answered for a real provider, or the reply is unreadable; each
-    is a dropped line marked `refused`, a read the run needed. `note` goes before the
-    window's text. When the window is `answered_already` (a second read for what the
-    first reply got wrong), a lost read is a `read again` line, never refused."""
+    when the read is lost: the call failed, the fake model answered for a real provider,
+    or the reply is unreadable; each is a dropped line marked `refused`, a read the run
+    needed. `note` goes before the window's text. When the window is `answered_already`
+    (a second read for what the first reply got wrong), a lost read is a `read again`
+    line, never refused."""
     from server.llm.json_text import strip_code_fence
 
     user = f"{note}\n\n{dx.user_prompt(w)}" if note else dx.user_prompt(w)
@@ -570,8 +570,7 @@ def _check_window(
         span = dx.unfound_reason(cand, texts) if reason else ""
         if not reason:
             cand = dx.document_spans(cand, texts)
-            # A ban the text gives no reason for is kept as one; any other restatement is
-            # dropped.
+            # A reason-less ban is kept as one; any other restatement is dropped.
             if dx.reasonless_ban(cand):
                 cand = dx.without_reason(cand)
             elif dx.restates_outcome(cand):
