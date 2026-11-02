@@ -417,19 +417,21 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   `.`, `!`, `?` or `;` (or their full-width forms), as the last line of a wrapped paragraph does; and that holds none
   of the ban words of a reason-less ban below, nor the contrast words of the inverted-alternatives check, nor a word
   ending in `n't`: skipping `not` would read "Retries are / not / safe" as "Retries are safe". A fourth label line, a
-  line of four words, a line that is no label, or a label inside a line ends the match. Between two words, the fewest
-  label lines that reach the next word are read, so a later line reading as that word is not taken for a label. Each
-  word of the span but the last ends where a word of the text ends, so `so` does not take the start of a label
-  `Something`. The word right after the whitespace is read before any label, so a label line whose first word reads as
-  the next word ("The proxy" over "the nearest replica") is taken as that word and the span is not found. Chunk texts
-  hold a section's body without its heading line. What is recorded is the document's own span on one line, its words
-  and case, with the label lines it read across left out: the same text on every run, and a recorded span reads as the
-  document's span again, across the same labels, when the retire step looks for it. The reasoning-restates check below
-  reads the model's span, so label words in the document's span add no reason. Each is at least 12 characters long,
-  counted on the model's span: a shorter span ("We", "the") is in every document, so a decision resting on it could
-  never retire. At most `--max-per-section` (default 3) are kept per section. A candidate whose category or scenario
-  holds no letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with one key, or with one
-  outcome and reasoning (overlapping chunks give two windows the same text), the first is kept.
+  line of four words, a line that is no label, or a label inside a line ends the match. A label sits inside a
+  sentence, so none is read after a word that ends in `.`, `!`, `?` or `;` (or their full-width forms): "We cache
+  plans per tenant. / Costs / Each plan expires after an hour." is two sentences with a heading between, never one
+  span. Between two words, the fewest label lines that reach the next word are read, so a later line reading as that
+  word is not taken for a label. Each word of the span but the last ends where a word of the text ends, so `so` does
+  not take the start of a label `Something`. The word right after the whitespace is read before any label, so a label
+  line whose first word reads as the next word ("The proxy" over "the nearest replica") is taken as that word and the
+  span is not found. Chunk texts hold a section's body without its heading line. What is recorded is the document's
+  own span on one line, its words and case, with the label lines it read across left out: the same text on every run,
+  and a recorded span reads as the document's span again, across the same labels, when the retire step looks for it.
+  The reasoning-restates check below reads the model's span, so label words in the document's span add no reason. Each
+  is at least 12 characters long, counted on the model's span: a shorter span ("We", "the") is in every document, so a
+  decision resting on it could never retire. At most `--max-per-section` (default 3) are kept per section. A candidate
+  whose category or scenario holds no letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with
+  one key, or with one outcome and reasoning (overlapping chunks give two windows the same text), the first is kept.
 - **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
   `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
   punctuation, as their English (Snowball) stems, so `stored` meets `store` and `running` meets `run`. Filler words
@@ -448,23 +450,24 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
 - **Recaps**: a candidate whose quote is in a section with `recap`, `summary` or `background` as a word of a heading at
   any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. The
   section stays in the window, since its text may give a later decision's reason.
-- **Inverted alternatives**: a rejected option the candidate's own quote, the span of the chosen design, states as part
-  of the choice is left out of the record and reported
-  (`rejected option '<option>' left out: the quote states it as part of the choice`); the decision is kept. An option is
-  such when every word of it, as the restatement check compares words, is in one sentence of the quote (a sentence ends
-  at `.`, `!` or `?` before whitespace, except after `vs.`, `e.g.` or `i.e.`, at a blank line or before a list item; a
-  single line break does not end one) and that sentence holds none of `not`, `no`, `never`, `cannot`, `can't`,
-  `instead`, `rather`, `without`, `fail`, `reject`, `than`, `avoid`, `slow`, `over`, `against`, `versus`, `vs`,
-  `unlike`, `replace` (and `replaces`, `replaced`, `replacing`), `favor`, `favour` (and `favored`, `favours` and the
-  like), `prefer` (and `prefers`, `preferred`), `outperform` (and its forms), `beat`, `beats`, `compare`, `drop`, each
-  of `fail`, `reject`, `avoid`, `compare` and `drop` in any form (`fails`, `rejected`, `avoids`, `compared`, `dropped`),
-  so "We chose sorted runs over a plain set on disk." and "We prefer sorted runs to a plain set on disk." still reject
-  the set. The list leans wide on purpose: a missed contrast word drops a true alternative's `Rejected:` part, while an
-  inverted option kept would tell an agent the chosen design was rejected. The sentence that holds the option's own
-  rejection reason is not read: it is the rejection. Text outside the quote is not read either: a document often names
-  an option in one sentence ("We looked at a plain set on disk.", a list item, "benchmarked … against …") and rejects it
-  in the next. A quote "…; sharding by tenant is deferred to v2." states "Defer sharding by tenant"; "so v1 cannot evict
-  it" still rejects "evict the largest job".
+- **Inverted alternatives**: a rejected option the candidate's own quote, the span of the chosen design, states as
+  part of the choice is left out of the record and reported (`rejected option '<option>' left out: the quote states it
+as part of the choice`); the decision is kept. An option is such when every word of it, as the restatement check
+  compares words, is in one sentence of the quote (a sentence ends at `.`, `!` or `?` before whitespace, except after
+  `vs.`, `e.g.` or `i.e.`, at a blank line or before a list item; a single line break does not end one) and that
+  sentence holds none of `not`, `no`, `never`, `cannot`, `can't`, `instead`, `rather`, `without`, `fail`, `reject`,
+  `than`, `avoid`, `slow`, `over`, `against`, `versus`, `vs`, `unlike`, `replace` (and `replaces`, `replaced`,
+  `replacing`), `favor`, `favour` (and `favored`, `favours` and the like), `prefer` (and `prefers`, `preferred`),
+  `outperform` (and its forms), `beat`, `beats`, `compare`, `drop`, each of `fail`, `reject`, `avoid`, `compare` and
+  `drop` in any form (`fails`, `rejected`, `avoids`, `compared`, `dropped`), so "We chose sorted runs over a plain set
+  on disk." and "We prefer sorted runs to a plain set on disk." still reject the set. The list leans wide on purpose:
+  a missed contrast word drops a true alternative's `Rejected:` part, while an inverted option kept would tell an
+  agent the chosen design was rejected. The sentence that holds the option's own rejection reason is not read: it is
+  the rejection. The quote is read as the document writes it, its line breaks kept and its label lines left out, so a
+  label naming an option states nothing. Text outside the quote is not read either: a document often names an option
+  in one sentence ("We looked at a plain set on disk.", a list item, "benchmarked … against …") and rejects it in the
+  next. A quote "…; sharding by tenant is deferred to v2." states "Defer sharding by tenant"; "so v1 cannot evict it"
+  still rejects "evict the largest job".
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.

@@ -263,6 +263,9 @@ _NEGATION_WORDS = (
 )
 # Whitespace other than a line break.
 _H = r"[^\S\n]"
+# What ends a sentence: a full stop, a question or exclamation mark, a semicolon, ASCII
+# or full-width.
+_SENTENCE_MARK = re.compile(r"[.!?;。！？；]")
 # A label line: one to three words on a line of their own, as a slide or diagram
 # converted to text puts box labels between a sentence's two halves.
 _LABEL_LINE = rf"{_H}*\S+(?:{_H}+\S+){{0,2}}{_H}*\n"
@@ -278,7 +281,7 @@ _LABEL_GAP = rf"{_H}*\n({_BLANK_LINES}(?:{_LABEL_LINE}{_BLANK_LINES}){{1,{LABEL_
 # a wrapped paragraph does; or one that holds a ban or a negation word: skipping `not`
 # would read "Retries are\nnot\nsafe" as "Retries are safe".
 _NOT_A_LABEL = re.compile(
-    rf"^(?:[-*+`~|#>:=<]|\d+[.)])|[.!?;。！？；]$"
+    rf"^(?:[-*+`~|#>:=<]|\d+[.)])|{_SENTENCE_MARK.pattern}$"
     rf"|\b(?:{_BAN_WORDS}|{_NEGATION_WORDS})\b|n['’]t\b",
     re.I,
 )
@@ -305,10 +308,13 @@ def _span_match(span: str, texts: Sequence[str]) -> re.Match[str] | None:
     parts = [re.escape(words[0])]
     for n, word in enumerate(words[1:], start=2):
         w = re.escape(word)
-        if n < len(words):
-            parts.append(rf"(?>\s+{w}(?=\s)|{_LABEL_GAP}{w}(?=\s))")
-        else:
-            parts.append(rf"(?>\s+{w}(?!\w)|{_LABEL_GAP}{w}(?!\w)|\s+{w})")
+        end = r"(?=\s)" if n < len(words) else r"(?!\w)"
+        # A label sits inside a sentence: no label gap after a sentence's end, which
+        # would join two sentences across a heading between them.
+        label = "" if _SENTENCE_MARK.search(words[n - 2][-1:]) else rf"|{_LABEL_GAP}{w}{end}"
+        # The last word may still end inside a document word (a CJK span has no spaces).
+        partial = rf"|\s+{w}" if n == len(words) else ""
+        parts.append(rf"(?>\s+{w}{end}{label}{partial})")
     pattern = re.compile("".join(parts), re.IGNORECASE)
     for text in texts:
         # Labels are checked after the match; a rejected match retries from the next start.
@@ -331,19 +337,35 @@ def find_span(span: str, texts: Sequence[str]) -> str:
     return m.group(0) if m else ""
 
 
-def stored_span(span: str, texts: Sequence[str]) -> str:
-    """The text's span that reads as `span` (`find_span`) as it is stored: the
-    document's own words and case on one line, its label lines left out, or ''."""
+def _without_labels(span: str, texts: Sequence[str]) -> list[str] | None:
+    """The pieces of the text's match of `span` between the label lines it read across
+    (and the blank lines around them), or None when it is not found."""
     m = _span_match(span, texts)
     if not m:
-        return ""
+        return None
     pieces, at = [], m.start()
     for n in range(1, len(m.groups()) + 1):
         if m.start(n) >= 0:
             pieces.append(m.string[at : m.start(n)])
             at = m.end(n)
     pieces.append(m.string[at : m.end()])
-    return collapse_ws(" ".join(pieces))
+    return pieces
+
+
+def stored_span(span: str, texts: Sequence[str]) -> str:
+    """The text's span that reads as `span` (`find_span`) as it is stored: the
+    document's own words and case on one line, its label lines left out, or ''."""
+    pieces = _without_labels(span, texts)
+    return collapse_ws(" ".join(pieces)) if pieces else ""
+
+
+def unlabelled_span(span: str, texts: Sequence[str]) -> str:
+    """The text's span that reads as `span` with its label lines left out and its other
+    line breaks kept, or '': where a list item or a blank line ends a sentence, and no
+    label names an option. The blank lines around a label go with it: the label sits
+    inside one sentence."""
+    pieces = _without_labels(span, texts)
+    return "".join(pieces) if pieces else ""
 
 
 def verbatim_failure(cand: Candidate, texts: list[str]) -> str:

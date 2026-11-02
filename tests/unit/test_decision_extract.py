@@ -725,6 +725,13 @@ def test_a_line_starting_lower_case_is_no_label(span, text) -> None:
     assert dx.find_span(span, [text]) == ""
 
 
+def test_no_label_is_read_after_a_sentence_end() -> None:
+    # A plain heading between two paragraphs is no label inside a sentence.
+    text = "We cache plans per tenant.\n\nCosts\n\nEach plan expires after an hour."
+    span = "We cache plans per tenant. Each plan expires after an hour."
+    assert dx.find_span(span, [text]) == ""
+
+
 def test_a_negation_line_is_not_skipped() -> None:
     assert dx.find_span("Retries are safe", ["Retries are\nnot\nsafe"]) == ""
 
@@ -3423,7 +3430,7 @@ async def test_a_ban_copied_in_another_case_is_still_its_whole_quote(monkeypatch
     ],
 )
 async def test_a_reasonless_ban_split_by_a_label_is_stored_without_it(monkeypatch, over) -> None:
-    text = "Client-side retries only;\nProxy\nno server retry setting."
+    text = "Client-side retries\nProxy\nonly; no server retry setting."
     world = _World(monkeypatch, [_ban(**over)])
     _chunks(monkeypatch, (text, ("Retries",)))
     await _run()
@@ -3694,6 +3701,32 @@ async def test_an_option_a_list_item_states_is_inverted_on_the_documents_lines(m
         "rejected option 'sort the runs in memory' left out: the quote states it as part of "
         "the choice"
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_label_naming_a_rejected_option_does_not_invert_it(monkeypatch) -> None:
+    # The label "Shard by tenant" sits inside the chosen design's sentence; it states
+    # nothing, so the option stays rejected.
+    text = (
+        "We shard by time\nShard by tenant\nso joins stay local. "
+        "Sharding by tenant splits every join."
+    )
+    cand = _candidate(
+        scenario="how tables are sharded",
+        outcome="shard by time",
+        reasoning="We shard by time so joins stay local.",
+        quote="We shard by time so joins stay local. Sharding by tenant splits every join.",
+        alternatives=[
+            {"option": "shard by tenant", "reason": "Sharding by tenant splits every join."}
+        ],
+        mentions=[],
+    )
+    world = _World(monkeypatch, [cand])
+    _chunks(monkeypatch, (text, ("Sharding",)))
+    report = await _run()
+    (inp,) = world.recorded
+    assert inp.alternatives == ["shard by tenant — rejected: Sharding by tenant splits every join."]
+    assert report.dropped == []
 
 
 @pytest.mark.asyncio

@@ -639,13 +639,13 @@ def _drop_inverted(
     cand: dx.Candidate, section: str, texts: list[str], report: ExtractReport
 ) -> dx.Candidate:
     """`cand` without the rejected options the text states as part of the choice, each
-    reported; the decision itself stays. Read on the document's own text, line breaks
-    and all: the stored quote is on one line, without the list items and blank lines
-    that end a sentence."""
+    reported; the decision itself stays. Read on the document's own lines without the
+    labels (`unlabelled_span`): the stored quote is on one line, without the list items
+    and blank lines that end a sentence, and a label naming an option states nothing."""
     raw = replace(
         cand,
-        quote=dx.find_span(cand.quote, texts) or cand.quote,
-        alternatives=[(o, dx.find_span(r, texts) or r) for o, r in cand.alternatives],
+        quote=dx.unlabelled_span(cand.quote, texts) or cand.quote,
+        alternatives=[(o, dx.unlabelled_span(r, texts) or r) for o, r in cand.alternatives],
     )
     inverted = dx.inverted_options(raw)
     for option in inverted:
