@@ -429,7 +429,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   was ever ingested in the namespace: `doc#v2#Intro` cites `doc#v2` once that document exists.
 - **Clearing `source-changed`**: when a run's candidate for a tagged row's key has the row's verbatim fields again,
   the run drops the tag, pinned or not, as long as the row cites this document. The retire step never drops it: it
-  reads the reasoning alone, and the tag may stand for an outcome or a rejected option the document still contradicts.
+  reads the reasoning alone, and the tag may stand for a rejected option's reason the document still contradicts, or
+  a tag a maintainer set.
   By hand, a maintainer drops it with `memory.update_by_id` on the row's `memory_id` with `tags` less
   `source-changed`, or re-records the decision (after `memory.unpin`) or deletes it.
 - **Refusals and races**: a write the server refuses (a blacklisted decision, a row pinned during the run, a busy key,

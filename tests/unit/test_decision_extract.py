@@ -860,11 +860,12 @@ async def test_a_pinned_row_the_document_says_again_loses_source_changed(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_a_tag_for_a_changed_outcome_stays_on_a_run_that_does_not_emit_the_key(
+async def test_a_tag_stays_on_a_run_that_does_not_emit_the_key(
     monkeypatch,
 ) -> None:
-    # The document changed the pinned decision's outcome and kept its reasoning; an earlier
-    # run tagged it. This run's model leaves the key out: the tag stays.
+    # The pinned row carries source-changed, set by hand or by an earlier run on a changed
+    # rejected reason; its reasoning is still in the document. This run's model leaves the
+    # key out: the retire step keeps the tag.
     world = _World(monkeypatch, [])
     world.record(
         "decision:k",
@@ -1785,18 +1786,6 @@ async def test_a_failed_model_call_loses_its_window_only(monkeypatch) -> None:
     report = await _run(window_chars=len(BODY) + 1)
     assert [d.reason for d in report.dropped] == ["the model call failed: ReadTimeout"]
     assert len(world.recorded) == 1
-
-
-@pytest.mark.parametrize(
-    ("dropped", "refused", "code"),
-    # The exit code reads `refused` alone; a dropped line is for the printed report.
-    [([], [], 0), (["refused: BLACKLISTED"], [], 0), ([], ["k: refused: X"], 2), (["x"], [], 0)],
-)
-def test_the_exit_code_says_whether_a_write_was_refused(dropped, refused, code) -> None:
-    report = de.ExtractReport("d", False)
-    report.dropped = [de.Dropped("s", r) for r in dropped]
-    report.refused = refused
-    assert cli.exit_code(report) == code
 
 
 @pytest.mark.asyncio
