@@ -358,8 +358,7 @@ def _schedule_recall_credit(input: MemorySearchInput, hits: list[Any]) -> None:
 async def credit_merged_hits(input: MemorySearchInput, hits: list[Any]) -> None:
     """Exposure and recall credit for the hits of a pass merged into another response
     (`_merged_into_parent`), which writes neither itself: `hits` are the ones the parent
-    merged, and `input` is the pass's settled input (`_settled_input`) with the window the
-    parent asked for."""
+    merged, and `input` is the settled input the pass ran (`_settled_input`)."""
     _schedule_exposure(input, hits)
     if not input.auto_touch:
         return

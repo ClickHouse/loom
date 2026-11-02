@@ -24,9 +24,9 @@ async def search_repo_decisions(
     mem_input: MemorySearchInput, repo_namespace: str
 ) -> tuple[MemorySearchOutput, MemorySearchInput] | None:
     """The decision memories in `repo_namespace` that match `mem_input`'s
-    query, with the input the search settled on and the caller's `top_k`;
-    None when there is nothing to add, when the search abstains, or on any
-    failure. The read scope the token allows is pinned inside the search, as
+    query, with the input the search settled on, its `top_k` reset to the
+    caller's; None when there is nothing to add, when the search abstains, or
+    on any failure. The read scope the token allows is pinned inside the search, as
     for the base search."""
     from server.memory.app.search import handle_memory_search
     from server.memory.app.search.scoring import one_per_key, per_key_fetch
@@ -146,8 +146,7 @@ async def memory_with_repo_decisions(
     if not added:
         return base
     # Credited as the base search credits its own: for the hits it hands on,
-    # before the section's floors and answer-first rules, with the decision
-    # pass's settled input and the caller's `top_k`.
+    # before the section's floors and answer-first rules.
     await credit_merged_hits(settled, added)
     update: dict[str, Any] = {
         "results": hits,

@@ -346,8 +346,8 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                     )
                 if component_only:
                     continue  # the statement only scores the pooled keys
-                row_key = row_key_of(ns, row)
-                if row_key in pooled:
+                stored = row_key_of(ns, row)
+                if stored in pooled:
                     continue
                 sim = float(row.get("similarity") or 0.0)
                 hit = _MemorySearchHit(
@@ -371,7 +371,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                 _stamp_row_tags(hit, row.get("tags"))
                 hit._row_identity = row_identity(row)
                 seen.setdefault((ns, mk), []).append(hit)
-                pooled.add(row_key)
+                pooled.add(stored)
                 ctx.all_hits.append(hit)
                 added += 1
         ctx.actual_work["key_match_added"] = added

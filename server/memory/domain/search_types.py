@@ -316,13 +316,27 @@ class RowKey(NamedTuple):
     memory_key: str
 
 
-def row_key(row: Any) -> RowKey:
-    """The RowKey of a record that carries the five identity fields."""
-    return RowKey(row.namespace, row.agent, row.user_id, row.session_id, row.memory_key)
+class IdentityRecord(Protocol):
+    """A record read with the five identity columns (frozen dataclasses fit)."""
+
+    @property
+    def namespace(self) -> str: ...
+    @property
+    def agent(self) -> str: ...
+    @property
+    def user_id(self) -> str: ...
+    @property
+    def session_id(self) -> str: ...
+    @property
+    def memory_key(self) -> str: ...
+
+
+def record_row_key(rec: IdentityRecord) -> RowKey:
+    return RowKey(rec.namespace, rec.agent, rec.user_id, rec.session_id, rec.memory_key)
 
 
 def row_key_of(namespace: str, row: Mapping[str, Any]) -> RowKey:
-    """The RowKey of a result row that read the identity columns."""
+    """The RowKey of a result row (a mapping) that read the identity columns."""
     agent, user_id, session_id = (str(row[c]) for c in ("agent", "user_id", "session_id"))
     return RowKey(namespace, agent, user_id, session_id, str(row["memory_key"]))
 
