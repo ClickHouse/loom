@@ -18,6 +18,7 @@ from server.memory.api.models_for_file import (
     _MemoryForFileHit,
 )
 from server.memory.domain.code_change import STATE_RANK, worst
+from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import CONFIRMED_STATES, row_verification
 
 log = logging.getLogger(__name__)
@@ -224,13 +225,18 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     of one namespace cross-linked by `conflict_with` are an older row and a newer one that
     contradicts it. The newer is placed directly above the older and carries `supersedes_key` /
     `supersedes` / `supersedes_kind` (the older's key, author and kind). No new state: both
-    stay live until the older's author or an admin removes it, or a verdict retires it."""
+    stay live until the older's author or an admin removes it, or a verdict retires it. Two
+    typed decisions never pair: a decision's key is its identity, so one cross-linked to
+    another is a second decision, not a newer version."""
     by_id = {str(r.get("memory_id")): r for r in rows if r.get("memory_id")}
     newer_of: dict[int, list[dict[str, Any]]] = {}
     for r in rows:
         for cid in r.get("conflict_with") or []:
             peer = by_id.get(str(cid))
             if peer is None or peer is r or peer.get("namespace") != r.get("namespace"):
+                continue
+            kind = r.get("memory_type")
+            if kind in KEY_IDENTIFIED_TYPES and peer.get("memory_type") == kind:
                 continue
             new, old = (r, peer) if _stamp(r) >= _stamp(peer) else (peer, r)
             if not new.get("supersedes_key"):

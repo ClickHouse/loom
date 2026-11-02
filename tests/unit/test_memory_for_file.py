@@ -320,12 +320,21 @@ def _conflicting(newer: dict[str, Any], older: dict[str, Any]) -> list[dict[str,
     return mff._supersede_order([older, newer])
 
 
-def test_a_decision_superseding_a_decision_says_decision() -> None:
-    rows = _conflicting(_decision("design/new", "New."), _decision("design/old", actor="human:bob"))
+def test_a_row_superseding_a_tagged_decision_says_decision() -> None:
+    old = _decision("design/old", memory_type="semantic", actor="human:bob")
+    rows = _conflicting(_decision("design/new", "New.", memory_type="semantic"), old)
     assert rows[0]["supersedes_kind"] == "decision"
     assert _lines(rows)[1].startswith(
         "- Decision (by alice, 3 days ago; supersedes decision by bob) (pinned): New."
     )
+
+
+def test_two_cross_linked_typed_decisions_are_two_decisions() -> None:
+    # The conflict check links close decisions under different keys; neither supersedes.
+    old = _decision("design/old", actor="human:bob")
+    rows = _conflicting(_decision("design/new", "New."), old)
+    assert [r["memory_key"] for r in rows] == ["design/old", "design/new"]
+    assert not any(r.get("supersedes_key") for r in rows)
 
 
 def test_a_block_of_team_decisions_has_a_neutral_removal_footer() -> None:
