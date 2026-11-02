@@ -316,6 +316,11 @@ class RowKey(NamedTuple):
     memory_key: str
 
 
+def row_key(row: Any) -> RowKey:
+    """The RowKey of a record that carries the five identity fields."""
+    return RowKey(row.namespace, row.agent, row.user_id, row.session_id, row.memory_key)
+
+
 def row_key_of(namespace: str, row: Mapping[str, Any]) -> RowKey:
     """The RowKey of a result row that read the identity columns."""
     agent, user_id, session_id = (str(row[c]) for c in ("agent", "user_id", "session_id"))

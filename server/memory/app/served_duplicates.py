@@ -23,7 +23,7 @@ from typing import Any
 
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
-from server.memory.domain.search_types import RowKey, hit_row_key, names_row
+from server.memory.domain.search_types import RowKey, hit_row_key, names_row, row_key
 from server.memory.store.dedup import CanonicalRow, DuplicateStatus
 
 log = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ async def hide_pool_duplicates(ctx: Any) -> None:
         # a fact hit whose leg read no identity is not judged
         rows = [hit_row_key(h, ns_default) for h in facts if names_row(h)]
         found = await memory_repo.status_by_rows(input.org, rows, scope=scope)
-        truth: _Truth = {r.row_key: r for r in found}
+        truth: _Truth = {row_key(r): r for r in found}
     except Exception as e:  # noqa: BLE001 — hiding is a filter, never a failure
         log.warning("memory.search: duplicate status read failed: %s", e)
         return
@@ -167,7 +167,7 @@ def _rewrite_pool(
         row = canon.get((ns, cid))
         if row is None:
             continue
-        canonical = row.row_key
+        canonical = row_key(row)
         if canonical in present:
             continue
         present.add(canonical)

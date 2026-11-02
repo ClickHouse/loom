@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
-from server.memory.domain.search_types import RowKey
+from server.memory.domain.search_types import RowKey, row_key
 from server.memory.store import dedup
 from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl
 
@@ -30,4 +30,4 @@ async def test_a_row_read_answers_for_that_row_alone() -> None:
         "o", rows, scope=WHOLE_NAMESPACE, ch=LocalCH(ddl("memory"), _ROWS)
     )
     # a key named without its row's identity matches no stored row
-    assert [(s.row_key, s.status) for s in found] == [(rows[0], "duplicate")]
+    assert [(row_key(s), s.status) for s in found] == [(rows[0], "duplicate")]
