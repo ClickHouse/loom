@@ -718,8 +718,9 @@ class MemorySearchOutput(BaseModel):
     # Whether this read's recall credit was written.
     # `credited`, or `not_credited (measurement_label | no_consumer |
     # no_closer)`: a bench / probe label (`*`, `-`, `eval-*`, …), no named
-    # consumer, or a consumer that has not posted a closer (memory.outcome,
-    # memory.outcome_run, run.complete) in the window and carries no run.
+    # consumer (the dashboard and the assistant toolset are none), or a consumer that has
+    # not posted a closer (memory.outcome, memory.outcome_run, run.complete) in the window
+    # and carries no run.
     # Absent when `auto_touch` was false or nothing was served.
     reinforcement: str | None = None
     # Graph-mode diagnostics, summed across the cross-namespace fan-out.

@@ -20,7 +20,10 @@ The rule, in order (the consumer is checked ahead of the agent sentinels):
    a sentinel read with no consumer is refused as a `measurement_label` —
    the probes and peer benches read that way. With a named consumer the
    sentinel is a scope, not a label: the consumer is the identity that
-   closes the loop (the closer window is keyed on it for that reason).
+   closes the loop (the closer window is keyed on it for that reason). The
+   dashboard and the assistant toolset (`loom-ui`, `loom-assistant`) are a
+   person looking at the namespace, not a reader that relies on what it is
+   shown, so their reads are refused as `no_consumer` too.
 3. A read that carries a run (its own `run_id`, the transport-bound ledger
    run) or a `session_id` is credited: the outcome can be
    posted against that run.
@@ -47,6 +50,7 @@ from server.observability.consumer import (
     CLASS_ANONYMOUS,
     CLASS_SERVICE_ACCOUNT,
     CLASS_USER,
+    INSPECTOR_CONSUMERS,
     SOURCE_CLASS,
     current_consumer,
     current_consumer_source,
@@ -150,7 +154,8 @@ def decide_static(
     """Rules 1–3, no I/O. None = the closer window decides (rule 4)."""
     if is_measurement_read(agent=agent, consumer=consumer, consumer_source=consumer_source):
         return CreditDecision(False, REASON_MEASUREMENT_LABEL)
-    if not named_consumer(consumer, consumer_source):
+    named = named_consumer(consumer, consumer_source)
+    if not named or named in INSPECTOR_CONSUMERS:
         return CreditDecision(False, REASON_NO_CONSUMER)
     if str(run_id or "").strip() not in ("", "-") or str(session_id or "").strip() not in ("", "-"):
         return CreditDecision(True)

@@ -549,3 +549,25 @@ def test_settings_defaults() -> None:
     f = Settings.model_fields
     assert f["memory_reinforcement_closer_window_days"].default == 14
     assert f["memory_reinforcement_closer_cache_seconds"].default == 300
+
+
+@pytest.mark.parametrize("inspector", ["loom-ui", "loom-assistant"])
+def test_a_person_looking_from_the_dashboard_or_the_assistant_is_never_credited(
+    inspector: str,
+) -> None:
+    # A closer posted under the inspector's name (it is self-reported) does not open credit.
+    ch = _CH([{"seen": 1}])
+    for run_id, session_id in (("", ""), ("run-1", "s-1")):
+        decision = asyncio.run(
+            rc.decide_recall_credit(
+                org="o",
+                agent="*",
+                consumer=inspector,
+                consumer_source="self-reported",
+                run_id=run_id,
+                session_id=session_id,
+                ch=ch,
+            )
+        )
+        assert decision == rc.CreditDecision(False, rc.REASON_NO_CONSUMER)
+    assert ch.calls == []  # refused before the closer window is read

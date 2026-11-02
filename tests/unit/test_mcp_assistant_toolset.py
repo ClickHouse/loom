@@ -287,7 +287,7 @@ def test_an_assistant_call_opens_no_session_run() -> None:
 def test_an_assistant_call_through_the_call_path_opens_no_session_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The consumer is stamped before the run phase, so the run phase sees it."""
+    """The connection is known before the run phase, so the run phase opens none."""
     seen: list[tuple[Any, bool]] = []
     real = mcp_call._stamp_session_run
 

@@ -87,7 +87,7 @@ _profile_shown: dict[tuple[str, str, str], set[str]] = {}
 # Callers the mentor never speaks to: the dashboard and the assistant toolset, which
 # inspect a namespace for a person rather than use it (and whose connection carries none
 # of the tools a hint points at).
-_SILENT_AGENTS = frozenset(INSPECTOR_CONSUMERS)
+_SILENT_CALLERS = frozenset(INSPECTOR_CONSUMERS)
 # A profile hint rides only the calls its advice is about:
 # the graph hint on a knowledge.get or a code.* result is advice about
 # something else. Codes absent here ride every `_CARRIES_PROFILE_HINTS` op.
@@ -471,7 +471,7 @@ def call_hint(
             return None
         if not org or not namespace:
             return None
-        if agent in _SILENT_AGENTS or str(arguments.get("consumer") or "") in _SILENT_AGENTS:
+        if agent in _SILENT_CALLERS or str(arguments.get("consumer") or "") in _SILENT_CALLERS:
             return None
         st = _session(session_key or f"{org}/{namespace}/{agent}", clock=clock)
         res = (
