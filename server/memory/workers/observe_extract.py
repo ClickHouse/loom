@@ -269,11 +269,10 @@ async def _distill_session(
         new_tags = [t for t in (head.tags or []) if t != CRYSTALLIZE_READY_TAG]
         if CRYSTALLIZE_DONE_TAG not in new_tags:
             new_tags.append(CRYSTALLIZE_DONE_TAG)
+        # a head written after the stamp is the one this row copies, so outrank it
+        row_version = max(version, int(head.version) + 1)
         version_rows.append(
-            # a head written after the stamp is the one this row copies, so outrank it
-            memory_repo.build_memory_version_row(
-                head, version=max(version, int(head.version) + 1), tags=new_tags
-            )
+            memory_repo.build_memory_version_row(head, version=row_version, tags=new_tags)
         )
     # One committed insert for the session's observations.
     await memory_repo.insert_memory_versions(version_rows, ch=ch)

@@ -10,6 +10,7 @@ import pytest
 
 from server.memory.app import chunk_projection as chunk_projection
 from server.memory.app import observe_replay as replay
+from server.memory.store.sql import _identity_key
 from server.memory.workers import observe_extract as ox
 
 NARRATIVE = (
@@ -126,7 +127,8 @@ def _heads(monkeypatch: pytest.MonkeyPatch, heads: list[Any], order: list[str]) 
 
     async def _read(keys: list[Any], **_k: Any) -> dict[Any, Any]:
         order.append("re-read")
-        live = {ox._identity(h): h for h in heads}
+        # keyed as the store keys its answer, not through the worker's own helper
+        live = {_identity_key(vars(h)): h for h in heads}
         return {k: live[k] for k in keys if k in live}
 
     monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", _read)
