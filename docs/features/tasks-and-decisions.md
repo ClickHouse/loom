@@ -376,26 +376,27 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   where the rows go:
   - `--into source` (the default for a document outside a code namespace): the document's namespace, each row tagged
     `repo:<id>`, the tag the coding plugins send to `memory.for_file`, so whoever reads that namespace gets the row
-    before editing a file it names.
+    before editing a file it names. A document in the trunk itself gets untagged rows, read there by every editor.
   - `--into repo` (the default for a document in a code namespace): the repository's trunk code namespace, where every
     reader of the repository gets the row before an edit. `source_resource_id` still cites the document in its own
     namespace; there is no per-document access, so a repository reader who cannot read the document's namespace sees
     the row's quote but is refused the document it cites. The rows are the trunk's: erasing the document's namespace
     leaves them, and `memory.delete` in the trunk removes them.
 
-  A row the run keeps as it is (pinned, attested or with a recorded outcome, and the same verbatim fields) gains the
-  `repo:<id>` tag by a tags-only write. The run reads the document's namespace and the repository's, and writes where
-  the rows go; with an auth context bound it checks each (viewer, viewer, writer) and refuses before any model call.
-  The CLI runs with none, as the operator. Every memory row the reconcile and retire steps read is in the namespace the
+  A row the run keeps as it is (pinned, attested or with a recorded outcome, and the same verbatim fields, or one the
+  retire step keeps because its reasoning is still in the document) gains the `repo:<id>` tag by a tags-only write.
+  The run reads the document's namespace and the repository's, and writes where the rows go; with an auth context
+  bound it checks each (viewer, viewer, and writer, or viewer for a dry run) and refuses before any model call. The
+  CLI runs with none, as the operator. Every memory row the reconcile and retire steps read is in the namespace the
   rows go to, so the run exits 1 before any model call when this document's rows from an earlier run are in the other
   namespace a run may write them to (the trunk, or the document's namespace; for a document in a release branch's code
-  namespace, run without `--repo`, its trunk), or when a run without `--repo` finds them tagged `repo:<id>`: going on
-  would leave the document's decisions in two places, or unlinked. A caller who cannot read that other namespace is
-  refused. Two places the run does not look: rows an `--into repo` run wrote, when a later run on a document outside
-  any code namespace drops `--repo` or names another repository, so pass the same `--repo` again; and two runs on one
-  document at once with different `--into`, which can both find the other namespace empty. A row the retire step keeps
-  (its reasoning still in the document) gains the `repo:<id>` tag too. An unknown repository, a repository with no
-  remote to tag rows with under `--into source`, or `--into` without `--repo`, exits 1 as well.
+  namespace, run without `--repo`, its trunk), or carry another repository's `repo:<id>` tag (any, for a run without
+  `--repo`): going on would leave the document's decisions in two places, or linked to the wrong repository. A caller
+  who cannot read that other namespace is refused. Two cases the run does not see: rows an `--into repo` run wrote,
+  when a later run on a document outside any code namespace drops `--repo` or names another repository, so pass the
+  same `--repo` again; and two runs on one document at once with different `--into`, which can both find the other
+  namespace empty. An unknown repository, a repository with no remote to tag rows with under `--into source`, or
+  `--into` without `--repo`, exits 1 as well.
 
 - **Windows**: the document's live chunks for the current embedding model, grouped by section, at most
   `--window-chars` (default 6000) per call. A document chunked under another embedding model has none: the command

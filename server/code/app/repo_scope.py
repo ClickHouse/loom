@@ -47,7 +47,6 @@ async def repo_trunk(org: str, repo: str) -> tuple[str, str]:
     or a remote URL), matched as code.repos matches its candidates; ("", "") when no
     repository configured in `org` is that one. No access check: the caller gates."""
     from server.code.app.index.repo_registry import refresh_db_repos
-    from server.code.app.memory_links import trunk_namespace
     from server.code.app.repos import repo_slug
     from server.code.domain.index.remote import repo_tag
 
@@ -56,10 +55,12 @@ async def repo_trunk(org: str, repo: str) -> tuple[str, str]:
         return "", ""
     # A repository added from the dashboard is in the snapshot once it is refreshed.
     await refresh_db_repos()
-    for cfg in configured_repos():
-        if cfg.org == org and repo_slug(cfg.repo) == slug:
-            return trunk_namespace(org, cfg.namespace), repo_tag(cfg.git_remote or cfg.repo)
-    return "", ""
+    entries = [c for c in configured_repos() if c.org == org and repo_slug(c.repo) == slug]
+    if not entries:
+        return "", ""
+    # Any branch's entry may be the one that names the remote.
+    tag = next((t for c in entries if (t := repo_tag(c.git_remote or c.repo))), "")
+    return trunk_namespace_of(org, entries[0].namespace), tag
 
 
 async def repo_namespace_in_scope(org: str) -> str:

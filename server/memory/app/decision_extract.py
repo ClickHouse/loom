@@ -293,25 +293,32 @@ def _refusal(e: BaseException) -> str:
 @dataclass(frozen=True)
 class Target:
     """Where a run reads and writes: the namespace holding the document, the one whose code
-    index resolves its names, and the one its rows go to, with the `repo:<id>` tag they
-    carry there (empty when they go to the repository's own namespace)."""
+    index resolves its names, the one its rows go to, and the repository's `repo:<id>` tag
+    (empty with no repository)."""
 
     doc_namespace: str
     code_namespace: str
     rows_namespace: str
     repo_tag: str = ""
 
+    @property
+    def row_tag(self) -> str:
+        """The tag the rows carry: the repository's, unless they are in its own namespace."""
+        return "" if self.rows_namespace == self.code_namespace else self.repo_tag
+
 
 Into = Literal["repo", "source"]
 
 
-async def _target(org: str, namespace: str, repo: str, into: Into | None) -> Target | str:
+async def _target(
+    org: str, namespace: str, repo: str, into: Into | None, dry_run: bool
+) -> Target | str:
     """The run's target, or why it may not run. With no `repo`, the document's namespace
     is all three. With one, its names resolve in the repository's trunk code
     namespace, and the rows go there (`into="repo"`) or stay beside the document tagged
     with the repository (`into="source"`, the default unless the document is in a code
     namespace). The caller must read the document and the repository and write where the
-    rows go; with no auth context (the CLI) the operator may."""
+    rows go (read, for a dry run); with no auth context (the CLI) the operator may."""
     from server.code.app.repo_scope import repo_trunk
     from server.code.domain.index.repos import repo_for_namespace
 
@@ -325,16 +332,13 @@ async def _target(org: str, namespace: str, repo: str, into: Into | None) -> Tar
             return f"no repository {repo!r} is configured in {org}"
         if into is None:
             into = "repo" if repo_for_namespace(org, namespace) else "source"
-        if into == "repo":
-            target = Target(namespace, trunk, trunk)
-        elif not tag:
+        target = Target(namespace, trunk, trunk if into == "repo" else namespace, tag)
+        if not tag and target.rows_namespace != trunk:
             return f"repository {repo!r} has no remote to tag its rows with; use --into repo"
-        else:
-            target = Target(namespace, trunk, namespace, tag)
     for ns, role in [
         (target.doc_namespace, Role.VIEWER),
         (target.code_namespace, Role.VIEWER),
-        (target.rows_namespace, Role.WRITER),
+        (target.rows_namespace, Role.VIEWER if dry_run else Role.WRITER),
     ]:
         if not await _may(org, ns, role):
             return f"not allowed to {'write' if role == Role.WRITER else 'read'} {org}/{ns}"
@@ -370,7 +374,7 @@ async def extract_document(
     if error := _no_model_error():
         report.error = error
         return report
-    t = await _target(org, namespace, repo, into)
+    t = await _target(org, namespace, repo, into, dry_run)
     if isinstance(t, str):
         report.error = t
         return report
@@ -438,7 +442,7 @@ async def extract_document(
             report.flagged.append(rec.memory_key)
         if rec.holds:
             held.setdefault(_held_key(rec.held_outcome, cand.reasoning), rec.memory_key)
-    await _retire(report, own, live_texts, written, held, t.repo_tag)
+    await _retire(report, own, live_texts, written, held, t.row_tag)
     return report
 
 
@@ -462,17 +466,18 @@ async def _read_own(
 ) -> tuple[list[tuple[MemoryRow, dict[str, Any]]], str]:
     """The extractor's rows on this document where the run writes, with their records
     (`_own_records`); and why the run must not go on, or '': its rows for the document are
-    in the other namespace a run may write them to, or carry a repository's tag a run
-    without `--repo` would drop. Reconcile and retire read one namespace, so going on would
-    leave the document's decisions in two places, or unlinked."""
+    in the other namespace a run may write them to, or carry another repository's tag (any,
+    for a run without `--repo`), which the run would drop or add to. Reconcile and retire
+    read one namespace, so going on would leave the document's decisions in two places, or
+    linked to the wrong repository."""
     from server.code.app.repo_scope import trunk_namespace_of
 
     rows = await _extractor_rows(org, t, source_uri)
-    tagged = sorted({x for r in rows for x in r.tags if x.startswith("repo:")})
-    if not linked and tagged:
+    tagged = sorted({x for r in rows for x in r.tags if x.startswith("repo:")} - {t.repo_tag})
+    if tagged:
         return [], (
             f"this document's decisions are linked to a repository ({', '.join(tagged)}); "
-            "run with --repo, or a re-run would record them again unlinked"
+            "run with its --repo, or delete them first"
         )
     if not linked:
         other = trunk_namespace_of(org, t.doc_namespace)
@@ -481,6 +486,7 @@ async def _read_own(
     else:
         other = t.doc_namespace
     if other and other != t.rows_namespace:
+        # _target checked both namespaces of a run with --repo; a branch's trunk is new here.
         if not await _may(org, other, Role.VIEWER):
             # Whether rows are there is not the caller's to learn.
             return [], f"not allowed to read {org}/{other}"
@@ -770,7 +776,7 @@ def _record_input(
     fit the op's field limits (`_fits` checks first)."""
     tags = [DESIGN_DOC_TAG, *([CONSTRAINT_TAG] if cand.is_constraint else [])]
     if t.repo_tag:
-        tags.append(t.repo_tag)
+        tags.append(t.row_tag)
     return DecisionRecordInput(
         org=org,
         namespace=t.rows_namespace,
@@ -930,7 +936,7 @@ async def _reconcile(
             rec.holds = ours
             rec.held_outcome = str(record.get("outcome") or "").strip()
             if row is not None and this_doc:
-                await _keep_tags(rec, row, dry_run, t.repo_tag)
+                await _keep_tags(rec, row, dry_run, t.row_tag)
             return rec
         if row is not None and _confirmed(row) and this_doc:
             # The human who confirmed it decides; a pinned writer row refuses decision.record.
@@ -942,7 +948,7 @@ async def _reconcile(
                 else "attested; the document now says otherwise; to accept this body, send it "
                 "and attest the new decision again with memory.verify"
             )
-            rec.action = await _flag(rec, row, dry_run, t.repo_tag)
+            rec.action = await _flag(rec, row, dry_run, t.row_tag)
             return rec
         if not ours:
             rec.body.update(
@@ -960,10 +966,10 @@ async def _reconcile(
             # decision.record rebuilds the record from the body, so a re-record would drop
             # the outcome.
             rec.note = "its outcome is recorded; re-recording would lose it"
-            rec.action = "outcome_known" if same else await _flag(rec, row, dry_run, t.repo_tag)
+            rec.action = "outcome_known" if same else await _flag(rec, row, dry_run, t.row_tag)
             if same:
                 # Only its row fields are stale: the document says what it says again.
-                await _keep_tags(rec, row, dry_run, t.repo_tag)
+                await _keep_tags(rec, row, dry_run, t.row_tag)
             return rec
         rec.action = "revised"
     rec.holds = True

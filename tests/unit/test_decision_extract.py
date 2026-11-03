@@ -3915,7 +3915,12 @@ def _link_repo(
 
     async def trunk(org, repo):
         # acme/bare: a repository with no remote to tag rows with
-        return {"acme/widgets": (TRUNK, REPO_TAG), "acme/bare": (TRUNK, "")}.get(repo, ("", ""))
+        known = {
+            "acme/widgets": (TRUNK, REPO_TAG),
+            "acme/bare": (TRUNK, ""),
+            "acme/gadgets": ("code-gadgets", "repo:9999999999"),
+        }
+        return known.get(repo, ("", ""))
 
     async def may(org, ns, role, *, hides_answer=True):
         return (ns, role.name.lower()) not in refused
@@ -4081,10 +4086,10 @@ async def test_repo_trunk_matches_owner_name_or_a_remote_url(monkeypatch) -> Non
         git_remote="https://github.com/acme/widgets.git",
         git_branch="main",
     )
+    # Listed first and with no remote of its own: the trunk's entry names it.
     branch = repo_config(
         namespace="code-widgets-26-1",
         repo="Acme/Widgets",
-        git_remote="https://github.com/acme/widgets.git",
         git_branch="release-26.1",
     )
 
@@ -4269,3 +4274,37 @@ async def test_a_run_without_repo_in_a_branch_namespace_checks_its_trunk(
     report = await _run()
     assert report.error == error
     assert world.prompts == [] and world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_a_run_with_another_repo_refuses_over_rows_linked_to_the_first(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), files=[HEADER], tags=["decision", REPO_TAG])
+    _link_repo(monkeypatch, world)
+    report = await _run(repo="acme/gadgets", into="source")
+    assert report.error == (
+        f"this document's decisions are linked to a repository ({REPO_TAG}); run with its "
+        "--repo, or delete them first"
+    )
+    assert world.prompts == [] and world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_needs_only_read_where_the_rows_go(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    _link_repo(monkeypatch, world, refused=frozenset({(TRUNK, "writer")}))
+    dry = await _run(dry_run=True, repo="acme/widgets", into="repo")
+    assert dry.error == "" and [r.action for r in dry.records] == ["written"]
+    applied = await _run(repo="acme/widgets", into="repo")
+    assert applied.error == f"not allowed to write o/{TRUNK}" and world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_rows_in_the_repositorys_own_namespace_carry_no_tag(monkeypatch) -> None:
+    """A document in the trunk: --into source writes to the trunk, served there untagged."""
+    world = _World(monkeypatch, [_candidate()])
+    _link_repo(monkeypatch, world, code_namespaces=frozenset({TRUNK}))
+    await de.extract_document("o", TRUNK, "doc.md", dry_run=False, repo="acme/bare", into="source")
+    (inp,) = world.recorded
+    assert inp.namespace == TRUNK and not [t for t in inp.tags if t.startswith("repo:")]
