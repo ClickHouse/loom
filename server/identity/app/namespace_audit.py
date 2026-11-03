@@ -319,8 +319,9 @@ _CONTRACT: dict[str, RuleContract] = {
         uncertainty=(
             "Only the structured-by-design types are recognised; other workflows that read by "
             "key on purpose still count in exact_key_store. A read is matched by key, so a "
-            "read of another writer's row under a procedure's key counts as one, and a "
-            "`memory.bulk_get` (which names no single key) is not matched."
+            "read of another writer's row under a procedure's key counts as one. A "
+            "`memory.bulk_get` (which names no single key) is not matched, nor is an MCP read "
+            "of a key longer than the 200 characters its ledger row keeps."
         ),
     ),
     "index_backlog": RuleContract(
