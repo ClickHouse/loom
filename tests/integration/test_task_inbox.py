@@ -543,3 +543,59 @@ async def test_a_foreign_poster_naming_the_owner_agent_lands_in_triage(
             c, private_bot, "task.create", {**body, "namespace": "private", "title": "own"}
         )
         assert own["task"]["status"] == "todo"
+
+
+@pytest.mark.asyncio
+async def test_a_poster_reusing_another_posters_key_gets_its_own_task(
+    control_plane_url: str, mint_test_token
+) -> None:
+    # Two listed posters, neither able to read the inbox's namespace, send one key: the
+    # second stores its own task and never sees the first one's title or brief.
+    org = f"taskkey-{uuid.uuid4().hex[:8]}"
+    admin = mint_test_token(org=org, namespaces=["private"], roles=["admin"], subject="alice")
+    bots = {
+        name: mint_test_token(org=org, namespaces=[name], roles=["writer"], subject=f"sa:{name}")
+        for name in ("bot-a", "bot-b")
+    }
+    secret = uuid.uuid4().hex
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
+        await _call(
+            c,
+            admin,
+            "inbox.register",
+            {
+                "org": org,
+                "namespace": "private",
+                "agent": "alice",
+                "inbox": "triage",
+                "owner_agent": "triage",
+                "posters": ["sa:bot-a", "sa:bot-b"],
+                "accept_disclosure": ["confidential"],
+            },
+        )
+
+        async def post(name: str, title: str, brief: dict) -> dict:
+            return await _call(
+                c,
+                bots[name],
+                "task.create",
+                {
+                    "org": org,
+                    "namespace": name,
+                    "agent": name,
+                    "inbox": "triage",
+                    "kind": "finding",
+                    "title": title,
+                    "brief": brief,
+                    "disclosure": "confidential",
+                    "idempotency_key": "finding-42",
+                },
+            )
+
+        a = await post("bot-a", f"title {secret}", {"objective": f"brief {secret}"})
+        b = await post("bot-b", "b's finding", {"objective": "b's brief"})
+        assert a["created"] and b["created"]
+        assert b["task"]["task_id"] != a["task"]["task_id"]
+        assert b["task"]["from_subject"] == "sa:bot-b" and secret not in str(b)
+        retry = await post("bot-b", "b's finding", {"objective": "b's brief"})
+        assert not retry["created"] and retry["task"]["task_id"] == b["task"]["task_id"]

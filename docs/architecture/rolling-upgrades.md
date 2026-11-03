@@ -109,7 +109,7 @@ schema. These rules keep that safe. The operator procedure is in
    location answers such a download 410 and cannot erase such an object, so the store is
    switched on after the rollout, and no rollback goes past this build while rows name
    objects.
-10. **A task key's exclusion holds only among N's replicas.** `task.create` with an
+10. **A `task.create` key's exclusion holds only among N's replicas.** `task.create` with an
     idempotency key holds a lease on the poster and its key (`_one_create_per_key`) and
     inserts under the key's dedup token (`insert_created_task`); the coverage watch's
     ready-event delivery holds one on the event's task id (`insert_ready_event`). One
