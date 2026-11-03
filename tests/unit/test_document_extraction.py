@@ -1414,16 +1414,40 @@ def test_a_toml_integer_outside_signed_64_bits_makes_the_file_invalid_toml() -> 
 
 
 def test_the_wide_integer_check_is_linear_in_a_deep_table_of_long_keys() -> None:
-    """A path spelled per value would copy its parent's: 20,000 levels of
-    1,000-character keys would copy about 200 GB."""
+    """A path that copies its prefix at each level is quadratic in the depth:
+    20,000 levels of 1,000-character keys would copy about 200 GB. It runs under
+    a trace function, as under coverage, where CPython does not extend a string
+    in place; four times the depth must cost well under sixteen times the time,
+    a ratio a slower machine does not change."""
+    import sys
+    import time
+
     from loom_extractor.tomlfile import _wide_integer
 
-    doc: dict[str, object] = {"v": 99999999999999999999}
-    for _ in range(20_000):
-        doc = {"k" * 1000: doc}
-    paths: list[str] = []
-    _within(5.0, lambda: paths.append(_wide_integer(doc)))
-    assert paths[0].endswith(".v") and paths[0].count(".") == 20_000
+    def deep(levels: int) -> dict[str, object]:
+        doc: dict[str, object] = {"v": 99999999999999999999}
+        for _ in range(levels):
+            doc = {"k" * 1000: doc}
+        return doc
+
+    def seconds(doc: dict[str, object]) -> float:
+        best = float("inf")
+        for _ in range(3):
+            start = time.perf_counter()
+            _wide_integer(doc)
+            best = min(best, time.perf_counter() - start)
+        return best
+
+    small, large = deep(5_000), deep(20_000)
+    previous = sys.gettrace()
+    sys.settrace(lambda *_: None)
+    try:
+        ratio = seconds(large) / seconds(small)
+    finally:
+        sys.settrace(previous)
+    assert ratio < 8, f"4x the depth took {ratio:.1f}x the time"
+    path = _wide_integer(large)
+    assert path.endswith(".v") and path.count(".") == 20_000
 
 
 def test_a_wide_integer_in_a_reopened_table_is_named_in_key_order() -> None:
