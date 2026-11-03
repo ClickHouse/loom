@@ -399,16 +399,21 @@ async def test_another_posters_create_with_the_key_is_not_dropped_by_its_token(
 # The previous build's create looks the key up, inserts the task, logs the created event
 # and writes the lease row. It names its lease and dedup token without the poster, so
 # neither ever matches this build's. Pausing that build mid-request takes hooks it does
-# not have, so these tests make its create's inserts beside this build's call, each
-# under a random token: a stand-in for any token that differs from this build's.
-# Neither build's create keeps the other's task out: a race gives two tasks.
+# not have, so these tests make its create's inserts beside this build's call: the task
+# row under that build's own key token, its event under a random one. Neither build's
+# create keeps the other's task out: a race gives two tasks.
 
 _OLD_SETTINGS = {"async_insert": 0, "wait_for_async_insert": 1}
 
 
 def _old_token() -> dict[str, Any]:
-    """The previous build's create insert settings: a token unlike this build's."""
+    """Insert settings under a token of its own."""
     return {**_OLD_SETTINGS, "insert_deduplication_token": uuid.uuid4().hex}
+
+
+def _old_key_token(org: str) -> dict[str, Any]:
+    """The previous build's task insert settings: its key token, named without the poster."""
+    return {**_OLD_SETTINGS, "insert_deduplication_token": f"task.create:{org}:bot:k1"}
 
 
 async def _registered(prefix: str) -> tuple[str, dict[str, Any]]:
@@ -467,7 +472,7 @@ async def _old_build_create(ch: Any, org: str, namespace: str) -> str:
     )
     seq = await repo.server_version(0)
     row = _new_version(task, seq)  # type: ignore[arg-type]
-    await ch.insert("loom.tasks", [dict(row)], settings=_old_token())
+    await ch.insert("loom.tasks", [dict(row)], settings=_old_key_token(org))
     event = {
         "org": org,
         "inbox": "bot",
