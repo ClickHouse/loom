@@ -540,7 +540,7 @@ Resolve one duplicate pair.
 | `decision` | `str` | The decision applied, echoed. |
 | `canonical_tombstoned` | `bool` | True when `keep_duplicate` tombstoned the canonical row. |
 | `duplicate_tombstoned` | `bool` | True when `keep_canonical` tombstoned the duplicate row. |
-| `ignored_args` | `list[str]` | Request fields the server did not apply: the removed `canonical_key` / `duplicate_key`. |
+| `ignored_args` | `list[str]` | Request fields the server did not apply: unknown keys, and the removed canonical_key / duplicate_key. |
 
 ## `memory.delete`
 

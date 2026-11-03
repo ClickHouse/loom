@@ -260,6 +260,24 @@ async def test_resolve_reads_the_dashed_form_of_any_uuid_spelling(
     assert tombstoned == [DUP]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("decision", "locked"), [("keep_canonical", DUP), ("keep_duplicate", CANON)]
+)
+async def test_resolve_refuses_to_tombstone_a_locked_side(
+    monkeypatch: pytest.MonkeyPatch, decision: str, locked: str
+) -> None:
+    from server.memory.app.dedup import handle_memory_dedup_resolve
+
+    rows = _pair()
+    rows[locked] = rows[locked].model_copy(update={"lock_mode": "no_delete"})
+    tombstoned, cleared = _fake_store(monkeypatch, rows)
+    with pytest.raises(HTTPException) as exc:
+        await handle_memory_dedup_resolve(_resolve_input(decision))
+    assert exc.value.status_code == 423
+    assert (tombstoned, cleared) == ([], [])
+
+
 _OLD_CALL: dict[str, Any] = {
     "org": "clickhouse",
     "namespace": "finance",
