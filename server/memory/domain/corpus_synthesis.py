@@ -121,11 +121,14 @@ def reduce_prompt(task: str, notes: Sequence[str], *, final: bool) -> str:
     )
 
 
-# A tag ends in `#idx` or `#a-b` right after its source's last character; the source
-# may hold spaces, and a window spanning documents is cited as a comma list
-# (`Window.cite`). Bracketed prose such as `[issue #3]` or `[#1]` is no tag.
-_CITATION = re.compile(r"\[([^\[\]\n]*[^\[\]\s,]#\d+(?:-\d+)?)\]", re.ASCII)
+# A citation is a bracket holding one or more `source#idx` / `source#a-b` items, separated
+# by `,` or `;` (a window spanning documents is cited as a comma list, `Window.cite`). A
+# source holds no blank, comma or semicolon; a bracket with anything else in it is
+# prose (`[PR #42]`, `[see doc#1]`) and is left as written.
+_ITEM = r"[^\s,;\[\]]+#\d+(?:-\d+)?"
+_CITATION = re.compile(rf"\[\s*({_ITEM}(?:\s*[,;]\s*{_ITEM})*)\s*\]", re.ASCII)
 _PART = re.compile(r"(.+)#(\d+)(?:-(\d+))?", re.ASCII)
+_SEPARATOR = re.compile(r"\s*[,;]\s*")
 # A removed tag goes with the blanks before it.
 _SPACED_CITATION = re.compile(r"[ \t]*" + _CITATION.pattern, re.ASCII)
 
@@ -143,11 +146,11 @@ def citations(text: str) -> list[str]:
 
 
 def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
-    """Whether `source#idx` (or `source#a-b`, a <= b, or a comma list of them) names
+    """Whether `source#idx` (or `source#a-b`, a <= b, or a `,`/`;` list of them) names
     chunks in `read`, the (source, idx) pairs the passes were shown. A range needs both
     of its ends read, a list every part."""
-    for part in tag.split(","):
-        m = _PART.fullmatch(part.strip())
+    for part in _SEPARATOR.split(tag):
+        m = _PART.fullmatch(part)
         if m is None:
             return False
         source, a, b = m.group(1), int(m.group(2)), int(m.group(3) or m.group(2))

@@ -223,15 +223,19 @@ def test_grounding_removes_the_tags_of_unread_chunks_from_the_answer() -> None:
     assert answer == "Refunds take 14 days [doc://a#1], or 30."
     assert kept == ["doc://a#1"] and removed == ["doc://a#9", "doc://z#0"]
     assert cs.ground_citations("No tags at all.", read) == ("No tags at all.", [], [])
-    # a source with a space is checked too; an answer of only unread tags is empty
-    assert cs.ground_citations("See [my notes.md#4].", read) == ("See.", [], ["my notes.md#4"])
+    # an answer of only unread citations is empty
     assert cs.ground_citations("[doc://z#0]", read) == ("", [], ["doc://z#0"])
-    # bracketed prose is no tag
-    for prose in ("fixed in [PR #42]", "see [#1]", "[items #2, #3]"):
+    # a bracket with anything but citations in it is prose, left as written
+    for prose in ("fixed in [PR #42]", "see [#1]", "[items #2, #3]", "[see doc://a#9]"):
         assert cs.ground_citations(prose, read) == (prose, [], [])
-    # a list with a part that is no index (a non-ASCII digit) is removed, not parsed
-    tag = "doc://a#²,doc://a#1"
-    assert cs.ground_citations(f"[{tag}]", read) == ("", [], [tag])
+    # a list separated by ';' is a citation, checked part by part
+    assert cs.ground_citations("x [doc://a#0; doc://a#1]", read) == (
+        "x [doc://a#0; doc://a#1]",
+        ["doc://a#0; doc://a#1"],
+        [],
+    )
+    # a non-ASCII digit is no index: the bracket is prose
+    assert cs.ground_citations("[doc://a#²,doc://a#1]", read) == ("[doc://a#²,doc://a#1]", [], [])
     # a source holding '#' splits at its last one; a padded tag is named without padding
     assert cs.cites_what_was_read("doc://a#frag#0", {("doc://a#frag", 0)})
     assert cs.ground_citations("x [ doc://a#1]", read) == ("x [ doc://a#1]", ["doc://a#1"], [])

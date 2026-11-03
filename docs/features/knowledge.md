@@ -123,10 +123,10 @@ Search finds a passage; three other reads cover the rest of the work with a long
   live chunk is read in order in windows of `window_chars` that respect section
   boundaries, each window is noted by the LLM, and the notes are folded into one
   answer with `citations`. `max_windows` (default 64) caps the model calls; a corpus
-  needing more sets `truncated`. A citation names a chunk the passes read
-  (`[source#idx]` or `[source#a-b]`); a tag the model wrote for anything else (a chunk
-  past `max_windows`, an index that does not exist, another document) is removed from
-  `answer` and listed in `unsupported_citations`, since following it would read
+  needing more sets `truncated`. A citation names chunks the passes read
+  (`[source#idx]`, `[source#a-b]`, or a list of them separated by `,` or `;`); a
+  citation of anything else (a chunk past `max_windows`, an index that does not exist,
+  another document) is removed from `answer` and listed in `unsupported_citations`, since following it would read
   something the answer did not come from. An answer that is empty once those tags are
   removed abstains with `abstain_reason="empty_answer"`. It needs a real LLM provider.
 

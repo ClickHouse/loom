@@ -374,10 +374,10 @@ class KnowledgeSynthesizeOutput(BaseModel):
     documents: int
     # How many fold rounds merged the notes into the answer; 1 when they fit one call.
     reduce_rounds: int
-    # Distinct `source#idx` (or `source#a-b`) citations in the answer, in reading order;
-    # each names chunks the passes read.
+    # Distinct `source#idx` (or `source#a-b`, or a list of them for a window spanning
+    # documents) citations in the answer, in reading order; each names chunks the passes read.
     citations: list[str] = Field(default_factory=list)
-    # Tags the model wrote for chunks it was not shown, removed from `answer`.
+    # Citations in the answer that name no chunk the passes read; removed from `answer`.
     unsupported_citations: list[str] = Field(default_factory=list)
     # True when the documents needed more than `max_windows` windows and only the first were read.
     truncated: bool = False
