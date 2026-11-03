@@ -20,7 +20,7 @@ environment, never a command line, which any local user can read:
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin loom-extractor
 sudo python3 -m venv /opt/loom-extractor && sudo /opt/loom-extractor/bin/pip install ./extractor
 sudo sh -c 'umask 077 && openssl rand -hex 24 > /etc/loom-extractor.token'
-sudo sh -c 'LOOM_EXTRACTOR_TOKEN=$(cat /etc/loom-extractor.token) LOOM_EXTRACTOR_HOST=0.0.0.0 \
+sudo sh -c 'export LOOM_EXTRACTOR_TOKEN="$(cat /etc/loom-extractor.token)" LOOM_EXTRACTOR_HOST=0.0.0.0 &&
   exec setpriv --reuid=loom-extractor --regid=loom-extractor --init-groups /opt/loom-extractor/bin/loom-extractor'
 ```
 

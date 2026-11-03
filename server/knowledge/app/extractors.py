@@ -107,6 +107,15 @@ def _client(url: str) -> httpx.AsyncClient:
     )
 
 
+def _uncompressed(response: httpx.Response) -> None:
+    """A compressed answer (a compressing proxy in front of the service, say) is
+    out of contract whatever its status: the service is unavailable, and no
+    source is refused for it."""
+    encoding = response.headers.get("content-encoding", "identity").strip().lower()
+    if encoding not in ("", "identity"):
+        raise ExtractorUnavailable(f"the extractor answered with {encoding[:20]!r} encoding")
+
+
 class _TooLarge(Exception):
     pass
 
@@ -154,6 +163,7 @@ async def capabilities(url: str) -> Capabilities:
             _client(url) as client,
             client.stream("GET", f"{url}/v1/capabilities") as r,
         ):
+            _uncompressed(r)
             if r.status_code != 200:
                 raise ExtractorUnavailable(f"the extractor's capabilities answered {r.status_code}")
             caps = _capabilities(await _read(r, _CAPABILITIES_MAX_BYTES))
@@ -263,6 +273,7 @@ async def extract(
                 headers={"Content-Type": "application/octet-stream"},
             ) as r,
         ):
+            _uncompressed(r)
             # The status first: only an artifact is read up to the artifact bound, and a
             # proxy's long error page is not mistaken for one.
             if 400 <= r.status_code < 500 and r.status_code not in _UNAVAILABLE_4XX:

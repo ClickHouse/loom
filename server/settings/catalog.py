@@ -3876,8 +3876,8 @@ def _is_http_url(url: str) -> bool:
         return (
             parsed.scheme in ("http", "https")
             and bool(parsed.host)  # `host` decodes IDNA
-            and not parsed.query
-            and not parsed.fragment
+            and "?" not in url  # a bare `?` or `#` too: httpx reads it as empty
+            and "#" not in url
         )
     except (httpx.InvalidURL, ValueError):
         return False

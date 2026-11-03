@@ -40,17 +40,17 @@ no original is extracted.
 **Tokens.** The server sends each service the token `LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON` holds for its URL, else
 `LOOM_DOCUMENT_EXTRACTOR_TOKEN`, so an operator's own service need not hold the token the reference extractor accepts.
 
-**Untrusted output.** The server asks for a response uncompressed (`Accept-Encoding: identity`) and reads it as sent, so
-a compressed body is no JSON, up to `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES` and refuses a longer one as
-`resource_limit`, then `parse_artifact` checks it before anything is chunked, embedded or published: the schema version,
-the format asked for, each block's type, a unique id and a parent that is an earlier block, at most 10,000 keys of 1,024
-characters and 64 section-path entries of 500 characters per block (so the chunks cut from a long block share its keys
-and per-chunk work stays linear), locator spans that are ranges, coverage counts within their total, strings that are
-valid Unicode, numbers that are JSON (no `NaN` or `Infinity`) and nesting depth in `attrs` and `options` (16; the
-reference TOML parser leaves out the `attrs.value` of a value nested deeper than 8, whose text the block keeps).
-`complete` is recomputed from the counts, failures and losses, and an artifact whose flag disagrees is refused. A field
-the contract does not name is dropped. The server addresses the artifact by the SHA-256 of its own serialization, not
-the service's bytes.
+**Untrusted output.** The server asks for a response uncompressed (`Accept-Encoding: identity`), treats a compressed one
+as the service being unavailable, and reads an artifact up to `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES`, refusing a
+longer one as `resource_limit`. Then `parse_artifact` checks it before anything is chunked, embedded or published: the
+schema version, the format asked for, each block's type, a unique id and a parent that is an earlier block, at most
+10,000 keys of 1,024 characters and 64 section-path entries of 500 characters per block (so the chunks cut from a long
+block share its keys and per-chunk work stays linear), locator spans that are ranges, coverage counts within their
+total, strings that are valid Unicode, numbers that are JSON (no `NaN` or `Infinity`) and nesting depth in `attrs` and
+`options` (16; the reference TOML parser leaves out the `attrs.value` of a value nested deeper than 8, whose text the
+block keeps). `complete` is recomputed from the counts, failures and losses, and an artifact whose flag disagrees is
+refused. A field the contract does not name is dropped. The server addresses the artifact by the SHA-256 of its own
+serialization, not the service's bytes.
 
 **Isolation in the reference extractor.** Every `/v1` call carries `Authorization: Bearer <token>`; the service
 refuses to start without a token of at least 16 characters. Each extraction runs in a child process, and before the
