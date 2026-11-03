@@ -287,14 +287,11 @@ decision whose outcome is recorded reads as decided).
 caller's own `decision:proposed` tag; `memory.update`, which replaces a row's tags, edits the tag like any other, and
 the readers follow it.
 
-A `loom decisions extract` run keeps an extracted row's stage, in either direction, while the document's words for it
-stay the same, and records a changed text at the stage it reads as. The words are the decision's reasoning and its
-rejected options' reasons: a proposal whose status line or title changes to accepted keeps its rows proposed, with a
-note that the document reads as decided. Mark such a decision decided by sending the body a `--dry-run` reports for it
-(it carries the extractor's identity, so it replaces the row) with `stage: "decided"`, record its outcome with
-`decision.outcome`, or delete the document's extracted rows that are not pinned or attested and extract it again, which
-reads every row's stage afresh. Pinning a row, or attesting it with `memory.verify`, keeps a stage set by hand: a run
-never records that row again.
+A `loom decisions extract` run keeps the stage of a row whose words stay the same ([Extract decisions from a
+document](#extract-decisions-from-a-document), **Stage**), so a proposal later marked accepted keeps its rows proposed.
+Mark such a decision decided by sending the body a `--dry-run` reports for it (it carries the extractor's identity, so
+it replaces the row) with `stage: "decided"`, record its outcome with `decision.outcome`, or delete the document's
+extracted rows that are not pinned or attested and extract it again, which reads every row's stage afresh.
 
 - **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the stored
   category, scenario, outcome, reasoning, alternatives and realized outcome (not `decision_maker` or `run_id`, which
