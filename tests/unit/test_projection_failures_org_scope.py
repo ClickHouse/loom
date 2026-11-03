@@ -33,11 +33,13 @@ def org_admin_with_hidden(monkeypatch: pytest.MonkeyPatch) -> RecordingCH:
     async def hidden(org: str) -> list[str]:
         return ["restricted-ns"]
 
-    async def no_collections(org: str, column: str = "namespace") -> tuple[str, dict[str, Any]]:
-        return "", {}
+    async def readable_collections(
+        org: str, column: str = "namespace"
+    ) -> tuple[str, dict[str, Any]]:
+        return " AND (NOT startsWith(namespace, {col_prefix:String}))", {"col_prefix": "col-"}
 
     monkeypatch.setattr(ctx, "restricted_namespaces_hidden_from", hidden)
-    monkeypatch.setattr(ctx, "collection_clause", no_collections)
+    monkeypatch.setattr(ctx, "collection_clause", readable_collections)
     return (
         RecordingCH()
         .on("FROM loom.memory_projection_failures", [])
@@ -46,9 +48,14 @@ def org_admin_with_hidden(monkeypatch: pytest.MonkeyPatch) -> RecordingCH:
 
 
 def _excludes_restricted(sql: str, params: dict[str, Any]) -> bool:
-    return "namespace NOT IN {ns_hidden:Array(String)}" in sql and params["ns_hidden"] == [
-        "restricted-ns"
-    ]
+    """The statement leaves out the hidden restricted namespace and the collections the
+    caller cannot read."""
+    return (
+        "namespace NOT IN {ns_hidden:Array(String)}" in sql
+        and params["ns_hidden"] == ["restricted-ns"]
+        and "startsWith(namespace, {col_prefix:String})" in sql
+        and params["col_prefix"] == "col-"
+    )
 
 
 @pytest.mark.asyncio
@@ -71,8 +78,7 @@ async def test_retry_reads_only_the_scope(org_admin_with_hidden: RecordingCH) ->
 
     out = await handle_projection_failures_retry(ProjectionFailureRetryInput(org="dev"))
     assert out.results == []
-    first = org_admin_with_hidden.calls[0]
-    sql, params = first.sql, first.params
+    ((sql, params),) = [(c.sql, c.params) for c in org_admin_with_hidden.calls]
     assert _excludes_restricted(sql, params)
 
 
