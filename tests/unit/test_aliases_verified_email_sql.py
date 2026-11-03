@@ -251,3 +251,37 @@ async def test_the_user_list_marks_a_platform_admin_by_a_verified_email_only(
         "dave": True,
         "erin": False,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("namespace", "subject", "found"),
+    [
+        # An address with no row of its own reaches its squatter's handle's row.
+        ("team-z", "bob@corp.example", "mallory"),
+        # A handle with none falls back to its verified email's row only.
+        ("team-y", "u-carol", "carol@corp.example"),
+        ("team-y", "mallory", None),
+    ],
+)
+async def test_a_revoke_finds_the_row_its_spellings_reach(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch, namespace: str, subject: str, found: str | None
+) -> None:
+    from server.identity.app import grants as grants_app
+
+    monkeypatch.setattr(grants, "_default_client", lambda: ch)
+    stored, row = await grants_app._live_grant_row(ORG, namespace, subject)
+    assert (stored if row is not None else None) == found
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_reads_the_owners_email_not_a_personal_namespaces(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.auth import login
+    from server.settings import settings
+
+    monkeypatch.setattr(login, "get_client", lambda: ch)
+    listed = {"carol@corp.example"}
+    monkeypatch.setattr(type(settings), "platform_admins_set", property(lambda _s: listed))
+    assert await login.refreshed_roles("u-carol", ORG, ["platform_admin"]) == ["platform_admin"]

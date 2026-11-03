@@ -165,4 +165,11 @@ async def canonical_subject(org: str, subject: str, *, ch: object | None = None)
     return subject
 
 
-__all__ = ["canonical_subject", "invalidate", "invalidate_org", "subject_aliases"]
+__all__ = [
+    "canonical_subject",
+    "invalidate",
+    "invalidate_org",
+    "read_aliases",
+    "spellings",
+    "subject_aliases",
+]

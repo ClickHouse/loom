@@ -150,26 +150,29 @@ async def _write(
     # FINAL a later unlink with a lower version would be lost.
     version = await next_version(ch, TABLE, {"email": email.strip().lower()})
     now = datetime.now(UTC)
-    await ch.insert(
-        TABLE,
-        [
-            {
-                "email": email.strip().lower(),
-                "org": org,
-                "namespace": namespace,
-                "linked": linked,
-                "linked_by": by,
-                "linked_at": now,
-                "version": version,
-            }
-            for org, namespace in accounts
-        ],
-    )
-    # A link verifies the account's email, which ties it to the owner's grants
-    # (`server.auth.aliases`): an unlink must not leave a cached tie admitting.
     from server.auth import aliases
     from server.core import grant_cache
 
-    for org in sorted({org for org, _ in accounts}):
-        aliases.invalidate_org(org)
-        await grant_cache.changed(org)
+    try:
+        await ch.insert(
+            TABLE,
+            [
+                {
+                    "email": email.strip().lower(),
+                    "org": org,
+                    "namespace": namespace,
+                    "linked": linked,
+                    "linked_by": by,
+                    "linked_at": now,
+                    "version": version,
+                }
+                for org, namespace in accounts
+            ],
+        )
+    finally:
+        # A link verifies the account's email, which ties it to the owner's grants
+        # (`server.auth.aliases`): an unlink must not leave a cached tie admitting,
+        # even when its reply is lost after the row landed.
+        for org in sorted({org for org, _ in accounts}):
+            aliases.invalidate_org(org)
+            await grant_cache.changed(org)
