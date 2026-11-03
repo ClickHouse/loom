@@ -28,7 +28,11 @@ def register_knowledge_cli(sub: Any) -> None:
     p_sync.add_argument("--namespace", required=True, help="The repository's trunk code namespace")
     p_sync.add_argument("--source", default="", help="Only the source of this name")
     p_sync.add_argument(
-        "--full", action="store_true", help="List every file, not only the changed ones"
+        "--full",
+        action="store_true",
+        help="Record a full sync request for each source, as knowledge.source.sync_now "
+        "full=true does, so every file is listed and waiting files are retried; a run "
+        "while that request is unfinished goes on with it",
     )
     p_sync.set_defaults(func=_cmd_sync)
 

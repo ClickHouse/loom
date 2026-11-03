@@ -16,16 +16,18 @@ file is fetched, turned into Markdown and written with `knowledge.upsert` as
 document is exported as Markdown, a presentation converted slide by slide, and
 a PDF or `.pptx` sent to the extractor service its format is routed to (the
 server parses no original itself); the bytes are kept as the document's
-original. A file that cannot be turned into text (no extractor declares its
-format, the extractor or the store refuses it, it is too large) is counted
-`unconverted` with its reason and not written, and given up on its revision at
-once. A file whose fetch, extraction or write fails in a way
-that may pass (a 5xx or a timeout on that file, its extractor call, the write)
-waits: the turn stays incomplete for `_WAIT_PASSES` passes on the same revision,
-then the file is given up on: tried again when it changes, once after each
-completed full listing, and on a full sync a person asks for. What fails for every
-file stays the turn's: the token exchange, the listing, a 401, a rate limit, an
-extractor whose capabilities cannot be read.
+original. A file that cannot be stored is counted `unconverted` with its reason
+and not written. One the store or the extractor refuses, one over the size bound
+and one whose write is refused is also given up on its revision at once, so later
+passes skip it without a fetch; one with no https link or a format no extractor
+declares costs no fetch and is counted again each pass. A file whose fetch,
+extraction or write fails in a way that may pass (a 5xx or a timeout on that
+file, its extractor call, the write) waits: the turn stays incomplete for
+`_WAIT_PASSES` passes on the same revision, then the file is given up on. A
+given-up file is tried again when it changes, once after each completed full
+listing, and on a full sync request. What fails for every file stays the turn's:
+the token exchange, the listing, a 401, a rate limit, an extractor whose
+capabilities cannot be read.
 
 Before each write the source is read again: a source removed or replaced during
 its turn stops the turn, which records nothing.
@@ -136,6 +138,8 @@ class TurnResult:
     retry_granted_for: str | None = None
     # Every listed file was handled, so the stamp may move.
     complete: bool = True
+    # The pass bound stopped the turn before every file was handled.
+    cut: bool = False
     # The newest revision the listing returned, capped at the listing's start.
     newest: str = ""
     full: bool = False
@@ -148,7 +152,7 @@ class TurnResult:
             self.status, self.error = status, error
 
     def stop_at_bound(self) -> None:
-        self.complete = False
+        self.complete, self.cut = False, True
         self.note = self.note or "pass bound reached; the next pass goes on"
 
     def unconverted_for(self, reason: str) -> None:
@@ -205,7 +209,8 @@ async def run_sync(
     *, org: str = "", namespace: str = "", only: str = "", full: bool = False
 ) -> PassResult:
     """One pass over every active source, or over one namespace's (`org`,
-    `namespace`, and `only` one source by name). `full` lists every file of each."""
+    `namespace`, and `only` one source by name). `full` records a full sync request
+    for each (`source_ops.request_full_sync`), as `sync_now(full=true)` does."""
     result = PassResult()
     run = _Pass(budget=_budget(), left=int(settings.knowledge_source_sync_documents_per_pass))
     found = await store.all_active_sources()
@@ -214,6 +219,9 @@ async def run_sync(
     if only:
         found = [s for s in found if s.name == only]
     usable = await _usable(found)
+    if full:
+        for src in usable:
+            await source_ops.request_full_sync(src)
     states = await _states(usable)
     asked = sorted(
         (s for s in usable if _requested(states, s)),
@@ -232,7 +240,7 @@ async def run_sync(
         # A pass cancelled inside this source resumes at the next one.
         nxt = order[i + 1] if i + 1 < len(order) else (rest or order)[0]
         pass_context.set_cursor(_cursor_of(nxt))
-        await _sync_one(src, states.get(_cursor_of(src), {}), run, full, result)
+        await _sync_one(src, states.get(_cursor_of(src), {}), run, result)
     if not order and not result.retired:
         pass_context.mark_idle()
     return result
@@ -274,12 +282,12 @@ async def _source_turn(src: KnowledgeSource) -> AsyncIterator[None]:
 
 
 async def _sync_one(
-    src: KnowledgeSource, state: dict[str, str], run: _Pass, full: bool, result: PassResult
+    src: KnowledgeSource, state: dict[str, str], run: _Pass, result: PassResult
 ) -> None:
     try:
         async with _source_turn(src):
             try:
-                turn = await _turn(src, state, run, full)
+                turn = await _turn(src, state, run)
             except SourceGone:
                 log.info("knowledge_source_sync: %s was removed during its turn", _cursor_of(src))
                 return
@@ -302,6 +310,7 @@ async def _sync_one(
     result.removed += turn.removed
     result.unconverted += turn.unconverted
     result.skipped += turn.skipped
+    result.cut |= turn.cut
     if turn.status != "ok":
         result.failed += 1
         result.errors.append(f"{_cursor_of(src)}: {turn.status} {turn.error}".strip())
@@ -318,16 +327,14 @@ def _full_due(detail: dict[str, Any]) -> bool:
     return age >= int(settings.knowledge_source_sync_full_interval_seconds)
 
 
-async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass, full: bool) -> TurnResult:
+async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass) -> TurnResult:
     """List, fetch, convert and write one source's changed files; retire those a
     complete full listing no longer has."""
     detail = json_object(state.get("detail", ""))
     stamp = state.get("state_value", "")
     turn = TurnResult()
-    turn.full = (
-        full or bool(detail.get("full")) or not gdrive.valid_stamp(stamp) or _full_due(detail)
-    )
-    _start_waits(turn, detail, full)
+    turn.full = bool(detail.get("full")) or not gdrive.valid_stamp(stamp) or _full_due(detail)
+    _start_waits(turn, detail)
     credential = unseal("knowledge_sources.credential", src.credential_enc)
     if not credential:
         # Fail closed: a credential that no longer opens is never read as "no auth".
@@ -382,10 +389,10 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass, full: b
     return turn
 
 
-def _start_waits(turn: TurnResult, detail: dict[str, Any], forced: bool) -> None:
-    """The turn's file waits, from the stored ones. A full sync a person asked for
-    (`sync_now(full=true)` once per request, `loom knowledge sync --full` every
-    run) retries every waiting file. A periodic full listing gives each given-up
+def _start_waits(turn: TurnResult, detail: dict[str, Any]) -> None:
+    """The turn's file waits, from the stored ones. A full sync request
+    (`sync_now(full=true)`, `loom knowledge sync --full`) retries every waiting
+    file, once per request. A periodic full listing gives each given-up
     file one more try, so a failure gives it up again at once, and grants it once
     per completed full listing: a full turn that keeps ending incomplete does not
     fetch the given-up files every pass."""
@@ -393,9 +400,11 @@ def _start_waits(turn: TurnResult, detail: dict[str, Any], forced: bool) -> None
     waits = dict(stored) if isinstance(stored, dict) else {}
     requested = str(detail.get("requested_at") or "")
     listed = str(detail.get("full_listed_at") or "")
-    if forced or (detail.get("full") and requested != detail.get("waits_reset_for")):
+    if detail.get("full") and requested != detail.get("waits_reset_for"):
         waits = {}
         turn.waits_reset_for = requested
+        # The reset is this full listing's retry: the request's later turns grant none.
+        turn.retry_granted_for = listed
     elif turn.full and detail.get("retry_granted_for") != listed:
         turn.retry_granted_for = listed
         for file_id, entry in waits.items():
@@ -562,7 +571,7 @@ async def _sync_file(
     outcome = await _fetch_and_write(src, token, f, uri, turn)
     if outcome == "stop":
         return False
-    if outcome != "waiting":
+    if outcome not in ("waiting", "given_up"):
         waits.pop(str(f["id"]), None)
     if outcome == "written" and prior and prior["source_uri"] != uri:
         if await retire(src, prior["source_uri"]):
@@ -573,10 +582,11 @@ async def _sync_file(
 async def _fetch_and_write(
     src: KnowledgeSource, token: str, f: dict[str, Any], uri: str, turn: TurnResult
 ) -> str:
-    """Fetch, convert and write one file: `written`, `waiting` (its wait entry
-    kept: a failure that may pass holds the turn for `_WAIT_PASSES` passes, a
-    refusal gives the file up at once; `_start_waits` says when it is tried again)
-    or `stop` (the turn's own failure: a rate limit, a refused credential)."""
+    """Fetch, convert and write one file: `written`, `waiting` (a failure that may
+    pass holds the turn for `_WAIT_PASSES` passes), `given_up` (a refusal gives the
+    file up at once; for both the wait entry is kept, and `_start_waits` says when
+    it is tried again) or `stop` (the turn's own failure: a rate limit, a refused
+    credential)."""
     try:
         fetched = await _fetch(token, f)
     except gdrive.RateLimited:
@@ -623,14 +633,18 @@ def _give_up(f: dict[str, Any], turn: TurnResult, reason: str) -> str:
     changes or `_start_waits` grants a retry."""
     turn.waits[str(f["id"])] = [str(f.get("modifiedTime") or ""), _WAIT_PASSES, reason]
     turn.unconverted_for(reason)
-    return "waiting"
+    return "given_up"
 
 
 def _over_size(f: dict[str, Any]) -> bool:
     """Whether the listing already says an uploaded file is over the size bound."""
-    mime = str(f.get("mimeType") or "")
-    limit = int(settings.knowledge_source_sync_max_file_bytes)
-    return mime in _FORMAT_OF_MIME and int(f.get("size") or 0) > limit
+    if str(f.get("mimeType") or "") not in _FORMAT_OF_MIME:
+        return False
+    try:
+        size = int(f.get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0  # unknown: the download's own bound catches it
+    return size > int(settings.knowledge_source_sync_max_file_bytes)
 
 
 def _wait(f: dict[str, Any], turn: TurnResult, reason: str, error: str) -> str:
@@ -695,8 +709,6 @@ async def _fetch(token: str, f: dict[str, Any]) -> _Fetched:
         deck = await gdrive.presentation(token, file_id, max_bytes=max_bytes)
         return _Fetched(convert.presentation_markdown(deck), "slides")
     fmt = _FORMAT_OF_MIME[mime]
-    if int(f.get("size") or 0) > max_bytes:
-        raise gdrive.TooLarge(f"{file_id}: over {max_bytes} bytes")
     data = await gdrive.download(token, file_id, max_bytes=max_bytes)
     artifact = await extractors.extract(
         data, name=str(f.get("name") or file_id), media_type=mime, declared_format=fmt

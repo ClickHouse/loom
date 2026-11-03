@@ -3789,7 +3789,7 @@
            "nargs": 0,
            "type": null,
            "required": false,
-           "help": "List every file, not only the changed ones",
+           "help": "Record a full sync request for each source, as knowledge.source.sync_now full=true does, so every file is listed and waiting files are retried; a run while that request is unfinished goes on with it",
            "metavar": null
           }
          ]

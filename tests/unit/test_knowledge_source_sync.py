@@ -844,7 +844,7 @@ def test_a_cut_pass_resumes_at_the_source_it_did_not_start(
     )
     order: list[str] = []
 
-    async def _turn(src: KnowledgeSource, state: Any, run: Any, full: bool) -> Any:
+    async def _turn(src: KnowledgeSource, state: Any, run: Any) -> Any:
         order.append(src.name)
         run.left -= 1
         return source_sync.TurnResult()
@@ -1345,3 +1345,75 @@ def test_a_credential_refusal_after_a_waiting_file_is_the_turn_s_status(world: _
     asyncio.run(source_sync.run_sync())
     detail = _detail(world)
     assert detail["status"] == "credential_invalid" and "http_401" in detail["error"]
+
+
+def test_repeated_full_runs_get_past_more_refused_files_than_the_bound(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 2)
+    world.files = [_file(f"bad{i}", DOCS, f"2026-01-0{i}T00:00:00.000Z") for i in range(1, 6)]
+    for i in range(1, 6):
+        world.file_answers[f"bad{i}"] = httpx.Response(403)
+    first = asyncio.run(source_sync.run_sync(full=True))
+    assert first.cut
+    # Each run goes on with the request the first recorded, so the waits are reset once.
+    for _ in range(2):
+        asyncio.run(source_sync.run_sync(full=True))
+    assert world.states["decks"]["state_value"] == "2026-01-05T00:00:00.000Z"
+    assert "requested_at" not in _detail(world)
+    assert all(_fetches(world, f"bad{i}") == 1 for i in range(1, 6))
+
+
+@pytest.mark.parametrize("refusal", ["http_403", "extraction_failed", "write_refused"])
+def test_a_file_refused_at_once_is_tried_again_when_it_changes_and_on_a_full_listing(
+    world: _World, monkeypatch: pytest.MonkeyPatch, refusal: str
+) -> None:
+    if refusal == "http_403":
+        world.files = [_file("f1", DOCS, "2026-01-01T00:00:00.000Z")]
+        world.file_answers["f1"] = httpx.Response(403)
+    elif refusal == "extraction_failed":
+        world.files = [_file("f1", PDF, "2026-01-01T00:00:00.000Z", size="14")]
+        world.extract_errors["f1"] = extractors.ExtractionFailed("corrupt", "damaged")
+    else:
+
+        async def _refuse(inp: Any) -> Any:
+            raise ValidationError("refused", code="TOO_LARGE")
+
+        monkeypatch.setattr(writes, "handle_knowledge_upsert", _refuse)
+        world.files = [_file("f1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    tried = len(world.requests)
+    asyncio.run(source_sync.run_sync())
+    # Given up on its revision: the next incremental turn lists nothing new.
+    assert _waits(world)["f1"][1] == 3
+    # A periodic full listing tries it once more...
+    world.states["decks"]["detail"] = json.dumps(_listed_long_ago(world))
+    asyncio.run(source_sync.run_sync())
+    assert len(world.requests) > tried
+    assert _waits(world)["f1"][1] == 3
+    # ...and so does a new revision.
+    world.files[0] = {**world.files[0], "modifiedTime": "2026-02-01T00:00:00.000Z"}
+    before = len(world.requests)
+    asyncio.run(source_sync.run_sync())
+    assert len(world.requests) > before + 1
+
+
+def test_a_turn_cut_by_the_bound_marks_the_pass_cut(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
+    ]
+    result = asyncio.run(source_sync.run_sync())
+    assert result.cut and result.changed == 1
+    from server.knowledge.workers.source_sync import outcome
+
+    assert outcome(result)["cut"] is True
+
+
+def test_a_size_that_is_not_a_number_is_left_to_the_download_bound(world: _World) -> None:
+    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="big")]
+    asyncio.run(source_sync.run_sync())
+    assert _uri("pdf1", "file") in world.docs

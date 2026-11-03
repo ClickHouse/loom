@@ -438,6 +438,19 @@ async def handle_knowledge_source_sync_now(
     )
 
 
+async def request_full_sync(src: KnowledgeSource) -> None:
+    """Record a full sync request for `src`, as `sync_now(full=true)` does, unless
+    one is already waiting: `loom knowledge sync --full` run again while a turn
+    has not finished the request goes on with it rather than starting over."""
+    async with sources_lease(src.org, src.namespace):
+        with sequential_reads():
+            states = await store.read_states(src.org, src.namespace, [src.name])
+        detail = domain.json_object((states.get(src.name) or {}).get("detail", ""))
+        if detail.get("full") and detail.get("requested_at"):
+            return
+        await _update_state(src, {"requested_at": _now_iso(), "full": True})
+
+
 async def _update_state(src: KnowledgeSource, changes: dict[str, Any]) -> None:
     """Merge `changes` into the source's sync state, keeping its stamp."""
     with sequential_reads():
@@ -486,6 +499,7 @@ def source_rotate_audit_subject(input: KnowledgeSourceRotateInput, response: Any
 __all__ = [
     "deactivate_namespace_sources",
     "is_trunk_namespace",
+    "request_full_sync",
     "sources_lease",
     "handle_knowledge_source_add",
     "handle_knowledge_source_check",

@@ -239,8 +239,8 @@ Trouble with one file is that file's:
   kept, and the next pass tries the file again. After three passes on the same revision
   the file is counted `unconverted` instead and is given up on: it is tried again when
   it changes, once on a periodic full listing after each completed one (one more failure
-  gives it up again), and on a full sync a person asks for (`sync_now(full=true)` resets
-  the waits once per request, `loom knowledge sync --full` on every run).
+  gives it up again), and on a full sync request (`sync_now(full=true)` or
+  `loom knowledge sync --full`), which resets the waits once per request.
 
 A source's `sync` in `list` and `inspect` shows what its last turn did:
 
@@ -257,7 +257,10 @@ A source's `sync` in `list` and `inspect` shows what its last turn did:
 
 `loom knowledge sync --org O --namespace <trunk namespace> [--source NAME] [--full]` runs
 one such pass over one namespace's sources now, in-process, and leaves a manual
-`knowledge_source_sync` row in `loom.worker_status`.
+`knowledge_source_sync` row in `loom.worker_status`. `--full` records a full sync
+request, as `sync_now(full=true)` does; run again while that request is unfinished, it
+goes on with it, so repeated runs work through a large folder rather than starting
+over.
 
 ## Searching
 
