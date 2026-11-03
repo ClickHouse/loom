@@ -226,6 +226,43 @@ def test_grounding_removes_the_tags_of_unread_chunks_from_the_answer() -> None:
     # a source with a space is checked too; an answer of only unread tags is empty
     assert cs.ground_citations("See [my notes.md#4].", read) == ("See.", [], ["my notes.md#4"])
     assert cs.ground_citations("[doc://z#0]", read) == ("", [], ["doc://z#0"])
+    # bracketed prose is no tag
+    for prose in ("fixed in [PR #42]", "see [#1]", "[items #2, #3]"):
+        assert cs.ground_citations(prose, read) == (prose, [], [])
+    # a list with a part that is no index (a non-ASCII digit) is removed, not parsed
+    tag = "doc://a#²,doc://a#1"
+    assert cs.ground_citations(f"[{tag}]", read) == ("", [], [tag])
+    # a source holding '#' splits at its last one; a padded tag is named without padding
+    assert cs.cites_what_was_read("doc://a#frag#0", {("doc://a#frag", 0)})
+    assert cs.ground_citations("x [ doc://a#1]", read) == ("x [ doc://a#1]", ["doc://a#1"], [])
+
+
+def _patch_corpus(monkeypatch: pytest.MonkeyPatch, rows: list[Any], answer: list[str]) -> None:
+    """knowledge.synthesize over `rows` (every named document has them), under no cost
+    cap, with an LLM that writes notes and then `answer[0]` as the final answer."""
+    import server.llm.client as llm_client
+    from server.knowledge.store import chunks as knowledge_repo
+
+    async def _over_cap(org: str, ns: str) -> bool:
+        return False
+
+    async def _list(org: str, ns: str, uri: str, *, embedding_model: str, ch: Any = None):
+        return rows
+
+    class _Final(_LLM):
+        async def complete(self, system: str, user: str, max_tokens: int = 1024, **kw: Any):
+            self.calls.append((system, user, max_tokens))
+            if "Answer the task from these notes" in user:
+                return SimpleNamespace(text=answer[0])
+            return SimpleNamespace(text="notes")
+
+    monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)
+    monkeypatch.setattr(
+        "server.knowledge.app.document_reads.get_embedder",
+        lambda: SimpleNamespace(model_name="fake"),
+    )
+    monkeypatch.setattr(knowledge_repo, "list_for_doc", _list)
+    monkeypatch.setattr(llm_client, "get_llm_client", _Final)
 
 
 @pytest.mark.asyncio
@@ -233,36 +270,11 @@ async def test_the_handler_keeps_only_supported_citations_and_abstains_on_an_emp
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import server.knowledge.app.synthesize as kh
-    import server.llm.client as llm_client
     from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
-    from server.knowledge.store import chunks as knowledge_repo
 
-    async def _over_cap(org: str, ns: str) -> bool:
-        return False
-
-    monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)
-    monkeypatch.setattr(
-        "server.knowledge.app.document_reads.get_embedder",
-        lambda: SimpleNamespace(model_name="fake"),
-    )
     rows = [SimpleNamespace(chunk_idx=i, content="x" * 1900, chunk_metadata="{}") for i in range(3)]
-
-    async def _list(org: str, ns: str, uri: str, *, embedding_model: str, ch: Any = None):
-        return rows
-
-    monkeypatch.setattr(knowledge_repo, "list_for_doc", _list)
-
-    class _Cites(_LLM):
-        answer = "From [doc://a#0] and [doc://a#2], not [doc://a#5]."
-
-        async def complete(self, system: str, user: str, max_tokens: int = 1024, **kw: Any):
-            self.calls.append((system, user, max_tokens))
-            if "Answer the task from these notes" in user:
-                return SimpleNamespace(text=self.answer)
-            return SimpleNamespace(text="notes")
-
-    llm = _Cites()
-    monkeypatch.setattr(llm_client, "get_llm_client", lambda: llm)
+    answer = ["From [doc://a#0] and [doc://a#2], not [doc://a#5]."]
+    _patch_corpus(monkeypatch, rows, answer)
     inp = KnowledgeSynthesizeInput(
         org="o", namespace="n", source_uris=["doc://a"], task="t", window_chars=2000, max_windows=2
     )
@@ -273,9 +285,10 @@ async def test_the_handler_keeps_only_supported_citations_and_abstains_on_an_emp
     assert out.unsupported_citations == ["doc://a#2", "doc://a#5"]
     assert out.answer == "From [doc://a#0] and, not." and not out.abstain
 
-    llm.answer = "   "
-    out = await kh.handle_knowledge_synthesize(inp)
-    assert out.abstain and out.abstain_reason == "empty_answer" and out.answer == ""
+    for empty in ("   ", "[doc://a#5]"):  # nothing written, or only unread citations
+        answer[0] = empty
+        out = await kh.handle_knowledge_synthesize(inp)
+        assert out.abstain and out.abstain_reason == "empty_answer" and out.answer == ""
 
 
 @pytest.mark.asyncio
@@ -285,32 +298,10 @@ async def test_a_window_spanning_two_documents_keeps_its_citation(
     """Two short documents share a window, which `Window.cite` names as a comma list:
     an answer citing that tag cites chunks the passes read."""
     import server.knowledge.app.synthesize as kh
-    import server.llm.client as llm_client
     from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
-    from server.knowledge.store import chunks as knowledge_repo
 
-    async def _over_cap(org: str, ns: str) -> bool:
-        return False
-
-    monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)
-    monkeypatch.setattr(
-        "server.knowledge.app.document_reads.get_embedder",
-        lambda: SimpleNamespace(model_name="fake"),
-    )
-
-    async def _list(org: str, ns: str, uri: str, *, embedding_model: str, ch: Any = None):
-        return [SimpleNamespace(chunk_idx=0, content="short", chunk_metadata="{}")]
-
-    monkeypatch.setattr(knowledge_repo, "list_for_doc", _list)
-
-    class _Echo(_LLM):
-        async def complete(self, system: str, user: str, max_tokens: int = 1024, **kw: Any):
-            self.calls.append((system, user, max_tokens))
-            if "Answer the task from these notes" in user:
-                return SimpleNamespace(text="Both say short [doc://a#0,doc://b#0].")
-            return SimpleNamespace(text="notes")
-
-    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Echo())
+    rows = [SimpleNamespace(chunk_idx=0, content="short", chunk_metadata="{}")]
+    _patch_corpus(monkeypatch, rows, ["Both say short [doc://a#0,doc://b#0]."])
     out = await kh.handle_knowledge_synthesize(
         KnowledgeSynthesizeInput(
             org="o", namespace="n", source_uris=["doc://a", "doc://b"], task="t", window_chars=2000

@@ -121,9 +121,13 @@ def reduce_prompt(task: str, notes: Sequence[str], *, final: bool) -> str:
     )
 
 
-# A tag ends in `#idx` or `#a-b`; its source may hold spaces, and a window spanning
-# documents is cited as a comma list (`Window.cite`).
-_CITATION = re.compile(r"\[([^\[\]\n]*#\d+(?:-\d+)?)\]")
+# A tag ends in `#idx` or `#a-b` right after its source's last character; the source
+# may hold spaces, and a window spanning documents is cited as a comma list
+# (`Window.cite`). Bracketed prose such as `[issue #3]` or `[#1]` is no tag.
+_CITATION = re.compile(r"\[([^\[\]\n]*[^\[\]\s,]#\d+(?:-\d+)?)\]", re.ASCII)
+_PART = re.compile(r"(.+)#(\d+)(?:-(\d+))?", re.ASCII)
+# A removed tag goes with the blanks before it.
+_SPACED_CITATION = re.compile(r"[ \t]*" + _CITATION.pattern, re.ASCII)
 
 
 def citations(text: str) -> list[str]:
@@ -131,7 +135,7 @@ def citations(text: str) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for m in _CITATION.finditer(text or ""):
-        tag = m.group(1)
+        tag = m.group(1).strip()
         if tag not in seen:
             seen.add(tag)
             out.append(tag)
@@ -143,11 +147,10 @@ def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
     chunks in `read`, the (source, idx) pairs the passes were shown. A range needs both
     of its ends read, a list every part."""
     for part in tag.split(","):
-        source, _, span = part.strip().rpartition("#")
-        first, _, last = span.partition("-")
-        if not (first.isdigit() and (not last or last.isdigit())):
+        m = _PART.fullmatch(part.strip())
+        if m is None:
             return False
-        a, b = int(first), int(last or first)
+        source, a, b = m.group(1), int(m.group(2)), int(m.group(3) or m.group(2))
         if not (a <= b and (source, a) in read and (source, b) in read):
             return False
     return True
@@ -161,6 +164,9 @@ def ground_citations(answer: str, read: set[tuple[str, int]]) -> tuple[str, list
     removed: list[str] = []
     for tag in citations(answer):
         (kept if cites_what_was_read(tag, read) else removed).append(tag)
-    for tag in removed:
-        answer = re.sub(r"[ \t]*\[" + re.escape(tag) + r"\]", "", answer)
+    if removed:
+        drop = set(removed)
+        answer = _SPACED_CITATION.sub(
+            lambda m: "" if m.group(1).strip() in drop else m.group(0), answer
+        )
     return answer.strip(), kept, removed

@@ -112,7 +112,7 @@ async def handle_knowledge_synthesize(
         citations=cited,
         unsupported_citations=unsupported,
         truncated=truncated,
-        # The passes ran and wrote nothing: there is no answer to give.
+        # Nothing is left once unread citations are removed: no answer to give.
         abstain=not answer,
         abstain_reason="" if answer else "empty_answer",
         model=str(getattr(llm, "model", "") or synth_model or ""),
