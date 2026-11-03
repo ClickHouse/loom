@@ -259,12 +259,11 @@ async def _distill_session(
 
     ch = get_client()
     version = next_version()
-    heads = await memory_repo.memory_rows_by_identity_keys(
-        [_identity(o) for o in observations], ch=ch, sequential=True
-    )
+    keys = [_identity(o) for o in observations]
+    heads = await memory_repo.memory_rows_by_identity_keys(keys, ch=ch, sequential=True)
     version_rows = []
-    for existing in observations:
-        head = heads.get(_identity(existing))
+    for key, existing in zip(keys, observations, strict=True):
+        head = heads.get(key)
         if head is None or head.content_sha256 != existing.content_sha256:
             continue
         new_tags = [t for t in (head.tags or []) if t != CRYSTALLIZE_READY_TAG]
