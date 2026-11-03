@@ -90,10 +90,11 @@ export function clearToken(): void {
 }
 
 /** Call `fn` with each token another tab of this origin stores (a sign-in there), or null
- *  when one drops it (a refusal or a sign-out there); the returned function stops listening. */
+ *  when one drops it or signs out; the returned function stops listening. */
 export function onTokenStored(fn: (token: string | null) => void): () => void {
   const listener = (e: StorageEvent) => {
-    if (e.key === KEY_TOKEN && e.newValue !== e.oldValue) fn(e.newValue);
+    // A sign-out elsewhere counts even when this tab's token was already gone.
+    if ((e.key === KEY_TOKEN && e.newValue !== e.oldValue) || (e.key === KEY_SIGNED_OUT && e.newValue)) fn(token());
   };
   window.addEventListener("storage", listener);
   return () => window.removeEventListener("storage", listener);
@@ -280,7 +281,13 @@ function asDashboardCall(path: string, body: unknown): unknown {
 /** The one request path every authenticated call rides: the inflight counter, the view's
  *  call count, the bounded signal, and a typed ApiError (status, server code, message,
  *  request id) for any non-2xx — never a "403: {json}" string. Answers the ok Response. */
-async function request(method: "GET" | "POST", path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
+async function request(
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
+  retried = false,
+): Promise<Response> {
   _bump(+1);
   noteCallStart(); // the view's call count and span
   const sent = token();
@@ -307,6 +314,9 @@ async function request(method: "GET" | "POST", path: string, body?: unknown, sig
         err.sessionEnded = true;
         throw err;
       }
+      // Another tab stored a new token while this call was out: a 401 ran nothing, so it
+      // goes again, once, with that token.
+      if (!retried) return request(method, path, body, signal, true);
     }
     if (!r.ok) throw await apiErrorFromResponse(r);
     return r;

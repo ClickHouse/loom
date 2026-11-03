@@ -127,12 +127,36 @@ describe("a refused sign-in token", () => {
     await rejection(post("/v1/collection.list", { org: "o" }));
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => {
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        if (new Headers(init?.headers).get("Authorization") === "Bearer tok-b") return new Response("{}");
         setToken("tok-b"); // a fresh sign-in finished meanwhile
         return new Response("{}", { status: 401 });
       }),
     );
-    await rejection(post("/v1/collection.list", { org: "o" }));
+    await post("/v1/collection.list", { org: "o" });
+    expect(localStorage.getItem("loom_token_v1")).toBe("tok-b");
+    expect(ended).not.toHaveBeenCalled();
+  });
+
+  it("sends a call refused for a token replaced meanwhile again, once, with the new one", async () => {
+    const ended = vi.fn(() => clearToken());
+    onSignInRejected(ended);
+    setToken("tok-a");
+    const sentWith: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const auth = new Headers(init?.headers).get("Authorization") ?? "";
+        sentWith.push(auth);
+        if (auth === "Bearer tok-a") {
+          setToken("tok-b"); // another tab signed in while this call was out
+          return new Response("{}", { status: 401 });
+        }
+        return new Response('{"ok": true}', { status: 200 });
+      }),
+    );
+    await expect(post("/v1/memory.list", { org: "o" })).resolves.toEqual({ ok: true });
+    expect(sentWith).toEqual(["Bearer tok-a", "Bearer tok-b"]);
     expect(ended).not.toHaveBeenCalled();
   });
 

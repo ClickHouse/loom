@@ -723,7 +723,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
     expect(whoamiAnswers).toHaveLength(4);
   });
 
-  it("a reload long after a sign-out elsewhere is still a plain sign-in", async () => {
+  it("a reload after a sign-out elsewhere is still a plain sign-in, with the mark kept", async () => {
     await expireMidSession();
     localStorage.setItem("loom_signed_out_v1", "1"); // another tab signed out; this one had no token to drop
     cleanup();
@@ -739,6 +739,44 @@ describe("a refused token", { timeout: 30_000 }, () => {
     await act(async () => storeElsewhere(null));
     await until(() => useStore.getState().sessionExpired);
     expect(screen.getByTestId("session-expired-bar")).toBeInTheDocument();
+  });
+
+  it("a reload after the session ended starts SSO by itself, once", async () => {
+    window.__LOOM_SSO = true;
+    await expireMidSession();
+    cleanup();
+    useStore.setState({ authed: true, sessionExpired: false, gateReason: null, whoami: null, identity: null });
+    render(<App />);
+    await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
+    await until(() => vi.mocked(goToSso).mock.calls.length > 0);
+    expect(goToSso).toHaveBeenCalledTimes(1);
+  });
+
+  it("an ended tab that cannot confirm another tab's token asks again later, and then carries on", async () => {
+    await expireMidSession();
+    refuse = false;
+    whoamiAnswers = [503, 503, 503, 503];
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await act(async () => storeElsewhere(fresh));
+      await until(() => whoamiAnswers.length === 0, 10_000);
+      expect(useStore.getState().sessionExpired).toBe(true);
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+      });
+      await until(() => !useStore.getState().sessionExpired, 10_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a sign-out elsewhere reloads a tab whose session had already ended", async () => {
+    await expireMidSession();
+    await act(async () => {
+      localStorage.setItem("loom_signed_out_v1", "1");
+      window.dispatchEvent(new StorageEvent("storage", { key: "loom_signed_out_v1", oldValue: null, newValue: "1" }));
+    });
+    await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
   });
 
   it("a reload after the session ended shows the gate saying so, though the token is gone", async () => {
@@ -773,7 +811,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
     render(<App />);
     await until(() => useStore.getState().authed === false);
     expect(useStore.getState().gateReason).toBeNull();
-    await settle(4); // the gate's chunk and its effect
+    await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
     expect(goToSso).not.toHaveBeenCalled();
   });
 
@@ -784,7 +822,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
     window.history.replaceState(null, "", `/me#token=${alice}`);
     render(<App />);
     await until(() => useStore.getState().authed === false);
-    await settle(4);
+    await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
     expect(useStore.getState().gateReason).toBe("refused");
     expect(goToSso).not.toHaveBeenCalled();
     expect(localStorage.getItem("loom_token_v1")).toBeNull();

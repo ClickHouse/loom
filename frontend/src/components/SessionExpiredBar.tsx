@@ -21,7 +21,8 @@ export function SessionExpiredBar() {
             type="primary"
             htmlType="button"
             iconLeft="lock"
-            onClick={() => window.open("/", "_blank", "noopener")}
+            // With SSO the new tab goes straight to the identity provider: one click.
+            onClick={() => window.open(window.__LOOM_SSO ? "/oauth/sso" : "/", "_blank", "noopener")}
           >
             Sign in in a new tab
           </Button>
