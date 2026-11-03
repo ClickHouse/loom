@@ -321,7 +321,8 @@ jobs:
           secret=$(openssl rand -hex 32)
           # Every optional object on, so each template renders at least once.
           on=(--set analyticsExport.enabled=true --set analyticsExport.bucket=ci --set analyticsExport.nameKeySecret.name=ci)
-          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set mustMatchChange.publish=ci --set settingsFile.memory_ask_recency_weight=0.3 "${on[@]}")
+          extractor=(--set extractor.enabled=true --set secrets.extractorToken="$(openssl rand -hex 24)")
+          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set mustMatchChange.publish=ci --set settingsFile.memory_ask_recency_weight=0.3 "${on[@]}" "${extractor[@]}")
           for overlay in values-eks.yaml values-kind.yaml; do
             args=(-f "$chart/$overlay" --set secrets.jwtSecret="$secret")
             helm lint --strict "$chart" "${args[@]}"
@@ -353,6 +354,11 @@ jobs:
           shared="is a Secret every web and workers pod loads"
           refused "$shared" "${on[@]}" --set analyticsExport.nameKeySecret.name=loom
           refused "$shared" "${on[@]}" --set "envFrom[0].secretRef.name=ci"
+          # The extractor's token is the release Secret's, 16 characters or more.
+          refused "extractor.enabled needs secrets.extractorToken" --set extractor.enabled=true
+          refused "secrets.extractorToken must be at least 16 characters" --set extractor.enabled=true --set secrets.extractorToken=short
+          refused "through secrets.extractorToken, not secrets.extra" "${extractor[@]}" --set secrets.extra.LOOM_DOCUMENT_EXTRACTOR_TOKEN=x
+          refused "extractor.env cannot set LOOM_EXTRACTOR_TOKEN" "${extractor[@]}" --set extractor.env.LOOM_EXTRACTOR_TOKEN=x
 
   agent-plugins:
     name: coding-agent plugins (node --test)

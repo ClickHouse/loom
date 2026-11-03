@@ -288,6 +288,22 @@ def test_the_service_and_the_test_environment_pin_one_sqlglot() -> None:
     assert sqlglot == server["project"]["optional-dependencies"]["extractor"]
 
 
+def test_the_image_locks_what_the_tests_ran() -> None:
+    """The image installs extractor/uv.lock; these tests run on the root lock. A
+    package both hold is at one version in each, so the image runs what passed."""
+    import tomllib
+
+    root = Path(__file__).resolve().parents[2]
+
+    def locked(path: Path) -> dict[str, str]:
+        return {p["name"]: p["version"] for p in tomllib.loads(path.read_text())["package"]}
+
+    image, tests = locked(root / "extractor" / "uv.lock"), locked(root / "uv.lock")
+    image.pop("loom-extractor")
+    assert set(image) <= set(tests)
+    assert {n: v for n, v in image.items() if tests[n] != v} == {}
+
+
 async def test_a_child_is_non_dumpable_in_root_with_no_request_on_its_command_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

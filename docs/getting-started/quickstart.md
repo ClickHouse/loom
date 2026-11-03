@@ -67,7 +67,7 @@ LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
   LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh install.sh
 ```
 
-`LOOM_PORT`, `LOOM_BIND_HOST`, `LOOM_IMAGE_REPOSITORY` and `LOOM_CLICKHOUSE_IMAGE` given
+`LOOM_PORT`, `LOOM_BIND_HOST`, `LOOM_IMAGE_REPOSITORY`, `LOOM_EXTRACTOR_IMAGE_REPOSITORY` and `LOOM_CLICKHOUSE_IMAGE` given
 to the installer are written to the install directory's `.env`, so later `docker compose`
 commands there and later installer runs use the same port and images. A
 `LOOM_BIND_HOST` other than loopback publishes Loom beyond this host, and the server

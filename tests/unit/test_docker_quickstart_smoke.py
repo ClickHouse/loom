@@ -104,7 +104,11 @@ def test_failed_compose_boot_cleans_only_the_generated_project(
     monkeypatch.setattr(docker_quickstart_smoke, "run", invoke)
     monkeypatch.setattr(docker_quickstart_smoke.subprocess, "run", cleanup)
     with pytest.raises(subprocess.CalledProcessError):
-        docker_quickstart_smoke.smoke("loom:unit-smoke", "clickhouse/clickhouse-server:26.9.18.11")
+        docker_quickstart_smoke.smoke(
+            "loom:unit-smoke",
+            "loom-extractor:unit-smoke",
+            "clickhouse/clickhouse-server:26.9.18.11",
+        )
     cleanup_command = commands[-1]
     assert cleanup_command[-3:] == ("down", "--volumes", "--remove-orphans")
     project = Path(cleanup_command[3])
@@ -133,6 +137,34 @@ def test_release_gate_installs_browser_dependencies_before_running_provider_flow
         if "scripts/gates/docker_quickstart_smoke.py" in step.get("run", "")
     )
     assert setup < browser < smoke
+    assert '--extractor-image "ghcr.io/clickhouse/loom-extractor:$VERSION"' in steps[smoke]["run"]
+    assert "docker-extractor" in job["needs"]
     assert steps[browser]["working-directory"] == "frontend"
     assert "npm ci" in steps[browser]["run"]
     assert job["timeout-minutes"] >= 30
+
+
+def test_the_extractor_image_must_carry_the_servers_tag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """compose.yaml runs both images at LOOM_VERSION, so another tag would not run."""
+
+    def invoke(*args, **kwargs):
+        if args[0] == "sh":
+            stack = Path(kwargs["env"]["LOOM_INSTALL_DIR"])
+            stack.mkdir()
+            (stack / ".env").write_text("COMPOSE_PROJECT_NAME=unit-smoke\n")
+
+    monkeypatch.setattr(docker_quickstart_smoke, "run", invoke)
+    with pytest.raises(AssertionError, match="is not tagged smoke"):
+        docker_quickstart_smoke.smoke(
+            "loom:smoke", "loom-extractor:other", "clickhouse/clickhouse-server:26.9.18.11"
+        )
+
+
+def test_both_smoke_workflows_build_or_pull_the_extractor_beside_the_server() -> None:
+    root = Path(__file__).resolve().parents[2]
+    smoke = yaml.safe_load((root / ".github/workflows/docker-smoke.yml").read_text())
+    steps = smoke["jobs"]["quickstart"]["steps"]
+    built = [s["with"]["tags"] for s in steps if s.get("uses", "").startswith("docker/build-push")]
+    assert built == ["loom:docker-smoke", "loom-extractor:docker-smoke"]
+    run = next(s["run"] for s in steps if "docker_quickstart_smoke.py" in s.get("run", ""))
+    assert "--extractor-image loom-extractor:docker-smoke" in run

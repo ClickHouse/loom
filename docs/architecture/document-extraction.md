@@ -211,9 +211,14 @@ their span (a field such as `key_path` survives only when every block agrees) an
 
 ## Dependencies
 
-The reference extractor's parsers need `sqlglot` for SQL and the standard library otherwise. They are installed with
-the service (`extractor/pyproject.toml`), and in a development environment by the `extractor` extra; the server's image
-carries none of them.
+The reference extractor's parsers need `sqlglot` for SQL and the standard library otherwise. They are installed with the
+service (`extractor/pyproject.toml`), and in a development environment by the `extractor` extra; the server's image
+carries none of them. Its image (`extractor/Dockerfile`, `ghcr.io/clickhouse/loom-extractor`) installs the package and
+its locked dependencies (`extractor/uv.lock`) into a venv root owns and runs the service as a user that owns nothing in
+it, so no file on a child's `sys.path` is writable to the child. The compose stack and the Helm chart run it apart from
+the server: on a network or behind a NetworkPolicy that admits only Loom's processes and allows it no egress, with no
+credential but its token ([deployment](../operations/deployment.md#container-images),
+[Kubernetes](../operations/kubernetes.md#document-extractor)).
 
 ## Invariants
 

@@ -359,6 +359,23 @@ more memory than a web pod, or to scale them apart from it. With `replicaCount: 
 the second pod is a standby with warm mirrors, and a PodDisruptionBudget keeps one of
 the two through a drain.
 
+## Document extractor
+
+`extractor.enabled: true` runs the document extractor service
+([document extraction](../architecture/document-extraction.md)) as a Deployment and a
+Service of its own, `extractor.replicaCount` pods (two by default), each running one
+extraction at a time. The Loom pods get `LOOM_DOCUMENT_EXTRACTOR_URL` pointing at it, and
+both sides read the bearer token from the release Secret's `LOOM_DOCUMENT_EXTRACTOR_TOKEN`
+key: `secrets.extractorToken` (16 characters or more; `openssl rand -hex 24`), or that key
+in `secrets.existingSecret`. The extractor pods read that one key and nothing else of the
+Secret, mount no service-account token, run as uid 10001 on a read-only root filesystem
+with every capability dropped, and carry labels of their own, so no policy or Service
+that selects the Loom pods selects them. Their NetworkPolicy, rendered whatever
+`networkPolicy.enabled` says, admits the release's Loom pods on 8790 and allows no egress;
+with `networkPolicy.enabled`, the Loom pods' policy allows egress to them. `extractor.env`
+takes the service's `LOOM_EXTRACTOR_*` limits ([extractor](../../extractor/README.md)),
+and `extractor.resources` bounds each pod.
+
 ## Analytics export
 
 `analyticsExport.enabled: true` adds a daily CronJob that writes the previous UTC day's

@@ -80,6 +80,10 @@ def test_a_default_install_runs_the_bundled_clickhouse(install) -> None:
     assert "LOOM_CH_HOST" not in env
     assert "ch-setup" not in result.stdout  # the bundled server needs none
     assert stat.S_IMODE((target / ".env").stat().st_mode) == 0o600
+    # The extractor service's token, its own on each install; the server reaches it by name.
+    assert env["LOOM_DOCUMENT_EXTRACTOR_URL"] == "http://extractor:8790"
+    assert len(env["LOOM_DOCUMENT_EXTRACTOR_TOKEN"]) == 48
+    assert "__" not in (target / ".env").read_text()
 
 
 def test_an_outside_clickhouse_is_written_to_env_and_never_printed(install) -> None:
@@ -466,3 +470,24 @@ def _recording_docker(installer_env: dict[str, str], *, ch_setup_status: int) ->
         f'case "$*" in *ch-setup*) exit {ch_setup_status} ;; esac\nexit 0\n'
     )
     return calls
+
+
+def test_an_upgrade_from_before_the_extractor_gives_it_a_token_and_keeps_one_it_has(
+    install,
+) -> None:
+    run, target = install
+    assert run().returncode == 0
+    env_path = target / ".env"
+    kept = _env(target)["LOOM_DOCUMENT_EXTRACTOR_TOKEN"]
+    assert run().returncode == 0
+    assert _env(target)["LOOM_DOCUMENT_EXTRACTOR_TOKEN"] == kept  # a rerun keeps it
+    lines = env_path.read_text().splitlines()
+    env_path.write_text("\n".join(x for x in lines if not x.startswith("LOOM_DOCUMENT_")) + "\n")
+    result = run()
+    assert result.returncode == 0, result.stderr
+    env = _env(target)
+    assert env["LOOM_DOCUMENT_EXTRACTOR_URL"] == "http://extractor:8790"
+    assert (
+        len(env["LOOM_DOCUMENT_EXTRACTOR_TOKEN"]) == 48
+        and env["LOOM_DOCUMENT_EXTRACTOR_TOKEN"] != kept
+    )

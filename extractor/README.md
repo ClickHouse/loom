@@ -35,6 +35,19 @@ sudo sh -c 'export LOOM_EXTRACTOR_TOKEN="$(cat /etc/loom-extractor.token)" LOOM_
 | `LOOM_EXTRACTOR_MAX_BYTES`          | `67108864`  | the largest original accepted                                   |
 | `LOOM_EXTRACTOR_MAX_ARTIFACT_BYTES` | `67108864`  | the largest artifact an extraction may write                    |
 
+The image (`extractor/Dockerfile`, built from the repository root; released as
+`ghcr.io/clickhouse/loom-extractor`) does this for you: the venv is root's, the
+service runs as uid 10001, and Loom's compose stack and Helm chart run it with no
+route out and the token alone
+([deployment](../docs/operations/deployment.md#container-images)):
+
+```bash
+docker run --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --env-file /etc/loom-extractor.env ghcr.io/clickhouse/loom-extractor
+```
+
+with `/etc/loom-extractor.env` a root-only file holding `LOOM_EXTRACTOR_TOKEN=...`.
+
 Point the server at it with `LOOM_DOCUMENT_EXTRACTOR_URL` and the token file's
 contents in `LOOM_DOCUMENT_EXTRACTOR_TOKEN`.
 

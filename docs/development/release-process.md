@@ -55,8 +55,8 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
    git push origin vX.Y.Z
    ```
 
-3. The tag push runs `.github/workflows/release.yml` (below), publishes the server image,
-   and only then creates the GitHub Release. Check the image and release files.
+3. The tag push runs `.github/workflows/release.yml` (below), publishes the server and
+   extractor images, and only then creates the GitHub Release. Check the images and release files.
 4. To publish the SDKs and the MCP Registry listing, run the same workflow manually on the tag:
 
    ```bash
@@ -102,11 +102,12 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    manifests, no tests in the Claude Code zip, the executable bits git records, and
    that the bundle names the ClickHouse release the `clickhouse` job checked, and
    smoke-tests the wheel in a clean venv with `scripts/gates/sdk_wheel_smoke.py`;
-5. `docker` publishes `ghcr.io/clickhouse/loom` for linux/amd64 and linux/arm64, with
-   provenance and an SBOM;
-6. `docker-smoke` installs the bundle with that image, on the ClickHouse release it
+5. `docker` publishes `ghcr.io/clickhouse/loom` and `docker-extractor`
+   `ghcr.io/clickhouse/loom-extractor` (the document extractor service) for linux/amd64 and
+   linux/arm64, each with provenance and an SBOM, scanned before it is tagged;
+6. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
    names, on amd64 and arm64;
-7. `github-release` creates the GitHub Release only after that image exists, with notes
+7. `github-release` creates the GitHub Release only after both images exist, with notes
    generated from the commits since the previous tag, or updates it on a re-run, keeping
    its notes as they are, and attaches the verified files. A bundle the release already
    carries is kept, and so is its checksum (one the release lost is written again from

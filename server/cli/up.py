@@ -104,6 +104,11 @@ def bootstrap(root: Path, env_file: str) -> list[str]:
             1,
         )
         template = template.replace(
+            "LOOM_DOCUMENT_EXTRACTOR_TOKEN=",
+            f"LOOM_DOCUMENT_EXTRACTOR_TOKEN={secrets.token_hex(24)}",
+            1,
+        )
+        template = template.replace(
             "COMPOSE_PROJECT_NAME=",
             f"COMPOSE_PROJECT_NAME=loom-local-{secrets.token_hex(4)}",
             1,

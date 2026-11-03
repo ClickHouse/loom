@@ -1,0 +1,125 @@
+{{- /* The document extractor service: Loom's pods send it originals and read
+back their extraction. Its pods hold the bearer token alone (one key of the
+release Secret), no service-account token, and run non-root on a read-only root
+filesystem; their NetworkPolicy admits the release's Loom pods and allows no
+egress. */}}
+{{- with .Values.extractor }}
+{{- if .enabled }}
+{{- range $k, $_ := .env }}
+{{- if has $k (list "LOOM_EXTRACTOR_TOKEN" "LOOM_EXTRACTOR_HOST" "LOOM_EXTRACTOR_PORT") }}
+{{- fail (printf "extractor.env cannot set %s: the chart sets it" $k) }}
+{{- end }}
+{{- end }}
+{{- $name := include "loom.extractorName" $ }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: extractor
+spec:
+  replicas: {{ .replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "loom.extractorSelectorLabels" $ | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "loom.extractorSelectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: extractor
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: extractor
+          image: {{ if .image.digest }}{{ printf "%s@%s" .image.repository .image.digest }}{{ else }}{{ printf "%s:%s" .image.repository (default $.Chart.AppVersion .image.tag) }}{{ end }}
+          imagePullPolicy: {{ .image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: LOOM_EXTRACTOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "loom.secretName" $ }}
+                  key: LOOM_DOCUMENT_EXTRACTOR_TOKEN
+            - name: LOOM_EXTRACTOR_HOST
+              value: "0.0.0.0"
+            - name: LOOM_EXTRACTOR_PORT
+              value: "8790"
+            {{- range $k, $v := .env }}
+            - name: {{ $k }}
+              value: {{ $v | toString | quote }}
+            {{- end }}
+          ports:
+            - name: extractor
+              containerPort: 8790
+          readinessProbe:
+            httpGet: { path: /healthz, port: extractor }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: extractor }
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml .resources | nindent 12 }}
+      {{- with .nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: extractor
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "loom.extractorSelectorLabels" $ | nindent 4 }}
+  ports:
+    - name: extractor
+      port: 8790
+      targetPort: extractor
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: extractor
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "loom.extractorSelectorLabels" $ | nindent 6 }}
+  # Egress listed with no rule: the pods reach nothing, DNS included.
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "loom.selectorLabels" $ | nindent 14 }}
+      ports:
+        - port: extractor
+{{- end }}
+{{- end }}

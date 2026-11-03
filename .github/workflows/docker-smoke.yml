@@ -6,6 +6,9 @@ on:
     paths:
       [
         "Dockerfile",
+        "extractor/**",
+        "compose.yaml",
+        "dev/docker-compose.dev.yml",
         "server/**",
         "schemas/**",
         "scripts/gates/docker*",
@@ -34,6 +37,9 @@ on:
     paths:
       [
         "Dockerfile",
+        "extractor/**",
+        "compose.yaml",
+        "dev/docker-compose.dev.yml",
         "server/**",
         "schemas/**",
         "scripts/gates/docker*",
@@ -120,11 +126,22 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           cache-from: type=gha,scope=docker-smoke-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=docker-smoke-${{ matrix.arch }}
+      - name: Build the extractor image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: extractor/Dockerfile
+          load: true
+          tags: loom-extractor:docker-smoke
+          platforms: linux/${{ matrix.arch }}
+          cache-from: type=gha,scope=docker-smoke-extractor-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-smoke-extractor-${{ matrix.arch }}
       - name: Fresh installer, compiler indexing and dashboard provider recovery
         env:
           CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
         run: |
           python3 scripts/gates/docker_quickstart_smoke.py --image loom:docker-smoke \
+            --extractor-image loom-extractor:docker-smoke \
             --clickhouse-image "$CLICKHOUSE_IMAGE"
 
   sandbox-profile:

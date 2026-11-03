@@ -35,7 +35,7 @@ OK_BODY: dict[str, Any] = {"status": "ok", "build_commit": "abc1234", "pending_m
 def root(tmp_path: Path) -> Path:
     (tmp_path / ".env.example").write_text(
         "# stock\nCOMPOSE_PROJECT_NAME=\nLOOM_AUTH_REQUIRED=false\nLOOM_IDENTITY_PROVIDER=\n"
-        "LOOM_JWT_SECRET=\nLOOM_LLM_PROVIDER=fake\n"
+        "LOOM_JWT_SECRET=\nLOOM_DOCUMENT_EXTRACTOR_TOKEN=\nLOOM_LLM_PROVIDER=fake\n"
     )
     cfg = tmp_path / "deploy" / "clickhouse-config"
     cfg.mkdir(parents=True)
@@ -130,6 +130,7 @@ def test_bootstrap_creates_env_and_named_collections_once(root: Path) -> None:
     created = up.bootstrap(root, ".env")
     env = up.read_env_file(root / ".env")
     assert len(env["LOOM_JWT_SECRET"]) >= 40
+    assert len(env["LOOM_DOCUMENT_EXTRACTOR_TOKEN"]) == 48  # the extractor refuses under 16
     assert env["COMPOSE_PROJECT_NAME"].startswith("loom-local-")
     assert (root / ".env").stat().st_mode & 0o777 == 0o600  # it will hold secrets
     assert (root / up.NAMED_COLLECTIONS).read_text() == "<clickhouse/>\n"

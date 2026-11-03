@@ -4,14 +4,14 @@ name: release
 # GitHub Release; nothing leaves GitHub. A manual dispatch on the same tag
 # (`gh workflow run release.yml --ref vX.Y.Z`) runs the same jobs and then
 # publishes the verified SDK files to PyPI and npm and lists the server in the
-# MCP Registry. Every tag publishes the server image to ghcr.io before making
+# MCP Registry. Every tag publishes the server and extractor images to ghcr.io before making
 # the GitHub Release visible, so the release's one-line installer never points
 # at an image that does not exist.
 # docs/development/release-process.md is the maintainer procedure.
 #
 # Jobs: version (derive and gate the version) -> clickhouse (the ClickHouse
 # release the installer bundle names, migrated and schema-checked) -> build ->
-# verify (inspect the exact files) -> docker -> docker-smoke -> github-release
+# verify (inspect the exact files) -> docker, docker-extractor -> docker-smoke -> github-release
 # -> pypi, npm, mcp-registry (dispatch only). A re-run after a partial
 # publish is safe: the bundle keeps the ClickHouse release it was first
 # published with, the release is updated in place, PyPI skips files it
@@ -454,9 +454,83 @@ jobs:
           docker buildx imagetools create "${args[@]}" "ghcr.io/clickhouse/loom@$DIGEST"
           echo "Pin with \`image.digest: $DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
 
+  docker-extractor:
+    # The document extractor service (extractor/), an image of its own that the
+    # compose stack and the chart run beside the server, at the same version.
+    name: Docker (ghcr.io/clickhouse/loom-extractor)
+    needs: [version, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to ghcr.io
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract image tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/clickhouse/loom-extractor
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+      - name: Build + push by digest (amd64 + arm64)
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: extractor/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          # By digest only: the version tags go on after the scan below.
+          outputs: type=image,name=ghcr.io/clickhouse/loom-extractor,push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=extractor
+          cache-to: type=gha,mode=max,scope=extractor
+      # Fails the release on a critical CVE that has a fixed package, in either image.
+      - name: Scan the pushed image (amd64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          image-ref: ghcr.io/clickhouse/loom-extractor@${{ steps.build.outputs.digest }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan the pushed image (arm64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          image-ref: ghcr.io/clickhouse/loom-extractor@${{ steps.build.outputs.digest }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Tag the scanned image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          args=()
+          while read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done <<<"$TAGS"
+          docker buildx imagetools create "${args[@]}" "ghcr.io/clickhouse/loom-extractor@$DIGEST"
+          echo "Pin with \`extractor.image.digest: $DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+
   docker-smoke:
     name: Released quickstart (${{ matrix.arch }})
-    needs: [version, clickhouse, docker]
+    needs: [version, clickhouse, docker, docker-extractor]
     strategy:
       fail-fast: false
       matrix:
@@ -487,11 +561,12 @@ jobs:
           CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
         run: |
           python3 scripts/gates/docker_quickstart_smoke.py --image "ghcr.io/clickhouse/loom:$VERSION" \
+            --extractor-image "ghcr.io/clickhouse/loom-extractor:$VERSION" \
             --clickhouse-image "$CLICKHOUSE_IMAGE"
 
   github-release:
     name: GitHub Release (artifacts attached)
-    needs: [version, verify, docker, docker-smoke]
+    needs: [version, verify, docker, docker-extractor, docker-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # One publish at a time across every tag, so the downgrade check below
