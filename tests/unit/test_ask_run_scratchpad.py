@@ -99,5 +99,35 @@ async def test_render_run_blocks_scopes_by_run_and_formats_newest_first() -> Non
     assert (await render_run_blocks("o", "ns", "run-1", ch=ch, max_chars=8)) == "## scrat"
 
 
+@pytest.mark.asyncio
+async def test_render_run_blocks_keeps_a_narrowed_token_to_its_own_user() -> None:
+    """A token bounded to one user that names another user's run_id reads none of
+    that user's notes: the statement carries the request's read scope."""
+    from server.identity.domain.read_scope import (
+        WHOLE_NAMESPACE,
+        ReadFilters,
+        bind_request_read_filters,
+    )
+    from server.memory.app.working_memory import render_run_blocks
+
+    class _CH:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            self.calls.append((sql, params or {}))
+            return []
+
+    ch = _CH()
+    bind_request_read_filters(None, ReadFilters("own_session", "u1", "s1"))
+    try:
+        await render_run_blocks("o", "ns", "run-of-u2", ch=ch)
+    finally:
+        bind_request_read_filters(None, WHOLE_NAMESPACE)
+    sql, params = ch.calls[0]
+    assert "user_id = {scope_uid:String}" in sql and params["scope_uid"] == "u1"
+    assert "session_id = {scope_sid:String}" in sql and params["scope_sid"] == "s1"
+
+
 def test_default_on() -> None:
     pass
