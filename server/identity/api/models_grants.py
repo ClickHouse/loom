@@ -127,12 +127,13 @@ class GrantsRevokeInput(BaseModel):
     org: str
     namespace: str
     # Whose grant to revoke: an email or a service-account `sub` claim; revoking a pending
-    # request rejects it.
+    # request rejects it. A person's row under each verified spelling (login handle,
+    # email) goes.
     subject: str
 
 
 class GrantsRevokeOutput(BaseModel):
-    # True when a grant row was found and revoked; false when the subject had none.
+    # True when any of the subject's grant rows was found and revoked; false when it had none.
     revoked: bool
     # When the revoke was written (UTC); None when nothing was revoked.
     revoked_at: datetime | None = None

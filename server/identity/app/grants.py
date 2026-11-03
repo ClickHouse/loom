@@ -384,8 +384,10 @@ async def revoke_grant(
     if may_take is not None:
         for _, row in rows:
             may_take(row)
-    # Refused before any write when the person holds every admin row there; each
-    # row's write checks again, under the admins claim.
+    # Refused before any write when the person holds every admin row there. Each
+    # row's write checks again under the admins claim, so an admin revoked
+    # meanwhile can still stop a later row: the earlier ones stay revoked, and
+    # the namespace keeps an admin.
     admins = sum(_active_admin(row) for _, row in rows)
     if admins:
         await _refuse_last_admin(input, also_going=admins - 1)

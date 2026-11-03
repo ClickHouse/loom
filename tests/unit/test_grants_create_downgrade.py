@@ -283,7 +283,7 @@ async def test_revoke_by_email_reaches_a_row_under_an_unverified_accounts_handle
         ("u-carol", ["carol@corp.example"], "carol@corp.example", True),
     ],
 )
-async def test_revoke_by_handle_falls_back_to_its_verified_email_only(
+async def test_revoke_by_handle_takes_its_verified_email_row_only(
     monkeypatch: pytest.MonkeyPatch, handle: str, verified: list[str], email: str, revoked: bool
 ) -> None:
     from server.identity.api.models_grants import GrantsRevokeInput

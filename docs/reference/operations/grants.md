@@ -102,7 +102,7 @@ Remove a subject's grant on a namespace.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `revoked` | `bool` | True when a grant row was found and revoked; false when the subject had none. |
+| `revoked` | `bool` | True when any of the subject's grant rows was found and revoked; false when it had none. |
 | `revoked_at` | `datetime \| None` | When the revoke was written (UTC); None when nothing was revoked. |
 
 ## `grants.share_agent`
