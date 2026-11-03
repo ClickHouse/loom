@@ -46,11 +46,11 @@ sudo docker run --read-only --cap-drop ALL --security-opt no-new-privileges \
   -p 127.0.0.1:8790:8790 --env-file /etc/loom-extractor.env ghcr.io/clickhouse/loom-extractor
 ```
 
-with `/etc/loom-extractor.env` a root-only file holding `LOOM_EXTRACTOR_TOKEN=...`
-(the `docker` command reads it, hence `sudo`),
-for a server on the same host at `http://127.0.0.1:8790`. Unlike the compose stack
-and the chart, this leaves the service's own process a route out; the extractions
-can make no socket either way.
+with `/etc/loom-extractor.env` a root-only file holding
+`LOOM_EXTRACTOR_TOKEN=...` (the `docker` command reads it, hence `sudo`), for a
+server on the same host at `http://127.0.0.1:8790`. Unlike the compose stack and
+the chart, this leaves the service's own process a route out; an extraction can
+make no socket either way (with one at a time, the default: see below).
 
 Point the server at it with `LOOM_DOCUMENT_EXTRACTOR_URL` and the token file's
 contents in `LOOM_DOCUMENT_EXTRACTOR_TOKEN`.

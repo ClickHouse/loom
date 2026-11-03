@@ -16,7 +16,8 @@ at once, and the rest wait. The service and every child are non-dumpable, so
 a child cannot read the token through /proc; they set no-new-privileges, so
 no exec gives a child a privilege; a child can start no process, so none
 outlives its extraction; and a child can make no socket (seccomp), so one a
-hostile source takes over reaches no address.
+hostile source takes over reaches no address while it runs alone (concurrency 1,
+the default; see `Config.concurrency`).
 """
 
 from __future__ import annotations

@@ -459,10 +459,12 @@ async def test_a_child_can_open_no_socket(tmp_path: Path, monkeypatch: pytest.Mo
     # hardened kernel) would make the probe pass without the filter.
     libc = ctypes.CDLL(None, use_errno=True)
     own = libc.syscall(425, 1, None) == -1 and ctypes.get_errno() == errno.EPERM
+    ptrace = 101 if platform.machine() == "x86_64" else 117
+    own_ptrace = libc.syscall(ptrace, 1, None) == -1 and ctypes.get_errno() == errno.EPERM
     refused = r.json()["error"]["message"].split()
     assert refused[:4] == ["AF_INET", "AF_INET6", "AF_UNIX", "pair"]
     assert ("io_uring" in refused) or own  # refused by the filter, unless the host refuses it
-    assert "ptrace" in refused
+    assert ("ptrace" in refused) or own_ptrace
     assert ("x32" in refused) == (platform.machine() == "x86_64")
 
 

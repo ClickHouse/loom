@@ -219,8 +219,8 @@ carries none of them. Its image (`extractor/Dockerfile`, `ghcr.io/clickhouse/loo
 its locked dependencies (`extractor/uv.lock`) into a venv root owns and runs the service as a user that owns nothing in
 it, so no file on a child's `sys.path` is writable to the child. The compose stack and the Helm chart run it apart from
 the server: Compose on an internal network shared with the server alone, the chart behind a NetworkPolicy that admits
-only Loom's pods and allows no egress, with no credential but its token; on either, an extraction makes no socket
-([deployment](../operations/deployment.md#container-images),
+only Loom's pods and allows no egress, with no credential but its token; on either, an extraction makes no socket while
+it runs alone (`LOOM_EXTRACTOR_CONCURRENCY` 1, the default) ([deployment](../operations/deployment.md#container-images),
 [Kubernetes](../operations/kubernetes.md#document-extractor)).
 
 ## Invariants
