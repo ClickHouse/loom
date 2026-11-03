@@ -418,7 +418,14 @@ export function MemoryInspector({
     setDetail({ ...detail, pinned: !wasPinned });
     try {
       if (wasPinned) {
-        const result = await unpinMemory(identity, memoryKey);
+        // The row's own identity, the one pinMemory writes to.
+        const rowId = {
+          ...identity,
+          agent: detail.agent || identity.agent,
+          user_id: detail.user_id || "-",
+          session_id: detail.session_id || "-",
+        };
+        const result = await unpinMemory(rowId, memoryKey);
         if (!result.unpinned && result.reason !== "not_pinned") {
           throw new Error(result.reason || "memory was not unpinned");
         }

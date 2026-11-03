@@ -32,6 +32,7 @@ vi.mock("../api", async (importOriginal) => {
     ...actual,
     getMemory: vi.fn(async () => LIVE),
     pinMemory: vi.fn(async () => ({ version: 4, pinned: true })),
+    unpinMemory: vi.fn(async () => ({ unpinned: true, reason: "", memory_id: "m1", version: 5 })),
     memoryHistory: vi.fn(async () => ({ rows: [] })),
     memoryRelated: vi.fn(async () => ({ results: [] })),
     memoryLineage: vi.fn(async () => ({ steps: [] })),
@@ -41,7 +42,7 @@ vi.mock("../api", async (importOriginal) => {
     listMine: vi.fn(async () => []),
   };
 });
-import { getMemory, pinMemory } from "../api";
+import { getMemory, pinMemory, unpinMemory } from "../api";
 
 const member: MyNamespaceEntry = {
   namespace: "team-alerts",
@@ -66,6 +67,7 @@ describe("MemoryInspector pin", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetNamespaceRoleCache();
+    vi.mocked(getMemory).mockResolvedValue(LIVE);
     useStore.setState({
       authed: true,
       whoami: person,
@@ -89,5 +91,21 @@ describe("MemoryInspector pin", () => {
 
     await waitFor(() => expect(pinMemory).toHaveBeenCalledTimes(1));
     expect(vi.mocked(pinMemory).mock.calls[0]).toEqual([identity, "coffee_pref", LIVE]);
+  });
+
+  it("unpins the row it read, by that row's own agent, user and session", async () => {
+    useStore.setState({ myNamespaces: [{ ...member, role: "admin" }] });
+    vi.mocked(getMemory).mockResolvedValue({ ...LIVE, pinned: true, user_id: "alice", session_id: "s1" });
+    render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />);
+    await screen.findByText("oat milk, no sugar");
+
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Unpin" }));
+
+    await waitFor(() => expect(unpinMemory).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(unpinMemory).mock.calls[0]).toEqual([
+      { ...identity, agent: "claude-desktop", user_id: "alice", session_id: "s1" },
+      "coffee_pref",
+    ]);
   });
 });
