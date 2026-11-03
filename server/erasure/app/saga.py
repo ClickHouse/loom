@@ -82,7 +82,7 @@ def audit_actor(row: Mapping[str, Any]) -> str:
     """The actor of a resumed saga's audit rows: the ledger row's, else ('' on a
     row an older build wrote) the process that resumes it — a CLI command's
     pipeline actor, or the recovery worker."""
-    return str(row["actor"]) or writer_actor(RECOVERY_WORKER_ACTOR)
+    return row["actor"] or writer_actor(RECOVERY_WORKER_ACTOR)
 
 
 def request_row_template(
