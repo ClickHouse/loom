@@ -203,39 +203,6 @@ def test_an_mcp_call_with_an_absent_org_runs_under_the_tokens_org(
     assert calls == ["globex"]
 
 
-def test_me_with_an_absent_org_names_the_callers_own_collection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """HTTP maps `@me` before the gate; an absent org there is the token's."""
-    from server.auth import gateway
-    from server.memory.api.models_crud import MemoryGetInput
-    from server.operations.registry import OPERATIONS_BY_NAME
-    from server.transport import http as http_mod
-
-    orgs: list[str] = []
-
-    def _personal(auth: Any, org: str, namespace: str) -> str:
-        orgs.append(org)
-        return f"personal-of-{org}"
-
-    monkeypatch.setattr(gateway, "personal_namespace", _personal)
-    auth = verify_token(
-        mint_token(
-            subject="probe", org="globex", namespaces=["*"], roles=["viewer"], ttl_seconds=300
-        )
-    )
-    body = {"org": "-", "namespace": "@me", "agent": "a", "memory_key": "k"}
-    payload, raw = http_mod._resolve_personal(
-        OPERATIONS_BY_NAME["memory.get"],
-        None,  # type: ignore[arg-type]
-        MemoryGetInput(**body),
-        body,
-        auth,
-    )
-    assert orgs == ["globex"]
-    assert payload.namespace == raw["namespace"] == "personal-of-globex"
-
-
 def test_the_mentor_hint_is_keyed_on_the_admitted_org(
     seen: list[tuple[str, str, str]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -418,3 +385,34 @@ def test_a_filled_org_that_fails_validation_is_a_422(
     assert r.status_code == 422, r.text
     assert r.json()["detail"]["code"] == "VALIDATION_FAILED"
     assert seen == []
+
+
+def test_an_mcp_dash_org_takes_the_callers_default_org(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Over MCP a "-" org is filled from the caller's defaults, as an empty one
+    is: an org-wide token's call runs in its default org either way."""
+    import server.transport.mcp_call as mcp_call
+
+    calls: list[str] = []
+
+    async def _handler(inp: Any) -> Any:
+        calls.append(inp.org)
+        raise RuntimeError("recorded")
+
+    async def _defaults(auth: Any, client_name: Any = None) -> dict[str, str]:
+        return {"org": "acme", "namespace": "priv", "agent": "claude-code"}
+
+    tool = "loom_memory_get"
+    monkeypatch.setitem(
+        mcp_call.TOOLS_BY_NAME,
+        tool,
+        dataclasses.replace(mcp_call.TOOLS_BY_NAME[tool], handler=_handler),
+    )
+    monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
+    RecordingCH(strict=False).install(monkeypatch)
+    auth = verify_token(
+        mint_token(subject="ops", org="*", namespaces=["*"], roles=["admin"], ttl_seconds=300)
+    )
+    for org in ("", "-"):
+        args = {"org": org, "agent": "a", "memory_key": "k"}
+        asyncio.run(mcp_call._call_tool(1, {"name": tool, "arguments": args}, auth=auth))
+    assert calls == ["acme", "acme"]

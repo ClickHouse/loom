@@ -158,7 +158,7 @@ def _resolve_personal(
 
     if getattr(payload, "namespace", None) != PERSONAL_ALIAS:
         return payload, raw_body
-    org = gates.present(getattr(payload, "org", None)) or (auth.org if auth is not None else "")
+    org = getattr(payload, "org", None) or (auth.org if auth is not None else "")
     try:
         namespace = personal_namespace(auth, org, PERSONAL_ALIAS)
     except ValueError as e:
