@@ -2636,6 +2636,8 @@ def test_every_printed_action_has_its_line() -> None:
         ("spill into sorted runs", "The decision is to spill into sorted runs.", True),
         ("sorted runs for the spill", "Sorted runs were chosen for the spill.", True),
         ("spill into sorted runs", "We are choosing sorted runs for spilling.", True),
+        ("spill into sorted runs", "We propose to spill into sorted runs.", True),
+        ("spill into sorted runs", "The proposal is sorted runs for spilling.", True),
         ("spill into sorted runs", "A plain set on disk costs random reads.", False),
         ("spill into sorted runs", "Sorted runs avoid random reads on disk.", False),
         # An outcome that carries its reason leaves the reasoning nothing to add: dropped,

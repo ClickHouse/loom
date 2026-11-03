@@ -517,18 +517,18 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
 - **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
   `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
   punctuation, as their English (Snowball) stems, so `stored` meets `store` and `running` meets `run`. Filler words
-  (`we`, `the`, `will`, `decided`, `chose`, `use`, `instead`, `because` and the like) are skipped in any form: "We
-  decided on spilling into sorted runs." restates the outcome `spill into sorted runs`; "Sorted runs avoid random reads
-  on disk." gives a reason. An outcome that carries its own reason leaves the reasoning nothing to add, so the candidate
-  is dropped, which is why the prompt asks for the outcome without its reason. One exception: a ban stated with no
-  reason ("Client-side retries only; no server retry setting."), a candidate the model marks `is_constraint` whose
-  reasoning holds `only`, `no`, `never`, `must`, `not`, `always`, `at most` or `at least` as a word, whose reasoning
-  restates its outcome or is its whole quote (an outcome shorter than the sentence), and whose reasoning fits an outcome
-  (1000 characters; a longer one is judged as any other candidate), is kept with its reasoning as its outcome (a
-  reasoning with fewer words than the outcome, such as "no server retry setting" of that ban, gives way to the quote
+  (`we`, `the`, `will`, `decided`, `chose`, `proposed`, `use`, `instead`, `because` and the like) are skipped in any
+  form: "We decided on spilling into sorted runs." restates the outcome `spill into sorted runs`; "Sorted runs avoid
+  random reads on disk." gives a reason. An outcome that carries its own reason leaves the reasoning nothing to add, so
+  the candidate is dropped, which is why the prompt asks for the outcome without its reason. One exception: a ban stated
+  with no reason ("Client-side retries only; no server retry setting."), a candidate the model marks `is_constraint`
+  whose reasoning holds `only`, `no`, `never`, `must`, `not`, `always`, `at most` or `at least` as a word, whose
+  reasoning restates its outcome or is its whole quote (an outcome shorter than the sentence), and whose reasoning fits
+  an outcome (1000 characters; a longer one is judged as any other candidate), is kept with its reasoning as its outcome
+  (a reasoning with fewer words than the outcome, such as "no server retry setting" of that ban, gives way to the quote
   when the quote holds a ban word too), so it is recorded with the `constraint` tag and reads `Decided <outcome>.`
-  (`Proposed <outcome>.` when proposed) with no reason. The flag alone is not enough: models mark plain descriptions
-  as constraints too.
+  (`Proposed <outcome>.` when proposed) with no reason. The flag alone is not enough: models mark plain descriptions as
+  constraints too.
 - **Stage**: the model marks each candidate `decided` or `proposed`; anything but a plain `decided` (a proposal, an RFC,
   a feature request, a plan, future work, an action item, or no answer) is recorded with `stage: "proposed"`, because a
   proposal served as a choice made misleads an agent more than a choice served as a proposal. The stage is the model's

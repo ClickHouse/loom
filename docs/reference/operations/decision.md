@@ -94,7 +94,7 @@ Record a DECISION as a first-class object — call it whenever you choose betwee
 | `decision_maker` | `str` | `''` | Who decided, a person or an agent; "" records the calling `agent`. |
 | `caused_by` | `list[str]` | *(computed)* | memory_keys (decisions, facts, procedures) that CAUSED or INFLUENCED this decision; each becomes an authored edge (memory.link) with this call as its evidence. |
 | `influenced_by` | `list[str]` | *(computed)* | Keys that shaped the decision without causing it; each becomes an `influenced` edge. |
-| `tags` | `list[str]` | *(computed)* | Extra tags on the memory row, beside `decision` and `decision:category:<category>`; a decision:proposed tag here is dropped (set it with stage). |
+| `tags` | `list[str]` | *(computed)* | Extra tags on the memory row, beside `decision` and `decision:category:<category>`; a `decision:proposed` tag here is dropped (set it with `stage`). |
 | `valid_at` | `datetime \| None` | `None` | Real-world time the decision took effect; None = now. |
 | `files` | `list[str] \| None` | `None` | The repo files this decision governs (repo-relative path or bare filename); memory.for_file serves it before an edit of them. |
 | `source_class` | `Literal['derived', 'external', 'imported'] \| None` | `None` | Declare that this decision was derived from other content (`derived`) or came from outside (`external`, `imported`). |

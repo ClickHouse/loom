@@ -66,7 +66,7 @@ class DecisionRecordInput(BaseModel):
     # edge.
     influenced_by: list[str] = Field(default_factory=list, max_length=20)
     # Extra tags on the memory row, beside `decision` and `decision:category:<category>`;
-    # a decision:proposed tag here is dropped (set it with stage).
+    # a `decision:proposed` tag here is dropped (set it with `stage`).
     tags: list[str] = Field(default_factory=list, max_length=16)
     # Real-world time the decision took effect; None = now.
     valid_at: datetime | None = None

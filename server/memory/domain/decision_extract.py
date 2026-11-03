@@ -478,7 +478,7 @@ _FILLER_WORDS = (
     "a an the and or of to in on at for with as is are was were be been being has have had "
     "it its this that these those we our us they will would should must can so decide "
     "chose chosen choose use used using instead because since decision pick picked opt "
-    "opted select selected"
+    "opted select selected propose proposal"
 )
 # Compared as Snowball stems, so `spilling` meets `spill`, `stored` meets `store`, and
 # every form of a filler word is one: `deciding`, `chooses`, `used`.
