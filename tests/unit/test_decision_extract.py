@@ -4079,8 +4079,8 @@ async def test_a_run_the_caller_may_not_make_refuses_before_any_model_call(
     ("kw", "broken", "error"),
     [
         ({"repo": "acme/widgets"}, TRUNK, "no repository 'acme/widgets' you may read"),
-        # The document's namespace is where the rows go: one check, for write.
-        ({"repo": "acme/widgets"}, "ns", "not allowed to write o/ns"),
+        # The document's namespace is read-checked first, whatever --into says.
+        ({"repo": "acme/widgets"}, "ns", "not allowed to read o/ns"),
         ({"repo": "acme/widgets", "into": "repo"}, "ns", "not allowed to read o/ns"),
     ],
     ids=["trunk", "rows beside the document", "document's namespace"],
@@ -4524,3 +4524,21 @@ async def test_into_source_refuses_a_document_in_another_repositorys_namespace(
     assert world.prompts == []
     # Into the named repository's trunk, it runs.
     assert (await _run(repo="acme/widgets", into="repo")).error == ""
+
+
+@pytest.mark.asyncio
+async def test_a_caller_who_cannot_read_the_documents_namespace_learns_nothing_of_it(
+    monkeypatch,
+) -> None:
+    """Refused before anything the namespace is (a code namespace, another repository's)
+    shapes the answer."""
+    from server.code.app import repo_scope
+
+    world = _World(monkeypatch, [_candidate()])
+    _link_repo(
+        monkeypatch, world, refused=frozenset({("ns", "viewer")}), code_namespaces=frozenset({"ns"})
+    )
+    monkeypatch.setattr(repo_scope, "trunk_namespace_of", lambda org, ns: "code-gadgets")
+    for into in (None, "source", "repo"):
+        report = await _run(repo="acme/widgets", into=into)
+        assert report.error == "not allowed to read o/ns"

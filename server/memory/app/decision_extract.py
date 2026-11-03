@@ -161,7 +161,8 @@ class ExtractReport:
     # Keys tagged (or to tag) `source-changed`: confirmed rows (pinned or attested), and
     # rows with a recorded outcome, whose document now says otherwise.
     flagged: list[str] = field(default_factory=list)
-    # Keys of rows the retire step keeps that gained (or would gain) the repository's tag.
+    # Keys of rows the retire step keeps that gained (or would gain) the repository's tag;
+    # a row reconcile tags says so in its record's note.
     linked: list[str] = field(default_factory=list)
     # The retire step's "<key>: refused: <code>" for a read or write the server refused,
     # "<key>: failed: <error>" for one a provider error stopped. A candidate's is its
@@ -329,6 +330,9 @@ async def _target(
     if not registry_read():
         # Without it a repository's trunk would read as none, and a check be skipped.
         return "could not read the repositories added from the dashboard; try again"
+    # First, so nothing about the document's namespace reaches a caller who cannot read it.
+    if not await _may(org, namespace, Role.VIEWER):
+        return f"not allowed to read {org}/{namespace}"
     if not repo:
         if into:
             return "--into needs --repo"
@@ -347,13 +351,9 @@ async def _target(
         target = Target(namespace, trunk, trunk if into == "repo" else namespace, tag)
         if not tag and target.rows_namespace != trunk:
             return f"repository {repo!r} has no remote to tag its rows with; use --into repo"
-    # The code namespace is the document's with no --repo, and was checked above with one.
-    checks = {target.doc_namespace: Role.VIEWER}
-    write = Role.VIEWER if dry_run else Role.WRITER
-    checks[target.rows_namespace] = max(write, checks.get(target.rows_namespace, write))
-    for ns, role in checks.items():
-        if not await _may(org, ns, role):
-            return f"not allowed to {'write' if role == Role.WRITER else 'read'} {org}/{ns}"
+    # The document's namespace and the trunk were read-checked above; a dry run writes nothing.
+    if not dry_run and not await _may(org, target.rows_namespace, Role.WRITER):
+        return f"not allowed to write {org}/{target.rows_namespace}"
     return target
 
 
