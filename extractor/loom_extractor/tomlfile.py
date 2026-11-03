@@ -393,10 +393,11 @@ class _Scanner:
 
 
 def _wide_integer(doc: dict[str, Any]) -> str:
-    """The key path of the first integer outside signed 64 bits, which TOML
-    makes an error and `tomllib` reads anyway, or ''. Walked without recursion,
-    in document order; each entry holds its parent, so a path is spelled only
-    for the integer it names."""
+    """The key path of an integer outside signed 64 bits, which TOML makes an
+    error and `tomllib` reads anyway, or ''. Walked without recursion in key
+    order (a table's keys together, as `tomllib` holds them: a table reopened
+    later in the file comes with its first part); each entry holds its parent,
+    so a path is spelled only for the integer it names."""
     stack: list[tuple[Any, Any]] = [(None, doc)]  # ((parent entry, key or index), value)
     while stack:
         entry, v = stack.pop()

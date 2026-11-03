@@ -1413,17 +1413,20 @@ def test_a_toml_integer_outside_signed_64_bits_makes_the_file_invalid_toml() -> 
         assert extract(source, "c.toml").coverage.failed[0].reason == f"invalid TOML: {reason}"
 
 
-def test_the_wide_integer_check_spells_a_path_only_for_the_integer_it_names(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A path per value would copy its parent's: quadratic in a long header."""
-    from loom_extractor import tomlfile
+def test_the_wide_integer_check_is_linear_in_a_deep_table_of_long_keys() -> None:
+    """A path spelled per value would copy its parent's: 20,000 levels of
+    1,000-character keys would copy about 200 GB."""
+    from loom_extractor.tomlfile import _wide_integer
 
-    spelled: list[object] = []
-    real = tomlfile._entry_path
-    monkeypatch.setattr(tomlfile, "_entry_path", lambda e: spelled.append(e) or real(e))
-    header = ".".join(["p" * 100] * 2_000)
-    assert "toml_types" not in extract(f"[{header}]\nk = 1\n".encode(), "c.toml").coverage.lost
-    assert spelled == []
-    extract(f"[{header}]\nk = 99999999999999999999\n".encode(), "c.toml")
-    assert len(spelled) == 1
+    doc: dict[str, object] = {"v": 99999999999999999999}
+    for _ in range(20_000):
+        doc = {"k" * 1000: doc}
+    paths: list[str] = []
+    _within(5.0, lambda: paths.append(_wide_integer(doc)))
+    assert paths[0].endswith(".v") and paths[0].count(".") == 20_000
+
+
+def test_a_wide_integer_in_a_reopened_table_is_named_in_key_order() -> None:
+    source = b"[a]\nx = 1\n[c]\ny = 99999999999999999999\n[a.b]\nz = 99999999999999999999\n"
+    reason = extract(source, "c.toml").coverage.failed[0].reason
+    assert reason == "invalid TOML: a.b.z is an integer outside signed 64 bits"
