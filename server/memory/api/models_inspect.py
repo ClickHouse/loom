@@ -43,7 +43,9 @@ class MemoryInspectInput(BaseModel):
 
 
 class InspectCount(BaseModel):
+    # The value counted: a memory type, status, source class, tag or category name.
     name: str
+    # Live rows with that value.
     rows: int
 
 
@@ -77,7 +79,9 @@ class InspectView(BaseModel):
 
     # Which rows this view holds, in one sentence.
     definition: str
+    # Live rows in the view.
     live_rows: int = 0
+    # The view's rows by memory type, by status and by source class, most first.
     by_type: list[InspectCount] = Field(default_factory=list)
     by_status: list[InspectCount] = Field(default_factory=list)
     by_source_class: list[InspectCount] = Field(default_factory=list)
@@ -85,6 +89,8 @@ class InspectView(BaseModel):
     top_tags: list[InspectCount] = Field(default_factory=list)
     # Registered categories (namespace.list_categories) the view's rows are filed under.
     categories: list[InspectCount] = Field(default_factory=list)
+    # The oldest and the newest `updated_at` of the view's live rows (a row's last
+    # write, not its first).
     first_updated_at: datetime | None = None
     last_updated_at: datetime | None = None
     # The newest rows, at most `sample_limit`.
@@ -94,6 +100,7 @@ class InspectView(BaseModel):
 
 
 class InspectCall(BaseModel):
+    # The operation called, e.g. `memory.search`.
     operation: str
     # Calls of the operation filed under the subject in the window.
     calls: int
@@ -102,16 +109,20 @@ class InspectCall(BaseModel):
 
 
 class InspectActivity(BaseModel):
-    """The calls the ledger files under the subject in the window, whoever made them (a
-    call is filed under the identity its arguments name): what was attempted and what
-    succeeded, never whether a result reached a model or changed an answer."""
+    """The calls the ledger files under the subject in the window.
+
+    A call is filed under the identity its arguments name, whoever made it. The counts
+    say what was attempted and what succeeded, never whether a result reached a model
+    or changed an answer.
+    """
 
     # The window the counts cover, in seconds.
     window_seconds: int
     # One entry per operation, most called first, at most 200.
     calls: list[InspectCall] = Field(default_factory=list)
-    # The first and the last call counted.
+    # The first call counted.
     first_at: datetime | None = None
+    # The last call counted.
     last_at: datetime | None = None
     # Why the counts may cover less than the window (ledger retention), or "".
     gap: str = ""

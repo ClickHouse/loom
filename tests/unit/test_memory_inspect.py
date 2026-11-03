@@ -224,7 +224,7 @@ async def test_the_extraction_policy_is_read_only_for_an_org_admin(
 async def test_a_failed_section_is_skipped_not_raised(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _ch(tags=_boom)
     fake.strict = False
-    fake.install(monkeypatch)
+    fake.install(monkeypatch, "server.identity.app.namespace_catalog")
     out = await mi.handle_memory_inspect(_inp())
     assert "own.tags: RuntimeError" in out.skipped and "others.tags: RuntimeError" in out.skipped
     assert out.own.top_tags == [] and out.own.live_rows == 3
@@ -234,7 +234,7 @@ async def test_a_failed_section_is_skipped_not_raised(monkeypatch: pytest.Monkey
 async def test_a_view_whose_counts_failed_is_not_complete(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _ch(counts=_boom)
     fake.strict = False
-    fake.install(monkeypatch)
+    fake.install(monkeypatch, "server.identity.app.namespace_catalog")
     out = await mi.handle_memory_inspect(_inp())
     assert "own.counts: RuntimeError" in out.skipped
     assert out.own.live_rows == 0 and len(out.own.newest) == 1 and out.own.complete is False

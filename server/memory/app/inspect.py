@@ -22,6 +22,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.auth.authz import row_in_scope
+from server.identity.api.models_namespace_catalog import NamespaceListCategoriesInput
+from server.identity.api.models_namespace_guide import NamespaceGuideGetInput
+from server.identity.app.namespace_catalog import handle_namespace_list_categories
+from server.identity.app.namespace_guide import handle_namespace_guide_get
 from server.memory.api.models_inspect import (
     InspectActivity,
     InspectCall,
@@ -32,6 +36,7 @@ from server.memory.api.models_inspect import (
     MemoryInspectInput,
     MemoryInspectOutput,
 )
+from server.memory.app import extraction_policy
 from server.memory.store import inspect as store
 from server.observability.consumer import INSPECTOR_CONSUMERS
 from server.operations.base import Role
@@ -177,12 +182,6 @@ class _Inspect:
         return out
 
     async def settings_section(self) -> InspectSettings:
-        from server.identity.api.models_namespace_catalog import NamespaceListCategoriesInput
-        from server.identity.api.models_namespace_guide import NamespaceGuideGetInput
-        from server.identity.app.namespace_catalog import handle_namespace_list_categories
-        from server.identity.app.namespace_guide import handle_namespace_guide_get
-        from server.memory.app import extraction_policy
-
         i = self.inp
         out = InspectSettings()
         guide = await self.guarded(
