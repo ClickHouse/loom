@@ -5,8 +5,9 @@ its own dependencies, never the Loom server. The server sends the original's byt
 to, reads the artifact back as untrusted input, and cuts structural chunks from its blocks, so a SQL statement, a TOML
 key and a Markdown section are all cited by a locator into the source. Loom ships a reference extractor
 (`extractor/loom_extractor/`) for Markdown, HTML, plain text, SQL and TOML; an operator can run another behind the same
-[wire contract](../reference/extractor-contract.md). No operation calls extraction yet: `knowledge.add` takes text the
-caller extracted.
+[wire contract](../reference/extractor-contract.md). The document-source sync calls it for the PDFs and `.pptx` files a
+registered folder holds ([syncing a source](../features/knowledge.md#syncing-a-source));
+`knowledge.add` takes text the caller extracted.
 
 ## The service boundary
 

@@ -34,6 +34,9 @@ STATE_TABLE = "loom.code_index_state"
 # Documents `knowledge.source.inspect` lists, at most.
 # not a setting: the op's wire contract (its description says 200)
 DOCUMENTS_LIMIT = 200
+# Documents one source's revision read returns, at most.
+# not a setting: a bound on one statement, far above what 20 shared folders hold
+REVISIONS_LIMIT = 50_000
 
 _COLUMNS = (
     "org, namespace, name, source_id, kind, config_json, credential_enc, created_by, active, "
@@ -71,6 +74,38 @@ async def list_sources(
         params={"org": org, "ns": namespace},
     )
     return [_source(r) for r in rows]
+
+
+async def all_active_sources(*, ch: _CHClient | None = None) -> list[KnowledgeSource]:
+    """Every active source of every org, in (org, namespace, name) order: the sync
+    worker's work list."""
+    rows = await (ch or _default_client()).query_all(
+        f"SELECT {_COLUMNS} FROM {TABLE} FINAL WHERE active ORDER BY org, namespace, name"
+    )
+    return [_source(r) for r in rows]
+
+
+async def pending_delete_sources(*, ch: _CHClient | None = None) -> list[KnowledgeSource]:
+    """Removed sources whose documents a maintainer asked to retire."""
+    rows = await (ch or _default_client()).query_all(
+        f"SELECT {_COLUMNS} FROM {TABLE} FINAL WHERE NOT active AND pending_delete "
+        "ORDER BY org, namespace, name"
+    )
+    return [_source(r) for r in rows]
+
+
+async def inactive_namespaces(
+    pairs: list[tuple[str, str]], *, ch: _CHClient | None = None
+) -> set[tuple[str, str]]:
+    """The (org, namespace) pairs among `pairs` whose directory row is inactive."""
+    if not pairs:
+        return set()
+    rows = await (ch or _default_client()).query_all(
+        "SELECT org, namespace FROM loom.namespaces FINAL "
+        "WHERE (org, namespace) IN {keys:Array(Tuple(String, String))} AND active = false",
+        params={"keys": pairs},
+    )
+    return {(str(r["org"]), str(r["namespace"])) for r in rows}
 
 
 async def get_source(
@@ -200,6 +235,31 @@ async def source_documents(
     return [dict(r) for r in rows]
 
 
+async def source_revisions(
+    org: str, namespace: str, name: str, *, ch: _CHClient | None = None
+) -> list[dict[str, str]]:
+    """Each live document of the source: its address, the store's file id it came
+    from and the revision stamp of the ingested copy. One statement per source turn,
+    a tag filter over the namespace's key prefix like `source_documents`."""
+    rows = await (ch or _default_client()).query_all(
+        "SELECT source_uri, JSONExtractString(metadata, 'ingested_from') AS file_id, "
+        "JSONExtractString(metadata, 'source_revision') AS source_revision "
+        "FROM loom.documents FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
+        "AND actor = {actor:String} AND superseded_at IS NULL "
+        f"LIMIT {REVISIONS_LIMIT}",
+        params={"org": org, "ns": namespace, "tag": source_tag(name), "actor": SYNC_WORKER_ACTOR},
+    )
+    return [
+        {
+            "source_uri": str(r.get("source_uri") or ""),
+            "file_id": str(r.get("file_id") or ""),
+            "source_revision": str(r.get("source_revision") or ""),
+        }
+        for r in rows
+    ]
+
+
 async def count_documents(
     org: str, namespace: str, name: str, *, ch: _CHClient | None = None
 ) -> int:
@@ -215,14 +275,19 @@ async def count_documents(
 
 __all__ = [
     "DOCUMENTS_LIMIT",
+    "REVISIONS_LIMIT",
     "TABLE",
     "active_count",
+    "all_active_sources",
     "count_documents",
     "get_source",
+    "inactive_namespaces",
     "insert_source",
     "latest_source",
     "list_sources",
+    "pending_delete_sources",
     "read_states",
     "source_documents",
+    "source_revisions",
     "write_state",
 ]

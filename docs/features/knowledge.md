@@ -73,9 +73,10 @@ documents from. A source lives on the repository's trunk code namespace, the one
 documents live in, so whoever reads the repository sees where its documents come from,
 and only the namespace's admins change that. The one kind served is `gdrive`, a shared
 folder of docs, slides, decks and PDFs, read with a service account the folders are
-shared to read-only; its credential is the account's JSON key. This build stores
-sources, probes them and records sync and delete requests; no worker pulls documents
-from them yet. A source's `sync` shows the last sync request (`requested_at`).
+shared to read-only; its credential is the account's JSON key. The
+`knowledge_source_sync` worker pulls each source's files into the repository's
+documents ([syncing](#syncing-a-source)); `list` says whether this deployment runs it
+(`enabled`, `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default).
 
 | Operation                                                                                   | Role   | Does                                                                                                       |
 | ------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------- |
@@ -124,8 +125,8 @@ deployment's configuration, a branch that now outranks the trunk, or a repositor
 removed by a replica of the previous release, which does not retire sources): its row
 stays active, keeps its sealed credential and counts toward the namespace's quota
 until `knowledge.source.remove` retires it. `check`, `rotate` and `sync_now` refuse it
-with `NOT_A_CODE_NAMESPACE`; `list`, `inspect` and `remove` still serve it, and a sync
-worker must skip it.
+with `NOT_A_CODE_NAMESPACE`; `list`, `inspect` and `remove` still serve it, and the sync
+worker skips it.
 
 A source's documents are the live documents of its namespace that carry the tag
 `source:<name>` and that the sync worker wrote (actor `worker:knowledge-source-sync`).
@@ -163,6 +164,69 @@ name at once.
 | `CONFIRM_REQUIRED`      | `remove`'s `confirm` is not the source's name.                                                                                                     |
 
 A probe's error names the HTTP status (`http_403`), never the store's response text.
+
+### Syncing a source
+
+Every `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` (default 900) the worker gives each
+active source a turn: sources a maintainer asked for with `sync_now` first, then the
+rest from where the previous pass stopped. A source whose namespace is inactive or no
+longer a repository's trunk is skipped. Each turn holds a lease of its own, so two
+copies of the worker never sync one source at once.
+
+A turn lists the source's files. Its first turn, a turn `sync_now(full=true)` asked
+for and the first turn after `LOOM_KNOWLEDGE_SOURCE_SYNC_FULL_INTERVAL_SECONDS`
+(default a day) since the last full listing list every file; the others list only the
+files changed after the stored stamp, the newest modification time a complete turn
+saw. A listed file whose stored copy has the same revision is skipped without a fetch.
+A changed file is fetched and written with `knowledge.upsert`:
+
+| File                  | Text                                                                                                                                                                                                                                                                                                                                                                        | Original                       |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| A document (`docs`)   | Exported by the store as Markdown.                                                                                                                                                                                                                                                                                                                                          | none                           |
+| A deck (`slides`)     | One `# Slide N: <title>` section per slide, so a chunk is a slide: its shapes' text (groups read through, a table one row per line), then `> Notes: …` from the speaker notes. A run of eight or more bare numbers is dropped. A slide whose text is under 120 characters beside a picture, chart or video ends with `> [image-only: N pictures, rationale not extracted]`. | none                           |
+| A PDF, a `.pptx` file | Sent to the [extractor service](../architecture/document-extraction.md) its format is routed to; the artifact's headings become Markdown headings. With no extractor declaring the format, the file is counted `unconverted` and not written.                                                                                                                               | the file's bytes, downloadable |
+
+Each document's address (`source_uri`) is the link the store reports for the file,
+without its query, so a `knowledge.synthesize` citation of it reads
+`<link>#<chunk>`. Its title is the file's name, its description the first paragraph,
+its tags `source-kind:design_doc`, the repository's `repo:<id>` and `source:<name>`,
+and its metadata the source's kind and name, the file's id (`ingested_from`), its
+revision (`source_revision`) and the conversion (`ingested_format`). Every document a
+sync writes has the actor `worker:knowledge-source-sync` and the class `imported`. A
+live document at the same address that another writer or another source holds is never
+overwritten; the file is counted `skipped`.
+
+A document is retired only on positive evidence: absence from a complete full listing
+(a file trashed, deleted or moved out of the folders), or a maintainer's
+`remove(delete_documents=true)`. A fetch error or a rate limit retires nothing. Each
+retirement is a `knowledge.delete` with its audit row, actor
+`worker:knowledge-source-sync`. Once a removed source has no documents left, its
+delete request is cleared.
+
+The stamp moves only when every listed file was handled. A turn cut short (a rate
+limit, a failure, the pass bound) is listed again on the next pass, and the files it
+wrote are skipped by revision. One pass fetches, writes and retires at most
+`LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` documents (default 40) across all
+sources, so a large folder's first sync spans several passes. A file over
+`LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` (default 64 MiB) is counted `unconverted`.
+A file left unconverted is fetched again when it changes, or on a full listing once an
+extractor serves its format.
+
+A source's `sync` in `list` and `inspect` shows what its last turn did:
+
+| Field                    | Meaning                                                                                                                                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `requested_at`           | A `sync_now` request no turn has finished yet.                                                                                            |
+| `last_synced_at`         | When the last turn ended.                                                                                                                 |
+| `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`. |
+| `documents_seen`         | Files the turn listed.                                                                                                                    |
+| `changed`, `removed`     | Documents it wrote and retired.                                                                                                           |
+| `unconverted`, `skipped` | Files it did not write: no extractor, refused or too large; another writer's document at the address.                                     |
+| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text.                                                   |
+
+`loom knowledge sync --org O --namespace <trunk namespace> [--source NAME] [--full]` runs
+one such pass over one namespace's sources now, in-process, and leaves a manual
+`knowledge_source_sync` row in `loom.worker_status`.
 
 ## Searching
 
@@ -367,7 +431,11 @@ a lifecycle rule expires their noncurrent versions ([backup and recovery](../ope
 
 ## Getting files in: the ingest CLI
 
-The server takes text; it parses no file formats. `dev/loom_ingest.py` parses on the client and posts the text:
+`knowledge.add` and `knowledge.upsert` take text: a caller sends the text it extracted.
+A folder registered as a [document source](#document-sources) is pulled by the server
+instead, with PDFs and `.pptx` files parsed by an extractor service. For a one-off push
+of a local file, an `s3://` object or an `https://` page, `dev/loom_ingest.py` parses on
+the client and posts the text:
 
 ```bash
 make ingest FILE=docs/runbook.md TAGS=ops,runbooks      # wraps dev/loom_ingest.py
@@ -421,15 +489,16 @@ curl -s localhost:7777/v1/knowledge.search -H "Authorization: Bearer $LOOM_API_K
 
 ## Settings
 
-| Setting                                                                             | Effect                                                                                                                                                                              |
-| ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_KNOWLEDGE_CHUNK_SIZE`, `…_CHUNK_STRIDE`                                       | How documents are split ([Knowledge → Chunking](../reference/configuration.md#chunking)). `loom rechunk --org O --namespace N --apply` re-chunks existing documents after a change. |
-| `LOOM_MEMORY_SEARCH_FANOUT_KINDS`                                                   | Which namespace kinds an `all_mine` search spans ([MemorySearch](../reference/configuration.md#memorysearch)).                                                                      |
-| `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES`                                          | How many of the caller's namespaces an `all_mine` search reads besides the addressed one ([MemorySearch](../reference/configuration.md#memorysearch)).                              |
-| `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY`                                     | The floor for knowledge hits in `loom_search` ([Mcp](../reference/configuration.md#mcp)).                                                                                           |
-| `LOOM_MEMORY_ASK_KNOWLEDGE_TOP_K`, `LOOM_MEMORY_ASK_SYNTHESIZE_ROUTE_MAX_DOCS`      | Whether and how `memory.ask` reads knowledge ([MemoryAsk](../reference/configuration.md#memoryask)).                                                                                |
-| `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE`, `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` | How many document sources one repository namespace may register, and how long a source's probe may take ([Knowledge](../reference/configuration.md#knowledge)).                     |
-| `LOOM_RETENTION_CHUNKS_DAYS`, `LOOM_RETENTION_DOCUMENTS_DAYS`                       | Opt-in table TTLs; 0 keeps rows forever ([Retention](../reference/configuration.md#retention)).                                                                                     |
+| Setting                                                                                                                           | Effect                                                                                                                                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `LOOM_KNOWLEDGE_CHUNK_SIZE`, `…_CHUNK_STRIDE`                                                                                     | How documents are split ([Knowledge → Chunking](../reference/configuration.md#chunking)). `loom rechunk --org O --namespace N --apply` re-chunks existing documents after a change.                                |
+| `LOOM_MEMORY_SEARCH_FANOUT_KINDS`                                                                                                 | Which namespace kinds an `all_mine` search spans ([MemorySearch](../reference/configuration.md#memorysearch)).                                                                                                     |
+| `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES`                                                                                        | How many of the caller's namespaces an `all_mine` search reads besides the addressed one ([MemorySearch](../reference/configuration.md#memorysearch)).                                                             |
+| `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY`                                                                                   | The floor for knowledge hits in `loom_search` ([Mcp](../reference/configuration.md#mcp)).                                                                                                                          |
+| `LOOM_MEMORY_ASK_KNOWLEDGE_TOP_K`, `LOOM_MEMORY_ASK_SYNTHESIZE_ROUTE_MAX_DOCS`                                                    | Whether and how `memory.ask` reads knowledge ([MemoryAsk](../reference/configuration.md#memoryask)).                                                                                                               |
+| `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE`, `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S`                                               | How many document sources one repository namespace may register, and how long a source's probe may take ([Knowledge](../reference/configuration.md#knowledge)).                                                    |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, `…_INTERVAL_SECONDS`, `…_DOCUMENTS_PER_PASS`, `…_FULL_INTERVAL_SECONDS`, `…_MAX_FILE_BYTES` | Whether and how often the sync worker pulls sources, how many documents a pass handles, how often a source is listed whole and the largest file it ingests ([Knowledge](../reference/configuration.md#knowledge)). |
+| `LOOM_RETENTION_CHUNKS_DAYS`, `LOOM_RETENTION_DOCUMENTS_DAYS`                                                                     | Opt-in table TTLs; 0 keeps rows forever ([Retention](../reference/configuration.md#retention)).                                                                                                                    |
 
 ## Limits
 

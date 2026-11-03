@@ -136,10 +136,26 @@ def json_object(raw: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+# The parts of a stored sync state a reader sees, with their types. The rest
+# (`full`, `full_listed_at`) is the worker's own bookkeeping.
+SYNC_FIELDS: dict[str, type] = {
+    "requested_at": str,
+    "last_synced_at": str,
+    "status": str,
+    "documents_seen": int,
+    "changed": int,
+    "removed": int,
+    "unconverted": int,
+    "skipped": int,
+    "error": str,
+}
+
+
 def sync_of(detail: str) -> dict[str, Any]:
-    """The parts of a stored sync state a reader sees; {} before any request."""
+    """The parts of a stored sync state a reader sees, each of its type; {} before
+    any request or pass."""
     state = json_object(detail)
-    return {"requested_at": state["requested_at"]} if "requested_at" in state else {}
+    return {k: v for k, t in SYNC_FIELDS.items() if isinstance(v := state.get(k), t)}
 
 
 __all__ = [
@@ -148,6 +164,7 @@ __all__ = [
     "KnowledgeSource",
     "MAX_FOLDERS",
     "STATE_KEY_PREFIX",
+    "SYNC_FIELDS",
     "SYNC_WORKER_ACTOR",
     "SourceConfigError",
     "json_object",

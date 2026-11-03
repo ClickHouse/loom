@@ -20,10 +20,32 @@ class KnowledgeSourceProbe(BaseModel):
 
 
 class KnowledgeSourceSync(BaseModel):
-    """A source's sync state as this build records it: the last sync request."""
+    """A source's sync state: the request waiting for the worker, and what its last
+    pass over the source did."""
 
-    # When `knowledge.source.sync_now` last asked for a pass, ISO UTC; '' = not asked.
+    # When `knowledge.source.sync_now` asked for a pass the worker has not run yet,
+    # ISO UTC; '' = none waiting.
     requested_at: str = ""
+    # When the worker last finished a turn on the source, ISO UTC; '' = never.
+    last_synced_at: str = ""
+    # How that turn ended: ok, failed, rate_limited or credential_invalid; '' = never run.
+    status: str = ""
+    # Files the turn's listing returned (every file on a full listing, else those
+    # changed since the last complete one).
+    documents_seen: int = 0
+    # Documents the turn wrote: new or changed files.
+    changed: int = 0
+    # Documents the turn retired: files the source no longer has.
+    removed: int = 0
+    # Files not ingested: no extractor serves their format, the extractor refused them,
+    # or they are over LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES.
+    unconverted: int = 0
+    # Files not written because a live document at their address is another writer's
+    # or another source's.
+    skipped: int = 0
+    # Why the turn failed: an error class and HTTP status (`http_403`), never the
+    # source's response text; '' when it did not.
+    error: str = ""
 
 
 class KnowledgeSourceEntry(BaseModel):
@@ -37,13 +59,13 @@ class KnowledgeSourceEntry(BaseModel):
     created_by: str = ""
     # When it was added, ISO UTC.
     created_at: str = ""
-    # The source's sync state: the last sync request.
+    # The source's sync state: a waiting request and the last pass.
     sync: KnowledgeSourceSync = Field(default_factory=KnowledgeSourceSync)
 
 
 class KnowledgeSourceListInput(BaseModel):
     """The document sources registered on a repository's code namespace, with each
-    one's last sync request. Any reader of the repository may list them; the credential
+    one's sync state. Any reader of the repository may list them; the credential
     is never returned."""
 
     org: str = Field(..., description="The org.")
@@ -53,6 +75,9 @@ class KnowledgeSourceListInput(BaseModel):
 class KnowledgeSourceListOutput(BaseModel):
     # The namespace's active sources, by name.
     sources: list[KnowledgeSourceEntry] = Field(default_factory=list)
+    # Whether this deployment runs the sync worker (LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED);
+    # false: sources are stored and probed, but nothing pulls from them.
+    enabled: bool = False
 
 
 class KnowledgeSourceAddInput(BaseModel):
@@ -100,7 +125,7 @@ class KnowledgeSourceAddOutput(BaseModel):
 
 
 class KnowledgeSourceInspectInput(BaseModel):
-    """One registered document source: its config, its last sync and the
+    """One registered document source: its config, its sync state and the
     documents it wrote (the 200 most recently ingested). Any reader of the
     repository may; the credential is never returned."""
 
@@ -131,7 +156,7 @@ class KnowledgeSourceInspectOutput(BaseModel):
     created_by: str = ""
     # When it was added, ISO UTC.
     created_at: str = ""
-    # The source's sync state: the last sync request.
+    # The source's sync state: a waiting request and the last pass.
     sync: KnowledgeSourceSync = Field(default_factory=KnowledgeSourceSync)
     # The source's live documents, most recently ingested first, at most 200.
     documents: list[KnowledgeSourceDocument] = Field(default_factory=list)
@@ -190,8 +215,8 @@ class KnowledgeSourceRotateOutput(BaseModel):
 class KnowledgeSourceRemoveInput(BaseModel):
     """Retire a registered document source: its registry row goes inactive and its
     credential is cleared. Its documents stay; with `delete_documents` true the
-    request to retire them is recorded on the row, for the sync worker (not in
-    this build) to act on. A namespace admin may; `confirm` must equal the name."""
+    request to retire them is recorded on the row, and the sync worker retires them
+    over its next passes. A namespace admin may; `confirm` must equal the name."""
 
     org: str = Field(..., description="The org.")
     namespace: str = Field(..., description="The repository's trunk code namespace.")
@@ -212,9 +237,9 @@ class KnowledgeSourceRemoveOutput(BaseModel):
 
 
 class KnowledgeSourceSyncNowInput(BaseModel):
-    """Record a request to sync one document source in its sync state, for the sync
-    worker (not in this build) to start its next pass with. Nothing is fetched on
-    the request. A namespace admin may."""
+    """Record a request to sync one document source in its sync state: the sync
+    worker starts its next pass with it. Nothing is fetched on the request. A
+    namespace admin may."""
 
     org: str = Field(..., description="The org.")
     namespace: str = Field(..., description="The repository's trunk code namespace.")
@@ -229,3 +254,5 @@ class KnowledgeSourceSyncNowInput(BaseModel):
 class KnowledgeSourceSyncNowOutput(BaseModel):
     # The source the request was recorded for.
     name: str
+    # Whether this deployment runs the sync worker; false: the request waits until it does.
+    enabled: bool = False

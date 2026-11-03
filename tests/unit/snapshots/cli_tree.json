@@ -3629,6 +3629,185 @@
       }
      ]
     },
+    "knowledge": {
+     "prog": "loom knowledge",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "subcommand"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "subcommand",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "sync": {
+         "prog": "loom knowledge sync",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.knowledge:_cmd_sync"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "org",
+            "namespace",
+            "source",
+            "full"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--namespace"
+           ],
+           "dest": "namespace",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The repository's trunk code namespace",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--source"
+           ],
+           "dest": "source",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Only the source of this name",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--full"
+           ],
+           "dest": "full",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "List every file, not only the changed ones",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "sync": "loom knowledge sync"
+       },
+       "choices_help": [
+        {
+         "dest": "sync",
+         "help": "Run one sync pass over a repository namespace's document sources now: list each source's changed files (every file with --full), write the changed ones as documents and retire those a full listing no longer has, bounded like a worker pass by LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS; run it again to go on. Leaves a manual knowledge_source_sync row in loom.worker_status. Exits 1 when a source's turn failed.",
+         "metavar": "sync"
+        }
+       ]
+      }
+     ]
+    },
     "export-okf": {
      "prog": "loom export-okf",
      "usage": null,
@@ -13097,6 +13276,7 @@
    "aliases_of": {
     "code": "loom code",
     "decisions": "loom decisions",
+    "knowledge": "loom knowledge",
     "export-okf": "loom export-okf",
     "import-okf": "loom import-okf",
     "okf-lint": "loom okf-lint",
@@ -13168,6 +13348,11 @@
      "dest": "decisions",
      "help": "Decision records mined from documents.",
      "metavar": "decisions"
+    },
+    {
+     "dest": "knowledge",
+     "help": "Knowledge documents and their sources.",
+     "metavar": "knowledge"
     },
     {
      "dest": "export-okf",

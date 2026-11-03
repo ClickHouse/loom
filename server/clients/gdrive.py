@@ -8,13 +8,16 @@ dialled.
 
 Errors carry the HTTP status, never the store's response body, which can name
 files or the store's own hosts. A rate limit raises `RateLimited`, a refused
-key or token `CredentialRefused`, an id the account cannot see `NotFound`, and
-any other failure `DriveError`.
+key or token `CredentialRefused`, an id the account cannot see `NotFound`, a
+file over the caller's size bound `TooLarge`, and any other failure
+`DriveError`. Nothing here retries: the sync worker's next pass is the retry.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -25,8 +28,17 @@ from server.clients._http import get_client
 
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 _FILES_URL = "https://www.googleapis.com/drive/v3/files"
+_SLIDES_URL = "https://slides.googleapis.com/v1/presentations"
 _SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 _FOLDER_MIME = "application/vnd.google-apps.folder"
+# Seconds between listing pages, so a long walk stays under the store's per-user
+# rate limit.
+PAGE_PACE_S = 0.7  # not a setting: the store's limit, the same on every deployment
+# A modification stamp as the store reports it (RFC 3339, UTC). A stamp goes into the
+# listing's query string, so nothing else is let through.
+_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z")
+# A file id goes into a request path; the store's own ids are in this alphabet.
+_FILE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,256}")
 
 
 class DriveError(RuntimeError):
@@ -42,6 +54,10 @@ class CredentialRefused(DriveError):
 
 
 class NotFound(DriveError):
+    pass
+
+
+class TooLarge(DriveError):
     pass
 
 
@@ -174,6 +190,27 @@ async def _get(url: str, token: str, params: dict[str, Any], what: str) -> dict[
     return _json(resp, what)
 
 
+async def _get_bytes(
+    url: str, token: str, params: dict[str, Any], what: str, max_bytes: int
+) -> bytes:
+    """The body of a GET, read up to `max_bytes`; TooLarge past it."""
+    try:
+        async with get_client().stream(
+            "GET", url, headers={"Authorization": f"Bearer {token}"}, params=params
+        ) as resp:
+            if resp.status_code >= 400:
+                await resp.aread()  # the error reasons tell a rate limit from a refusal
+                _raise_for(resp, what)
+            body = bytearray()
+            async for piece in resp.aiter_bytes():
+                body.extend(piece)
+                if len(body) > max_bytes:
+                    raise TooLarge(f"{what}: over {max_bytes} bytes")
+    except httpx.RequestError as e:
+        raise DriveError(f"{what}: {type(e).__name__}") from e
+    return bytes(body)
+
+
 async def require_folder(token: str, folder_id: str) -> None:
     """NotFound when the account cannot see `folder_id` or it is no folder."""
     what = f"folder {folder_id}"
@@ -212,14 +249,105 @@ async def list_files(
     return files, bool(data.get("nextPageToken"))
 
 
+def valid_file_id(file_id: str) -> bool:
+    """Whether `file_id` is an id the store hands out, safe in a request path."""
+    return bool(_FILE_ID_RE.fullmatch(file_id))
+
+
+def _file_url(file_id: str, suffix: str = "") -> str:
+    if not valid_file_id(file_id):
+        raise ValueError("not a file id")
+    return f"{_FILES_URL}/{file_id}{suffix}"
+
+
+def valid_stamp(stamp: str) -> bool:
+    """Whether `stamp` is a modification time as the store reports it."""
+    return bool(_STAMP_RE.fullmatch(stamp))
+
+
+async def list_all(
+    token: str,
+    folder_ids: list[str],
+    mime_types: list[str],
+    *,
+    modified_after: str = "",
+    pace_s: float = PAGE_PACE_S,
+) -> list[dict[str, Any]]:
+    """Every file of `mime_types` in any of `folder_ids`, oldest change first, or only
+    those changed after `modified_after` (a `valid_stamp`). Pages are paced; a failure
+    on any page raises, so a list returned is the whole listing."""
+    if modified_after and not valid_stamp(modified_after):
+        raise ValueError("modified_after is not a modification stamp")
+    parents = " or ".join(f"'{f}' in parents" for f in folder_ids)
+    kinds = " or ".join(f"mimeType = '{m}'" for m in mime_types)
+    query = f"({parents}) and trashed = false and ({kinds})"
+    if modified_after:
+        query += f" and modifiedTime > '{modified_after}'"
+    params = {
+        "q": query,
+        "fields": "nextPageToken,files(id,name,mimeType,modifiedTime,webViewLink,size)",
+        "pageSize": "1000",
+        "orderBy": "modifiedTime",
+        "supportsAllDrives": "true",
+        "includeItemsFromAllDrives": "true",
+    }
+    files: list[dict[str, Any]] = []
+    while True:
+        data = await _get(_FILES_URL, token, params, "listing")
+        files.extend(f for f in data.get("files") or [] if isinstance(f, dict))
+        page_token = data.get("nextPageToken")
+        if not isinstance(page_token, str) or not page_token:
+            return files
+        params = {**params, "pageToken": page_token}
+        await asyncio.sleep(pace_s)
+
+
+async def export_markdown(token: str, file_id: str, *, max_bytes: int) -> str:
+    """A native document exported as Markdown."""
+    data = await _get_bytes(
+        _file_url(file_id, "/export"),
+        token,
+        {"mimeType": "text/markdown"},
+        f"export {file_id}",
+        max_bytes,
+    )
+    return data.decode("utf-8", errors="replace")
+
+
+async def presentation(token: str, file_id: str) -> dict[str, Any]:
+    """A native presentation's slides, shapes and speaker notes."""
+    if not valid_file_id(file_id):
+        raise ValueError("not a file id")
+    return await _get(f"{_SLIDES_URL}/{file_id}", token, {}, f"presentation {file_id}")
+
+
+async def download(token: str, file_id: str, *, max_bytes: int) -> bytes:
+    """An uploaded file's bytes."""
+    return await _get_bytes(
+        _file_url(file_id),
+        token,
+        {"alt": "media", "supportsAllDrives": "true"},
+        f"download {file_id}",
+        max_bytes,
+    )
+
+
 __all__ = [
+    "PAGE_PACE_S",
     "CredentialRefused",
     "DriveError",
     "NotFound",
     "RateLimited",
     "ServiceAccount",
+    "TooLarge",
     "access_token",
+    "download",
+    "export_markdown",
+    "list_all",
     "list_files",
     "parse_service_account",
+    "presentation",
     "require_folder",
+    "valid_file_id",
+    "valid_stamp",
 ]

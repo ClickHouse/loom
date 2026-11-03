@@ -3497,6 +3497,14 @@ export interface KnowledgeSourceInspectInput {
 
 export interface KnowledgeSourceSync {
   requested_at?: string;
+  last_synced_at?: string;
+  status?: string;
+  documents_seen?: number;
+  changed?: number;
+  removed?: number;
+  unconverted?: number;
+  skipped?: number;
+  error?: string;
 }
 
 export interface KnowledgeSourceDocument {
@@ -3534,6 +3542,7 @@ export interface KnowledgeSourceEntry {
 
 export interface KnowledgeSourceListOutput {
   sources?: KnowledgeSourceEntry[];
+  enabled?: boolean;
 }
 
 export interface KnowledgeSourceRemoveInput {
@@ -3584,6 +3593,7 @@ export interface KnowledgeSourceSyncNowInput {
 
 export interface KnowledgeSourceSyncNowOutput {
   name: string;
+  enabled?: boolean;
 }
 
 export interface KnowledgeSynthesizeInput {

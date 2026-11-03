@@ -10228,7 +10228,7 @@ class KnowledgeSourceCheckOutput(TypedDict, total=False):
 
 
 class KnowledgeSourceInspectInput(TypedDict, total=False):
-    "One registered document source: its config, its last sync and the"
+    "One registered document source: its config, its sync state and the"
 
     org: Required[str]
     namespace: Required[str]
@@ -10236,7 +10236,7 @@ class KnowledgeSourceInspectInput(TypedDict, total=False):
 
 
 class KnowledgeSourceInspectBody(TypedDict, total=False):
-    "One registered document source: its config, its last sync and the"
+    "One registered document source: its config, its sync state and the"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -10254,9 +10254,17 @@ class KnowledgeSourceInspectOutput(TypedDict, total=False):
 
 
 class KnowledgeSourceSync(TypedDict, total=False):
-    "A source's sync state as this build records it: the last sync request."
+    "A source's sync state: the request waiting for the worker, and what its last"
 
     requested_at: NotRequired[str]
+    last_synced_at: NotRequired[str]
+    status: NotRequired[str]
+    documents_seen: NotRequired[int]
+    changed: NotRequired[int]
+    removed: NotRequired[int]
+    unconverted: NotRequired[int]
+    skipped: NotRequired[int]
+    error: NotRequired[str]
 
 
 class KnowledgeSourceDocument(TypedDict, total=False):
@@ -10282,6 +10290,7 @@ class KnowledgeSourceListBody(TypedDict, total=False):
 
 class KnowledgeSourceListOutput(TypedDict, total=False):
     sources: NotRequired[list["KnowledgeSourceEntry"]]
+    enabled: NotRequired[bool]
 
 
 class KnowledgeSourceEntry(TypedDict, total=False):
@@ -10343,7 +10352,7 @@ class KnowledgeSourceRotateOutput(TypedDict, total=False):
 
 
 class KnowledgeSourceSyncNowInput(TypedDict, total=False):
-    "Record a request to sync one document source in its sync state, for the sync"
+    "Record a request to sync one document source in its sync state: the sync"
 
     org: Required[str]
     namespace: Required[str]
@@ -10352,7 +10361,7 @@ class KnowledgeSourceSyncNowInput(TypedDict, total=False):
 
 
 class KnowledgeSourceSyncNowBody(TypedDict, total=False):
-    "Record a request to sync one document source in its sync state, for the sync"
+    "Record a request to sync one document source in its sync state: the sync"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -10362,6 +10371,7 @@ class KnowledgeSourceSyncNowBody(TypedDict, total=False):
 
 class KnowledgeSourceSyncNowOutput(TypedDict, total=False):
     name: Required[str]
+    enabled: NotRequired[bool]
 
 
 class KnowledgeSynthesizeInput(TypedDict, total=False):

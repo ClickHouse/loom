@@ -7,9 +7,10 @@ readers list and inspect, the namespace's admins add, check, rotate, remove and
 ask for a sync. The credential is sealed at rest under its own purpose, held in
 memory only for a probe, and never returned or audited.
 
-Nothing here fetches documents: the sync worker does, outside the request path.
-`sync_now` records what the worker should do next in the source's sync state;
-`remove(delete_documents=true)` records it on the inactive registry row it writes.
+Nothing here fetches documents: the sync worker does, outside the request path
+(`server.knowledge.app.source_sync`). `sync_now` records what the worker should do
+next in the source's sync state; `remove(delete_documents=true)` records it on the
+inactive registry row it writes.
 
 Every write of a namespace's sources, registry rows and sync state alike (add,
 rotate, remove, sync_now and code.repo.remove's retirement), runs under
@@ -173,6 +174,7 @@ async def handle_knowledge_source_list(
             )
             for s in found
         ],
+        enabled=bool(settings.knowledge_source_sync_enabled),
     )
 
 
@@ -429,7 +431,9 @@ async def handle_knowledge_source_sync_now(
                 "knowledge.source.sync_now again for the current source"
             )
         await _update_state(fresh, {"requested_at": _now_iso(), "full": bool(input.full)})
-    return KnowledgeSourceSyncNowOutput(name=src.name)
+    return KnowledgeSourceSyncNowOutput(
+        name=src.name, enabled=bool(settings.knowledge_source_sync_enabled)
+    )
 
 
 async def _update_state(src: KnowledgeSource, changes: dict[str, Any]) -> None:

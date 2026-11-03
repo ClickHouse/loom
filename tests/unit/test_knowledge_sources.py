@@ -220,13 +220,26 @@ def test_list_and_inspect_return_config_and_sync_never_the_credential(
     asyncio.run(app.handle_knowledge_source_add(_add()))
     fake.states["design-decks"] = {
         "state_value": "stamp",
-        "detail": json.dumps({"requested_at": "t", "full": True, "pending_extract": ["u"]}),
+        "detail": json.dumps(
+            {
+                "requested_at": "t",
+                "full": True,
+                "pending_extract": ["u"],
+                "status": "ok",
+                "changed": 2,
+                "full_listed_at": "t0",
+            }
+        ),
     }
+    monkeypatch.setattr(settings, "knowledge_source_sync_enabled", True)
     listed = asyncio.run(
         app.handle_knowledge_source_list(KnowledgeSourceListInput(org=ORG, namespace=NS))
     )
     assert [s.name for s in listed.sources] == ["design-decks"]
-    assert listed.sources[0].sync.model_dump() == {"requested_at": "t"}
+    assert listed.enabled
+    sync = listed.sources[0].sync.model_dump()
+    assert (sync["requested_at"], sync["status"], sync["changed"]) == ("t", "ok", 2)
+    assert set(sync) == set(domain.SYNC_FIELDS)
     body = KnowledgeSourceInspectInput(org=ORG, namespace=NS, name="design-decks")
     seen = asyncio.run(app.handle_knowledge_source_inspect(body))
     assert seen.documents[0].source_uri == "https://x/1"
@@ -476,8 +489,11 @@ def test_a_sync_state_write_leaves_the_version_to_the_server(
 
 
 def test_sync_state_of_reports_only_reader_fields() -> None:
-    detail = json.dumps({"requested_at": "t", "full": True, "pending_extract": ["u"]})
-    assert domain.sync_of(detail) == {"requested_at": "t"}
+    detail = json.dumps(
+        {"requested_at": "t", "full": True, "full_listed_at": "t0", "changed": "2", "removed": 1}
+    )
+    # The worker's bookkeeping stays out, and a field of the wrong type is left out.
+    assert domain.sync_of(detail) == {"requested_at": "t", "removed": 1}
     assert domain.sync_of("not json") == {}
 
 
