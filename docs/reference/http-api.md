@@ -183,7 +183,7 @@ MCP `tools/call` runs the same sequence. Consequences worth knowing:
 - A deployment that requires a token answers an anonymous request 401 whatever
   its body holds, and the anonymous check runs before the rate limiter, so an
   unauthenticated caller can never drain a tenant's bucket.
-- An empty `org` or `namespace` is treated as absent: a code or tracker op takes
+- An empty, blank or `"-"` `org` or `namespace` is treated as absent: a code or tracker op takes
   its plane's default, any other op the token's own org, and a namespace with
   no org to pair it with is `400 IDENTITY_INCOMPLETE`.
 - An idempotent replay is looked up only after authorization and policy admit

@@ -11,6 +11,9 @@ here, once:
   the request's, else the op's plane default (code.* / tracker.*), else the
   verified token's own org. A namespace is never authorized without an org:
   that is a refusal (IDENTITY_INCOMPLETE), not a flat-role pass.
+- `with_target`: the input with an absent org / namespace set to the
+  authorized target, so the handler reads and writes where the call was
+  authorized.
 - `authorize`: first-contact provisioning, the role + namespace gate
   (`authorize_op`, raising PermissionError / IdentityIncompleteError), then
   the restricted-access audit row and the first-write registration.
@@ -123,7 +126,7 @@ def with_target(input_obj: Any, target: Target) -> Any:
     """The input with an absent `org` / `namespace` (blank or "-") set to the
     target the gate authorized, so the handler writes and reads where the call
     was authorized: a literal "-" org is a tenant every token reaches."""
-    fields = getattr(type(input_obj), "model_fields", {})
+    fields = type(input_obj).model_fields
     update: dict[str, str] = {}
     for name, resolved in (("org", target.org), ("namespace", target.register_namespace)):
         if name in fields and resolved and present(getattr(input_obj, name)) is None:

@@ -71,8 +71,8 @@ def test_an_http_write_with_an_absent_org_runs_under_the_tokens_org(
 
 
 def test_an_absent_namespace_takes_the_authorized_namespace() -> None:
-    """A code read naming namespace "-" is authorized against the code
-    namespace, and now reads it too."""
+    """A code read naming namespace "-" reads the code namespace it is
+    authorized against."""
     from server.code.api.models_search import CodeSearchInput
     from server.transport.gates import Target, with_target
 
@@ -120,3 +120,36 @@ def test_an_mcp_call_with_an_absent_org_runs_under_the_tokens_org(
     args = {"org": org, "namespace": "ns1", "agent": "a", "memory_key": "k"}
     asyncio.run(mcp_call._call_tool(1, {"name": tool, "arguments": args}, auth=auth))
     assert calls == ["globex"]
+
+
+def test_me_with_an_absent_org_names_the_callers_own_collection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTTP maps `@me` before the gate; an absent org there is the token's."""
+    from server.auth import gateway
+    from server.memory.api.models_crud import MemoryGetInput
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import http as http_mod
+
+    orgs: list[str] = []
+
+    def _personal(auth: Any, org: str, namespace: str) -> str:
+        orgs.append(org)
+        return f"personal-of-{org}"
+
+    monkeypatch.setattr(gateway, "personal_namespace", _personal)
+    auth = verify_token(
+        mint_token(
+            subject="probe", org="globex", namespaces=["*"], roles=["viewer"], ttl_seconds=300
+        )
+    )
+    body = {"org": "-", "namespace": "@me", "agent": "a", "memory_key": "k"}
+    payload, raw = http_mod._resolve_personal(
+        OPERATIONS_BY_NAME["memory.get"],
+        None,  # type: ignore[arg-type]
+        MemoryGetInput(**body),
+        body,
+        auth,
+    )
+    assert orgs == ["globex"]
+    assert payload.namespace == raw["namespace"] == "personal-of-globex"
