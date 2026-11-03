@@ -796,8 +796,8 @@ def _mentor_headers(
             raw_body,
             result,
             session_key=_mentor.session_key_for("", {**raw_body, **tenant}),
-            org=tenant["org"],
-            namespace=tenant["namespace"],
+            org=gates.present(tenant["org"]) or "",
+            namespace=gates.present(tenant["namespace"]) or "",
             agent=str(raw_body.get("agent") or "-"),
         )
         set_hint_context(hint[0] if hint else "")

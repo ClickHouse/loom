@@ -277,6 +277,7 @@ def _mentor_hint(
         from server.insights.app import mentor as _mentor
         from server.observability.ledger import set_hint_context
         from server.transport._common import ledger_identity
+        from server.transport.gates import present
 
         # The tenant the call was admitted in, as its ledger row names it.
         tenant = ledger_identity(arguments)
@@ -285,8 +286,8 @@ def _mentor_hint(
             arguments,
             result,
             session_key=_mentor.session_key_for(mcp_session_id, {**arguments, **tenant}),
-            org=tenant["org"],
-            namespace=tenant["namespace"],
+            org=present(tenant["org"]) or "",
+            namespace=present(tenant["namespace"]) or "",
             agent=str(arguments.get("agent") or "-"),
         )
         set_hint_context(hint[0] if hint else "")

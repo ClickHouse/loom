@@ -211,3 +211,30 @@ def test_the_mentor_hint_is_keyed_on_the_admitted_org(
     monkeypatch.setattr(mentor, "call_hint", _hint)
     _post("memory.get", {"org": "-", "namespace": "ns1", "agent": "a", "memory_key": "k"})
     assert keyed == [("globex", "ns1", "globex/ns1/a")]
+
+
+def test_a_call_naming_no_namespace_gives_the_mentor_none(
+    seen: list[tuple[str, str, str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An absent namespace stays absent for the mentor, which then reads no
+    profile, rather than becoming the literal "-"."""
+    from server.identity.api.models import NamespaceListMineOutput
+    from server.insights.app import mentor
+    from server.transport import http as http_mod
+
+    async def _answer(inp: Any) -> NamespaceListMineOutput:
+        return NamespaceListMineOutput(rows=[])
+
+    ops = [
+        dataclasses.replace(op, handler=_answer) if op.name == "namespace.list_mine" else op
+        for op in ALL_OPERATIONS
+    ]
+    monkeypatch.setattr(http_mod, "ALL_OPERATIONS", ops)
+    keyed: list[tuple[str, str]] = []
+
+    def _hint(*_a: Any, org: str, namespace: str, **_k: Any) -> None:
+        keyed.append((org, namespace))
+
+    monkeypatch.setattr(mentor, "call_hint", _hint)
+    _post("namespace.list_mine", {"org": "globex"})
+    assert keyed == [("globex", "")]
