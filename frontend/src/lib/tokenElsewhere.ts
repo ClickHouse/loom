@@ -16,6 +16,9 @@ let recheck: ReturnType<typeof setTimeout> | undefined;
  *  ends here takes its gate's reason from (the stored one is already gone or replaced). */
 export async function tokenChangedElsewhere(token: string | null, lost: string | null): Promise<void> {
   clearTimeout(recheck); // this change decides
+  // Run late (this chunk loads after the page): a change since then decides instead, so
+  // this one never clears a token stored after it.
+  if (storedToken() !== token) return;
   const s = useStore.getState;
   const before = s().whoami;
   if (!before) return;
@@ -43,9 +46,14 @@ export async function tokenChangedElsewhere(token: string | null, lost: string |
   // Another change landed while whoami answered: that one decides.
   if (storedToken() !== token) return;
   // A token the server refuses is nobody's: this session ended, and the page stays. One it
-  // accepts is the person its claims named, already checked above.
+  // accepts is checked against this page's person below.
   if (!now.authenticated) {
     if (!s().sessionExpired) endSession(lost);
+    return;
+  }
+  // Anyone else (a token whose claims the page could not read) gets a fresh page.
+  if (now.subject !== before.subject || (now.org ?? "") !== (before.org ?? "")) {
+    reloadPage();
     return;
   }
   // The card going away is the sign that the session is back.

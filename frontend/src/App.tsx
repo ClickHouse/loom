@@ -55,7 +55,8 @@ useStore.subscribe((s) => setPageOwner(s.whoami));
 // Its handler ships in the session card's chunk; one that cannot load reloads, and the
 // fresh page decides on the stored token.
 onTokenStored((token, before) => {
-  if (!isProxyMode() && !isAuthDisabled()) void sessionCard.then((m) => m.tokenChangedElsewhere(token, before));
+  if (!isProxyMode() && !isAuthDisabled())
+    void sessionCard.then((m) => (m?.tokenChangedElsewhere ?? reloadPage)(token, before));
 });
 
 // One view per chunk, so a person opening Memories does not pay for the code index
@@ -105,12 +106,15 @@ const sessionCard = import("./components/SessionExpiredBar").catch(() => ({
   default: () => null,
   tokenChangedElsewhere: reloadPage,
 }));
-const SessionExpiredBar = lazy<() => ReactElement | null>(() => sessionCard);
+// A stale chunk the reload handler (lib/staleChunk.ts) takes resolves to nothing: no card.
+const SessionExpiredBar = lazy<() => ReactElement | null>(() =>
+  sessionCard.then((m) => ({ default: m?.default ?? (() => null) })),
+);
 // The health problems banner shows on a degraded deployment only: its own chunk, and none
 // (it is best-effort) when that chunk cannot load.
 const ProblemsBanner = lazy<() => ReactElement | null>(() =>
   import("./components/ProblemsBanner").then(
-    (m) => ({ default: m.ProblemsBanner }),
+    (m) => ({ default: m?.ProblemsBanner ?? (() => null) }),
     () => ({ default: () => null }),
   ),
 );

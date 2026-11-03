@@ -735,6 +735,18 @@ describe("a refused token", { timeout: 30_000 }, () => {
     expect(localStorage.getItem("loom_signed_out_v1")).toBe("1");
   });
 
+  it("a drop and a sign-in elsewhere, heard together, keep the new token", async () => {
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    await act(async () => {
+      // Both land before this tab's handler runs (its chunk resolves after the events).
+      storeElsewhere(null);
+      storeElsewhere(fresh);
+    });
+    await settle(3);
+    expect(localStorage.getItem("loom_token_v1")).toBe(fresh);
+  });
+
   it("ends this tab's session too when another tab clears the whole storage", async () => {
     render(<App />);
     await until(() => useStore.getState().whoami !== null);
