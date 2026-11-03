@@ -432,25 +432,8 @@ async def test_reject_writes_version_rows_and_updates_no_embeddings_part(
     from server.memory.api.models_lifecycle import MemoryRejectInput
     from server.memory.app.ops import handle_memory_reject
 
-    class _RejectCH(_CH):
-        def __init__(self) -> None:
-            super().__init__()
-            self.executed: list[str] = []
-
-        async def query_all(
-            self, sql: str, params: dict[str, Any] | None = None
-        ) -> list[dict[str, Any]]:
-            if "FROM loom.memory FINAL" in sql:
-                assert (params or {})["key"] == "home"
-                return [{"memory_id": "m1"}]
-            return await super().query_all(sql, params)
-
-        async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
-            self.executed.append(sql)
-
     ch = _RejectCH()
-    _wire(monkeypatch, ch, _existing())
-    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    _wire_sessions(monkeypatch, ch)
     out = await handle_memory_reject(
         MemoryRejectInput(
             org="o", namespace="n", agent="a", user_id="u", memory_key="home", rejection_reason="r"
@@ -459,7 +442,76 @@ async def test_reject_writes_version_rows_and_updates_no_embeddings_part(
     assert out.rejected is True
     assert ch.executed == []
     assert [t for t, _ in ch.inserts] == ["loom.memory", "loom.memory_embeddings"]
-    mem = ch.inserts[0][1][0]
-    assert mem["status"] == "rejected" and mem["rejection_reason"] == "r"
-    emb = ch.inserts[1][1][0]
-    assert emb["status"] == "rejected" and emb["memory_key"] == "home" and emb["version"] > 1
+    # Every session's row of the key, each at its read version + 1, and each vector
+    # row at its memory row's version.
+    mems = ch.inserts[0][1]
+    assert [(m["session_id"], m["status"], m["version"]) for m in mems] == [
+        ("s1", "rejected", 2),
+        ("s2", "rejected", 2),
+    ]
+    assert {m["rejection_reason"] for m in mems} == {"r"}
+    embs = ch.inserts[1][1]
+    assert sorted((e["session_id"], e["status"], e["version"]) for e in embs) == [
+        ("s1", "rejected", 2),
+        ("s2", "rejected", 2),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reject_raises_when_the_vector_rows_are_not_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recall reads the vector row: a reject whose vector write failed is not
+    answered `rejected=True`."""
+    from server.memory.api.models_lifecycle import MemoryRejectInput
+    from server.memory.app.ops import handle_memory_reject
+
+    class _FailingCH(_RejectCH):
+        async def insert(
+            self, table: str, rows: list[dict[str, Any]], settings: dict[str, Any] | None = None
+        ) -> None:
+            if table == "loom.memory_embeddings":
+                raise TimeoutError("insert timed out")
+            await super().insert(table, rows, settings)
+
+    _wire_sessions(monkeypatch, _FailingCH())
+    with pytest.raises(TimeoutError):
+        await handle_memory_reject(
+            MemoryRejectInput(org="o", namespace="n", agent="a", user_id="u", memory_key="home")
+        )
+
+
+class _RejectCH(_CH):
+    """Answers the reject's id read with one row per session of the key."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.executed: list[str] = []
+
+    async def query_all(
+        self, sql: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        if "FROM loom.memory FINAL" in sql:
+            assert (params or {})["key"] == "home"
+            return [{"memory_id": "m1"}, {"memory_id": "m2"}]
+        return await super().query_all(sql, params)
+
+    async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
+        self.executed.append(sql)
+
+
+def _wire_sessions(monkeypatch: pytest.MonkeyPatch, ch: _CH) -> None:
+    """m1 and m2: the key's row in sessions s1 and s2, both at version 1."""
+    _wire(monkeypatch, ch, _existing())
+    heads = {
+        mid: SimpleNamespace(
+            **{**vars(_existing()), "memory_id": mid, "session_id": s, "version": 1}
+        )
+        for mid, s in (("m1", "s1"), ("m2", "s2"))
+    }
+
+    async def _get_by_id(memory_id: str, **_: Any) -> Any:
+        return heads[memory_id]
+
+    monkeypatch.setattr(lifecycle, "get_by_id", _get_by_id)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)

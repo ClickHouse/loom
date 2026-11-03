@@ -1,9 +1,9 @@
 """Unit: negative-outcome escalation in handle_memory_outcome.
 
 Below the threshold, a negative is counted but the memory is untouched. At the
-threshold, it's auto-quarantined through `reject_by_identity` (version rows,
-covered in test_status_mirror.py). Uses a stub CH; the threshold is a settings
-knob (default 0 = off)."""
+threshold, it's auto-quarantined: a `rejected` version row on loom.memory and
+on its vector row, no in-place UPDATE. Uses a stub CH; the threshold is a
+settings knob (default 0 = off)."""
 
 from __future__ import annotations
 
@@ -42,11 +42,43 @@ class _StubCH:
         self.executes.append((sql, params))
 
 
+class _QuarantineCH(_StubCH):
+    """Also answers the reject's reads: the identity's live ids and its vector row."""
+
+    async def query_all(self, sql, params=None):
+        if "FROM loom.memory FINAL" in sql:
+            return [{"memory_id": "mid-1"}]
+        if "FROM loom.memory_embeddings FINAL" in sql:
+            p = params or {}
+            return [
+                {
+                    "org": o,
+                    "namespace": n,
+                    "agent": a,
+                    "user_id": u,
+                    "session_id": s,
+                    "memory_key": k,
+                    "memory_type": "semantic",
+                    "embedding": [0.1, 0.2],
+                    "embedding_dim": 2,
+                    "status": "active",
+                    "version": 1,
+                }
+                for o, n, a, u, s, k in zip(
+                    p["o"], p["n"], p["a"], p["u"], p["s"], p["k"], strict=True
+                )
+            ]
+        return []
+
+
 async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
+    from types import SimpleNamespace
+
+    from server.memory.store import lifecycle
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_negative_demote_threshold", 3)
-    ch = _StubCH(
+    ch = _QuarantineCH(
         [
             {"n": 3},  # rejection count reaches threshold
             {"agent": "a", "user_id": "-", "memory_key": "k"},  # identity lookup
@@ -54,13 +86,28 @@ async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
         ]
     )
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
-    rejected: list = []
+    head = SimpleNamespace(
+        org="o",
+        namespace="n",
+        agent="a",
+        user_id="-",
+        session_id="s",
+        memory_key="k",
+        status="active",
+        version=1,
+        invalid_at=None,
+    )
 
-    async def reject_by_identity(*identity, ch):
-        rejected.append(identity)
-        return 1
+    async def get_by_id(memory_id, **kw):
+        return head
 
-    monkeypatch.setattr(ops, "reject_by_identity", reject_by_identity)
+    def build(row, **overrides):
+        keys = ("org", "namespace", "agent", "user_id", "session_id", "memory_key", "status")
+        return {**{k: getattr(row, k) for k in keys}, "invalid_at": None, **overrides}
+
+    monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
+    monkeypatch.setattr(lifecycle, "build_memory_version_row", build)
+    monkeypatch.setattr("server.memory.store.inserts.check_memory_rows", lambda rows: None)
 
     out = await ops.handle_memory_outcome(
         MemoryOutcomeInput(
@@ -72,7 +119,12 @@ async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
         )
     )
     assert out.quarantined is True
-    assert rejected == [("o", "n", "a", "-", "k", "auto-quarantine: 3 negative outcomes")]
+    written = {t: rows for t, rows in ch.inserts if t in ("loom.memory", "loom.memory_embeddings")}
+    (mem,) = written["loom.memory"]
+    assert mem["status"] == "rejected" and mem["version"] == 2
+    assert mem["rejection_reason"] == "auto-quarantine: 3 negative outcomes"
+    (emb,) = written["loom.memory_embeddings"]
+    assert emb["status"] == "rejected" and emb["memory_key"] == "k" and emb["version"] == 2
     assert ch.executes == []  # no in-place UPDATE
 
 

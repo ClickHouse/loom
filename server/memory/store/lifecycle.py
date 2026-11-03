@@ -50,6 +50,7 @@ async def write_versions_by_ids(
     on_written: Callable[[list[dict[str, Any]]], None] | None = None,
     on_unconfirmed: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
     judged: bool = False,
+    strict: bool = False,
 ) -> int:
     """Write a new version of each live row in `memory_ids`: `update(existing)`'s
     overrides on every persisted column carried forward, a fresh `version` unless it
@@ -58,7 +59,8 @@ async def write_versions_by_ids(
     Lifecycle in memory-architecture.md). `judged`: the rows land a verdict reached
     after the write (the conflict resolver's) on the write it judged
     (`conflicts.judged_write`), and the status mirror copies only that write's vector
-    rows (`mirror_status_to_embeddings(judged=True)`).
+    rows (`mirror_status_to_embeddings(judged=True)`). `strict`: a failed status
+    mirror raises instead of being logged.
     Returns the rows written, or confirmed."""
 
     if not memory_ids:
@@ -115,7 +117,7 @@ async def write_versions_by_ids(
     # admitting superseded and unpenalised conflicted rows.
     status_changes = [r for r in rows if r.get("status") and r.get("status") != "active"]
     if status_changes:
-        await mirror_status_to_embeddings(status_changes, ch=ch, judged=judged)
+        await mirror_status_to_embeddings(status_changes, ch=ch, judged=judged, strict=strict)
     return len(confirmed)
 
 
@@ -228,7 +230,9 @@ async def reject_by_identity(
     `rejected`, by version re-emit on loom.memory and its vector rows. Never a
     lightweight UPDATE: on loom.memory_embeddings it leaves a patch part, and
     the fact leg's codes-first read stays off while one exists
-    (`server.core.vectors.patch_parts`). Returns the rows written."""
+    (`server.core.vectors.patch_parts`). Each row lands at its read version + 1,
+    so a write drawn after that read stays the head. A failed vector write
+    raises: recall reads the vector row. Returns the rows written."""
     ch = ch or _default_client()
     rows = await ch.query_all(
         """
@@ -244,9 +248,14 @@ async def reject_by_identity(
     return await write_versions_by_ids(
         org,
         [str(r["memory_id"]) for r in rows],
-        lambda row: {"status": "rejected", "rejection_reason": reason},
+        lambda row: {
+            "status": "rejected",
+            "rejection_reason": reason,
+            "version": int(row.version) + 1,
+        },
         ch=ch,
         strong=True,
+        strict=True,
     )
 
 

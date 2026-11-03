@@ -1919,6 +1919,7 @@ f5eda989840e	SELECT memory_key, memory_type, content_excerpt, created_at, valid_
 f5ef08ffa21e	SELECT count() AS n FROM loom.shared FINAL WHERE org = {org:String} AND arrayExists(x -> splitByChar(?, x)[?] = {uid:String}, promoted_from)
 f617d9867707	SELECT count() AS n FROM loom.memory_code_links WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 f646cb42e8e3	ALTER TABLE loom.derived_facts DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
+f64c5c396655	UPDATE loom.memory SET evidence_count = greatest(evidence_count, transform(toString(memory_id), {ids:Array(String)}, {evs:Array(UInt32)}, toUInt32(?))), recall_count = greatest(recall_count, transform
 f65fc198c24d	ALTER TABLE loom.memory_record_conflicts UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:Strin
 f6669612c23e	SELECT p.pr_number AS pr_number, p.merge_commit_sha AS merge_commit_sha, p.pack_tokens AS pack_tokens, p.created_at AS created_at, ifNull(h.title, ?) AS title, ifNull(h.author, ?) AS author, h.merged_
 f6b09af77b98	SELECT DISTINCT toString(memory_id) AS id FROM loom.entity_triple_rows WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND memory_id NOT IN (SELECT memory_id FROM loom.memory FINAL WHERE
