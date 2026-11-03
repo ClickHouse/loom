@@ -32,8 +32,9 @@ A document outside a repository's code namespace names the repository: its code 
 resolve in the repository's trunk, and the rows go there or stay beside the document,
 tagged with the repository (`_target`). Every memory row the reconcile and retire steps
 read is in the namespace the rows go to (`_read_own`). Runs in-process: with no auth
-context (the CLI) the operator may do everything; with one bound, `_target` checks each
-namespace.
+context (the CLI) the operator may do everything; with one bound, `_target` checks the
+document's, the repository's and the target namespace, and `_read_own` the trunk of the
+document's branch namespace.
 """
 
 from __future__ import annotations

@@ -394,7 +394,7 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   CLI runs with none, as the operator. Every memory row the reconcile and retire steps read is in the namespace the
   rows go to, so the run exits 1 before any model call when this document's rows from an earlier run are in another
   namespace a run may write them to (the document's namespace, the named repository's trunk, or, for a document in a
-  release branch's code namespace, that branch's trunk), or carry another repository's `repo:<id>` tag (any, for a run
+  branch's code namespace, its repository's trunk), or carry another repository's `repo:<id>` tag (any, for a run
   without `--repo`): going on would leave the document's decisions in two places, or linked to the wrong repository.
   A caller who cannot read that other namespace is refused. Two cases the run does not see: rows an `--into repo` run
   wrote to a repository other than the one whose code namespace holds the document (any repository, for a document
