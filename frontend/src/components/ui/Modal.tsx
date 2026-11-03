@@ -73,6 +73,7 @@ export function Modal({
   layer = "dialog",
   initialFocus = "first",
   onCloseAutoFocus,
+  onPointerDownOutside,
   ...handlers
 }: ModalProps) {
   // Taken before Radix moves focus into the dialog (its focus effect is a passive one).
@@ -83,6 +84,15 @@ export function Modal({
     // On the body (a loading button lost it, or Safari never focused it): the control pressed.
     opener.current = active instanceof HTMLElement && active !== document.body ? active : lastPressed();
   }, [open]);
+  // A press on a toast (or the expired session's card among them) is not a dismissal: they
+  // sit over every dialog, and a dialog closed by one would lose what was typed into it.
+  const pointerDownOutside: ContentProps["onPointerDownOutside"] = (e) => {
+    if (e.target instanceof Element && e.target.closest("[data-toast-viewport]")) {
+      e.preventDefault();
+      return;
+    }
+    onPointerDownOutside?.(e);
+  };
   const returnFocus = (e: Event) => {
     onCloseAutoFocus?.(e);
     if (e.defaultPrevented || !opener.current?.isConnected) return;
@@ -104,6 +114,7 @@ export function Modal({
         // Radix's focus trap moves focus without scrolling (its wrap from the last control
         // to the first, too), so a long dialog keeps the focused control in view itself.
         onFocus={keepFocusInView}
+        onPointerDownOutside={pointerDownOutside}
         {...handlers}
       >
         {/* First in the DOM, as it is drawn in the header, so Tab follows what is seen.

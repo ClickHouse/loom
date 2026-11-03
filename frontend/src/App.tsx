@@ -45,14 +45,39 @@ import { PendingRequestBanner } from "./components/PendingRequestBanner";
 import { ProblemsBanner } from "./components/ProblemsBanner";
 import { SessionExpiredBar } from "./components/SessionExpiredBar";
 import { shortcutOff } from "./lib/shortcuts";
+import { reloadPage } from "./lib/navigation";
 
-// A token the server refuses (it expired or was revoked). While the app boots there is no
-// page to keep: the sign-in gate shows, saying why. Mid-session a bar says so over the page,
-// which stays as it is, instead of each view showing the refusal as its error.
-onSignInRejected(() => {
+// This tab's session ended on a refused token: a reload's sign-in gate says so, and with SSO
+// starts the sign-in by itself, though the token is already gone.
+const SESSION_ENDED = "loom_session_ended_v1";
+
+function noteSessionEnded(): void {
+  try {
+    sessionStorage.setItem(SESSION_ENDED, "1");
+  } catch {
+    /* no session storage: a reload shows the first-visit gate */
+  }
+}
+
+/** Whether this tab's session ended on a refused token; reading it forgets it. */
+function takeSessionEnded(): boolean {
+  try {
+    const ended = sessionStorage.getItem(SESSION_ENDED) === "1";
+    sessionStorage.removeItem(SESSION_ENDED);
+    return ended;
+  } catch {
+    return false;
+  }
+}
+
+/** The session ended (the server refused the token, or another tab dropped it). While the
+ *  app boots there is no page to keep: the sign-in gate shows, saying why. Mid-session a
+ *  card says so over the page, which stays as it is. */
+function endSession(): void {
   clearToken();
   // A single-user install has no sign-in: its next call goes without the stale token.
   if (isAuthDisabled()) return;
+  noteSessionEnded();
   const s = useStore.getState();
   if (!s.whoami) {
     s.setGateReason("expired");
@@ -60,10 +85,12 @@ onSignInRejected(() => {
     return;
   }
   s.setSessionExpired(true);
-});
+}
+
+onSignInRejected(endSession);
 
 /** whoami, asked again while the replica answers 503 (its signing keys still loading, the
- *  token may be fine): a few tries a second apart before boot gives up. */
+ *  token may be fine): up to three more times, a second apart, before boot gives up. */
 async function whoamiWhenReady(): Promise<WhoAmI> {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -75,24 +102,38 @@ async function whoamiWhenReady(): Promise<WhoAmI> {
   }
 }
 
-/** A token another tab stored while this one's session was away: the same person carries
- *  on here, with their identity and roles read again; anyone else gets a fresh page, so
- *  nothing the last person read stays on screen. */
-async function takeTokenFromAnotherTab(token: string): Promise<void> {
-  const before = useStore.getState().whoami;
-  const now = claimsFromToken(token);
-  if (!before?.subject || now?.subject !== before.subject || now?.org !== before.org) {
-    location.reload();
+/** Another tab of this origin stored a token (a sign-in there) or dropped it. Dropped: this
+ *  tab's session ended too. Stored: once the server confirms it is the same person, this
+ *  page carries on with their identity and roles read again; anyone else gets a fresh page,
+ *  so nothing the last person read stays on screen. */
+async function tokenChangedElsewhere(token: string | null): Promise<void> {
+  const s = useStore.getState();
+  const before = s.whoami;
+  if (!before) return;
+  if (token === null) {
+    if (!s.sessionExpired) endSession();
     return;
   }
-  useStore.getState().setSessionExpired(false);
-  toast("Signed in again. Retry what failed while the session was away.", "ok");
+  let now: WhoAmI | null = null;
   try {
-    useStore.getState().setWhoami(await whoami());
-    invalidateShared();
-    useStore.getState().setMyNamespaces(await sharedMine(before.org ?? ""));
+    now = await whoami();
   } catch {
-    /* the boot-time identity stays; a reload reads it again */
+    /* unconfirmed: reload below */
+  }
+  if (!now?.authenticated || !before.subject || now.subject !== before.subject || now.org !== before.org) {
+    reloadPage();
+    return;
+  }
+  const wasExpired = useStore.getState().sessionExpired;
+  useStore.getState().setWhoami(now);
+  useStore.getState().setSessionExpired(false);
+  takeSessionEnded();
+  if (wasExpired) toast("Signed in again. Retry what failed while the session was away.", "ok");
+  try {
+    invalidateShared();
+    useStore.getState().setMyNamespaces(await sharedMine(now.org ?? ""));
+  } catch {
+    /* the roles read at boot stay; a reload reads them again */
   }
 }
 
@@ -201,11 +242,12 @@ export default function App() {
   const setAuthed = useStore((s) => s.setAuthed);
   const gateReason = useStore((s) => s.gateReason);
   const sessionExpired = useStore((s) => s.sessionExpired);
-  // While the session is away, a sign-in in another tab hands this one its token.
+  // A sign-in or a dropped token in another tab reaches this one (a proxy's header and an
+  // auth-off install keep no token).
   useEffect(() => {
-    if (!sessionExpired) return;
-    return onTokenStored((token) => void takeTokenFromAnotherTab(token));
-  }, [sessionExpired]);
+    if (!authed || isProxyMode() || isAuthDisabled()) return;
+    return onTokenStored((token) => void tokenChangedElsewhere(token));
+  }, [authed]);
   const setWhoami = useStore((s) => s.setWhoami);
   // Boot settles the identity (a provisional namespace, then the answer): not a switch, so
   // the deep link's memory or thread stays open.
@@ -372,13 +414,14 @@ export default function App() {
           // A stored token the server no longer accepts is dead — drop it so the next
           // load doesn't retry it, and tell the gate why it is showing instead of a
           // silent first-visit card.
-          if (hasToken()) {
+          if (takeSessionEnded() || hasToken()) {
             clearToken();
             useStore.getState().setGateReason("expired");
           }
           setAuthed(false);
           return;
         }
+        takeSessionEnded();
 
         setAuthed(true);
         setWhoami(w);
@@ -601,9 +644,8 @@ export default function App() {
           <HelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
         </Suspense>
       )}
-      {sessionExpired && <SessionExpiredBar />}
       <NetworkProgress />
-      <ToastViewport />
+      <ToastViewport pinned={sessionExpired ? <SessionExpiredBar /> : null} />
       <ConfirmViewport />
     </div>
   );

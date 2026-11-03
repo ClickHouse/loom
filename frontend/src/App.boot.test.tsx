@@ -13,8 +13,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { preloadView } = vi.hoisted(() => ({ preloadView: vi.fn() }));
 vi.mock("./views/registry", () => ({ preloadView, VIEW_LOADERS: {} }));
+vi.mock("./lib/navigation", () => ({ goToSso: vi.fn(), reloadPage: vi.fn() }));
 
 import App from "./App";
+import { reloadPage } from "./lib/navigation";
 import { useStore } from "./lib/state";
 import { resetNamespaceRoleCache } from "./lib/namespaceRole";
 import { invalidateShared } from "./lib/sharedReads";
@@ -528,12 +530,16 @@ describe("login link", () => {
   });
 });
 
-describe("a refused token", () => {
+// Each case boots the whole App, some twice: slower than a unit test on a loaded runner.
+describe("a refused token", { timeout: 30_000 }, () => {
   let refuse = false;
   let refuseListMine = false;
   let whoamiAnswers: number[] = [];
   let whoamiCalls = 0;
+  let listMineRefused: () => void = () => undefined;
+  const alice = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
   const fresh = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 2 });
+  const bob = jwt({ sub: "bob", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
@@ -554,21 +560,35 @@ describe("a refused token", () => {
     });
     Element.prototype.scrollTo = vi.fn();
     window.history.replaceState(null, "", "/memories");
-    localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] }));
+    localStorage.setItem("loom_token_v1", alice);
     localStorage.setItem("loom_namespace_v1", NS);
+    const listMineDone = new Promise<void>((r) => {
+      listMineRefused = r;
+    });
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         const refused = new Response('{"detail":{"code":"AUTH_INVALID","message":"token expired"}}', { status: 401 });
         if (url.includes("/v1/whoami")) {
           whoamiCalls++;
+          // The server answers for the token the request carries.
+          const bearer = new Headers(init?.headers).get("Authorization")?.replace("Bearer ", "") ?? "";
+          if (refuseListMine) {
+            await listMineDone; // its 401 lands first and clears the token
+            return json({ authenticated: false });
+          }
           const status = whoamiAnswers.shift() ?? 200;
-          if (status === 200 && refuseListMine) return json({ authenticated: false, reason: "token expired" });
           if (status !== 200) return new Response("{}", { status });
-          return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+          if (!bearer || (refuse && bearer === alice)) return json({ authenticated: false });
+          const sub = bearer === bob ? "bob" : "alice";
+          return json({ authenticated: true, subject: sub, org: ORG, namespaces: [NS], roles: ["ADMIN"] });
         }
-        if (url.includes("namespace.list_mine")) return refuseListMine ? refused : json({ ...GENERIC, rows: MINE });
+        if (url.includes("namespace.list_mine")) {
+          if (!refuseListMine) return json({ ...GENERIC, rows: MINE });
+          setTimeout(listMineRefused, 0);
+          return refused;
+        }
         if (refuse && url.includes("/v1/") && !url.includes("/v1/health")) return refused;
         return json(GENERIC);
       }),
@@ -593,40 +613,63 @@ describe("a refused token", () => {
     await until(() => useStore.getState().sessionExpired);
   }
 
-  it("mid-session says so over the page, which stays as it was", async () => {
+  function storeElsewhere(token: string | null) {
+    // Another tab's write: this tab hears it as a storage event, after the value changed.
+    const oldValue = localStorage.getItem("loom_token_v1");
+    if (token === null) localStorage.removeItem("loom_token_v1");
+    else localStorage.setItem("loom_token_v1", token);
+    window.dispatchEvent(new StorageEvent("storage", { key: "loom_token_v1", oldValue, newValue: token }));
+  }
+
+  it("mid-session says so in a card over the page, which stays as it was", async () => {
     await expireMidSession();
-    expect(screen.getByTestId("session-expired-bar")).toHaveTextContent("Your session expired");
+    const card = screen.getByTestId("session-expired-bar");
+    expect(card).toHaveTextContent("Your session expired");
+    // In the toasts' viewport: over every dialog, and a press on it dismisses none.
+    expect(card.closest("[data-toast-viewport]")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Sign in in a new tab" })).toBeInTheDocument();
     expect(localStorage.getItem("loom_token_v1")).toBeNull();
     expect(document.getElementById("main")).not.toBeNull();
     expect(useStore.getState().authed).toBe(true);
   });
 
-  it("takes the same person's token from another tab and carries on, reading the identity again", async () => {
+  it("takes the same person's token from another tab once the server confirms it, and carries on", async () => {
     await expireMidSession();
     const before = whoamiCalls;
     refuse = false;
-    localStorage.setItem("loom_token_v1", fresh);
-    await act(async () => {
-      window.dispatchEvent(new StorageEvent("storage", { key: "loom_token_v1", newValue: fresh }));
-    });
-    await until(() => !useStore.getState().sessionExpired && whoamiCalls > before);
+    await act(async () => storeElsewhere(fresh));
+    await until(() => !useStore.getState().sessionExpired);
+    expect(whoamiCalls).toBe(before + 1);
+    expect(reloadPage).not.toHaveBeenCalled();
     expect(screen.queryByTestId("session-expired-bar")).not.toBeInTheDocument();
   });
 
-  it("does not carry on as someone else whose token another tab stored", async () => {
+  it("reloads when someone else signed in in another tab", async () => {
     await expireMidSession();
-    const bob = jwt({ sub: "bob", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
-    await act(async () => {
-      window.dispatchEvent(new StorageEvent("storage", { key: "loom_token_v1", newValue: bob }));
-    });
-    await settle();
-    // The page reloads (which jsdom does not do); it never takes bob's token as alice's.
-    expect(useStore.getState().sessionExpired).toBe(true);
+    refuse = false;
+    await act(async () => storeElsewhere(bob));
+    await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
     expect(useStore.getState().whoami?.subject).toBe("alice");
   });
 
-  it("at boot shows the gate saying the session expired, even when list_mine is refused before whoami", async () => {
+  it("ends this tab's session too when another tab drops the token", async () => {
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    await act(async () => storeElsewhere(null));
+    await until(() => useStore.getState().sessionExpired);
+    expect(screen.getByTestId("session-expired-bar")).toBeInTheDocument();
+  });
+
+  it("a reload after the session ended shows the gate saying so, though the token is gone", async () => {
+    await expireMidSession();
+    cleanup();
+    useStore.setState({ authed: true, sessionExpired: false, gateReason: null, whoami: null, identity: null });
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    expect(useStore.getState().gateReason).toBe("expired");
+  });
+
+  it("at boot shows the gate saying the session expired when list_mine is refused before whoami answers", async () => {
     refuseListMine = true;
     render(<App />);
     await until(() => useStore.getState().authed === false);
@@ -642,5 +685,5 @@ describe("a refused token", () => {
     expect(whoamiCalls).toBe(2);
     expect(localStorage.getItem("loom_token_v1")).not.toBeNull();
     expect(useStore.getState().authed).toBe(true);
-  }, 15_000);
+  });
 });

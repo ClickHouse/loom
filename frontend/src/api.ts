@@ -78,11 +78,11 @@ export function clearToken(): void {
   localStorage.removeItem(KEY_TOKEN);
 }
 
-/** Call `fn` with each token another tab of this origin stores (a sign-in there); the
- *  returned function stops listening. */
-export function onTokenStored(fn: (token: string) => void): () => void {
+/** Call `fn` with each token another tab of this origin stores (a sign-in there), or null
+ *  when one drops it (a refusal or a sign-out there); the returned function stops listening. */
+export function onTokenStored(fn: (token: string | null) => void): () => void {
   const listener = (e: StorageEvent) => {
-    if (e.key === KEY_TOKEN && e.newValue) fn(e.newValue);
+    if (e.key === KEY_TOKEN && e.newValue !== e.oldValue) fn(e.newValue);
   };
   window.addEventListener("storage", listener);
   return () => window.removeEventListener("storage", listener);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "./IconButton";
 import { errorRequestId, humanizeError } from "../lib/format";
@@ -87,7 +87,10 @@ const KIND_ICON: Record<ToastKind, { name: IconName; color: string }> = {
   info: { name: "info-in-circle", color: "var(--click-toast-color-icon-default)" },
 };
 
-export function ToastViewport() {
+/** `pinned`: a card that stays above the toasts until its owner removes it (the expired
+ *  session's), at their layer and inside their live region, so a modal neither covers nor
+ *  silences it. */
+export function ToastViewport({ pinned = null }: { pinned?: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
 
   const dismiss = useCallback((id: number) => {
@@ -111,6 +114,7 @@ export function ToastViewport() {
       aria-atomic="false"
       className="fixed bottom-4 right-4 z-[65] flex flex-col items-end gap-2 pointer-events-none"
     >
+      {pinned}
       {items.map((t) => (
         <ToastCard key={t.id} item={t} onDismiss={dismiss} />
       ))}

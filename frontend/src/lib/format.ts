@@ -235,7 +235,14 @@ export function humanizeError(err: unknown): string {
   return m[2] ? `${friendly} ${m[2]}` : friendly;
 }
 
+/** The server's words for a session's token that ran out, or that a request lost when the
+ *  session ended in another tab. */
+const SESSION_GONE = /\btoken expired\b|\bmissing bearer token\b/i;
+
 function humanizeApiError(err: ApiError): string {
+  // A page that read while its session was away says so plainly (the dashboard's bar
+  // offers the sign-in), not as a rejected credential.
+  if (err.status === 401 && SESSION_GONE.test(err.serverMessage)) return "Your session expired — sign in again.";
   const friendly = ERROR_CODE_PREFIXES[err.code];
   if (friendly) return joinSentence(friendly, err.serverMessage);
   if (err.code && !err.serverMessage) return joinSentence(sentenceForStatus(err.status), err.code);

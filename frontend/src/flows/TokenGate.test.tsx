@@ -19,8 +19,8 @@ vi.mock("../api", async (importOriginal) => {
   };
 });
 import { loginWithPassword, selfSignup } from "../api";
-vi.mock("../lib/ssoStart", () => ({ goToSso: vi.fn() }));
-import { goToSso } from "../lib/ssoStart";
+vi.mock("../lib/navigation", () => ({ goToSso: vi.fn(), reloadPage: vi.fn() }));
+import { goToSso } from "../lib/navigation";
 
 describe("TokenGate", () => {
   afterEach(() => vi.clearAllMocks());

@@ -131,7 +131,7 @@ describe("a refused sign-in token", () => {
     expect(ended).not.toHaveBeenCalled();
   });
 
-  it("does nothing for a request sent without a token (proxy mode, auth off)", async () => {
+  it("does nothing for a request sent without a stored token", async () => {
     const ended = vi.fn();
     onSignInRejected(ended);
     stubFetch(401, "{}");

@@ -66,6 +66,15 @@ describe("humanizeError", () => {
       expect(
         humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "Invalid email or password." })),
       ).toBe("Sign-in rejected: Invalid email or password.");
+      // A session's token that ran out, or a read sent after another tab ended the session.
+      expect(
+        humanizeError(
+          new ApiError({ status: 401, code: "AUTH_INVALID", message: "token expired: Signature has expired" }),
+        ),
+      ).toBe("Your session expired — sign in again.");
+      expect(humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "missing bearer token" }))).toBe(
+        "Your session expired — sign in again.",
+      );
       expect(
         humanizeError(
           new ApiError({ status: 429, code: "RATE_LIMITED", message: "namespace 'x' exceeded memory.set rate limit" }),

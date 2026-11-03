@@ -9,7 +9,7 @@ import { Panel } from "../components/ui/Panel";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { selfSignup, setToken, loginWithPassword } from "../api";
 import { SIGN_IN_FROM } from "../lib/boot";
-import { goToSso } from "../lib/ssoStart";
+import { goToSso } from "../lib/navigation";
 import { errorRequestId, humanizeError } from "../lib/format";
 import type { GateReason } from "../lib/state";
 import { Alert } from "../components/ui";
