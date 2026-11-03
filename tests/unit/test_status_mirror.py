@@ -486,6 +486,30 @@ async def test_reject_raises_when_the_vector_rows_are_not_written(
         )
 
 
+@pytest.mark.asyncio
+async def test_reject_of_a_key_with_no_live_row_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_lifecycle import MemoryRejectInput
+    from server.memory.app.ops import handle_memory_reject
+
+    class _NoRowCH(_RejectCH):
+        async def query_all(
+            self, sql: str, params: dict[str, Any] | None = None
+        ) -> list[dict[str, Any]]:
+            if "FROM loom.memory FINAL" in sql:
+                return []
+            return await super().query_all(sql, params)
+
+    ch = _NoRowCH()
+    _wire_sessions(monkeypatch, ch)
+    out = await handle_memory_reject(
+        MemoryRejectInput(org="o", namespace="n", agent="a", user_id="u", memory_key="home")
+    )
+    assert out.rejected is True
+    assert ch.inserts == [] and ch.executed == []
+
+
 class _RejectCH(_CH):
     """Answers the reject's id read with one row per session of the key, and each
     vector row one version above its memory row."""
