@@ -110,11 +110,12 @@ schema. These rules keep that safe. The operator procedure is in
    switched on after the rollout, and no rollback goes past this build while rows name
    objects.
 10. **An exclusion N adds holds only among N's replicas.** `task.create` with an
-    idempotency key holds a lease on the poster and its key from this build on
-    (`insert_created_task`), and the coverage watch's ready-event delivery one on the
-    event's task id (`insert_ready_event`). One whose lease ran out before its insert can
-    still race the next, so both insert under one dedup token (named by the same poster
-    and key, or the event's task id) and storage drops the later row. An erased row's
+    idempotency key holds a lease on the poster and its key (`_one_create_per_key`) and
+    inserts under the key's dedup token (`insert_created_task`); the coverage watch's
+    ready-event delivery holds one on the event's task id (`insert_ready_event`). One
+    whose lease ran out before its insert can still race the next, so both insert under
+    one dedup token (named by the same poster and key, or the event's task id) and
+    storage drops the later row. An erased row's
     token can outlive it and drop a new row too: with nothing stored, the row goes in
     again under a fresh token. The delivery's lease and token are the build before's
     too, so they exclude across builds. The create's are not: the build before names
