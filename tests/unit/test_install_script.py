@@ -492,3 +492,16 @@ def test_an_upgrade_from_before_the_extractor_gives_it_a_token_and_keeps_one_it_
         token = env["LOOM_DOCUMENT_EXTRACTOR_TOKEN"]
         assert len(token) == 48 and token != kept, extra
         assert env_path.read_text().count("LOOM_DOCUMENT_EXTRACTOR_TOKEN=") == 1
+
+
+def test_an_upgrade_keeps_an_operators_own_extractor_url(install) -> None:
+    run, target = install
+    assert run().returncode == 0
+    env_path = target / ".env"
+    lines = [x for x in env_path.read_text().splitlines() if not x.startswith("LOOM_DOCUMENT_")]
+    env_path.write_text("\n".join([*lines, "LOOM_DOCUMENT_EXTRACTOR_URL=https://mine:8790"]) + "\n")
+    result = run()
+    assert result.returncode == 0, result.stderr
+    env = _env(target)
+    assert env["LOOM_DOCUMENT_EXTRACTOR_URL"] == "https://mine:8790"
+    assert len(env["LOOM_DOCUMENT_EXTRACTOR_TOKEN"]) == 48
