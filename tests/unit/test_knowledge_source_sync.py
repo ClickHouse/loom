@@ -11,6 +11,7 @@ import contextlib
 import dataclasses
 import json
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -613,8 +614,8 @@ def test_the_listing_pages_through_and_refuses_a_stamp_it_did_not_issue(
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(_answer))
     monkeypatch.setattr(gdrive, "get_client", lambda: client)
-    files = asyncio.run(gdrive.list_all("tok", [FOLDER], [DOCS], pace_s=0))
-    assert [f["id"] for f in files] == ["a", "b"]
+    files, whole = asyncio.run(gdrive.list_all("tok", [FOLDER], [DOCS], pace_s=0))
+    assert [f["id"] for f in files] == ["a", "b"] and whole
     assert all(r.headers["Authorization"] == "Bearer tok" for r in seen)
     with pytest.raises(ValueError):
         asyncio.run(gdrive.list_all("tok", [FOLDER], [DOCS], modified_after="x' or '1"))
@@ -953,7 +954,7 @@ def test_a_turn_that_ends_early_keeps_the_stored_waits(
     if ending == "rate_limited":
         world.fail_listing = 429
     else:
-        # A newer file before it uses the whole bound.
+        # An older file, listed first, uses the whole bound.
         monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
         world.files.insert(0, _file("doc0", DOCS, "2025-12-01T00:00:00.000Z"))
     asyncio.run(source_sync.run_sync())
@@ -1093,12 +1094,12 @@ def test_a_periodic_full_listing_gives_a_given_up_file_one_more_try(world: _Worl
         asyncio.run(source_sync.run_sync())
     assert _waits(world)["bad1"][1] == 3
     # One more failure on the next full listing gives it up again at once.
-    world.states["decks"]["detail"] = json.dumps({**_detail(world), "full_listed_at": ""})
+    world.states["decks"]["detail"] = json.dumps(_listed_long_ago(world))
     asyncio.run(source_sync.run_sync())
     assert _detail(world)["status"] == "ok" and _waits(world)["bad1"][1] == 3
     # Once the store answers, the next full listing writes it.
     del world.file_answers["bad1"]
-    world.states["decks"]["detail"] = json.dumps({**_detail(world), "full_listed_at": ""})
+    world.states["decks"]["detail"] = json.dumps(_listed_long_ago(world, days=3))
     asyncio.run(source_sync.run_sync())
     assert _uri("bad1") in world.docs and "bad1" not in _waits(world)
 
@@ -1108,9 +1109,13 @@ def test_an_incomplete_listing_retires_nothing(world: _World) -> None:
     asyncio.run(source_sync.run_sync())
     world.files = []
     world.incomplete_search = True
+    world.files = [_file("doc2", DOCS, "2026-01-02T00:00:00.000Z")]
     asyncio.run(source_sync.run_sync(full=True))
-    assert list(world.docs) == [_uri("doc1")]
-    assert _detail(world)["status"] == "failed"
+    # What it listed is written; nothing is retired and the stamp stays.
+    assert sorted(world.docs) == [_uri("doc1"), _uri("doc2")]
+    detail = _detail(world)
+    assert (detail["status"], detail["error"]) == ("ok", "listing: incomplete search")
+    assert world.states["decks"]["state_value"] == "2026-01-01T00:00:00.000Z"
 
 
 def test_a_file_missing_from_the_listing_but_still_in_the_folder_stays(world: _World) -> None:
@@ -1175,3 +1180,65 @@ def test_a_turn_that_raises_records_a_failed_state_and_keeps_the_waits(
     detail = _detail(world)
     assert (detail["status"], detail["error"]) == ("failed", "ConnectionError")
     assert _waits(world)["bad1"][1] == 1
+
+
+def _fetches(world: _World, file_id: str) -> int:
+    return sum(1 for r in world.requests if f"/{file_id}/" in r.url.path)
+
+
+@pytest.mark.parametrize("held_by", ["waiting_file", "lost_folder", "cut"])
+def test_a_full_turn_that_stays_incomplete_retries_a_given_up_file_once(
+    world: _World, monkeypatch: pytest.MonkeyPatch, held_by: str
+) -> None:
+    world.files = [_file("bad1", DOCS, "2026-01-01T00:00:00.000Z")]
+    world.file_answers["bad1"] = httpx.Response(503)
+    for _ in range(3):
+        asyncio.run(source_sync.run_sync())
+    assert _waits(world)["bad1"][1] == 3
+    if held_by == "waiting_file":
+        world.files.append(_file("bad2", DOCS, "2026-01-02T00:00:00.000Z"))
+        world.file_answers["bad2"] = httpx.Response(503)
+    elif held_by == "lost_folder":
+        world.lost_folders = {FOLDER}
+    else:
+        monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
+        world.files.append(_file("doc2", DOCS, "2026-01-02T00:00:00.000Z"))
+        world.files.append(_file("doc3", DOCS, "2026-01-03T00:00:00.000Z"))
+    world.states["decks"]["detail"] = json.dumps(_listed_long_ago(world))
+    before = _fetches(world, "bad1")
+    asyncio.run(source_sync.run_sync())
+    assert _fetches(world, "bad1") == before + 1
+    # The full listing did not complete, so the next full turn grants no new retry.
+    asyncio.run(source_sync.run_sync())
+    assert _fetches(world, "bad1") == before + 1
+
+
+@pytest.mark.parametrize(
+    ("answer", "status"),
+    [(httpx.Response(401), "credential_invalid"), (httpx.Response(429), "rate_limited")],
+)
+def test_a_lookup_refused_for_the_credential_or_rate_limited_stops_retiring(
+    world: _World, answer: httpx.Response, status: str
+) -> None:
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
+    ]
+    asyncio.run(source_sync.run_sync())
+    world.files = []
+    world.file_answers["doc1"] = answer
+    world.file_answers["doc2"] = answer
+    asyncio.run(source_sync.run_sync(full=True))
+    assert sorted(world.docs) == [_uri("doc1"), _uri("doc2")]
+    assert _detail(world)["status"] == status
+    lookups = [r for r in world.requests if r.url.params.get("fields") == "trashed,parents"]
+    assert len(lookups) == 1
+
+
+def _listed_long_ago(world: _World, days: int = 2) -> dict[str, Any]:
+    """The state as days past its last complete full listing: the next turn is full.
+    Each call in one test passes its own `days`, as each real full listing has its
+    own time."""
+    detail = _detail(world)
+    stamp = datetime.fromisoformat(detail["full_listed_at"]) - timedelta(days=days)
+    return {**detail, "full_listed_at": stamp.isoformat()}

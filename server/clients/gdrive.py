@@ -282,11 +282,11 @@ async def list_all(
     *,
     modified_after: str = "",
     pace_s: float = PAGE_PACE_S,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], bool]:
     """Every file of `mime_types` in any of `folder_ids`, oldest change first, or only
-    those changed after `modified_after` (a `valid_stamp`). Pages are paced; a failure
-    on any page, or a page the store says is incomplete (`incompleteSearch`), raises,
-    so a list returned is every page the store had."""
+    those changed after `modified_after` (a `valid_stamp`), and whether the store
+    searched everything: False when any page says `incompleteSearch`. Pages are
+    paced; a failure on any page raises, so every page was read."""
     if modified_after and not valid_stamp(modified_after):
         raise ValueError("modified_after is not a modification stamp")
     parents = " or ".join(f"'{f}' in parents" for f in folder_ids)
@@ -305,14 +305,14 @@ async def list_all(
         "includeItemsFromAllDrives": "true",
     }
     files: list[dict[str, Any]] = []
+    whole = True
     while True:
         data = await _get(_FILES_URL, token, params, "listing")
-        if data.get("incompleteSearch"):
-            raise DriveError("listing: incomplete search")
+        whole = whole and not data.get("incompleteSearch")
         files.extend(f for f in data.get("files") or [] if isinstance(f, dict))
         page_token = data.get("nextPageToken")
         if not isinstance(page_token, str) or not page_token:
-            return files
+            return files, whole
         params = {**params, "pageToken": page_token}
         await asyncio.sleep(pace_s)
 
