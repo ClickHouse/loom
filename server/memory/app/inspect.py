@@ -5,9 +5,9 @@ The rows whose identity names the subject (`own`) are reported apart from every 
 live row of the namespace (`others`): an agent's name or a session id says who wrote a
 row, not what that agent or session can read, so a view filtered on it never stands for
 everything the subject knows. The ledger calls filed under the subject say what was
-attempted and what succeeded in the window, nothing more. The settings section reads the namespace
-guide and categories, and the operator extraction policy only for a caller who may read
-it (an org admin).
+attempted and what succeeded in the window, nothing more. The settings section reads
+the namespace guide and categories, and the operator extraction policy only for a
+caller who may read it (an org admin).
 
 Read-only: plain reads over `loom.memory`, `loom.memory_categories`,
 `loom.memory_versions` and `loom.agent_events`; no recall credit or usage event. A

@@ -204,8 +204,9 @@ async def subject_calls(
     skip_consumers: Sequence[str],
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """(operation, calls, succeeded, first, last) for the subject's own calls in the
-    window, leaving out the consumers that inspect a namespace on a person's behalf."""
+    """(operation, calls, succeeded, first, last) for the calls the ledger files under
+    the subject in the window, whoever made them, leaving out the consumers that inspect
+    a namespace on a person's behalf."""
     col = SUBJECT_COLUMN[subject]
     return await (ch or _default_client()).query_all(
         f"""
