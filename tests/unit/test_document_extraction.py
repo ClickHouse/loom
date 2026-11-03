@@ -1405,7 +1405,25 @@ def test_a_toml_integer_outside_signed_64_bits_makes_the_file_invalid_toml() -> 
         assert a.blocks[0].type == "paragraph"
     reasons = {
         b"[t]\nx = [[1, 99999999999999999999]]\n": "t.x[0][1] is an integer outside signed 64 bits",
+        b"a = 99999999999999999999\nb = 99999999999999999999\n": "a is an integer outside signed 64 bits",
+        b'["q k"]\n"x.y" = [-9223372036854775809]\n': '"q k"."x.y"[0] is an integer outside signed 64 bits',
         b"a = " + b"1" * 4301 + b"\n": "an integer of over 4,300 digits",
     }
     for source, reason in reasons.items():
         assert extract(source, "c.toml").coverage.failed[0].reason == f"invalid TOML: {reason}"
+
+
+def test_the_wide_integer_check_spells_a_path_only_for_the_integer_it_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A path per value would copy its parent's: quadratic in a long header."""
+    from loom_extractor import tomlfile
+
+    spelled: list[object] = []
+    real = tomlfile._entry_path
+    monkeypatch.setattr(tomlfile, "_entry_path", lambda e: spelled.append(e) or real(e))
+    header = ".".join(["p" * 100] * 2_000)
+    assert "toml_types" not in extract(f"[{header}]\nk = 1\n".encode(), "c.toml").coverage.lost
+    assert spelled == []
+    extract(f"[{header}]\nk = 99999999999999999999\n".encode(), "c.toml")
+    assert len(spelled) == 1

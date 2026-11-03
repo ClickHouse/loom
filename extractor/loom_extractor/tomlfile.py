@@ -10,7 +10,8 @@ path and its index-free form (`retention.rules.days`) are the block's `keys`,
 so an exact lookup by either finds it.
 
 An invalid file is still searchable as text; its loss of types is recorded in
-coverage (`toml_types`) with the decoder's message.
+coverage (`toml_types`) with the reason, which names the line or the key path
+where it can.
 
 Pure and I/O-free.
 """
@@ -21,6 +22,7 @@ import datetime as dt
 import json
 import math
 import re
+import sys
 import tomllib
 from dataclasses import dataclass
 from typing import Any
@@ -391,20 +393,31 @@ class _Scanner:
 
 
 def _wide_integer(doc: dict[str, Any]) -> str:
-    """The key path of an integer outside signed 64 bits, which TOML makes an
-    error and `tomllib` reads anyway, or ''. Walked without recursion."""
-    stack: list[tuple[str, Any]] = [("", doc)]
+    """The key path of the first integer outside signed 64 bits, which TOML
+    makes an error and `tomllib` reads anyway, or ''. Walked without recursion,
+    in document order; each entry holds its parent, so a path is spelled only
+    for the integer it names."""
+    stack: list[tuple[Any, Any]] = [(None, doc)]  # ((parent entry, key or index), value)
     while stack:
-        path, v = stack.pop()
+        entry, v = stack.pop()
         if isinstance(v, dict):
-            stack.extend(
-                (".".join(filter(None, (path, _path_text([_Step(k)])))), x) for k, x in v.items()
-            )
+            stack.extend(((entry, k), x) for k, x in reversed(v.items()))
         elif isinstance(v, list):
-            stack.extend((f"{path}[{i}]", x) for i, x in enumerate(v))
+            stack.extend(((entry, i), x) for i, x in reversed(list(enumerate(v))))
         elif isinstance(v, int) and not isinstance(v, bool) and not -(2**63) <= v < 2**63:
-            return path
+            return _entry_path(entry)
     return ""
+
+
+def _entry_path(entry: Any) -> str:
+    parts: list[str] = []
+    while entry is not None:
+        entry, step = entry
+        parts.append(f"[{step}]" if isinstance(step, int) else _path_text([_Step(step)]))
+    path = ""
+    for part in reversed(parts):
+        path += part if part.startswith("[") or not path else f".{part}"
+    return path
 
 
 def _decoded(text: str) -> dict[str, Any]:
@@ -414,8 +427,9 @@ def _decoded(text: str) -> dict[str, Any]:
         doc = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
         raise
-    except ValueError as e:  # `int()` refusing a decimal of over 4,300 digits
-        raise ValueError("an integer of over 4,300 digits") from e
+    except ValueError as e:  # `int()` refusing a decimal past Python's digit limit
+        limit = sys.get_int_max_str_digits()
+        raise ValueError(f"an integer of over {limit:,} digits") from e
     path = _wide_integer(doc)
     if path:
         raise ValueError(f"{path} is an integer outside signed 64 bits")
