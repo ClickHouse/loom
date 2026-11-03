@@ -811,7 +811,6 @@ export async function memoryHistory(
   memoryKey: string,
   limit: number = 10,
 ): Promise<{ rows: MemoryHistoryEntry[] }> {
-  // The whole writer identity: a row opened under its user and session is read under them.
   return post("/v1/memory.history", { ...id, memory_key: memoryKey, limit });
 }
 

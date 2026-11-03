@@ -56,8 +56,8 @@ export function Assistant() {
   const role = useNamespaceRole(identity?.namespace ?? "");
   // The answers belong to the namespace and to the token's read scope: a token signed in
   // again with another scope (the page stays mounted) drops what the old one read.
-  const claims = tokenReadScope(storedToken());
-  const scope = `${identity?.org}/${identity?.namespace}/${claims?.readScope ?? "-"}/${claims?.readUserId ?? "-"}`;
+  const tokenScope = tokenReadScope(storedToken());
+  const scope = `${identity?.org}/${identity?.namespace}/${tokenScope?.readScope ?? "-"}/${tokenScope?.readUserId ?? "-"}`;
   const inventory = useScopedRead<NamespaceInventory>(scope);
   const inspection = useScopedRead<MemoryInspection>(scope);
   const tune = useScopedRead<NamespaceTune>(scope);
@@ -77,10 +77,11 @@ export function Assistant() {
   // up front; for an end-user token, or behind a proxy (no token here), only the inventory's
   // answer does.
   const narrowed =
-    claims?.readScope != null || (inventory.data !== null && inventory.data.scope.read_scope !== "namespace");
+    tokenScope?.readScope != null || (inventory.data !== null && inventory.data.scope.read_scope !== "namespace");
   // A scoped read under `own_session`, or under `own_user` with no `read_user_id`, needs the
   // session or user id in the request, which this page does not send: the server refuses it.
-  const incomplete = claims?.readScope === "own_session" || (claims?.readScope === "own_user" && !claims.readUserId);
+  const incomplete =
+    tokenScope?.readScope === "own_session" || (tokenScope?.readScope === "own_user" && !tokenScope.readUserId);
   const gate = (op: "namespace.inventory" | "memory.inspect" | "namespace.tune") =>
     !canCall(op, role, whoami)
       ? "Your role on this namespace is not known."

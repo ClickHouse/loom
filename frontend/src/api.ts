@@ -1187,7 +1187,6 @@ export interface MemoryProvenance {
 
 // Resolve where a memory came from (source_trace + retained-transcript check).
 export async function getProvenance(id: Identity, memoryKey: string): Promise<MemoryProvenance> {
-  // The whole writer identity: a row opened under its user and session is read under them.
   return post<MemoryProvenance>("/v1/memory.provenance", { ...id, memory_key: memoryKey });
 }
 
