@@ -16,8 +16,8 @@ export interface NamespaceAuditSummary {
   excerpt_bytes: number;
   version_rows: number;
   version_bytes: number;
-  // Searchable-type embedding rows with no vector and an embed error of their own (a held
-  // or unbilled model call is the deployment's: index_backlog).
+  // Searchable-type embedding rows the worker gave up on with an error of their own (a row
+  // still retrying, or a held or unbilled model call, is the deployment's: index_backlog).
   unembedded_rows: number;
   // Ledger counts over `window_seconds`.
   gets: number;

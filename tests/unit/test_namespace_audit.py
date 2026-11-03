@@ -1536,19 +1536,24 @@ async def test_a_hot_short_procedure_is_not_coordination_state() -> None:
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.asyncio
 async def test_a_held_model_call_is_a_backlog_and_an_empty_row_is_neither() -> None:
-    def stub(key: str, error: str) -> str:
+    def stub(key: str, error: str, given_up: bool = False) -> str:
+        failed = "now()" if given_up else "NULL"
         return (
             "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
             "memory_key, embedding_model, embedding_dim, embedding, memory_key_embedding, "
-            f"embed_last_error, status, version) SELECT 'o', 'ns', 'bot', '-', '-', '{key}', 'm', "
-            f"0, v, v, '{error}', 'active', 1 FROM (SELECT arrayWithConstant(3072, toBFloat16(0)) AS v)"
+            "embed_last_error, embed_failed_at, status, version) SELECT 'o', 'ns', 'bot', '-', "
+            f"'-', '{key}', 'm', 0, v, v, '{error}', {failed}, 'active', 1 "
+            "FROM (SELECT arrayWithConstant(3072, toBFloat16(0)) AS v)"
         )
 
     rows = [
         _memory_row("held/row", minutes_ago=30),
         stub("held/row", na.EMBED_HOLDS[0]),
         _memory_row("failed/row", minutes_ago=30),
-        stub("failed/row", "ValueError: input too long"),
+        stub("failed/row", "ValueError: input too long", given_up=True),
+        # A provider error the worker is still retrying: the deployment's, not the row's.
+        _memory_row("retrying/row", minutes_ago=30),
+        stub("retrying/row", "ServiceUnavailable: 503 from the embedder"),
         _memory_row("empty/row", minutes_ago=30, value=""),
         # Never embedded, by design: an episodic row and a high-sensitivity one.
         _memory_row("episode/1", minutes_ago=30, memory_type="episodic"),
@@ -1563,7 +1568,7 @@ async def test_a_held_model_call_is_a_backlog_and_an_empty_row_is_neither() -> N
     await audit.index_backlog()
     await audit.unembedded_rows()
     backlog = _finding(audit, "index_backlog")
-    assert [s["memory_key"] for s in backlog.samples] == ["held/row"]
+    assert sorted(s["memory_key"] for s in backlog.samples) == ["held/row", "retrying/row"]
     assert backlog.severity == "warning"  # older than the grace
     assert [s["memory_key"] for s in _finding(audit, "unembedded_rows").samples] == ["failed/row"]
 

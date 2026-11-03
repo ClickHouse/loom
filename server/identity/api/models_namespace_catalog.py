@@ -341,8 +341,8 @@ class NamespaceAuditSummary(BaseModel):
     # status change, a tags edit by id, a lock, the server's own copies); and their bytes.
     version_rows: int = 0
     version_bytes: int = 0
-    # Searchable-type embedding rows with no vector and an embed error of their own (a
-    # model call the deployment held or could not bill is not counted: index_backlog).
+    # Searchable-type embedding rows the worker gave up on with an error of their own (a
+    # row still being retried, or whose model call was held or unbilled, is index_backlog).
     unembedded_rows: int = 0
     # Ledger counts over `window_seconds`.
     gets: int = 0

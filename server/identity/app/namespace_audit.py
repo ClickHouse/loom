@@ -145,10 +145,13 @@ EMBED_HOLDS: tuple[str, ...] = (
     "MODEL_CALL_UNATTRIBUTED: the row names no org to bill",
 )
 # Over loom.memory_embeddings: a searchable row the worker gave up on (summary and check).
-_UNEMBEDDED_ROW = (
-    f"embedding_dim = 0 AND embed_last_error != '' "
-    f"AND embed_last_error NOT IN {{holds:Array(String)}} AND {_SEARCHABLE}"
+# Given up on (`embed_failed_at` set) with an error of the row's own: a row the worker is
+# still retrying, a provider outage among the reasons, is the deployment's backlog.
+_GIVEN_UP = (
+    "embed_failed_at IS NOT NULL AND embed_last_error != '' "
+    "AND embed_last_error NOT IN {holds:Array(String)}"
 )
+_UNEMBEDDED_ROW = f"embedding_dim = 0 AND {_GIVEN_UP} AND {_SEARCHABLE}"
 # Remedies point at the recipe: docs/guides/investigation-agent-memory.md.
 _RECIPE = "docs/guides/investigation-agent-memory.md"
 
@@ -182,10 +185,11 @@ _TEXT: dict[str, tuple[str, str]] = {
         "the namespace.",
     ),
     "index_backlog": (
-        "Searchable rows with no vector and no error of their own: rows the embedding "
-        "worker has not reached, or whose model call the deployment held or could not "
-        f"bill. Within {INDEX_GRACE_SECONDS // 60} minutes of a write that is normal lag; "
-        "older, the worker is stopped or behind, or the calls are held. Either way the rows "
+        "Searchable rows with no vector the worker has not given up on: not reached yet, "
+        "still being retried (a provider error, an outage), or whose model call the "
+        f"deployment held or could not bill. Within {INDEX_GRACE_SECONDS // 60} minutes of a "
+        "write that is normal lag; older, the worker is stopped or behind, the provider is "
+        "failing, or the calls are held. Either way the rows "
         "are not found by meaning yet, through no fault of the writer.",
         "Check that the embedding worker runs and that the org's model calls are allowed: "
         "a held row is retried on the worker's next pass. A row whose call named no org to "
@@ -324,7 +328,9 @@ _CONTRACT: dict[str, RuleContract] = {
         ),
         uncertainty=(
             "A row whose embedding row was written but not yet merged can read as pending for "
-            "a moment, and a row with a vector from another embedder counts as reached."
+            "a moment, and a row with a vector from another embedder counts as reached. Age "
+            "is from the row's last version, so a lock or status change on a stalled row "
+            "restarts it (namespace.validate ages from creation)."
         ),
     ),
     "hand_rolled_index_rows": RuleContract(
@@ -363,8 +369,9 @@ _CONTRACT: dict[str, RuleContract] = {
         # 2: a model call the deployment held or could not bill is not the row's error.
         2,
         exceptions=(
-            "Non-searchable types are not checked, a row with no recorded embed error is not "
-            "counted, and nor is one whose model call was held or unbilled (index_backlog)."
+            "Non-searchable types are not checked, and only a row the worker gave up on with "
+            "an error of its own is counted: one still being retried, or whose model call "
+            "was held or unbilled, is index_backlog."
         ),
     ),
     "hash_keys": RuleContract(
@@ -713,8 +720,7 @@ class _Audit:
                   LEFT ANTI JOIN (SELECT agent, user_id, session_id, memory_key
                                   FROM loom.memory_embeddings FINAL
                                   WHERE {_SCOPE} AND tombstoned_at IS NULL
-                                    AND (embedding_dim > 0 OR (embed_last_error != ''
-                                         AND embed_last_error NOT IN {{holds:Array(String)}}))
+                                    AND (embedding_dim > 0 OR ({_GIVEN_UP}))
                                  ) AS b
                     ON a.agent = b.agent AND a.user_id = b.user_id
                    AND a.session_id = b.session_id AND a.memory_key = b.memory_key)
@@ -1061,6 +1067,7 @@ def render_table(out: NamespaceAuditOutput) -> str:
         f"  live {s.live_rows} rows / {s.live_bytes:,} B; versions {s.version_rows} rows / "
         f"{s.version_bytes:,} B; excerpts {s.excerpt_bytes:,} B; unembedded {s.unembedded_rows}; "
         f"gets {s.gets} / searches {s.searches} / sets {s.sets} (ratio {s.get_search_ratio})"
+        + (f"; {s.typed_gets} procedure reads left out of the ratio" if s.typed_gets else "")
         + (
             f"; {s.inspector_calls} dashboard and assistant calls not counted"
             if s.inspector_calls
