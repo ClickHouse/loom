@@ -28,6 +28,21 @@ export function planMaterialize(env, { configExists, configToken, tokenFileExist
   return { write: true, url, reason: configExists ? "config lacks a token" : "no config" };
 }
 
+/** The primer line when the install token was skipped for a config token
+ *  saved for another server: the MCP header helper sends that one to the
+ *  server the plugin is installed for, which refuses it. "" otherwise. Pure. */
+export function installTokenNotice(plan, serverUrl) {
+  if (plan.write || plan.reason !== "config has a token") return "";
+  const saved = String(plan.configUrl || "");
+  const inUse = String(serverUrl || "").replace(/\/+$/, "");
+  if (!saved || !inUse || saved === inUse) return "";
+  return (
+    `Loom: ~/.loom/config.json holds a token saved for ${saved}, which the loom MCP tools send to ` +
+    `${inUse}; the hooks use the install token. If the loom tools fail to connect, put a ${inUse} ` +
+    `token in that file or in LOOM_API_KEY and restart.`
+  );
+}
+
 export function applyPluginOptions(env = process.env, paths = {}) {
   const configPath = paths.configPath || loomConfigPath(env);
   const tokenPath = paths.tokenPath || loomTokenPath(env);
@@ -38,6 +53,9 @@ export function applyPluginOptions(env = process.env, paths = {}) {
     configToken: existing.token,
     tokenFileExists: existsSync(tokenPath),
   });
+  plan.configUrl = String(existing.url || "")
+    .trim()
+    .replace(/\/+$/, "");
   if (!plan.write) return plan;
   try {
     const patch = { token: String(env.CLAUDE_PLUGIN_OPTION_TOKEN).trim() };

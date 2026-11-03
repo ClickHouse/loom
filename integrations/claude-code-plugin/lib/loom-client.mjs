@@ -129,26 +129,35 @@ export function loomConfig() {
   return _loomConfigCache;
 }
 
-/** Resolve the Loom bearer token: env, an agent's exchanged token, then
- *  ~/.loom/config.json, then ~/.loom/token. */
-export function resolveToken() {
+/** The Loom bearer token and the lookup that supplied it: env, an agent's
+ *  exchanged token, the install option, ~/.loom/config.json, ~/.loom/token. */
+function tokenLookup() {
   const fromEnv = (process.env.LOOM_API_KEY || "").trim();
-  if (fromEnv) return fromEnv;
+  if (fromEnv) return { token: fromEnv, source: "LOOM_API_KEY" };
   // An agent signs in as itself or not at all: never as a credential a person left here.
-  if (agentMode()) return agentToken();
+  if (agentMode()) return { token: agentToken(), source: "the workload-token exchange" };
   // The plugin's install-time option: Claude Code exports
   // `userConfig` values to hook processes as CLAUDE_PLUGIN_OPTION_<KEY>.
   const fromOption = (process.env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
-  if (fromOption) return fromOption;
+  if (fromOption) return { token: fromOption, source: "the plugin's install option" };
   const fromCfg = String(loomConfig().token || "").trim();
-  if (fromCfg) return fromCfg;
+  if (fromCfg) return { token: fromCfg, source: loomConfigPath() };
   try {
     const fromFile = readFileSync(loomTokenPath(), "utf8").trim();
-    if (fromFile) return fromFile;
+    if (fromFile) return { token: fromFile, source: loomTokenPath() };
   } catch {
     // no token file; caller decides whether to no-op
   }
-  return "";
+  return { token: "", source: "" };
+}
+
+export function resolveToken() {
+  return tokenLookup().token;
+}
+
+/** Which lookup `resolveToken` answers from, named for a status line; "" for none. */
+export function tokenSource() {
+  return tokenLookup().source;
 }
 
 // --- an agent with no Loom token of its own ------------------------------------

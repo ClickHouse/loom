@@ -9,7 +9,10 @@ import {
   requestJson,
   resolveScope,
   resolveServerUrl,
+  loomConfig,
+  loomConfigPath,
   resolveToken,
+  tokenSource,
 } from "../lib/loom-client.mjs";
 
 const FLUSH_RE = /^loom-flush-\d{13}-\d+\.json$/;
@@ -34,6 +37,8 @@ export async function clientStatus({
   serverUrl,
   token,
   scope,
+  source = "",
+  configUrl = "",
   fetchImpl = fetch,
   now = Date.now(),
   tempDirectory = tmpdir(),
@@ -68,8 +73,21 @@ export async function clientStatus({
   } else {
     add("token", "PASS", `${claims.sub || "unknown subject"} @ ${claims.org || "unknown org"}`);
   }
+  if (source) {
+    // A config token saved for another server is what the MCP header helper
+    // sends to this one; the hooks may hold a different token.
+    const saved = String(configUrl || "")
+      .trim()
+      .replace(/\/+$/, "");
+    const other = source === loomConfigPath() && saved && saved !== serverUrl.replace(/\/+$/, "");
+    add(
+      "source",
+      other ? "WARN" : "PASS",
+      other ? `token from ${source}, which names ${saved}; this check uses ${serverUrl}` : `token from ${source}`,
+    );
+  }
 
-  if (health.status === 200 && checks.at(-1)?.grade === "PASS") {
+  if (health.status === 200 && checks.find((c) => c.name === "token")?.grade === "PASS") {
     const auth = await requestJson(`${serverUrl}/v1/namespace.list_mine`, {
       body: { org: scope.org },
       token,
@@ -118,6 +136,8 @@ if (process.env.LOOM_HOOK_NO_MAIN !== "1") {
     serverUrl: resolveServerUrl(),
     token: resolveToken(),
     scope: resolveScope(process.cwd()),
+    source: tokenSource(),
+    configUrl: loomConfig().url,
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.ok) process.exitCode = 1;

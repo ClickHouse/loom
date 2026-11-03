@@ -46,7 +46,7 @@ import {
 import { checkoutRemotes, lookupIndexedRepo } from "../lib/repo-scope.mjs";
 import { readRecording, recordingFromNamespace, recordingPrimerLine, writeRecording } from "../lib/recording.mjs";
 import { teamRulesLine } from "../lib/file-context.mjs";
-import { applyPluginOptions } from "../lib/plugin-options.mjs";
+import { applyPluginOptions, installTokenNotice } from "../lib/plugin-options.mjs";
 import { cacheIsFresh, countsBody, renderTaskLine, summarizeCounts } from "../lib/task-inbox.mjs";
 import { briefPrimerEnabled, primerLine } from "../lib/session-brief.mjs";
 import { readJsonFile, sweepStaleStateFiles, tmpStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
@@ -57,7 +57,7 @@ async function main() {
   // helper; write it once to ~/.loom/config.json, where the helper (and the
   // CLI, the SDK) read it. Before the token check below, so this very
   // session's hooks use it too.
-  applyPluginOptions();
+  const optionNotice = installTokenNotice(applyPluginOptions(), resolveServerUrl());
   sweepStaleStateFiles();
   // Default ON; opt out with LOOM_INJECT_CONTEXT=false (see header).
   if (!envSwitch("LOOM_INJECT_CONTEXT", true)) {
@@ -116,7 +116,7 @@ async function main() {
   const dup = hookClient() === "claude-code" ? duplicateNotice({ serverUrl }) : "";
   process.stdout.write(
     renderPrimer({
-      notices: [firstSessionNotice, dup],
+      notices: [firstSessionNotice, dup, optionNotice],
       project: scope.project,
       repo: scope.repo,
       rendered: result && typeof result.rendered === "string" ? result.rendered : "",

@@ -324,7 +324,8 @@ Bash tool respectively.
 - After a few tool calls, the dashboard shows the session's observations and,
   with logging on, its conversation. `run.get` on `cc-<session_id>` replays the run.
 - `/loom:loom-status` runs `bin/loom-client-status.mjs` from the plugin: the server it
-  would call, whether the token is accepted and can write the namespace, and capture
+  would call, which lookup supplied the token and whether `~/.loom/config.json` names
+  another server, whether the token is accepted and can write the namespace, and capture
   batches that never reached the server. It needs nothing but the plugin.
 - `loom doctor --client` (the operator CLI, from a source checkout or the server image)
   adds the Claude Code and Codex wiring checks.

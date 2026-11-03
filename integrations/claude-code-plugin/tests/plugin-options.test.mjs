@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { applyPluginOptions, planMaterialize } from "../lib/plugin-options.mjs";
+import { applyPluginOptions, installTokenNotice, planMaterialize } from "../lib/plugin-options.mjs";
 
 function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "loom-opts-"));
@@ -56,8 +56,10 @@ test("applyPluginOptions writes token + url once, 0600, merging other keys", () 
   const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
   assert.deepEqual(written, { token: "opt.tok", url: "https://loom.test" });
   assert.equal(fs.statSync(configPath).mode & 0o777, 0o600);
-  // second run: the config now has a token → nothing written
-  assert.equal(applyPluginOptions(env, { configPath, tokenPath }).reason, "config has a token");
+  // second run: the config now has a token → nothing written; the saved url rides along
+  const r2 = applyPluginOptions(env, { configPath, tokenPath });
+  assert.equal(r2.reason, "config has a token");
+  assert.equal(r2.configUrl, "https://loom.test");
   // a config with other keys but no token is merged, its own url kept
   fs.writeFileSync(configPath, JSON.stringify({ namespace: "keep", url: "https://mine" }));
   const r3 = applyPluginOptions(env, { configPath, tokenPath });
@@ -74,6 +76,15 @@ test("applyPluginOptions writes token + url once, 0600, merging other keys", () 
   assert.equal(fs.existsSync(configPath), false);
 });
 
+test("installTokenNotice: only when the config token was saved for another server", () => {
+  const skipped = { write: false, reason: "config has a token", configUrl: "https://old" };
+  assert.match(installTokenNotice(skipped, "https://new/"), /saved for https:\/\/old.*send to https:\/\/new;/);
+  assert.equal(installTokenNotice({ ...skipped, configUrl: "https://new" }, "https://new"), "");
+  assert.equal(installTokenNotice({ ...skipped, configUrl: "" }, "https://new"), "");
+  assert.equal(installTokenNotice({ write: false, reason: "token file exists" }, "https://new"), "");
+  assert.equal(installTokenNotice({ write: true, url: "https://new", reason: "no config" }, "https://new"), "");
+});
+
 test("resolvers: the option ranks after the env var and before the files", async () => {
   const dir = tmp();
   fs.mkdirSync(path.join(dir, ".loom"));
@@ -87,10 +98,15 @@ test("resolvers: the option ranks after the env var and before the files", async
     process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL = "https://opt/";
     const m = await import(`../lib/loom-client.mjs?t=${Date.now()}`);
     assert.equal(m.resolveToken(), "opt.tok");
+    assert.equal(m.tokenSource(), "the plugin's install option");
     assert.equal(m.resolveServerUrl(), "https://opt");
+    delete process.env.CLAUDE_PLUGIN_OPTION_TOKEN;
+    assert.equal(m.resolveToken(), "cfg.tok");
+    assert.equal(m.tokenSource(), process.env.LOOM_CONFIG_FILE);
     process.env.LOOM_API_KEY = "env.tok";
     process.env.LOOM_BASE_URL = "https://env";
     assert.equal(m.resolveToken(), "env.tok");
+    assert.equal(m.tokenSource(), "LOOM_API_KEY");
     assert.equal(m.resolveServerUrl(), "https://env");
   } finally {
     for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];

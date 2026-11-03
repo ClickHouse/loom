@@ -107,3 +107,49 @@ test("an agent with no token is told its workload-token exchange failed", async 
     }
   }
 });
+
+test("the source line names the token's lookup and warns when the config names another server", async () => {
+  const { loomConfigPath } = await import("../lib/loom-client.mjs");
+  const pass = await clientStatus({
+    serverUrl,
+    token: token(),
+    scope,
+    now,
+    fetchImpl: responses().fetchImpl,
+    source: "LOOM_API_KEY",
+    configUrl: "https://elsewhere",
+  });
+  assert.deepEqual(
+    pass.checks.find((c) => c.name === "source"),
+    { name: "source", grade: "PASS", detail: "token from LOOM_API_KEY" },
+  );
+  const cfg = loomConfigPath();
+  const warn = await clientStatus({
+    serverUrl,
+    token: token(),
+    scope,
+    now,
+    fetchImpl: responses().fetchImpl,
+    source: cfg,
+    configUrl: "https://elsewhere/",
+  });
+  const line = warn.checks.find((c) => c.name === "source");
+  assert.equal(line.grade, "WARN");
+  assert.match(line.detail, /names https:\/\/elsewhere; this check uses https:\/\/loom\.test/);
+  assert.equal(warn.ok, true); // a WARN never fails the check
+  const same = await clientStatus({
+    serverUrl,
+    token: token(),
+    scope,
+    now,
+    fetchImpl: responses().fetchImpl,
+    source: cfg,
+    configUrl: `${serverUrl}/`,
+  });
+  assert.equal(same.checks.find((c) => c.name === "source").grade, "PASS");
+  const none = await clientStatus({ serverUrl, token: "", scope, now, fetchImpl: responses().fetchImpl, source: "" });
+  assert.equal(
+    none.checks.some((c) => c.name === "source"),
+    false,
+  );
+});
