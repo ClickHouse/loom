@@ -319,7 +319,7 @@ async def _screen_tool_call(
     from server.auth.authz import may_act_in_org
 
     # The one cross-org rule (a platform admin may act in any org).
-    if req_org and not may_act_in_org(auth, str(req_org)):
+    if req_org and not may_act_in_org(auth, req_org):
         # result-with-isError, not a JSON-RPC error frame (clients
         # drop conversation state on those) — so the agent reads
         # the message and can recover. Ledgered in the token's org, never
@@ -334,14 +334,14 @@ async def _screen_tool_call(
                 "structuredContent": {"error": msg, "code": "ORG_MISMATCH"},
             },
         )
-    target_org = str(req_org or auth.org)
+    target_org = req_org or auth.org
     if not req_ns:
         return None
     from server.core.errors import LoomServerError
 
     try:
         return await _screen_namespace(
-            req, tool_name, args, auth, target_org, str(req_ns), consumer
+            req, tool_name, args, auth, target_org, req_ns, consumer
         )
     except LoomServerError as e:
         # A read the check could not make past its cache (a 503): counted
