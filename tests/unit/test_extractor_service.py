@@ -422,10 +422,23 @@ async def test_a_child_can_start_no_process(
 
 # Calls the child's filter refuses beyond the socket families, by architecture:
 # io_uring_setup (an io_uring can open a socket), ptrace (PEEKTEXT on pid 0 is
-# ESRCH unfiltered), process_vm_readv and pidfd_getfd (EINVAL and EBADF unfiltered).
+# ESRCH unfiltered), process_vm_readv/writev and pidfd_getfd (EINVAL, EFAULT or
+# EBADF unfiltered).
 _PROBES = {
-    "x86_64": {"io_uring": 425, "ptrace": 101, "vm_readv": 310, "pidfd_getfd": 438},
-    "aarch64": {"io_uring": 425, "ptrace": 117, "vm_readv": 270, "pidfd_getfd": 438},
+    "x86_64": {
+        "io_uring": 425,
+        "ptrace": 101,
+        "vm_readv": 310,
+        "vm_writev": 311,
+        "pidfd_getfd": 438,
+    },
+    "aarch64": {
+        "io_uring": 425,
+        "ptrace": 117,
+        "vm_readv": 270,
+        "vm_writev": 271,
+        "pidfd_getfd": 438,
+    },
 }
 
 

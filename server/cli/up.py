@@ -272,14 +272,15 @@ def compose_up(
     env_file: str,
     *,
     build: bool,
-    recreate_service: str = "",
+    recreate: tuple[str, ...] = (),
 ) -> int:
     tail = ["up", "-d", *(["--build"] if build else [])]
-    if recreate_service:
+    if recreate:
         # Compose may consider a manually restarted container current even after its
-        # env file changed.  Recreate only Loom so provider/auth changes take effect
+        # env file changed.  Recreate only Loom (and its extractor, which a stack
+        # started before it existed lacks) so provider/auth changes take effect
         # without disrupting the durable ClickHouse service.
-        tail.extend(["--force-recreate", "--no-deps", recreate_service])
+        tail.extend(["--force-recreate", "--no-deps", *recreate])
     argv = compose_argv(root, compose_files, env_file, *tail)
     env = dict(os.environ)
     # Importing Loom may have loaded the caller checkout's .env into os.environ.
@@ -641,12 +642,14 @@ def _cmd_up(args: argparse.Namespace) -> int:
     # A healthy container can still have stale environment or Compose settings.  Always
     # reconcile it, but avoid an image build on the ordinary idempotent rerun.
     build = args.rebuild or (not already_up and not args.no_build)
+    texts = [(root / f).read_text(encoding="utf-8", errors="replace") for f in files]
+    extractor = any(re.search(r"^  extractor:\s*$", t, re.MULTILINE) for t in texts)
     rc = compose_up(
         root,
         files,
         args.env_file,
         build=build,
-        recreate_service=service if already_up else "",
+        recreate=((service, "extractor") if extractor else (service,)) if already_up else (),
     )
     if rc != 0:
         print(f"✗ docker compose up exited {rc}", file=sys.stderr)

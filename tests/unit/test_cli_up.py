@@ -343,6 +343,19 @@ def test_up_rerun_on_running_stack_reconciles_without_rebuilding(root: Path, sta
     assert out.count("http://localhost:7777/") >= 2
 
 
+def test_up_rerun_on_a_stack_from_before_the_extractor_starts_it(root: Path, stack) -> None:
+    """A stack started before the extractor service lacks its container: a rerun
+    recreates it with loom, never ClickHouse."""
+    compose = root / "dev" / "docker-compose.dev.yml"
+    compose.write_text(
+        COMPOSE_TEXT.replace("volumes:\n", "  extractor:\n    image: x\nvolumes:\n", 1)
+    )
+    fake = stack([(200, OK_BODY), (200, OK_BODY)])
+    assert up._cmd_up(_args(root)) == 0
+    (call,) = [c for c in fake.calls if c[:2] == ["docker", "compose"]]
+    assert call[-6:] == ["up", "-d", "--force-recreate", "--no-deps", "loom", "extractor"]
+
+
 def test_up_rebuild_runs_compose_even_when_healthy(root: Path, stack) -> None:
     fake = stack([(200, OK_BODY)])
     assert up._cmd_up(_args(root, rebuild=True)) == 0
