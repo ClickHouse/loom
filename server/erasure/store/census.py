@@ -504,6 +504,11 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "an encrypted password, the tracker namespaces reading it) — deployment configuration "
         "keyed by (org, name), holding no memory or record content; retired by active=false."
     ),
+    "loom.knowledge_sources": (
+        "A document source a repository's maintainer registered (kind, folder ids, an "
+        "encrypted credential) — deployment configuration keyed by (org, namespace, name), "
+        "holding no memory or document content; retired by active=false."
+    ),
     "loom.task_inboxes": (
         "An inbox a namespace admin registered (owner agent, posters, "
         "accepted disclosure, lease defaults) — configuration keyed by (org, inbox), "

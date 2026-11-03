@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 173 tables + 19 materialized views.
+-- Counts: 174 tables + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (173)
+-- Tables (174)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -1855,6 +1855,27 @@ CREATE TABLE IF NOT EXISTS loom.keyring_readers
 ENGINE = MergeTree
 ORDER BY (seen_at, process)
 TTL toDateTime(seen_at) + toIntervalDay(1)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
+-- loom.knowledge_sources
+CREATE TABLE IF NOT EXISTS loom.knowledge_sources
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `name` LowCardinality(String),
+    `source_id` UUID,
+    `kind` LowCardinality(String),
+    `config_json` String DEFAULT '{}',
+    `credential_enc` String DEFAULT '',
+    `created_by` String DEFAULT '',
+    `active` Bool DEFAULT true,
+    `pending_delete` Bool DEFAULT false,
+    `created_at` DateTime DEFAULT now(),
+    `updated_at` DateTime DEFAULT now(),
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, name)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.learnings_queue

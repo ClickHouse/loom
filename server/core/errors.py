@@ -79,6 +79,14 @@ class PreconditionFailedError(LoomServerError):
         super().__init__(message, current_sha256=current_sha256)
 
 
+class SourceReplacedError(LoomServerError):
+    """409 — the document source was removed and added again as another source
+    during the call (a rotate's probe, a sync request); act on the current one."""
+
+    code = "SOURCE_REPLACED"
+    status_code = 409
+
+
 class ReadsLlmFreeError(LoomServerError):
     """409 — `memory.ask` or `code.ask` asked for a model's answer while
     `LOOM_READS_LLM_FREE` is on. Resending the same request never succeeds;
@@ -117,11 +125,12 @@ class GrantBusyError(LoomServerError):
 
 class OverloadedError(LoomServerError):
     """503 — too busy, retry: the ClickHouse pool or its streams, the document
-    bucket's transfers or streams, an override's lock or a conversation delete or
-    compaction stayed contended. The pool: every pooled connection was busy
-    past `ch_pool_wait_ms`; the lock: a sibling held it past its wait; a conversation
-    delete or compaction: writes to the thread's embeddings kept landing. A retry is
-    safe; `retry_after_s` is the hint the SDK's retry layer honours."""
+    bucket's transfers or streams, an override's lock, a namespace's document-source
+    lease, or a conversation delete or compaction stayed contended. The pool: every
+    pooled connection was busy past `ch_pool_wait_ms`; the lock or lease: a sibling
+    held it past its wait; a conversation delete or compaction: writes to the
+    thread's embeddings kept landing. A retry is safe; `retry_after_s` is the hint
+    the SDK's retry layer honours."""
 
     code = "OVERLOADED"
     status_code = 503

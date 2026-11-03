@@ -421,8 +421,16 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
             "entry there and swap — the page cannot retire an operator-owned index",
             code="REPO_FROM_CONFIG",
         )
+    from server.knowledge.app.sources import deactivate_namespace_sources, sources_lease
+
+    # The document sources registered on this namespace stop with the repository. Under
+    # the lease every source write of the namespace takes, an add runs wholly before
+    # (and is retired here) or after (and sees the repository gone). Sources first, so
+    # a call that fails between the two leaves the repository registered to retry.
     ch = get_client()
-    registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
+    async with sources_lease(input.org, input.namespace):
+        sources_off = await deactivate_namespace_sources(input.org, input.namespace)
+        registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
     await reg.refresh_db_repos(force=True)
     from server.identity.app.namespace import handle_namespace_delete
 
@@ -448,6 +456,7 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
         purged_tables=len(tables),
         erasure_id=erasure_id,
         mirror_removed=mirror_removed,
+        sources_deactivated=sources_off,
     )
 
 

@@ -330,6 +330,9 @@ class CodeRepoRemoveOutput(BaseModel):
     erasure_id: str = ""
     # True when the bare mirror was deleted because no other branch of the repository uses it.
     mirror_removed: bool = False
+    # The document sources registered on the namespace (knowledge.source.add), now inactive
+    # with their credentials cleared.
+    sources_deactivated: list[str] = Field(default_factory=list)
 
 
 class CodeRepoAddOutput(BaseModel):

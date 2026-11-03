@@ -170,6 +170,13 @@ OpName = Literal[
     "knowledge.outline",
     "knowledge.reads",
     "knowledge.search",
+    "knowledge.source.add",
+    "knowledge.source.check",
+    "knowledge.source.inspect",
+    "knowledge.source.list",
+    "knowledge.source.remove",
+    "knowledge.source.rotate",
+    "knowledge.source.sync_now",
     "knowledge.synthesize",
     "knowledge.update_metadata",
     "knowledge.upsert",
@@ -513,6 +520,13 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.outline",
     "knowledge.reads",
     "knowledge.search",
+    "knowledge.source.add",
+    "knowledge.source.check",
+    "knowledge.source.inspect",
+    "knowledge.source.list",
+    "knowledge.source.remove",
+    "knowledge.source.rotate",
+    "knowledge.source.sync_now",
     "knowledge.synthesize",
     "knowledge.update_metadata",
     "knowledge.upsert",
@@ -2296,6 +2310,90 @@ OPS: dict[str, OpSpec] = {
         250,
         False,
         True,
+    ),
+    "knowledge.source.add": OpSpec(
+        "knowledge.source.add",
+        "KnowledgeSourceAddInput",
+        "KnowledgeSourceAddBody",
+        "KnowledgeSourceAddOutput",
+        False,
+        "admin",
+        "experimental",
+        30000,
+        True,
+        False,
+    ),
+    "knowledge.source.check": OpSpec(
+        "knowledge.source.check",
+        "KnowledgeSourceCheckInput",
+        "KnowledgeSourceCheckBody",
+        "KnowledgeSourceCheckOutput",
+        True,
+        "admin",
+        "experimental",
+        30000,
+        False,
+        False,
+    ),
+    "knowledge.source.inspect": OpSpec(
+        "knowledge.source.inspect",
+        "KnowledgeSourceInspectInput",
+        "KnowledgeSourceInspectBody",
+        "KnowledgeSourceInspectOutput",
+        True,
+        "viewer",
+        "experimental",
+        400,
+        False,
+        True,
+    ),
+    "knowledge.source.list": OpSpec(
+        "knowledge.source.list",
+        "KnowledgeSourceListInput",
+        "KnowledgeSourceListBody",
+        "KnowledgeSourceListOutput",
+        True,
+        "viewer",
+        "experimental",
+        300,
+        False,
+        True,
+    ),
+    "knowledge.source.remove": OpSpec(
+        "knowledge.source.remove",
+        "KnowledgeSourceRemoveInput",
+        "KnowledgeSourceRemoveBody",
+        "KnowledgeSourceRemoveOutput",
+        False,
+        "admin",
+        "experimental",
+        400,
+        True,
+        False,
+    ),
+    "knowledge.source.rotate": OpSpec(
+        "knowledge.source.rotate",
+        "KnowledgeSourceRotateInput",
+        "KnowledgeSourceRotateBody",
+        "KnowledgeSourceRotateOutput",
+        False,
+        "admin",
+        "experimental",
+        30000,
+        True,
+        False,
+    ),
+    "knowledge.source.sync_now": OpSpec(
+        "knowledge.source.sync_now",
+        "KnowledgeSourceSyncNowInput",
+        "KnowledgeSourceSyncNowBody",
+        "KnowledgeSourceSyncNowOutput",
+        True,
+        "admin",
+        "experimental",
+        300,
+        True,
+        False,
     ),
     "knowledge.synthesize": OpSpec(
         "knowledge.synthesize",
@@ -6693,6 +6791,7 @@ class CodeRepoRemoveOutput(TypedDict, total=False):
     purged_tables: Required[int]
     erasure_id: NotRequired[str]
     mirror_removed: NotRequired[bool]
+    sources_deactivated: NotRequired[list[str]]
 
 
 class CodeRepoSetAccessInput(TypedDict, total=False):
@@ -10056,6 +10155,210 @@ class SearchHit(TypedDict, total=False):
     agent: NotRequired[str]
     session_id: NotRequired[str]
     source_class: NotRequired[str]
+
+
+class KnowledgeSourceAddInput(TypedDict, total=False):
+    "Register a document source on a repository's trunk code namespace: a kind,"
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    kind: Required[str]
+    config: Required[dict[str, Any]]
+    credential: Required[str]
+    dry_run: NotRequired[bool]
+
+
+class KnowledgeSourceAddBody(TypedDict, total=False):
+    "Register a document source on a repository's trunk code namespace: a kind,"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    kind: Required[str]
+    config: Required[dict[str, Any]]
+    credential: Required[str]
+    dry_run: NotRequired[bool]
+
+
+class KnowledgeSourceAddOutput(TypedDict, total=False):
+    name: Required[str]
+    kind: Required[str]
+    namespace: Required[str]
+    config: NotRequired[dict[str, Any]]
+    probe: NotRequired["KnowledgeSourceProbe"]
+    dry_run: NotRequired[bool]
+
+
+class KnowledgeSourceProbe(TypedDict, total=False):
+    "What a probe that succeeded found; a probe that fails refuses the call."
+
+    documents: NotRequired[int]
+    more: NotRequired[bool]
+    sample: NotRequired[list[str]]
+
+
+class KnowledgeSourceCheckInput(TypedDict, total=False):
+    "Probe a registered document source with its stored credential now (folder"
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+
+
+class KnowledgeSourceCheckBody(TypedDict, total=False):
+    "Probe a registered document source with its stored credential now (folder"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+
+
+class KnowledgeSourceCheckOutput(TypedDict, total=False):
+    name: Required[str]
+    reachable: NotRequired[bool]
+    documents: NotRequired[int]
+    more: NotRequired[bool]
+    sample: NotRequired[list[str]]
+    summary: NotRequired[str]
+    checked_at: NotRequired[str]
+
+
+class KnowledgeSourceInspectInput(TypedDict, total=False):
+    "One registered document source: its config, its last sync and the"
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+
+
+class KnowledgeSourceInspectBody(TypedDict, total=False):
+    "One registered document source: its config, its last sync and the"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+
+
+class KnowledgeSourceInspectOutput(TypedDict, total=False):
+    name: Required[str]
+    kind: Required[str]
+    config: NotRequired[dict[str, Any]]
+    created_by: NotRequired[str]
+    created_at: NotRequired[str]
+    sync: NotRequired["KnowledgeSourceSync"]
+    documents: NotRequired[list["KnowledgeSourceDocument"]]
+
+
+class KnowledgeSourceSync(TypedDict, total=False):
+    "A source's sync state as this build records it: the last sync request."
+
+    requested_at: NotRequired[str]
+
+
+class KnowledgeSourceDocument(TypedDict, total=False):
+    source_uri: Required[str]
+    title: NotRequired[str]
+    source_revision: NotRequired[str]
+    ingested_at: NotRequired[str]
+
+
+class KnowledgeSourceListInput(TypedDict, total=False):
+    "The document sources registered on a repository's code namespace, with each"
+
+    org: Required[str]
+    namespace: Required[str]
+
+
+class KnowledgeSourceListBody(TypedDict, total=False):
+    "The document sources registered on a repository's code namespace, with each"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class KnowledgeSourceListOutput(TypedDict, total=False):
+    sources: NotRequired[list["KnowledgeSourceEntry"]]
+
+
+class KnowledgeSourceEntry(TypedDict, total=False):
+    name: Required[str]
+    kind: Required[str]
+    config: NotRequired[dict[str, Any]]
+    created_by: NotRequired[str]
+    created_at: NotRequired[str]
+    sync: NotRequired["KnowledgeSourceSync"]
+
+
+class KnowledgeSourceRemoveInput(TypedDict, total=False):
+    "Retire a registered document source: its registry row goes inactive and its"
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    confirm: Required[str]
+    delete_documents: NotRequired[bool]
+
+
+class KnowledgeSourceRemoveBody(TypedDict, total=False):
+    "Retire a registered document source: its registry row goes inactive and its"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    confirm: Required[str]
+    delete_documents: NotRequired[bool]
+
+
+class KnowledgeSourceRemoveOutput(TypedDict, total=False):
+    name: Required[str]
+    documents_pending: NotRequired[int]
+
+
+class KnowledgeSourceRotateInput(TypedDict, total=False):
+    "Replace a registered document source's credential. A namespace admin may;"
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    credential: Required[str]
+
+
+class KnowledgeSourceRotateBody(TypedDict, total=False):
+    "Replace a registered document source's credential. A namespace admin may;"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    credential: Required[str]
+
+
+class KnowledgeSourceRotateOutput(TypedDict, total=False):
+    name: Required[str]
+    probe: NotRequired["KnowledgeSourceProbe"]
+    rotated_at: NotRequired[str]
+
+
+class KnowledgeSourceSyncNowInput(TypedDict, total=False):
+    "Record a request to sync one document source in its sync state, for the sync"
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    full: NotRequired[bool]
+
+
+class KnowledgeSourceSyncNowBody(TypedDict, total=False):
+    "Record a request to sync one document source in its sync state, for the sync"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    full: NotRequired[bool]
+
+
+class KnowledgeSourceSyncNowOutput(TypedDict, total=False):
+    name: Required[str]
 
 
 class KnowledgeSynthesizeInput(TypedDict, total=False):

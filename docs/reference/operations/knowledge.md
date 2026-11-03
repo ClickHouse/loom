@@ -256,6 +256,145 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 | `embedding_model` | `str` | Embedding model the query was embedded with; only chunks of this model are searched. |
 | `namespaces_skipped` | `list[str]` | Namespaces of the caller an all_mine search did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
 
+## `knowledge.source.add`
+
+Register a document source on a repository's trunk code namespace: a kind, the ids it reads and a read-only credential.
+
+`POST /v1/knowledge.source.add` · MCP `loom_knowledge_source_add` · role `admin` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `name` | `str` | required | Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. |
+| `kind` | `str` | required | The source kind; `gdrive` is the one kind served. |
+| `config` | `dict[str, Any]` | required | The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}. |
+| `credential` | `str` | required | The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only); stored encrypted, never returned. |
+| `dry_run` | `bool` | `False` | Probe and write nothing. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The registered source's name, normalised. |
+| `kind` | `str` | The source kind, normalised. |
+| `namespace` | `str` | The repository's trunk code namespace the source was registered on. |
+| `config` | `dict[str, Any]` | The config as stored. |
+| `probe` | `KnowledgeSourceProbe` | What the probe with the credential found. |
+| `dry_run` | `bool` | True when the call only probed. |
+
+## `knowledge.source.check`
+
+Probe a registered document source with its stored credential now (folder checks and a listing), nothing written.
+
+`POST /v1/knowledge.source.check` · MCP `loom_knowledge_source_check` · role `admin` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `name` | `str` | required | The source name. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The source checked. |
+| `reachable` | `bool` | False when the probe failed; `summary` says why. |
+| `documents` | `int` | Documents the source lists now, the first 1000 at most. |
+| `more` | `bool` | True when more than 1000 documents match, so `documents` is a lower bound. |
+| `sample` | `list[str]` | Up to five document titles, most recently changed first. |
+| `summary` | `str` | One line: what was found, or why it failed. |
+| `checked_at` | `str` | When the probe ran, ISO UTC. |
+
+## `knowledge.source.inspect`
+
+One registered document source: its config, its last sync and the documents it wrote (the 200 most recently ingested).
+
+`POST /v1/knowledge.source.inspect` · MCP `loom_knowledge_source_inspect` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `name` | `str` | required | The source name. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The source's name. |
+| `kind` | `str` | The source's kind. |
+| `config` | `dict[str, Any]` | The ids and filters the source reads; never a credential. |
+| `created_by` | `str` | Token subject of the maintainer who added it; '' with auth off. |
+| `created_at` | `str` | When it was added, ISO UTC. |
+| `sync` | `KnowledgeSourceSync` | The source's sync state: the last sync request. |
+| `documents` | `list[KnowledgeSourceDocument]` | The source's live documents, most recently ingested first, at most 200. |
+
+## `knowledge.source.list`
+
+The document sources registered on a repository's code namespace, with each one's last sync request.
+
+`POST /v1/knowledge.source.list` · MCP `loom_knowledge_source_list` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `sources` | `list[KnowledgeSourceEntry]` | The namespace's active sources, by name. |
+
+## `knowledge.source.remove`
+
+Retire a registered document source: its registry row goes inactive and its credential is cleared.
+
+`POST /v1/knowledge.source.remove` · MCP `loom_knowledge_source_remove` · role `admin` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `name` | `str` | required | The source name. |
+| `confirm` | `str` | required | Type the source name to confirm. |
+| `delete_documents` | `bool` | `False` | Record a request to retire the source's documents (default keep them). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The source retired. |
+| `documents_pending` | `int` | Live documents the recorded delete request covers (none retired yet), 0 without `delete_documents`. |
+
+## `knowledge.source.rotate`
+
+Replace a registered document source's credential.
+
+`POST /v1/knowledge.source.rotate` · MCP `loom_knowledge_source_rotate` · role `admin` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `name` | `str` | required | The source name. |
+| `credential` | `str` | required | The replacement credential (gdrive: a service account's JSON key); stored encrypted, never returned. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The source whose credential was replaced. |
+| `probe` | `KnowledgeSourceProbe` | What the probe with the new credential found. |
+| `rotated_at` | `str` | When the credential was replaced, ISO UTC. |
+
+## `knowledge.source.sync_now`
+
+Record a request to sync one document source in its sync state, for the sync worker (not in this build) to start its next pass with.
+
+`POST /v1/knowledge.source.sync_now` · MCP `loom_knowledge_source_sync_now` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `name` | `str` | required | The source name. |
+| `full` | `bool` | `False` | Ask for a pass that lists every document, not only those changed since the last pass. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The source the request was recorded for. |
+
 ## `knowledge.synthesize`
 
 Complete a task over WHOLE documents, not a search slice: every active chunk of the named documents is read in order, in windows that respect section boundaries, each window is noted once, and the…

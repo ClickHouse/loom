@@ -507,6 +507,8 @@
  "knowledge_repo_docs_timeout_s": 1.5,
  "knowledge_search_fanout_kinds": "memory,collection,personal",
  "knowledge_search_max_namespaces": 10000,
+ "knowledge_source_probe_timeout_s": 20.0,
+ "knowledge_sources_max_per_namespace": 8,
  "langfuse_capture_io_level": "off",
  "langfuse_circuit_cooldown_s": 30.0,
  "langfuse_circuit_failure_threshold": 5,

@@ -1290,6 +1290,7 @@ export interface CodeRepoRemoveOutput {
   purged_tables: number;
   erasure_id?: string;
   mirror_removed?: boolean;
+  sources_deactivated?: string[];
 }
 
 export interface CodeRepoSetAccessInput {
@@ -3430,6 +3431,157 @@ export interface KnowledgeSearchOutput {
   results: SearchHit[];
   embedding_model: string;
   namespaces_skipped?: string[];
+}
+
+export interface KnowledgeSourceAddInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+  /** Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. */
+  name: string;
+  /** The source kind; `gdrive` is the one kind served. */
+  kind: string;
+  /** The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}. */
+  config: Record<string, unknown>;
+  /** The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only); stored encrypted, never returned. */
+  credential: string;
+  /** Probe and write nothing. */
+  dry_run?: boolean;
+}
+
+export interface KnowledgeSourceProbe {
+  documents?: number;
+  more?: boolean;
+  sample?: string[];
+}
+
+export interface KnowledgeSourceAddOutput {
+  name: string;
+  kind: string;
+  namespace: string;
+  config?: Record<string, unknown>;
+  probe?: KnowledgeSourceProbe;
+  dry_run?: boolean;
+}
+
+export interface KnowledgeSourceCheckInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+  /** The source name. */
+  name: string;
+}
+
+export interface KnowledgeSourceCheckOutput {
+  name: string;
+  reachable?: boolean;
+  documents?: number;
+  more?: boolean;
+  sample?: string[];
+  summary?: string;
+  checked_at?: string;
+}
+
+export interface KnowledgeSourceInspectInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+  /** The source name. */
+  name: string;
+}
+
+export interface KnowledgeSourceSync {
+  requested_at?: string;
+}
+
+export interface KnowledgeSourceDocument {
+  source_uri: string;
+  title?: string;
+  source_revision?: string;
+  ingested_at?: string;
+}
+
+export interface KnowledgeSourceInspectOutput {
+  name: string;
+  kind: string;
+  config?: Record<string, unknown>;
+  created_by?: string;
+  created_at?: string;
+  sync?: KnowledgeSourceSync;
+  documents?: KnowledgeSourceDocument[];
+}
+
+export interface KnowledgeSourceListInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+}
+
+export interface KnowledgeSourceEntry {
+  name: string;
+  kind: string;
+  config?: Record<string, unknown>;
+  created_by?: string;
+  created_at?: string;
+  sync?: KnowledgeSourceSync;
+}
+
+export interface KnowledgeSourceListOutput {
+  sources?: KnowledgeSourceEntry[];
+}
+
+export interface KnowledgeSourceRemoveInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+  /** The source name. */
+  name: string;
+  /** Type the source name to confirm. */
+  confirm: string;
+  /** Record a request to retire the source's documents (default keep them). */
+  delete_documents?: boolean;
+}
+
+export interface KnowledgeSourceRemoveOutput {
+  name: string;
+  documents_pending?: number;
+}
+
+export interface KnowledgeSourceRotateInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+  /** The source name. */
+  name: string;
+  /** The replacement credential (gdrive: a service account's JSON key); stored encrypted, never returned. */
+  credential: string;
+}
+
+export interface KnowledgeSourceRotateOutput {
+  name: string;
+  probe?: KnowledgeSourceProbe;
+  rotated_at?: string;
+}
+
+export interface KnowledgeSourceSyncNowInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+  /** The source name. */
+  name: string;
+  /** Ask for a pass that lists every document, not only those changed since the last pass. */
+  full?: boolean;
+}
+
+export interface KnowledgeSourceSyncNowOutput {
+  name: string;
 }
 
 export interface KnowledgeSynthesizeInput {
@@ -9349,6 +9501,13 @@ export type OpName =
   | "knowledge.outline"
   | "knowledge.reads"
   | "knowledge.search"
+  | "knowledge.source.add"
+  | "knowledge.source.check"
+  | "knowledge.source.inspect"
+  | "knowledge.source.list"
+  | "knowledge.source.remove"
+  | "knowledge.source.rotate"
+  | "knowledge.source.sync_now"
   | "knowledge.synthesize"
   | "knowledge.update_metadata"
   | "knowledge.upsert"
@@ -9692,6 +9851,13 @@ export interface OpMap {
   "knowledge.outline": { input: KnowledgeOutlineInput; output: KnowledgeOutlineOutput };
   "knowledge.reads": { input: KnowledgeReadsInput; output: KnowledgeReadsOutput };
   "knowledge.search": { input: KnowledgeSearchInput; output: KnowledgeSearchOutput };
+  "knowledge.source.add": { input: KnowledgeSourceAddInput; output: KnowledgeSourceAddOutput };
+  "knowledge.source.check": { input: KnowledgeSourceCheckInput; output: KnowledgeSourceCheckOutput };
+  "knowledge.source.inspect": { input: KnowledgeSourceInspectInput; output: KnowledgeSourceInspectOutput };
+  "knowledge.source.list": { input: KnowledgeSourceListInput; output: KnowledgeSourceListOutput };
+  "knowledge.source.remove": { input: KnowledgeSourceRemoveInput; output: KnowledgeSourceRemoveOutput };
+  "knowledge.source.rotate": { input: KnowledgeSourceRotateInput; output: KnowledgeSourceRotateOutput };
+  "knowledge.source.sync_now": { input: KnowledgeSourceSyncNowInput; output: KnowledgeSourceSyncNowOutput };
   "knowledge.synthesize": { input: KnowledgeSynthesizeInput; output: KnowledgeSynthesizeOutput };
   "knowledge.update_metadata": { input: KnowledgeUpdateMetadataInput; output: KnowledgeUpdateMetadataOutput };
   "knowledge.upsert": { input: KnowledgeUpsertInput; output: KnowledgeUpsertOutput };
@@ -10035,6 +10201,13 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.outline", group: "knowledge", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "knowledge.reads", group: "knowledge", method: "reads", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },
   { name: "knowledge.search", group: "knowledge", method: "search", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 250, audit: false, readOnly: true },
+  { name: "knowledge.source.add", group: "knowledge", method: "sourceAdd", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "knowledge.source.check", group: "knowledge", method: "sourceCheck", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
+  { name: "knowledge.source.inspect", group: "knowledge", method: "sourceInspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
+  { name: "knowledge.source.list", group: "knowledge", method: "sourceList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
+  { name: "knowledge.source.remove", group: "knowledge", method: "sourceRemove", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
+  { name: "knowledge.source.rotate", group: "knowledge", method: "sourceRotate", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "knowledge.source.sync_now", group: "knowledge", method: "sourceSyncNow", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 300, audit: true, readOnly: false },
   { name: "knowledge.synthesize", group: "knowledge", method: "synthesize", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
   { name: "knowledge.update_metadata", group: "knowledge", method: "updateMetadata", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: true, readOnly: false },
   { name: "knowledge.upsert", group: "knowledge", method: "upsert", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: false },
@@ -10250,4 +10423,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 340;
+export const GENERATED_OP_COUNT = 347;
