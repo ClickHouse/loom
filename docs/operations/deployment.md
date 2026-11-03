@@ -762,11 +762,12 @@ and what it leaves:
   and ask again about once a minute. The session-start primer then adds a code-index
   line that points the agent at the `loom_code_*` tools; set `LOOM_CODE_MAP=false` in
   the plugin's environment to leave it out.
-- The switch stops no worker: each code and tracker worker has its own `LOOM_*_ENABLED`
-  setting. With no repository and no tracker source configured, they find nothing to do:
-  each pass reads a few rows and ends. The git mirror warm-up does not run, and boot
-  probes the repository-job sandbox only when `LOOM_CODE_INGEST_ENABLED` or
-  `LOOM_CODE_SANDBOX_REQUIRED` is on.
+- The switch also stops the coverage-watch workers (`code_coverage_notify`,
+  `code_coverage_import`). Every other code and tracker worker has its own
+  `LOOM_*_ENABLED` setting and keeps running; with no repository and no tracker source
+  configured, they find nothing to do: each pass reads a few rows and ends. The git mirror
+  warm-up does not run, and boot probes the repository-job sandbox only when
+  `LOOM_CODE_INGEST_ENABLED` or `LOOM_CODE_SANDBOX_REQUIRED` is on.
 - `memory.*`, `knowledge.*`, `conversation.*`, `context.pack` and `search.query`
   (`loom_search` over MCP) serve as on any deployment; `search.query` has no code or
   tracker results to add.
