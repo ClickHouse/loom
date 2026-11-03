@@ -397,6 +397,49 @@ def test_a_class_wins_over_its_constructor_and_homonyms_link_nothing() -> None:
     assert dx.definition_path([]) == ""
 
 
+@pytest.mark.parametrize(
+    ("path", "governed"),
+    [
+        ("frontend/src/views/Recent.mentor.test.tsx", False),
+        ("tests/unit/test_decision_ops.py", False),
+        ("src/Interpreters/tests/gtest_hash_join.cpp", False),
+        ("internal/operator/reconcile_test.go", False),
+        ("docs/reference/configuration.md", False),
+        ("frontend/src/__tests__/api.ts", False),
+        ("frontend/src/__mocks__/api.ts", False),
+        ("frontend/src/graph.spec.ts", False),
+        ("src/join/tests.rs", False),
+        ("frontend/e2e/fixtures.ts", False),
+        ("src/Common/hash_unittest.cc", False),
+        ("internal/mocks/reconciler.go", False),
+        ("src/test/java/x/FooTest.java", False),
+        ("lib/src/testFixtures/java/Fake.java", False),
+        ("app/src/integrationTest/java/X.java", False),
+        ("cypress/support/commands.ts", False),
+        ("shop/orders/tests.py", False),
+        ("conftest.py", False),
+        ("internal/controller/mock_reconciler.go", False),
+        ("internal/controller/reconciler_mock.go", False),
+        ("internal/testdata/cluster.go", False),
+        # A spec directory is code: a target-spec module, a protocol spec.
+        ("compiler/rustc_target/src/spec/mod.rs", True),
+        ("specs/CommitProtocol.tla", True),
+        ("docs/guide.markdown", False),
+        (".cursor/rules/style.mdc", False),
+        # Code whose module name only mentions tests, and a CMake file the index reads as code.
+        ("CMakeLists.txt", True),
+        ("server/code/domain/index/test_gate.py", True),
+        ("src/main/java/x/LoadTest.java", True),
+        # An RSpec file is a test; a `*_test` module reads as one too.
+        ("spec/models/user_spec.rb", False),
+        ("src/Common/self_test.c", False),
+        ("src/Interpreters/HashJoin/HashJoin.h", True),
+    ],
+)
+def test_a_decision_governs_code_not_a_test_or_a_markdown_page(path: str, governed: bool) -> None:
+    assert dx.governs(path) is governed
+
+
 # ------------------------------------------------------------------ reconcile
 
 
@@ -4585,3 +4628,83 @@ async def test_into_source_on_a_branch_of_the_same_repository_stays_tagged_there
     (inp,) = world.recorded
     assert inp.namespace == "ns" and repo_tag(remote) in inp.tags
     assert looked_up == [TRUNK]
+
+
+@pytest.mark.asyncio
+async def test_a_name_only_a_test_or_a_page_defines_links_nothing(monkeypatch) -> None:
+    c = _candidate(
+        mentions=[
+            "memory_ttl",
+            "ExternalDistinctTransform",
+            "FakeSpiller",
+            "fake_store",
+            "page_and_test",
+            "OnePageName",
+        ]
+    )
+    world = _World(monkeypatch, [c])
+    from server.knowledge.app import document_reads
+
+    body = BODY + " `memory_ttl` caps it. FakeSpiller, `fake_store` and `page_and_test` stand in."
+    body += " OnePageName is a heading."
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, body, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    # Two pages, no code: no file to pick, still a setting.
+    world.symbols["memory_ttl"] = [
+        ("docs/reference/configuration.md", "memory_ttl"),
+        ("docs/features/memory.md", "memory_ttl"),
+    ]
+    world.symbols["FakeSpiller"] = [("tests/unit/fakes.py", "FakeSpiller")]
+    world.symbols["fake_store"] = [("tests/unit/fakes.py", "fake_store")]
+    # One page, no code: no file.
+    world.symbols["OnePageName"] = [("docs/reference/configuration.md", "OnePageName")]
+    # A page and a test (a fixture named after the setting): the page makes it a setting.
+    world.symbols["page_and_test"] = [
+        ("docs/features/memory.md", "page_and_test"),
+        ("tests/unit/fakes.py", "page_and_test"),
+    ]
+    # A name in a test and in one code file stays ambiguous: dropping the test makes no link.
+    world.symbols["ExternalDistinctTransform"] = [
+        ("tests/unit/fake_transform.py", "ExternalDistinctTransform"),
+        (HEADER, "DB::ExternalDistinctTransform"),
+    ]
+    report = await _run(dry_run=True)
+    (rec,) = report.records
+    assert sorted(rec.signals) == [
+        "ExternalDistinctTransform: camelcase, no single definition",
+        "FakeSpiller: camelcase, only a test or a page defines it",
+        "OnePageName: camelcase, only a test or a page defines it",
+        "fake_store: qualified, only a test or a page defines it",
+        "memory_ttl: qualified, only a test or a page defines it; reported as a setting",
+        "page_and_test: qualified, only a test or a page defines it; reported as a setting",
+    ]
+    # A test's snake_case name is a helper, not a setting; the sorted list is the whole list.
+    assert sorted(rec.unresolved) == [
+        "ExternalDistinctTransform (several definitions)",
+        "FakeSpiller (only tests or pages)",
+        "OnePageName (only tests or pages)",
+        "memory_ttl (setting)",
+        "page_and_test (setting)",
+    ]
+    assert rec.body["files"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_test_class_beside_a_code_constructor_links_nothing(monkeypatch) -> None:
+    c = _candidate(mentions=["ExternalDistinctTransform"])
+    world = _World(monkeypatch, [c])
+    # The class only in a test, its constructor in code: the class-first pick would link the test.
+    world.symbols["ExternalDistinctTransform"] = [
+        ("tests/fake_transform.h", "DB::ExternalDistinctTransform"),
+        (
+            "src/Processors/ExternalDistinctTransform.cpp",
+            "DB::ExternalDistinctTransform::ExternalDistinctTransform",
+        ),
+    ]
+    report = await _run(dry_run=True)
+    (rec,) = report.records
+    assert rec.body["files"] == []
+    assert "ExternalDistinctTransform (several definitions)" in rec.unresolved

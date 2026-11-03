@@ -49,6 +49,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from server.auth.authz import row_in_scope
+from server.code.domain.extract.lang_markdown import is_markdown_path
 from server.core.errors import LoomServerError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_decision import DecisionRecordInput
@@ -1095,8 +1096,9 @@ async def resolve_mentions(
     org: str, namespace: str, cand: dx.Candidate, texts: list[str]
 ) -> tuple[list[str], list[str], list[str], bool]:
     """(files, signal lines, unresolved names, complete): each code name the document text
-    holds, looked up with code.symbol; a name with exactly one defining file adds that
-    file. `complete` is False when a lookup could not read the index."""
+    holds, looked up with code.symbol; a name with exactly one defining file adds that file,
+    unless the file is a test or a Markdown page. `complete` is False when a lookup could not
+    read the index."""
     mentions = dx.sort_mentions(cand.mentions, "\n".join(texts))
     files: list[str] = []
     signals: list[str] = []
@@ -1108,7 +1110,18 @@ async def resolve_mentions(
         if definitions is None:
             complete = False
             signals.append(f"{name}: {signal}, unknown (code index unavailable)")
-        elif path:
+        elif definitions and not any(dx.governs(p) for p, _ in definitions):
+            line = f"{name}: {signal}, only a test or a page defines it"
+            if not dx.looks_like_setting(name):
+                # A test or a page names code the index does not show: a human adds the file.
+                unresolved.append(f"{name} (only tests or pages)")
+            elif any(is_markdown_path(p) for p, _ in definitions):
+                # A page writes about a setting (a test fixture may share its name).
+                unresolved.append(f"{name} (setting)")
+                line += "; reported as a setting"
+            # else: a snake_case name only tests define is a helper.
+            signals.append(line)
+        elif path and dx.governs(path):
             signals.append(f"{name}: {signal}, exact -> {path}")
             if path not in files:
                 files.append(path)
