@@ -401,9 +401,11 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   outside a code namespace), when a later run drops `--repo` or names another repository, so pass the same `--repo`
   again; and two runs on one document at once with different `--into`, which can both find the other
   namespace empty. A repository that is not configured in the org, or that the caller may not read (one answer for
-  both), a repository with no remote to tag rows with under `--into source` for a document outside the trunk, or
-  `--into` without `--repo`, exits 1 as well, as does a run when the repositories added from the dashboard could not
-  be read. The refusal for rows linked to another repository names it by `owner/name` when the caller may read it.
+  both), a repository with no remote to tag rows with under `--into source` for a document outside the trunk,
+  `--into` without `--repo`, or `--into source` for a document in another repository's code namespace (its rows would
+  link to the named repository's code and be read in the other's), exits 1 as well, as does a run when the
+  repositories added from the dashboard could not be read. The refusal for rows linked to another repository names it
+  by `owner/name` when the caller may read it.
 
 - **Windows**: the document's live chunks for the current embedding model, grouped by section, at most
   `--window-chars` (default 6000) per call. A document chunked under another embedding model has none: the command

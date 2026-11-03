@@ -320,7 +320,7 @@ async def _target(
     namespace). The caller must read the document and the repository and write where the
     rows go (read, for a dry run); with no auth context (the CLI) the operator may."""
     from server.code.app.index.repo_registry import refresh_db_repos, registry_read
-    from server.code.app.repo_scope import repo_trunk
+    from server.code.app.repo_scope import repo_trunk, trunk_namespace_of
     from server.code.domain.index.repos import repo_for_namespace
 
     # A repository added from the dashboard is known once the snapshot is read; a run
@@ -340,6 +340,10 @@ async def _target(
             return f"no repository {repo!r} you may read is configured in {org}"
         if into is None:
             into = "repo" if repo_for_namespace(org, namespace) else "source"
+        home = trunk_namespace_of(org, namespace)
+        if into == "source" and home and home != trunk:
+            # Its rows would link to this repository's code and be read in another's.
+            return "the document is in another repository's code namespace; use --into repo"
         target = Target(namespace, trunk, trunk if into == "repo" else namespace, tag)
         if not tag and target.rows_namespace != trunk:
             return f"repository {repo!r} has no remote to tag its rows with; use --into repo"
@@ -1331,7 +1335,7 @@ async def _retire_one(
         on = SOURCE_CHANGED_TAG in row.tags
         tags = _tags_for(row, source_changed=on, repo_tag=repo_tag)
         if set(tags) != set(row.tags):
-            await _tag_kept(report, row, tags)
+            await _tag_kept(report, row, tags, report.linked)
 
 
 async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool, repo_tag: str) -> None:
@@ -1343,24 +1347,21 @@ async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool, repo
             report.retired.append(row.memory_key)
         return
     tags = _tags_for(row, source_changed=True, repo_tag=repo_tag)
-    if set(tags) == set(row.tags):
-        return
-    if SOURCE_CHANGED_TAG in row.tags:
-        # Only the repository's tag was missing.
-        await _tag_kept(report, row, tags)
-        return
+    if set(tags) != set(row.tags):
+        # Tagged source-changed already: only the repository's tag is new.
+        flagged = SOURCE_CHANGED_TAG not in row.tags
+        await _tag_kept(report, row, tags, report.flagged if flagged else report.linked)
+
+
+async def _tag_kept(
+    report: ExtractReport, row: MemoryRow, tags: list[str], reported: list[str]
+) -> None:
+    """Write the tags of a row the retire step keeps; its key goes to `reported` once
+    written, a race to `races`."""
     if not report.dry_run and (moved := await _set_tags(row, tags)):
         report.races.append(f"{row.memory_key}: {moved} since the run read it")
         return
-    report.flagged.append(row.memory_key)
-
-
-async def _tag_kept(report: ExtractReport, row: MemoryRow, tags: list[str]) -> None:
-    """Add the repository's tag to a row the retire step keeps, reported in `linked`."""
-    if not report.dry_run and (moved := await _set_tags(row, tags)):
-        report.races.append(f"{row.memory_key}: {moved} since the run read it")
-        return
-    report.linked.append(row.memory_key)
+    reported.append(row.memory_key)
 
 
 async def _delete_row(report: ExtractReport, row: MemoryRow) -> bool:

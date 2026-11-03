@@ -64,12 +64,14 @@ def repo_trunk(org: str, repo: str) -> tuple[str, str]:
 def repo_names(org: str) -> dict[str, tuple[str, str]]:
     """`repo:<id>` tag -> (owner/name, trunk code namespace) of each repository
     configured in `org`."""
+    from server.code.app.repos import repo_slug
     from server.code.domain.index.remote import repo_tag
 
     names: dict[str, tuple[str, str]] = {}
     for c in configured_repos():
         if c.org == org and (tag := repo_tag(c.git_remote or c.repo)):
-            names.setdefault(tag, (c.repo, trunk_namespace_of(org, c.namespace)))
+            name = repo_slug(c.repo) or c.repo
+            names.setdefault(tag, (name, trunk_namespace_of(org, c.namespace)))
     return names
 
 

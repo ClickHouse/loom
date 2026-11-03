@@ -4134,7 +4134,7 @@ async def test_repo_trunk_matches_owner_name_or_a_remote_url(monkeypatch) -> Non
     assert repo_scope.repo_trunk("o", "git@github.com:Acme/Widgets.git") == want
     assert repo_scope.repo_trunk("other-org", "acme/widgets") == ("", "")
     assert repo_scope.repo_trunk("o", "widgets") == ("", "")
-    assert repo_scope.repo_names("o") == {want[1]: ("Acme/Widgets", "code-widgets")}
+    assert repo_scope.repo_names("o") == {want[1]: ("acme/widgets", "code-widgets")}
 
 
 @pytest.mark.parametrize(
@@ -4505,3 +4505,22 @@ async def test_a_confirmed_row_linked_to_another_repository_keeps_only_its_link(
     await _run(repo="acme/widgets")
     (upd,) = world.updates
     assert set(upd.tags) == {"decision", "repo:9999999999", SOURCE_CHANGED}
+
+
+@pytest.mark.asyncio
+async def test_into_source_refuses_a_document_in_another_repositorys_namespace(
+    monkeypatch,
+) -> None:
+    from server.code.app import repo_scope
+
+    world = _World(monkeypatch, [_candidate()])
+    _link_repo(monkeypatch, world, code_namespaces=frozenset({"ns"}))
+    # "ns" is a code namespace of another repository, whose trunk is code-gadgets.
+    monkeypatch.setattr(repo_scope, "trunk_namespace_of", lambda org, ns: "code-gadgets")
+    report = await _run(repo="acme/widgets", into="source")
+    assert report.error == (
+        "the document is in another repository's code namespace; use --into repo"
+    )
+    assert world.prompts == []
+    # Into the named repository's trunk, it runs.
+    assert (await _run(repo="acme/widgets", into="repo")).error == ""
