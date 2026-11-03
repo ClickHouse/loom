@@ -12,7 +12,7 @@ from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from typing import Any
 
-from server.auth import agents, aliases, machines, revocation, sso_links
+from server.auth import agents, machines, revocation, sso_links
 from server.auth.grant_claims import account_change, bot_change, trusts_change
 from server.core.naming import SSO_NAMESPACE_PREFIX
 from server.observability import audit
@@ -209,7 +209,7 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
     address as JIT holds it, so no SSO sign-in makes a second account for it
     meanwhile. Returns the address it had and the namespaces carried."""
     from server.auth.self_signup import CLAIM_TTL_S, email_claim
-    from server.core import grant_cache, leases
+    from server.core import leases
     from server.core.ch import get_client
     from server.core.errors import GrantBusyError
 
@@ -234,8 +234,6 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
             [{**row, "contact_email": email, "updated_at": max(now, row["updated_at"])}],
         )
         await sso_links.link(email, [(org, namespace)], by)
-    await grant_cache.changed(org)  # the person's spellings changed
-    aliases.invalidate(org, [str(row["owner_email"]), was, email])
     await audit.emit(
         "auth.sso_linked",
         org=org,

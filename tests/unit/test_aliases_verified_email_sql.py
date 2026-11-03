@@ -174,6 +174,36 @@ async def test_a_link_or_an_unlink_drops_the_cached_ties(
     assert marks[0]["n"] == 2
 
 
+class _LostReply(KeptCH):
+    """Writes a link row, then loses the reply."""
+
+    async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        await super().insert(table, rows, settings)
+        if table == "loom.sso_links":
+            raise TimeoutError("reply lost")
+
+
+@pytest.mark.asyncio
+async def test_an_unlink_whose_reply_is_lost_still_drops_the_cached_ties(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    kept = _LostReply(tmp_path, *SETUP, ddl("acl_versions"))
+    monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
+    monkeypatch.setattr(sso_links, "get_client", lambda: kept)
+    assert await aliases.subject_aliases(ORG, "dave", ch=kept) == ["dave", "dave@corp.example"]
+
+    with pytest.raises(TimeoutError):
+        await sso_links.unlink("dave@corp.example", [(ORG, "dave")], "op")
+
+    assert (ORG, "dave") not in aliases._CACHE
+    assert await aliases.subject_aliases(ORG, "dave", ch=kept) == ["dave"]
+    marks = await kept.query_all(
+        "SELECT sum(changes) AS n FROM loom.acl_versions WHERE org = {org:String}",
+        {"org": ORG},
+    )
+    assert marks[0]["n"] == 1
+
+
 @pytest.mark.asyncio
 async def test_revoking_the_address_reaches_the_tokens_its_squatter_made(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
