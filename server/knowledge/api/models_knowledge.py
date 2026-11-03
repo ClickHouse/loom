@@ -28,10 +28,11 @@ class KnowledgeAddInput(BaseModel):
     source_uri: str
     # The document's extracted text; it is split into chunks, and each chunk is embedded.
     content: str
-    # Document title, stored on the document and prepended to each chunk before embedding.
+    # Document title, stored on the document and in each chunk's context, which heads
+    # the chunk's embedded text and is scored by the lexical leg.
     title: str = ""
-    # Prepended (with title) to each chunk before embedding so chunk
-    # vectors carry doc-level context.
+    # Stored (with the title) in each chunk's context, so both search legs carry
+    # doc-level context.
     description: str = ""
     # Labels stored on the document and on every chunk; search and list filter on them.
     tags: list[str] = Field(default_factory=list)
@@ -480,7 +481,7 @@ class KnowledgeDeleteOutput(BaseModel):
 
 class KnowledgeUpdateMetadataInput(BaseModel):
     """Edit doc-level metadata (title, description, tags). Leaves chunk
-    embeddings alone unless reindex=True. To change content, use
+    embeddings and stored context alone unless reindex=True. To change content, use
     knowledge.upsert; to rename the URI, delete + re-add — source_uri is
     the stable identifier the agent cites and isn't editable.
     """
@@ -496,9 +497,9 @@ class KnowledgeUpdateMetadataInput(BaseModel):
     description: str | None = None
     # New tag list, replacing the old one; None leaves it unchanged, `[]` clears it.
     tags: list[str] | None = None
-    # When True, re-embed every chunk with the new title + description
-    # prepended, routed through the upsert flow for identical supersession
-    # semantics (same content, fresh embeddings).
+    # When True, rewrite every chunk with the new title + description in its
+    # context (re-embedded, re-scored by the lexical leg), routed through the upsert
+    # flow for identical supersession semantics (same content, fresh chunks).
     reindex: bool = False
 
 

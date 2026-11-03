@@ -41,8 +41,8 @@ before ClickHouse applies it; watch `system.mutations`.
   do not take, and editing `LOOM_EMBEDDING_DIM` alone makes every vector write answer 503
   `CODED_WIDTH_MISMATCH` while `/v1/health` reports `coded_width_mismatch`.
 - **`loom rechunk --org ORG --namespace NS`** re-runs every live document through
-  `knowledge.upsert` from its stored content, so documents pick up the current chunking
-  and vectors (`--source-uri` for one document). Dry run until `--apply`.
+  `knowledge.upsert` from its stored content, so documents pick up the current chunking,
+  chunk context and vectors (`--source-uri` for one document). Dry run until `--apply`.
 - **`loom lexical-stats-rebuild --org ORG --namespace NS`** recomputes the BM25 document
   frequencies from live rows. The term-frequency views see only inserts, so supersession,
   tombstones and bulk deletes leave stale vocabulary behind until this runs

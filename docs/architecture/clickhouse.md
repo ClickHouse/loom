@@ -28,7 +28,7 @@ Retention is in [Partitioning and TTL](#partitioning-and-ttl).
 | Evidence and chunks          | `memory_evidence`, `memory_chunks`, `memory_chunk_sources`, `memory_belief_sources`, `session_summaries`, `derived_facts`                                                                                                                                                                              | `set_from_messages` projections, consolidation                                                                         |
 | Records and taxonomy         | `memory_records`, `memory_record_versions`, `memory_record_fields`, `memory_record_conflicts`, `memory_schemas`, `memory_schema_fields`, `categories`, `memory_categories`                                                                                                                             | `memory.record.*`, `namespace.*`, category assignment                                                                  |
 | Write-path state             | `memory_extraction_queue`, `memory_projection_failures`, `memory_drops`, `blacklist`, `blacklist_version`, `conflict_allowlist`, `learnings_queue`, `consolidation_runs`, `memory_ask_precedents`                                                                                                      | Deferred extraction, fail-open projections, `blacklist.*`, `conflicts.resolve`, `memory.consolidate`, `memory.ask`     |
-| Knowledge                    | `documents`, `document_blobs` (uploaded originals), `chunks`, `chunk_supersessions`, `chunk_term_freq`                                                                                                                                                                                                 | `knowledge.add`; `chunk_term_freq_mv`                                                                                  |
+| Knowledge                    | `documents`, `document_blobs` (uploaded originals), `chunks`, `chunk_supersessions`, `chunk_term_freq`                                                                                                                                                                                                 | `knowledge.add`; `chunk_term_freq_mv`, `chunk_context_term_freq_mv`                                                    |
 | Conversations                | `conversations`, `conversation_threads`, `conversation_embeddings`                                                                                                                                                                                                                                     | `conversation.*`; `conversation_titler`                                                                                |
 | Entity graph                 | `entity_edges`, `entity_degree`, `entity_triples`, `entity_edge_memories`, `entity_edge_rows`, `entity_triple_memories`, `entity_triple_rows`, `entity_vectors`, `entity_summaries`, `entity_canonical_map`, `entity_communities`, `operator_edges`                                                    | The `memory.set` after-write projection, `entity_extractor`, `entity_communities`; `entity_degree_mv`                  |
 | Code index                   | `code_files`, `code_chunks`, `code_symbols`, `code_edges`, `code_pr_history` and the other `code_*` tables                                                                                                                                                                                             | `code_ingest`, the `code_scip_*` workers, `code_pr_history`, `code_embed_recovery`, `code_summary`, `code_graph_stats` |
@@ -363,8 +363,8 @@ with `LOOM_TIERING_<TABLE>_WARM_DAYS` plus `LOOM_TIERING_WARM_VOLUME_NAME`. Per-
 A part count that keeps rising almost always means merges are failing. A skip index a
 merge cannot build fails every merge of that table until inserts get `TOO_MANY_PARTS`.
 Loom keeps such indexes out of merges with `exclude_materialize_skip_indexes_on_merge`
-(the text index `content_text` on `chunks`): inserted parts still build the index, merged
-parts do without it. The `clickhouse_parts` check of `ops.health`
+(the text indexes `content_text` and `context_text` on `chunks`): inserted parts still
+build the index, merged parts do without it. The `clickhouse_parts` check of `ops.health`
 (`_clickhouse_parts_check`) reads `system.part_log` for failed `MergeParts` events in the
 last quarter hour and reports the exception and this repair. For the same reason
 memory-content tables carry no rows TTL. The runbook is in
@@ -440,19 +440,19 @@ read it; the erasure saga deletes from it. A new `memory` column goes into
 
 ## Materialized views
 
-| View                                                                                                         | Kind                            | From → to                                             |
-| ------------------------------------------------------------------------------------------------------------ | ------------------------------- | ----------------------------------------------------- |
-| `memory_versions_mv`                                                                                         | insert-time                     | `memory` → `memory_versions`                          |
-| `memory_record_versions_mv`                                                                                  | insert-time                     | `memory_records` → `memory_record_versions`           |
-| `memory_usage_totals_mv`                                                                                     | insert-time                     | `memory_usage_events` → `memory_usage_totals`         |
-| `entity_degree_mv`                                                                                           | insert-time                     | `entity_edges` → `entity_degree`                      |
-| `session_brief_revisions_mv`                                                                                 | insert-time                     | `session_briefs` → `session_brief_revisions`          |
-| `chunk_term_freq_mv`, `code_term_freq_mv`, `code_doc_stats_mv`, `code_symbol_ids_mv`, `code_symbol_names_mv` | insert-time                     | Chunk and code-index statistics and lookups           |
-| `memory_term_freq_refresh`, `memory_doc_stats_refresh`                                                       | `REFRESH EVERY 1 MINUTE APPEND` | `memory_embeddings` → BM25 statistics                 |
-| `agent_cost_rollup_refresh`                                                                                  | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `agent_cost_rollup_daily`            |
-| `memory_exposure_breadth_hourly_refresh`                                                                     | `REFRESH EVERY 1 MINUTE APPEND` | `memory_exposures` → `memory_exposure_breadth_hourly` |
-| `subject_last_seen_refresh`                                                                                  | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `subject_last_seen`                  |
-| `loom_telemetry.sli_minute_refresh`                                                                          | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `loom_telemetry.sli_minute`          |
+| View                                                                                                                                       | Kind                            | From → to                                             |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- | ----------------------------------------------------- |
+| `memory_versions_mv`                                                                                                                       | insert-time                     | `memory` → `memory_versions`                          |
+| `memory_record_versions_mv`                                                                                                                | insert-time                     | `memory_records` → `memory_record_versions`           |
+| `memory_usage_totals_mv`                                                                                                                   | insert-time                     | `memory_usage_events` → `memory_usage_totals`         |
+| `entity_degree_mv`                                                                                                                         | insert-time                     | `entity_edges` → `entity_degree`                      |
+| `session_brief_revisions_mv`                                                                                                               | insert-time                     | `session_briefs` → `session_brief_revisions`          |
+| `chunk_term_freq_mv`, `chunk_context_term_freq_mv`, `code_term_freq_mv`, `code_doc_stats_mv`, `code_symbol_ids_mv`, `code_symbol_names_mv` | insert-time                     | Chunk and code-index statistics and lookups           |
+| `memory_term_freq_refresh`, `memory_doc_stats_refresh`                                                                                     | `REFRESH EVERY 1 MINUTE APPEND` | `memory_embeddings` → BM25 statistics                 |
+| `agent_cost_rollup_refresh`                                                                                                                | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `agent_cost_rollup_daily`            |
+| `memory_exposure_breadth_hourly_refresh`                                                                                                   | `REFRESH EVERY 1 MINUTE APPEND` | `memory_exposures` → `memory_exposure_breadth_hourly` |
+| `subject_last_seen_refresh`                                                                                                                | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `subject_last_seen`                  |
+| `loom_telemetry.sli_minute_refresh`                                                                                                        | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `loom_telemetry.sli_minute`          |
 
 **Insert-time or refreshable.** An insert-time view writes one part per source insert. That
 suits a low-rate source or a target read back in the same request (`memory_versions`). A
@@ -601,10 +601,11 @@ primary-key ranges a read selects and resolves versions under `FINAL`.
 | Table         | Index                        | Indexed expression | Tokenizer         |
 | ------------- | ---------------------------- | ------------------ | ----------------- |
 | `chunks`      | `content_text`               | `content_lc`       | `splitByNonAlpha` |
+| `chunks`      | `context_text`               | `context_lc`       | `splitByNonAlpha` |
 | `code_chunks` | `idx_code_chunks_content_ng` | `lower(content)`   | `ngrams(3)`       |
 | `code_chunks` | `idx_code_chunks_lexemes`    | `lexemes`          | `splitByNonAlpha` |
 
-All three use `GRANULARITY 100000000`: one granule per part, a per-part posting list.
+All four use `GRANULARITY 100000000`: one granule per part, a per-part posting list.
 
 `memory_embeddings` and `memory_evidence` carry no text index: `hasAnyTokens` and
 `hasAllTokens` run on their lowercase columns after the key prefix narrows the read.

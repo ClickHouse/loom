@@ -1,13 +1,14 @@
 """BM25 corpus statistics for knowledge.search.
 
-The knowledge plane's lexical leg mirrors memory's: per-token inverse
-document frequency from the term-frequency materialized view
-(`loom.chunk_term_freq`, uniqExact over the chunk key), corpus size and
-average chunk length in words from `loom.chunks` (cached per namespace and
-summed over the namespaces a search reads), Okapi
-BM25 (`server.core.bm25`) scored in SQL over the query tokens, fused with the
-vector leg by reciprocal rank. Tokenisation here must match the view: lower-cased
-`splitByNonAlpha` runs, digits included, of at least `bm25.MIN_TERM_LEN` bytes.
+The knowledge plane's lexical leg mirrors memory's: per-token inverse document
+frequency from the term-frequency materialized views (`loom.chunk_term_freq`,
+uniqExact over the chunk key, fed from each chunk's text and its context),
+corpus size and average chunk length in words (context and text) from
+`loom.chunks` (cached per namespace and summed over the namespaces a search
+reads), Okapi BM25 (`server.core.bm25`) scored in SQL over the query tokens,
+fused with the vector leg by reciprocal rank. Tokenisation here must match the
+views: lower-cased `splitByNonAlpha` runs, digits included, of at least
+`bm25.MIN_TERM_LEN` bytes.
 """
 
 from __future__ import annotations
@@ -62,7 +63,8 @@ async def corpus_stats(
         rows = await ch.query_all(
             """
             SELECT namespace, count() AS n,
-                   toFloat32(avg(length(splitByNonAlpha(content_lc)))) AS avgdl
+                   toFloat32(avg(length(splitByNonAlpha(context_lc))
+                                 + length(splitByNonAlpha(content_lc)))) AS avgdl
             FROM loom.chunks
             WHERE org = {org:String} AND namespace IN {nss:Array(String)}
               AND embedding_model = {model:String}

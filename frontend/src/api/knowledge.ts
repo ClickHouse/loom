@@ -11,7 +11,7 @@ export interface KnowledgeEntry {
   source_uri: string;
   title: string;
   /** User-supplied summary. Rendered as a 2-line excerpt in the Library
-   *  list, and prepended to chunks before embedding. */
+   *  list, and stored in each chunk's context (embedded and lexically scored). */
   description?: string;
   tags: string[];
   ingested_at: string;
@@ -61,9 +61,9 @@ export async function listKnowledge(
 }
 
 /** Edit doc-level metadata (title / description / tags) without
- *  re-chunking or re-embedding the body. Cheap (single doc-row
- *  insert). Returns the post-update state so the caller doesn't
- *  need to refetch. */
+ *  re-chunking or re-embedding the body unless `reindex` is set. Without
+ *  it, cheap (single doc-row insert). Returns the post-update state so the
+ *  caller doesn't need to refetch. */
 export async function updateKnowledgeMetadata(
   id: Pick<Identity, "org" | "namespace">,
   source_uri: string,
@@ -71,9 +71,9 @@ export async function updateKnowledgeMetadata(
     title?: string;
     description?: string;
     tags?: string[];
-    /** When true, re-embed every chunk with the new title +
-     *  description prepended, giving the same retrieval-quality boost
-     *  as a full content re-upload without re-uploading the file. */
+    /** When true, rewrite every chunk with the new title + description in
+     *  its context (re-embedded and re-scored by the lexical leg), as a full
+     *  content re-upload would, without re-uploading the file. */
     reindex?: boolean;
   },
 ): Promise<{ updated: boolean; title: string; description: string; tags: string[]; chunks_reindexed: number }> {

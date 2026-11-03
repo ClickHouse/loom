@@ -9,9 +9,10 @@ configured size and stride. A document with no headings is windowed over its
 whole text.
 
 Each chunk records its section path, depth and ordinal in `meta`, which the
-ingest path stores as `chunk_metadata` and prepends (as a breadcrumb) to the
-text that gets embedded, next to the document title and description. The
-stored `content` is the chunk text alone, so snippets read as plain text.
+ingest path stores as `chunk_metadata`. Its breadcrumb, with the document title
+and description, is the chunk's context (`chunk_context`): stored as the
+chunk's `context`, it heads the embedded text and is scored by the lexical leg.
+The stored `content` is the chunk text alone, so snippets read as plain text.
 
 Pure and I/O-free.
 """
@@ -68,6 +69,20 @@ class Chunk:
             "section_idx": self.section_idx,
             "char_start": self.char_start,
         }
+
+
+def chunk_context(title: str, description: str, breadcrumb: str) -> str:
+    """What a chunk is about beyond its own text: the document title, description and
+    the chunk's section breadcrumb, one per line, the empty ones left out. Both search
+    legs read it: it heads the embedded text and the lexical leg scores it. A first
+    heading that repeats the title stays; the repeat acts as a title boost."""
+    parts = [p.strip() for p in (title, description, breadcrumb)]
+    return "\n".join(p for p in parts if p)
+
+
+def embedding_text(context: str, text: str) -> str:
+    """The text a chunk's vector is computed from: its context, a blank line, its text."""
+    return f"{context}\n\n{text}" if context else text
 
 
 @dataclass
@@ -418,7 +433,9 @@ __all__ = [
     "Section",
     "OutlineEntry",
     "SEPARATOR",
+    "chunk_context",
     "detect_sections",
+    "embedding_text",
     "window",
     "chunk_document",
     "outline",

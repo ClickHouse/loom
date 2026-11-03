@@ -75,13 +75,22 @@ async def test_lexical_search_sql_shape_and_cold_corpus_short_circuit() -> None:
     )
     hits = await lexical_search(_q(), ch=ch)
     sql, params = ch.calls[0]
-    # token-based tf, as df is; the row is split once and dl is its word count
-    assert sql.startswith("WITH splitByNonAlpha(content_lc) AS words SELECT")
-    assert sql.count("splitByNonAlpha") == 1
+    # token-based tf, as df is; the context and the text are split once and dl is
+    # their word count
+    assert sql.startswith(
+        "WITH arrayConcat(splitByNonAlpha(context_lc), splitByNonAlpha(content_lc)) AS words SELECT"
+    )
+    assert sql.count("splitByNonAlpha") == 2
     assert "arrayMap(tok -> countEqual(words, tok), {toks:Array(String)})" in sql
     assert "* length(words) / {avgdl:Float32}" in sql and "length(content)" not in sql
     assert "PREWHERE" not in sql
-    assert "hasAnyTokens(content_lc, {toks:Array(String)})" in sql  # the text index predicate
+    # the text index predicates: a token in the context or the text makes a candidate
+    assert (
+        "(hasAnyTokens(content_lc, {toks:Array(String)})"
+        " OR hasAnyTokens(context_lc, {toks:Array(String)}))" in sql
+    )
+    assert "content != ''" in sql  # an empty chunk is not scored on its context alone
+    assert "query_plan_direct_read_from_text_index = 0" in sql
     assert "positionCaseInsensitive" not in sql and "countSubstrings" not in sql
     assert "ORDER BY lexical DESC, distance ASC" in sql and "doc_superseded_at IS NULL" in sql
     assert params["toks"] == ["deploy", "rollback"] and params["idfs"] == [1.5, 2.5]

@@ -119,6 +119,7 @@ class ChunkExportRow(TypedDict):
     source_uri: str
     chunk_idx: int
     content: str
+    context: str
     tags: list[str]
     doc_metadata: str
     chunk_metadata: str

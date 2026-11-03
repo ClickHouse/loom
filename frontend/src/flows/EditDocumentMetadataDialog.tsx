@@ -23,9 +23,9 @@ interface Props {
  * the agent cites, and renaming it would silently break every
  * external reference. To use a different URI, delete + re-add.
  *
- * Doesn't re-chunk or re-embed: the chunk vectors were computed
- * with the OLD title + description prepended. The doc row updates
- * immediately; embeddings stay as-is until the user does a full
+ * Without `reindex` it doesn't rewrite chunks: each chunk's stored context
+ * (embedded and lexically scored) keeps the OLD title + description. The
+ * doc row updates immediately; chunks stay as-is until a reindex or a full
  * content re-upload. Note surfaced inline so the user understands.
  */
 export function EditDocumentMetadataDialog({ open, onOpenChange, identity, entry, onSaved }: Props) {
@@ -123,8 +123,8 @@ export function EditDocumentMetadataDialog({ open, onOpenChange, identity, entry
               onCheckedChange={(x) => setReindex(x === true)}
             />
             <p id="edit-doc-reindex-hint" className="mt-1 text-xs text-text-muted">
-              Picks up the retrieval-quality boost from the new title + description without re-uploading. Costs one
-              OpenAI batch call per save.
+              Rewrites each chunk with the new title + description for both search legs, without re-uploading. Re-embeds
+              every chunk of the document on each save.
             </p>
           </div>
         </div>

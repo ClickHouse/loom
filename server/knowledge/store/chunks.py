@@ -53,6 +53,7 @@ class ChunkInsertRow(TypedDict):
     source_uri: str
     chunk_idx: int
     content: str
+    context: str
     tags: list[str]
     doc_metadata: str
     chunk_metadata: str
@@ -76,6 +77,7 @@ def build_chunk_rows(
     namespace: str,
     source_uri: str,
     chunks: Sequence[Chunk],
+    contexts: Sequence[str],
     embeddings: Sequence[list[float]],
     tags: list[str],
     metadata: str,
@@ -86,10 +88,11 @@ def build_chunk_rows(
     author: Mapping[str, str],
 ) -> list[ChunkInsertRow]:
     """One ingestion's loom.chunks rows, every column set: each chunk with its
-    vector, the document's tags and metadata (JSON), its own section metadata
-    and content hash (what upsert's duplicate count and the dedup report
-    match on), and the document's provenance (`author`: agent, user_id,
-    session_id, source_class) that search returns and filters on."""
+    context (`chunk_context`) and vector, the document's tags and metadata
+    (JSON), its own section metadata and content hash (what upsert's duplicate
+    count and the dedup report match on), and the document's provenance
+    (`author`: agent, user_id, session_id, source_class) that search returns and
+    filters on."""
     return [
         {
             "org": org,
@@ -97,6 +100,7 @@ def build_chunk_rows(
             "source_uri": source_uri,
             "chunk_idx": chunk.idx,
             "content": chunk.text,
+            "context": context,
             "tags": tags,
             "doc_metadata": metadata,
             "chunk_metadata": json.dumps(chunk.meta, sort_keys=True),
@@ -113,7 +117,7 @@ def build_chunk_rows(
             "session_id": author["session_id"],
             "source_class": author["source_class"],
         }
-        for chunk, embedding in zip(chunks, embeddings, strict=True)
+        for chunk, context, embedding in zip(chunks, contexts, embeddings, strict=True)
     ]
 
 
