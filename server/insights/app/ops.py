@@ -622,13 +622,15 @@ async def handle_projection_failures_resolve(
     from server.memory.app.projection_failures import mark_projection_failures_resolved
 
     scope = await resolve_org_scope(input.org)
-    if not scope.accessible:
-        return ProjectionFailureResolveOutput(resolved=0)
-    resolved = await mark_projection_failures_resolved(
-        org=input.org,
-        failure_ids=input.failure_ids,
-        scope_where=scope.where,
-        scope_params=scope.params,
+    resolved = (
+        await mark_projection_failures_resolved(
+            org=input.org,
+            failure_ids=input.failure_ids,
+            scope_where=scope.where,
+            scope_params=scope.params,
+        )
+        if scope.accessible
+        else 0
     )
     return ProjectionFailureResolveOutput(resolved=resolved)
 
@@ -641,15 +643,17 @@ async def handle_projection_failures_retry(
     from server.memory.app.projection_failures import retry_projection_failures
 
     scope = await resolve_org_scope(input.org)
-    if not scope.accessible:
-        return ProjectionFailureRetryOutput(results=[], retried=0, resolved=0, abandoned=0)
-    results = await retry_projection_failures(
-        org=input.org,
-        namespace=input.namespace,
-        projection=input.projection,
-        limit=input.limit,
-        scope_where=scope.where,
-        scope_params=scope.params,
+    results = (
+        await retry_projection_failures(
+            org=input.org,
+            namespace=input.namespace,
+            projection=input.projection,
+            limit=input.limit,
+            scope_where=scope.where,
+            scope_params=scope.params,
+        )
+        if scope.accessible
+        else []
     )
     rows = [
         ProjectionFailureRetryRow(

@@ -302,13 +302,13 @@ async def mark_projection_failures_resolved(
     orgs = [org] if isinstance(org, str) else sorted(set(org))
     ch = ch or get_client()
     await ch.execute(
-        """
+        f"""
         ALTER TABLE loom.memory_projection_failures
-        UPDATE status = 'resolved', resolved_at = {at:DateTime}
-        WHERE org IN {orgs:Array(String)}
-          AND toString(failure_id) IN {failure_ids:Array(String)}
-          AND status = 'active'{scope}
-        """.replace("{scope}", scope_where),
+        UPDATE status = 'resolved', resolved_at = {{at:DateTime}}
+        WHERE org IN {{orgs:Array(String)}}
+          AND toString(failure_id) IN {{failure_ids:Array(String)}}
+          AND status = 'active'{scope_where}
+        """,
         # bound: a replicated table refuses now() in a mutation
         params={
             **(scope_params or {}),
