@@ -368,9 +368,8 @@ class ClickStackBackend:
     # the same ClickStack.
     TENANT_NAMESPACE_KEY = "loom.namespace"
     # The org Loom stamps beside `loom.namespace`. A subject or namespace name
-    # is unique per org only, so a row tagged with ANOTHER org is never erased.
-    # A row with no org tag is still erased when matched by a user key or by
-    # `service.namespace`, since another emitter may hold the subject.
+    # is unique per org only, so a row tagged with ANOTHER org is never erased;
+    # `_org_clause` and `_namespace_where` say when an untagged row is.
     TENANT_ORG_KEY = "loom.org"
 
     def __init__(
