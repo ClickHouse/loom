@@ -14,7 +14,10 @@ here is already the owner the token may see.
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from server.auth.context import OrgScopeFilter
 
 _ROWS_SQL = """
 SELECT namespace, memory_type, count() AS n
@@ -25,13 +28,15 @@ GROUP BY namespace, memory_type
 ORDER BY namespace, memory_type
 """
 
+# `namespace` in the outer WHERE is `e.namespace`, by the SELECT alias, so one
+# scope predicate serves the ledger and the `loom.memory` subquery alike.
 _READS_SQL = """
 SELECT e.namespace AS namespace, e.agent AS agent, e.actor AS actor,
        count() AS calls, uniq(k) AS distinct_keys, max(e.ts) AS last_read
 FROM loom.memory_exposures AS e
 ARRAY JOIN e.returned_keys AS k
 WHERE e.org = {org:String}
-  AND e.ts > now() - INTERVAL {hours:UInt32} HOUR__NS_E__
+  AND e.ts > now() - INTERVAL {hours:UInt32} HOUR__NS__
   AND (e.namespace, k) IN (
       SELECT namespace, memory_key FROM loom.memory FINAL
       WHERE org = {org:String} AND user_id = {uid:String}
@@ -57,26 +62,19 @@ ORDER BY m.namespace
 """
 
 
-class NamespaceScope(NamedTuple):
-    """The namespace predicate on `loom.memory` (`where`) and on the exposure
-    ledger (`where_e`, column `e.namespace`), and the parameters they bind."""
-
-    where: str
-    where_e: str
-    params: dict[str, Any]
-
-
-def namespace_scope(namespaces: list[str]) -> NamespaceScope:
+def namespace_scope(namespaces: list[str]) -> OrgScopeFilter:
     """The predicate bounding the report to `namespaces`."""
-    return NamespaceScope(
+    from server.auth.context import OrgScopeFilter
+
+    return OrgScopeFilter(
+        accessible=True,
         where=" AND namespace IN {nss:Array(String)}",
-        where_e=" AND e.namespace IN {nss:Array(String)}",
         params={"nss": sorted(set(namespaces))},
     )
 
 
 def build_queries(
-    *, org: str, user_id: str, scope: NamespaceScope, since_hours: int, limit: int
+    *, org: str, user_id: str, scope: OrgScopeFilter, since_hours: int, limit: int
 ) -> tuple[list[tuple[str, dict[str, Any]]], dict[str, Any]]:
     """The three statements and their shared parameters. Pure."""
     params: dict[str, Any] = {
@@ -86,11 +84,11 @@ def build_queries(
         "lim": max(1, int(limit)),
         **scope.params,
     }
-    ns, ns_e = scope.where, scope.where_e
+    ns = scope.where
     return (
         [
             (_ROWS_SQL.replace("__NS__", ns), params),
-            (_READS_SQL.replace("__NS__", ns).replace("__NS_E__", ns_e), params),
+            (_READS_SQL.replace("__NS__", ns), params),
             (_USAGE_SQL.replace("__NS__", ns), params),
         ],
         params,
@@ -101,7 +99,7 @@ async def owner_report(
     *,
     org: str,
     user_id: str,
-    scope: NamespaceScope,
+    scope: OrgScopeFilter,
     since_hours: int = 720,
     limit: int = 50,
     ch: Any | None = None,
@@ -120,4 +118,4 @@ async def owner_report(
     return {"rows": rows, "reads": reads, "usage": usage}
 
 
-__all__ = ["NamespaceScope", "build_queries", "namespace_scope", "owner_report"]
+__all__ = ["build_queries", "namespace_scope", "owner_report"]

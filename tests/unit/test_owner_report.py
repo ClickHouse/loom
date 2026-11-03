@@ -26,10 +26,10 @@ def test_queries_are_owner_scoped_and_namespace_bounded() -> None:
         assert "user_id = {uid:String}" in sql and "status = 'active'" in sql
         assert "tombstoned_at IS NULL" in sql and "loom.memory FINAL" in sql
         assert "namespace IN {nss:Array(String)}" in sql
-    assert (
-        "ARRAY JOIN e.returned_keys AS k" in reads[0]
-        and "e.namespace IN {nss:Array(String)}" in reads[0]
-    )
+    # The ledger's filter and the memory subquery's: `namespace` there is
+    # `e.namespace`, by the SELECT alias.
+    assert "ARRAY JOIN e.returned_keys AS k" in reads[0]
+    assert reads[0].count("namespace IN {nss:Array(String)}") == 2
     assert "loom.memory_usage_totals" in usage[0]
     assert params == {
         "org": "acme",
@@ -38,21 +38,6 @@ def test_queries_are_owner_scoped_and_namespace_bounded() -> None:
         "lim": 20,
         "nss": ["shop", "support"],
     }
-
-
-def test_an_exclusion_scope_reaches_every_statement() -> None:
-    scope = R.NamespaceScope(
-        " AND namespace NOT IN {ns_hidden:Array(String)}",
-        " AND e.namespace NOT IN {ns_hidden:Array(String)}",
-        {"ns_hidden": ["hr"]},
-    )
-    (rows, reads, usage), params = R.build_queries(
-        org="acme", user_id="u1", scope=scope, since_hours=1, limit=1
-    )
-    assert params["ns_hidden"] == ["hr"] and "nss" not in params
-    for sql, _ in (rows, reads, usage):
-        assert " namespace NOT IN {ns_hidden:Array(String)}" in sql
-    assert "e.namespace NOT IN {ns_hidden:Array(String)}" in reads[0]
 
 
 @pytest.mark.asyncio
@@ -246,7 +231,7 @@ async def test_a_wildcard_token_leaves_out_the_restricted_namespaces_it_cannot_r
     monkeypatch.setattr("server.auth.authz._lookup_grant", _no_grant)
     monkeypatch.setattr("server.auth.authz.grant_role_for", _no_grant)
     monkeypatch.setattr("server.auth.sharing.readable", _no_collections)
-    monkeypatch.setattr("server.settings.settings.restricted_serve", True, raising=False)
+    monkeypatch.setattr("server.settings.settings.restricted_serve", True)
     ch = _CH()
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     auth = _token(("*",))
@@ -254,4 +239,30 @@ async def test_a_wildcard_token_leaves_out_the_restricted_namespaces_it_cannot_r
     await H.handle_memory_owner_report(OPS.MemoryOwnerReportInput(org="acme"))
     assert len(ch.calls) == 3
     for sql, params in ch.calls:
-        assert "NOT IN {ns_hidden:Array(String)}" in sql and params["ns_hidden"] == ["ns-r"]
+        assert "namespace NOT IN {ns_hidden:Array(String)}" in sql
+        assert params["ns_hidden"] == ["ns-r"]
+        # and the collections it cannot read (none here)
+        assert "NOT startsWith(namespace, {col_prefix:String})" in sql
+        assert params["col_readable"] == []
+    reads_sql = next(sql for sql, _ in ch.calls if "ARRAY JOIN" in sql)
+    assert reads_sql.count("namespace NOT IN {ns_hidden:Array(String)}") == 2
+
+
+@pytest.mark.asyncio
+async def test_a_delegated_wildcard_token_is_bounded_to_its_creators_grants(
+    monkeypatch: pytest.MonkeyPatch, grants: dict[str, list[str]]
+) -> None:
+    """A delegated token's `*` reaches only where its creator holds a live
+    grant (`authz._check_delegated`), so it takes the member path."""
+    from dataclasses import replace
+
+    from server.memory.api import models_exposure as OPS
+    from server.memory.app import exposure as H
+
+    ch = _CH()
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    grants["acme"] = ["shop"]
+    auth = replace(_token(("*",)), creator="alice")
+    monkeypatch.setattr("server.auth.context.current_auth", lambda: auth)
+    await H.handle_memory_owner_report(OPS.MemoryOwnerReportInput(org="acme"))
+    assert len(ch.calls) == 3 and all(p["nss"] == ["shop"] for _, p in ch.calls)
