@@ -1,21 +1,24 @@
 # Deployment
 
-Loom is one server image plus ClickHouse. The image serves HTTP, MCP and the
-dashboard, and runs the background workers. Its containers keep no durable state of their
-own, so you can replace or add them freely: ClickHouse holds Loom's data, uploaded
-document originals included unless their bytes are kept in an S3-compatible bucket
-([where originals are stored](../features/knowledge.md#where-originals-are-stored)); the
-code index keeps bare git mirrors on disk, a cache of the remotes ClickHouse records. A
-deployment moves with ClickHouse, its env config, `LOOM_JWT_SECRET` and, while rows name
-objects in it, the document bucket
-([moving a deployment](./backup-and-recovery.md#moving-a-deployment)). The compose files under `dev/` are the supported production
-files. Every setting named here is in the generated
-[configuration reference](../reference/configuration.md).
+Loom is one server image plus ClickHouse, with the document extractor service as an
+image of its own ([container images](#container-images)). The server image serves HTTP,
+MCP and the dashboard, and runs the background workers. Its containers keep no durable
+state of their own, so you can replace or add them freely: ClickHouse holds Loom's data,
+uploaded document originals included unless their bytes are kept in an S3-compatible
+bucket ([where originals are
+stored](../features/knowledge.md#where-originals-are-stored)); the code index keeps bare
+git mirrors on disk, a cache of the remotes ClickHouse records. A deployment moves with
+ClickHouse, its env config, `LOOM_JWT_SECRET` and, while rows name objects in it, the
+document bucket ([moving a deployment](./backup-and-recovery.md#moving-a-deployment)).
+The compose files under `dev/` are the supported production files. Every setting named
+here is in the generated [configuration reference](../reference/configuration.md).
 
 ## Deployment ladder
 
 Each rung keeps the previous one's image and schema. What changes is where ClickHouse
-lives and how many containers run.
+lives and how many containers run. The installed stack and the local stack from a clone
+run the document extractor beside Loom; the rungs below them do not, so point
+`LOOM_DOCUMENT_EXTRACTOR_URL` at one you run ([container images](#container-images)).
 
 | Rung                          | Start it with                                                                                          | ClickHouse                                         | Use for                                   |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------- | ----------------------------------------- |
@@ -110,8 +113,9 @@ refresh gauges leave its refresh out, and `loom.sli.rollup_lag_s` and
 
 ### Local stack from a clone
 
-`loom up` (or `make dev`) creates `.env` from `.env.example` and
-`deploy/clickhouse-config/named_collections.xml` from its template, then runs:
+`loom up` (or `make dev`) creates `.env` from `.env.example` (or gives an existing one
+without an extractor token one) and `deploy/clickhouse-config/named_collections.xml` from
+its template, then runs:
 
 ```bash
 docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --build
@@ -122,10 +126,11 @@ because a checkout's `.env` also serves `make server` on the host. Compose reads
 `.env` beside the first `-f` file, here the root one; `--env-file .env` only says so
 explicitly.
 
-| Service      | Container     | Ports                          | Role                                                                                             |
-| ------------ | ------------- | ------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `clickhouse` | `loom-ch`     | `8123` (HTTP), `9000` (native) | ClickHouse OSS (pinned image), database `loom`, user `loom`, password `loomdev`.                 |
-| `loom`       | `loom-server` | `7777`                         | HTTP, MCP, the dashboard and the background workers in one process, built from the `Dockerfile`. |
+| Service      | Container        | Ports                          | Role                                                                                                |
+| ------------ | ---------------- | ------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `clickhouse` | `loom-ch`        | `8123` (HTTP), `9000` (native) | ClickHouse OSS (pinned image), database `loom`, user `loom`, password `loomdev`.                    |
+| `loom`       | `loom-server`    | `7777`                         | HTTP, MCP, the dashboard and the background workers in one process, built from the `Dockerfile`.    |
+| `extractor`  | `loom-extractor` | none                           | The document extractor service, built from `extractor/Dockerfile`, on a network only `loom` shares. |
 
 The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
 
@@ -461,7 +466,7 @@ A `<table>_pre_rebuild` copy left by an earlier run blocks that table's rebuild.
 from the current window is removed with that table's line and
 `mode="--drop-pre-rebuild --yes"`, as in step 3. Once writers have run since the copy
 was made, `--drop-pre-rebuild` refuses it: the live table holds changes the copy lacks
-(new rows, erasure tombstones, quarantine updates, a re-embed delete). Remove such a copy
+(new rows, erasure tombstones, a re-embed delete). Remove such a copy
 with the read in
 [what the checks after a swap find](./maintenance.md#what-the-checks-after-a-swap-find),
 then `DROP TABLE loom.<table>_pre_rebuild SYNC` by hand. A mutation on
@@ -737,6 +742,48 @@ Each is off until configured; `.env.example` has a commented block for each.
 | Telemetry                | `LOOM_OTEL_EXPORTER`: `ch` (the `otel_*` tables), `otlp` (a collector); empty picks `otlp` when an endpoint is set | [Telemetry](../features/observability/telemetry.md)                                                         |
 | Erasure in other systems | `LOOM_LANGFUSE_URL`, `LOOM_CLICKSTACK_DATABASE` and their credentials                                              | [Retention and erasure](../features/memory/retention-and-erasure.md)                                        |
 
+### Memory and documents only
+
+The code plane's ops are served by default (`LOOM_CODE_INTEL_ENABLED=true`), even with no
+repository configured. A deployment that serves memory, documents and conversations, and
+no code index, turns them off with `LOOM_CODE_INTEL_ENABLED=false`. What that changes,
+and what it leaves:
+
+- Boot still applies every migration. An empty table costs nothing to serve, and erasure
+  covers every table whatever is in use.
+- Every `code.*` operation but `code.repo.remove` answers a precondition error. Retire any
+  code index before turning the switch off: [code-index
+  operations](./code-index-operations.md#rollout-and-shutdown) covers retirement, erasure
+  and what stays on disk. The dashboard's code pages show the precondition error.
+- The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
+  leaves the code tools out, but any client entry whose toolset includes `coding`, `tracker`
+  (`code.bisect_candidates`, `code.pr_check`, `code.impact`) or `assistant` (`code.search`,
+  `code.symbol`) lists code tools that refuse. The plugins, `loom install` for Claude Code
+  and Codex, the lines `loom up` and `loom init` print, and the dashboard's Claude Code,
+  Codex and Cursor snippets ask for `coding`. Point those entries at `core` (with `tasks`
+  added where agents use the task inbox): the Claude Code plugin's `toolset` option
+  ([options](../features/integrations/claude-code.md#install)),
+  `loom install --toolset core`, or for the Codex plugin a `[mcp_servers.loom]` override in
+  `~/.codex/config.toml` that keeps the plugin's `http_headers_helper` line, since the
+  override replaces the entry whole
+  ([the server](../features/integrations/codex.md#the-server)).
+- The plugin hooks find a session's repository through `code.repos`, which is refused, and
+  ask again about once a minute. The session-start primer then adds a code-index line that
+  points the agent at the `loom_code_*` tools; set `LOOM_CODE_MAP=false` in the environment
+  the agent runs its hooks with to leave it out.
+- The switch also stops the coverage workers (`code_coverage_notify`, which delivers
+  coverage watches, and `code_coverage_import`). Every other code and tracker worker has its
+  own `LOOM_*_ENABLED` setting, which this switch does not change; with no repository and no
+  tracker source configured, they find nothing to do: each pass reads a few rows and ends.
+  The git mirror warm-up and host loop do not run, and boot probes the repository-job
+  sandbox only when `LOOM_CODE_INGEST_ENABLED` or `LOOM_CODE_SANDBOX_REQUIRED` is on. Every
+  process still re-reads the repository registry while `LOOM_CODE_SELF_SERVICE_ENABLED` is
+  on and the tracker sources while `LOOM_TRACKER_SELF_SERVICE_ENABLED` is on: one small read
+  per interval (`LOOM_CODE_REPOS_REFRESH_SECONDS`, `LOOM_TRACKER_SOURCES_REFRESH_SECONDS`).
+- `memory.*`, `knowledge.*`, `conversation.*`, `context.pack` and `search.query`
+  (`loom_search` over MCP) serve as on any deployment; `search.query` has no code or tracker
+  results to add.
+
 ## Identity modes
 
 **OSS supports both single-user and multi-user deployments.** The stock Docker installer
@@ -882,7 +929,7 @@ Carry the choices in `deploy/proxy/nginx.conf` over to your own front end:
 
 ## Container images
 
-The repository [`Dockerfile`](../../Dockerfile) builds the one image every rung uses:
+The repository [`Dockerfile`](../../Dockerfile) builds the server image every rung uses:
 
 | Stage              | Produces                                                                                                                                 |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -922,11 +969,36 @@ Images include build provenance and an SBOM. The one-line installer pins `X.Y.Z`
 generated `.env`; pin an immutable version (or digest) in production rather than tracking
 `latest` ([release process](../development/release-process.md)).
 
+The document extractor service (the parsers, apart from the server: [document
+extraction](../architecture/document-extraction.md)) is an image of its own, built by
+[`extractor/Dockerfile`](../../extractor/Dockerfile) from `extractor/uv.lock` and
+published as `ghcr.io/clickhouse/loom-extractor` with the same tags. It runs as uid
+10001, which owns nothing in the image, listens on 8790 and has a `/healthz`
+healthcheck. `compose.yaml` runs it as the `extractor` service, at `LOOM_VERSION` like
+the server: on a network of its own that is internal (no route out) and that only the
+`loom` service shares, with no published port, a read-only root filesystem, every
+capability dropped, `no-new-privileges` and a memory, CPU and process bound. That
+network lets the service's process reach `loom`; each extraction's process can make no
+socket at all, so the one a hostile file could take over reaches neither `loom` nor
+anything else while extractions run one at a time, as the compose stack runs them
+([document extraction](../architecture/document-extraction.md#the-service-boundary)).
+The service gets one variable, the token; the server reads `LOOM_DOCUMENT_EXTRACTOR_URL`
+(`http://extractor:8790`) and `LOOM_DOCUMENT_EXTRACTOR_TOKEN` from `.env`, which the
+installer writes, a new token per install, and adds to an install from before the
+service (a URL already there is kept). `LOOM_EXTRACTOR_IMAGE_REPOSITORY` names another
+image, as `LOOM_IMAGE_REPOSITORY` does the server's. The development stack (`make dev`)
+builds it from the checkout. The stacks that bring their own ClickHouse
+(`dev/docker-compose.cloud.yml`, `dev/docker-compose.replicas.yml`, the blue/green
+colours) run none: point `LOOM_DOCUMENT_EXTRACTOR_URL` and
+`LOOM_DOCUMENT_EXTRACTOR_TOKEN` at an extractor you run, or the server reports every
+format unavailable.
+
 The matching GitHub Release carries `loom-stack.tar.gz`, its SHA-256 file, and
 `install.sh`. The bundle is the supported source-free laptop deployment: it contains
 Compose plus the ClickHouse configuration/dictionary the stack needs, while the UI and
 server stay in the image. The repository serves `install.sh`; rerunning it preserves
-`.env` (apart from advancing the pinned `LOOM_VERSION`) and volumes.
+`.env` (apart from advancing the pinned `LOOM_VERSION` and giving an `.env` without an
+extractor token one, and the extractor URL unless it names its own) and volumes.
 
 ## N identical replicas
 

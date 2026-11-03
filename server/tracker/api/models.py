@@ -209,7 +209,7 @@ class TrackerTestSignalOutput(BaseModel):
     churn: dict[str, Any] = Field(default_factory=dict)
     # The deployment thresholds the verdict used (min runs, flip rate, co-failure knobs).
     thresholds: dict[str, Any] = Field(default_factory=dict)
-    # where the history came from (the checks source clause) and its cost
+    # where the history came from: the checks source clause without its credentials
     source: str = ""
     # Milliseconds spent per leg (`history`, `co_failures`, `churn`, `smells`, …).
     timings_ms: dict[str, int] = Field(default_factory=dict)

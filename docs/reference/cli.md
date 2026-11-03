@@ -79,7 +79,7 @@ on stdout and keeps the human report on stderr.
 ### Run and check a deployment
 
 ```bash
-loom up                          # from a checkout: create .env, boot Loom + ClickHouse, print how to connect
+loom up                          # from a checkout: create .env, boot Loom, its extractor and ClickHouse, print how to connect
 docker exec loom-server loom doctor          # pre-boot checks + the /v1/health problem list, each with its fix
 docker exec loom-server loom doctor --json   # the same, machine-readable
 loom doctor --client             # also examine this machine as a coding-agent client
@@ -254,7 +254,7 @@ python scripts/codegen/docs_reference.py
 | `loom export-okf` | Render a namespace as an OKF v0.2 bundle (Markdown + frontmatter) — the git-reviewable projection of Loom memory. | `--server-url`, `--token`, `--org`, `--namespace`, `--out`, `--title`, `--include-tombstoned`, `--limit`, `--dry-run`, `--no-evidence`, `--no-links`, `--include-high` |
 | `loom import-okf` | Write the concepts of an OKF v0.2 bundle into a namespace via memory.set. | `<path>`, `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--user-id`, `--session-id`, `--keep-sessions`, `--verify`, `--dry-run`, `--no-evidence`, `--no-lint`, `--force-import`, `--no-links`, `--prune` |
 | `loom okf-lint` | Lint an OKF bundle directory offline — the compile gate a mirror repository's CI runs. | `<path>`, `--json`, `--strict` |
-| `loom up` | Boot the local stack (Loom + ClickHouse) and print how to connect: creates .env and the ClickHouse config from their templates, runs docker compose up --build, waits for /v1/health, then prints the… | `--root`, `--file`, `--env-file`, `--no-build`, `--rebuild`, `--port`, `--timeout`, `--subject`, `--org`, `--namespace`, `--open` |
+| `loom up` | Boot the local stack (Loom, its document extractor and ClickHouse) and print how to connect: creates .env and the ClickHouse config from their templates, runs docker compose up --build, waits for… | `--root`, `--file`, `--env-file`, `--no-build`, `--rebuild`, `--port`, `--timeout`, `--subject`, `--org`, `--namespace`, `--open` |
 | `loom down` | Stop the local stack while preserving data; --delete-data performs a confirmed reset. | `--root`, `--file`, `--env-file`, `--delete-data`, `-y` |
 | `loom ch-setup` | Prepare a self-managed ClickHouse or a ClickHouse Cloud service for Loom: create the loom database and the read-only reader user, or print the SQL for an admin. | `--print-sql` |
 | `loom participant` | The Loom processes a provider change waits for. |  |
@@ -315,7 +315,7 @@ python scripts/codegen/docs_reference.py
 | `loom namespaces-adopt` | Give namespaces that hold live memory and no registry row an owner row: kind=bench under the bench prefixes, else memory; retention_days 0, no TTL. | `--org`, `--owner`, `--prefix`, `--namespace`, `--kind`, `--apply`, `--dry-run`, `--show` |
 | `loom sensitivity-sweep` | Label live rows the sensitivity detector would have labelled on write but a path skipped. | `--org`, `--namespace`, `--since-days`, `--limit`, `--show`, `--only-shape`, `--apply`, `--dry-run` |
 | `loom integrity-repair` | Read the row-level integrity gauges (dim-0 rows holding a vector, tombstoned_at/status drift, active rows past valid_to) and, with --apply, re-emit the dim-0 rows with their true dimension so search… | `--org`, `--namespace`, `--limit`, `--show`, `--apply`, `--dry-run` |
-| `loom rechunk` | Re-chunk and re-embed a namespace's knowledge documents from stored content through the current chunker, so every document carries section metadata and document frequency. | `--org`, `--namespace`, `--source-uri`, `--apply`, `--dry-run` |
+| `loom rechunk` | Re-chunk and re-embed a namespace's knowledge documents from stored content through the current chunker, so every document carries section metadata, chunk context and document frequency. | `--org`, `--namespace`, `--source-uri`, `--apply`, `--dry-run` |
 | `loom export-actions` | Export the action schema derived from the operation registry — an MCP tools/list manifest with loom extras (json) or the Cedar schema (cedar) a policy gateway governs the surface with. | `--format`, `--output` |
 | `loom lexical-stats-rebuild` | Recompute BM25 document frequency for a namespace from its live rows (the term-frequency views only see inserts; supersession and tombstones leave stale vocabulary behind). | `--org`, `--namespace`, `--no-knowledge`, `--no-memory` |
 | `loom version` | Print installed Loom version. |  |

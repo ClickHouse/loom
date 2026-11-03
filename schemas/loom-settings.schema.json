@@ -1140,7 +1140,7 @@
         "code_intel_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "Master kill switch, checked at the top of every code.* handler."
+          "description": "Master kill switch, checked at the top of every code.* handler but the retirement (code.repo.remove), which only deletes."
         },
         "code_jit_risk_max_age_days": {
           "default": 183,
@@ -3721,7 +3721,7 @@
           "default": 20,
           "minimum": 1,
           "type": "integer",
-          "description": "Closest decision keys a candidate is checked against for a confirmed restatement under another key (cosine only); the fetch caps at 500 rows."
+          "description": "Closest decision keys a candidate is checked against for a pinned or attested restatement under another key (cosine only); the fetch caps at 500 rows."
         },
         "memory_durability_verifier_max_facts_per_call": {
           "default": 60,

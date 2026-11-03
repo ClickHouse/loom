@@ -175,6 +175,7 @@ def test_query_token_floor_equals_the_df_floor() -> None:
     # the schema's term-frequency views and the SQL built in code spell one floor
     assert _schema_view_floors("memory_term_freq_refresh") == {bm25.MIN_TERM_LEN}
     assert _schema_view_floors("chunk_term_freq_mv") == {bm25.MIN_TERM_LEN}
+    assert _schema_view_floors("chunk_context_term_freq_mv") == {bm25.MIN_TERM_LEN}
     assert f"length(t) >= {bm25.MIN_TERM_LEN}," in search_bm25._BM25_TERMS
     # the query sides read the same constant
     assert knowledge_bm25.MIN_TOKEN_LEN == bm25.MIN_TERM_LEN
@@ -301,5 +302,30 @@ async def test_knowledge_avgdl_is_the_mean_word_count() -> None:
     )
     knowledge_bm25.reset_cache()
     assert avgdl == 12.0 and idfs == [bm25.idf(1, 3), bm25.idf(0, 3)]
-    assert "avg(length(splitByNonAlpha(content_lc)))" in ch.sqls[0]
+    # a chunk's length counts the words of its context and its text
+    assert (
+        "avg(length(splitByNonAlpha(context_lc)) + length(splitByNonAlpha(content_lc)))"
+        in ch.sqls[0]
+    )
     assert "length(content)" not in ch.sqls[0] and "PREWHERE" not in ch.sqls[0]
+
+
+def test_knowledge_df_views_and_rebuild_read_the_same_two_columns() -> None:
+    """Document frequency comes from two views (a chunk's text and its context) and from
+    `loom lexical-stats-rebuild`; both read the context and the text the lexical leg
+    counts tf and length over (`test_knowledge_lexical`), or df and tf disagree on what
+    a chunk contains."""
+    import pathlib
+    import re
+
+    from server.memory.store.term_freq import _REBUILD_SQL
+
+    text = (pathlib.Path(__file__).resolve().parents[2] / "schemas" / "schema.sql").read_text()
+    views = re.findall(
+        r"CREATE MATERIALIZED VIEW IF NOT EXISTS loom\.\w+ TO loom\.chunk_term_freq\b(.*?);",
+        text,
+        re.S,
+    )
+    read = {c for v in views for c in re.findall(r"splitByNonAlpha\((\w+)\)", v)}
+    assert read == {"content", "context"}
+    assert bm25.terms_sql("concat(context, ' ', content)") in _REBUILD_SQL["knowledge"][1]

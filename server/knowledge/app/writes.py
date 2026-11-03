@@ -35,7 +35,7 @@ from server.knowledge.api.models_knowledge import (
     _KnowledgeBulkDeleteResult,
     _KnowledgeBulkEntryResult,
 )
-from server.knowledge.domain.chunking import Chunk, chunk_document
+from server.knowledge.domain.chunking import Chunk, chunk_context, chunk_document, embedding_text
 
 log = logging.getLogger(__name__)
 
@@ -151,31 +151,14 @@ async def _embed_inline_batch(embedder: Embedder, contents: list[str]) -> list[l
     return await embedder.embed_many(contents) if contents else []
 
 
-def _augment_for_embedding(
-    chunk: str,
-    *,
-    title: str = "",
-    description: str = "",
-    section: str = "",
-) -> str:
-    """Prepend doc-level context to a chunk before embedding. The chunk's
-    stored content stays unchanged (so search snippets read naturally) but
-    its vector reflects title + description + the chunk's section breadcrumb
-    ("Chapter 2 > Theories > Initiative vs Guilt"). No-op when
-    all are empty."""
-    title = (title or "").strip()
-    description = (description or "").strip()
-    section = (section or "").strip()
-    if not title and not description and not section:
-        return chunk
-    header_parts = []
-    if title:
-        header_parts.append(title)
-    if description:
-        header_parts.append(description)
-    if section:
-        header_parts.append(section)
-    return "\n".join(header_parts) + "\n\n" + chunk
+def _contexts(chunks: list[Chunk], title: str, description: str) -> list[str]:
+    """Each chunk's context (`chunk_context`): stored on its row and embedded before its
+    text, which stays unchanged so search snippets read naturally."""
+    return [chunk_context(title, description, c.breadcrumb) for c in chunks]
+
+
+def _embedding_texts(chunks: list[Chunk], contexts: list[str]) -> list[str]:
+    return [embedding_text(ctx, c.text) for c, ctx in zip(chunks, contexts, strict=True)]
 
 
 def _chunk_text(content: str) -> list[Chunk]:
@@ -283,21 +266,14 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     )
 
     chunks = _chunk_text(input.content)
-    embed_inputs = [
-        _augment_for_embedding(
-            c.text,
-            title=input.title,
-            description=input.description,
-            section=c.breadcrumb,
-        )
-        for c in chunks
-    ]
+    contexts = _contexts(chunks, input.title, input.description)
     rows = knowledge_repo.build_chunk_rows(
         org=input.org,
         namespace=input.namespace,
         source_uri=input.source_uri,
         chunks=chunks,
-        embeddings=await _embed_inline_batch(embedder, embed_inputs),
+        contexts=contexts,
+        embeddings=await _embed_inline_batch(embedder, _embedding_texts(chunks, contexts)),
         tags=input.tags,
         metadata=json.dumps(input.metadata, sort_keys=True),
         doc_version=version,
@@ -382,21 +358,14 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
     from server.knowledge.store import chunks as knowledge_repo
 
     with traced("embed.chunks", model=embedder.model_name, chunk_count=len(chunks)):
-        embed_inputs = [
-            _augment_for_embedding(
-                c.text,
-                title=input.title,
-                description=input.description,
-                section=c.breadcrumb,
-            )
-            for c in chunks
-        ]
+        contexts = _contexts(chunks, input.title, input.description)
         rows = knowledge_repo.build_chunk_rows(
             org=input.org,
             namespace=input.namespace,
             source_uri=input.source_uri,
             chunks=chunks,
-            embeddings=await _embed_inline_batch(embedder, embed_inputs),
+            contexts=contexts,
+            embeddings=await _embed_inline_batch(embedder, _embedding_texts(chunks, contexts)),
             tags=input.tags,
             metadata=json.dumps(input.metadata, sort_keys=True),
             doc_version=version,
@@ -501,10 +470,9 @@ async def handle_knowledge_update_metadata(
 
     Insert a new ReplacingMergeTree(version) row on `documents` with
     edited fields applied and existing fields carried forward. Chunks
-    stay untouched — their stored content is unchanged and their
-    embeddings remain as-is. Caller's responsibility to know that
-    embeddings won't reflect the new title/description until a
-    re-upload (`knowledge.upsert`).
+    stay untouched: their stored context (the old title and description)
+    and their embeddings remain as-is, so both search legs keep matching
+    the old context until `reindex=True` or a re-upload (`knowledge.upsert`).
     """
     from server.knowledge.store import documents as documents_repo
 
@@ -557,8 +525,8 @@ async def handle_knowledge_update_metadata(
 
     chunks_reindexed = 0
     if input.reindex:
-        # Re-run upsert with unchanged content but the new title +
-        # description, so the chunk vectors carry the current augmentation.
+        # Re-run upsert with unchanged content but the new title + description, so
+        # each chunk's context (embedded and lexically scored) is current.
         upsert_in = KnowledgeUpsertInput(
             org=input.org,
             namespace=input.namespace,
@@ -647,22 +615,15 @@ async def handle_knowledge_bulk_add(
         )
 
         # Batched per-doc; cross-doc batching is not done here.
-        embed_inputs = [
-            _augment_for_embedding(
-                c.text,
-                title=entry.title,
-                description=entry.description,
-                section=c.breadcrumb,
-            )
-            for c in chunks
-        ]
+        contexts = _contexts(chunks, entry.title, entry.description)
         chunk_rows.extend(
             knowledge_repo.build_chunk_rows(
                 org=input.org,
                 namespace=input.namespace,
                 source_uri=entry.source_uri,
                 chunks=chunks,
-                embeddings=await _embed_inline_batch(embedder, embed_inputs),
+                contexts=contexts,
+                embeddings=await _embed_inline_batch(embedder, _embedding_texts(chunks, contexts)),
                 tags=entry.tags,
                 metadata=json.dumps(entry.metadata, sort_keys=True),
                 doc_version=version,

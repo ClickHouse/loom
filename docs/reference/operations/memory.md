@@ -1735,8 +1735,8 @@ Mark a memory as explicitly rejected (extractor / user review decided the candid
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `rejected` | `bool` | Always True: the status update is issued whether or not a row matched. |
-| `rejected_at` | `datetime \| None` | The server time the update was issued. |
+| `rejected` | `bool` | Always True, also when no live row matched (nothing is written then). |
+| `rejected_at` | `datetime \| None` | The server time of the reject. |
 
 ## `memory.related`
 

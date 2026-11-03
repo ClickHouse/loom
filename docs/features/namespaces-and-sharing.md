@@ -103,6 +103,7 @@ halfway leaves the source intact and the target without the row. The learnings q
 | `namespace.validate`                                                             | An integrity report: stuck conflicts, low-confidence rows, rows still waiting for an embedding. Run it after a batch of writes or when a recall looks wrong.                                                                                                                                                                                                                                                                                                               |
 | `namespace.audit`                                                                | Whether the namespace is used as a memory or as an object store: exact-key reads against searches, hash-shaped keys, double-encoded or oversized values, leases stored as memories, version churn. It also names the deployment's own state (kind `system_state`: missing telemetry, an indexing backlog), and skips the ledger checks rather than report them clean when the ledger recorded none of the calls behind the window's writes. Each finding carries a remedy. |
 | `memory.inspect`                                                                 | One user, agent or session: its own rows apart from the rest of the namespace, its calls in a window, and the guide, categories and extraction policy that create its memories ([below](#inspecting-one-user-agent-or-session)).                                                                                                                                                                                                                                           |
+| `namespace.tune`                                                                 | Drafts of changes to the extraction rules, categories and guide that create the namespace's memories, each with its evidence and the write that would apply it; nothing is applied ([below](#drafting-changes-to-how-memories-are-made)).                                                                                                                                                                                                                                  |
 | `namespace.taxonomy`                                                             | The live vocabulary: top tags, entities, memory types and communities.                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `agents.connected`                                                               | The agents active in a window (default 24 hours): last and first seen, ops, namespaces touched and cost per agent. Answers "is my client actually talking to Loom?"                                                                                                                                                                                                                                                                                                        |
 
@@ -209,6 +210,61 @@ are refused. It changes nothing it reads and gives no recall credit. Like
   sent per request; no user, agent or session setting stores them.
 - A section that cannot be read is listed in `skipped`; a skipped section is not an empty
   one. A token narrowed below the namespace (`read_scope`) cannot call it.
+
+## Drafting changes to how memories are made
+
+`namespace.tune` (viewer) reads the namespace's audit, its tags and key layout, its
+registered categories, its guide and, for an org admin, the operator extraction policy in
+force, and drafts changes to the settings that create its memories. It reads the whole
+namespace, not one user, agent or session (`memory.inspect` shows one), applies nothing
+and calls no model. Each proposal names:
+
+- **`target`**: the setting it changes. `extraction_instructions.request` (the
+  instructions a `memory.set_from_messages` request sends; no user, agent or session
+  setting stores them), `namespace.category` or `namespace.guide`. Extraction rules are
+  never drafted as the operator extraction policy: a policy in force overrides every
+  other instruction and turns off extraction's recovery passes, so a style rule there
+  would cost facts the namespace keeps today. A rule whose exact text the policy in force
+  contains is not drafted again.
+- **`current`** and **`proposed`**: the setting's value now and the value it would set,
+  with `current_revision` for the guide.
+- **`evidence`**: the audit findings it answers (`finding_codes`), how many rows support
+  it (the first `sample_limit` cited by `memory_id`, `version` and the `content_sha256`
+  `memory.get` serves, one from each finding in turn), and how many it must keep working
+  for (`counter_count`: at least the rows of the smallest population the checks read that
+  none of them flagged, or the tagged rows another category already holds; null when that
+  count could not be read, and for a guide, which changes no stored row).
+- **`affected_agents`**: the writers the change shapes, at most 20, with
+  `affected_agents_total`: for extraction instructions, the agents whose rows extraction
+  wrote; for a category or the guide, every agent that wrote live rows;
+  `affected_agents_total` is null when the namespace's writers could not be read.
+- **`effect`** (`future`) and **`historical`**: a setting shapes the memories written
+  after it changes; reworking stored rows (`memory.move`, `memory.assign_category`) is a
+  separate action with its own approval.
+- **`apply`**: the ordinary write, its arguments (`args_complete: false` when they are a
+  part to merge into each request), the role it needs and its guard.
+  `namespace.guide_set` refuses a guide that moved past `expected_revision`;
+  `namespace.register_category` has no revision check, so the categories are read again
+  just before applying.
+
+The drafts come from fixed rules: an extraction rule per writer-side audit finding
+(double-encoded values, JSON-prefix excerpts, oversized values, episodic blobs,
+coordination state, hand-rolled index rows), drafted only when `memory.set_from_messages`'
+extraction writes into the namespace (rows with its source trace) and at least one of the
+finding's cited rows came from it, since the instructions reach nothing else; a finding
+none of whose cited rows extraction wrote, a finding the audit cited no live row of, or a
+namespace extraction writes nothing into, drafts nothing and is named in `skipped`. Its
+affected agents are the agents whose rows extraction wrote, it cites the flagged rows
+extraction wrote, and the flagged counts cover every writer. A key's layout is the
+writer's (extracted keys are sanitized), so no rule is drafted for it. Then a category per
+tag on at least `min_rows` live rows with no category of its name, and a guide listing the
+key prefixes and tags (or the prefixes an existing guide leaves out) on at least
+`min_rows` rows; none in a personal collection (`col-me-…`), which takes no guide. A tag
+or prefix that is not a plain name is never drafted, so text stored in rows cannot steer a
+target or an argument; neither is a `<prefix>:` tag (`source:`, `speaker:`, `agent:`),
+which says where a row came from, not what it is about. A check the audit could not run is
+listed in `skipped` as `audit.<check>`. A token narrowed below the namespace
+(`read_scope`) cannot call it.
 
 ## A namespace's guide
 

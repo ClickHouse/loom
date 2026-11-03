@@ -114,6 +114,10 @@ async def run_pipeline(
 # ============================================================
 
 
+# Registered categories the extraction prompt offers as tags for new rows, by name.
+OFFERED_CATEGORIES = 32  # not a setting: the prompt's size
+
+
 async def _step_fetch_namespace_categories(
     state: WorkflowState,
     config: dict[str, Any],
@@ -136,9 +140,9 @@ async def _step_fetch_namespace_categories(
             WHERE org = {org:String} AND namespace = {ns:String}
               AND tombstoned_at IS NULL
             ORDER BY name
-            LIMIT 32
+            LIMIT {lim:UInt32}
             """,
-            params={"org": state.org, "ns": state.namespace},
+            params={"org": state.org, "ns": state.namespace, "lim": OFFERED_CATEGORIES},
         )
         state.namespace_categories = [
             {

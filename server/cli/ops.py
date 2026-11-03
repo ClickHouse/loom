@@ -62,7 +62,7 @@ async def rechunk_namespace(
     """Re-run every live document in a namespace through knowledge.upsert
     from its stored content: the current chunker
     (sections + breadcrumb) and embedder replace the chunks, old chunks are
-    superseded, and the term-frequency view sees the new rows. Blobs are
+    superseded, and the term-frequency views see the new rows. Blobs are
     carried forward by upsert. Returns counts; `dry_run` only lists."""
     from server.knowledge.api.models_knowledge import KnowledgeUpsertInput
     from server.knowledge.app.writes import handle_knowledge_upsert
@@ -133,9 +133,8 @@ async def rechunk_namespace(
 
 def _cmd_rechunk(args: argparse.Namespace) -> int:
     """Re-chunk and re-embed a namespace's documents from stored content so
-    documents ingested before section chunking / the lexical leg get section
-    metadata and document frequency. Idempotent; costs one embedding call per
-    new chunk."""
+    documents ingested by an older build get section metadata, chunk context and
+    document frequency. Idempotent; costs one embedding call per new chunk."""
 
     async def _run(ch: Any) -> int:
         out = await rechunk_namespace(

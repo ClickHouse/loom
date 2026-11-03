@@ -14,6 +14,7 @@ from tests.unit.schema_ddl import columns, ddl, views
 
 # Every insert-time view in the dump. A new one is added here, and so reviewed.
 INSERT_VIEWS = {
+    "chunk_context_term_freq_mv": "chunk_term_freq",
     "chunk_term_freq_mv": "chunk_term_freq",
     "code_doc_stats_mv": "code_doc_stats",
     "code_symbol_ids_mv": "code_symbol_ids",

@@ -959,6 +959,31 @@ async def _inspect_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
 _INSPECT_ID = "00000000-0000-0000-0000-000000000001"
 
 
+async def _tune_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """Every read `namespace.tune` makes of the namespace's rows, under the whole
+    namespace or a narrowed scope."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+    from server.identity.store import namespace_tune as store
+
+    scope = (
+        WHOLE_NAMESPACE
+        if c["scope"] == "namespace"
+        else ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    )
+    await store.writing_agents(ORG, NS, scope=scope, limit=20, ch=ch)
+    await store.key_prefixes(
+        ORG, NS, scope=scope, min_rows=5, name_pattern="^[a-z]+$", limit=500, ch=ch
+    )
+    await store.plain_tags(
+        ORG, NS, scope=scope, min_rows=5, name_pattern="^[a-z]+$", limit=500, ch=ch
+    )
+    await store.tag_spellings(ORG, NS, ["billing"], scope=scope, ch=ch)
+    await store.extraction_writers(ORG, NS, scope=scope, limit=20, ch=ch)
+    await store.written_by_extraction(ORG, NS, [("a", "-", "-", "k1")], scope=scope, ch=ch)
+    await store.tagged_rows(ORG, NS, "billing", scope=scope, limit=5, ch=ch)
+    await store.tagged_in_other_categories(ORG, NS, "billing", scope=scope, ch=ch)
+
+
 def cases() -> list[Case]:
     out = [
         Case(
@@ -990,6 +1015,27 @@ def cases() -> list[Case]:
     )
     out.append(Case("profiles", "server.memory.store.profile_sources", _profiles, {}))
     out.append(Case("grants_repo", "server.identity.store.grants", _grants_repo, {}))
+    out.append(
+        Case(
+            "namespace_tune",
+            "server.identity.store.namespace_tune",
+            _tune_reads,
+            {"scope": ("namespace", "own_user")},
+            # Each read answers one row with every column the drafts read back.
+            rows=lambda sql, params: [
+                {
+                    "agent": "a",
+                    "user_id": "-",
+                    "session_id": "-",
+                    "memory_key": "k1",
+                    "prefix": "k1",
+                    "rows": 1,
+                    "total": 1,
+                    "tag": "billing",
+                }
+            ],
+        )
+    )
     out.append(
         Case(
             "memory_inspect",

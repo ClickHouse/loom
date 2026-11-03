@@ -41,8 +41,8 @@ before ClickHouse applies it; watch `system.mutations`.
   do not take, and editing `LOOM_EMBEDDING_DIM` alone makes every vector write answer 503
   `CODED_WIDTH_MISMATCH` while `/v1/health` reports `coded_width_mismatch`.
 - **`loom rechunk --org ORG --namespace NS`** re-runs every live document through
-  `knowledge.upsert` from its stored content, so documents pick up the current chunking
-  and vectors (`--source-uri` for one document). Dry run until `--apply`.
+  `knowledge.upsert` from its stored content, so documents pick up the current chunking,
+  chunk context and vectors (`--source-uri` for one document). Dry run until `--apply`.
 - **`loom lexical-stats-rebuild --org ORG --namespace NS`** recomputes the BM25 document
   frequencies from live rows. The term-frequency views see only inserts, so supersession,
   tombstones and bulk deletes leave stale vocabulary behind until this runs
@@ -349,11 +349,11 @@ The erasure saga does not cover these copies.
   a delete, a write of another width, a write the delta cannot pick up (a version below
   the twin's highest, or a row under a key the twin holds on a table without a version
   column), and any change to a row's columns that keeps its key and version, the rebuilt
-  vectors included, such as a lightweight `UPDATE` (the quarantine `memory.reject` writes)
-  or an erasure tombstone, whether or not its patch part is still there. Any other insert
-  is copied in and the swap goes ahead: the window, not the tool, keeps writers out. The
-  gate also fails on any source mutation still running or created since the copy started
-  (with `--reuse`, since the twin was created), less a minute for replica clocks.
+  vectors included, such as a lightweight `UPDATE` or an erasure tombstone, whether or
+  not its patch part is still there. Any other insert is copied in and the swap goes
+  ahead: the window, not the tool, keeps writers out. The gate also fails on any source
+  mutation still running or created since the copy started (with `--reuse`, since the
+  twin was created), less a minute for replica clocks.
 - **After the swap (exit 7).** The tool runs the consistency check again, the rollback
   copy as the source and the new table as the twin, with the same read settings and
   replica check as the last gate reads, and counts both tables' mutations since the

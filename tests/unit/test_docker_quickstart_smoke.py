@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -104,7 +106,11 @@ def test_failed_compose_boot_cleans_only_the_generated_project(
     monkeypatch.setattr(docker_quickstart_smoke, "run", invoke)
     monkeypatch.setattr(docker_quickstart_smoke.subprocess, "run", cleanup)
     with pytest.raises(subprocess.CalledProcessError):
-        docker_quickstart_smoke.smoke("loom:unit-smoke", "clickhouse/clickhouse-server:26.9.18.11")
+        docker_quickstart_smoke.smoke(
+            "loom:unit-smoke",
+            "loom-extractor:unit-smoke",
+            "clickhouse/clickhouse-server:26.9.18.11",
+        )
     cleanup_command = commands[-1]
     assert cleanup_command[-3:] == ("down", "--volumes", "--remove-orphans")
     project = Path(cleanup_command[3])
@@ -133,6 +139,103 @@ def test_release_gate_installs_browser_dependencies_before_running_provider_flow
         if "scripts/gates/docker_quickstart_smoke.py" in step.get("run", "")
     )
     assert setup < browser < smoke
+    assert '--extractor-image "ghcr.io/clickhouse/loom-extractor:$VERSION"' in steps[smoke]["run"]
+    images = workflow["jobs"]["docker"]["strategy"]["matrix"]["include"]
+    assert [i["image"] for i in images] == [
+        "ghcr.io/clickhouse/loom",
+        "ghcr.io/clickhouse/loom-extractor",
+    ]
+    # Tagged together after both scans, so a version never names one image alone.
+    assert "docker-tag" in job["needs"] and workflow["jobs"]["docker-tag"]["needs"] == ["docker"]
+    assert "docker-tag" in workflow["jobs"]["github-release"]["needs"]
     assert steps[browser]["working-directory"] == "frontend"
     assert "npm ci" in steps[browser]["run"]
     assert job["timeout-minutes"] >= 30
+
+
+def test_the_extractor_image_must_carry_the_servers_tag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """compose.yaml runs both images at LOOM_VERSION, so another tag would not run."""
+
+    def invoke(*args, **kwargs):
+        if args[0] == "sh":
+            stack = Path(kwargs["env"]["LOOM_INSTALL_DIR"])
+            stack.mkdir()
+            (stack / ".env").write_text("COMPOSE_PROJECT_NAME=unit-smoke\n")
+
+    monkeypatch.setattr(docker_quickstart_smoke, "run", invoke)
+    with pytest.raises(AssertionError, match="is not tagged smoke"):
+        docker_quickstart_smoke.smoke(
+            "loom:smoke", "loom-extractor:other", "clickhouse/clickhouse-server:26.9.18.11"
+        )
+
+
+def test_both_smoke_workflows_build_or_pull_the_extractor_beside_the_server() -> None:
+    root = Path(__file__).resolve().parents[2]
+    smoke = yaml.safe_load((root / ".github/workflows/docker-smoke.yml").read_text())
+    steps = smoke["jobs"]["quickstart"]["steps"]
+    built = [s["with"]["tags"] for s in steps if s.get("uses", "").startswith("docker/build-push")]
+    assert built == ["loom:docker-smoke", "loom-extractor:docker-smoke"]
+    run = next(s["run"] for s in steps if "docker_quickstart_smoke.py" in s.get("run", ""))
+    assert "--extractor-image loom-extractor:docker-smoke" in run
+
+
+def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> None:
+    """The release's tag step, run against two scans' artifacts and a stub docker."""
+    root = Path(__file__).resolve().parents[2]
+    workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
+    steps = workflow["jobs"]["docker-tag"]["steps"]
+    script = next(s["run"] for s in steps if s.get("name") == "Tag the scanned images")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "docker").write_text('#!/bin/sh\necho "$@" >> "$CALLS"\n')
+    (bin_dir / "docker").chmod(0o755)
+    for name, image, pin, digest, tags in (
+        (
+            "server",
+            "ghcr.io/clickhouse/loom",
+            "image.digest",
+            "sha256:aa",
+            "loom:1.2.3\nloom:1.2\n\n",
+        ),
+        (
+            "extractor",
+            "ghcr.io/clickhouse/loom-extractor",
+            "extractor.image.digest",
+            "sha256:bb",
+            "x:1.2.3\n",
+        ),
+    ):
+        d = tmp_path / f"scanned-{name}"
+        d.mkdir()
+        for file, value in (("image", image), ("pin", pin), ("digest", digest), ("tags", tags)):
+            (d / file).write_text(value if file == "tags" else value + "\n")
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "CALLS": str(tmp_path / "calls"),
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+    }
+
+    def run() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", "-e", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True
+        )
+
+    assert run().returncode == 0
+    calls = sorted((tmp_path / "calls").read_text().splitlines())
+    assert calls == [
+        "buildx imagetools create -t loom:1.2.3 -t loom:1.2 ghcr.io/clickhouse/loom@sha256:aa",
+        "buildx imagetools create -t x:1.2.3 ghcr.io/clickhouse/loom-extractor@sha256:bb",
+    ]
+    summary = (tmp_path / "summary").read_text()
+    assert (
+        "`image.digest: sha256:aa`" in summary and "`extractor.image.digest: sha256:bb`" in summary
+    )
+    shutil.rmtree(tmp_path / "scanned-extractor")
+    (tmp_path / "calls").unlink()
+    failed = run()
+    assert (
+        failed.returncode != 0
+        and "expected the server's and the extractor's scans" in failed.stdout
+    )
+    assert not (tmp_path / "calls").exists()  # nothing tagged

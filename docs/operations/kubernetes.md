@@ -5,18 +5,19 @@ Deployment of web pods over one ClickHouse service, each pod a full replica. It 
 any conformant cluster; `values-eks.yaml` sets it up on EKS and `values-kind.yaml` runs
 it on a laptop.
 
-| Object                                | What it does                                                                                                             |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Deployment `<release>`                | The web pods. Rolls one pod at a time and takes none down before its replacement is ready.                               |
-| Service, optional Ingress             | Routes to ready pods only. The readiness probe is `/v1/health/ready`.                                                    |
-| Secret                                | The keys every pod shares. Bring your own with `secrets.existingSecret`. The rest of the env is in the pod template.     |
-| ConfigMap `<release>-settings`        | The settings file (`settingsFile`), mounted at `/app/config/loom.yaml` on every pod; each hook Job carries its own copy. |
-| PodDisruptionBudget                   | One pod at a time on node drains and upgrades.                                                                           |
-| Optional HPA                          | CPU-based. Rate-limit shares resize as pods come and go.                                                                 |
-| Optional `<release>-workers`          | Background workers in their own pods (`workers.enabled`). Off by default: one web pod holds the lease and runs them.     |
-| Optional `<release>-publish`          | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                                   |
-| Optional `<release>-analytics-export` | A daily CronJob and its own ServiceAccount (`analyticsExport.enabled`, [below](#analytics-export)).                      |
-| Optional dev ClickHouse               | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                |
+| Object                                | What it does                                                                                                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deployment `<release>`                | The web pods. Rolls one pod at a time and takes none down before its replacement is ready.                                                                    |
+| Service, optional Ingress             | Routes to ready pods only. The readiness probe is `/v1/health/ready`.                                                                                         |
+| Secret                                | The keys the Loom pods share (the extractor's read only its token). Bring your own with `secrets.existingSecret`. The rest of the env is in the pod template. |
+| ConfigMap `<release>-settings`        | The settings file (`settingsFile`), mounted at `/app/config/loom.yaml` on every pod; each hook Job carries its own copy.                                      |
+| PodDisruptionBudget                   | One pod at a time on node drains and upgrades.                                                                                                                |
+| Optional HPA                          | CPU-based. Rate-limit shares resize as pods come and go.                                                                                                      |
+| Optional `<release>-workers`          | Background workers in their own pods (`workers.enabled`). Off by default: one web pod holds the lease and runs them.                                          |
+| Optional `<release>-publish`          | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                                                                        |
+| Optional `<release>-analytics-export` | A daily CronJob and its own ServiceAccount (`analyticsExport.enabled`, [below](#analytics-export)).                                                           |
+| Optional `<release>-extractor`        | The document extractor's Deployment, Service and NetworkPolicy (`extractor.enabled`, [below](#document-extractor)).                                           |
+| Optional dev ClickHouse               | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                                                     |
 
 ## Before you install
 
@@ -146,8 +147,8 @@ helm install loom deploy/helm/loom -n loom -f deploy/helm/loom/values-eks.yaml
   cluster needs its own rule, as engines differ on matching pod IPs by range:
   `networkPolicy.extraEgress: [{to: [{namespaceSelector: …, podSelector: …}], ports: [{port: 8123}]}]`.
 - **ClickHouse Cloud's IP access list** must allow the cluster's NAT gateway addresses.
-- **Image.** Pin `image.digest`; each release's run summary prints it, after the image
-  passed a CVE scan.
+- **Image.** Pin `image.digest`, and `extractor.image.digest` with `extractor.enabled`;
+  each release's run summary prints both, after each image passed a CVE scan.
 
 ## Upgrades and scaling
 
@@ -358,6 +359,27 @@ leader among themselves. The web pods run no workers. Use it when the workers ne
 more memory than a web pod, or to scale them apart from it. With `replicaCount: 2`
 the second pod is a standby with warm mirrors, and a PodDisruptionBudget keeps one of
 the two through a drain.
+
+## Document extractor
+
+`extractor.enabled: true` runs the document extractor service ([document
+extraction](../architecture/document-extraction.md)) as a Deployment and a Service of
+its own, `extractor.replicaCount` pods (two by default), each running one extraction at
+a time. The Loom pods get `LOOM_DOCUMENT_EXTRACTOR_URL` pointing at it, unless `env` or
+`extraEnv` sets one, and both sides read the bearer token from the release Secret's
+`LOOM_DOCUMENT_EXTRACTOR_TOKEN` key: `secrets.extractorToken` (16 characters or more;
+`openssl rand -hex 24`), or that key in `secrets.existingSecret`. The extractor pods
+read that one key and nothing else of the Secret, mount no service-account token, run as
+uid 10001 on a read-only root filesystem with every capability dropped, and carry labels
+of their own, so no policy or Service that selects the Loom pods selects them. Their
+NetworkPolicy, rendered whatever `networkPolicy.enabled` says, admits the release's Loom
+pods on 8790 and allows no egress; with `networkPolicy.enabled`, the Loom pods' policy
+allows egress to them. `extractor.env` takes the service's `LOOM_EXTRACTOR_*` limits
+([extractor](../../extractor/README.md)), and `extractor.resources` bounds each pod.
+Each side holds one token, so changing `secrets.extractorToken` restarts the Loom
+Deployments (web, and workers when enabled) and the extractor's, and while they roll, a
+Loom pod and an extractor pod may hold different tokens: extraction answers unavailable
+until every roll finishes.
 
 ## Analytics export
 

@@ -10,24 +10,24 @@ identity, so a re-run revises the extractor's own rows instead of writing beside
 
 - the key's active record has the same verbatim fields (reasoning, rejected options'
   reasons; the rest is the model's wording) and its row carries the same files, source,
-  constraint and repository tags: nothing is written (a confirmed row may still gain the
-  repository's tag by a tags-only write);
-- it differs and its row is the extractor's, unconfirmed and from this document:
-  recorded again (Revise), unless its outcome is recorded: then it is tagged
+  constraint and repository tags: nothing is written (a pinned or attested row may still
+  gain the repository's tag by a tags-only write);
+- it differs and its row is the extractor's, not pinned or attested, and from this
+  document: recorded again (Revise), unless its outcome is recorded: then it is tagged
   `source-changed`;
-- it differs and its row is confirmed (pinned, or attested in its current form) and
-  from this document: nothing is written, the body is printed for the human who
-  confirmed it, and the row is tagged `source-changed`, a tag a later run drops once the
-  document says the same again;
+- it differs and its row is frozen (pinned, or attested in its current form) and from
+  this document: nothing is written, the new body is printed in the run's report, and
+  the row is tagged `source-changed`, a tag a later run drops once the document says the
+  same again;
 - it differs and its row is another writer's or another document's: nothing is written;
-- no record under the key, but a confirmed decision row (pinned or attested) reads the
-  same at or above the conflict threshold: skipped as already recorded.
+- no record under the key, but a pinned or attested decision row reads the same at or
+  above the conflict threshold: skipped as already recorded.
 
-After the writes, the extractor deletes its unconfirmed rows citing this document whose
-reasoning (a span of the document) is no longer in its text, read as in the verbatim
-check, or whose outcome and reasoning this run recorded under another key. A row it keeps
-(confirmed, or with a recorded outcome) whose reasoning left is tagged `source-changed`
-instead. A refused write is reported and the run goes on.
+After the writes, the extractor deletes its rows citing this document, unless pinned or
+attested, whose reasoning (a span of the document) is no longer in its text, read as in
+the verbatim check, or whose outcome and reasoning this run recorded under another key. A
+row it keeps (pinned, attested, or with a recorded outcome) whose reasoning left is
+tagged `source-changed` instead. A refused write is reported and the run goes on.
 
 A document outside a repository's code namespace names the repository: its code names
 resolve in the repository's trunk, and the rows go there or stay beside the document,
@@ -80,7 +80,7 @@ log = logging.getLogger(__name__)
 EXTRACTOR_AGENT = "loom-decisions"
 DESIGN_DOC_TAG = "source-kind:design_doc"
 CONSTRAINT_TAG = "constraint"
-# A model's reading of a document, until a human pins it.
+# A model's reading of a document, ranked below a row someone wrote directly.
 EXTRACTED_CONFIDENCE = 0.5
 _PAGE = 500
 
@@ -163,7 +163,7 @@ class ExtractReport:
     # "<old key> -> <key>" for each extractor row deleted (or to delete) because this run
     # recorded its reasoning under another key: the model worded the scenario anew.
     replaced: list[str] = field(default_factory=list)
-    # Keys tagged (or to tag) `source-changed`: confirmed rows (pinned or attested), and
+    # Keys tagged (or to tag) `source-changed`: frozen rows (pinned or attested), and
     # rows with a recorded outcome, whose document now says otherwise.
     flagged: list[str] = field(default_factory=list)
     # Keys of rows the retire step keeps that gained (or would gain) the repository's tag;
@@ -178,10 +178,9 @@ class ExtractReport:
     races: list[str] = field(default_factory=list)
 
 
-def _confirmed(row: MemoryRow) -> bool:
-    """A person or a service account stood behind the row: pinned, or attested in its
-    current form, read as memory.get reads it; the rule memory.for_file marks
-    `(unconfirmed)` by."""
+def _frozen(row: MemoryRow) -> bool:
+    """The row is frozen against re-extraction: pinned, or attested in its current form,
+    read as memory.get reads it."""
     current = row_content_sha256(row)
     state = verification_state(row.verified_by, row.verified_sha256, current)
     return confirmed(row.pinned, state)
@@ -937,7 +936,7 @@ async def _reconcile(
     rec = RecordReport(key, "written", record_body(inp), signals, unresolved)
     writer = await live_writer_record(org, namespace, key)
     if writer is None:
-        peer = await _confirmed_restatement(org, namespace, key, inp)
+        peer = await _frozen_restatement(org, namespace, key, inp)
         if peer is not None:
             rec.action = "already_recorded"
             rec.note = f"already recorded by {peer.agent} under {peer.memory_key}"
@@ -969,19 +968,20 @@ async def _reconcile(
         same = _same_decision(record, inp)
         # Our own row is revised for its files, source, constraint or repository tag too: a
         # document extracted before its code was indexed gains its files on a later run.
-        stale_row = row is not None and ours and not _confirmed(row) and not _same_row(row, inp)
+        stale_row = row is not None and ours and not _frozen(row) and not _same_row(row, inp)
         if same and not stale_row:
             rec.action = "unchanged"
             rec.holds = ours
             rec.held_outcome = str(record.get("outcome") or "").strip()
             if row is not None and this_doc:
-                # Another writer's unconfirmed row gains no repository tag.
-                # (Our own unconfirmed row reached here with its tags the same already.)
-                link = t.row_tag if _confirmed(row) else ""
+                # Another writer's row that is not frozen gains no repository tag.
+                # (Our own such row reached here with its tags the same already.)
+                link = t.row_tag if _frozen(row) else ""
                 await _reconcile_tags(rec, row, dry_run, link)
             return rec
-        if row is not None and _confirmed(row) and this_doc:
-            # The human who confirmed it decides; a pinned writer row refuses decision.record.
+        if row is not None and _frozen(row) and this_doc:
+            # A pinned or attested row is frozen: whoever froze it decides; a pinned writer
+            # row refuses decision.record.
             rec.body.update(agent=row.agent, user_id=row.user_id, session_id=row.session_id)
             rec.note = (
                 "pinned; the document now says otherwise; to accept this body, unpin the row "
@@ -1026,12 +1026,12 @@ async def _reconcile(
     return rec
 
 
-async def _confirmed_restatement(
+async def _frozen_restatement(
     org: str, namespace: str, key: str, inp: DecisionRecordInput
 ) -> MemoryRow | None:
-    """A confirmed decision row (pinned or attested) under another key that reads as this
+    """A frozen decision row (pinned or attested) under another key that reads as this
     decision: of the decision hits at or above the namespace's conflict threshold, the
-    most similar one with a confirmed row."""
+    most similar one with a frozen row."""
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.conflicts import resolve_conflict_floor
     from server.memory.app.search import handle_memory_search
@@ -1072,10 +1072,10 @@ async def _confirmed_restatement(
     close.sort(key=lambda h: h.similarity, reverse=True)
     # _rows_of_key reads every row of a key: read each key once, at its most similar hit
     for hit in one_per_key(close, namespace, top_k):
-        # Every identity's row of the key, read exactly: a confirmed one may sit beside a
-        # newer unconfirmed one.
+        # Every identity's row of the key, read exactly: a frozen one may sit beside a
+        # newer one that is not.
         for row in await _rows_of_key(org, namespace, hit.memory_key):
-            if row.memory_type == "decision" and _confirmed(row):
+            if row.memory_type == "decision" and _frozen(row):
                 return row
     return None
 
@@ -1291,8 +1291,8 @@ async def _retire(
     repo_tag: str,
 ) -> None:
     """Contract the extractor's own rows on this document whose reasoning left its text:
-    delete an unconfirmed one; tag a confirmed one (pinned or attested), or one with a
-    recorded outcome, `source-changed`. An unconfirmed one whose outcome and reasoning
+    delete one that is not frozen; tag a frozen one (pinned or attested), or one with a
+    recorded outcome, `source-changed`. An unfrozen one whose outcome and reasoning
     this run holds under another key (`held`) is deleted too: the model worded the
     scenario anew, and the decision is not served twice. Another decision resting on the
     same reasoning has another outcome and stays. A row whose reasoning is still there
@@ -1333,7 +1333,7 @@ async def _retire_one(
     outcome = str(record.get("outcome") or "")
     restated = held.get(_held_key(outcome, reasoning))
     # A row with a recorded outcome is kept: deleting it would lose the outcome.
-    if not _confirmed(row) and restated is not None and not _has_outcome(record):
+    if not _frozen(row) and restated is not None and not _has_outcome(record):
         if await _delete_row(report, row):
             report.replaced.append(f"{key} -> {restated}")
         return
@@ -1341,7 +1341,7 @@ async def _retire_one(
     # read across is the same text.
     if not dx.find_span(reasoning, live_texts):
         # A row with a recorded outcome is tagged, never deleted, like a pinned one.
-        keep = _confirmed(row) or _has_outcome(record)
+        keep = _frozen(row) or _has_outcome(record)
         await _retire_row(report, row, keep=keep, repo_tag=repo_tag)
     elif repo_tag:
         # Its reasoning is still there though the model did not emit it: it stays, linked.

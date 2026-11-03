@@ -8,23 +8,21 @@ from typing import Any
 from server.core import request_work
 
 
-# Every statement of a request carries `query_id =
-# "<request_id>:<n>"` (the request id is the second token of the query
-# tag; n counts statements, and attempts, within the request), so
-# `system.query_log` joins `agent_events` by equality instead of `LIKE` over
-# `log_comment`. `query_id` is a URL parameter the driver passes through
-# unvalidated, never a server setting. A worker pass (no request id) keeps the
-# driver's own uuid.
+# A request statement's `query_id` is `<request_id>:<n>:<nonce>`: the request id
+# from the query tag, n counting the request's statements and attempts, and the
+# request's nonce (`RequestWork.ch_nonce`). A carried insert prefixes it with
+# `loom-carry/<process>/`. A worker pass keeps the driver's own uuid.
 def request_query_id(query_tag: str) -> str | None:
-    """`<request_id>:<n>` for the next statement under `query_tag`, or None
-    outside a request."""
+    """`<request_id>:<n>:<nonce>` for the next statement under `query_tag`, or
+    None outside a request."""
     parts = query_tag.split(" ")
     if len(parts) < 2 or not parts[1]:
         return None
     seq = request_work.next_query_seq()
     if seq is None:
         return None
-    return f"{parts[1]}:{seq}"
+    n, nonce = seq
+    return f"{parts[1]}:{n}:{nonce}"
 
 
 _SUMMARY_SPAN_ATTRS = (

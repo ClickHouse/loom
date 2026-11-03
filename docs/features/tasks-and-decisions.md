@@ -275,9 +275,9 @@ every field in full except the alternatives, each kept to its first 300 characte
   category, scenario, outcome, reasoning, alternatives and realized outcome (not `decision_maker` or `run_id`, which
   the row never holds).
 - **Files**: `files` sets the row's files as on `memory.set`; unset, they are detected from the stored fields, never
-  from the shortened statement. `memory.for_file` serves the decision before an edit of a file it names, marked
-  `(unconfirmed)` until it is pinned or attested, and `(source changed since confirmation)` or `(source changed)`
-  once tagged `source-changed` ([how the block reads](../concepts/memory.md#tags-entities-and-files)).
+  from the shortened statement. `memory.for_file` serves the decision before an edit of a file it names, as it is,
+  `(pinned)` when pinned and `(source changed)` once tagged `source-changed`
+  ([how the block reads](../concepts/memory.md#tags-entities-and-files)).
 - **Source**: `source_resource_id` and `source_class` set those columns as on `memory.set`; `source_resource_id`
   cites the document the decision was taken from.
 - **Outcome**: `decision.outcome` keeps the row's files, source, declared class and the caller's tags. It sets the
@@ -387,7 +387,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   - **Tags**: under `--into source` for a document outside the trunk, a row the run keeps as it is (pinned, attested
     or with a recorded outcome, and the same verbatim fields, or one the retire step keeps because its reasoning is
     still in the document), and a row it tags `source-changed`, gains the `repo:<id>` tag by a tags-only write;
-    another writer's unconfirmed row gains none, nor does a row that carries another repository's tag already.
+    another writer's row that is not pinned or attested gains none, nor does a row that carries another repository's
+    tag already.
   - **Access**: the run reads the document's namespace and the repository's, and writes where the rows go. With an
     auth context bound it checks each (viewer, viewer, and writer, or viewer for a dry run) and refuses before any
     model call; the CLI runs with none, as the operator.
@@ -540,26 +541,26 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   The category, scenario, outcome and option wording are the model's, and a change there alone is no change. Nor is a
   change in whitespace or letter case alone (a re-wrapped line, a capitalised first word): the row keeps its stored
   span, which the retire step still finds, and `decision.record` stores rejected options' reasons on one line already.
-  A row counts as confirmed when it is pinned or attested in its current form (`memory.verify`), the rule
-  `memory.for_file` marks `(unconfirmed)` by. By the row the key's active record belongs to:
-  - **The extractor's own, unconfirmed, from this document**: same verbatim fields and the same `files`,
+  A row is frozen against re-extraction when it is pinned or attested in its current form (`memory.verify`). By the
+  row the key's active record belongs to:
+  - **The extractor's own, not pinned or attested, from this document**: same verbatim fields and the same `files`,
     `source_resource_id`, `constraint` tag and `repo:` tag: no write. A verbatim field differs, or only those row
     fields do (a file that resolves once the code is indexed, a renamed heading, a first run with `--repo`): recorded
     again (the record is superseded, history keeps it).
-  - **Confirmed, citing this document** (whoever wrote it): a verbatim field differs: no write; the full
+  - **Pinned or attested, citing this document** (whoever wrote it): a verbatim field differs: no write; the full
     `decision.record` body is printed with the row's agent, user and session, and the row is tagged `source-changed`
     unless it already carries the tag. To accept the body, a maintainer unpins a pinned row with `memory.unpin`
     (`decision.record` on a pinned writer row answers 409 `PINNED_CONFLICT`) and sends it; an attested row takes the
     body, and its attestation then reads stale until `memory.verify` binds it again.
-  - **Another writer's unconfirmed row, or a row from another document**: neither revised nor tagged; its body is
-    printed.
+  - **Another writer's row that is not pinned or attested, or a row from another document**: neither revised nor
+    tagged; its body is printed.
   - **Its outcome recorded** (`decision.outcome`): never recorded again, since `decision.record` would rebuild it
-    without the outcome; a verbatim field that differs tags it `source-changed`, as a confirmed row is.
+    without the outcome; a verbatim field that differs tags it `source-changed`, as a pinned or attested row is.
   - **No record under the key**: of the `LOOM_MEMORY_DECISION_EXTRACT_RESTATEMENT_TOP_K` (default 20) decision keys
-    closest to the candidate (cosine only), a confirmed one under another key that reads the same at or above the
-    namespace's conflict threshold skips the candidate: `already recorded by <agent> under <key>`. The query is the
-    candidate's statement, which leaves the category out, so a confirmed decision filed under another category counts.
-    Otherwise the decision is recorded. The fetch is capped at 500 rows, so a large value or
+    closest to the candidate (cosine only), a pinned or attested one under another key that reads the same at or above
+    the namespace's conflict threshold skips the candidate: `already recorded by <agent> under <key>`. The query is the
+    candidate's statement, which leaves the category out, so a pinned or attested decision filed under another
+    category counts. Otherwise the decision is recorded. The fetch is capped at 500 rows, so a large value or
     `LOOM_MEMORY_SEARCH_PER_KEY_CAP=0` can read fewer keys.
 - **The tag write**: `memory.update_by_id` by the row's `memory_id`, tags only, conditional on the value read: a value
   changed since, by `decision.outcome` or a re-record, is left alone and reported as a race. It is a new version by
@@ -571,14 +572,14 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
 - **Races**: `decision.record` takes no precondition, so a `decision.outcome` that lands between the run's read and
   its re-record is replaced with the rest of the record; the tag write's precondition covers the value, not a
   tags-only change in the gap.
-- **Retire**: an unconfirmed `loom-decisions` row citing the document whose reasoning is no longer in the document's
-  text, read as in the verbatim check, is deleted with `memory.delete_version`, which also retires its record; a
-  confirmed one, or one whose outcome `decision.outcome` recorded, is tagged `source-changed` instead. The reasoning
-  read is the extractor's own record: a key whose active record another identity wrote is left alone. An unconfirmed
-  row whose outcome and reasoning (whitespace and letter case aside) this run recorded under another key (the model
-  worded the scenario differently) is deleted too, so the decision is not served twice, unless its realized outcome is
-  recorded; another decision resting on the same reasoning has another outcome and stays. Otherwise a row whose
-  reasoning is still there stays, whether or not the run emitted it again.
+- **Retire**: a `loom-decisions` row, not pinned or attested, citing the document whose reasoning is no longer in the
+  document's text, read as in the verbatim check, is deleted with `memory.delete_version`, which also retires its
+  record; a pinned or attested one, or one whose outcome `decision.outcome` recorded, is tagged `source-changed`
+  instead. The reasoning read is the extractor's own record: a key whose active record another identity wrote is left
+  alone. An unpinned, unattested row whose outcome and reasoning (whitespace and letter case aside) this run recorded
+  under another key (the model worded the scenario differently) is deleted too, so the decision is not served twice,
+  unless its realized outcome is recorded; another decision resting on the same reasoning has another outcome and stays.
+  Otherwise a row whose reasoning is still there stays, whether or not the run emitted it again.
 - **Citing the document**: a row cites it when its `source_resource_id` starts
   `knowledge:<document namespace>/<source_uri>#`, the namespace that holds the document (not where the row is), so a
   heading holding `#` (`C# bindings`) is no obstacle, unless a document `<source_uri>#<part>` it also starts with was
@@ -610,13 +611,15 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   so does a window the model could not answer readably while others were read), else 0; a race does not change the
   exit code.
 
-The reasoning is the verbatim span the retire step reads: the record has no field for the quote. To confirm an
-extracted decision, a maintainer reads its identity with `memory.get` and calls `memory.pin` under it, or attests its
-current value with `memory.verify`. Before an edit, `memory.for_file` marks an extracted row `(unconfirmed)` and
-`(source changed …)` as it does every decision row ([Decisions](#decisions)). Extracted into a repository's trunk code
-namespace, the rows also reach `loom_search` from a checkout of the repository, as every decision recorded there does
+The reasoning is the verbatim span the retire step reads: the record has no field for the quote. An extracted row is
+served as it is; nobody needs to review it. Pinning is optional: to freeze a row against re-extraction, read its
+identity with `memory.get` and call `memory.pin` under it, or attest its current value with `memory.verify`; a later run
+whose document no longer says it then tags the row `source-changed` instead of revising or deleting it. Before an edit,
+`memory.for_file` marks a pinned extracted row `(pinned)` and one tagged `source-changed` `(source changed)`, as it does
+every decision row ([Decisions](#decisions)). Extracted into a repository's trunk code namespace, the rows also reach
+`loom_search` from a checkout of the repository, as every decision recorded there does
 ([unified search](unified-search.md#reading-the-memory-section)); that surface marks no pin state, nor whether its
-source changed, so an extracted row reads there as any decision does until a maintainer confirms or deletes it.
+source changed, so an extracted row reads there as any decision does.
 
 ## History policies
 

@@ -180,7 +180,7 @@ async def roll_day(
     half-written day reads as not rolled."""
     from server.tracker.domain import test_daily as td
     from server.tracker.store.daily import version_now
-    from server.tracker.store.source import checks_config
+    from server.tracker.store.source import checks_source_label
 
     t0 = time.monotonic()
     fold = await src.test_day_fold(org, ns, since=day.since, until=day.until)
@@ -226,7 +226,7 @@ async def roll_day(
             "runs": sum(int(r["runs"]) for r in rows),
             "statements": 2,
             "remote_ms": remote_ms,
-            "source": checks_config(org, ns)[0][:200],
+            "source": checks_source_label(org, ns)[:200],
             "rolled_at": stamp,
             "created_at": stamp,
             "version": version,

@@ -1833,6 +1833,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "in the window; the guide revision and categories. An agent name records the "
         "writer, not a read boundary. `skipped` names sections not read, which are not empty."
     ),
+    "namespace.tune": (
+        "Drafts of changes to the settings that create a namespace's memories, read-only: "
+        "extraction rules for the shapes the audit found, categories for much-used tags, "
+        "a guide naming the key layout. Each proposal has its real target, current and "
+        "proposed value, supporting rows (key, version, content_sha256) and a count of the "
+        "rows it must keep working for, the agents it affects and the write that would "
+        "apply it with its guard. Nothing is applied; show a proposal to the person to "
+        "approve, never apply it yourself."
+    ),
     "namespace.inventory": (
         "What a namespace holds and who appears in it, read-only: live counts and "
         "newest write for memories, records, documents, runs and integrations; the "

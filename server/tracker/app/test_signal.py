@@ -389,7 +389,7 @@ async def test_signal_for(
     include_smells: bool = True,
     resolved_from: str = "",
 ) -> TrackerTestSignalOutput:
-    from server.tracker.store.source import checks_config
+    from server.tracker.store.source import checks_source_label
 
     name = test_name.strip()
     days = int(window_days or 0) or max(1, int(settings.tracker_test_signal_window_days))
@@ -486,7 +486,7 @@ async def test_signal_for(
         infra=infra,
         churn=churn,
         thresholds=th.as_dict(),
-        source=checks_config(org, namespace)[0],
+        source=checks_source_label(org, namespace),
         timings_ms=timings,
         rollup=rollup,
         streak=streak,

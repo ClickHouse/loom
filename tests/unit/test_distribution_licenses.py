@@ -15,6 +15,8 @@ def test_distribution_builders_ship_the_project_license_materials() -> None:
     assert "COPY LICENSE NOTICE THIRD_PARTY_NOTICES ./" in dockerfile
     assert "frontend_third_party_notices.mjs" in dockerfile
     assert "/frontend/dist/THIRD_PARTY_NOTICES.txt" in dockerfile
+    extractor = (ROOT / "extractor" / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY LICENSE NOTICE THIRD_PARTY_NOTICES /usr/share/doc/loom-extractor/" in extractor
 
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert 'required_notice in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES")' in workflow

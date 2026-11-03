@@ -2308,6 +2308,14 @@ class NamespaceOps:
             await self._agent.call("namespace.taxonomy", body, **options),
         )
 
+    async def tune(
+        self, body: _ops.NamespaceTuneBody | None = None, /, **options: Any
+    ) -> _ops.NamespaceTuneOutput:
+        """`namespace.tune`."""
+        return cast(
+            "_ops.NamespaceTuneOutput", await self._agent.call("namespace.tune", body, **options)
+        )
+
     async def validate(
         self, body: _ops.NamespaceValidateBody | None = None, /, **options: Any
     ) -> _ops.NamespaceValidateOutput:
