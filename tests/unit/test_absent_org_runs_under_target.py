@@ -179,7 +179,7 @@ def test_an_org_wide_token_naming_a_dash_org_with_a_namespace_is_incomplete() ->
         authz_target(OPERATIONS_BY_NAME["memory.get"], org="-", namespace="ns1", auth=auth)
 
 
-@pytest.mark.parametrize("org", ["-", "  "])
+@pytest.mark.parametrize("org", ["-", "  ", " globex "])
 def test_an_mcp_call_with_an_absent_org_runs_under_the_tokens_org(
     monkeypatch: pytest.MonkeyPatch, org: str
 ) -> None:
@@ -440,3 +440,10 @@ def test_a_padded_org_or_namespace_runs_stripped(seen: list[tuple[str, str, str]
     body = {"org": " globex ", "namespace": " ns1 ", "agent": "a", "memory_key": "k", "value": "v"}
     _post("memory.set", body, role="writer")
     assert seen == [("MemorySetInput", "globex", "ns1")]
+
+
+def test_the_ledger_records_a_padded_name_stripped() -> None:
+    from server.transport._common import ledger_identity
+
+    row = ledger_identity({"org": " globex ", "namespace": " ns1 "})
+    assert (row["org"], row["namespace"]) == ("globex", "ns1")
