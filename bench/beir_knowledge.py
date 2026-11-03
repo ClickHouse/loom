@@ -34,12 +34,13 @@ refuses a fake embedder; a hybrid or lexical arm whose lexical leg never fired,
 and an arm whose reranker did not run as it says (`check_reranked`), fail.
 
 A search returns at most 100 hits, which are chunks: recall@100 is over the
-documents they hold (`depth` in the report, 100 when every passage is one
-chunk). Ingest cost is the corpus's embedding tokens (SciFact ≈ 5.2K passages,
-NFCorpus ≈ 3.6K, ArguAna ≈ 8.7K, SCIDOCS ≈ 25K, FiQA ≈ 57K, each embedded by
-its own call); a search arm embeds only its queries, plus one model call per
-query when it reranks. Two arms pair by query id
-(`bench.bootstrap.paired_bootstrap`, each query its own cluster).
+documents they hold (`depth` in the report: 100 when every passage is one chunk,
+at most 99 on ArguAna, whose query finds its own passage and drops it). Ingest
+cost is the corpus's embedding tokens (SciFact ≈ 5.2K passages, NFCorpus ≈ 3.6K,
+ArguAna ≈ 8.7K, SCIDOCS ≈ 25K, FiQA ≈ 57K, each embedded by its own call); a
+search arm embeds only its queries, plus one model call per query when it
+reranks. Two arms pair by query id (`bench.bootstrap.paired_bootstrap`, each
+query its own cluster).
 """
 
 from __future__ import annotations

@@ -355,8 +355,10 @@ def test_an_arm_naming_no_reranker_pins_none() -> None:
     ]
     hit = {"source_uri": "a.md", "content": "y", "similarity": 0.5, "lexical_score": 1.0}
     sent: list[dict] = []
-    search(lambda path, body: sent.append(body) or {"results": [hit]}, "o", "n", queries, {})
-    assert sent[0]["rerank"] == "none"
+    report = search(
+        lambda path, body: sent.append(body) or {"results": [hit]}, "o", "n", queries, {}
+    )
+    assert sent[0]["rerank"] == "none" and report["params"] == {"rerank": "none"}
     # a deployment default that reranks anyway fails the baseline
     answer = {"results": [hit], "reranked_by": "builtin:openai"}
     with pytest.raises(SystemExit, match="names none"):
