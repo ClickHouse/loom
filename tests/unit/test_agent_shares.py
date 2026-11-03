@@ -299,8 +299,8 @@ def test_an_unshare_rechecks_the_row_under_the_grants_claim(monkeypatch) -> None
     async def find_any_grant(org: str, namespace: str, subject: str, **kw: Any) -> GrantState:
         return next(reads)
 
-    async def canonical(org: str, subject: str) -> str:
-        return subject
+    async def stored(org: str, namespace: str, spellings: list[str], **kw: Any) -> list[str]:
+        return spellings
 
     class _Claim:
         async def __aenter__(self) -> None:
@@ -312,12 +312,10 @@ def test_an_unshare_rechecks_the_row_under_the_grants_claim(monkeypatch) -> None
     async def insert_row(row: Any, **kw: Any) -> None:
         written.append(row)
 
-    from server.auth import aliases
-
     monkeypatch.setattr(grants_app.grants_repo, "find_any_grant", find_any_grant)
+    monkeypatch.setattr(grants_app.grants_repo, "stored_spellings", stored)
     monkeypatch.setattr(grants_app.grants_repo, "insert_row", insert_row)
     monkeypatch.setattr(grants_app, "grant_change", lambda *a: _Claim())
-    monkeypatch.setattr(aliases, "canonical_subject", canonical)
     check = agent_shares._made_by("sa:fleet:a", "sa:fleet:b", "fleet-a")
     body = GrantsRevokeInput(org="acme", namespace="fleet-a", subject="sa:fleet:b")
     with pytest.raises(PreconditionFailedError):

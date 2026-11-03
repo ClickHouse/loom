@@ -75,6 +75,8 @@ SETUP = (
     *(_grant("team-y", f"{who}@corp.example") for who in ("erin", "frank")),
     *(_grant("team-x", handle) for handle in ("mallory", "u-carol", "dave")),
     _grant("team-z", "mallory"),
+    # Granted under the address as typed, before the account was linked.
+    _grant("team-w", "Dave@Corp.example"),
 )
 
 
@@ -139,7 +141,7 @@ async def test_a_grant_to_the_address_is_written_under_it_until_it_is_verified(c
         # Nor does the squatter's own grant admit the address.
         ("bob@corp.example", {"team-x": 2, "team-y": 2, "team-z": 0}),
         ("u-carol", {"team-x": 2, "team-y": 2}),
-        ("dave", {"team-x": 2, "team-y": 2}),
+        ("dave", {"team-x": 2, "team-y": 2, "team-w": 2}),  # team-w: in any case
         ("erin", {"team-y": 0}),  # unlinked
         ("u-frank", {"team-y": 0}),  # deactivated
     ],
@@ -324,6 +326,9 @@ async def test_the_user_list_marks_a_platform_admin_by_a_verified_email_only(
         ("team-y", "mallory", []),
         # An address typed in another case still reaches the row kept in lower case.
         ("team-x", "Carol@Corp.example", ["carol@corp.example", "u-carol"]),
+        # And a row stored in another case is reached by the handle or the address.
+        ("team-w", "dave", ["Dave@Corp.example"]),
+        ("team-w", "dave@corp.example", ["Dave@Corp.example"]),
     ],
 )
 async def test_a_revoke_takes_the_rows_its_spellings_reach(

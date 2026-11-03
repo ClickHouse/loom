@@ -389,6 +389,31 @@ async def find_any_grant(
     return None if row is None else GrantState.from_row(row)
 
 
+async def stored_spellings(
+    org: str,
+    namespace: str,
+    spellings: list[str],
+    *,
+    ch: _CHClient | None = None,
+) -> list[str]:
+    """The subjects the live rows on (org, namespace) are stored under that match one
+    of `spellings` in any case, as the gate matches them."""
+    if not spellings:
+        return []
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT DISTINCT subject FROM loom.namespace_grants FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND lowerUTF8(subject) IN {subs:Array(String)} AND revoked_at IS NULL
+        ORDER BY subject
+        LIMIT 64
+        """,
+        params={"org": org, "ns": namespace, "subs": sorted({s.lower() for s in spellings})},
+    )
+    return [str(r["subject"]) for r in rows]
+
+
 async def count_active_admins(
     org: str,
     namespace: str,

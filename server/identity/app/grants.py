@@ -335,12 +335,12 @@ async def handle_grants_pending_for_me(
 async def _live_grant_rows(org: str, namespace: str, subject: str) -> list[tuple[str, GrantState]]:
     """The (stored subject, row) pairs a revoke of `subject` takes: the live row
     under every spelling the gate admits the person by (the subject, its login
-    handle, its verified email, an address also in lower case, as the directory
-    keeps one), since one left live would keep admitting them. When there is none
-    and the subject is an address, the first row under a spelling a revocation
-    reaches (`aliases.spellings`): a grant for it stored under an unverified
-    account's handle. A handle never falls back to its unverified email, which
-    may name someone else's grant."""
+    handle, its verified email), matched in any case as the gate matches them,
+    since one left live would keep admitting them. When there is none and the
+    subject is an address, the first row under a spelling a revocation reaches
+    (`aliases.spellings`): a grant for it stored under an unverified account's
+    handle. A handle never falls back to its unverified email, which may name
+    someone else's grant."""
     from server.auth.aliases import read_aliases, spellings
     from server.core.ch import own_write_reads
     from server.core.principals import has_aliases
@@ -349,20 +349,25 @@ async def _live_grant_rows(org: str, namespace: str, subject: str) -> list[tuple
     if has_aliases(subject):
         with own_write_reads():  # a link another process just made
             verified = await read_aliases(org, subject, None)
-    verified += [s.lower() for s in verified if "@" in s]
-    found: list[tuple[str, GrantState]] = []
-    for spelling in dict.fromkeys(verified):
-        row = await grants_repo.find_any_grant(org, namespace, spelling)
-        if row is not None:
-            found.append((spelling, row))
+    found = await _rows_under(org, namespace, verified)
     if found or "@" not in subject:
         return found
-    for spelling in await spellings(org, subject):
-        if spelling not in verified:
-            row = await grants_repo.find_any_grant(org, namespace, spelling)
-            if row is not None:
-                return [(spelling, row)]
-    return []
+    seen = {s.lower() for s in verified}
+    others = [s for s in await spellings(org, subject) if s.lower() not in seen]
+    return (await _rows_under(org, namespace, others))[:1]
+
+
+async def _rows_under(
+    org: str, namespace: str, spellings: list[str]
+) -> list[tuple[str, GrantState]]:
+    """Each live row on (org, namespace) stored under one of `spellings`, in any case,
+    with the subject it is stored under."""
+    found: list[tuple[str, GrantState]] = []
+    for stored in await grants_repo.stored_spellings(org, namespace, spellings):
+        row = await grants_repo.find_any_grant(org, namespace, stored)
+        if row is not None:
+            found.append((stored, row))
+    return found
 
 
 async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
