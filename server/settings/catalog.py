@@ -2660,8 +2660,8 @@ class MemorySettings(BaseModel):
     # Decisions already recorded from a document that the prompt lists, so a re-run
     # keeps their keys and wording; past this many, the rest may be read as new. 0 = none.
     memory_decision_extract_known_max: Annotated[int, LIVE] = Field(default=30, ge=0)
-    # Closest decision keys a candidate is checked against for a confirmed restatement under
-    # another key (cosine only); the fetch caps at 500 rows.
+    # Closest decision keys a candidate is checked against for a pinned or attested restatement
+    # under another key (cosine only); the fetch caps at 500 rows.
     memory_decision_extract_restatement_top_k: Annotated[int, LIVE] = Field(default=20, ge=1)
     # ---- fact-leg reads of memory_embeddings ----
     # Seconds a process caches its count of patch parts on

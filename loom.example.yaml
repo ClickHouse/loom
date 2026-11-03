@@ -3141,8 +3141,8 @@ settings:
   # [live]
   # memory_decision_extract_known_max: 30
 
-  # Closest decision keys a candidate is checked against for a confirmed restatement
-  # under another key (cosine only); the fetch caps at 500 rows. [live]
+  # Closest decision keys a candidate is checked against for a pinned or attested
+  # restatement under another key (cosine only); the fetch caps at 500 rows. [live]
   # memory_decision_extract_restatement_top_k: 20
 
   # --- fact-leg reads of memory_embeddings ---
