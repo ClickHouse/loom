@@ -461,7 +461,7 @@ A `<table>_pre_rebuild` copy left by an earlier run blocks that table's rebuild.
 from the current window is removed with that table's line and
 `mode="--drop-pre-rebuild --yes"`, as in step 3. Once writers have run since the copy
 was made, `--drop-pre-rebuild` refuses it: the live table holds changes the copy lacks
-(new rows, erasure tombstones, quarantine updates, a re-embed delete). Remove such a copy
+(new rows, erasure tombstones, a re-embed delete). Remove such a copy
 with the read in
 [what the checks after a swap find](./maintenance.md#what-the-checks-after-a-swap-find),
 then `DROP TABLE loom.<table>_pre_rebuild SYNC` by hand. A mutation on

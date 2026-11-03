@@ -131,6 +131,24 @@ async def _worker_passes(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.observability import budget
 
     await budget.namespaces_over_cap([(ORG, NS), (ORG, "n2")], ch=ch)
+    # The usage fold's lightweight UPDATE of loom.memory's counters.
+    from server.memory.workers import usage_fold as uf
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    target = uf._Target(
+        memory_id="00000000-0000-0000-0000-000000000001",
+        org=ORG,
+        namespace=NS,
+        agent="a",
+        user_id="-",
+        memory_key="k1",
+        evidence=1,
+        recall=1,
+        last_recalled=now,
+        reinforcement=None,
+        last_activity=now,
+    )
+    await uf._fold_memory_rows(ch, [target], 10)
 
 
 async def _admin_readers(ch: RecordingCH, c: dict[str, Any]) -> None:
