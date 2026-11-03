@@ -420,14 +420,20 @@ async def test_a_child_can_start_no_process(
     assert r.json()["error"]["message"] == "BlockingIOError"
 
 
+# Calls the child's filter refuses beyond the socket families, by architecture:
+# io_uring_setup (an io_uring can open a socket), ptrace (PEEKTEXT on pid 0 is
+# ESRCH unfiltered), process_vm_readv and pidfd_getfd (EINVAL and EBADF unfiltered).
+_PROBES = {
+    "x86_64": {"io_uring": 425, "ptrace": 101, "vm_readv": 310, "pidfd_getfd": 438},
+    "aarch64": {"io_uring": 425, "ptrace": 117, "vm_readv": 270, "pidfd_getfd": 438},
+}
+
+
 async def test_a_child_can_open_no_socket(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The service's network may hold the Loom server (an unauthenticated one, on
     a laptop): a taken-over extraction reaches no address on it or beyond."""
-    _child(
-        tmp_path,
-        monkeypatch,
-        """
-        import socket
+    body = """
+        import ctypes, errno, platform, socket
         refused = []
         for family in (socket.AF_INET, socket.AF_INET6, socket.AF_UNIX):
             try:
@@ -438,33 +444,32 @@ async def test_a_child_can_open_no_socket(tmp_path: Path, monkeypatch: pytest.Mo
             socket.socketpair()
         except PermissionError:
             refused.append("pair")
-        import ctypes, errno, platform
         libc = ctypes.CDLL(None, use_errno=True)
-        probes = {"io_uring": 425}  # io_uring_setup: an io_uring can open a socket
-        # ptrace(PTRACE_PEEKTEXT, 0): unfiltered, ESRCH; the filter refuses every request
-        probes["ptrace"] = 101 if platform.machine() == "x86_64" else 117
+        probes = dict(PROBES[platform.machine()])
         if platform.machine() == "x86_64":
             probes["x32"] = 0x40000000 | 39  # the x32 ABI's getpid, numbered past the filter's checks
         for name, nr in probes.items():
             if libc.syscall(nr, 1, None) == -1 and ctypes.get_errno() == errno.EPERM:
                 refused.append(name)
         raise ExtractionError("corrupt", " ".join(refused))
-        """,
-    )
+        """
+    _child(tmp_path, monkeypatch, body.replace("PROBES", repr(_PROBES)))
     r = await _extract()
     import ctypes
     import errno
 
-    # A host that refuses io_uring itself (a container's seccomp profile, a
-    # hardened kernel) would make the probe pass without the filter.
+    # A call the host refuses itself (a container's seccomp profile, a hardened
+    # kernel) would pass the probe without the filter, so it is not counted.
     libc = ctypes.CDLL(None, use_errno=True)
-    own = libc.syscall(425, 1, None) == -1 and ctypes.get_errno() == errno.EPERM
-    ptrace = 101 if platform.machine() == "x86_64" else 117
-    own_ptrace = libc.syscall(ptrace, 1, None) == -1 and ctypes.get_errno() == errno.EPERM
+    probes = _PROBES[platform.machine()]
+    host = {
+        n
+        for n, nr in probes.items()
+        if libc.syscall(nr, 1, None) == -1 and ctypes.get_errno() == errno.EPERM
+    }
     refused = r.json()["error"]["message"].split()
     assert refused[:4] == ["AF_INET", "AF_INET6", "AF_UNIX", "pair"]
-    assert ("io_uring" in refused) or own  # refused by the filter, unless the host refuses it
-    assert ("ptrace" in refused) or own_ptrace
+    assert set(probes) - host <= set(refused), refused
     assert ("x32" in refused) == (platform.machine() == "x86_64")
 
 

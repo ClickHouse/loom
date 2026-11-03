@@ -71,7 +71,7 @@ def _bpf(code: int, k: int, jt: int = 0, jf: int = 0) -> bytes:
 
 
 def socket_filter(machine: str) -> tuple[int, tuple[int, ...]]:
-    """(audit arch, the syscalls that make a socket) on `machine`; an OSError for
+    """(audit arch, the syscalls a child is refused) on `machine`; an OSError for
     an architecture with no filter, which the service refuses to start on."""
     if machine not in _NO_SOCKETS:
         raise OSError(f"no socket filter for {machine}: the extractor runs on x86_64 or aarch64")
