@@ -16,6 +16,8 @@ import uuid
 import httpx
 import pytest
 
+from tests.integration._resources import unique_org
+
 
 def _hdr(tok: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {tok}"}
@@ -551,7 +553,7 @@ async def test_a_poster_reusing_another_posters_key_gets_its_own_task(
 ) -> None:
     # Two listed posters, neither able to read the inbox's namespace, send one key: the
     # second stores its own task and never sees the first one's title or brief.
-    org = f"taskkey-{uuid.uuid4().hex[:8]}"
+    org = unique_org("taskkey")
     admin = mint_test_token(org=org, namespaces=["private"], roles=["admin"], subject="alice")
     bots = {
         name: mint_test_token(org=org, namespaces=[name], roles=["writer"], subject=f"sa:{name}")
