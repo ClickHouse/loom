@@ -475,6 +475,8 @@ async def test_a_child_can_open_no_socket(tmp_path: Path, monkeypatch: pytest.Mo
     # kernel) would pass the probe without the filter, so it is not counted.
     libc = ctypes.CDLL(None, use_errno=True)
     probes = _PROBES[platform.machine()]
+    if platform.machine() == "x86_64":
+        probes = {**probes, "x32": 0x40000000 | 39}
     host = {
         n
         for n, nr in probes.items()
@@ -483,7 +485,7 @@ async def test_a_child_can_open_no_socket(tmp_path: Path, monkeypatch: pytest.Mo
     refused = r.json()["error"]["message"].split()
     assert refused[:4] == ["AF_INET", "AF_INET6", "AF_UNIX", "pair"]
     assert set(probes) - host <= set(refused), refused
-    assert ("x32" in refused) == (platform.machine() == "x86_64")
+    assert ("x32" in refused) == (platform.machine() == "x86_64") or "x32" in host
 
 
 def test_a_machine_with_no_socket_filter_refuses_to_extract(

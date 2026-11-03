@@ -1,7 +1,8 @@
 # Deployment
 
-Loom is one server image plus ClickHouse. The image serves HTTP, MCP and the
-dashboard, and runs the background workers. Its containers keep no durable state of their
+Loom is one server image plus ClickHouse, with the document extractor service as an
+image of its own ([container images](#container-images)). The server image serves HTTP,
+MCP and the dashboard, and runs the background workers. Its containers keep no durable state of their
 own, so you can replace or add them freely: ClickHouse holds Loom's data, uploaded
 document originals included unless their bytes are kept in an S3-compatible bucket
 ([where originals are stored](../features/knowledge.md#where-originals-are-stored)); the
@@ -15,7 +16,9 @@ files. Every setting named here is in the generated
 ## Deployment ladder
 
 Each rung keeps the previous one's image and schema. What changes is where ClickHouse
-lives and how many containers run.
+lives and how many containers run. The installed stack and the local stack from a clone
+run the document extractor beside Loom; the rungs below them do not, so point
+`LOOM_DOCUMENT_EXTRACTOR_URL` at one you run ([container images](#container-images)).
 
 | Rung                          | Start it with                                                                                          | ClickHouse                                         | Use for                                   |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------- | ----------------------------------------- |
@@ -926,7 +929,7 @@ Carry the choices in `deploy/proxy/nginx.conf` over to your own front end:
 
 ## Container images
 
-The repository [`Dockerfile`](../../Dockerfile) builds the one image every rung uses:
+The repository [`Dockerfile`](../../Dockerfile) builds the server image every rung uses:
 
 | Stage              | Produces                                                                                                                                 |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |

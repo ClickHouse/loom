@@ -109,9 +109,7 @@ def bootstrap(root: Path, env_file: str) -> list[str]:
             1,
         )
         template = template.replace(
-            "LOOM_DOCUMENT_EXTRACTOR_TOKEN=",
-            f"LOOM_DOCUMENT_EXTRACTOR_TOKEN={secrets.token_hex(24)}",
-            1,
+            f"{_EXTRACTOR_TOKEN}=", f"{_EXTRACTOR_TOKEN}={secrets.token_hex(24)}", 1
         )
         template = template.replace(
             "COMPOSE_PROJECT_NAME=",
@@ -127,11 +125,9 @@ def bootstrap(root: Path, env_file: str) -> list[str]:
         line = f"{_EXTRACTOR_TOKEN}={secrets.token_hex(24)}"
         # An empty value, bare or quoted, is the line to fill.
         blank = re.compile(rf"^{_EXTRACTOR_TOKEN}=[ \t]*(?:\"\"|'')?[ \t]*$", re.MULTILINE)
-        text = (
-            blank.sub(line, text, count=1)
-            if blank.search(text)
-            else text.rstrip("\n") + f"\n{line}\n"
-        )
+        text, filled = blank.subn(line, text, count=1)
+        if not filled:
+            text = text.rstrip("\n") + f"\n{line}\n"
         write_private(env_path, text)
         created.append(f"added {_EXTRACTOR_TOKEN} to {env_file}")
     nc = root / NAMED_COLLECTIONS
