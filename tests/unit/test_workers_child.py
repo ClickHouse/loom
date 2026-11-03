@@ -381,44 +381,91 @@ async def test_the_child_stops_its_loops_before_its_writes_drain(monkeypatch) ->
     assert events == ["calibration stopped", "service ended", "workers stopped", "drain"]
 
 
+@pytest.fixture
+def child_stubs(monkeypatch) -> SimpleNamespace:
+    """The child's services stubbed to start without ClickHouse. `tags` holds the
+    query tag each tracker-registry refresh saw; `second_refresh` is set on the second."""
+    from server import boot
+    from server.code.app.index import repo_registry
+    from server.core import runtime_overrides
+    from server.core.ch import current_query_tag
+    from server.insights.app import provider_barrier, provider_runtime
+    from server.tracker.app import registry_sources
+
+    tags: list[str] = []
+    second_refresh = asyncio.Event()
+
+    async def _no_overrides(*, ch=None) -> runtime_overrides.Snapshot:
+        return {}
+
+    async def _noop(*_a, **_k) -> None:
+        return None
+
+    async def _refresh(*_a, **_k) -> None:
+        tags.append(current_query_tag())
+        if len(tags) == 2:
+            second_refresh.set()
+
+    async def _refresher(_ch):
+        return asyncio.create_task(asyncio.sleep(3600))
+
+    monkeypatch.setattr(provider_barrier, "register_process", _noop)
+    monkeypatch.setattr(provider_runtime, "load_active_configuration", _noop)
+    monkeypatch.setattr(provider_runtime, "refresh_loop", lambda: asyncio.sleep(3600))
+    monkeypatch.setattr(registry_sources, "refresh_db_sources", _refresh)
+    monkeypatch.setattr(repo_registry, "start_refresher", _refresher)
+    monkeypatch.setattr(boot, "calibrate_similarity_gates", _noop)
+    monkeypatch.setattr("server.observability.get_emitter", lambda: SimpleNamespace(start=_noop))
+    monkeypatch.setattr(runtime_overrides, "load", _no_overrides)
+    monkeypatch.setattr(boot, "_WARM", {})  # no earlier test's first load counts
+    return SimpleNamespace(tags=tags, second_refresh=second_refresh)
+
+
+async def _stop(tasks: list[asyncio.Task[None]]) -> None:
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("child_stubs")
 async def test_the_child_adopts_the_runtime_overrides_before_its_workers_start(
     monkeypatch,
 ) -> None:
     """A worker pass reads LIVE settings: the child loads the stored overrides
     before the supervisor starts and keeps re-reading them."""
-    from server import boot, worker_main
-    from server.code.app.index import repo_registry
+    from server import worker_main
     from server.core import runtime_overrides, settings_overrides
-    from server.insights.app import provider_barrier, provider_runtime
     from server.settings import settings
-    from server.tracker.app import registry_sources
-
-    async def _noop(*_a, **_k) -> None:
-        return None
-
-    async def _refresher(_ch):
-        return asyncio.create_task(asyncio.sleep(3600))
 
     async def _load(*, ch=None) -> runtime_overrides.Snapshot:
         await asyncio.sleep(0.05)  # the first read is not instant
         return {runtime_overrides.SETTING: {("memory_ask_recency_weight",): 0.9}}
 
-    monkeypatch.setattr(provider_barrier, "register_process", _noop)
-    monkeypatch.setattr(provider_runtime, "load_active_configuration", _noop)
-    monkeypatch.setattr(provider_runtime, "refresh_loop", lambda: asyncio.sleep(3600))
-    monkeypatch.setattr(registry_sources, "refresh_db_sources", _noop)
-    monkeypatch.setattr(repo_registry, "start_refresher", _refresher)
-    monkeypatch.setattr(boot, "calibrate_similarity_gates", _noop)
-    monkeypatch.setattr("server.observability.get_emitter", lambda: SimpleNamespace(start=_noop))
     monkeypatch.setattr(runtime_overrides, "load", _load)
-    monkeypatch.setattr(boot, "_WARM", {})  # no earlier test's first load counts
     monkeypatch.setattr(settings, "memory_ask_recency_weight", 0.2)
     tasks = await worker_main._start_services(object())
     try:
         assert settings.memory_ask_recency_weight == 0.9  # before any pass starts
     finally:
-        for t in tasks:
-            t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await _stop(tasks)
         settings_overrides.adopt({})
+
+
+@pytest.mark.asyncio
+async def test_the_child_tags_its_boot_reads_and_its_tracker_loop(monkeypatch, child_stubs) -> None:
+    """Its boot reads and its tracker-registry loop run where no request or pass
+    tag reaches; each carries its own, and the caller's context keeps none."""
+    from server import worker_main
+    from server.core.ch import current_query_tag
+
+    real_sleep = asyncio.sleep
+    # The loop waits at least 5 s between refreshes: let every wait return at once.
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: real_sleep(0))
+    tasks = await worker_main._start_services(object())
+    try:
+        await asyncio.wait_for(child_stubs.second_refresh.wait(), 5)
+    finally:
+        await _stop(tasks)
+    assert child_stubs.tags[:2] == ["boot.workers_child", "tracker.sources_refresh"]
+    assert current_query_tag() == ""
