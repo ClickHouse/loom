@@ -229,6 +229,44 @@ async def test_revoke_by_email_revokes_the_canonical_row(monkeypatch: pytest.Mon
 
 
 @pytest.mark.asyncio
+async def test_revoke_by_email_reaches_a_row_under_an_unverified_accounts_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The address is no verified spelling of `mallory`, so it canonicalises to
+    # itself; a grant for it stored under her handle is still what it revokes.
+    from server.identity.api.models_grants import GrantsRevokeInput
+    from server.identity.app import token_grants
+
+    inserted: list[dict[str, Any]] = []
+
+    async def _canonical(org: str, subject: str, **_: Any) -> str:
+        return subject
+
+    async def _spellings(org: str, subject: str, **_: Any) -> list[str]:
+        return [subject, "mallory"]
+
+    async def _find_any(org: str, ns: str, sub: str, **_: Any) -> GrantState | None:
+        return GrantState.from_row(_row("writer")) if sub == "mallory" else None
+
+    async def _insert(row: dict[str, Any], **_: Any) -> None:
+        inserted.append(row)
+
+    async def _cascade(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.auth.aliases.canonical_subject", _canonical)
+    monkeypatch.setattr("server.auth.aliases.spellings", _spellings)
+    monkeypatch.setattr(grants_repo, "find_any_grant", _find_any)
+    monkeypatch.setattr(grants_repo, "insert_row", _insert)
+    monkeypatch.setattr(token_grants, "cascade_revoke_to_created_tokens", _cascade)
+    out = await grants_mod.handle_grants_revoke(
+        GrantsRevokeInput(org="o", namespace="ns", subject="bob@corp.example")
+    )
+    assert out.revoked is True
+    assert inserted[0]["subject"] == "mallory" and inserted[0]["revoked_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_the_last_admin_is_not_lowered(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.core.errors import PreconditionFailedError
 
