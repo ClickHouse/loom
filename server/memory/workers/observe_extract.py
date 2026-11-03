@@ -5,7 +5,8 @@ with no LLM/embedding. `observe.crystallize` tags a session's observations
 READY (`crystallize:ready`). This worker picks up READY rows per session,
 replays their narratives through `memory.set_from_messages` (LLM extraction
 + embedding + conflict-surfacing + blacklist), and rewrites each source row
-`crystallize:done` so the next pass skips it — idempotent.
+`crystallize:done` so the next pass skips it — idempotent. A row deleted or
+given new text during the replay is left as it now is.
 
 Off by default (`LOOM_OBSERVE_EXTRACT_ENABLED`); requires LLM credentials.
 """
@@ -226,7 +227,8 @@ async def _distill_session(
     observations: list[Any],
 ) -> DistilledSession:
     """Replay one session's observations through memory.set_from_messages
-    (one synthetic `user` turn per narrative) and mark the sources DONE."""
+    (one synthetic `user` turn per narrative) and mark the sources DONE, except a
+    source deleted or given new text since it was read."""
     import server.memory.store as memory_repo
 
     # An observation that holds a high shape is never sent to the model, labelled or not:
@@ -437,7 +439,7 @@ async def run_pass(
 
     if result.distilled_count or result.failures:
         log.info(
-            "observe_extract: distilled=%d sessions, %d memories from %d observations, %d failed",
+            "observe_extract: distilled=%d sessions, %d memories, %d observations done, %d failed",
             result.distilled_count,
             result.written_memories,
             result.observations_consumed,
