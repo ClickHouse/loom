@@ -74,20 +74,16 @@ function takeSessionEnded(): boolean {
 }
 
 /** The session ended (the server refused the token, or another tab dropped it). While the
- *  app boots there is no page to keep: the sign-in gate shows, saying why. Mid-session a
- *  card says so over the page, which stays as it is. */
+ *  app boots there is no page to keep, and boot, which knows whether the token came by a
+ *  sign-in link, shows the gate and says why once whoami answers. Mid-session a card says
+ *  so over the page, which stays as it is. */
 function endSession(): void {
   clearToken();
   // A single-user install has no sign-in: its next call goes without the stale token.
   if (isAuthDisabled()) return;
   noteSessionEnded();
   const s = useStore.getState();
-  if (!s.whoami) {
-    s.setGateReason("expired");
-    s.setAuthed(false);
-    return;
-  }
-  s.setSessionExpired(true);
+  if (s.whoami) s.setSessionExpired(true);
 }
 
 onSignInRejected(endSession);

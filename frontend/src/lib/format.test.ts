@@ -84,11 +84,16 @@ describe("humanizeError", () => {
         humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "token jti 'j1' is revoked" })),
       ).toBe("Your session ended — sign in again.");
       // With auth off, or behind a proxy, there is no session to sign in to.
-      window.__LOOM_AUTH_DISABLED = true;
-      expect(humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "missing bearer token" }))).toBe(
-        "Sign-in rejected: missing bearer token",
-      );
-      delete window.__LOOM_AUTH_DISABLED;
+      for (const flag of ["__LOOM_AUTH_DISABLED", "__LOOM_PROXY_AUTH"] as const) {
+        window[flag] = true;
+        try {
+          expect(
+            humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "missing bearer token" })),
+          ).toBe("Sign-in rejected: missing bearer token");
+        } finally {
+          delete window[flag];
+        }
+      }
       expect(
         humanizeError(
           new ApiError({ status: 429, code: "RATE_LIMITED", message: "namespace 'x' exceeded memory.set rate limit" }),

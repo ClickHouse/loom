@@ -581,11 +581,17 @@ describe("a refused token", { timeout: 30_000 }, () => {
           }
           const status = whoamiAnswers.shift() ?? 200;
           if (status !== 200) return new Response("{}", { status });
-          if (!bearer || (refuse && bearer === alice)) return json({ authenticated: false });
+          if (!bearer || (refuse && bearer === alice)) {
+            await new Promise((r) => setTimeout(r, 30)); // after the early read's 401
+            return json({ authenticated: false });
+          }
           const sub = bearer === bob ? "bob" : "alice";
           return json({ authenticated: true, subject: sub, org: ORG, namespaces: [NS], roles: ["ADMIN"] });
         }
         if (url.includes("namespace.list_mine")) {
+          // The server refuses the same token on every op, and the early read is first back.
+          const bearer = new Headers(init?.headers).get("Authorization")?.replace("Bearer ", "") ?? "";
+          if (refuse && bearer === alice) return refused;
           if (!refuseListMine) return json({ ...GENERIC, rows: MINE });
           setTimeout(listMineRefused, 0);
           return refused;
@@ -741,6 +747,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
     await settle(4);
     expect(useStore.getState().gateReason).toBe("refused");
     expect(goToSso).not.toHaveBeenCalled();
+    expect(localStorage.getItem("loom_token_v1")).toBeNull();
     delete window.__LOOM_SSO;
   });
 
