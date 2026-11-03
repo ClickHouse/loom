@@ -3,9 +3,9 @@
 A human reaches loom under two subjects: the login token names the
 account's `owner_email` (the login handle), while grants written by
 operators, bootstrap scripts and invitations name the person's email — the
-same row's `contact_email`. An exact-subject grant read would refuse a person granted under one
-spelling when they arrive under the other, and list the same human twice as
-a namespace's readers.
+same row's `contact_email`. An exact-subject grant read would refuse a
+person granted under one spelling when they arrive under the other, and
+list the same human twice as a namespace's readers.
 
 `subject_aliases(org, subject)` returns the subject and every spelling the
 directory ties to the same account: the row whose `owner_email` is the
@@ -113,6 +113,14 @@ def invalidate(org: str, subjects: Iterable[str]) -> None:
             del _CACHE[key]
 
 
+def invalidate_org(org: str) -> None:
+    """Drop every cached read of `org`: a link or an unlink changed which of
+    its accounts' emails are verified, and a link's owner may not be among
+    the spellings a cached read found."""
+    for key in [k for k in _CACHE if k[0] == org]:
+        del _CACHE[key]
+
+
 async def spellings(org: str, subject: str) -> list[str]:
     """Every spelling of `subject` a change keyed by exact spelling must reach
     (a revocation): itself, an email's lower case, and each spelling the
@@ -155,4 +163,4 @@ async def canonical_subject(org: str, subject: str, *, ch: object | None = None)
     return subject
 
 
-__all__ = ["canonical_subject", "invalidate", "subject_aliases"]
+__all__ = ["canonical_subject", "invalidate", "invalidate_org", "subject_aliases"]

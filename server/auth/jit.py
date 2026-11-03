@@ -176,10 +176,10 @@ async def _provision_jit(org: str, ident: str, base: str) -> login.Identity | No
     # (self-signup never verified the address), so it is not theirs here.
     if any(a["active"] and a["sso"] for a in accounts):
         return await _resolve_as_written(ident)  # their account, whatever its name
-    # Nor is it someone else's to sit beside: with two active accounts naming
-    # one email, its sign-in would have two to choose from, and a revocation
-    # of the address reaches both (`aliases.spellings`). The address is freed
-    # by releasing that account (`loom claim-release`).
+    # Nor is it someone else's to sit beside: a password sign-in with the email
+    # still finds that account, and a revocation of the address reaches both
+    # (`aliases.spellings`). The address is freed by releasing that account
+    # (`loom claim-release`).
     if any(a["active"] for a in accounts):
         log.info("oidc jit: a password account names %r in %s; not provisioning", ident, org)
         return None

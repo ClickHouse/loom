@@ -171,5 +171,5 @@ async def _write(
     from server.core import grant_cache
 
     for org in sorted({org for org, _ in accounts}):
-        aliases.invalidate(org, [email.strip().lower()])
+        aliases.invalidate_org(org)
         await grant_cache.changed(org)

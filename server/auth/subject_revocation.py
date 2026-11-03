@@ -180,10 +180,10 @@ async def revoke_subject(
 async def revoke_in_org(
     org: str, subject: str, *, by: str, reason: str = "", at: datetime | None = None
 ) -> list[tuple[str, Revoked]]:
-    """`revoke_subject` for `subject` and every spelling `org`'s directory ties
-    to it, as grants read them (`aliases.spellings`): an email (and its lower
-    case) reaches the login handle of the account it signs in to, a handle its
-    email. Raises, revoking nothing, when the directory cannot be read."""
+    """`revoke_subject` for `subject` and every spelling `org`'s directory
+    pairs with it, its email verified or not (`aliases.spellings`): an email
+    (and its lower case) reaches the login handle of the account naming it, a
+    handle its email. Raises, revoking nothing, when the directory cannot be read."""
     from server.auth.aliases import spellings
 
     recorded = []

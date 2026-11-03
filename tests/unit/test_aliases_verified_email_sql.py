@@ -7,14 +7,15 @@ none of the grants written under it: not at the gate, not in the alias reads, no
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from server.auth import aliases
+from server.auth import aliases, sso_links
 from server.core import grant_cache
 from server.identity.store import grants
-from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl
+from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, LocalCH, ddl
 
 pytestmark = [
     pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed"),
@@ -68,6 +69,7 @@ SETUP = (
     ),
     *(_grant("team-y", f"{who}@corp.example") for who in ("erin", "frank")),
     *(_grant("team-x", handle) for handle in ("mallory", "u-carol", "dave")),
+    _grant("team-z", "mallory"),
 )
 
 
@@ -121,7 +123,9 @@ async def test_a_grant_to_the_address_is_written_under_it_until_it_is_verified(c
     [
         # The address's grants cap a claim there (one in a token minted
         # before this read), never admit one.
-        ("mallory", {"team-x": 2, "team-y": 0}),
+        ("mallory", {"team-x": 2, "team-y": 0, "team-z": 2}),
+        # Nor does the squatter's own grant admit the address.
+        ("bob@corp.example", {"team-x": 2, "team-y": 2, "team-z": 0}),
         ("u-carol", {"team-x": 2, "team-y": 2}),
         ("dave", {"team-x": 2, "team-y": 2}),
         ("erin", {"team-y": 0}),  # unlinked
@@ -132,6 +136,32 @@ async def test_the_gate_admits_a_grant_under_a_verified_email_only(
     ch: _CH, subject: str, ranks: dict[str, int]
 ) -> None:
     assert (await grant_cache._read(ORG, subject)).ranks == ranks
+
+
+@pytest.mark.asyncio
+async def test_a_link_or_an_unlink_drops_the_cached_ties(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    kept = KeptCH(tmp_path, *SETUP, ddl("acl_versions"))
+    monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
+    monkeypatch.setattr(sso_links, "get_client", lambda: kept)
+    aliases._CACHE.clear()
+    assert await aliases.subject_aliases(ORG, "dave", ch=kept) == ["dave", "dave@corp.example"]
+    assert await aliases.subject_aliases(ORG, "erin", ch=kept) == ["erin"]
+
+    await sso_links.unlink("dave@corp.example", [(ORG, "dave")], "op")
+    await sso_links.link("erin@corp.example", [(ORG, "erin")], "op")
+
+    # Read again, not from the cache: the unlink unties, the link ties.
+    assert await aliases.subject_aliases(ORG, "dave", ch=kept) == ["dave"]
+    assert await aliases.subject_aliases(ORG, "erin", ch=kept) == ["erin", "erin@corp.example"]
+    # And every other process drops the org's grant maps at its next poll.
+    marks = await kept.query_all(
+        "SELECT sum(changes) AS n FROM loom.acl_versions WHERE org = {org:String}",
+        {"org": ORG},
+    )
+    assert marks[0]["n"] == 2
+    aliases._CACHE.clear()
 
 
 @pytest.mark.asyncio
