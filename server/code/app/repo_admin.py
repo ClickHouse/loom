@@ -27,6 +27,7 @@ from server.code.api.models_repos import (
     CodeRepoSetAccessOutput,
     CodeRepoSetSourceOutput,
 )
+from server.code.app.common import require_code_intel
 from server.code.app.index import repo_registry as reg
 from server.code.domain.index.repos import registry_repos
 from server.core.errors import AuthInsufficientError, ValidationError
@@ -173,6 +174,7 @@ async def handle_code_repo_remote_branches(input: Any) -> Any:
     token given (none for a public one), the default branch, which look like
     release branches, and which are indexed here already — so the add dialog
     can offer the choice instead of one text field."""
+    require_code_intel()
     _require_self_service()
     await _require_sandbox()
     _require_same_org(input.org)
@@ -305,6 +307,7 @@ async def _add_extra_branches(
 
 
 async def handle_code_repo_add(input: CodeRepoAddInput) -> CodeRepoAddOutput:
+    require_code_intel()
     _require_self_service()
     await _require_sandbox()
     _require_same_org(input.org)
@@ -394,6 +397,7 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
     mis-clicked op cannot purge an index. The rows leave through an erasure saga: a detached
     `namespace_list` purge over the one namespace, loom-only, checkpointed, resumed by
     erasure_recovery if the process dies, and proven by the residue census."""
+    require_code_intel()
     from server.code.app.index import retire
     from server.code.domain.index.repos import configured_repos, repo_for_namespace
     from server.core.ch import get_client
@@ -447,6 +451,7 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
 
 
 async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepoAddOutput:
+    require_code_intel()
     _require_self_service()
     await _require_sandbox()
     _require_same_org(input.org)
@@ -521,6 +526,7 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     this process enforces at once, and every other process re-reads the row
     within `code_repos_refresh_seconds`. Widening restricted → standard
     needs `confirm` = namespace; a restricted index is never `open`."""
+    require_code_intel()
     from server.code.domain.index.repos import repo_for_namespace
     from server.core.ch import get_client
     from server.identity.app import namespace_classification as nc
@@ -592,6 +598,7 @@ async def handle_code_repo_set_source(input: Any) -> Any:
     """The maintainer sets the trackers this repository reads, primary first
     (`CodeRepoSetSourceInput`). The links are the `tracker_binding` state row of the code
     namespace (comma-joined); `tracker_namespaces_for` reads it before the deployment's map."""
+    require_code_intel()
     from server.code.domain.index.repos import repo_for_namespace
     from server.code.store.index import CodeRepo
     from server.tracker.app import binding
