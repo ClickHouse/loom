@@ -1,6 +1,7 @@
 """One delegation policy (server/auth/delegation.py): a child token gets
-`requested ∩ parent ceiling ∩ the creator's live grants`, and the per-request
-gate keeps it there. The parent/child matrix over standard, restricted,
+`requested ∩ parent ceiling ∩ the creator's live grants`, where a per-namespace
+child of a primary token takes the grant alone on a standard namespace, and the
+per-request gate keeps it there. The parent/child matrix over standard, restricted,
 cross-namespace and cross-org targets; narrow parents with a broad creator;
 revoked parents and creators; a disabled account; expiry. Hermetic: grants,
 the directory and the account lookup are faked."""
@@ -16,6 +17,7 @@ from fastapi import HTTPException
 
 from server.auth import authz, context, delegation, revocation
 from server.auth.delegation import DEFAULT_TTL_DAYS, delegate
+from server.auth.directory import ClassificationUnavailable
 from server.auth.jwt import AuthInfo, TokenError, mint_token, verify_token
 from server.core import grant_cache
 from server.operations.base import Role, grant_rank
@@ -201,7 +203,46 @@ async def test_a_sign_in_token_delegates_the_persons_grant_not_its_flat_role(wor
     assert "admin" in await _refused(_delegated_list(), {"a": "admin"})
     assert "admin" in await _refused(_scoped(), {"a": "admin"})
     world["grants"][(ORG, RESTRICTED, "alice")] = Role.ADMIN
-    assert "admin" in await _refused(_login(), {RESTRICTED: "admin"})
+    assert "admin" in await _refused(_login(), {RESTRICTED: "admin"}, scoped=True)
+
+
+@pytest.mark.asyncio
+async def test_a_flat_child_keeps_the_sign_in_tokens_role(world) -> None:
+    """A flat child's one role also answers an op that names no namespace,
+    where the gate reads the flat role alone: it stays inside the parent's."""
+    world["grants"][(ORG, "a", "alice")] = Role.ADMIN
+    assert "admin" in await _refused(_login(), {"a": "admin"})
+    child = await _child(_login(), {"a": None})
+    assert child.roles == (Role.WRITER,)
+    with pytest.raises(PermissionError):
+        await authz.check_authorized(child, Role.ADMIN, ORG, None)
+    assert not await _reaches(child, "a", Role.ADMIN)  # its own claim is its ceiling
+
+
+@pytest.mark.asyncio
+async def test_a_viewer_flat_parent_delegates_its_subjects_grant_per_namespace(world) -> None:
+    """`loom mint-token --roles viewer` for a subject who holds admin: the
+    gate admits it as admin on that namespace, so a per-namespace child may be
+    admin there; a flat child stays viewer."""
+    world["grants"][(ORG, "a", "alice")] = Role.ADMIN
+    parent = _login(roles=(Role.VIEWER,))
+    child = await _child(parent, {"a": "admin"}, scoped=True)
+    assert child.ns_roles == (("a", "admin"),) and await _reaches(child, "a", Role.ADMIN)
+    assert (await _child(parent, {"a": None})).roles == (Role.VIEWER,)
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_classification_keeps_the_token_role_cap(world, monkeypatch) -> None:
+    """The restricted predicate fails closed: with the directory unreadable the
+    mint stays inside the parent token's role, as the gate would."""
+    world["grants"][(ORG, "a", "alice")] = Role.ADMIN
+
+    class _Down(_Directory):
+        async def is_restricted(self, org: str, ns: str) -> bool:
+            raise ClassificationUnavailable("down")
+
+    monkeypatch.setattr(authz, "directory", lambda: _Down())
+    assert "admin" in await _refused(_login(), {"a": "admin"}, scoped=True)
 
 
 @pytest.mark.asyncio

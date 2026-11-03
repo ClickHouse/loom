@@ -1,7 +1,10 @@
 """One delegation policy for every token minted from another token.
 
 A child gets requested ∩ the parent token's ceiling ∩ the creator's live
-grants, never more. The rules and the recheck on every request are in
+grants, never more. One ceiling is the grant itself: a per-namespace child
+of a primary token (a sign-in, or `loom mint-token`) takes the creator's
+grant on a named standard namespace, where the gate admits that token on
+its grant alone. The rules and the recheck on every request are in
 docs/guides/tokens-and-grants.md (Delegated tokens). `loom mint-token`
 holds the signing secret and is not a delegation.
 """
@@ -245,15 +248,16 @@ async def _allowed_roles(
         if ns != "*":
             grant = await authz.grant_role_for(org, ns, creator)
             if (
-                _primary(parent)
+                scoped
+                and _primary(parent)
                 and allowed is not None
                 and not await authz.may_be_restricted(org, ns)
             ):
-                # The gate admits a primary token to a namespace on the
-                # subject's grant alone (`authz.check_authorized`), so its flat
-                # role is no cap there: every sign-in token carries `writer`
-                # (`login.platform_roles`), whatever the person administers.
-                # A restricted namespace needs the role from both, as at the gate.
+                # The gate admits a primary token to a standard namespace on
+                # the subject's grant alone (`authz.check_authorized`), so the
+                # grant is the measure; a restricted one needs the role from
+                # both. A flat child keeps the parent's cap: its one role also
+                # answers ops that name no namespace.
                 allowed = grant
             else:
                 allowed = _lower(allowed, grant)

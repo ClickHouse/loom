@@ -295,10 +295,13 @@ what was asked for, cut to what the caller's token allows and to the caller's li
 - the caller's org only (an org-wide `*` token names one);
 - `viewer`, `writer` or `admin` only; `org_admin` and `platform_admin` are never delegated;
 - on each named namespace, at most the person's live grant; a namespace without one is
-  refused (403 naming it). A token minted from another token also stays inside that
-  token's own role there, and a restricted namespace inside the caller's token role;
+  refused (403 naming it). A per-namespace child of a sign-in token (or of a
+  `loom mint-token` token) takes that grant, as the gate admits the token there on its
+  grant alone. A flat child, a child of a delegated or per-namespace token, and a child on
+  a restricted namespace also stay inside the caller's token role there;
 - `*` only from a sign-in token or a delegated `*` token, and it means "wherever the person
-  holds a grant"; from a narrower token it becomes that token's own namespace list;
+  holds a grant", at the caller's token role; from a narrower token it becomes that token's
+  own namespace list;
 - the caller's `read_scope`, `read_user_id` and `ns_write`; a per-namespace child asking for
   `writer` or `admin` on a namespace outside the caller's `ns_write` is refused, and the
   inherited `ns_write` binds the child's writes whatever its `ns_roles` say;
