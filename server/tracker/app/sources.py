@@ -991,4 +991,6 @@ __all__ = [
     "handle_tracker_source_list",
     "handle_tracker_source_remove",
     "handle_tracker_source_rotate",
+    "source_add_audit_subject",
+    "source_rotate_audit_subject",
 ]

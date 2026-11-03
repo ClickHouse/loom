@@ -136,6 +136,7 @@ def test_host_drops_userinfo_from_a_url() -> None:
     """A credential typed into the host never becomes part of the stored host."""
     assert sources.host_of("https://user:pw@x.example.com:8443/") == "x.example.com"
     assert sources.host_of("tok@x.example.com") == "x.example.com"
+    assert sources.host_of("x.example.com#@y.example.com") == "x.example.com"
 
 
 @pytest.mark.asyncio

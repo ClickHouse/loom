@@ -119,7 +119,7 @@ def host_of(raw: str) -> str:
     value = (raw or "").strip()
     if "://" in value:
         value = value.split("://", 1)[1]
-    authority = value.split("/", 1)[0].split("?", 1)[0]
+    authority = value.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
     return authority.rsplit("@", 1)[-1].split(":", 1)[0].strip()
 
 

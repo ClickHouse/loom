@@ -24,8 +24,11 @@ SECRET = "s3cret-value-never-audited"
 # part either: `*_tokens` fields count model tokens.
 CREDENTIAL_PARTS = {
     "password",
+    "passwords",
     "passwd",
     "secret",
+    "secrets",
+    "apikey",
     "token",
     "credential",
     "credentials",
@@ -159,7 +162,16 @@ def test_code_repo_add_audits_what_was_registered_not_what_was_asked() -> None:
 
 
 def test_the_matcher_tells_credentials_from_lookalikes() -> None:
-    for name in ("password", "db_passwd", "access_token", "authorization", "signing_key"):
+    for name in (
+        "password",
+        "passwords",
+        "db_passwd",
+        "secrets",
+        "apikey",
+        "access_token",
+        "authorization",
+        "signing_key",
+    ):
         assert _is_credential(name), name
     for name in ("key", "secret_ref", "token_budget", "section_token_budgets", "max_tokens"):
         assert not _is_credential(name), name
