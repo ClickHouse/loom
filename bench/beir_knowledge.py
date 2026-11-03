@@ -4,30 +4,39 @@ A BEIR dataset is a corpus of passages, a set of queries and graded relevance
 judgements (qrels). Each passage is ingested as one document (`beir:<doc id>`,
 its title and text), each test query with a judgement is searched, and the hits
 are scored against the qrels by document, the passage's chunks counted once at
-the rank of the first. The small datasets (`SMALL`) run in minutes; `--fetch`
-downloads one from the BEIR release and keeps only its corpus, queries and test
+the rank of the first and a hit on the query's own id dropped (ArguAna's queries
+are corpus passages; BEIR's evaluation drops them the same way). `--fetch`
+downloads one of the small datasets (`SMALL`) from the BEIR release, checks the
+archive against its published MD5 and keeps only its corpus, queries and test
 qrels:
 
-    PYTHONPATH=$PWD .venv/bin/python bench/beir_knowledge.py --fetch scifact --data-dir /tmp/beir
+    PYTHONPATH=$PWD .venv/bin/python bench/beir_knowledge.py --fetch scifact
 
 Then ingest once into a namespace you name, which is kept, and search it per arm:
 
-    PYTHONPATH=$PWD .venv/bin/python bench/beir_knowledge.py --data /tmp/beir/scifact \\
+    PYTHONPATH=$PWD .venv/bin/python bench/beir_knowledge.py --data bench/datasets/beir/scifact \\
         --base-url http://localhost:7790 --namespace beir-scifact --phase ingest
-    PYTHONPATH=$PWD .venv/bin/python bench/beir_knowledge.py --data /tmp/beir/scifact \\
+    PYTHONPATH=$PWD .venv/bin/python bench/beir_knowledge.py --data bench/datasets/beir/scifact \\
         --base-url http://localhost:7790 --namespace beir-scifact --phase search \\
         --param search_mode=hybrid --out /tmp/beir-hybrid.json
 
 Without `--namespace` both phases run into a fresh namespace erased at the end.
 A named namespace must start with `beir-` (and not `beir-run-`, a run's own), as
-`knowledge_retrieval.py` does with its prefix, and a search over a namespace that
-does not hold exactly this corpus fails the run. `--param KEY=VALUE` sets any
-`knowledge.search` field the harness does not fix (`FIXED_FIELDS`). A run records
-the server's embedding model and build and refuses a fake embedder.
+`knowledge_retrieval.py` does with its prefix. An ingest adds only the passages
+the namespace does not hold yet, so a failed one is resumed by running it again.
+A search over a namespace that does not hold exactly this corpus fails the run.
+`--param KEY=VALUE` sets any `knowledge.search` field but the depth, scope and
+filters. A run records the server's embedding model and build and the corpus,
+queries and judgements it scored, and refuses a fake embedder; a hybrid or
+lexical arm whose lexical leg never fired, and a rerank arm no answer of which
+names a reranker, fail.
 
-Ingest cost is the corpus's embedding tokens (SciFact ≈ 5K passages, NFCorpus ≈
-3.6K, FiQA ≈ 57K, SCIDOCS ≈ 25K); a search arm embeds only its queries, plus one
-model call per query when it reranks. Two arms pair by query id
+A search returns at most 100 hits, which are chunks: recall@100 is over the
+documents they hold (`depth` in the report, 100 when every passage is one
+chunk). Ingest cost is the corpus's embedding tokens (SciFact ≈ 5.2K passages,
+NFCorpus ≈ 3.6K, ArguAna ≈ 8.7K, SCIDOCS ≈ 25K, FiQA ≈ 57K, each embedded by
+its own call); a search arm embeds only its queries, plus one model call per
+query when it reranks. Two arms pair by query id
 (`bench.bootstrap.paired_bootstrap`, each query its own cluster).
 """
 
@@ -59,26 +68,37 @@ from bench.knowledge_retrieval import listed_documents, parse_params, require_re
 from bench.quality import run_metadata
 
 RELEASE = "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/{name}.zip"
-SMALL = ("scifact", "nfcorpus", "fiqa", "scidocs", "arguana", "trec-covid")
+# The small datasets and the MD5 the BEIR release publishes for each archive.
+SMALL = {
+    "scifact": "5f7d1de60b170fc8027bb7898e2efca1",
+    "nfcorpus": "a89dba18a62ef92f7d323ec890a0d38d",
+    "arguana": "8ad3e3c2a5867cdced806d6503f29b99",
+    "scidocs": "38121350fc3a4d2f48850f6aff52e4a9",
+    "fiqa": "17918ed23cd04fb15047f73e6c3bd9d9",
+}
 # What a fetch keeps from the release archive: nothing else is written.
 KEPT = ("corpus.jsonl", "queries.jsonl", "qrels/test.tsv")
+DATA_DIR = Path("bench/datasets/beir")
 PREFIX = "beir-"
 FRESH_PREFIX = f"{PREFIX}run-"
 URI_PREFIX = "beir:"
-# Hits a search asks for: the wire bound, so recall@100 counts every hit it can.
-DEPTH = 100
+DEPTH = 100  # hits a search asks for: knowledge.search's wire bound
 BATCH = 200  # documents per knowledge.bulk_add; the op takes at most 500
 
 
 def fetch(name: str, data_dir: Path) -> Path:
-    """Download one BEIR dataset and write its corpus, queries and test qrels under
-    `data_dir/name`. Archive members are read by name, never extracted as paths."""
+    """Download one BEIR dataset, check the archive's MD5, and write its corpus,
+    queries and test qrels under `data_dir/name`. Archive members are read by name,
+    never extracted as paths."""
     if name not in SMALL:
         raise SystemExit(f"--fetch takes one of {', '.join(SMALL)}: {name!r}")
-    out = data_dir / name
     with httpx.Client(timeout=600, follow_redirects=True) as client:
         r = client.get(RELEASE.format(name=name))
         r.raise_for_status()
+    digest = hashlib.md5(r.content, usedforsecurity=False).hexdigest()
+    if digest != SMALL[name]:
+        raise SystemExit(f"{name}.zip has MD5 {digest}, not the published {SMALL[name]}")
+    out = data_dir / name
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         for member in KEPT:
             target = out / member
@@ -111,12 +131,14 @@ def load(root: Path) -> tuple[list[dict], dict[str, str], dict[str, dict[str, in
     return docs, queries, {q: qrels[q] for q in queries}
 
 
+def digest(value: object) -> str:
+    """A short digest of a JSON value, so two reports pair only over the same inputs."""
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()[:12]
+
+
 def corpus_tag(docs: list[dict]) -> str:
     """A tag naming this exact corpus, so a search refuses a namespace holding another."""
-    h = hashlib.sha256()
-    for d in docs:
-        h.update(json.dumps(d, sort_keys=True).encode())
-    return f"beir:{h.hexdigest()[:12]}"
+    return f"beir:{digest(docs)}"
 
 
 def run_namespace(named: str | None) -> tuple[str, bool]:
@@ -131,17 +153,22 @@ def run_namespace(named: str | None) -> tuple[str, bool]:
 
 
 def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: bool) -> None:
+    """Add the passages the namespace does not hold yet. `knowledge.bulk_add` never
+    replaces a document, so a passage sent twice would be indexed twice: what is
+    there already is skipped, and the caller sends each batch once."""
     if keep:  # printed first, so a failed ingest leaves the command behind
         print(f"kept; erase it with: {gc_command(org, [namespace])}", file=sys.stderr)
     register_bench_namespace_sync(
         post, org=org, namespace=namespace, description="BEIR corpus", keep=keep
     )
     remember_bench_namespace(org, namespace)
+    held = {row["source_uri"] for row in listed_documents(post, org, namespace)}
+    todo = [d for d in docs if d["source_uri"] not in held]
     tag = corpus_tag(docs)
-    for i in range(0, len(docs), BATCH):
-        entries = [{**d, "tags": [tag]} for d in docs[i : i + BATCH]]
+    for i in range(0, len(todo), BATCH):
+        entries = [{**d, "tags": [tag]} for d in todo[i : i + BATCH]]
         post("/v1/knowledge.bulk_add", {"org": org, "namespace": namespace, "entries": entries})
-        print(f"ingested {min(i + BATCH, len(docs))}/{len(docs)}", file=sys.stderr)
+        print(f"ingested {min(i + BATCH, len(todo))}/{len(todo)}", file=sys.stderr)
 
 
 def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> int:
@@ -159,12 +186,13 @@ def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> 
     return sum(int(row.get("chunk_count") or 0) for row in rows)
 
 
-def ranked_docs(hits: list[dict]) -> list[str]:
-    """The documents of `hits` in rank order, each once, at its first chunk's rank."""
+def ranked_docs(hits: list[dict], query_id: str) -> list[str]:
+    """The documents of `hits` in rank order, each once, at its first chunk's rank, and
+    never the query's own id."""
     out: list[str] = []
     for h in hits:
         doc_id = h["source_uri"].removeprefix(URI_PREFIX)
-        if doc_id not in out:
+        if doc_id != query_id and doc_id not in out:
             out.append(doc_id)
     return out
 
@@ -195,7 +223,7 @@ def search(
     params: dict,
 ) -> dict:
     rows = []
-    reranked = 0
+    reranked = lexical_fired = 0
     for qid, text in queries.items():
         body = {
             **params,
@@ -204,28 +232,39 @@ def search(
             "namespace_scope": "this",
             "query": text,
             "top_k": DEPTH,
+            # Headless passages are never folded; sent so a server default cannot change it.
             "collapse_sections": False,
         }
         out = post("/v1/knowledge.search", body)
         if out.get("ignored_args"):
             raise SystemExit(f"knowledge.search ignored {out['ignored_args']}: the arm did not run")
+        hits = out["results"]
         reranked += bool(out.get("reranked_by"))
-        metrics = score(ranked_docs(out["results"]), qrels[qid])
+        lexical_fired += any(h.get("lexical_score", 0) > 0 for h in hits)
+        ranked = ranked_docs(hits, qid)
+        metrics = {**score(ranked, qrels[qid]), "depth": float(len(ranked))}
         rows.append({"id": qid, "cluster": qid, "metrics": metrics})
+    if params.get("search_mode", "hybrid") != "semantic" and rows and not lexical_fired:
+        raise SystemExit("the lexical leg never fired: the arm ran as semantic")
+    # A reranker that keeps the fused order names none, so only a rerank arm no
+    # answer of which names one did not run.
+    if params.get("rerank") not in (None, "", "none") and rows and not reranked:
+        raise SystemExit("no answer names a reranker: the rerank arm did not run")
     keys = rows[0]["metrics"] if rows else {}
     means = {k: round(sum(r["metrics"][k] for r in rows) / len(rows), 4) for k in keys}
-    return {"params": params, "metrics": means, "reranked": reranked, "queries": rows}
-
-
-# Fixed here besides knowledge_retrieval.py's depth, scope and filters: documents are
-# scored once each, so a collapse would only drop hits.
-FIXED_FIELDS = ("collapse_sections",)
+    return {
+        "params": params,
+        "metrics": means,
+        "reranked": reranked,
+        "lexical_fired": lexical_fired,
+        "queries": rows,
+    }
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--fetch", metavar="DATASET", help=f"download one of: {', '.join(SMALL)}")
-    ap.add_argument("--data-dir", type=Path, help="where --fetch writes the dataset")
+    ap.add_argument("--data-dir", type=Path, default=DATA_DIR, help="where --fetch writes")
     ap.add_argument("--data", type=Path, help="a dataset directory (corpus, queries, qrels)")
     ap.add_argument("--base-url", default=os.environ.get("LOOM_BASE_URL", "http://localhost:7777"))
     ap.add_argument("--token", default=os.environ.get("LOOM_API_KEY", ""))
@@ -240,8 +279,6 @@ def main() -> int:
     ap.add_argument("--out", type=Path, help="write the full report (per query) as JSON")
     args = ap.parse_args()
     if args.fetch:
-        if not args.data_dir:
-            ap.error("--fetch needs a --data-dir")
         fetch(args.fetch, args.data_dir)
         return 0
     if not args.data:
@@ -249,9 +286,6 @@ def main() -> int:
     if args.phase != "both" and not args.namespace:
         ap.error(f"--phase {args.phase} needs a --namespace (one ingest, many searches)")
 
-    for key in FIXED_FIELDS:
-        if any(p.partition("=")[0] == key for p in args.param):
-            raise SystemExit(f"--param {key} is refused: the harness fixes it")
     params = parse_params(args.param)
     namespace, keep = run_namespace(args.namespace)
     docs, queries, qrels = load(args.data)
@@ -260,7 +294,9 @@ def main() -> int:
     with httpx.Client(headers=headers) as client:
 
         def post(path: str, body: dict[str, Any]) -> Any:
-            return post_json(client, f"{base}{path}", body, attempts=3, timeout_s=300.0)
+            # A resent bulk_add after a 5xx could write its batch twice.
+            attempts = 1 if path.endswith("bulk_add") else 3
+            return post_json(client, f"{base}{path}", body, attempts=attempts, timeout_s=300.0)
 
         health = client.get(f"{base}/v1/health", timeout=30)
         if health.status_code != 200:
@@ -269,6 +305,8 @@ def main() -> int:
         require_real_embedder(instrument)
         instrument["dataset"] = args.data.name
         instrument["corpus"] = corpus_tag(docs)
+        instrument["queries"] = digest(queries)
+        instrument["qrels"] = digest(qrels)
         with erase_on_exit_sync(post, org=args.org, keep=keep):
             if args.phase in ("ingest", "both"):
                 ingest(post, args.org, namespace, docs, keep)

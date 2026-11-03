@@ -3,6 +3,7 @@ rules and the search loop, with no server or network."""
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import math
@@ -39,9 +40,10 @@ def test_a_dataset_loads_as_documents_judged_queries_and_qrels(tmp_path: Path) -
     assert qrels == {"q1": {"d1": 2, "d2": 0}}
 
 
-def test_a_documents_chunks_count_once_at_the_first_rank() -> None:
-    hits = [{"source_uri": u} for u in ("beir:a", "beir:b", "beir:a", "beir:c")]
-    assert bk.ranked_docs(hits) == ["a", "b", "c"]
+def test_a_documents_chunks_count_once_and_the_query_itself_never() -> None:
+    hits = [{"source_uri": u} for u in ("beir:a", "beir:q1", "beir:b", "beir:a", "beir:c")]
+    # a hit on the query's own id is dropped, as BEIR's evaluation does (ArguAna)
+    assert bk.ranked_docs(hits, "q1") == ["a", "b", "c"]
 
 
 def test_scores_use_the_graded_gain_and_count_only_relevant_documents() -> None:
@@ -52,12 +54,8 @@ def test_scores_use_the_graded_gain_and_count_only_relevant_documents() -> None:
     assert out["ndcg@10"] == pytest.approx(dcg / ideal)
     assert out["mrr@10"] == pytest.approx(1 / 2)  # a judgement of 0 is not relevant
     assert out["recall@10"] == 1.0 and out["recall@100"] == 1.0
-    assert bk.score([], qrels) == {
-        "ndcg@10": 0.0,
-        "recall@10": 0.0,
-        "recall@100": 0.0,
-        "mrr@10": 0.0,
-    }
+    empty = {"ndcg@10": 0.0, "recall@10": 0.0, "recall@100": 0.0, "mrr@10": 0.0}
+    assert bk.score([], qrels) == empty
     # a relevant document past rank 10 counts for recall@100 only
     deep = [f"x{i}" for i in range(10)] + ["a"]
     assert bk.score(deep, {"a": 1})["recall@10"] == 0.0
@@ -73,7 +71,9 @@ def test_a_named_namespace_carries_the_prefix_and_is_kept() -> None:
             bk.run_namespace(bad)
 
 
-def test_a_fetch_writes_only_the_kept_members(tmp_path: Path, monkeypatch) -> None:
+def test_a_fetch_checks_the_archive_and_writes_only_the_kept_members(
+    tmp_path: Path, monkeypatch
+) -> None:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for member in bk.KEPT:
@@ -93,11 +93,16 @@ def test_a_fetch_writes_only_the_kept_members(tmp_path: Path, monkeypatch) -> No
 
         def get(self, url: str) -> Any:
             assert url == bk.RELEASE.format(name="scifact")
-            return type(
-                "R", (), {"content": buf.getvalue(), "raise_for_status": lambda self: None}
-            )()
+            body = {"content": buf.getvalue(), "raise_for_status": lambda self: None}
+            return type("R", (), body)()
 
     monkeypatch.setattr(bk.httpx, "Client", _Client)
+    monkeypatch.setitem(bk.SMALL, "scifact", "0" * 32)
+    with pytest.raises(SystemExit, match="not the published"):
+        bk.fetch("scifact", tmp_path / "data")
+    assert not (tmp_path / "data").exists()  # nothing is written from an unchecked archive
+    published = hashlib.md5(buf.getvalue(), usedforsecurity=False).hexdigest()
+    monkeypatch.setitem(bk.SMALL, "scifact", published)
     out = bk.fetch("scifact", tmp_path / "data")
     written = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*") if p.is_file())
     assert written == sorted(f"data/scifact/{m}" for m in bk.KEPT)
@@ -106,20 +111,47 @@ def test_a_fetch_writes_only_the_kept_members(tmp_path: Path, monkeypatch) -> No
         bk.fetch("msmarco", tmp_path)
 
 
-def test_the_search_scores_each_query_and_counts_reranked_answers() -> None:
+def test_the_search_scores_each_query_and_counts_what_ran() -> None:
     sent: list[dict] = []
 
     def post(path: str, body: dict) -> Any:
         sent.append(body)
-        return {"results": [{"source_uri": "beir:d1"}], "reranked_by": "builtin:openai"}
+        hits = [{"source_uri": "beir:d1", "lexical_score": 1.0}, {"source_uri": "beir:d1"}]
+        return {"results": hits, "reranked_by": "builtin:openai"}
 
-    report = bk.search(
-        post, "o", "beir-x", {"q1": "refund"}, {"q1": {"d1": 1}}, {"rerank": "builtin:openai"}
-    )
-    assert report["metrics"] == {"ndcg@10": 1.0, "recall@10": 1.0, "recall@100": 1.0, "mrr@10": 1.0}
-    assert report["reranked"] == 1 and report["queries"][0]["id"] == "q1"
+    params = {"rerank": "builtin:openai"}
+    report = bk.search(post, "o", "beir-x", {"q1": "refund"}, {"q1": {"d1": 1}}, params)
+    assert report["metrics"] == {
+        "ndcg@10": 1.0,
+        "recall@10": 1.0,
+        "recall@100": 1.0,
+        "mrr@10": 1.0,
+        "depth": 1.0,  # two chunk hits, one document
+    }
+    assert report["reranked"] == 1 and report["lexical_fired"] == 1
+    assert report["queries"][0]["id"] == "q1"
     assert sent[0]["top_k"] == bk.DEPTH and sent[0]["collapse_sections"] is False
     assert sent[0]["rerank"] == "builtin:openai"
+
+
+@pytest.mark.parametrize(
+    ("params", "answer"),
+    [
+        ({}, {"results": [{"source_uri": "beir:d1"}]}),  # hybrid, lexical leg silent
+        ({"search_mode": "semantic", "rerank": "builtin:openai"}, {"results": []}),
+    ],
+    ids=["lexical-never-fired", "no-answer-reranked"],
+)
+def test_an_arm_whose_treatment_never_ran_fails(params: dict, answer: dict) -> None:
+    with pytest.raises(SystemExit):
+        bk.search(lambda p, b: answer, "o", "beir-x", {"q1": "x"}, {"q1": {"d1": 1}}, params)
+
+
+def test_a_semantic_arm_needs_no_lexical_leg() -> None:
+    answer = {"results": [{"source_uri": "beir:d1"}]}
+    params = {"search_mode": "semantic"}
+    report = bk.search(lambda p, b: answer, "o", "beir-x", {"q1": "x"}, {"q1": {"d1": 1}}, params)
+    assert report["lexical_fired"] == 0
 
 
 def test_an_ignored_search_field_fails_the_run() -> None:
@@ -141,12 +173,16 @@ def test_a_namespace_holding_another_corpus_is_refused(monkeypatch) -> None:
         bk.check_corpus(None, "o", "beir-x", docs)
 
 
-def test_the_ingest_batches_bulk_adds_with_the_corpus_tag(monkeypatch) -> None:
+def test_the_ingest_adds_only_what_the_namespace_lacks_in_tagged_batches(monkeypatch) -> None:
     sent: list[tuple[str, dict]] = []
     monkeypatch.setattr(bk, "register_bench_namespace_sync", lambda post, **kw: None)
+    # a resumed ingest: two passages are there already, and bulk_add never replaces
+    held = [{"source_uri": "beir:d0"}, {"source_uri": "beir:d3"}]
+    monkeypatch.setattr(bk, "listed_documents", lambda post, org, ns: held)
     monkeypatch.setattr(bk, "BATCH", 2)
-    docs = [{"source_uri": f"beir:d{i}", "title": "", "content": "x"} for i in range(5)]
+    docs = [{"source_uri": f"beir:d{i}", "title": "", "content": "x"} for i in range(6)]
     bk.ingest(lambda path, body: sent.append((path, body)), "o", "beir-x", docs, keep=False)
-    assert [len(b["entries"]) for _, b in sent] == [2, 2, 1]
+    uris = [[e["source_uri"] for e in b["entries"]] for _, b in sent]
+    assert uris == [["beir:d1", "beir:d2"], ["beir:d4", "beir:d5"]]
     assert {p for p, _ in sent} == {"/v1/knowledge.bulk_add"}
     assert sent[0][1]["entries"][0]["tags"] == [bk.corpus_tag(docs)]
