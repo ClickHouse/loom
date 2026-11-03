@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from server.memory.api.models_common import MemoryType, _Identity
+from server.operations.base import MCP_HIDDEN
 
 
 class MemoryLineageInput(_Identity):
@@ -131,34 +132,40 @@ class MemoryDedupListOutput(BaseModel):
 class MemoryDedupResolveInput(BaseModel):
     """Resolve one duplicate pair.
 
-    `canonical_key` + `duplicate_key` identify the two memory_keys.
-    `confirm_canonical_key` must equal `canonical_key` — mid-weight
-    defense against UI-dropdown accidents (mirrors memory.clear).
+    `canonical_id` + `duplicate_id` are the two memory ids of one
+    `memory.dedup_list` cluster entry: the duplicate row must be live in
+    this namespace, marked `duplicate` and point at the canonical id.
+    `confirm_canonical_key` must equal the canonical row's key —
+    mid-weight defense against UI-dropdown accidents (mirrors memory.clear).
 
     Decisions:
       - keep_canonical: tombstone the duplicate; canonical wins.
       - keep_duplicate: tombstone the canonical; flip the duplicate
         back to status='active' and clear its duplicate_of pointer.
       - keep_both: both stay live; the duplicate flips to 'active' and
-        its duplicate_of clears. Future re-flags muted via the conflict allowlist.
+        its duplicate_of clears. A later write can flag the pair again.
     """
 
     org: str
     namespace: str
-    # The key the duplicate points at; both keys must have a live row (else 404).
-    canonical_key: str
-    # The key whose row is marked `duplicate`.
-    duplicate_key: str
+    # The cluster's `canonical_id` from memory.dedup_list; must be a live row here (else 404).
+    canonical_id: str
+    # A `duplicates[].memory_id` of that cluster, marked duplicate of `canonical_id` (else 404).
+    duplicate_id: str
     # Which side stays live; see the class docstring for each value.
     decision: Literal["keep_canonical", "keep_duplicate", "keep_both"]
-    # Must equal `canonical_key`, else 400 CONFIRM_CANONICAL_KEY_MISMATCH.
+    # Must equal the canonical row's key, else 400 CONFIRM_CANONICAL_KEY_MISMATCH.
     confirm_canonical_key: str = Field(..., min_length=1, max_length=256)
+    # Removed, as a key does not name one row: accepted, unused and named in `ignored_args`.
+    canonical_key: str = Field(default="", json_schema_extra=MCP_HIDDEN)
+    # Removed, as a key does not name one row: accepted, unused and named in `ignored_args`.
+    duplicate_key: str = Field(default="", json_schema_extra=MCP_HIDDEN)
 
 
 class MemoryDedupResolveOutput(BaseModel):
-    # The canonical key, echoed.
+    # The canonical row's key.
     canonical_key: str
-    # The duplicate key, echoed.
+    # The duplicate row's key.
     duplicate_key: str
     # The decision applied, echoed.
     decision: str
@@ -166,6 +173,8 @@ class MemoryDedupResolveOutput(BaseModel):
     canonical_tombstoned: bool = False
     # True when `keep_canonical` tombstoned the duplicate row.
     duplicate_tombstoned: bool = False
+    # Request fields the server did not apply: unknown keys and the removed key fields.
+    ignored_args: list[str] = Field(default_factory=list)
 
 
 class MemoryDedupCollapseInput(BaseModel):

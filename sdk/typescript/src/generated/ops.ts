@@ -4298,10 +4298,12 @@ export interface MemoryDedupListOutput {
 export interface MemoryDedupResolveInput {
   org: string;
   namespace: string;
-  canonical_key: string;
-  duplicate_key: string;
+  canonical_id: string;
+  duplicate_id: string;
   decision: "keep_canonical" | "keep_duplicate" | "keep_both";
   confirm_canonical_key: string;
+  canonical_key?: string;
+  duplicate_key?: string;
 }
 
 export interface MemoryDedupResolveOutput {
@@ -4310,6 +4312,7 @@ export interface MemoryDedupResolveOutput {
   decision: string;
   canonical_tombstoned?: boolean;
   duplicate_tombstoned?: boolean;
+  ignored_args?: string[];
 }
 
 export interface MemoryDeleteInput {

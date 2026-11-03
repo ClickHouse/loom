@@ -1357,22 +1357,23 @@ class MemoryClient:
 
     async def dedup_resolve(
         self,
-        canonical_key: str,
-        duplicate_key: str,
+        canonical_id: str,
+        duplicate_id: str,
         *,
         decision: Literal["keep_canonical", "keep_duplicate", "keep_both"],
         confirm_canonical_key: str,
     ) -> dict[str, Any]:
-        """Resolve one duplicate pair (ADMIN role).
+        """Resolve one duplicate pair (ADMIN role), named by the two memory
+        ids of a `dedup_list` cluster.
 
-        `confirm_canonical_key` must equal `canonical_key` —
+        `confirm_canonical_key` must equal the canonical row's key —
         mid-weight defense mirroring memory.clear's `confirm_subject`.
         """
         payload: dict[str, Any] = {
             "org": self._agent.org,
             "namespace": self._agent.namespace,
-            "canonical_key": canonical_key,
-            "duplicate_key": duplicate_key,
+            "canonical_id": canonical_id,
+            "duplicate_id": duplicate_id,
             "decision": decision,
             "confirm_canonical_key": confirm_canonical_key,
         }

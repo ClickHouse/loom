@@ -15,6 +15,7 @@ Wire ops:
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Literal
 
 from server.identity.app.request_scope import request_scope
@@ -40,6 +41,7 @@ from server.memory.api.models_graph import (
 )
 from server.memory.app import webhooks
 from server.memory.domain import assistant_rules
+from server.memory.store.rows import MemoryRow
 
 
 def _parse_supporter(tuple_str: str) -> dict[str, str] | None:
@@ -315,50 +317,60 @@ async def handle_memory_dedup_list(input: MemoryDedupListInput) -> MemoryDedupLi
 
 
 async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryDedupResolveOutput:
-    """Resolve one duplicate pair.
+    """Resolve one duplicate pair, addressed by the two memory ids.
 
     Three decisions dispatch to:
       keep_canonical → tombstone the duplicate row
       keep_duplicate → tombstone canonical + clear duplicate's tag
       keep_both      → clear duplicate's tag only (both stay live)
 
-    `confirm_canonical_key` must equal `canonical_key`.
+    A key alone does not name a row: several identities can hold the same
+    key, so the pair is the duplicate id plus the canonical id it points at.
+    `confirm_canonical_key` must equal the canonical row's key.
     """
     from fastapi import HTTPException
 
     import server.memory.store as memory_repo
+    from server.memory.domain import lock as _lock
 
-    if input.confirm_canonical_key != input.canonical_key:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "code": "CONFIRM_CANONICAL_KEY_MISMATCH",
-                "message": (
-                    "`confirm_canonical_key` must equal `canonical_key`. "
-                    "Mid-weight defense against destructive UI-dropdown "
-                    "accidents."
-                ),
-            },
+    async def _live_row(memory_id: str) -> MemoryRow | None:
+        try:
+            # The dashed form: ClickHouse refuses the braced and urn: forms Python reads.
+            memory_id = str(uuid.UUID(memory_id))
+        except ValueError:
+            return None  # not a UUID: no such row
+        row = await memory_repo.get_by_id(
+            memory_id, org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
         )
+        return row if row is not None and row.namespace == input.namespace else None
 
-    canon_row = await memory_repo.find_row_by_key_namespace(
-        input.org,
-        input.namespace,
-        input.canonical_key,
-    )
-    dup_row = await memory_repo.find_row_by_key_namespace(
-        input.org,
-        input.namespace,
-        input.duplicate_key,
-    )
-    if canon_row is None or dup_row is None:
+    dup_row = await _live_row(input.duplicate_id)
+    canon_row = await _live_row(input.canonical_id)
+    if (
+        dup_row is None
+        or canon_row is None
+        or dup_row.status != "duplicate"
+        or dup_row.duplicate_of != canon_row.memory_id
+    ):
         raise HTTPException(
             status_code=404,
             detail={
                 "code": "DEDUP_PAIR_NOT_FOUND",
                 "message": (
-                    "Either the canonical or duplicate memory_key has no "
-                    "active row in this namespace. Confirm the keys."
+                    "No live row in this namespace is `duplicate_id` marked as a "
+                    "duplicate of `canonical_id`. Take both ids from memory.dedup_list."
+                ),
+            },
+        )
+    if input.confirm_canonical_key != canon_row.memory_key:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "CONFIRM_CANONICAL_KEY_MISMATCH",
+                "message": (
+                    "`confirm_canonical_key` must equal the canonical row's key. "
+                    "Mid-weight defense against destructive UI-dropdown "
+                    "accidents."
                 ),
             },
         )
@@ -366,39 +378,31 @@ async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryD
     canonical_tombstoned = False
     duplicate_tombstoned = False
 
-    # A locked side of the pair cannot be the one tombstoned.
-    from server.memory.domain import lock as _lock
-
-    async def _tombstone(memory_id: str) -> None:
-        row = await memory_repo.get_by_id(
-            memory_id, org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
-        )
+    async def _tombstone(row: MemoryRow) -> None:
+        # A locked side of the pair cannot be the one tombstoned.
         _lock.assert_unlocked(row, "delete", op="memory.dedup_resolve")
-        tombstoned = await memory_repo.tombstone_by_id(input.org, memory_id)
+        tombstoned = await memory_repo.tombstone_by_id(input.org, row.memory_id)
         await webhooks.announce([("memory.tombstoned", change) for change in tombstoned])
 
     if input.decision == "keep_canonical":
-        await _tombstone(dup_row.memory_id)
+        await _tombstone(dup_row)
         duplicate_tombstoned = True
     elif input.decision == "keep_duplicate":
-        await _tombstone(canon_row.memory_id)
-        await memory_repo.clear_duplicate_tag(
-            input.org,
-            dup_row.memory_id,
-        )
+        await _tombstone(canon_row)
+        await memory_repo.clear_duplicate_tag(input.org, dup_row.memory_id)
         canonical_tombstoned = True
     elif input.decision == "keep_both":
-        await memory_repo.clear_duplicate_tag(
-            input.org,
-            dup_row.memory_id,
-        )
+        await memory_repo.clear_duplicate_tag(input.org, dup_row.memory_id)
 
     return MemoryDedupResolveOutput(
-        canonical_key=input.canonical_key,
-        duplicate_key=input.duplicate_key,
+        canonical_key=canon_row.memory_key,
+        duplicate_key=dup_row.memory_key,
         decision=input.decision,
         canonical_tombstoned=canonical_tombstoned,
         duplicate_tombstoned=duplicate_tombstoned,
+        ignored_args=[
+            name for name in ("canonical_key", "duplicate_key") if name in input.model_fields_set
+        ],
     )
 
 
