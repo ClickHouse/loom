@@ -12,6 +12,7 @@ import pytest
 from server.core.errors import PreconditionFailedError
 from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
+from server.settings import settings
 
 _CODE_OPS = sorted(
     (op for op in ALL_OPERATIONS if op.name.startswith("code.")), key=lambda op: op.name
@@ -23,8 +24,6 @@ _CODE_OPS = sorted(
 async def test_a_code_op_refuses_with_code_intelligence_off(
     monkeypatch: pytest.MonkeyPatch, op: Operation
 ) -> None:
-    from server.code.app import common
-
-    monkeypatch.setattr(common.settings, "code_intel_enabled", False)
+    monkeypatch.setattr(settings, "code_intel_enabled", False)
     with pytest.raises(PreconditionFailedError, match="code intelligence is disabled"):
         await op.handler(op.input_model.model_construct())

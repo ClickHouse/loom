@@ -80,8 +80,8 @@ Rules:
   uses it. An operator-configured entry is refused with `REPO_FROM_CONFIG`.
 - `LOOM_CODE_SELF_SERVICE_ENABLED=false` removes the feature (`SELF_SERVICE_OFF`).
 - `LOOM_CODE_INTEL_ENABLED=false` refuses every `code.repo.*` op with
-  `PRECONDITION_FAILED`, as it does every `code.*` op. To retire an index, turn it on
-  first.
+  `PRECONDITION_FAILED`, as it does every `code.*` op. The setting is read at startup: to
+  retire an index, set it to `true` and restart, run `code.repo.remove`, then set it back.
 
 Add a public repository and a release branch in one call:
 
