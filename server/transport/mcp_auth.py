@@ -340,9 +340,7 @@ async def _screen_tool_call(
     from server.core.errors import LoomServerError
 
     try:
-        return await _screen_namespace(
-            req, tool_name, args, auth, target_org, req_ns, consumer
-        )
+        return await _screen_namespace(req, tool_name, args, auth, target_org, req_ns, consumer)
     except LoomServerError as e:
         # A read the check could not make past its cache (a 503): counted
         # against the server, then raised.
