@@ -400,15 +400,10 @@ async def test_another_posters_create_with_the_key_is_not_dropped_by_its_token(
 # and writes the lease row. It names its lease and dedup token without the poster, so
 # neither ever matches this build's. Pausing that build mid-request takes hooks it does
 # not have, so these tests make its create's inserts beside this build's call: the task
-# row under that build's own key token, its event under a random one. Neither build's
-# create keeps the other's task out: a race gives two tasks.
+# row under that build's own key token, its event under the task's created token.
+# Neither build's create keeps the other's task out: a race gives two tasks.
 
 _OLD_SETTINGS = {"async_insert": 0, "wait_for_async_insert": 1}
-
-
-def _old_token() -> dict[str, Any]:
-    """Insert settings under a token of its own."""
-    return {**_OLD_SETTINGS, "insert_deduplication_token": uuid.uuid4().hex}
 
 
 def _old_key_token(org: str) -> dict[str, Any]:
@@ -492,7 +487,12 @@ async def _old_build_create(ch: Any, org: str, namespace: str) -> str:
         "note": "",
         "ts": now,
     }
-    await ch.insert("loom.task_events", [event], settings=_old_token())
+    created_token = f"task.created:{org}:{task_id}"
+    await ch.insert(
+        "loom.task_events",
+        [event],
+        settings={**_OLD_SETTINGS, "insert_deduplication_token": created_token},
+    )
     backend = await repo.lease_backend()
     await backend.ensure_row(task_id, org, "bot", 0)
     return task_id
