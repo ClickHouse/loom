@@ -10107,6 +10107,7 @@ class KnowledgeSearchInput(TypedDict, total=False):
     uri_prefix: NotRequired[list[str]]
     session_ids: NotRequired[list[str]]
     source_classes: NotRequired[list[str]]
+    rerank: NotRequired[str]
 
 
 class KnowledgeSearchBody(TypedDict, total=False):
@@ -10125,10 +10126,12 @@ class KnowledgeSearchBody(TypedDict, total=False):
     uri_prefix: NotRequired[list[str]]
     session_ids: NotRequired[list[str]]
     source_classes: NotRequired[list[str]]
+    rerank: NotRequired[str]
 
 
 class KnowledgeSearchOutput(TypedDict, total=False):
     results: Required[list["SearchHit"]]
+    reranked_by: NotRequired[str]
     embedding_model: Required[str]
     namespaces_skipped: NotRequired[list[str]]
 

@@ -13,6 +13,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from server.knowledge.domain.documents import MAX_SEARCH_TOP_K
+from server.memory.domain.rerank_names import RerankName
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 
@@ -193,6 +194,10 @@ class KnowledgeSearchInput(BaseModel):
     # agents wrote as their own, without what an agent derived or fetched.
     # Empty = every class.
     source_classes: list[str] = Field(default_factory=list, max_length=8)
+    # Reranker for this call. Empty = the deployment's `knowledge_search_rerank_default`;
+    # "none" = no rerank; "builtin:openai[:<model>]", "builtin:cohere[:<model>]" or the name
+    # of an endpoint in LOOM_RERANK_ENDPOINTS_JSON reranks the fused top hits. A URL is refused.
+    rerank: RerankName = ""
 
     @field_validator("source_classes")
     @classmethod
@@ -220,8 +225,12 @@ class KnowledgeSearchInput(BaseModel):
 
 
 class KnowledgeSearchOutput(BaseModel):
-    # Hits ranked by `score` (then similarity), best first; empty when nothing matched.
+    # Hits best first: in the reranker's order when `reranked_by` is set, else by `score`
+    # (then similarity); empty when nothing matched.
     results: list[_SearchHit]
+    # The reranker that ordered `results`; empty when none ran or it failed and the
+    # fused order was kept.
+    reranked_by: str = ""
     # Embedding model the query was embedded with; only chunks of this model are searched.
     embedding_model: str
     # Namespaces of the caller an all_mine search did not read because it stops

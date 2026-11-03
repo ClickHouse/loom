@@ -1983,6 +1983,17 @@ class KnowledgeSettings(BaseModel):
     # Namespace kinds an all_mine knowledge.search spans (comma list over
     # loom.namespaces.kind): the memory fan-out's, and the caller's collections.
     knowledge_search_fanout_kinds: Annotated[str, LIVE] = "memory,collection,personal"
+    # Reranker knowledge.search uses when the request names none (same values as the
+    # per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON;
+    # rerank="none" turns it off for a call). Empty = no default rerank.
+    knowledge_search_rerank_default: Annotated[str, LIVE] = ""
+    # How many fused hits a rerank reads (the legs fetch at least this many).
+    knowledge_search_rerank_top: Annotated[int, LIVE] = Field(default=30, ge=2, le=100)
+    # Characters of each hit a reranker reads: its context (title, breadcrumb), then
+    # the chunk text.
+    knowledge_search_rerank_excerpt_chars: Annotated[int, LIVE] = Field(
+        default=800, ge=100, le=4000
+    )
 
     # ---- chunking ----
     # Sliding-window chunking on knowledge.add/upsert, in characters.

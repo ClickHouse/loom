@@ -2412,6 +2412,18 @@ settings:
   # loom.namespaces.kind): the memory fan-out's, and the caller's collections. [live]
   # knowledge_search_fanout_kinds: "memory,collection,personal"
 
+  # Reranker knowledge.search uses when the request names none (same values as the
+  # per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON;
+  # rerank="none" turns it off for a call). Empty = no default rerank. [live]
+  # knowledge_search_rerank_default: ""
+
+  # How many fused hits a rerank reads (the legs fetch at least this many). [live]
+  # knowledge_search_rerank_top: 30
+
+  # Characters of each hit a reranker reads: its context (title, breadcrumb), then the
+  # chunk text. [live]
+  # knowledge_search_rerank_excerpt_chars: 800
+
   # --- chunking ---
 
   # Sliding-window chunking on knowledge.add/upsert, in characters. chunk_size 0 = one

@@ -249,10 +249,12 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 | `uri_prefix` | `list[str]` | *(computed)* | Directory scope: only chunks whose source_uri starts with one of these prefixes. |
 | `session_ids` | `list[str]` | *(computed)* | Only chunks of documents written in one of these sessions (a chat's own attachments, an agent run's output). |
 | `source_classes` | `list[str]` | *(computed)* | Only chunks of these classes, e.g. ["asserted"] for what people and their agents wrote as their own, without what an agent derived or fetched. |
+| `rerank` | `str` | `''` | Reranker for this call. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `results` | `list[_SearchHit]` | Hits ranked by `score` (then similarity), best first; empty when nothing matched. |
+| `results` | `list[_SearchHit]` | Hits best first: in the reranker's order when `reranked_by` is set, else by `score` (then similarity); empty when nothing matched. |
+| `reranked_by` | `str` | The reranker that ordered `results`; empty when none ran or it failed and the fused order was kept. |
 | `embedding_model` | `str` | Embedding model the query was embedded with; only chunks of this model are searched. |
 | `namespaces_skipped` | `list[str]` | Namespaces of the caller an all_mine search did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
 

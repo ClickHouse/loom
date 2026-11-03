@@ -48,7 +48,9 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     embedder = get_embedder()
     with traced("embed.compute.query", model=embedder.model_name):
         query_vec = await embedder.embed(input.query)
-    search = _namespaces_search(input, embedder, query_vec)
+    endpoint = _rerank_endpoint(input)
+    pool = max(input.top_k, settings.knowledge_search_rerank_top) if endpoint else input.top_k
+    search = _namespaces_search(input, embedder, query_vec, pool)
     skipped: list[str] = []
     if input.namespaces:
         namespaces = await _named_namespaces(input)
@@ -63,18 +65,76 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     results_per_ns = await _search_private_first(input, namespaces, search)
     all_hits = _as_search_hits(results_per_ns)
     all_hits.sort(key=lambda x: (x.score, x.similarity), reverse=True)
+    reranked_by = ""
+    if endpoint and len(all_hits) > 1:
+        contexts = {
+            (ns, h.source_uri, h.chunk_idx): h.context for ns, hits in results_per_ns for h in hits
+        }
+        all_hits, reranked = await _rerank(endpoint, input.query, all_hits, contexts)
+        reranked_by = endpoint if reranked else ""
     if input.collapse_sections:
         all_hits = _collapse_by_section(all_hits)
     top = all_hits[: input.top_k]
     if input.narrow_spans and top:
         await _narrow_spans(embedder, query_vec, top)
     return KnowledgeSearchOutput(
-        results=top, embedding_model=embedder.model_name, namespaces_skipped=skipped
+        results=top,
+        embedding_model=embedder.model_name,
+        namespaces_skipped=skipped,
+        reranked_by=reranked_by,
     )
 
 
+def _rerank_endpoint(input: KnowledgeSearchInput) -> str:
+    """The reranker this call uses: the request's, else the deployment default; '' for
+    none ("none" turns the default off)."""
+    if input.rerank == "none":
+        return ""
+    return input.rerank or settings.knowledge_search_rerank_default.strip()
+
+
+async def _rerank(
+    endpoint: str,
+    query: str,
+    hits: list[_SearchHit],
+    contexts: dict[tuple[str, str, int], str],
+) -> tuple[list[_SearchHit], bool]:
+    """The fused head (`knowledge_search_rerank_top` hits) in the reranker's order, the
+    rest after it, and whether the reranker produced the order. Each candidate shows the
+    chunk's context (title, breadcrumb) before its text. Fail-open: the rerank service
+    hands back its input on any failure, and the fused order is kept."""
+    from server.memory.app.rerank import RerankCandidate, rerank
+
+    top = settings.knowledge_search_rerank_top
+    chars = settings.knowledge_search_rerank_excerpt_chars
+    head, tail = hits[:top], hits[top:]
+    candidates = []
+    for i, h in enumerate(head):
+        context = contexts.get((h.namespace, h.source_uri, h.chunk_idx), "")
+        text = f"{context}\n\n{h.content}" if context else h.content
+        candidates.append(
+            RerankCandidate(
+                memory_key=str(i),
+                namespace="",
+                content_excerpt=text[:chars],
+                memory_type="document",
+                similarity=h.similarity,
+            )
+        )
+    ordered = await rerank(
+        endpoint=endpoint,
+        prompt_template="",
+        query=query,
+        candidates=candidates,
+        excerpt_chars=chars,
+    )
+    if ordered is candidates:
+        return hits, False
+    return [head[int(c.memory_key)] for c in ordered] + tail, True
+
+
 def _namespaces_search(
-    input: KnowledgeSearchInput, embedder: Embedder, query_vec: list[float]
+    input: KnowledgeSearchInput, embedder: Embedder, query_vec: list[float], pool: int
 ) -> Callable[[list[str]], Awaitable[list[tuple[str, list[ChunkHit]]]]]:
     """A search over several namespaces in the requested mode, one statement
     per leg whatever their number: the vector leg, the lexical leg, or both
@@ -90,8 +150,8 @@ def _namespaces_search(
     tokens = knowledge_bm25.tokenize(input.query) if input.search_mode != "semantic" else []
 
     # Collapsing sections folds sibling chunks after the statement: ask for more,
-    # so the page still fills.
-    top_k = input.top_k * 3 if input.collapse_sections else input.top_k
+    # so the page still fills. `pool` is the page, or a reranker's head when larger.
+    top_k = pool * 3 if input.collapse_sections else pool
 
     async def _ranked(namespaces: list[str]) -> list[ChunkHit]:
         base = HybridSearchQuery(

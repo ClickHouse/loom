@@ -179,10 +179,21 @@ A probe's error names the HTTP status (`http_403`), never the store's response t
 | `collapse_sections` | `true`     | One hit per (document, section); the survivor reports `siblings_folded`.                               |
 | `narrow_spans`      | `false`    | Also return the two-sentence `span` nearest the query, with its offsets and similarity.                |
 | `top_k`             | `5`        | 1–100.                                                                                                 |
+| `rerank`            | `""`       | Reranker for the fused head; `""` = the deployment default, `"none"` = off.                            |
 
 Each hit carries `source_uri`, `chunk_idx`, `content`, `section` (the breadcrumb as
 text) and `section_path`, `similarity`, `lexical_score`, `score` (the fused rank in
 hybrid mode) and, on a fan-out, the `namespace` it came from.
+
+**Reranking.** `rerank` names a reranker (`builtin:openai[:<model>]`, `builtin:cohere[:<model>]`
+or an endpoint in `LOOM_RERANK_ENDPOINTS_JSON`; a URL is refused), or the deployment
+sets `LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT`. The legs then fetch at least
+`LOOM_KNOWLEDGE_SEARCH_RERANK_TOP` hits (30), and the reranker reads each one's context
+(title, breadcrumb) and text, `LOOM_KNOWLEDGE_SEARCH_RERANK_EXCERPT_CHARS` characters
+(800), and orders them before sections collapse and the page is cut. `reranked_by` on
+the response names the reranker that produced the order; it is empty when none ran or
+the reranker failed and the fused order was kept (fail-open). A rerank is one more model
+call per search: `builtin:openai` adds about two seconds, so it is off unless asked for.
 
 **Fan-out and private-first.** Under `all_mine` the namespaces are the caller's
 memory-kind namespaces (`LOOM_MEMORY_SEARCH_FANOUT_KINDS`; code and tracker indexes are

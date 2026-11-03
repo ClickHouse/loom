@@ -3401,6 +3401,7 @@ export interface KnowledgeSearchInput {
   uri_prefix?: string[];
   session_ids?: string[];
   source_classes?: string[];
+  rerank?: string;
 }
 
 export interface SearchHit {
@@ -3429,6 +3430,7 @@ export interface SearchHit {
 
 export interface KnowledgeSearchOutput {
   results: SearchHit[];
+  reranked_by?: string;
   embedding_model: string;
   namespaces_skipped?: string[];
 }

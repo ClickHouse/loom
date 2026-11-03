@@ -2776,6 +2776,25 @@
           "type": "integer",
           "description": "Namespaces an all_mine knowledge.search reads besides the addressed one, at most; the rest come back in `namespaces_skipped`. Each search leg is one statement over all of them (measured 110 ms at 10,000 collections)."
         },
+        "knowledge_search_rerank_default": {
+          "default": "",
+          "type": "string",
+          "description": "Reranker knowledge.search uses when the request names none (same values as the per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON; rerank=\"none\" turns it off for a call). Empty = no default rerank."
+        },
+        "knowledge_search_rerank_excerpt_chars": {
+          "default": 800,
+          "maximum": 4000,
+          "minimum": 100,
+          "type": "integer",
+          "description": "Characters of each hit a reranker reads: its context (title, breadcrumb), then the chunk text."
+        },
+        "knowledge_search_rerank_top": {
+          "default": 30,
+          "maximum": 100,
+          "minimum": 2,
+          "type": "integer",
+          "description": "How many fused hits a rerank reads (the legs fetch at least this many)."
+        },
         "knowledge_source_probe_timeout_s": {
           "default": 20.0,
           "exclusiveMinimum": 0,
