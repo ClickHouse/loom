@@ -1323,9 +1323,7 @@ async def test_delete_version_retires_chunks_the_excerpt_rule_no_longer_writes(
     assert live == []
 
 
-_OPENING = "\n\n".join(
-    " ".join(f"opening {p}.{i} of the deploy note." for i in range(18)) for p in range(1)
-)
+_OPENING = " ".join(f"opening {i} of the deploy note." for i in range(18))
 
 
 def _head_with_opening() -> str:
@@ -1375,22 +1373,39 @@ async def test_a_short_versions_passage_shared_with_the_head_stays_live(
     assert await _live_chunk_contents(ch) == sorted(r["content"] for r in rows)
 
 
+_PAST = datetime(2020, 1, 1)
+
+
 @pytest.mark.asyncio
-async def test_a_passage_another_session_of_the_user_serves_stays_live(ch: KeptCH) -> None:
-    # Chunk rows are the user's under the key: another session's live value that shares a
-    # passage keeps it live when this session's version is deleted.
+@pytest.mark.parametrize(
+    ("other", "served"),
+    [
+        ({"session_id": "s2"}, True),
+        ({"user_id": "u2"}, True),
+        ({"user_id": ""}, True),
+        ({"session_id": "s2", "expires_at": _PAST}, False),
+        ({"session_id": "s2", "status": "superseded"}, False),
+    ],
+    ids=["other session", "other user", "empty user", "expired", "superseded"],
+)
+async def test_a_passage_another_row_of_the_key_serves_stays_live(
+    ch: KeptCH, other: dict[str, Any], served: bool
+) -> None:
+    # A key's chunk rows are shared by every user, agent and session holding it: another
+    # row search serves keeps a shared passage live when this row's version is deleted; an
+    # expired or superseded one does not.
     ch.create("SET enable_quantized_codec = 1", ddl("memory_chunks"))
     head = time.time_ns() - 10_000_000_000
     removed_value = _OPENING + "\n\n" + " ".join(f"old tail {i} of the note." for i in range(300))
     other_value = _head_with_opening()
     await ch.insert("loom.memory", [{**_row(removed_value, head), "memory_type": "semantic"}])
-    other = {
+    row = {
         **_row(other_value, head + 1_000_000_000),
         "memory_type": "semantic",
-        "session_id": "s2",
         "memory_id": "00000000-0000-0000-0000-00000000000b",
+        **other,
     }
-    await ch.insert("loom.memory", [other])
+    await ch.insert("loom.memory", [row])
     removed, kept = _chunk_rows(removed_value), _chunk_rows(other_value)
     await ch.insert("loom.memory_chunks", removed + kept)
     shared = {r["content"] for r in removed} & {r["content"] for r in kept}
@@ -1399,7 +1414,10 @@ async def test_a_passage_another_session_of_the_user_serves_stays_live(ch: KeptC
         MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
     )
     assert out.tombstoned is True
-    assert await _live_chunk_contents(ch) == sorted(r["content"] for r in kept)
+    expected = [r["content"] for r in kept]
+    if not served:
+        expected = [c for c in expected if c not in shared]
+    assert await _live_chunk_contents(ch) == sorted(expected)
 
 
 @pytest.mark.asyncio

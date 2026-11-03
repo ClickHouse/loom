@@ -135,9 +135,9 @@ from server.memory.store.reads import (
     memory_rows_by_identity_keys,
     namespace_version,
     overlay_usage_totals_many,
+    served_key_rows,
     session_writers,
     statuses_by_ids,
-    user_key_rows,
     versions_above,
 )
 from server.memory.store.records import (
@@ -286,7 +286,7 @@ __all__ = [
     "MEMORY_PERSISTED_COLS",
     "memory_mirror_rows_for_keys",
     "memory_rows_by_identity_keys",
-    "user_key_rows",
+    "served_key_rows",
     "MemoryRow",
     "mirror_status_to_embeddings",
     "namespace_version",

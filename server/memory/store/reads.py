@@ -330,23 +330,29 @@ async def memory_rows_by_identity_keys(
     return {_identity_key(r): _hydrate(r) for r in rows}
 
 
-async def user_key_rows(
-    org: str, namespace: str, user_id: str, memory_key: str, *, ch: _CHClient | None = None
-) -> list[MemoryRow]:
-    """The live row of `memory_key` under each agent and session of `user_id`: every
-    identity whose value may share the key's memory.set chunks. Sequentially consistent,
-    since a delete decides on the answer."""
+async def served_key_rows(
+    org: str, namespace: str, memory_key: str, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The rows of `memory_key` in the namespace that search serves, under every user,
+    agent and session (a key's memory.set chunks are shared by all of them): live, not
+    expired, inside their validity and of a served status. `agent`, `session_id`,
+    `memory_type`, `sensitivity` and `value` (the stored JSON) only. Sequentially
+    consistent, since a delete decides on the answer."""
     ch = ch or _default_client()
-    rows = await ch.query_all(
-        f"""{_MEMORY_FINAL_PROJECTION}
+    return await ch.query_all(
+        f"""
+        SELECT agent, user_id, session_id, memory_type, sensitivity, value
+        FROM loom.memory FINAL
         PREWHERE org = {{org:String}} AND namespace = {{ns:String}}
-             AND user_id = {{uid:String}} AND memory_key = {{key:String}}
+             AND memory_key = {{key:String}}
         WHERE tombstoned_at IS NULL
+          AND (expires_at IS NULL OR expires_at > now())
+          AND (valid_to IS NULL OR valid_to > now())
+          AND {served_status_sql()}
         {_SEQUENTIAL}
         """,
-        params={"org": org, "ns": namespace, "uid": user_id, "key": memory_key},
+        params={"org": org, "ns": namespace, "key": memory_key},
     )
-    return [_hydrate(r) for r in rows]
 
 
 async def key_heads_across_sessions(

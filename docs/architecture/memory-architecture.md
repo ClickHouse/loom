@@ -1137,12 +1137,15 @@ took the very row it checked), so a restore brings back the row it removed and a
 after it lifts over the copy as over this tombstone.
 
 Only when the key did not move on does the delete stand and retire the removed version's
-vectors and chunks: the chunks whose index and content hash its own value writes, so a
-newer value's chunks of the key stay. A newer value that repeats one of those chunks at
-the same index shares its row; the delete reads the key's newest value after the retire
-and puts the shared chunks back when search serves that value (live, and not `sensitivity:
-high`), reading the key again afterwards to retire them once more if a delete or a write
-landed in between. A `memory.delete` whose insert lands after that read can still answer
+vectors and chunks: every chunk row its value's passages can hold (`passage_identities`:
+each index and content hash of its text, whether or not the excerpt rule chunks it), so
+another value's chunks of the key stay. A key's chunk rows are shared by every user, agent
+and session holding the key, and a value that repeats one of those passages at the same
+index shares its row. After the retire, the delete reads the key's newest value under its
+own identity and every other row of the key in the namespace that search serves (live, not
+expired, inside its validity, of a served status, and not `sensitivity: high`). It puts
+back the shared chunks any of them cuts, then reads them again to retire those chunks once
+more if a delete or a write landed in between. A `memory.delete` whose insert lands after that read can still answer
 `tombstoned` alongside it, as two racing `memory.delete` calls can. Between the tombstone
 and a write back, the key reads as deleted, and a `memory.delete` in that window answers
 `found=false`. A delete of a decision row, by either op, also tombstones the key's

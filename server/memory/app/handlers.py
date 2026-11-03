@@ -926,17 +926,19 @@ async def _head_carries(existing: Any, top: int, row: Any) -> bool:
 
 async def _restore_newer_chunks(existing: Any, *, tombstone: int) -> None:
     """Put back the chunks the removed row `existing` shares with a value search still
-    serves: the key's newest value after it, and the live value of every other agent and
-    session of its user, since a key's chunk rows are the user's, not one session's. A
-    chunk row is named by its index and text, so a value keeping a passage at the same
-    index shares the row, and its write may land after the delete's check but before the
-    retire. A write inserts its row before its chunks, and this read follows the retire, so
-    it sees any write whose chunks it caught. The values are read again after the restore:
-    a delete, or a write the chunks no longer serve, that found them retired and left them
-    has them retired again."""
+    serves: the key's newest value after it, and every other row of the key in the
+    namespace, since a key's memory.set chunk rows are shared by every user, agent and
+    session holding it. A chunk row is named by its index and text, so a value keeping a
+    passage at the same index shares the row, and its write may land after the delete's
+    check but before the retire. A write inserts its row before its chunks, and this read
+    follows the retire, so it sees any write whose chunks it caught. The values are read
+    again after the restore: a delete, or a write the chunks no longer serve, that found
+    them retired and left them has them retired again."""
     from server.memory.app import set_chunks as _set_chunks
 
     removed = _set_chunks.passage_identities(existing.value, existing.memory_type)
+    if not removed:
+        return  # a value of no searchable type wrote no chunks
     ch = get_client()
     key_chunks = {
         "org": existing.org,
@@ -971,20 +973,27 @@ async def _restore_newer_chunks(existing: Any, *, tombstone: int) -> None:
 
 
 async def _served_chunks(existing: Any, *, tombstone: int) -> frozenset[tuple[int, str]]:
-    """The chunk identities search still serves for the user of `existing` under its key:
-    those of its own newest value after it (other than the delete's own `tombstone`), and
-    those of every other agent's and session's live value. A value counts when it is live
-    and embedded (a high row's chunks stay retired)."""
+    """The chunk identities search still serves under the key of `existing`: those of its
+    own newest value after it (other than the delete's own `tombstone`), and those of every
+    other row of the key in the namespace that search serves. A row counts when it is
+    embedded too (a high row's chunks stay retired)."""
     import server.memory.store as memory_repo
     from server.memory.app import set_chunks as _set_chunks
 
-    own = (existing.agent, existing.session_id)
-    served: set[tuple[int, str]] = set()
-    for row in await memory_repo.user_key_rows(
-        existing.org, existing.namespace, str(existing.user_id or "-"), existing.memory_key
+    own = (existing.agent, existing.user_id, existing.session_id)
+    values: set[tuple[str, str]] = set()
+    for r in await memory_repo.served_key_rows(
+        existing.org, existing.namespace, existing.memory_key
     ):
-        if (row.agent, row.session_id) != own and is_embedded(row.memory_type, row.sensitivity):
-            served |= _set_chunks.set_chunk_identities(row.value, row.memory_type, row.memory_key)
+        if (r["agent"], r["user_id"], r["session_id"]) == own:
+            continue
+        if is_embedded(str(r["memory_type"]), str(r["sensitivity"] or "")):
+            values.add((str(r["value"]), str(r["memory_type"])))
+    served: set[tuple[int, str]] = set()
+    # rows holding one value cut one set of chunks
+    for text, memory_type in values:
+        value = memory_repo.parse_memory_value(text)
+        served |= _set_chunks.set_chunk_identities(value, memory_type, existing.memory_key)
     return frozenset(served | await _own_newer_chunks(existing, tombstone=tombstone))
 
 
