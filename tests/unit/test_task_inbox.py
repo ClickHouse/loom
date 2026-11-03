@@ -112,6 +112,7 @@ class FakeRepo:
         return max(repo.next_version(), int(floor) + 1)
 
     resolve_policy = staticmethod(repo.resolve_policy)
+    create_key_digest = staticmethod(repo.create_key_digest)
 
     def __init__(self) -> None:
         self.inboxes: dict[tuple[str, str], dict[str, Any]] = {}

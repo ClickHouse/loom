@@ -361,13 +361,13 @@ async def test_racing_deliveries_store_one(ch: Any, monkeypatch: pytest.MonkeyPa
 
 # ---- the previous build beside this one (rolling upgrade) ----------------------------
 #
-# The previous build takes no lease. Its create looks the key up, inserts the task, logs
-# the created event and writes the lease row; its delivery checks for the event and
-# inserts it. It names a dedup token, but its client writes a fresh random one over it
-# for every insert, so storage never drops its rows as repeats. Pausing that build
-# mid-request takes hooks it does not have, so these tests make its exact inserts
-# (a random token each) beside this build's call. Neither build keeps the other's row
-# out: a race gives two tasks, as two replicas of the previous build already can.
+# The previous build's create looks the key up, inserts the task, logs the created event
+# and writes the lease row; its delivery checks for the event and inserts it. Its create
+# names its lease and dedup token without the poster, so neither ever matches this
+# build's. Pausing that build mid-request takes hooks it does not have, so these tests
+# make its inserts beside this build's call, each under a random token: a stand-in for
+# any token that differs from this build's. Neither build keeps the other's row out: a
+# race gives two tasks.
 
 _OLD_SETTINGS = {"async_insert": 0, "wait_for_async_insert": 1}
 

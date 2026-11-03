@@ -362,14 +362,19 @@ async def insert_task_version(
     await ch.insert("loom.tasks", [dict(row)], settings=settings)
 
 
+def create_key_digest(org: str, inbox: str, subject: str, key: str) -> str:
+    """One poster's idempotency key in one inbox, for the create's lease and dedup token.
+    Two keys that join to one digest only share a lease and a token: the lookup still
+    names the poster, so a row the token dropped is inserted again under a fresh one."""
+    return hashlib.sha256("\x1f".join((org, inbox, subject, key)).encode()).hexdigest()
+
+
 async def insert_created_task(row: TaskRow, *, ch: _CHClient | None = None) -> TaskRow:
     """Insert a task with an idempotency key; answer this row, or the one stored first.
     Why the dedup token and its retry: docs/architecture/rolling-upgrades.md, rule 10."""
     org, inbox, key = row["org"], row["inbox"], row["idempotency_key"]
     subject = row["from_subject"]
-    # Subjects and keys may hold any separator: join with one neither takes, then hash.
-    ident = "\x1f".join((org, inbox, subject, key))
-    token = "task.create:" + hashlib.sha256(ident.encode()).hexdigest()
+    token = "task.create:" + create_key_digest(org, inbox, subject, key)
     await insert_task_version(row, dedup_token=token, ch=ch)
     if await fetch_task(org, str(row["task_id"]), ch=ch) is not None:
         return row

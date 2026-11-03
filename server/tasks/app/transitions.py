@@ -5,7 +5,6 @@ and reassign."""
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import time
 import uuid
@@ -161,8 +160,8 @@ async def _one_create_per_key(input: TaskCreateInput, subject: str) -> AsyncIter
     if not input.idempotency_key:
         yield
         return
-    ident = "\x1f".join((input.org, input.inbox, subject, input.idempotency_key))
-    name = "task.create/" + hashlib.sha256(ident.encode()).hexdigest()[:40]
+    digest = repo.create_key_digest(input.org, input.inbox, subject, input.idempotency_key)
+    name = "task.create/" + digest[:40]
     async with leases.holding(name, ttl_s=60, wait_s=10) as held:
         if not held:
             raise PreconditionFailedError(
