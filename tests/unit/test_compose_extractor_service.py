@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -54,3 +55,25 @@ def test_the_charts_extractor_is_selected_by_nothing_of_loom_and_reaches_nothing
     from scripts.gates import helm_extractor_isolation
 
     helm_extractor_isolation.main()
+
+
+async def test_the_quickstart_extractor_probe_passes_against_the_reference_service(
+    monkeypatch: pytest.MonkeyPatch, settings_override: Any
+) -> None:
+    """What the quickstart smoke runs inside the loom container, here against the
+    reference service in process."""
+    import httpx
+
+    from loom_extractor import service
+    from scripts.gates import docker_extractor_smoke
+    from server.knowledge.app import extractors
+
+    token = "t" * 24
+    app = service.create_app(service.Config(token=token))
+    monkeypatch.setattr(extractors, "transport", httpx.ASGITransport(app=app))
+    extractors._declared.clear()
+    settings_override(document_extractor_url="http://extractor:8790", document_extractor_token=token)
+    try:
+        await docker_extractor_smoke.main()
+    finally:
+        extractors._declared.clear()

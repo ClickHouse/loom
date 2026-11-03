@@ -21,5 +21,6 @@ async def main() -> None:
     assert artifact.coverage.complete, artifact.coverage
 
 
-asyncio.run(main())
-print("extractor: reached, declared five formats, extraction checked")
+if __name__ == "__main__":  # `python -` runs it as __main__ too
+    asyncio.run(main())
+    print("extractor: reached, declared five formats, extraction checked")
