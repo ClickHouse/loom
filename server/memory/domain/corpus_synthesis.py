@@ -12,6 +12,7 @@ not fit in one call.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -120,15 +121,66 @@ def reduce_prompt(task: str, notes: Sequence[str], *, final: bool) -> str:
     )
 
 
-def citations(text: str) -> list[str]:
-    """Distinct [source#idx] or [source#a-b] tags in reading order."""
-    import re
+# A citation is a bracket holding one or more `source#idx` / `source#a-b` items, separated
+# by `,` or `;` (a window spanning documents is cited as a comma list, `Window.cite`). A
+# source holds no blank, comma, semicolon or bracket; a bracket with anything else in it
+# is prose (`[PR #42]`, `[see doc#1]`) and is left as written. Of nested brackets, the
+# innermost is the one read. An index is ASCII digits; one past nine digits names no chunk.
+# One item, as (source, first index, last index); a citation is a list of them.
+_ITEM_PARTS = re.compile(r"([^\s,;\[\]]+)#([0-9]+)(?:-([0-9]+))?")
+# not a setting: longer than any chunk index, short enough for int() to parse safely
+_MAX_INDEX_DIGITS = 9
+_ITEMS = re.compile(rf"{_ITEM_PARTS.pattern}(?:\s*[,;]\s*{_ITEM_PARTS.pattern})*")
+# The blanks around a list's separators, which do not make it another citation.
+_SEPARATOR = re.compile(r"\s*([,;])\s*")
+# A removed citation goes with the blanks before it; the lookbehind starts the blanks at
+# the start of their run, so a long run is scanned once.
+_SPACED_CITATION = re.compile(rf"(?<![ \t])[ \t]*\[\s*({_ITEMS.pattern})\s*\]")
+# A citation formed only after this many removals is left as written and unchecked: a
+# model writes none, and each one is one more pass over the answer.
+# not a setting: a bound on adversarial nesting, not a quality trade-off to tune
+_MAX_PASSES = 8
 
-    out: list[str] = []
+
+def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
+    """Whether `source#idx` (or `source#a-b`, a <= b, or a `,`/`;` list of them) names
+    chunks in `read`, the (source, idx) pairs the passes were shown. A range needs both
+    of its ends read, a list every part; a tag that is not such a list names nothing read."""
+    if not _ITEMS.fullmatch(tag):
+        return False
+    for m in _ITEM_PARTS.finditer(tag):
+        if max(len(m.group(2)), len(m.group(3) or "")) > _MAX_INDEX_DIGITS:
+            return False
+        source, a, b = m.group(1), int(m.group(2)), int(m.group(3) or m.group(2))
+        if not (a <= b and (source, a) in read and (source, b) in read):
+            return False
+    return True
+
+
+def ground_citations(answer: str, read: set[tuple[str, int]]) -> tuple[str, list[str], list[str]]:
+    """(the answer without its citations of chunks the passes did not read, the citations
+    kept, the ones removed, each in the order found). A model can cite a part it was
+    never shown; a caller that follows it would read something the answer did not come
+    from."""
+    kept: list[str] = []
+    removed: list[str] = []
     seen: set[str] = set()
-    for m in re.finditer(r"\[([^\[\]\s]+#\d+(?:-\d+)?)\]", text or ""):
+
+    def check(m: re.Match[str]) -> str:
         tag = m.group(1)
-        if tag not in seen:
-            seen.add(tag)
-            out.append(tag)
-    return out
+        supported = cites_what_was_read(tag, read)
+        key = _SEPARATOR.sub(r"\1", tag)
+        if key not in seen:
+            seen.add(key)
+            (kept if supported else removed).append(tag)
+        return m.group(0) if supported else ""
+
+    # Removing an inner citation can close an outer bracket into a new one
+    # (`[a#7[b#0]]`), so the pass repeats until it removes nothing; each nesting level
+    # takes one pass, and past _MAX_PASSES levels the rest is left as written.
+    for _ in range(_MAX_PASSES):
+        grounded = _SPACED_CITATION.sub(check, answer)
+        if grounded == answer:
+            break
+        answer = grounded
+    return answer.strip(), kept, removed

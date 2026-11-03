@@ -185,7 +185,8 @@ class KnowledgeClient:
     ) -> dict[str, Any]:
         """Complete `task` over whole documents by map-reduce:
         `{"answer", "windows", "chunks_read", "documents", "reduce_rounds",
-        "citations", "truncated", "abstain", "abstain_reason", "model"}`."""
+        "citations", "unsupported_citations", "truncated", "abstain", "abstain_reason",
+        "model"}`."""
         return await self._agent.transport.post(
             "/v1/knowledge.synthesize",
             {

@@ -3449,6 +3449,7 @@ export interface KnowledgeSynthesizeOutput {
   documents: number;
   reduce_rounds: number;
   citations?: string[];
+  unsupported_citations?: string[];
   truncated?: boolean;
   abstain?: boolean;
   abstain_reason?: string;
