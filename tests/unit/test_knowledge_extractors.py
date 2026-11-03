@@ -607,3 +607,13 @@ def test_capabilities_of_a_contract_version_that_is_not_the_integer_1_are_refuse
     body = {"contract_version": version, "extractor": {"name": "x"}, "max_bytes": 1, "formats": []}
     with pytest.raises(ValueError, match="contract_version"):
         extractors._capabilities(json.dumps(body).encode())
+
+
+async def test_a_listing_logs_no_credential_of_a_service_it_cannot_read(
+    hosts: _Hosts, settings_override: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    settings_override(document_extractor_url="http://user:pass@gone:8790/x?key=k")
+    assert await extractors.available_formats() == {}
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert "http://gone:8790" in logged
+    assert "pass" not in logged and "key=k" not in logged

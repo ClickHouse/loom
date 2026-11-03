@@ -20,6 +20,7 @@ import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -177,6 +178,14 @@ def _endpoints(fmt: str) -> list[str]:
     return list(dict.fromkeys(u.rstrip("/") for u in [endpoint_for(fmt), *by_media] if u))
 
 
+def _origin(url: str) -> str:
+    """`scheme://host:port` of a URL: a URL setting is a secret, as its user
+    info, path or query can carry a credential."""
+    parts = urlsplit(url)
+    port = f":{parts.port}" if parts.port else ""
+    return f"{parts.scheme}://{parts.hostname}{port}"
+
+
 async def available_formats() -> dict[str, str]:
     """Each format some configured service declares, with the first such
     service's URL. A service that cannot be read declares nothing, and is read
@@ -189,7 +198,7 @@ async def available_formats() -> dict[str, str]:
                 try:
                     read[url] = await capabilities(url)
                 except ExtractorUnavailable as e:
-                    logger.warning("document extractor %s: %s", url, e)
+                    logger.warning("document extractor %s: %s", _origin(url), e)
                     read[url] = None
             caps = read[url]
             if caps is not None and fmt in caps.formats:

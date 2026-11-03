@@ -248,13 +248,14 @@ async def test_a_child_sees_no_environment_and_cannot_write_files(
     assert set(names) <= {"PYTHONPATH", "PATH", "LC_ALL", "LC_CTYPE"} and wrote == "no"
 
 
-async def test_a_child_that_crashes_is_a_500(
+async def test_a_child_that_crashes_refuses_the_source_as_corrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A retry would crash the same way: the source is refused, not the service down."""
     _child(tmp_path, monkeypatch, "raise RuntimeError('bug')")
     r = await _extract()
-    assert (r.status_code, r.json()["error"]["code"]) == (500, "extractor_error")
-    assert json.loads(r.text)["error"]["message"] == "the extraction exited 1"
+    assert (r.status_code, r.json()["error"]["code"]) == (422, "corrupt")
+    assert r.json()["error"]["message"] == "the parser failed on this file (exit 1)"
 
 
 def test_the_service_and_the_test_environment_pin_one_sqlglot() -> None:

@@ -2436,11 +2436,6 @@ settings:
 
   # --- document extraction ---
 
-  # The extractor service a format goes to unless LOOM_DOCUMENT_EXTRACTORS_JSON routes
-  # it elsewhere, an http(s) base URL. Empty and unrouted: the format is not extracted.
-  # [restart]
-  # document_extractor_url: ""
-
   # Seconds one call to an extractor may take as a whole: reading its capabilities, or
   # sending the original and reading its artifact. [restart]
   # document_extractor_timeout_s: 180.0

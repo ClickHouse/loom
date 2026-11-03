@@ -2005,16 +2005,14 @@ class KnowledgeSettings(BaseModel):
     # The extractor service a format goes to unless LOOM_DOCUMENT_EXTRACTORS_JSON routes
     # it elsewhere, an http(s) base URL. Empty and unrouted: the format is not extracted.
     document_extractor_url: str = ""
-    # JSON {format or media type: http(s) base URL}: per-format extractor services. A
-    # format's own key wins over its media type's, either over LOOM_DOCUMENT_EXTRACTOR_URL;
-    # a key that is neither a format nor a media type naming one is refused.
+    # JSON {format or media type: http(s) base URL}: per-format extractor services, over
+    # LOOM_DOCUMENT_EXTRACTOR_URL; docs/reference/extractor-contract.md has the routing.
     document_extractors_json: Annotated[str, JsonObject] = "{}"
     # The bearer token the server sends an extractor service, which checks it, unless
     # LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON holds one for that service's URL.
     document_extractor_token: str = ""
-    # JSON {base URL: bearer token}: a token of its own for each extractor service, so an
-    # operator's service never holds the token another accepts. Each URL must be one that
-    # LOOM_DOCUMENT_EXTRACTOR_URL or LOOM_DOCUMENT_EXTRACTORS_JSON names.
+    # JSON {base URL: bearer token}: each extractor service's own token, so none holds
+    # another's. Each URL must be one an extractor URL setting names.
     document_extractor_tokens_json: Annotated[str, JsonObject] = "{}"
     # Seconds one call to an extractor may take as a whole: reading its capabilities, or
     # sending the original and reading its artifact.
