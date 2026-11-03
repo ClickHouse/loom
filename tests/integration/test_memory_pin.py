@@ -205,7 +205,7 @@ async def test_pin_of_a_read_row_keeps_its_fields(mint_test_token) -> None:
         tok,
         {
             **key,
-            "memory_type": "procedural",
+            "memory_type": "preference",
             "value": "deploys freeze on Fridays",
             "tags": ["infra", "prod"],
             "entities": ["deploy"],
@@ -222,7 +222,7 @@ async def test_pin_of_a_read_row_keeps_its_fields(mint_test_token) -> None:
     assert before.get("found"), before
     # The write stored every field, so the comparison after the pin is not of defaults.
     assert before["value"] == "deploys freeze on Fridays", before
-    assert before["memory_type"] == "procedural", before
+    assert before["memory_type"] == "preference", before
     assert {"infra", "prod"} <= set(before["tags"]), before
     assert before["entities"] == ["deploy"], before
     assert before["confidence"] == pytest.approx(0.8, abs=1e-6), before

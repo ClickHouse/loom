@@ -39,7 +39,7 @@ describe("pinMemory", () => {
   const row: MemoryDetail = {
     found: true,
     value: "deploys freeze on Fridays",
-    memory_type: "procedural",
+    memory_type: "preference",
     confidence: 0.8,
     version: 3,
     pinned: false,
@@ -87,7 +87,7 @@ describe("pinMemory", () => {
       session_id: "-",
       memory_key: "deploy/freeze",
       value: "deploys freeze on Fridays",
-      memory_type: "procedural",
+      memory_type: "preference",
       tags: ["infra", "prod"],
       entities: ["deploy"],
       confidence: 0.8,
