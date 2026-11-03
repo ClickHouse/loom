@@ -741,17 +741,22 @@ Each is off until configured; `.env.example` has a commented block for each.
 
 Code intelligence is on by default. A deployment that serves memory, documents and
 conversations, and no code index, turns it off with `LOOM_CODE_INTEL_ENABLED=false`.
-Nothing else changes:
+What that changes, and what it leaves:
 
 - Boot still applies every migration. An empty table costs nothing to serve, and erasure
   covers every table whatever is in use.
 - Every `code.*` operation, the `code.repo.*` administration included, answers a
   precondition error.
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
-  leaves the code tools out. The coding-agent plugins list them: the Claude Code plugin
-  asks for the `coding` toolset (its `toolset` option) and the Codex plugin's MCP entry
-  for `toolset=core,coding,tracker,tasks`. Set each to `core` so agents are not offered
-  tools that refuse.
+  leaves the code tools out, but the coding-agent plugins list them, so agents are offered
+  tools that refuse. Set the Claude Code plugin's `toolset` option from `coding` to `core`.
+  The Codex plugin's entry asks for `toolset=core,coding,tracker,tasks`; replace it with
+  a `[mcp_servers.loom]` override in `~/.codex/config.toml`
+  ([Codex](../features/integrations/codex.md)) that asks for `core,tasks`
+  (`core,tracker,tasks` with a tracker source).
+- The plugin hooks find a session's repository through `code.repos`. With the switch off
+  that call is refused; the hooks then add nothing to the session and ask again about
+  once a minute.
 - With no repository and no tracker source configured, the code and tracker workers find
   nothing to do: each pass reads a few rows and ends. The git mirror warm-up does not
   run, and boot probes the repository-job sandbox only when `LOOM_CODE_INGEST_ENABLED` or
