@@ -759,8 +759,8 @@ and what it leaves:
   agents use the task inbox): the Claude Code plugin's `toolset` option
   ([options](../features/integrations/claude-code.md#install)),
   `loom install --toolset core`, or for the Codex plugin a `[mcp_servers.loom]` override in
-  `~/.codex/config.toml` that keeps the plugin's `http_headers_helper` line, since the override replaces the entry
-  whole ([the server](../features/integrations/codex.md#the-server)).
+  `~/.codex/config.toml` that keeps the plugin's `http_headers_helper` line, since the
+  override replaces the entry whole ([the server](../features/integrations/codex.md#the-server)).
 - The plugin hooks find a session's repository through `code.repos`, which is refused, and
   ask again about once a minute. The session-start primer then adds a code-index line that
   points the agent at the `loom_code_*` tools; set `LOOM_CODE_MAP=false` in the environment
