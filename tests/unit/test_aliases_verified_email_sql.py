@@ -24,11 +24,11 @@ pytestmark = [
 ORG = "acme"
 
 
-def _account(namespace: str, email: str, password_hash: str) -> str:
+def _account(namespace: str, email: str, password_hash: str, active: int = 1) -> str:
     return (
         "INSERT INTO loom.namespaces (org, namespace, owner_email, contact_email,"
         " password_hash, active, created_at, updated_at) VALUES"
-        f" ('{ORG}', '{namespace}', '{namespace}', '{email}', '{password_hash}', 1,"
+        f" ('{ORG}', '{namespace}', '{namespace}', '{email}', '{password_hash}', {active},"
         " now(), now())"
     )
 
@@ -53,12 +53,20 @@ SETUP = (
     _account("dave", "dave@corp.example", "argon2-hash"),
     "INSERT INTO loom.sso_links (email, org, namespace, linked, linked_by, linked_at, version)"
     f" VALUES ('dave@corp.example', '{ORG}', 'dave', 1, 'op', now(), 1)",
+    # A password account linked to its email, then unlinked: unverified again.
+    _account("erin", "erin@corp.example", "argon2-hash"),
+    "INSERT INTO loom.sso_links (email, org, namespace, linked, linked_by, linked_at, version)"
+    f" VALUES ('erin@corp.example', '{ORG}', 'erin', 1, 'op', now(), 1),"
+    f" ('erin@corp.example', '{ORG}', 'erin', 0, 'op', now(), 2)",
+    # A deactivated SSO account.
+    _account("u-frank", "frank@corp.example", "", active=0),
     # Each address granted before its person signed in, and each handle on team-x.
     *(
         _grant(ns, f"{who}@corp.example")
         for ns in ("team-x", "team-y")
         for who in ("bob", "carol", "dave")
     ),
+    *(_grant("team-y", f"{who}@corp.example") for who in ("erin", "frank")),
     *(_grant("team-x", handle) for handle in ("mallory", "u-carol", "dave")),
 )
 
@@ -84,6 +92,8 @@ def ch(monkeypatch: pytest.MonkeyPatch) -> _CH:
         ("bob@corp.example", ["bob@corp.example"]),
         ("u-carol", ["u-carol", "carol@corp.example"]),
         ("dave", ["dave", "dave@corp.example"]),
+        ("erin", ["erin"]),
+        ("u-frank", ["u-frank"]),  # deactivated: no spelling admits
     ],
 )
 async def test_only_a_verified_email_is_a_spelling(
@@ -114,6 +124,8 @@ async def test_a_grant_to_the_address_is_written_under_it_until_it_is_verified(c
         ("mallory", {"team-x": 2, "team-y": 0}),
         ("u-carol", {"team-x": 2, "team-y": 2}),
         ("dave", {"team-x": 2, "team-y": 2}),
+        ("erin", {"team-y": 0}),  # unlinked
+        ("u-frank", {"team-y": 0}),  # deactivated
     ],
 )
 async def test_the_gate_admits_a_grant_under_a_verified_email_only(
@@ -131,4 +143,41 @@ async def test_grants_list_folds_a_verified_email_only(ch: _CH) -> None:
         frozenset(["mallory"]),
         frozenset(["u-carol", "carol@corp.example"]),
         frozenset(["dave", "dave@corp.example"]),
+    }
+
+
+@pytest.mark.asyncio
+async def test_the_user_list_marks_a_platform_admin_by_a_verified_email_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.identity.api.models_admin_users import AdminUsersInput
+    from server.identity.app import admin_users
+    from server.operations.base import Role
+    from server.settings import settings
+
+    client = _CH(*SETUP, ddl("audit_log"))
+    monkeypatch.setattr(admin_users, "get_client", lambda: client)
+    listed = {f"{who}@corp.example" for who in ("bob", "carol", "dave", "erin")}
+    monkeypatch.setattr(type(settings), "platform_admins_set", property(lambda _s: listed))
+    set_current_auth(
+        AuthInfo(
+            subject="op",
+            org=ORG,
+            namespaces=("*",),
+            roles=(Role.ORG_ADMIN,),
+            is_service_account=False,
+        )
+    )
+    try:
+        out = await admin_users.handle_admin_users(AdminUsersInput(org=ORG))
+    finally:
+        set_current_auth(None)
+    marked = {u.subject: u.is_platform_admin for u in out.users}
+    assert {s: marked[s] for s in ("mallory", "u-carol", "dave", "erin")} == {
+        "mallory": False,
+        "u-carol": True,
+        "dave": True,
+        "erin": False,
     }

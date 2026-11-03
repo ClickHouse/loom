@@ -1,10 +1,9 @@
 """One person is one principal.
 
 A human reaches loom under two subjects: the login token names the
-self-signup row's `owner_email` (the login handle), while grants written by
+account's `owner_email` (the login handle), while grants written by
 operators, bootstrap scripts and invitations name the person's email — the
-same row's `contact_email`, the credential the password login itself matches
-on. An exact-subject grant read would refuse a person granted under one
+same row's `contact_email`. An exact-subject grant read would refuse a person granted under one
 spelling when they arrive under the other, and list the same human twice as
 a namespace's readers.
 

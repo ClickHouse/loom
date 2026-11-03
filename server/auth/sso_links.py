@@ -165,3 +165,11 @@ async def _write(
             for org, namespace in accounts
         ],
     )
+    # A link verifies the account's email, which ties it to the owner's grants
+    # (`server.auth.aliases`): an unlink must not leave a cached tie admitting.
+    from server.auth import aliases
+    from server.core import grant_cache
+
+    for org in sorted({org for org, _ in accounts}):
+        aliases.invalidate(org, [email.strip().lower()])
+        await grant_cache.changed(org)

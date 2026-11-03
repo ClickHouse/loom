@@ -321,11 +321,13 @@ would bypass the provider's MFA and outlive a deactivation there.
 
 A verified email reaches a password account only once the account is linked to it
 (`loom.sso_links`, `server/auth/sso_links.py`). Grants follow the same rule: an account's
-email is another spelling of its owner, so a grant written under it admits the account,
-only when it is an SSO account's or a linked one's (`VERIFIED_EMAIL_SQL` in
+email is another spelling of its owner, and a grant written under it admits the account,
+only when the account is an SSO account or a linked one (`VERIFIED_EMAIL_SQL` in
 `server/core/grant_sql.py`, read by `server/auth/aliases.py`, the grant map and
 `grants.list`). An unverified pair still caps the account's claims and is still reached by
-a revocation, where reaching further fails closed. Self-signup never verified the email it was
+a revocation, where reaching further fails closed. So revoking an account that registered
+someone else's address also revokes that address; release such an account instead
+(`loom claim-release`), which clears its email. Self-signup never verified the email it was
 given, so linking on an email match alone would hand the account to whoever registered the
 address first. The owner links it by proving the account's password once from the SSO
 sign-in, under the password sign-in limits; an operator can vouch for a whole domain with

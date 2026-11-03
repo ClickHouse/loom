@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.grant_sql import VERIFIED_EMAIL_SQL
 from server.identity.api.models_admin_users import (
     AdminUsersInput,
     AdminUsersOutput,
@@ -100,18 +101,20 @@ async def handle_admin_users(input: AdminUsersInput) -> AdminUsersOutput:
         contact_rows = await ch.query_all(
             """
             SELECT owner_email AS subject,
-                   any(contact_email) AS contact_email,
-                   max(password_hash != '') AS has_pw
+                   any(contact_email) AS contact,
+                   max(password_hash != '') AS has_pw,
+                   anyIf(contact_email, {verified}) AS verified_email
             FROM loom.namespaces FINAL
             WHERE org = {org:String} AND owner_email IN {subjects:Array(String)}
             GROUP BY owner_email
-            """,
+            """.replace("{verified}", VERIFIED_EMAIL_SQL),
             params={"org": input.org, "subjects": subjects},
         )
         contact_map = {
             str(r["subject"]): {
-                "contact_email": str(r.get("contact_email") or ""),
+                "contact_email": str(r.get("contact") or ""),
                 "has_pw": bool(r.get("has_pw") or False),
+                "verified_email": str(r.get("verified_email") or ""),
             }
             for r in contact_rows
         }
@@ -121,8 +124,10 @@ async def handle_admin_users(input: AdminUsersInput) -> AdminUsersOutput:
         grants = by_subject[subj]
         info = contact_map.get(subj, {})
         contact = str(info.get("contact_email", ""))
+        # An email entry names only a verified address, as at login (`platform_roles`).
+        verified = str(info.get("verified_email", ""))
         is_admin = subj.lower() in admin_emails or (
-            contact.strip().lower() in admin_emails if contact else False
+            verified.strip().lower() in admin_emails if verified else False
         )
         # Service-account filter: subjects without a contact_email AND
         # without password_hash are almost always service accounts.

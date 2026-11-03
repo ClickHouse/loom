@@ -333,7 +333,7 @@ gateway.
 | `{subject}`   | the token's subject                                                             | the row's writer, else the agent whose own namespace it is in |
 | `{agent}`     | `<agent>` of an agent's subject, `sa:<trust>:<agent>`                           | the same, of that subject                                     |
 | `{tenant}`    | its trust's one required value of the claim `LOOM_INFERENCE_TENANT_CLAIM` names | the same                                                      |
-| `{email}`     | a person's address: the subject, or its directory spelling                      | the same                                                      |
+| `{email}`     | a person's address: the subject, or its verified directory spelling             | the same                                                      |
 | `{user_id}`   | the request's `user_id`, else the subject                                       | the row's `user_id`, else the subject                         |
 
 - **Empty is left out.** A header whose template renders empty is not sent, so a bare

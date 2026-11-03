@@ -37,8 +37,9 @@ def has_aliases_sql(column: str) -> str:
 # another spelling of them: an SSO account's (it has no password; the identity provider
 # verified the email) or one linked to the address (`loom.sso_links`). Self-signup never
 # verifies the email it is given, and whoever typed an address first must not hold the
-# grants written under it.
+# grants written under it. It binds `{org:String}`: the links of that org only.
 VERIFIED_EMAIL_SQL = (
     "(password_hash = '' OR (org, namespace, contact_email) IN ("
-    "SELECT org, namespace, email FROM loom.sso_links FINAL WHERE linked = 1))"
+    "SELECT org, namespace, email FROM loom.sso_links FINAL"
+    " WHERE org = {org:String} AND linked = 1))"
 )
