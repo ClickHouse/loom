@@ -13,6 +13,7 @@ from bench.knowledge_retrieval import (
     FIXED_FIELDS,
     FIXTURE,
     check_corpus,
+    cluster_of,
     fixture_tag,
     ingest,
     load_fixture,
@@ -269,3 +270,14 @@ def test_one_phase_alone_needs_a_named_namespace(monkeypatch, phase: str) -> Non
     with pytest.raises(SystemExit) as exit_info:
         knowledge_retrieval.main()
     assert exit_info.value.code == 2  # argparse's usage error, before any request
+
+
+def test_the_handbook_questions_cluster_by_template_and_the_rest_stand_alone() -> None:
+    assert cluster_of("harbor-retention") == cluster_of("lantern-retention") == "retention"
+    assert cluster_of("rb-E4031") == "rb-E4031" and cluster_of("all-sla") == "all-sla"
+
+
+def test_the_corpus_check_returns_the_chunk_count_the_run_measured() -> None:
+    docs = [{"source_uri": "a.md", "content": "x"}]
+    row = {"source_uri": "a.md", "tags": [fixture_tag(docs)], "chunk_count": 3}
+    assert check_corpus(lambda path, body: {"rows": [row]}, "o", "n", docs) == 3

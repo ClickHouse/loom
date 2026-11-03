@@ -43,8 +43,11 @@ freshness query's R@1, MRR and nDCG@10, not its R@5. Ingesting embeds 21
 documents: a few cents with a hosted embedder, free with a local one.
 
 Two arms are compared per query, not by their means: pair the `queries` rows of
-two `--out` reports by `id` (only reports with the same `instrument.fixture`) and pass the metric deltas to
-`bench.bootstrap.paired_bootstrap`, whose lower bound is what a change ships on.
+two `--out` reports by `id`, only when their `instrument` names the same corpus,
+queries and chunk count, and pass the metric deltas to
+`bench.bootstrap.paired_bootstrap` with each row's `cluster` as `clusters` (the
+handbook questions are one template per product). Its lower bound is what a
+change ships on.
 """
 
 from __future__ import annotations
@@ -75,14 +78,26 @@ from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 
 FIXTURE = Path(__file__).parent / "fixtures" / "knowledge_retrieval"
 KS = (1, 5, 10)
+# The handbook products: their queries share one template per question.
+PRODUCTS = ("harbor", "lantern", "quill", "meridian")
 TOP_K = max(KS)
+
+
+def _digest(value: object) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()[:12]
 
 
 def fixture_tag(docs: list[dict]) -> str:
     """A tag naming this version of the corpus, put on every ingested document so a
     search can tell an ingest of an older corpus from this one."""
-    digest = hashlib.sha256(json.dumps(docs, sort_keys=True).encode()).hexdigest()
-    return f"fixture:{digest[:12]}"
+    return f"fixture:{_digest(docs)}"
+
+
+def cluster_of(query_id: str) -> str:
+    """The question a query asks, without its product: `harbor-retention` and
+    `lantern-retention` are one question asked twice, not two independent items."""
+    stem = query_id.split("-", 1)
+    return stem[1] if len(stem) == 2 and stem[0] in PRODUCTS else query_id
 
 
 def load_fixture(root: Path) -> tuple[list[dict], list[dict]]:
@@ -223,7 +238,7 @@ def listed_documents(post: SyncPost, org: str, namespace: str) -> list[dict]:
                 "namespace": namespace,
                 "limit": 500,
                 "cursor": cursor,
-                "fields": ["tags"],
+                "fields": ["tags", "chunk_count"],
             },
         )
         rows.extend(page["rows"])
@@ -232,9 +247,10 @@ def listed_documents(post: SyncPost, org: str, namespace: str) -> list[dict]:
             return rows
 
 
-def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> None:
+def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> int:
     """Refuse a namespace whose documents are not exactly this fixture's: an older or
-    partial ingest skews every number without failing a query."""
+    partial ingest skews every number without failing a query. Returns its chunk
+    count, which names the chunking the run measured."""
     tag = fixture_tag(docs)
     rows = listed_documents(post, org, namespace)
     have = {row["source_uri"] for row in rows}
@@ -246,6 +262,7 @@ def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> 
             f"extra {len(have - want)}, from another version {stale}; "
             "ingest into a fresh namespace"
         )
+    return sum(int(row.get("chunk_count") or 0) for row in rows)
 
 
 def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params: dict) -> dict:
@@ -276,7 +293,10 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
         if not q["gold"]:
             continue
         any_hits = any_hits or bool(hits)
-        rows.append({"id": q["id"], "kind": q["kind"], "metrics": score_query(hits, q["gold"])})
+        m = score_query(hits, q["gold"])
+        rows.append(
+            {"id": q["id"], "cluster": cluster_of(q["id"]), "kind": q["kind"], "metrics": m}
+        )
     if not any_hits:
         raise SystemExit(f"no query found anything in {org}/{namespace}: was it ingested?")
     # A hybrid search over a corpus with no lexical statistics runs its vector leg alone.
@@ -330,14 +350,15 @@ def main() -> int:
 
         instrument = run_metadata(client.get(f"{base}/v1/health", timeout=30).json())
         require_real_embedder(instrument)
-        # Two reports pair only when they scored one fixture version.
+        # Two reports pair only when they scored one corpus, one query set and one chunking.
         instrument["fixture"] = fixture_tag(docs)
+        instrument["queries"] = _digest(queries)
         with erase_on_exit_sync(post, org=args.org, keep=keep):
             if args.phase in ("ingest", "both"):
                 ingest(post, args.org, namespace, docs, keep)
             if args.phase == "ingest":
                 return 0
-            check_corpus(post, args.org, namespace, docs)
+            instrument["chunks"] = check_corpus(post, args.org, namespace, docs)
             report = search(post, args.org, namespace, queries, params)
     report = {"instrument": instrument, **report}
     if args.out:

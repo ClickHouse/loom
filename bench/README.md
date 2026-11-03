@@ -374,6 +374,7 @@ Langfuse's run-comparison view shows which queries moved. Details:
 | Why did query X miss?                                                          | `lme_diagnose.py` after longmemeval                                           |
 | Is recall holding without paying LLM-judge cost?                               | `quality.py`                                                                  |
 | Did ranking regress on a corpus that already exists?                           | `retrieval_recall.py` (recall@k + MRR + rank@1)                               |
+| Did `knowledge.search` document ranking regress?                               | `knowledge_retrieval.py` (labelled fixture, per query kind)                   |
 | Did the code plane regress?                                                    | `code_intel_qa.py` (`make bench-code-intel`)                                  |
 | Does throughput cliff under concurrency?                                       | `scripts/ops/benchmark.py` (not bench/)                                       |
 | How much of a namespace can a prompt-only attacker echo out through the agent? | `memory_extraction_redteam.py` (RN/EN/EE per arm; `--max-rn-fraction` gate)   |
