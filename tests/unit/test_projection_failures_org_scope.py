@@ -14,24 +14,12 @@ import pytest
 
 from server.auth.jwt import AuthInfo
 from server.operations.base import Role
-
-
-class _CH:
-    def __init__(self) -> None:
-        self.statements: list[tuple[str, dict[str, Any]]] = []
-
-    async def query_all(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> list:
-        self.statements.append((sql, params or {}))
-        return []
-
-    async def execute(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> None:
-        self.statements.append((sql, params or {}))
+from tests.unit.ch_fake import RecordingCH
 
 
 @pytest.fixture
-def org_admin_with_hidden(monkeypatch: pytest.MonkeyPatch) -> _CH:
+def org_admin_with_hidden(monkeypatch: pytest.MonkeyPatch) -> RecordingCH:
     import server.auth.context as ctx
-    import server.memory.app.projection_failures as pf
 
     admin = AuthInfo(
         subject="ops",
@@ -50,9 +38,11 @@ def org_admin_with_hidden(monkeypatch: pytest.MonkeyPatch) -> _CH:
 
     monkeypatch.setattr(ctx, "restricted_namespaces_hidden_from", hidden)
     monkeypatch.setattr(ctx, "collection_clause", no_collections)
-    ch = _CH()
-    monkeypatch.setattr(pf, "get_client", lambda: ch)
-    return ch
+    return (
+        RecordingCH()
+        .on("FROM loom.memory_projection_failures", [])
+        .install(monkeypatch, "server.memory.app.projection_failures")
+    )
 
 
 def _excludes_restricted(sql: str, params: dict[str, Any]) -> bool:
@@ -62,31 +52,32 @@ def _excludes_restricted(sql: str, params: dict[str, Any]) -> bool:
 
 
 @pytest.mark.asyncio
-async def test_list_leaves_out_a_restricted_namespace(org_admin_with_hidden: _CH) -> None:
+async def test_list_leaves_out_a_restricted_namespace(org_admin_with_hidden: RecordingCH) -> None:
     from server.insights.api.models_ops import ProjectionFailureListInput
     from server.insights.app.ops import handle_projection_failures_list
 
     await handle_projection_failures_list(
         ProjectionFailureListInput(org="dev", namespace="restricted-ns")
     )
-    ((sql, params),) = org_admin_with_hidden.statements
+    ((sql, params),) = [(c.sql, c.params) for c in org_admin_with_hidden.calls]
     assert _excludes_restricted(sql, params)
     assert params["ns"] == "restricted-ns"
 
 
 @pytest.mark.asyncio
-async def test_retry_reads_only_the_scope(org_admin_with_hidden: _CH) -> None:
+async def test_retry_reads_only_the_scope(org_admin_with_hidden: RecordingCH) -> None:
     from server.insights.api.models_ops import ProjectionFailureRetryInput
     from server.insights.app.ops import handle_projection_failures_retry
 
     out = await handle_projection_failures_retry(ProjectionFailureRetryInput(org="dev"))
     assert out.results == []
-    sql, params = org_admin_with_hidden.statements[0]
+    first = org_admin_with_hidden.calls[0]
+    sql, params = first.sql, first.params
     assert _excludes_restricted(sql, params)
 
 
 @pytest.mark.asyncio
-async def test_resolve_changes_only_the_scope(org_admin_with_hidden: _CH) -> None:
+async def test_resolve_changes_only_the_scope(org_admin_with_hidden: RecordingCH) -> None:
     from server.insights.api.models_ops import ProjectionFailureResolveInput
     from server.insights.app.ops import handle_projection_failures_resolve
 
@@ -95,7 +86,7 @@ async def test_resolve_changes_only_the_scope(org_admin_with_hidden: _CH) -> Non
             org="dev", failure_ids=["7d1b0c52-0000-4000-8000-000000000001"]
         )
     )
-    ((sql, params),) = org_admin_with_hidden.statements
+    ((sql, params),) = [(c.sql, c.params) for c in org_admin_with_hidden.calls]
     assert sql.lstrip().startswith("ALTER TABLE loom.memory_projection_failures")
     assert _excludes_restricted(sql, params)
 
@@ -103,7 +94,7 @@ async def test_resolve_changes_only_the_scope(org_admin_with_hidden: _CH) -> Non
 @pytest.mark.asyncio
 @pytest.mark.parametrize("op", ["list", "retry", "resolve"])
 async def test_an_unreadable_classification_reads_and_changes_nothing(
-    monkeypatch: pytest.MonkeyPatch, org_admin_with_hidden: _CH, op: str
+    monkeypatch: pytest.MonkeyPatch, org_admin_with_hidden: RecordingCH, op: str
 ) -> None:
     import server.auth.context as ctx
     from server.insights.api import models_ops as m
@@ -128,4 +119,4 @@ async def test_an_unreadable_classification_reads_and_changes_nothing(
             )
         )
         assert resolved.resolved == 0
-    assert org_admin_with_hidden.statements == []
+    assert org_admin_with_hidden.calls == []
