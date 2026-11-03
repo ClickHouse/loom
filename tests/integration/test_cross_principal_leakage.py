@@ -1025,8 +1025,17 @@ def test_a_dash_org_is_the_tokens_own_org(control_plane_url, seed, tokens) -> No
         key,
     )
     assert (row["value"], row["user_id"], row["session_id"]) == (nonce, "-", "-")
-    own = {"namespace": seed.ns_a, "agent": "a", "memory_key": key}
-    for body in ({"org": "-", **own}, {"org": "-", **own, "namespace": "-"}):
+    assert (row["actor"], row["source_class"], row["memory_type"]) == (
+        "process:alice",
+        "asserted",
+        "semantic",
+    )
+    # A write naming neither org nor namespace, read back the same way by
+    # another org: the reproduction of the leak.
+    dash = {"org": "-", "namespace": "-", "agent": "a", "memory_key": f"{key}_dash"}
+    r = _post(control_plane_url, tokens["a_writer"], "memory.set", {**dash, "value": nonce})
+    assert r.status_code in _OK_STATUSES, r.text[:200]
+    for body in ({"org": "-", "namespace": seed.ns_a, "agent": "a", "memory_key": key}, dash):
         r = _post(control_plane_url, tokens["other_org"], "memory.get", body)
         assert r.status_code in _OK_STATUSES, r.text[:200]
         assert nonce not in r.text, f"another org read a '-'-org write: {r.text[:200]}"
