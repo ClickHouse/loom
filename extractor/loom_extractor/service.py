@@ -197,10 +197,10 @@ async def run_child(config: Config, data: bytes, request: dict[str, object]) -> 
         raise _Refused(refused["code"], refused["message"])
     if code < 0:  # a signal: the CPU limit's SIGXCPU, or the kernel's at the memory limit
         raise _Refused("resource_limit", f"the extraction was stopped by signal {-code}")
-    # A parser's exception: the same source fails the same way on every attempt,
-    # so it is the source's failure, not the service's.
+    # Not the parser (a parser's exception is the child's own `corrupt`): a fault
+    # before it ran, such as a refused prctl or a missing import, worth a retry.
     logger.error("extraction exited %s: %s", code, err.decode(errors="replace"))
-    raise _Refused("corrupt", f"the parser failed on this file (exit {code})")
+    raise RuntimeError(f"the extraction exited {code}")
 
 
 async def _disconnected(request: Request) -> None:
@@ -278,6 +278,8 @@ def create_app(config: Config) -> Starlette:
                 out = extraction.result()
             except _Refused as e:
                 return _error(422, e.code, str(e))
+            except RuntimeError as e:
+                return _error(500, "extractor_error", str(e))
         return Response(out, media_type="application/json")
 
     return Starlette(

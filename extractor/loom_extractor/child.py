@@ -87,6 +87,8 @@ def main(argv: list[str]) -> int:
         return _refuse(e.code, str(e))
     except MemoryError:
         return _refuse("resource_limit", "the extraction ran out of its memory limit")
+    except Exception as e:  # noqa: BLE001 — a parser's defect is this source's failure, and repeats
+        return _refuse("corrupt", f"the parser failed on this file: {type(e).__name__}")
     sys.stdout.buffer.write(out)
     return 0
 

@@ -386,6 +386,9 @@ def test_an_unknown_declared_format_or_a_legacy_name_is_refused() -> None:
     [
         {"document_extractor_url": "extractor:8790"},
         {"document_extractor_url": "ftp://extractor"},
+        {"document_extractor_url": "http://extractor:87a0"},
+        {"document_extractor_url": "http://extractor:99999"},
+        {"document_extractors_json": '{"pdf": "http://xn--a-.com"}'},
         {"document_extractors_json": '{"pdf": "file:///x"}'},
         {"document_extractors_json": '{"pdf": "http://"}'},
         {"document_extractors_json": '{"pdf": 1}'},
@@ -617,3 +620,4 @@ async def test_a_listing_logs_no_credential_of_a_service_it_cannot_read(
     logged = " ".join(r.getMessage() for r in caplog.records)
     assert "http://gone:8790" in logged
     assert "pass" not in logged and "key=k" not in logged
+    assert extractors._origin("http://u@[fd00::1]:8790/x") == "http://[fd00::1]:8790"

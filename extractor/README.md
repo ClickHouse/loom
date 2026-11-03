@@ -10,9 +10,14 @@ format this one does not parse, or a utility an operator prefers) serves the
 same wire contract: [extractor contract](../docs/reference/extractor-contract.md).
 The design is in [document extraction](../docs/architecture/document-extraction.md).
 
+Install it where the user it runs as cannot write, since a file of that user's on
+`sys.path` would change what every later extraction imports
+([what an extraction can do](../docs/architecture/document-extraction.md#the-service-boundary)):
+
 ```bash
-pip install ./extractor
-LOOM_EXTRACTOR_TOKEN=$(openssl rand -hex 24) LOOM_EXTRACTOR_HOST=0.0.0.0 loom-extractor
+sudo python3 -m venv /opt/loom-extractor && sudo /opt/loom-extractor/bin/pip install ./extractor
+sudo -u nobody env LOOM_EXTRACTOR_TOKEN="$(openssl rand -hex 24)" LOOM_EXTRACTOR_HOST=0.0.0.0 \
+  /opt/loom-extractor/bin/loom-extractor
 ```
 
 | Variable                            | Default     | Meaning                                                         |

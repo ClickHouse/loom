@@ -255,7 +255,18 @@ async def test_a_child_that_crashes_refuses_the_source_as_corrupt(
     _child(tmp_path, monkeypatch, "raise RuntimeError('bug')")
     r = await _extract()
     assert (r.status_code, r.json()["error"]["code"]) == (422, "corrupt")
-    assert r.json()["error"]["message"] == "the parser failed on this file (exit 1)"
+    assert r.json()["error"]["message"] == "the parser failed on this file: RuntimeError"
+
+
+async def test_a_child_that_fails_before_its_parser_runs_is_a_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refused prctl or a missing import is the service's fault, worth a retry."""
+    (tmp_path / "test_child.py").write_text("raise OSError('prctl(PR_SET_DUMPABLE, 0) failed')\n")
+    monkeypatch.setattr(service, "_CHILD_MODULE", "test_child")
+    monkeypatch.setattr(service, "_PACKAGE_ROOT", f"{tmp_path}{os.pathsep}{service._PACKAGE_ROOT}")
+    r = await _extract()
+    assert (r.status_code, r.json()["error"]["code"]) == (500, "extractor_error")
 
 
 def test_the_service_and_the_test_environment_pin_one_sqlglot() -> None:

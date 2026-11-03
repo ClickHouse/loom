@@ -83,11 +83,11 @@ file that is another format (`format_mismatch`) rather than reading it as the on
 | `timeout`            | the extraction took longer than the service allows      |
 | `resource_limit`     | the extraction passed a memory or output limit          |
 
-The server keeps a code of up to 40 lowercase letters and `_` as the failure's code and reads any other, or an error body over 64
-KiB, as `refused`. It treats `401`, `403`, `407`, `408`, `429`, any `5xx`, any other answer that is not `200` or `4xx`
-(a redirect, a `204`), `format_unavailable` and a call past its timeout as the service being unavailable, so the source
-can be tried again later, and any other `4xx` as the source refused. A `200` whose artifact breaks the rules below is
-refused as `invalid_artifact`.
+The server keeps a code of up to 40 lowercase letters and `_` as the failure's code and reads any other, or an error
+body over 64 KiB, as `refused`. It treats `401`, `403`, `407`, `408`, `429`, any `5xx`, any other answer that is not
+`200` or `4xx` (a redirect, a `204`), `format_unavailable` and a call past its timeout as the service being unavailable,
+so the source can be tried again later, and any other `4xx` as the source refused. A `200` whose artifact breaks the
+rules below is refused as `invalid_artifact`.
 
 ## The artifact
 

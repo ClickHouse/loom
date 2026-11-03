@@ -182,8 +182,7 @@ def _origin(url: str) -> str:
     """`scheme://host:port` of a URL: a URL setting is a secret, as its user
     info, path or query can carry a credential."""
     parts = urlsplit(url)
-    port = f":{parts.port}" if parts.port else ""
-    return f"{parts.scheme}://{parts.hostname}{port}"
+    return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}"
 
 
 async def available_formats() -> dict[str, str]:

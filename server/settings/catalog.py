@@ -2060,8 +2060,7 @@ class KnowledgeSettings(BaseModel):
             f"LOOM_DOCUMENT_EXTRACTORS_JSON {key[:64]!r}": url for key, url in routes.items()
         }
         for name, url in urls.items():
-            parts = urlsplit(url)
-            if url and (parts.scheme not in ("http", "https") or not parts.hostname):
+            if url and not _is_http_url(url):
                 raise ValueError(f"{name} is not an http(s) URL")
         # A token for a URL no route names would leave that service on the shared
         # token without a word: refused, as is a token that is not a string.
@@ -3865,6 +3864,17 @@ def url_host(url: str) -> str:
         return httpx.URL(url.strip()).raw_host.decode("ascii").lower().rstrip(".")
     except (httpx.InvalidURL, UnicodeDecodeError):
         return ""
+
+
+def _is_http_url(url: str) -> bool:
+    """An http(s) URL with a host that the extractor client's httpx can parse:
+    a bad port or host is refused at load, not on the first call."""
+    try:
+        parsed = httpx.URL(url)
+        urlsplit(url).port  # noqa: B018 — over 65535 raises, which httpx lets by
+        return parsed.scheme in ("http", "https") and bool(parsed.host)  # `host` decodes IDNA
+    except (httpx.InvalidURL, UnicodeError, ValueError):
+        return False
 
 
 # A DNS name LOOM_INFERENCE_GATEWAY_HOSTS may name: no scheme, port, path or wildcard.
