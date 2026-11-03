@@ -1213,7 +1213,15 @@ _THRESHOLDS = {
         (na.INDEX_GRACE_SECONDS, na.EMBED_HOLDS),
         (600, ("model call held", "MODEL_CALL_UNATTRIBUTED: the row names no org to bill")),
     ),
-    "telemetry_unavailable": (1, (na.TELEMETRY_LAG_SECONDS,), (60,)),
+    "telemetry_unavailable": (
+        1,
+        (na.TELEMETRY_LAG_SECONDS, na._REPORT_OPS),
+        (
+            60,
+            "('namespace.audit', 'namespace.validate', 'namespace.summary', "
+            "'namespace.inventory', 'mentor.brief')",
+        ),
+    ),
 }
 
 
