@@ -314,7 +314,7 @@ async def every_namespace_scope(org: str, *, column: str = "namespace") -> OrgSc
     auth = current_auth()
     if auth is not None:
         named = named_claims(auth)
-        refused = set(named) - set(await _gate_readable(auth, org, named))
+        refused = set(named) - set(await readable_named_claims(auth, org))
         hidden = sorted(set(hidden) | refused)
     where, params = await collection_clause(org, column)
     if hidden:
