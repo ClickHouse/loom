@@ -187,6 +187,16 @@ describe("the object a page shows is in its URL", () => {
     expect(window.location.search).toBe("");
   });
 
+  it("a row opened with its user and session keeps them; the next open by key or agent clears them", () => {
+    useStore.getState().inspect("billing/invoices", { agent: "claude-code", userId: "ada", sessionId: "-" });
+    expect(useStore.getState().inspectedOwner).toEqual({ user_id: "ada", session_id: "-" });
+    useStore.getState().inspect("api/rate-limit", { agent: "claude-code" });
+    expect(useStore.getState().inspectedOwner).toBeNull();
+    useStore.getState().inspect("billing/invoices", { agent: "claude-code", userId: "ada" });
+    useStore.getState().inspect("api/rate-limit");
+    expect(useStore.getState().inspectedOwner).toBeNull();
+  });
+
   it("a deep link opens what it names on boot: the memory, the document, the thread", () => {
     setLocation("/memories?memory=api%2Frate-limit");
     useStore.getState().bootView("memories");
@@ -270,7 +280,7 @@ describe("a navigation leaves a place for Back to restore", () => {
     useStore.getState().navigate("graph", { query: { seed: "x" }, back: "memory k", note: "Graph, walked from x" });
     spy.mockRestore();
     expect(left).toMatchObject({
-      loomPlace: { scrollTop: 420, focusKey: "memory:k", inspected: "k", inspectedAgent: "bot" },
+      loomPlace: { scrollTop: 420, focusKey: "memory:k", inspected: "k", inspectedAgent: "bot", inspectedOwner: null },
     });
     expect(history.state).toMatchObject({ loomBack: "memory k" });
     expect(window.location.pathname + window.location.search).toBe("/graph?namespace=team&seed=x");
@@ -290,9 +300,13 @@ describe("a navigation leaves a place for Back to restore", () => {
     });
     history.replaceState({ loomNamespace: "team" }, "", "/memories");
     const seq = useStore.getState().navSeq;
-    useStore
-      .getState()
-      .arriveFromHistory("memories", { scrollTop: 420, focusKey: null, inspected: "k", inspectedAgent: "bot" });
+    useStore.getState().arriveFromHistory("memories", {
+      scrollTop: 420,
+      focusKey: null,
+      inspected: "k",
+      inspectedAgent: "bot",
+      inspectedOwner: null,
+    });
     expect(useStore.getState()).toMatchObject({
       view: "memories",
       inspectedMemoryKey: "k",
@@ -309,9 +323,13 @@ describe("a navigation leaves a place for Back to restore", () => {
       identity: { org: "dev", namespace: "other", agent: "loom-ui" },
     });
     history.replaceState({ loomNamespace: "team" }, "", "/memories?memory=k");
-    useStore
-      .getState()
-      .arriveFromHistory("memories", { scrollTop: 0, focusKey: null, inspected: "k", inspectedAgent: "bot" });
+    useStore.getState().arriveFromHistory("memories", {
+      scrollTop: 0,
+      focusKey: null,
+      inspected: "k",
+      inspectedAgent: "bot",
+      inspectedOwner: null,
+    });
     expect(useStore.getState().inspectedMemoryKey).toBeNull();
     // An address boot rewrites (the old /sessions path) keeps the entry's namespace.
     history.replaceState({ loomNamespace: "team" }, "", "/sessions?thread=t");
@@ -340,7 +358,10 @@ describe("a navigation leaves a place for Back to restore", () => {
     useStore.getState().navigate("graph");
     // Back to the Memories entry: it remembers "k".
     history.replaceState(
-      { loomNamespace: "team", loomPlace: { scrollTop: 0, focusKey: null, inspected: "k", inspectedAgent: "bot" } },
+      {
+        loomNamespace: "team",
+        loomPlace: { scrollTop: 0, focusKey: null, inspected: "k", inspectedAgent: "bot", inspectedOwner: null },
+      },
       "",
       "/memories?memory=k",
     );

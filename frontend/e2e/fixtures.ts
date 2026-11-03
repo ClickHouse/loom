@@ -1576,6 +1576,7 @@ export const ROUTES = [
   "/library",
   "/conversations",
   "/graph",
+  "/assistant",
   "/spaces",
   "/profile",
   "/runs",

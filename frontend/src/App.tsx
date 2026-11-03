@@ -69,6 +69,7 @@ const Documents = lazy(() => import("./views/Documents").then((m) => ({ default:
 const Conversations = lazy(() => import("./views/Conversations").then((m) => ({ default: m.Conversations })));
 const Runs = lazy(() => import("./views/Runs").then((m) => ({ default: m.Runs })));
 const GraphExplorer = lazy(() => import("./views/Graph").then((m) => ({ default: m.GraphExplorer })));
+const Assistant = lazy(() => import("./views/Assistant").then((m) => ({ default: m.Assistant })));
 const Sharing = lazy(() => import("./views/Sharing").then((m) => ({ default: m.Sharing })));
 const Browse = lazy(() => import("./views/Browse").then((m) => ({ default: m.Browse })));
 const CodeView = lazy(() => import("./views/Code").then((m) => ({ default: m.CodeView })));
@@ -174,13 +175,22 @@ export default function App() {
 
   const inspectedKey = useStore((s) => s.inspectedMemoryKey);
   const inspectedAgent = useStore((s) => s.inspectedAgent);
+  const inspectedOwner = useStore((s) => s.inspectedOwner);
   // Override agent with the writer's identity (captured when the list-view
   // card was clicked) so strict-tuple memory.get doesn't 404 on cross-agent
   // rows. Memoised: a fresh object every render would replay the inspector's seven reads
   // on any App re-render.
   const inspectorIdentity = useMemo(
-    () => (identity ? (inspectedAgent ? { ...identity, agent: inspectedAgent } : identity) : null),
-    [identity, inspectedAgent],
+    () =>
+      identity
+        ? {
+            ...identity,
+            ...(inspectedAgent ? { agent: inspectedAgent } : {}),
+            // A row filed under a user or session is read under them, or memory.get misses it.
+            ...(inspectedOwner ?? {}),
+          }
+        : null,
+    [identity, inspectedAgent, inspectedOwner],
   );
   const inspect = useStore((s) => s.inspect);
   const setAuthed = useStore((s) => s.setAuthed);
@@ -676,6 +686,8 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
       return <Spending />; // file unchanged, just relabelled
     case "admin:agents":
       return <Agents />;
+    case "assistant":
+      return <Assistant />;
     case "admin:collections":
       return <Collections />;
     case "admin:users":

@@ -121,6 +121,17 @@ def test_scan_of_a_checkout_under_a_tests_directory_still_finds_reach(tmp_path):
     assert "memory.get" not in derived
 
 
+def test_a_test_beside_its_source_is_not_reach(tmp_path):
+    """A dashboard test names ops in its fixtures; only the page source is reach."""
+    src = tmp_path / "frontend" / "src"
+    src.mkdir(parents=True)
+    (src / "Page.tsx").write_text('post("/v1/memory.pin");\n')
+    (src / "Page.test.tsx").write_text('const OP = "memory.unpin";\n')
+    derived = derive_static_reach(tmp_path)
+    assert derived.get("memory.pin") == ("plugin_hook",)
+    assert "memory.unpin" not in derived
+
+
 def test_manifest_finds_the_known_reach_paths():
     # SDK wrapper: sdk/python/loom/memory.py posts /v1/memory.pin
     assert "sdk_method" in op_reach("memory.pin")

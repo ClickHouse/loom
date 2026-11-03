@@ -247,6 +247,10 @@ export interface Identity {
   org: string;
   namespace: string;
   agent: string;
+  /** The user and session a row is filed under, when the inspector reads a row it was
+   *  opened on by its whole writer identity; absent reads the caller's own (`-`). */
+  user_id?: string;
+  session_id?: string;
 }
 
 // In-flight tracking — every active request() bumps the counter; the UI
@@ -686,7 +690,7 @@ export async function pinMemory(
 
 /** `id` may name the row's user and session (`rowIdentity`); they default to '-'. */
 export async function unpinMemory(
-  id: Identity & { user_id?: string; session_id?: string },
+  id: Identity,
   key: string,
 ): Promise<{ unpinned: boolean; reason: string; memory_id: string; version: number | null }> {
   return post("/v1/memory.unpin", { ...id, memory_key: key });
@@ -1183,12 +1187,7 @@ export interface MemoryProvenance {
 
 // Resolve where a memory came from (source_trace + retained-transcript check).
 export async function getProvenance(id: Identity, memoryKey: string): Promise<MemoryProvenance> {
-  return post<MemoryProvenance>("/v1/memory.provenance", {
-    org: id.org,
-    namespace: id.namespace,
-    agent: id.agent,
-    memory_key: memoryKey,
-  });
+  return post<MemoryProvenance>("/v1/memory.provenance", { ...id, memory_key: memoryKey });
 }
 
 export interface CopyToResult {
@@ -1211,7 +1210,11 @@ export async function copyMemoryTo(
     from_org: source.org,
     from_namespace: source.namespace,
     memory_key: memoryKey,
-    from_agent: "*",
+    // A row opened under its user and session is copied as that exact row; otherwise the
+    // newest row of the key, whoever wrote it, as the Memories list shows it.
+    ...(source.user_id || source.session_id
+      ? { from_agent: source.agent, from_user_id: source.user_id ?? "-", from_session_id: source.session_id ?? "-" }
+      : { from_agent: "*" }),
     to_namespace: toNamespace,
     target_key: opts.targetKey ?? null,
     rationale: opts.rationale ?? "",
@@ -1509,3 +1512,4 @@ export * from "./api/code";
 export * from "./api/runs";
 export * from "./api/facts";
 export * from "./api/tracker";
+export * from "./api/assistant";
