@@ -145,8 +145,10 @@ class Retried:
 class ExtractReport:
     source_uri: str
     dry_run: bool
-    # Why the run read nothing and retired nothing: no document, no chunks for the current
-    # embedding model, no usable model, the extractor's rows unreadable, or no window read.
+    # Why the run read nothing and retired nothing: a refusal of its target (`_target`), no
+    # document, no chunks for the current embedding model, no usable model, the extractor's
+    # rows unreadable, elsewhere or linked to another repository (`_read_own`), or no window
+    # read.
     error: str = ""
     windows: int = 0
     records: list[RecordReport] = field(default_factory=list)

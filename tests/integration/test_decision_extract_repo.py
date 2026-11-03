@@ -176,6 +176,9 @@ async def test_into_source_serves_the_decision_in_the_documents_namespace(env) -
     _assert_written(hit, person)
     # A session in another repository (another tag) is not served it.
     assert await _for_file(person, ["project:other", "repo:0000000000"], [], _auth(person)) == []
+    # Nor is a repository reader working from their own namespace: the row is the person's.
+    reader = f"reader-{person}"
+    assert await _for_file(reader, hook_tags, [trunk], _auth(reader, trunk)) == []
 
 
 async def test_into_repo_serves_the_decision_to_repository_readers_only(env) -> None:
