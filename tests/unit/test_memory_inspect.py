@@ -68,7 +68,9 @@ def _newest(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _ch(tags: Any = None, counts: Any = _counts, retention: Any = 0) -> RecordingCH:
+def _ch(
+    tags: Any = None, counts: Any = _counts, retention: Any = 0, newest: Any = _newest
+) -> RecordingCH:
     retention_rows = retention if callable(retention) else [{"retention_days": retention}]
     return (
         RecordingCH()
@@ -77,7 +79,7 @@ def _ch(tags: Any = None, counts: Any = _counts, retention: Any = 0) -> Recordin
         .on("arrayJoin(tags)", tags or [{"tag": "deploy", "rows": 2}])
         .on("AS item_count", [{"category_id": "c1", "item_count": 1}])
         .on("FROM loom.memory_categories FINAL", [{"category_id": "c1", "rows": 1}])
-        .on("ORDER BY updated_at DESC", _newest)
+        .on("ORDER BY updated_at DESC", newest)
         .on(
             "value_preview",
             [{"id": MID, "version": 7, "value_preview": '"Deploys on Tuesdays."', "cut": False}],
@@ -309,6 +311,39 @@ async def test_a_failed_read_noted_earlier_is_not_blamed_on_the_admin_check(
     assert "only an org admin" in out.settings.extraction_policy_unavailable
     assert not any(s.startswith("settings.extraction_policy") for s in out.skipped)
     assert not fail_closed.answered_unverified()
+
+
+@pytest.mark.asyncio
+async def test_a_high_sensitivity_row_lists_no_excerpt_and_no_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def high(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        return [{**_newest(sql, params)[0], "high": True}]
+
+    fake = _ch(newest=high)
+    fake.strict = False
+    fake.install(monkeypatch, "server.identity.app.namespace_catalog")
+    out = await mi.handle_memory_inspect(_inp(sample_limit=1))
+    (row,) = out.own.newest
+    assert row.memory_id == MID and row.excerpt == "" and row.content_sha256 == ""
+    # No preview is read for it.
+    assert not fake.statements("value_preview")
+
+
+@pytest.mark.asyncio
+async def test_the_listed_rows_are_recorded_in_the_exposure_ledger(
+    ch: RecordingCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows: list[dict[str, Any]] = []
+    monkeypatch.setattr(mi, "record_exposure", lambda **kw: rows.append(kw))
+    await mi.handle_memory_inspect(_inp(sample_limit=1))
+    (row,) = rows
+    assert row["operation"] == "memory.inspect" and row["keys"] == ["deploy/window"] * 2
+    assert (row["org"], row["namespace"], row["top_k"]) == ("o", "ns", 1)
+
+    rows.clear()
+    await mi.handle_memory_inspect(_inp(sample_limit=0))
+    assert rows == []
 
 
 @pytest.mark.asyncio

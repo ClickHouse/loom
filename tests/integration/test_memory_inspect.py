@@ -61,6 +61,15 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
             {"agent": "other", "memory_key": "team/deploy", "value": "Deploys on Tuesdays."},
         )
         await post(
+            "memory.set",
+            {
+                "agent": "vault",
+                "memory_key": "team/pin",
+                "value": "4921",
+                "sensitivity": "high",
+            },
+        )
+        await post(
             "namespace.guide_set",
             {
                 "content": "# Guide\nKeys are <user>/<kind>.",
@@ -85,13 +94,16 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
 
         before = rows()
         agent = await post("memory.inspect", {"subject": "agent", "id": "bot"})
-        assert agent["own"]["live_rows"] == 2 and agent["others"]["live_rows"] == 1
+        assert agent["own"]["live_rows"] == 2 and agent["others"]["live_rows"] == 2
         assert {r["memory_key"] for r in agent["own"]["newest"]} == {"u1/pref", "u2/pref"}
-        assert [r["memory_key"] for r in agent["others"]["newest"]] == ["team/deploy"]
+        assert {r["memory_key"] for r in agent["others"]["newest"]} == {"team/deploy", "team/pin"}
         assert "not a read boundary" in agent["own"]["definition"]
+        # A high-sensitivity row is listed without its excerpt or its hash.
+        (pin,) = [r for r in agent["others"]["newest"] if r["memory_key"] == "team/pin"]
+        assert pin["excerpt"] == "" and pin["content_sha256"] == ""
 
         user = await post("memory.inspect", {"subject": "user", "id": "u1"})
-        assert user["own"]["live_rows"] == 1 and user["others"]["live_rows"] == 2
+        assert user["own"]["live_rows"] == 1 and user["others"]["live_rows"] == 3
         row = user["own"]["newest"][0]
         assert (row["memory_id"], row["content_sha256"]) == (
             held["memory_id"],
@@ -125,12 +137,12 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
         assert user["skipped"] == []
 
         session = await post("memory.inspect", {"subject": "session", "id": "s1"})
-        assert session["own"]["live_rows"] == 1 and session["others"]["live_rows"] == 2
+        assert session["own"]["live_rows"] == 1 and session["others"]["live_rows"] == 3
         assert [r["memory_key"] for r in session["own"]["newest"]] == ["u1/pref"]
 
         nobody = await post("memory.inspect", {"subject": "session", "id": "never-used"})
         assert nobody["own"]["live_rows"] == 0 and nobody["own"]["newest"] == []
-        assert nobody["others"]["live_rows"] == 3
+        assert nobody["others"]["live_rows"] == 4
 
         # The ledger is flushed in batches: wait for every call that names the agent, its
         # two writes and the read above. An inspection names no agent and is not counted.
@@ -150,6 +162,18 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
         r = await c.post("/v1/memory.inspect", json={**base, "subject": "user", "id": "-"})
         assert r.status_code == 422, r.text[:300]
         assert rows() == before
+
+        # Each inspection that listed rows left one exposure-ledger row with their keys.
+        for _ in range(40):
+            exposures = ch_client.query(
+                "SELECT count() FROM loom.memory_exposures "
+                "WHERE org = {org:String} AND operation = 'memory.inspect'",
+                parameters={"org": ORG},
+            ).result_rows[0][0]
+            if exposures:
+                break
+            await asyncio.sleep(0.5)
+        assert exposures >= 1
 
 
 @pytest.mark.asyncio

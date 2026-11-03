@@ -38,6 +38,7 @@ from server.memory.api.models_inspect import (
     MemoryInspectOutput,
 )
 from server.memory.app import extraction_policy
+from server.memory.app.exposure_ledger import record_exposure
 from server.memory.store import inspect as store
 from server.observability.consumer import INSPECTOR_CONSUMERS
 from server.operations.base import Role
@@ -227,6 +228,23 @@ class _Inspect:
         return out
 
 
+def _record_exposure(input: MemoryInspectInput, keys: list[str]) -> None:
+    """One exposure-ledger row for the rows listed, as memory.list writes: walking the
+    subjects of a namespace lists its newest rows, which the ledger must count."""
+    if not keys:
+        return
+    try:
+        record_exposure(
+            operation="memory.inspect",
+            org=input.org,
+            namespace=input.namespace,
+            keys=keys,
+            top_k=input.sample_limit,
+        )
+    except Exception as e:  # noqa: BLE001 — telemetry never fails a read
+        log.warning("exposure-ledger schedule failed (non-fatal): %s", e)
+
+
 async def handle_memory_inspect(input: MemoryInspectInput) -> MemoryInspectOutput:
     run = _Inspect(input)
     own_def, others_def = _DEFINITIONS[input.subject]
@@ -235,6 +253,7 @@ async def handle_memory_inspect(input: MemoryInspectInput) -> MemoryInspectOutpu
     own = await run.view("own", own_def)
     others = await run.view("others", others_def)
     activity = await run.activity()
+    _record_exposure(input, [r.memory_key for r in own.newest + others.newest])
     return MemoryInspectOutput(
         org=input.org,
         namespace=input.namespace,

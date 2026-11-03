@@ -55,6 +55,8 @@ class InspectRow(BaseModel):
     memory_key: str
     memory_id: str
     version: int
+    # The value's hash, as memory.get serves it; empty for a high-sensitivity row, whose
+    # hash comes only with the value.
     content_sha256: str
     memory_type: str
     status: str

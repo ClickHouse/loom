@@ -109,7 +109,8 @@ async def view_newest(
     limit: int,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """The view's newest rows: identifiers, then `value_preview` for those rows only. The
+    """The view's newest rows: identifiers, then `value_preview` for those rows only; a
+    high-sensitivity row has neither an excerpt nor a hash. The
     order is not the sort key, so under FINAL one statement would read every row's value
     before the limit; the rows are located without it, and their previews read by
     (memory_id, version), as `memory.list` does. The id is selected as `id`: an alias
@@ -144,9 +145,12 @@ async def view_newest(
             (r["id"], int(r["version"])): excerpt(str(r["value_preview"]), bool(r["cut"]))
             for r in rows
         }
+    # A high-sensitivity row gives no excerpt and no hash: a short secret's hash can be
+    # guessed, so it comes only with the value (memory.list withholds it too).
     return [
         {
             **{k: v for k, v in r.items() if k != "high"},
+            "content_sha256": "" if r["high"] else r["content_sha256"],
             "excerpt": previews.get((r["id"], int(r["version"])), ""),
         }
         for r in located
