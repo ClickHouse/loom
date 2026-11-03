@@ -1,6 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
-import { authHeader } from "../api";
+import { authHeader, ownsToken, storedToken } from "../api";
 import { isRecord } from "../lib/guards";
 
 /**
@@ -100,7 +100,9 @@ export async function buildDiagnostics(error: Error | null, info: ErrorInfo | nu
  *  on its own diagnostics. */
 async function buildCommit(): Promise<string> {
   try {
-    const r = await fetch("/v1/health", { headers: authHeader(), signal: AbortSignal.timeout(1500) });
+    // Only the page's own person's token rides along (another tab may have stored another's).
+    const headers = ownsToken(storedToken()) ? authHeader() : {};
+    const r = await fetch("/v1/health", { headers, signal: AbortSignal.timeout(1500) });
     if (!r.ok) return "unknown";
     const d: unknown = await r.json();
     return isRecord(d) && typeof d.build_commit === "string" && d.build_commit ? d.build_commit : "unknown";

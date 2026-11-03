@@ -69,6 +69,11 @@ describe("ui.vitals", () => {
       startView("memories");
       flushView({ org: "o", namespace: "n" }, "b1");
       expect(fetchMock).not.toHaveBeenCalled();
+      // The page's own person's token: the row goes.
+      setToken(`${part({ alg: "HS256" })}.${part({ sub: "alice", org: "o" })}.sig`);
+      startView("memories");
+      flushView({ org: "o", namespace: "n" }, "b1");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     } finally {
       setPageOwner(null);
       localStorage.clear();

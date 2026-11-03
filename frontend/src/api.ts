@@ -132,7 +132,8 @@ export function signOut(): void {
   const t = token();
   localStorage.setItem(KEY_SIGNED_OUT, "1");
   clearToken();
-  if (!t || !claimsFromToken(t)?.session) return;
+  // Another person's token another tab stored a moment ago is not this page's to end.
+  if (!t || !claimsFromToken(t)?.session || !ownsToken(t)) return;
   fetch("/oauth/revoke", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },

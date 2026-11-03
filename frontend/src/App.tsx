@@ -17,6 +17,7 @@ import {
   onSignInRejected,
   onTokenStored,
   setPageOwner,
+  ownsToken,
   signedOut,
   storedToken,
   ApiError,
@@ -100,8 +101,10 @@ async function whoamiWhenReady(): Promise<WhoAmI> {
     try {
       return await whoami();
     } catch (e) {
-      // A token stored meanwhile is not the one being asked about: no retry carries it.
-      if (storedToken() !== asked || attempt >= 6 || !(e instanceof ApiError) || e.status !== 503) throw e;
+      // A token stored meanwhile is not the one being asked about: no retry carries it, and
+      // the caller, which checks the stored token next, decides on the new one.
+      if (storedToken() !== asked) return { authenticated: false };
+      if (attempt >= 6 || !(e instanceof ApiError) || e.status !== 503) throw e;
       await new Promise((r) => setTimeout(r, 1000));
     }
   }
@@ -126,8 +129,7 @@ async function tokenChangedElsewhere(token: string | null): Promise<void> {
   }
   // A token naming someone else is a fresh page at once: until a reload, every call here
   // would carry it under the last person's page.
-  const claims = claimsFromToken(token);
-  if (!before.subject || claims?.subject !== before.subject || (claims?.org ?? "") !== (before.org ?? "")) {
+  if (!before.subject || !ownsToken(token)) {
     reloadPage();
     return;
   }

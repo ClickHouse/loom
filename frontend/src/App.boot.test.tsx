@@ -830,6 +830,28 @@ describe("a refused token", { timeout: 30_000 }, () => {
     delete window.__LOOM_SSO;
   });
 
+  it("boots afresh when another tab stores a token while whoami cannot answer", async () => {
+    whoamiAnswers = [503, 503, 503, 503, 503, 503];
+    render(<App />);
+    await until(() => whoamiCalls >= 1);
+    localStorage.setItem("loom_token_v1", fresh);
+    await until(() => vi.mocked(reloadPage).mock.calls.length > 0, 10_000);
+    expect(useStore.getState().authed).toBe(true);
+  });
+
+  it("a sign-in link that whoami alone refuses says so and starts no SSO", async () => {
+    window.__LOOM_SSO = true;
+    localStorage.clear();
+    refuseWhoamiOnly = true; // list_mine answers; only whoami refuses the link's token
+    window.history.replaceState(null, "", `/me#token=${alice}`);
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
+    expect(useStore.getState().gateReason).toBe("refused");
+    expect(refusedWhoami).toBeGreaterThan(0);
+    expect(goToSso).not.toHaveBeenCalled();
+  });
+
   it("boots afresh when another tab stores a token while whoami answers for this one", async () => {
     let answer: () => void = () => undefined;
     const held = new Promise<void>((r) => {
