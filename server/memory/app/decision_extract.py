@@ -1326,9 +1326,12 @@ async def _retire_one(
         # A row with a recorded outcome is tagged, never deleted, like a pinned one.
         keep = _confirmed(row) or _has_outcome(record)
         await _retire_row(report, row, keep=keep, repo_tag=repo_tag)
-    elif repo_tag and repo_tag not in row.tags:
+    elif repo_tag:
         # Its reasoning is still there though the model did not emit it: it stays, linked.
-        await _tag_kept(report, row, [*row.tags, repo_tag])
+        on = SOURCE_CHANGED_TAG in row.tags
+        tags = _tags_for(row, source_changed=on, repo_tag=repo_tag)
+        if set(tags) != set(row.tags):
+            await _tag_kept(report, row, tags)
 
 
 async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool, repo_tag: str) -> None:

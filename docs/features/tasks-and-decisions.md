@@ -574,10 +574,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   worded the scenario differently) is deleted too, so the decision is not served twice, unless its realized outcome is
   recorded; another decision resting on the same reasoning has another outcome and stays. Otherwise a row whose
   reasoning is still there stays, whether or not the run emitted it again.
-- **Citing the document**: a row cites it when its `source_resource_id` starts `knowledge:<namespace>/<source_uri>#`
-  with the document's own namespace, so a heading holding `#` (`C# bindings`) is no obstacle, unless a document
-  `<source_uri>#<part>` it also starts with was ever ingested in that namespace: `doc#v2#Intro` cites `doc#v2` once
-  that document exists.
+- **Citing the document**: a row cites it when its `source_resource_id` starts
+  `knowledge:<document namespace>/<source_uri>#`, the namespace that holds the document (not where the row is), so a
+  heading holding `#` (`C# bindings`) is no obstacle, unless a document `<source_uri>#<part>` it also starts with was
+  ever ingested in that namespace: `doc#v2#Intro` cites `doc#v2` once that document exists.
 - **Clearing `source-changed`**: when a run's candidate for a tagged row's key has the row's verbatim fields again,
   the run drops the tag, pinned or not, as long as the row cites this document. The retire step never drops it: it
   reads the reasoning alone, and the tag may stand for a rejected option's reason the document still contradicts, or
