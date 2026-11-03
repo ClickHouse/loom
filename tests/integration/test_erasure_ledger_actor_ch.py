@@ -24,14 +24,14 @@ async def ch() -> Any:
     await c.disconnect()
 
 
-async def _saga_row(org: str, status: str, attempts: int) -> str:
+async def _saga_row(org: str, status: str, attempts: int, erasure_id: str | None = None) -> str:
     from server.erasure.api.erasure import ErasureRequestInput
     from server.erasure.app.saga import checkpoint, request_row_template
 
     request = ErasureRequestInput(
         org=org, scope_type="namespace", scope_value="ns-a", requester="dpo@y"
     )
-    erasure_id = str(uuid.uuid4())
+    erasure_id = erasure_id or str(uuid.uuid4())
     await checkpoint(
         row=request_row_template(
             erasure_id=erasure_id,
@@ -67,6 +67,9 @@ async def test_every_resume_read_returns_the_actor(ch: Any) -> None:
         "failed": await ledger.list_failed_requests(org=org, ch=ch),
     }
     wanted = {"stuck": stuck, "exhausted": exhausted, "failed": exhausted}
+    # Both sagas end completed, so no recovery worker resumes or abandons them.
+    for erasure_id in (stuck, exhausted):
+        await _saga_row(org, "completed", attempts=1, erasure_id=erasure_id)
     for name, rows in reads.items():
         (row,) = [r for r in rows if str(r["id"]) == wanted[name]]
         assert (row["actor"], row["requester"]) == ("human:admin@o", "dpo@y"), name

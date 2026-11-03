@@ -1,5 +1,5 @@
-"""Every erasure audit row names the principal of the request's token, never the
-body's free-text `requester`, which stays in the row's subject. The ledger keeps
+"""The erasure audit rows name the principal of the request's token, not the body's
+free-text `requester`, which goes in the row's subject. The ledger keeps
 that actor, so a saga the recovery worker resumes without a token names it too.
 CH-free."""
 
