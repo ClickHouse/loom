@@ -6,6 +6,7 @@ import {
   onSignInRejected,
   post,
   setToken,
+  setPageOwner,
   signOut,
   signedOut,
   subscribeInflight,
@@ -140,7 +141,8 @@ describe("a refused sign-in token", () => {
     vi.stubGlobal("fetch", fetchMock);
     const err = await rejection(post("/v1/collection.list", { org: "o" }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(err.sessionEnded).toBe(true);
+    // Not "sign in again": the person already did, elsewhere; Retry sends it.
+    expect(err.code).toBe("SIGNED_IN_ELSEWHERE");
     expect(localStorage.getItem("loom_token_v1")).toBe(ALICE_2);
     expect(ended).not.toHaveBeenCalled();
   });
@@ -156,8 +158,25 @@ describe("a refused sign-in token", () => {
     vi.stubGlobal("fetch", fetchMock);
     const err = await rejection(post("/v1/memory.delete", { org: "o" }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(err.sessionEnded).toBe(true);
+    expect(err.code).toBe("SIGNED_IN_ELSEWHERE");
     expect(ended).not.toHaveBeenCalled();
+  });
+
+  it("never sends a call under a token that names someone other than the page's person", async () => {
+    setPageOwner({ subject: "alice", org: "o" });
+    try {
+      setToken(jwtFor("bob")); // another tab signed bob in; this tab has not heard yet
+      const fetchMock = vi.fn(async () => new Response("{}"));
+      vi.stubGlobal("fetch", fetchMock);
+      const err = await rejection(post("/v1/memory.set", { org: "o" }));
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(err.sessionEnded).toBe(true);
+      setToken(ALICE_2);
+      await post("/v1/memory.set", { org: "o" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      setPageOwner(null);
+    }
   });
 
   it("does nothing for a request sent without a stored token", async () => {
@@ -179,5 +198,33 @@ describe("signing out", () => {
     expect(signedOut()).toBe(true);
     setToken("tok-b");
     expect(signedOut()).toBe(false);
+  });
+});
+
+describe("with auth off", () => {
+  afterEach(() => {
+    delete window.__LOOM_AUTH_DISABLED;
+    localStorage.clear();
+    vi.resetModules();
+  });
+
+  it("sends every call a stale token got refused again without it", async () => {
+    window.__LOOM_AUTH_DISABLED = true;
+    vi.resetModules();
+    const api = await import("./api"); // reads the flag as it loads
+    api.onSignInRejected(() => api.clearToken());
+    api.setToken("stale");
+    const sentWith: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const auth = new Headers(init?.headers).get("Authorization") ?? "";
+        sentWith.push(auth);
+        return auth ? new Response("{}", { status: 401 }) : new Response('{"ok": true}');
+      }),
+    );
+    const answers = await Promise.all([1, 2, 3].map(() => api.post("/v1/memory.list", { org: "o" })));
+    expect(answers).toEqual([{ ok: true }, { ok: true }, { ok: true }]);
+    expect(sentWith.filter((a) => a === "")).toHaveLength(3);
   });
 });

@@ -16,6 +16,7 @@ import {
   clearToken,
   onSignInRejected,
   onTokenStored,
+  setPageOwner,
   signedOut,
   storedToken,
   ApiError,
@@ -45,9 +46,7 @@ import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
 import { ProblemsBanner } from "./components/ProblemsBanner";
 import { shortcutOff } from "./lib/shortcuts";
-// Eager, not a chunk: it shows on a long-lived tab, the one most likely to predate a deploy
-// that removed its chunk, and a stale-chunk reload would lose the page it keeps.
-import { SessionExpiredBar } from "./components/SessionExpiredBar";
+
 import { reloadPage } from "./lib/navigation";
 
 // This tab's session ended on a refused token: a reload's sign-in gate says so, and with SSO
@@ -81,6 +80,10 @@ function endSession(): void {
 }
 
 onSignInRejected(endSession);
+// A call carries only the token of the person whose page this is.
+useStore.subscribe((s) =>
+  setPageOwner(s.whoami?.subject ? { subject: s.whoami.subject, org: s.whoami.org ?? "" } : null),
+);
 // A sign-in, a dropped token or a sign-out in another tab reaches this one from the first
 // moment (a proxy's header and an auth-off install keep no token; before boot has an
 // identity, boot's own checks decide).
@@ -101,13 +104,13 @@ async function whoamiWhenReady(): Promise<WhoAmI> {
   }
 }
 
+let recheck: ReturnType<typeof setTimeout> | undefined;
+
 /** Another tab of this origin stored a token (a sign-in there) or dropped it. Dropped by a
  *  sign-out: this tab reloads to a plain sign-in. Dropped by a refusal: this tab's session
  *  ended too. Stored: once the server confirms it is the same person, this page carries on
  *  with their identity and roles read again; anyone else gets a fresh page, so nothing the
  *  last person read stays on screen. */
-let recheck: ReturnType<typeof setTimeout> | undefined;
-
 async function tokenChangedElsewhere(token: string | null): Promise<void> {
   clearTimeout(recheck); // this change decides
   const s = useStore.getState;
@@ -193,6 +196,11 @@ const ProfileSectionDialog = lazy(() =>
 );
 const HelpDialog = lazy(() => import("./components/HelpDialog").then((m) => ({ default: m.HelpDialog })));
 const TokenGate = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.TokenGate })));
+// The expired-session card's chunk is fetched as the app loads, from the build that served
+// it: it shows on a long-lived tab, the one most likely to predate a deploy, and a chunk
+// first asked for then would be gone and its stale-chunk reload would lose the page.
+const sessionCard = import("./components/SessionExpiredBar");
+const SessionExpiredBar = lazy(() => sessionCard.then((m) => ({ default: m.SessionExpiredBar })));
 
 const NamespaceNoAccess = lazy(() =>
   import("./components/NamespaceNoAccess").then((m) => ({ default: m.NamespaceNoAccess })),
@@ -678,7 +686,15 @@ export default function App() {
         </Suspense>
       )}
       <NetworkProgress />
-      <ToastViewport pinned={sessionExpired ? <SessionExpiredBar /> : null} />
+      <ToastViewport
+        pinned={
+          sessionExpired ? (
+            <Suspense fallback={null}>
+              <SessionExpiredBar />
+            </Suspense>
+          ) : null
+        }
+      />
       <ConfirmViewport />
     </div>
   );

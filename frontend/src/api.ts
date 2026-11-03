@@ -4,7 +4,7 @@
 
 import { noteCallEnd, noteCallStart } from "./lib/vitalsCounter";
 import { claimsFromToken } from "./lib/boot";
-import { apiErrorFromResponse } from "./lib/errors";
+import { ApiError, apiErrorFromResponse } from "./lib/errors";
 export { ApiError } from "./lib/errors";
 // The two code-plane shapes the shell reads; the plane itself lives in api/code.ts and rides with the Repositories view.
 import type { CodeIndexStatus, CodeRepoSummary } from "./api/code";
@@ -100,6 +100,12 @@ export function onTokenStored(fn: (token: string | null) => void): () => void {
   };
   window.addEventListener("storage", listener);
   return () => window.removeEventListener("storage", listener);
+}
+
+// The person this page belongs to, once boot knows (App keeps it in step with whoami).
+let pageOwner: { subject: string; org: string } | null = null;
+export function setPageOwner(owner: { subject: string; org: string } | null): void {
+  pageOwner = owner;
 }
 
 // The app's answer to a stored token the server refuses (expired or revoked): the session
@@ -303,6 +309,16 @@ async function send(
   retried: boolean,
 ): Promise<Response> {
   const sent = token();
+  // Another tab may have stored another person's token a moment ago, before this one heard
+  // of it (and reloads): this page's call never carries it.
+  if (sent && pageOwner) {
+    const c = claimsFromToken(sent);
+    if (c?.subject !== pageOwner.subject || (c?.org ?? "") !== pageOwner.org) {
+      const err = new ApiError({ status: 401, code: "AUTH_INVALID", message: "signed in as someone else elsewhere" });
+      err.sessionEnded = true;
+      throw err;
+    }
+  }
   const r = await fetch(
     path,
     method === "POST"
@@ -319,12 +335,13 @@ async function send(
     // concurrent ones end it once.
     const ending = sent === token();
     if (ending) signInRejected?.();
-    // A single-user install has no sign-in: the stale token is gone, so the call goes again
-    // without it.
-    if (ending && isAuthDisabled() && !retried) return send(method, path, body, signal, true);
-    // A call raced by another tab's sign-in is never sent again under that token, whose
-    // person this tab has not checked: it fails as the ended session, and Retry sends it.
+    // A single-user install has no sign-in: the stale token is gone (this refusal or a
+    // concurrent one dropped it), so the call goes again without it.
+    if (isAuthDisabled() && !retried) return send(method, path, body, signal, true);
     const err = await apiErrorFromResponse(r);
+    // A call raced by another tab's sign-in is not sent again under a token this tab has
+    // not checked: Retry sends it, and the error says so instead of "sign in again".
+    if (!ending && token()) throw new ApiError({ status: 401, code: "SIGNED_IN_ELSEWHERE", requestId: err.requestId });
     err.sessionEnded = true;
     throw err;
   }
