@@ -52,10 +52,9 @@ def test_prompts_carry_task_tags_and_citations() -> None:
     rp = cs.reduce_prompt("Who left?", ["The butler left [doc://a#3]"], final=True)
     assert rp.endswith("Answer the task from these notes:") and "NOTES 1:" in rp
     assert "Merge these notes" in cs.reduce_prompt("t", ["a", "b"], final=False)
-    assert cs.citations("x [doc://a#3] y [doc://a#3] z [doc://b#0-4] [bad tag]") == [
-        "doc://a#3",
-        "doc://b#0-4",
-    ]
+    read = {("doc://a", 3), ("doc://b", 0), ("doc://b", 4)}
+    text = "x [doc://a#3] y [doc://a#3] z [doc://b#0-4] [bad tag]"
+    assert cs.ground_citations(text, read)[1] == ["doc://a#3", "doc://b#0-4"]
 
 
 class _LLM:
@@ -245,6 +244,8 @@ def test_grounding_removes_the_tags_of_unread_chunks_from_the_answer() -> None:
     # a long run of blanks before a removed citation is removed in one scan
     many = " " * 40000 + "[doc://z#0]"
     assert cs.ground_citations("x" + many, read) == ("x", [], ["doc://z#0"])
+    # of nested brackets the innermost is read
+    assert cs.ground_citations("[[doc://a#1]]", read) == ("[[doc://a#1]]", ["doc://a#1"], [])
     # an index past nine digits is prose, not a number to parse
     long_index = "[doc#" + "9" * 5000 + "]"
     assert cs.ground_citations(long_index, read) == (long_index, [], [])

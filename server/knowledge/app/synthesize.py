@@ -22,7 +22,8 @@ async def handle_knowledge_synthesize(
     """Map-reduce over every active chunk of the named documents: windows by section and
     size, one LLM note per window with chunk citations, notes folded into the answer
     (hierarchically when they do not fit one call). Cost-cap gated like memory.ask;
-    abstains, never guesses, when the documents are empty or the namespace is capped."""
+    abstains, never guesses, when the documents are empty, the namespace is capped, or the
+    answer is empty once citations of chunks it did not read are removed."""
     from server.memory.domain import corpus_synthesis as cs
     from server.observability.budget import namespace_over_cap
     from server.settings import settings as _s
