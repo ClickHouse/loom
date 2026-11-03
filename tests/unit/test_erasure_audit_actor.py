@@ -171,9 +171,9 @@ async def test_a_resumed_saga_that_completes_names_the_ledgers_actor(
     assert rows and {r["actor"] for r in rows} == {stored}
 
 
-def test_a_cli_resume_of_a_row_with_no_actor_names_the_command() -> None:
-    """`loom erasure-re-verify --resume` binds its pipeline actor: a ledger row
-    with an actor keeps it, one without names the command, never `requester`."""
+def test_audit_actor_falls_back_to_the_pipeline_actor_when_the_row_has_none() -> None:
+    """Under a bound pipeline actor (what every CLI command runs under): a ledger
+    row with an actor keeps it, one without names the pipeline, never `requester`."""
     with pipeline_actor("process:cli:erasure-re-verify"):
         assert saga.audit_actor(_ledger_row()) == "human:admin@o"
         assert saga.audit_actor(_ledger_row(actor="")) == "process:cli:erasure-re-verify"
