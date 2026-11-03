@@ -110,16 +110,17 @@ schema. These rules keep that safe. The operator procedure is in
    switched on after the rollout, and no rollback goes past this build while rows name
    objects.
 10. **An exclusion N adds holds only among N's replicas.** `task.create` with an
-    idempotency key and the coverage watch's ready-event delivery hold a lease from this
-    build on (`insert_created_task`, `insert_ready_event`). One whose lease ran out
-    before its insert can still race the next, so both insert under one dedup token (the
-    poster and its key, or the event's task id) and storage drops the later row. An
-    erased row's token can outlive it and drop a new row too: with nothing stored, the
-    row goes in again under a fresh token. The build before names the create's lease and
-    token without the poster, so neither build's create of a key excludes the other's:
-    racing, they can store two tasks. A build that looks a key up without the
-    poster answers another poster's task to a create with the same key until it stops
-    serving.
+    idempotency key holds a lease on the poster and its key from this build on
+    (`insert_created_task`), and the coverage watch's ready-event delivery one on the
+    event's task id (`insert_ready_event`). One whose lease ran out before its insert can
+    still race the next, so both insert under one dedup token (named by the same poster
+    and key, or the event's task id) and storage drops the later row. An erased row's
+    token can outlive it and drop a new row too: with nothing stored, the row goes in
+    again under a fresh token. The delivery's lease and token are the build before's
+    too, so they exclude across builds. The create's are not: the build before names
+    them without the poster, so neither build's create of a key excludes the other's,
+    and racing they can store two tasks. A build that looks a key up without the poster
+    answers another poster's task to a create with the same key until it stops serving.
     Each task is whole (its event and its lease row) and claimable: a create of N cut
     off after its task row is finished by its retry, which under the key's lease writes
     the created event the first one left out, and by the lease sweep, which writes its
