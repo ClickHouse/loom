@@ -281,7 +281,8 @@ async def collection_clause(org: str, column: str = "namespace") -> tuple[str, d
 class OrgScopeFilter:
     """Resolved org-wide read scope for the current caller.
 
-    ``accessible=False`` → non-admin caller in zero namespaces; return empty.
+    ``accessible=False`` → the caller may read none of the org's namespaces
+    (none in scope, or classification unreadable); return empty.
     Otherwise append ``where`` + ``params`` (both empty = see everything).
     """
 
