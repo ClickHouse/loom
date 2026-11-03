@@ -271,12 +271,13 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
   an edit of those files.
 
 `memory.for_file` renders one line per memory. A decision or a constraint prints whole,
-however long, and does not count against the request's `token_budget` (300 tokens by
-default); the other rows are held to it, cut to one line of 220 characters. A row that
-does not fit is left out whole while the rows after it still get their turn, and a
-closing `- … <n> more` line, which counts against the budget too, says how many were left
-out and how to list them. The header and the removal footer are always printed, and the
-`… more` line whenever a row is left out, so a budget smaller than those can be exceeded.
+up to the ceiling below, and does not count against the request's `token_budget` (300
+tokens by default); the other rows are held to it, cut to one line of 220 characters. A
+row that does not fit is left out whole while the rows after it still get their turn,
+and a closing `- … <n> more` line, which counts against the budget too, says how many
+were left out and how to list them. The header and the removal footer are always
+printed, and the `… more` line whenever a row is left out, so a budget smaller than those
+can be exceeded.
 
 Decisions and constraints share one ceiling, `memory_for_file_whole_tokens` (1,500
 tokens, about 6,000 characters), so a file governed by dozens of them cannot flood the

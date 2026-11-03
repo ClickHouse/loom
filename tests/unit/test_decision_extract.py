@@ -1571,6 +1571,32 @@ async def test_a_long_reason_cut_at_the_cap_survives_a_reworded_option(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_alternatives_alike_once_cut_are_no_change(monkeypatch) -> None:
+    # Two options that share their first 300 characters are one alternative in the record,
+    # so the candidate is compared as one too and the second run writes nothing.
+    head = "a hash set " + "kept on disk " * 25
+    alts = [
+        {"option": head + "per run", "reason": "costs random reads"},
+        {"option": head + "per part", "reason": "costs random reads"},
+    ]
+    c = _candidate(alternatives=alts)
+    world = _World(monkeypatch, [c])
+    from server.knowledge.app import document_reads
+
+    body = BODY + " " + " ".join(f"{a['option']} costs random reads" for a in alts)
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, body, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    stored = svc.clean_alternatives([f"{a['option']}{dx.REJECTED}{a['reason']}" for a in alts])
+    assert len(stored) == 1 and svc.is_cut(stored[0])
+    world.record(_key(c), {**_same_fields(c), "alternatives": stored[0]}, files=[HEADER])
+    report = await _run()
+    assert report.records[0].action == "unchanged" and world.recorded == []
+
+
+@pytest.mark.asyncio
 async def test_alternatives_in_another_order_are_no_change(monkeypatch) -> None:
     reasons = [f"costs random reads {i}" for i in range(10)]
     alts = [{"option": f"option {i}", "reason": r} for i, r in enumerate(reasons)]

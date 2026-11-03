@@ -299,11 +299,10 @@ def render_block(
     *,
     home: str = "",
     now: datetime | None = None,
-    whole_tokens: int | None = None,
 ) -> tuple[str, int, bool]:
     """Prompt-ready block. Returns (text, tokens, truncated).
     Decision and constraint rows print whole, in their place in the order, up to
-    `whole_tokens` between them (the `memory_for_file_whole_tokens` setting when None); one
+    `memory_for_file_whole_tokens` between them; one
     past it is left out and named on a closing line. The other rows are cut at
     `token_budget`. A row left out with the newer row that supersedes it is counted on the
     "… more" line. The header and the removal footer always print, and the "… more" line
@@ -313,10 +312,8 @@ def render_block(
     if not hits:
         return "", 0, False
     now = now or naive_utc_now()
-    if whole_tokens is None:
-        whole_tokens = settings.memory_for_file_whole_tokens
     budget_chars = token_budget * _CHARS_PER_TOKEN
-    whole_chars = whole_tokens * _CHARS_PER_TOKEN
+    whole_chars = settings.memory_for_file_whole_tokens * _CHARS_PER_TOKEN
     n = len(hits)
     lines = [f"Loom: {n} memor{'y' if n == 1 else 'ies'} anchored to {path} — read before editing:"]
     footer = _removal_footer(hits, home)

@@ -57,16 +57,16 @@ def is_cut(alternative: str) -> bool:
 
 def clean_alternatives(items: list[str], *, cut: bool = True) -> list[str]:
     """The alternatives a record keeps: whitespace collapsed, deduplicated in any case, at
-    most MAX_ALTERNATIVES, each cut by `cut_alternative` unless `cut` is False."""
+    most MAX_ALTERNATIVES, each cut by `cut_alternative` unless `cut` is False. Two that
+    read alike once cut are one either way, so an uncut list counts as the record will."""
     out: list[str] = []
     seen: set[str] = set()
     for a in items or []:
         t = collapse_ws(a)
-        t = cut_alternative(t) if cut and t else t
-        # Two alternatives that read alike once cut are one in the record.
-        if t and t.lower() not in seen:
-            seen.add(t.lower())
-            out.append(t)
+        same = cut_alternative(t).lower()
+        if t and same not in seen:
+            seen.add(same)
+            out.append(cut_alternative(t) if cut else t)
         if len(out) >= MAX_ALTERNATIVES:
             break
     return out

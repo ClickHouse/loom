@@ -150,4 +150,5 @@ async def test_precedents_find_a_decision_past_its_embedded_excerpt(agent) -> No
     )
     keys = [p["memory_key"] for p in found["precedents"]]
     assert keys and keys[0] == out["memory_key"], found
-    assert distractor["memory_key"] != out["memory_key"]
+    # The distractor shares the head, so it is found too, below the target.
+    assert distractor["memory_key"] in keys[1:], found

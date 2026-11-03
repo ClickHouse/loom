@@ -824,7 +824,8 @@ def _record_input(
         scenario=cand.scenario,
         reasoning=cand.reasoning,
         outcome=cand.outcome,
-        # As decision.record keeps them: deduplicated, at most MAX_ALTERNATIVES.
+        # As decision.record will keep them (deduplicated once cut, at most
+        # MAX_ALTERNATIVES), but uncut, so a reason can be compared whole.
         alternatives=svc.clean_alternatives(cand.rejected(), cut=False),
         confidence=EXTRACTED_CONFIDENCE,
         tags=tags,

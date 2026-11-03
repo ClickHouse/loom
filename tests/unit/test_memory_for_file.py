@@ -299,12 +299,11 @@ def test_decisions_do_not_count_against_the_token_budget() -> None:
     assert sum(len(ln) + 1 for ln in budgeted) - 1 <= 100 * mff._CHARS_PER_TOKEN
 
 
-def test_decisions_past_the_ceiling_are_left_out_and_named() -> None:
+def test_decisions_past_the_ceiling_are_left_out_and_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 250)
     hits = [_decision(f"design/{i}", "w" * 300) for i in range(5)]
     own = _decision("design/own", "w" * 300, namespace="me")
-    text, _, truncated = mff.render_block(
-        "src/a.cpp", [*hits, own], 300, home="me", now=_NOW, whole_tokens=250
-    )
+    text, _, truncated = mff.render_block("src/a.cpp", [*hits, own], 300, home="me", now=_NOW)
     lines = text.splitlines()
     shown = [ln for ln in lines if ln.startswith("- Decision")]
     assert truncated is True and len(shown) == 2
@@ -386,7 +385,10 @@ async def test_an_emoji_constraint_under_the_ceiling_prints_whole(
     assert out.rendered.splitlines()[1] == f"- rules/emoji [constraint]: {text}"
 
 
-def test_a_more_line_from_a_left_out_constraint_fits_the_budget() -> None:
+def test_a_more_line_from_a_left_out_constraint_fits_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 50)
     # The notes alone fill the budget exactly; the constraint left out at the ceiling takes
     # the older note with it, so the "… more" line it adds must fit too.
     older = _row("notes/old", json.dumps("Keep 32."), namespace="me")
@@ -397,7 +399,7 @@ def test_a_more_line_from_a_left_out_constraint_fits_the_budget() -> None:
         "notes/f", json.dumps("f" * (240 - used - 1 - len("- notes/f: "))), namespace="me"
     )
     text, _, truncated = mff.render_block(
-        "src/a.cpp", [newer, older, filler], 60, home="me", now=_NOW, whole_tokens=50
+        "src/a.cpp", [newer, older, filler], 60, home="me", now=_NOW
     )
     lines = text.splitlines()
     assert truncated is True and lines[0] == header
@@ -406,27 +408,29 @@ def test_a_more_line_from_a_left_out_constraint_fits_the_budget() -> None:
     assert any(ln.startswith("- … ") and "lists them" in ln for ln in lines)
 
 
-def test_notes_that_fit_exactly_print_beside_a_constraint_left_out_at_the_ceiling() -> None:
+def test_notes_that_fit_exactly_print_beside_a_constraint_left_out_at_the_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 50)
     # The constraint supersedes nothing, so no "… more" line can appear and none is reserved.
     rule = _row("rules/long", json.dumps("n" * 400), tags=["constraint"], namespace="me")
     header = "Loom: 2 memories anchored to src/a.cpp — read before editing:"
     size = 240 - len(header) - 1 - len("- notes/f: ")
     note = _row("notes/f", json.dumps("f" * size), namespace="me")
-    text, _, truncated = mff.render_block(
-        "src/a.cpp", [rule, note], 60, home="me", now=_NOW, whole_tokens=50
-    )
+    text, _, truncated = mff.render_block("src/a.cpp", [rule, note], 60, home="me", now=_NOW)
     lines = text.splitlines()
     assert truncated is True and lines[1] == "- notes/f: " + "f" * size
     assert len("\n".join(lines[:2])) == 60 * mff._CHARS_PER_TOKEN
     assert lines[2].endswith("loom_search: rules/long.")
 
 
-def test_a_left_out_constraint_takes_the_older_row_it_supersedes() -> None:
+def test_a_left_out_constraint_takes_the_older_row_it_supersedes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 50)
     older = _row("notes/old", json.dumps("Keep 32."), namespace="me")
     newer = _superseding("rules/new", older, "n" * 400, "me", tags=["constraint"])
-    text, _, truncated = mff.render_block(
-        "src/a.cpp", [newer, older], 300, home="me", now=_NOW, whole_tokens=50
-    )
+    text, _, truncated = mff.render_block("src/a.cpp", [newer, older], 300, home="me", now=_NOW)
     lines = text.splitlines()
     assert truncated is True and "Keep 32." not in text
     # the older row is counted, never named as one to read
@@ -443,20 +447,24 @@ def test_a_left_out_budgeted_row_takes_the_older_constraint_it_supersedes() -> N
     assert lines[-1] == '- … 2 more; memory.for_file(path="src/a.cpp") lists them.'
 
 
-def test_the_left_out_line_names_five_keys_then_counts_the_rest() -> None:
+def test_the_left_out_line_names_five_keys_then_counts_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 50)
     hits = [_decision(f"design/{i}", "w" * 300, namespace="me") for i in range(8)]
-    text, _, _ = mff.render_block("src/a.cpp", hits, 300, home="me", now=_NOW, whole_tokens=50)
+    text, _, _ = mff.render_block("src/a.cpp", hits, 300, home="me", now=_NOW)
     assert text.splitlines()[-1].endswith(
         "loom_search: design/0, design/1, design/2, design/3, design/4 and 3 more."
     )
 
 
-def test_a_decision_past_the_ceiling_leaves_room_for_a_later_one_that_fits() -> None:
+def test_a_decision_past_the_ceiling_leaves_room_for_a_later_one_that_fits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 100)
     long = _decision("design/long", "w" * 600, namespace="me")
     short = _decision("design/short", namespace="me")
-    text, _, _ = mff.render_block(
-        "src/a.cpp", [long, short], 300, home="me", now=_NOW, whole_tokens=100
-    )
+    text, _, _ = mff.render_block("src/a.cpp", [long, short], 300, home="me", now=_NOW)
     assert "- design/short [decision] (pinned): Decided X because Y." in text
     assert text.splitlines()[-1].endswith("loom_search: design/long.")
 
