@@ -127,13 +127,21 @@ def test_the_top_similarity_is_reported_per_answerability_and_kinds_average_apar
     ]
     hit = {"source_uri": "a.md", "content": "y", "similarity": 0.25, "lexical_score": 1.0}
     report = search(lambda path, body: {"results": [hit]}, "o", "n", queries, {})
-    assert report["top_similarity"] == {"answerable": 0.25, "unanswerable": 0.25, "no_hits": 0}
+    assert report["top_similarity"] == {
+        "answerable": 0.25,
+        "unanswerable": 0.25,
+        "no_hits": {"answerable": 0, "unanswerable": 0},
+    }
     # an unanswerable query with no hit is counted apart, not averaged as 0
     queries.append({"id": "c", "query": "w", "gold": [], "kind": "unanswerable"})
     report = search(
         lambda path, body: {"results": [] if body["query"] == "w" else [hit]}, "o", "n", queries, {}
     )
-    assert report["top_similarity"] == {"answerable": 0.25, "unanswerable": 0.25, "no_hits": 1}
+    assert report["top_similarity"] == {
+        "answerable": 0.25,
+        "unanswerable": 0.25,
+        "no_hits": {"answerable": 0, "unanswerable": 1},
+    }
     assert report["metrics"]["all"]["n"] == 1 and report["metrics"]["context"]["mrr"] == 1.0
     rows = [
         {"kind": "context", "metrics": {"mrr": 1.0}},
@@ -200,5 +208,10 @@ def test_every_gold_passage_lies_inside_one_chunk_at_the_default_size() -> None:
     size, stride = settings.knowledge_chunk_size, settings.knowledge_chunk_stride
     chunks = {d["source_uri"]: chunk_document(d["content"], size=size, stride=stride) for d in docs}
     for q in queries:
+        holders = []
         for uri, text in q["gold"]:
-            assert any(text in c.text for c in chunks[uri]), q["id"]
+            held = [c.idx for c in chunks[uri] if text in c.text]
+            assert held, q["id"]
+            holders.append((uri, held[0]))
+        # each passage of a query in a chunk of its own: nDCG's cap never applies here
+        assert len(set(holders)) == len(holders), q["id"]

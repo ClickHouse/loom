@@ -90,7 +90,7 @@ def load_fixture(root: Path) -> tuple[list[dict], list[dict]]:
 
 def relevant(hit: dict, gold: list[list[str]]) -> list[int]:
     """The indexes of the gold passages `hit` holds."""
-    content = hit.get("content") or ""
+    content = hit["content"]
     return [
         i for i, (uri, text) in enumerate(gold) if hit.get("source_uri") == uri and text in content
     ]
@@ -236,7 +236,7 @@ def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> 
 def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params: dict) -> dict:
     rows, top_answerable, top_unanswerable = [], [], []
     any_hits = lexical_fired = False
-    empty = 0
+    no_hits = {"answerable": 0, "unanswerable": 0}
     for q in queries:
         body = {
             **params,
@@ -252,7 +252,7 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
         hits = out["results"]
         lexical_fired = lexical_fired or any(h.get("lexical_score", 0) > 0 for h in hits)
         if not hits:
-            empty += 1
+            no_hits["answerable" if q["gold"] else "unanswerable"] += 1
         elif q["gold"]:
             top_answerable.append(hits[0]["similarity"])
         else:
@@ -270,11 +270,12 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
         "params": params,
         "metrics": mean_by_kind(rows),
         # The gap between the two is the room a similarity floor has to abstain.
-        # Means over the queries that returned a hit; `no_hits` counts the others.
+        # Means over the queries that returned a hit; `no_hits` counts the others of each
+        # kind (an unanswerable query with none abstained, an answerable one missed).
         "top_similarity": {
             "answerable": round(sum(top_answerable) / max(1, len(top_answerable)), 3),
             "unanswerable": round(sum(top_unanswerable) / max(1, len(top_unanswerable)), 3),
-            "no_hits": empty,
+            "no_hits": no_hits,
         },
         "misses@5": [r["id"] for r in rows if not r["metrics"]["recall@5"]],
         "queries": rows,
