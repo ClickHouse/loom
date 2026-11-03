@@ -52,8 +52,9 @@ _FILE_MATCH = (
     "OR endsWith({p:String}, concat('/', f)))"
 )
 
-# A decision or constraint prints whole, so it is read up to the block's ceiling for such
-# rows (`whole_bytes`); every other row up to the 600 bytes its capped line can show.
+# A decision or constraint prints whole, so it is read up to the block's ceiling at six
+# stored bytes a character (`whole_bytes`, a `\uXXXX` escape each) and the rendered line
+# decides whether it fits; every other row up to the 600 bytes its capped line can show.
 _WHOLE_ROW = "(memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))"
 _READ_BYTES = f"if({_WHOLE_ROW}, {{whole_bytes:UInt32}}, {_VALUE_BYTES})"
 
@@ -81,6 +82,12 @@ LIMIT {lim:UInt32}
 """
 _FILES_SQL = f"{_SELECT}  AND arrayExists(f -> {_FILE_MATCH}, files){_ORDER}"
 _LINKED_SQL = f"{_SELECT}  AND memory_id IN {{linked:Array(UUID)}}{_ORDER}"
+
+
+def _whole_bytes() -> int:
+    """The stored JSON a decision or constraint is read up to: the ceiling's characters,
+    each as long as its escape."""
+    return settings.memory_for_file_whole_tokens * _CHARS_PER_TOKEN * _ESCAPE_CHARS
 
 
 def _readable(hit: dict[str, Any]) -> str:
@@ -240,18 +247,32 @@ def _more_line(path: str, rest: int) -> str:
     return f'- … {rest} more; memory.for_file(path="{path}") lists them.'
 
 
+# The left-out line names this many keys; a longer list would crowd the block itself.
+_NAMED_KEYS = 5
+
+
 def _whole_left_out_line(left: list[dict[str, Any]], home: str) -> str:
-    """Names each decision or constraint left out at the ceiling, so it is one read away."""
+    """Names the decisions and constraints left out at the ceiling, so each is one read
+    away: the first few keys, then how many more."""
     keys = []
-    for h in left:
+    for h in left[:_NAMED_KEYS]:
         key = str(h["memory_key"])
         keys.append(f'{key} (namespace "{h.get("namespace")}")' if _is_team(h, home) else key)
+    rest = len(left) - len(keys)
+    named = ", ".join(keys) + (f" and {rest} more" if rest else "")
     what = "decision or constraint" if len(left) == 1 else "decisions or constraints"
     return (
         f"- … {len(left)} more {what} left out to keep this block short; "
-        f"memory.get on the key reads each, or loom_search: "
-        f"{', '.join(keys)}."
+        f"memory.get on the key reads each, or loom_search: {named}."
     )
+
+
+def _row_line(h: dict[str, Any], now: datetime, home: str) -> str:
+    decision = _is_decision(h)
+    if _is_team(h, home):
+        return _team_line(h, now, decision=decision)
+    marks = _marker(h, show_decision=decision) + _status_notes(h, decision=decision)
+    return f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}"
 
 
 def render_block(
@@ -267,8 +288,9 @@ def render_block(
     Decision and constraint rows print whole, in their place in the order, up to
     `whole_tokens` between them (the `memory_for_file_whole_tokens` setting when None); one
     past it is left out and named on a closing line. The other rows are cut at
-    `token_budget`. The header and the removal footer always print, and the "… more" line
-    whenever a budgeted row is left out, so a budget smaller than those can be exceeded.
+    `token_budget`. A row left out with the newer row that supersedes it is counted on the
+    "… more" line. The header and the removal footer always print, and the "… more" line
+    whenever a row is counted on it, so a budget smaller than those can be exceeded.
     `home` is the caller's namespace; a row from any other is a team row (rule or decision),
     rendered with its author and age, and the block ends with how to remove one."""
     if not hits:
@@ -283,14 +305,7 @@ def render_block(
     footer = _removal_footer(hits, home)
     # Each line after the header adds its length and the newline before it.
     used = len(lines[0]) + (len(footer) + 1 if footer else 0)
-    rows = []
-    for h in hits:
-        decision = _is_decision(h)
-        if _is_team(h, home):
-            rows.append(_team_line(h, now, decision=decision))
-        else:
-            marks = _marker(h, show_decision=decision) + _status_notes(h, decision=decision)
-            rows.append(f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}")
+    rows = [_row_line(h, now, home) for h in hits]
     budgeted = [not _is_whole(h) for h in hits]
     # A block whose budgeted rows fit whole needs no "… more" line, so nothing is reserved.
     fits = used + sum(len(r) + 1 for r, b in zip(rows, budgeted, strict=True) if b) <= budget_chars
@@ -300,15 +315,20 @@ def render_block(
     hidden: set[str] = set()  # memory_ids of rows whose superseder was left out
     for i, (h, row) in enumerate(zip(hits, rows, strict=True)):
         if budgeted[i]:
-            # Keep room for a "… more" line counting every budgeted row that may still be
-            # left out.
-            most = left_out + sum(budgeted[i + 1 :])
+            # Keep room for a "… more" line counting every row that may still be left out.
+            most = left_out + n - i - 1
             tail = 0 if fits else len(_more_line(path, most)) + 1
             keep = used + len(row) + 1 + tail <= budget_chars
         else:
-            # A value cut at the read is longer than the ceiling: it cannot print whole.
+            # A value cut at the read is far longer than the ceiling: it cannot print whole.
             keep = not h.get("value_truncated") and whole_used + len(row) + 1 <= whole_chars
-        if str(h.get("memory_id")) in hidden or not keep:
+        if str(h.get("memory_id")) in hidden:
+            # An older row goes with its superseder, counted on the "… more" line and never
+            # named as one to read.
+            left_out += 1
+            hidden.update(h.get("supersedes_ids") or [])
+            continue
+        if not keep:
             if budgeted[i]:
                 left_out += 1
             else:
@@ -415,7 +435,7 @@ async def _rows_for(
         "tags": tags,
         "statuses": statuses,
         "lim": int(input.top_k),
-        "whole_bytes": settings.memory_for_file_whole_tokens * _CHARS_PER_TOKEN,
+        "whole_bytes": _whole_bytes(),
     }
     ch = get_client()
     found, states_of = await asyncio.gather(ch.query_all(_FILES_SQL, params), linked)

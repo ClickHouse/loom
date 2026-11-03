@@ -14,8 +14,8 @@ Read-only, VIEWER. Rows tagged `constraint` sort first, then pinned, then
 confidence; a row the conflict check linked to an older one of its namespace is
 placed above it (two typed decisions keep their order). In `rendered` a decision
 or constraint prints whole, outside `token_budget`, up to the
-`memory_for_file_whole_tokens` ceiling between them (one past it is named on a
-closing line); the other rows are cut at `token_budget` (its header and removal
+`memory_for_file_whole_tokens` ceiling between them (one that would pass it is
+named on a closing line); the other rows are cut at `token_budget` (its header and removal
 footer always print, and its "… more" line whenever a row is left out).
 `extra_namespaces` (a repository's primary
 code namespace, where its team file rules and design decisions live) runs the
@@ -66,9 +66,9 @@ class MemoryForFileInput(BaseModel):
 class _MemoryForFileHit(BaseModel):
     memory_key: str
     memory_type: str
-    # The stored JSON text, cut at 600 bytes (a decision or constraint at the
-    # memory_for_file_whole_tokens ceiling, 4 bytes a token); `rendered` prints it decoded.
-    # The full row is a memory.get away.
+    # The stored JSON text, cut at 600 bytes (a decision or constraint at 24 bytes a token
+    # of the memory_for_file_whole_tokens ceiling); `rendered` prints it decoded. The full
+    # row is a memory.get away.
     value: str
     # True when `value` was cut.
     value_truncated: bool = False

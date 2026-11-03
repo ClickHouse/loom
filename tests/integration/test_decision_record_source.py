@@ -98,7 +98,7 @@ async def test_decisions_that_read_alike_each_keep_a_live_row(agent, ch_client) 
             # The same statement: the category is in the key, not the text.
             ("deploy", "a bad image"),
             ("storage", "a bad image"),
-            # These two differ only past the statement's 80-character scenario clip.
+            # These two differ only at the end of a long scenario.
             ("deploy", f"{head} on monday"),
             ("deploy", f"{head} on friday"),
             ("ci", "a flaky runner"),

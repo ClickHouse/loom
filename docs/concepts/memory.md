@@ -280,11 +280,13 @@ out and how to list them. The header and the removal footer are always printed, 
 
 Decisions and constraints share one ceiling, `memory_for_file_whole_tokens` (1,500
 tokens, about 6,000 characters), so a file governed by dozens of them cannot flood the
-prompt: they print in the block's order until the next one would pass it, and a closing
-line counts the rest and names each key, read with `memory.get` (in the namespace it
-names, for a team row) or found with `loom_search`. One longer than the whole ceiling
-is always named there. The default keeps the whole block under the 10,000 characters a
-coding-agent host passes from a hook to the model as it is.
+prompt. They print in the block's order; one that would pass the ceiling is left out,
+and the ones after it that still fit print. A closing line counts those left out and
+names the first five keys, each read with `memory.get` (in the namespace it names, for a
+team row) or found with `loom_search`. A row left out with the newer row that supersedes
+it is counted on the `… more` line instead, never named as one to read. The default
+keeps the whole block under the 10,000 characters a coding-agent host passes from a hook
+to the model as it is.
 
 Each line:
 
@@ -313,8 +315,8 @@ Each line:
   and a team line says which it supersedes (`supersedes decision` when the older is tagged
   `decision`). Two typed decisions the check linked each keep their place in the block,
   with no such note, since each decision key is its own decision. When the budget or the
-  ceiling leaves out any row that supersedes others, in any namespace, every row it supersedes is left
-  out with it, so an older row never reads as current.
+  ceiling leaves out any row that supersedes others, in any namespace, every row it
+  supersedes is left out with it, so an older row never reads as current.
 
 ## Memories linked to code
 

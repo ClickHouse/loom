@@ -122,9 +122,16 @@ def test_a_recorded_decision_reads_as_its_statement_before_an_edit(
 def test_a_long_recorded_decision_prints_as_text(
     control_plane_url: str, mint_test_token: Any
 ) -> None:
-    # A statement past 600 stored bytes is read and printed whole, decoded: no quotes, no
-    # escapes, every rejected option.
+    # A statement past 600 stored bytes, every part longer than a shortened statement held,
+    # is stored, read and printed whole, decoded: no quotes, no escapes, no cut.
     token = mint_test_token(org=ORG, namespaces=["*"], roles=["writer"])
+    outcome = ("réécrire la jointure " * 12).strip()
+    reasoning = ("la mémoire est bornée " * 20).strip()
+    alternatives = [
+        ("garder la jointure actuelle " * 4).strip(),
+        ("attendre la version " * 4).strip(),
+        ("réécrire plus tard " * 4).strip(),
+    ]
     _post(
         control_plane_url,
         "decision.record",
@@ -135,17 +142,20 @@ def test_a_long_recorded_decision_prints_as_text(
             "agent": "claude-code",
             "category": "design",
             "scenario": "Réécrire la jointure ?",
-            "outcome": "réécrire la jointure " * 10,
-            "reasoning": "la mémoire est bornée " * 15,
-            "alternatives": ["garder la jointure actuelle " * 4, "attendre la version " * 4],
+            "outcome": outcome,
+            "reasoning": reasoning,
+            "alternatives": alternatives,
             "files": ["src/c.cpp"],
         },
     )
+    assert len("; ".join(alternatives)) > 240
     request = {"org": ORG, "namespace": "recorded-long", "path": "src/c.cpp"}
     out = _poll(control_plane_url, token, request, lambda out: out["total"] == 1)
     assert out["total"] == 1, out
     assert out["hits"][0]["value_truncated"] is False
     line = out["rendered"].splitlines()[1]
-    assert ": Réécrire la jointure ? Decided" in line and "…" not in line
-    assert "Rejected: garder la jointure actuelle" in line and "attendre la version" in line
+    assert ": Réécrire la jointure ? Decided" in line
+    assert f"Decided {outcome} because {reasoning}." in line
+    assert f"Rejected: {'; '.join(alternatives)}." in line
+    assert "..." not in line and "…" not in line
     assert "\\u" not in line and '"' not in line

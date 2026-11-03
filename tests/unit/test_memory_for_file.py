@@ -81,7 +81,7 @@ async def test_path_and_basename_are_bound_and_both_shapes_are_matched(
         assert column in ch.sql
     assert f"value_len > {mff._READ_BYTES} AS value_truncated" in ch.sql
     # a decision or constraint is read up to the ceiling, every other row up to 600 bytes
-    assert ch.params["whole_bytes"] == 1500 * mff._CHARS_PER_TOKEN
+    assert ch.params["whole_bytes"] == 1500 * mff._CHARS_PER_TOKEN * mff._ESCAPE_CHARS
     assert "if((memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))" in ch.sql
 
 
@@ -327,8 +327,84 @@ async def test_the_ceiling_is_read_from_its_setting(monkeypatch: pytest.MonkeyPa
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
     )
     # the read limit and the render share the setting: one 200-character decision fits
-    assert ch.params["whole_bytes"] == 400
+    assert ch.params["whole_bytes"] == 400 * mff._ESCAPE_CHARS
     assert out.truncated is True and out.rendered.splitlines()[-1].endswith(": design/1.")
+
+
+class _CuttingCH(_CH):
+    """Applies the select's per-row read limit as ClickHouse would, on the stored bytes."""
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+        await super().query_all(sql, params)
+        out = []
+        for r in self.rows:
+            whole = mff._is_whole(r)
+            limit = self.params["whole_bytes"] if whole else mff._VALUE_BYTES
+            stored = r["value"].encode()
+            out.append(
+                r | {"value": stored[:limit].decode(), "value_truncated": len(stored) > limit}
+            )
+        return out
+
+
+@pytest.mark.asyncio
+async def test_an_escaped_constraint_under_the_ceiling_prints_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    # 300 characters, stored as 1,800 bytes of escapes: past the ceiling's 400 characters
+    # in bytes, inside it as printed.
+    monkeypatch.setattr(settings, "memory_for_file_whole_tokens", 100)
+    text = "决" * 300
+    rule = _row("rules/zh", json.dumps(text), tags=["constraint"])
+    assert len(rule["value"]) > 100 * mff._CHARS_PER_TOKEN
+    monkeypatch.setattr(mff, "get_client", lambda: _CuttingCH([rule]))
+    out = await mff.handle_memory_for_file(
+        MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
+    )
+    assert out.truncated is False
+    assert out.rendered.splitlines()[1] == f"- rules/zh [constraint]: {text}"
+
+
+def test_a_left_out_constraint_takes_the_older_row_it_supersedes() -> None:
+    older = _row("notes/old", json.dumps("Keep 32."), namespace="me")
+    newer = _superseding("rules/new", older, "n" * 400, "me", tags=["constraint"])
+    text, _, truncated = mff.render_block(
+        "src/a.cpp", [newer, older], 300, home="me", now=_NOW, whole_tokens=50
+    )
+    lines = text.splitlines()
+    assert truncated is True and "Keep 32." not in text
+    # the older row is counted, never named as one to read
+    assert lines[-2] == '- … 1 more; memory.for_file(path="src/a.cpp") lists them.'
+    assert lines[-1].endswith("loom_search: rules/new.")
+
+
+def test_a_left_out_budgeted_row_takes_the_older_constraint_it_supersedes() -> None:
+    older = _row("rules/old", json.dumps("Keep 32."), namespace="me", tags=["constraint"])
+    newer = _superseding("notes/new", older, "n" * 400, "me")
+    text, _, truncated = mff.render_block("src/a.cpp", [newer, older], 60, home="me", now=_NOW)
+    lines = text.splitlines()
+    assert truncated is True and "Keep 32." not in text and "rules/old" not in text
+    assert lines[-1] == '- … 2 more; memory.for_file(path="src/a.cpp") lists them.'
+
+
+def test_the_left_out_line_names_five_keys_then_counts_the_rest() -> None:
+    hits = [_decision(f"design/{i}", "w" * 300, namespace="me") for i in range(8)]
+    text, _, _ = mff.render_block("src/a.cpp", hits, 300, home="me", now=_NOW, whole_tokens=50)
+    assert text.splitlines()[-1].endswith(
+        "loom_search: design/0, design/1, design/2, design/3, design/4 and 3 more."
+    )
+
+
+def test_a_decision_past_the_ceiling_leaves_room_for_a_later_one_that_fits() -> None:
+    long = _decision("design/long", "w" * 600, namespace="me")
+    short = _decision("design/short", namespace="me")
+    text, _, _ = mff.render_block(
+        "src/a.cpp", [long, short], 300, home="me", now=_NOW, whole_tokens=100
+    )
+    assert "- design/short [decision] (pinned): Decided X because Y." in text
+    assert text.splitlines()[-1].endswith("loom_search: design/long.")
 
 
 def test_a_decision_cut_at_the_read_is_left_out_and_named() -> None:
