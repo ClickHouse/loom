@@ -16,6 +16,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+from tests.integration._resources import unique_org
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
@@ -184,14 +186,14 @@ async def _get_until(base_url: str, token: str, body: dict, *, pinned: bool) -> 
 
 
 @pytest.mark.asyncio
-async def test_pin_of_a_read_row_keeps_its_fields() -> None:
+async def test_pin_of_a_read_row_keeps_its_fields(mint_test_token) -> None:
     """A pin that sends back what memory.get served keeps every carried field."""
     base = os.environ.get("LOOM_BASE_URL")
     if not base:
         pytest.skip("LOOM_BASE_URL not set — start the control plane first")
-    ns = f"pintest-{os.urandom(4).hex()}"
-    tok = _mint(ns)
-    key = {"org": "test-org", "namespace": ns, "agent": "test-agent", "memory_key": "freeze"}
+    org, ns = unique_org("memory-pin"), "pins"
+    tok = mint_test_token(org=org, namespaces=[ns])
+    key = {"org": org, "namespace": ns, "agent": "test-agent", "memory_key": "freeze"}
 
     _post(
         base,
