@@ -364,6 +364,8 @@ def test_budget_timeout_matches_the_server_code_in_the_body() -> None:
     [
         # a table name has no credential to hide
         ("qa.checks", "qa.checks"),
+        ("`db`.`checks`", "`db`.`checks`"),
+        ('"db"."checks"', '"db"."checks"'),
         ("", ""),
         (
             "remoteSecure('play.example.com', 'default', 'checks', 'play', 's3cr\\'t')",
