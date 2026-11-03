@@ -355,7 +355,8 @@ async def _target(
 
 async def _may(org: str, namespace: str, role: Role) -> bool:
     try:
-        return await row_in_scope(org, namespace, role, hides_answer=False)
+        # The refusal is the whole answer: an unverifiable grant counts as the server's.
+        return await row_in_scope(org, namespace, role)
     except Exception as e:  # noqa: BLE001 — a gate that cannot check refuses
         log.warning("decisions extract: access check on %s failed (closed): %s", namespace, e)
         return False
@@ -407,7 +408,7 @@ async def extract_document(
     # One scan of the extractor's rows on this document and their records, for the prompt
     # and the retire step; rows this run writes are skipped by the retire step.
     try:
-        own, report.error = await _read_own(org, t, source_uri, linked=bool(repo))
+        own, report.error = await _read_own(org, t, source_uri)
     except _REPORTED_ERRORS as e:
         # Before any model call: a run that cannot see its own rows reads nothing.
         report.error = f"could not read the extractor's rows: {_refusal(e)}"
@@ -470,7 +471,7 @@ def _windows(chunks: list[CorpusChunk], skipped: set[str], window_chars: int) ->
 
 
 async def _read_own(
-    org: str, t: Target, source_uri: str, *, linked: bool
+    org: str, t: Target, source_uri: str
 ) -> tuple[list[tuple[MemoryRow, dict[str, Any]]], str]:
     """The extractor's rows on this document where the run writes, with their records
     (`_own_records`); and why the run must not go on, or '': its rows for the document are
@@ -489,22 +490,19 @@ async def _read_own(
             f"this document's decisions are linked to a repository ({linked_to}); run with "
             "its --repo, or delete them first"
         )
-    if not linked:
-        other = trunk_namespace_of(org, t.doc_namespace)
-    elif t.rows_namespace == t.doc_namespace:
-        other = t.code_namespace
-    else:
-        other = t.doc_namespace
-    if other and other != t.rows_namespace:
-        # _target checked both namespaces of a run with --repo; a branch's trunk is new here.
-        if not linked and not await _may(org, other, Role.VIEWER):
+    # Where an earlier run may have written them: beside the document, the named
+    # repository's trunk, or the trunk of the branch namespace the document is in.
+    places = [t.doc_namespace, t.code_namespace, trunk_namespace_of(org, t.doc_namespace)]
+    # _target checked the first two; a branch's trunk is new here.
+    checked = {t.doc_namespace, t.code_namespace}
+    for other in dict.fromkeys(ns for ns in places if ns and ns != t.rows_namespace):
+        if other not in checked and not await _may(org, other, Role.VIEWER):
             # Whether rows are there is not the caller's to learn.
             return [], f"not allowed to read {org}/{other}"
         if await _extractor_rows(org, replace(t, rows_namespace=other), source_uri):
-            into = "source" if other == t.doc_namespace else "repo"
             return [], (
-                f"this document's decisions are in {org}/{other}; run with --repo and "
-                f"--into {into}, or delete them there first"
+                f"this document's decisions are in {org}/{other}; run with the --repo and "
+                "--into that wrote them, or delete them there first"
             )
     return await _own_records(org, t.rows_namespace, rows), ""
 

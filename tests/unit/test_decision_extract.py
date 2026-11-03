@@ -4193,14 +4193,14 @@ async def test_a_contradicted_pinned_row_is_flagged_and_tagged_in_one_write(monk
         (
             {"repo": "acme/widgets", "into": "repo"},
             "ns",
-            "this document's decisions are in o/ns; run with --repo and --into source, or "
-            "delete them there first",
+            "this document's decisions are in o/ns; run with the --repo and --into that "
+            "wrote them, or delete them there first",
         ),
         (
             {"repo": "acme/widgets", "into": "source"},
             TRUNK,
-            f"this document's decisions are in o/{TRUNK}; run with --repo and --into repo, or "
-            "delete them there first",
+            f"this document's decisions are in o/{TRUNK}; run with the --repo and --into that "
+            "wrote them, or delete them there first",
         ),
     ],
     ids=["to the trunk", "to the source"],
@@ -4286,8 +4286,8 @@ async def test_a_flagged_and_tagged_row_says_so(monkeypatch) -> None:
     [
         (
             frozenset(),
-            f"this document's decisions are in o/{TRUNK}; run with --repo and --into repo, or "
-            "delete them there first",
+            f"this document's decisions are in o/{TRUNK}; run with the --repo and --into that "
+            "wrote them, or delete them there first",
         ),
         # Whether rows are there is not told to a caller who cannot read the trunk.
         (frozenset({(TRUNK, "viewer")}), f"not allowed to read o/{TRUNK}"),
@@ -4410,8 +4410,8 @@ async def test_a_run_without_repo_reads_the_registry_for_a_branchs_trunk(monkeyp
     finally:
         set_registry_repos([])
     assert report.error == (
-        f"this document's decisions are in o/{TRUNK}; run with --repo and --into repo, or "
-        "delete them there first"
+        f"this document's decisions are in o/{TRUNK}; run with the --repo and --into that "
+        "wrote them, or delete them there first"
     )
     assert world.prompts == []
 
@@ -4459,3 +4459,22 @@ async def test_another_writers_flagged_row_is_cleared_but_not_tagged(monkeypatch
     await _run(repo="acme/widgets")
     (upd,) = world.updates
     assert upd.tags == ["decision"]
+
+
+@pytest.mark.asyncio
+async def test_a_run_naming_another_repo_checks_the_branchs_own_trunk(monkeypatch) -> None:
+    """A document in a branch namespace whose rows went to that repository's trunk: a run
+    naming another repository sees them there."""
+    from server.code.app import repo_scope
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), namespace=TRUNK, files=[HEADER])
+    _link_repo(monkeypatch, world, code_namespaces=frozenset({"ns"}))
+    monkeypatch.setattr(repo_scope, "trunk_namespace_of", lambda org, ns: TRUNK)
+    report = await _run(repo="acme/gadgets")
+    assert report.error == (
+        f"this document's decisions are in o/{TRUNK}; run with the --repo and --into that "
+        "wrote them, or delete them there first"
+    )
+    assert world.prompts == [] and world.recorded == []
