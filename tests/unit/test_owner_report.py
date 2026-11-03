@@ -205,16 +205,12 @@ async def test_unpinned_token_must_name_the_user(monkeypatch: pytest.MonkeyPatch
         await H.handle_memory_owner_report(OPS.MemoryOwnerReportInput(org="acme"))
 
 
-@pytest.mark.asyncio
-async def test_a_wildcard_token_leaves_out_the_restricted_namespaces_it_cannot_read(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """`*` never counts toward a restricted namespace (`authz.names_namespace`),
-    so the report for a wildcard token excludes one it holds no grant on."""
+@pytest.fixture
+def restricted_ns_r(monkeypatch: pytest.MonkeyPatch) -> _CH:
+    """`ns-r` is restricted and the `*` VIEWER token holds no grant and reads
+    no collection; the statements land in the returned fake client."""
     import server.code.domain.index.repos as repos
     import server.identity.app.namespace_classification as nc
-    from server.memory.api import models_exposure as OPS
-    from server.memory.app import exposure as H
 
     async def _restricted_set(org: str) -> frozenset[str]:
         return frozenset({"ns-r"})
@@ -236,6 +232,19 @@ async def test_a_wildcard_token_leaves_out_the_restricted_namespaces_it_cannot_r
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     auth = _token(("*",))
     monkeypatch.setattr("server.auth.context.current_auth", lambda: auth)
+    return ch
+
+
+@pytest.mark.asyncio
+async def test_a_wildcard_token_leaves_out_the_restricted_namespaces_it_cannot_read(
+    restricted_ns_r: _CH,
+) -> None:
+    """`*` never counts toward a restricted namespace (`authz.names_namespace`),
+    so the report for a wildcard token excludes one it holds no grant on."""
+    from server.memory.api import models_exposure as OPS
+    from server.memory.app import exposure as H
+
+    ch = restricted_ns_r
     await H.handle_memory_owner_report(OPS.MemoryOwnerReportInput(org="acme"))
     assert len(ch.calls) == 3
     for sql, params in ch.calls:
@@ -249,11 +258,35 @@ async def test_a_wildcard_token_leaves_out_the_restricted_namespaces_it_cannot_r
 
 
 @pytest.mark.asyncio
-async def test_a_delegated_wildcard_token_is_bounded_to_its_creators_grants(
+async def test_a_wildcard_token_gets_nothing_when_classification_is_unreadable(
+    monkeypatch: pytest.MonkeyPatch, restricted_ns_r: _CH
+) -> None:
+    """Which namespaces are restricted cannot be told: the report is empty,
+    runs no statement, and the request is marked the server's."""
+    import server.identity.app.namespace_classification as nc
+    from server.auth import fail_closed
+    from server.auth.directory import ClassificationUnavailable
+    from server.core import request_work
+    from server.memory.api import models_exposure as OPS
+    from server.memory.app import exposure as H
+
+    async def _down(org: str) -> frozenset[str]:
+        raise ClassificationUnavailable("down")
+
+    monkeypatch.setattr(nc, "restricted_set", _down)
+    request_work.begin()
+    out = await H.handle_memory_owner_report(OPS.MemoryOwnerReportInput(org="acme"))
+    assert restricted_ns_r.calls == [] and out.live_rows == 0 and out.reads == []
+    assert fail_closed.answered_unverified()
+
+
+@pytest.mark.asyncio
+async def test_a_delegated_wildcard_token_takes_the_member_path(
     monkeypatch: pytest.MonkeyPatch, grants: dict[str, list[str]]
 ) -> None:
     """A delegated token's `*` reaches only where its creator holds a live
-    grant (`authz._check_delegated`), so it takes the member path."""
+    grant (`authz._check_delegated`), so its report is bounded to the member
+    namespaces `resolve_my_namespaces` names (faked here), never every one."""
     from dataclasses import replace
 
     from server.memory.api import models_exposure as OPS

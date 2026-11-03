@@ -318,8 +318,9 @@ async def every_readable_namespace(org: str, *, column: str = "namespace") -> Or
 
 async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeFilter:
     """WHERE fragment scoping an org-wide read to the namespaces the caller
-    may see. Org/platform admins (and the auth-off path) get an empty filter;
-    everyone else is constrained to `resolve_my_namespaces`, and a caller with
+    may see. Org/platform admins get `every_readable_namespace`'s exclusions,
+    the auth-off path an empty filter; everyone else is constrained to
+    `resolve_my_namespaces`, and a caller with
     no accessible namespaces yields ``accessible=False`` to short-circuit.
 
     Single source of truth for the privacy filter shared by the org-wide
