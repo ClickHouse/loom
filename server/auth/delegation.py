@@ -1,9 +1,10 @@
 """One delegation policy for every token minted from another token.
 
 A child gets requested ∩ the parent token's ceiling ∩ the creator's live
-grants, never more; for a primary flat parent the ceiling on a standard
-namespace is the grant itself (`_primary`). The rules and the recheck on
-every request are in docs/guides/tokens-and-grants.md (Delegated tokens).
+grants, never more; for a per-namespace child of a primary flat parent the
+ceiling on a standard namespace is the grant itself (`_primary`). The rules
+and the recheck on every request are in docs/guides/tokens-and-grants.md
+(Delegated tokens).
 `loom mint-token` holds the signing secret and is not a delegation.
 """
 
@@ -246,10 +247,10 @@ async def _allowed_roles(
         if ns != "*":
             grant = await authz.grant_role_for(org, ns, creator)
             if scoped and _primary(parent) and not await authz.may_be_restricted(org, ns):
-                # A flat child keeps the parent's cap instead: its one role
-                # also answers ops that name no namespace.
                 allowed = grant
             else:
+                # A flat child keeps the parent's cap: its one role also
+                # answers ops that name no namespace.
                 allowed = _lower(allowed, grant)
         if allowed is None or (want is not None and want > allowed):
             if ns not in requested:
