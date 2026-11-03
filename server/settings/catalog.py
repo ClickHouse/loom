@@ -27,6 +27,7 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import AfterValidator, BaseModel, Field, PrivateAttr, field_validator, model_validator
 
+from server.core.document_formats import route_key
 from server.core.embedding_space import inferred_provider
 from server.core.numbers import parse_budget_value
 from server.settings._env import (
@@ -1999,6 +2000,91 @@ class KnowledgeSettings(BaseModel):
     knowledge_bm25_corpus_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
     # Seconds a repository's document list is cached for the docs section of a brief.
     knowledge_repo_docs_list_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+
+    # ---- document extraction ----
+    # The extractor service a format goes to unless LOOM_DOCUMENT_EXTRACTORS_JSON routes
+    # it elsewhere, an http(s) base URL. Empty and unrouted: the format is not extracted.
+    document_extractor_url: str = ""
+    # JSON {format or media type: http(s) base URL}: per-format extractor services. A
+    # format's own key wins over its media type's, either over LOOM_DOCUMENT_EXTRACTOR_URL;
+    # a key that is neither a format nor a media type naming one is refused.
+    document_extractors_json: Annotated[str, JsonObject] = "{}"
+    # The bearer token the server sends an extractor service, which checks it, unless
+    # LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON holds one for that service's URL.
+    document_extractor_token: str = ""
+    # JSON {base URL: bearer token}: a token of its own for each extractor service, so an
+    # operator's service never holds the token another accepts. Each URL must be one that
+    # LOOM_DOCUMENT_EXTRACTOR_URL or LOOM_DOCUMENT_EXTRACTORS_JSON names.
+    document_extractor_tokens_json: Annotated[str, JsonObject] = "{}"
+    # Seconds one call to an extractor may take as a whole: reading its capabilities, or
+    # sending the original and reading its artifact.
+    document_extractor_timeout_s: float = Field(default=180.0, gt=0)
+    # Bytes of an extractor's response the server reads; a larger artifact is refused.
+    document_extractor_max_artifact_bytes: int = Field(default=64 * 1024 * 1024, ge=1024)
+
+    def document_extractor_routes(self) -> dict[str, str]:
+        """The operator's per-format extractor URLs, format or media type → URL;
+        a media type without its parameters and lowercased, as routing reads it."""
+        raw = self.document_extractors_json.strip()
+        if not raw:
+            return {}
+        items = json_map_items(raw, "document_extractors_json", strings_only=True)
+        return {route_key(key) or key: url for key, url in items}
+
+    def document_extractor_token_map(self) -> dict[str, str]:
+        """Each extractor service's own token, base URL (no trailing `/`) → token."""
+        raw = self.document_extractor_tokens_json.strip()
+        if not raw:
+            return {}
+        items = json_map_items(raw, "document_extractor_tokens_json", strings_only=True)
+        return {url.rstrip("/"): token for url, token in items}
+
+    @model_validator(mode="after")
+    def _check_document_extractors(self) -> KnowledgeSettings:
+        """Every extractor URL is http(s) with a host. The error names the entry,
+        never the URL (it can carry a credential)."""
+        raw = self.document_extractors_json.strip()
+        seen: set[str] = set()
+        for key, _ in json_map_items(raw, "document_extractors_json") if raw else ():
+            routed = route_key(key)
+            if not routed:  # a typo would leave the format on the default URL
+                raise ValueError(
+                    f"LOOM_DOCUMENT_EXTRACTORS_JSON {key[:64]!r} is neither a document format "
+                    "nor a media type that names one"
+                )
+            if routed in seen:  # two spellings of one media type: one would be dropped
+                raise ValueError(
+                    f"LOOM_DOCUMENT_EXTRACTORS_JSON {key[:64]!r} routes {routed!r} again"
+                )
+            seen.add(routed)
+        routes = self.document_extractor_routes()
+        urls = {"LOOM_DOCUMENT_EXTRACTOR_URL": self.document_extractor_url} | {
+            f"LOOM_DOCUMENT_EXTRACTORS_JSON {key[:64]!r}": url for key, url in routes.items()
+        }
+        for name, url in urls.items():
+            parts = urlsplit(url)
+            if url and (parts.scheme not in ("http", "https") or not parts.hostname):
+                raise ValueError(f"{name} is not an http(s) URL")
+        # A token for a URL no route names would leave that service on the shared
+        # token without a word: refused, as is a token that is not a string.
+        configured = {url.rstrip("/") for url in urls.values() if url}
+        raw = self.document_extractor_tokens_json.strip()
+        items = (
+            json_map_items(raw, "document_extractor_tokens_json", strings_only=True) if raw else ()
+        )
+        token_urls = [url.rstrip("/") for url, _ in items]
+        for i, url in enumerate(token_urls):
+            if url in token_urls[:i]:  # `http://x` and `http://x/`: one token would be dropped
+                raise ValueError(
+                    f"LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON entry {i + 1} names the URL of an "
+                    "earlier entry again"
+                )
+            if url not in configured:
+                raise ValueError(
+                    f"LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON entry {i + 1} names no configured "
+                    "extractor URL (LOOM_DOCUMENT_EXTRACTOR_URL or LOOM_DOCUMENT_EXTRACTORS_JSON)"
+                )
+        return self
 
 
 # ===== Mcp ====================================================================

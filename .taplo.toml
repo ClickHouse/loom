@@ -1,5 +1,5 @@
 include = ["*.toml", "**/*.toml"]
-exclude = ["tests/fixtures/**", "**/node_modules/**", "scripts/scip_harness/vendor/**"]
+exclude = ["tests/fixtures/**", "tests/unit/fixtures/knowledge/**", "**/node_modules/**", "scripts/scip_harness/vendor/**"]
 
 [formatting]
 align_entries = false

@@ -213,3 +213,32 @@ def test_classify_reads_the_layout() -> None:
     assert allowed("server.memory.app.fanout", "server.knowledge.api.models_knowledge")
     assert not allowed("server.memory.app.fanout", "server.knowledge.api.ops_knowledge")
     assert not allowed("server.memory.domain.x", "server.knowledge.api.models_knowledge")
+
+
+def _all_imports(path: Path) -> set[str]:
+    out: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+        if isinstance(node, ast.Import):
+            out.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+            out.add(node.module)
+    return out
+
+
+def _importers(root: Path, banned: tuple[str, ...]) -> list[str]:
+    return sorted(
+        f"{p.relative_to(ROOT)} imports {name}"
+        for p in root.rglob("*.py")
+        if "__pycache__" not in p.parts
+        for name in _all_imports(p)
+        if name in banned or name.startswith(tuple(f"{b}." for b in banned))
+    )
+
+
+def test_the_server_parses_no_original_and_the_extractor_reads_no_server_code() -> None:
+    """Every original is parsed in an extractor service (extractor/loom_extractor/);
+    the server reads only the artifact it returns. The knowledge plane also uses
+    no parser library of its own."""
+    assert not _importers(SERVER, ("loom_extractor", "sqlglot"))
+    assert not _importers(SERVER / "knowledge", ("tomllib", "html.parser"))
+    assert not _importers(ROOT / "extractor", ("server",))

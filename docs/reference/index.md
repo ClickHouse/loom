@@ -29,13 +29,14 @@ around it is hand-written. The op tables inside the SDK packages (`sdk/python/lo
 
 ## Written by hand
 
-| Page                                      | What it covers                                                                                                                                                     |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [HTTP API](./http-api.md)                 | Every route (ops, discovery, health, streams, sign-in, OAuth, dashboard, operator), the gate order, headers, unknown fields, idempotency, pagination, rate limits. |
-| [MCP](./mcp.md)                           | The `/mcp` endpoint, authentication and OAuth, sessions and identity, the tool list and toolsets, results, errors, the action-schema export.                       |
-| [Python SDK](./python-sdk.md)             | Install, construction, calling ops, typed shapes, sessions and tools, framework adapters, errors, retries.                                                         |
-| [TypeScript SDK](./typescript-sdk.md)     | Install, clients and options, typed ops, sessions and tools, pagination, the Strands adapter, errors, retries.                                                     |
-| [Environment variables](./environment.md) | Variables read outside the settings model: provider keys, the image, compose files, the CLI, the SDKs and the operator scripts.                                    |
+| Page                                          | What it covers                                                                                                                                                     |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [HTTP API](./http-api.md)                     | Every route (ops, discovery, health, streams, sign-in, OAuth, dashboard, operator), the gate order, headers, unknown fields, idempotency, pagination, rate limits. |
+| [MCP](./mcp.md)                               | The `/mcp` endpoint, authentication and OAuth, sessions and identity, the tool list and toolsets, results, errors, the action-schema export.                       |
+| [Python SDK](./python-sdk.md)                 | Install, construction, calling ops, typed shapes, sessions and tools, framework adapters, errors, retries.                                                         |
+| [TypeScript SDK](./typescript-sdk.md)         | Install, clients and options, typed ops, sessions and tools, pagination, the Strands adapter, errors, retries.                                                     |
+| [Environment variables](./environment.md)     | Variables read outside the settings model: provider keys, the image, compose files, the CLI, the SDKs and the operator scripts.                                    |
+| [Extractor contract](./extractor-contract.md) | Version 1 of the HTTP contract an extractor service serves: capabilities, extraction, error codes, the artifact's fields and rules.                                |
 
 The hand-written pages name only things that exist in the tree and link to the source they
 describe.

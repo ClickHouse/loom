@@ -130,13 +130,15 @@ _SECRET_FIELD = re.compile(
         (
             r"(?:^|_)secret(?:_previous)?$",
             r"(?:^|_)password$",
-            r"(?:^|_)(?:admin|github|scim)_token$",
+            r"(?:^|_)(?:admin|extractor|github|scim)_token$",
             r"(?:^|_)key$",
             r"(?:^|_)public_keys_json$",
             r"(?:^|_)credentials_json$",
             r"^code_repos_json$",
             # Its URLs can carry a credential (`_check_rerank_endpoints`).
             r"^rerank_endpoints_json$",
+            r"^document_extractors_json$",
+            r"^document_extractor_tokens_json$",
             r"(?:^|_)otlp_headers$",
         )
     )

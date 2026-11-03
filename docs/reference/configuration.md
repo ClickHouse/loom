@@ -833,6 +833,17 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_BM25_CORPUS_TTL_S` | `float` | `300.0` | live | Seconds the BM25 corpus statistics of a knowledge namespace are cached. |
 | `LOOM_KNOWLEDGE_REPO_DOCS_LIST_TTL_S` | `float` | `60.0` | live | Seconds a repository's document list is cached for the docs section of a brief. |
 
+### Document extraction
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_DOCUMENT_EXTRACTOR_URL` | `str` | `''` |  | The extractor service a format goes to unless LOOM_DOCUMENT_EXTRACTORS_JSON routes it elsewhere, an http(s) base URL. Empty and unrouted: the format is not extracted. |
+| `LOOM_DOCUMENT_EXTRACTORS_JSON` | `str` | *(unset)* |  | JSON {format or media type: http(s) base URL}: per-format extractor services. A format's own key wins over its media type's, either over LOOM_DOCUMENT_EXTRACTOR_URL; a key that is neither a format nor a media type naming one is refused. |
+| `LOOM_DOCUMENT_EXTRACTOR_TOKEN` | `str` | *(unset)* |  | The bearer token the server sends an extractor service, which checks it, unless LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON holds one for that service's URL. |
+| `LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON` | `str` | *(unset)* |  | JSON {base URL: bearer token}: a token of its own for each extractor service, so an operator's service never holds the token another accepts. Each URL must be one that LOOM_DOCUMENT_EXTRACTOR_URL or LOOM_DOCUMENT_EXTRACTORS_JSON names. |
+| `LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S` | `float` | `180.0` |  | Seconds one call to an extractor may take as a whole: reading its capabilities, or sending the original and reading its artifact. |
+| `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES` | `int` | `67108864` |  | Bytes of an extractor's response the server reads; a larger artifact is refused. |
+
 ## Mcp
 
 The MCP transport: tool listing, lean results, session runs.

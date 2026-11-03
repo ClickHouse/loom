@@ -2156,6 +2156,23 @@
           "type": "integer",
           "description": "Seconds an original must have gone unwritten before the sweep may remove it. A write stores its original before the document row that names it, so a younger original may belong to a write still in flight. Erasure ignores it and deletes every original of its scope. With a bucket, the settings refuse one under a minimum: a write's upload budget plus its row insert's retries (906 s at the defaults; a much larger value leaves room for what the minimum does not count), or an unbounded write timeout, read timeout or pool wait."
         },
+        "document_extractor_max_artifact_bytes": {
+          "default": 67108864,
+          "minimum": 1024,
+          "type": "integer",
+          "description": "Bytes of an extractor's response the server reads; a larger artifact is refused."
+        },
+        "document_extractor_timeout_s": {
+          "default": 180.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one call to an extractor may take as a whole: reading its capabilities, or sending the original and reading its artifact."
+        },
+        "document_extractor_url": {
+          "default": "",
+          "type": "string",
+          "description": "The extractor service a format goes to unless LOOM_DOCUMENT_EXTRACTORS_JSON routes it elsewhere, an http(s) base URL. Empty and unrouted: the format is not extracted."
+        },
         "document_object_store": {
           "default": "clickhouse",
           "enum": [

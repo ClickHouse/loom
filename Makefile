@@ -279,7 +279,7 @@ bench-clickgap-replay:
 # copies, the configuration and docs/reference tables, the reach manifest) must match its
 # source; regenerate with the script named in the failure.
 lint:
-	$(PYTHON) -m ruff check server sdk/python tests scripts .claude
+	$(PYTHON) -m ruff check server extractor sdk/python tests scripts .claude
 	$(PYTHON) scripts/gates/function_length_gate.py
 	$(PYTHON) scripts/gates/check_no_secrets.py
 	$(PYTHON) scripts/codegen/sdk_py_gen.py --check

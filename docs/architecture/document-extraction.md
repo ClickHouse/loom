@@ -1,0 +1,238 @@
+# Document extraction
+
+An uploaded original is parsed into one shape, the extraction artifact, by an extractor service: a separate process with
+its own dependencies, never the Loom server. The server sends the original's bytes to the service its format is routed
+to, reads the artifact back as untrusted input, and cuts structural chunks from its blocks, so a SQL statement, a TOML
+key and a Markdown section are all cited by a locator into the source. Loom ships a reference extractor
+(`extractor/loom_extractor/`) for Markdown, HTML, plain text, SQL and TOML; an operator can run another behind the same
+[wire contract](../reference/extractor-contract.md). No operation calls extraction yet: `knowledge.add` takes text the
+caller extracted.
+
+## The service boundary
+
+| Side              | Holds                                                                                                                                                                                    |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Loom server       | the contract (`server/knowledge/domain/extract/`), the checks on what an extractor returns, format routing, the structural chunker and the client (`server/knowledge/app/extractors.py`) |
+| Extractor service | format detection, strict decoding and every parser; no Loom token, no database credential and no bucket access: it gets bytes and returns JSON                                           |
+
+Parsing a file means running a parser over input an uploader controls. Keeping that out of the server's process keeps
+a parser defect, a pathological input or a parser's dependencies away from the process that holds ClickHouse
+credentials, signing keys and tenant data, and lets an operator swap in their own utility for a format.
+`tests/unit/test_package_contracts.py` checks that no server module imports the extractor or a parser library.
+
+**Routing.** The server names the format from what the caller says (a declared format, else the file extension, else the
+media type, else `text`) without reading the bytes, and sends the original to the service
+`LOOM_DOCUMENT_EXTRACTORS_JSON` names for that format, or for its media type when the media type names that format, else
+to `LOOM_DOCUMENT_EXTRACTOR_URL`. A format is extracted only when that service's `/v1/capabilities` declares it; the
+declaration is read again after a minute. A `.doc`, `.xls` or `.ppt` name is refused before any call. A route key is a
+format name or a media type that names one, matched without its parameters and case; any other key is refused when the
+settings load.
+
+**Fail closed.** A format with no configured service, a service that does not declare it, is unreachable, takes longer
+than `LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S` for a whole call, refuses the server's token (`401`, `403`, `407`), answers
+`408`, `429`, `format_unavailable`, a `5xx` or anything else that is neither `200` nor `4xx` (a redirect, a `204`)
+raises `ExtractorUnavailable`, and the source can be tried again. A source the service refuses raises `ExtractionFailed`
+with the contract's code (`format_mismatch`, `encoding`, `too_large`, `timeout`, `resource_limit`, ...), as does a
+response that breaks the contract (`invalid_artifact`). There is no in-process fallback: with no extractor configured,
+no original is extracted.
+
+**Tokens.** The server sends each service the token `LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON` holds for its URL, else
+`LOOM_DOCUMENT_EXTRACTOR_TOKEN`, so an operator's own service need not hold the token the reference extractor accepts.
+
+**Untrusted output.** The server reads a response up to `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES` and refuses a
+longer one as `resource_limit`, then `parse_artifact` checks it before anything is chunked, embedded or published: the
+schema version, the format asked for, each block's type, a unique id and a parent that is an earlier block, at most
+10,000 keys of 1,024 characters and 64 section-path entries of 500 characters per block (so the chunks cut from a long
+block share its keys and per-chunk work stays linear), locator spans that are ranges, coverage counts within their
+total, strings that are valid Unicode, numbers that are JSON (no `NaN` or `Infinity`) and nesting depth in `attrs` and
+`options` (16; the reference TOML parser leaves out the `attrs.value` of a value nested deeper than 8, whose text the
+block keeps). `complete` is recomputed from the counts, failures and losses, and an artifact whose flag disagrees is
+refused. A field the contract does not name is dropped. The server addresses the artifact by the SHA-256 of its own
+serialization, not the service's bytes.
+
+**Isolation in the reference extractor.** Every `/v1` call carries `Authorization: Bearer <token>`; the service
+refuses to start without a token of at least 16 characters. Each extraction runs in a child process, and before the
+child reads the source:
+
+| The child                                | How                                                                                                                                                                                          |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| has no environment                       | started with only `PYTHONPATH`, `PATH` and `LC_ALL`, so the token is not in it                                                                                                               |
+| cannot read the service or another child | the service and every child are non-dumpable (`PR_SET_DUMPABLE`), so a process of the same user cannot read their environment, memory or open files through `/proc` or ptrace                |
+| has bounded resources                    | address space (`LOOM_EXTRACTOR_MEMORY_MB`), CPU seconds, a file size of 0 (it can create empty files, not write to one), no core dump                                                        |
+| starts no process                        | `RLIMIT_NPROC` 0, so nothing a parser starts outlives the extraction; a child still running at a timeout, a disconnect or a cancel is killed with its process group before its slot is freed |
+| gains no privilege on exec               | `PR_SET_NO_NEW_PRIVS` in the service and in each child, so no setuid binary or file capability raises one                                                                                    |
+| loads only the package                   | runs in `/` with `-P`, so no directory it could write to is on `sys.path`                                                                                                                    |
+| shows no request                         | its command line holds only its limits; the file's name and options come on stdin                                                                                                            |
+
+The service kills a child at the wall-clock timeout, when its caller disconnects or when its output passes the artifact
+bound, and reads a source only once one of its `LOOM_EXTRACTOR_CONCURRENCY` slots is free, so that bound covers the
+originals held in memory too. The slots are one by default: a child is readable by other processes of its user from its
+start until it makes itself non-dumpable, so a child a hostile source has taken over could open a concurrent child's
+source in that moment. Scale with service replicas, not slots. The kernel does not hold root, or a process with
+`CAP_SYS_RESOURCE` or `CAP_SYS_ADMIN`, to the process limit, so the service refuses to start as root or with either
+capability permitted. A child is not denied the network or reads of the file system in its process: the container it
+runs in is what denies those. The settings are in [`extractor/README.md`](../../extractor/README.md).
+
+## The artifact
+
+| Part       | Holds                                                                                                                                                                         |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `blocks`   | the source's structure in order: `heading`, `paragraph`, `list`, `code`, `sql_statement`, `toml_table`, `toml_key`, ...; each with its text, locator, section path and parent |
+| `coverage` | the unit the format is made of (`lines`, `statements`, `keys`, `chars`), how many there are, how many extracted, each failed unit with its reason, and each capability lost   |
+| `warnings` | facts a reader should see, such as an ambiguous SQL dialect                                                                                                                   |
+| `options`  | the overrides the parse ran with (`sql_dialect` for SQL only, `encoding` by its codec name)                                                                                   |
+| `attrs`    | format facts (`dialect`, `dialect_source`, `dialect_candidates`; an HTML page's `title`)                                                                                      |
+
+A block's `id` is `b<ordinal>`, stable within its artifact. `keys` are the exact names a reader can look the block up
+by: the objects a SQL statement creates, writes and reads, and its columns (for a statement sqlglot cannot parse, every
+name its tokens hold), every qualified name also by its last part (`events` for `analytics.events`), unquoted
+(`my.table` for ``db.`my.table` ``; a quoted part keeps its dots); a TOML table's or key's full path and its index-free
+form.
+
+A locator sets only the fields that apply: `line_start`/`line_end` (1-based) on every text format,
+`char_start`/`char_end` (offsets into the decoded text) on Markdown, plain text, SQL and the text blocks of an invalid
+TOML file, and `key_path` for TOML. A Markdown heading's span covers its source line or lines, markup included, while
+its text is the cleaned title, so a window of a long heading cites the heading's whole span. A format that needs another
+field (a page, a cell range) adds it with its parser.
+
+The artifact is serialized as sorted, compact JSON with a `schema_version` and addressed by the SHA-256 of those bytes.
+A parser or option change produces a new artifact of the same source revision; an artifact is never edited. A reader
+refuses a `schema_version` it does not know. `parser_version` names what a parse depends on: sqlglot's version for SQL,
+and the Python version for HTML and TOML, whose parsers ship with it.
+
+## Formats in the reference extractor
+
+`detect_format` reads the bytes before the file name. A PDF, a DOCX, PPTX or XLSX container (by the parts inside the
+zip) and a Parquet file are recognised by content; a name that claims a format the bytes are not is refused
+(`format_mismatch`), and a legacy binary Office file is refused (`unsupported_format`), as is a `.doc`, `.xls` or `.ppt`
+name unless a format is declared. Text is decoded strictly: UTF-8, UTF-16 or UTF-32 by its byte-order mark, or a
+declared encoding, and a UTF-8 byte-order mark is dropped when the text is UTF-8, declared or not, as is the mark of a
+declared byte-order codec (`utf-16-le`). An undecodable byte is an `encoding` failure naming its offset, and a NUL byte
+in undeclared UTF-8 text (behind a byte-order mark or not) is binary; neither is replaced and indexed.
+
+| Format                              | Parser                                                                | Blocks                                                                       |
+| ----------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Markdown                            | a block parser after CommonMark's heading, fence and HTML-block rules | headings, paragraphs, lists, fenced code, front matter                       |
+| Plain text                          | a paragraph splitter                                                  | one paragraph per run of non-blank lines (a `#` line is text, not a heading) |
+| HTML                                | the standard library's parser                                         | headings, paragraphs, list items, table cells, quotes, definitions, `pre`    |
+| SQL                                 | `sqlglot`, never executed                                             | one block per statement                                                      |
+| TOML                                | `tomllib` and a line scanner                                          | one block per table header and per key                                       |
+| PDF, DOCX, PPTX, XLSX, CSV, Parquet | none in this build                                                    | none: detected and reported `format_unavailable`                             |
+
+**Markdown.** Headings are ATX, setext and one-line `<hN>`. A paragraph over a setext underline (indented up to three
+spaces) is one heading; a list item, a quote or a thematic break over `---` is not. A fenced block keeps its body's
+lines without the fences; a fence closes on a bare run of its character at least as long, and its language is the info
+string's first word, the rest kept as `info` (an empty block keeps it too). Inside a paragraph only a bullet or an item
+numbered 1 starts a list, so a wrapped line that begins `2019.` stays prose. A thematic break (`***`, `- - -`) is
+markup: it ends the paragraph or list above it and is no block's text. An HTML block is one paragraph block, as written,
+and never a heading's title (CommonMark's start conditions): one opened by a comment, `<?`, `<![CDATA[`, `<!`
+(`<!DOCTYPE html>`) or a raw-text tag (`<pre>`, `<script>`, `<style>`, `<textarea>`) ends on the line holding its end
+marker (`-->`, `</pre>`), so the line after it can be a setext title; one opened by a block-level tag (`<p
+align="center">`, `<div>`) or a line of only tags (`</div>`) ends at a blank line. Each but the tag-only line ends a
+paragraph above it, and a tag-only line inside a paragraph is its text. An empty ATX heading (`# #`) is markup that ends
+the paragraph above it, while one whose title cleans to nothing (`# <img src="logo.svg">`) stays a paragraph. Leading
+YAML front matter (`key:` lines between `---` markers, a `#` at a line's start followed by a blank being a heading, not
+a comment) is one block. Blocks carry line and char spans, and coverage counts non-blank lines, every one of which lands
+in a block or is a fence or front-matter delimiter, a thematic break or an empty ATX heading (counted from the blocks'
+spans, a guard against a parser change that drops a line).
+
+These rules are the extractor's own (`extractor/loom_extractor/markdown.py`). The `knowledge.add` heading splitter,
+which sections text a caller extracted, keeps its own rules and can section the same document differently.
+
+A heading's title carries at most its first 500 characters into the section paths under it, a cut marked as the
+contract bounds below say; the heading block keeps all of it and is windowed like any block longer than a chunk.
+
+**HTML.** `blockquote`, `dd` and `dt` are paragraphs, and a `<p>` that opens a list item, and the `<p>`s after it, are
+the item's text. A block whose end tag is left out closes at the next block, its container's end or the document's end
+(a container inside a block leaves it open; `br`, `hr` and a container's start separate words), and an unclosed `head`
+closes at the first body element or text. A block's line span runs from its first text line to its last. `script`,
+`style`, `template`, `noscript`, `svg`, `title` and `head` are dropped from the blocks (the `<title>` text is the
+artifact's `attrs.title`); coverage counts the visible characters outside them and how many the blocks hold, a guard of
+the same kind. Neither counts what a block loses within itself, such as stripped inline tags. A hidden element left open
+hides the rest of the document; the text inside it is counted as not read, with a failure naming the open elements.
+
+**SQL statements.** A statement is split on the dialect's tokens, so a `;` in a string or comment does not end it. A
+client's own command lines (`GO`, a lone `/`, `DELIMITER ;;`, backslash commands) are not SQL: a script that holds
+them is split on its `;` tokens all the same, and a statement a command line joins is an `UNKNOWN` block that coverage
+records as failed. A body the client sends whole (a procedure's `BEGIN … END`) is cut at its inner `;`: the head keeps
+the `CREATE` and its name, each statement of the body is a block of its own with its own reads and writes, and the
+closing fragment (`END`) is `UNKNOWN`; a T-SQL body with no `BEGIN … END` can read as complete. Splitting by a client's
+own rules is not done; declare the dialect, and expect such scripts to report `sql_structure` lost. Its block holds its
+kind (`CREATE MATERIALIZED VIEW` apart from `CREATE VIEW`), the object created, the objects written (a view's `TO`
+table, the table an index is built on, what a `DROP` or `TRUNCATE` removes, a `MERGE` target), the tables read (a CTE is
+not one), its columns and its comments (one after a `;` on its line belongs to that statement). Coverage counts
+statements, not comment-only blocks, and names a failed one by its block id.
+
+**SQL dialects.** A declared dialect is used as given, by its name alone; an unknown one, or one with sqlglot settings
+after a comma, is `invalid_option`. Otherwise every candidate dialect reads a window of the script: the whole script
+when it is at most 50,000 characters, else a prefix up to its 50th `;` within the first 50,000 characters, and a shorter
+prefix when its tokenizer refuses one (a cut can land inside a quoted body). A dialect that tokenizes a longer window
+ranks first, so a dialect that refuses the script cannot win on a shorter cut of it; then the larger share of its first
+50 statements' text turned into syntax trees wins (a share, so a dialect that splits a quoted body into many small
+statements does not win), the first of a tie by a fixed order (ClickHouse first). A tie between dialects that parse
+anything is reported as `sql_dialect_ambiguous` with the tied candidates, and the script is split with the first of them
+whose tokenizer reads it whole; when none of the dialects that read the most of the script parses anything, the first of
+them is used with `dialect_source = "default"` and no candidates. Detection reads at most 50,000 characters per window
+and at most about seven windows per dialect, so a script whose first statement is longer, or whose first quoted body
+outruns every cut, may be detected wrongly: declare its dialect. A statement the chosen dialect cannot turn into a
+syntax tree stays a searchable block of kind `UNKNOWN`, is listed in `coverage.failed` and sets `coverage.lost =
+["sql_structure"]`; a script the tokenizer cannot split is one such block.
+
+**TOML.** `tomllib` decides validity, types and values; the scanner beside it finds lines, comments and the original
+value text, including values that span lines (multi-line strings, arrays, inline tables). A key block's text is `<full
+path> = <value text>` with its comments, written so it reads on its own; its line span points into the source. The
+comments above a table or key go into its text and its line span; a run of comments no table or key follows is a
+paragraph of its own, and a comment inside a multi-line array stays in that key's text. An invalid file is kept as
+paragraph blocks with `coverage.lost = ["toml_types"]` and the decoder's message.
+
+**Contract bounds.** Before it answers, the reference extractor fits every block to the contract's bounds: a key over
+1,024 characters is left out and the first 10,000 kept, and the section path keeps its first 64 entries, each cut to 500
+characters. A block it cut is marked (`attrs.keys_truncated`, `attrs.section_truncated`) and the artifact's
+`coverage.lost` names what it lost (`exact_keys`, `section_path`); the block's text and locator still hold all of it.
+
+## Structural chunks
+
+`chunk_artifact` cuts chunks from blocks instead of fixed windows over flattened text:
+
+- consecutive blocks under one parent (a heading's section, a TOML table with its keys) pack into one chunk up to the
+  chunk size;
+- a SQL statement is a chunk of its own, so a hit cites one statement;
+- a block longer than the chunk size is windowed, and each window keeps its section and, for a block with char
+  offsets, its own line and char span (an HTML window, or a valid TOML file's, cites its block's lines);
+- heading text is not repeated in chunk text: the section path travels beside it; a heading with no text and no
+  subsection under it is a chunk of its own.
+
+Each chunk carries the ids of the blocks it was cut from, their type (`mixed` when they differ), the merged locator of
+their span (a field such as `key_path` survives only when every block agrees) and the union of their keys.
+
+## Dependencies
+
+The reference extractor's parsers need `sqlglot` for SQL and the standard library otherwise. They are installed with
+the service (`extractor/pyproject.toml`), and in a development environment by the `extractor` extra; the server's image
+carries none of them.
+
+## Invariants
+
+- A text format's content lands in blocks; what a parser could not structure is recorded in `coverage` (failed units,
+  lost capabilities), never dropped in silence. Only the HTML elements listed above are left out, by design.
+- A block's locator points at the source text it came from.
+- An artifact is addressed by the SHA-256 of its bytes and never edited; a parser change bumps that parser's
+  `PARSER_VERSION`, so its output is a new artifact.
+- Extraction never executes what it parses.
+- The server parses no original: every format goes to an extractor service, and nothing it returns is used before
+  `parse_artifact` accepts it.
+
+## Source entry points
+
+| What                       | Where                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------ |
+| The artifact               | `server/knowledge/domain/extract/artifact.py` (`Artifact`, `Block`, `Locator`, `Coverage`) |
+| Checks on a response       | `server/knowledge/domain/extract/validate.py` (`parse_artifact`)                           |
+| Format routing             | `server/core/document_formats.py` (`format_of`)                                            |
+| Calls to extractors        | `server/knowledge/app/extractors.py` (`extract`, `available_formats`)                      |
+| Structural chunks          | `server/knowledge/domain/extract/structural.py` (`chunk_artifact`)                         |
+| The reference service      | `extractor/loom_extractor/service.py`, one extraction per `child.py` process               |
+| Format detection, decoding | `extractor/loom_extractor/source.py` (`detect_format`, `decode`, `extract`)                |
+| SQL                        | `extractor/loom_extractor/sql.py` (`extract_sql`, `detect_dialect`)                        |
+| TOML                       | `extractor/loom_extractor/tomlfile.py`                                                     |
+| Markdown, plain text, HTML | `extractor/loom_extractor/text.py`, heading rules in `markdown.py`                         |

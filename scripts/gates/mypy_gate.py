@@ -43,7 +43,7 @@ if str(ROOT) not in sys.path:  # run as a file
 from scripts.gates.ratchet import GateError, Ratchet, Report, normalise_key  # noqa: E402
 
 BASELINE_PATH = Path(__file__).with_name("mypy_baseline.json")
-TARGETS = ["server", "sdk/python/loom"]
+TARGETS = ["server", "sdk/python/loom", "extractor/loom_extractor"]
 
 _ERROR_RE = re.compile(
     r"^(?P<path>(?:[A-Za-z]:)?[^:\s][^:]*\.pyi?):(?P<line>\d+):(?:\d+:)? error: (?P<msg>.*)$"

@@ -777,7 +777,11 @@ dev = [
     { name = "pytest-randomly" },
     { name = "pytest-rerunfailures" },
     { name = "ruff" },
+    { name = "sqlglot" },
     { name = "types-pyyaml" },
+]
+extractor = [
+    { name = "sqlglot" },
 ]
 ingest = [
     { name = "boto3" },
@@ -803,6 +807,7 @@ requires-dist = [
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "clickhouse-connect", specifier = ">=1.7" },
     { name = "clickhouse-loom-server", extras = ["aws"], marker = "extra == 'dev'" },
+    { name = "clickhouse-loom-server", extras = ["extractor"], marker = "extra == 'dev'" },
     { name = "fastapi", specifier = ">=0.118" },
     { name = "fastembed", marker = "extra == 'local-embedder'", specifier = ">=0.4" },
     { name = "google-re2", specifier = ">=1.1" },
@@ -831,6 +836,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.9" },
     { name = "snowballstemmer", specifier = ">=2.2" },
+    { name = "sqlglot", marker = "extra == 'extractor'", specifier = ">=30.27,<31" },
     { name = "tenacity", specifier = ">=9.0" },
     { name = "trafilatura", marker = "extra == 'ingest'", specifier = ">=2.0" },
     { name = "tree-sitter", marker = "extra == 'code'", specifier = ">=0.23" },
@@ -845,7 +851,7 @@ requires-dist = [
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
-provides-extras = ["lemma", "dev", "ingest", "aws", "code", "scip", "local-embedder"]
+provides-extras = ["lemma", "dev", "ingest", "extractor", "aws", "code", "scip", "local-embedder"]
 
 [[package]]
 name = "colorama"
@@ -3140,6 +3146,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/43/f8/0a71edf031f03c40db17503cb8ca78a69a171254e568e7db241b0ab57ea1/snowballstemmer-3.1.1.tar.gz", hash = "sha256:e07bbc54a0d798fe6010a12398422e62a8bfbba95c394fd0956ef58cb4d3e260", size = 123314, upload-time = "2026-06-03T00:56:40.194Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4c/07/2ebca9b11fb9be7340a818d8d6f63feaebb146be2c4afbd6061701d6df6e/snowballstemmer-3.1.1-py3-none-any.whl", hash = "sha256:7e207fa178741da09cdee59d3ecec3827ad5f92b1fc5c9ff3755b639f71f5752", size = 104164, upload-time = "2026-06-03T00:56:38.614Z" },
+]
+
+[[package]]
+name = "sqlglot"
+version = "30.27.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/d8/322dee46e3fd283a3b249a22e4f369693f9aad9fdc714df66b815882e99e/sqlglot-30.27.0.tar.gz", hash = "sha256:10617b2beee196e88a310c6a5348482248bf10ac01c6ade22128bf4a690ec0ee", size = 6172431, upload-time = "2026-10-30T18:18:59.13Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/88/fb7ce53c23e171ad059fd3a5ff6889399da2804cf0cfda2a10c64f32fdf7/sqlglot-30.27.0-py3-none-any.whl", hash = "sha256:b630686fc167762e20960ad3d007ad03d81af0a804c9f7d117f1fe06433c839e", size = 801972, upload-time = "2026-10-30T18:18:57.65Z" },
 ]
 
 [[package]]
