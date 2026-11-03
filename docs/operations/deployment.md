@@ -773,7 +773,9 @@ and what it leaves:
   and no tracker source configured, they find nothing to do: each pass reads a few rows
   and ends. The git mirror warm-up and host loop do not run, and boot probes the
   repository-job sandbox only when `LOOM_CODE_INGEST_ENABLED` or
-  `LOOM_CODE_SANDBOX_REQUIRED` is on.
+  `LOOM_CODE_SANDBOX_REQUIRED` is on. Every process still re-reads the repository registry
+  (`LOOM_CODE_REPOS_REFRESH_SECONDS`, while self-service is on) and the tracker sources
+  (`LOOM_TRACKER_SOURCES_REFRESH_SECONDS`): one small read per interval.
 - `memory.*`, `knowledge.*`, `conversation.*`, `context.pack` and `search.query`
   (`loom_search` over MCP) serve as on any deployment; `search.query` has no code or
   tracker results to add.
