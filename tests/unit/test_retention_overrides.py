@@ -3,7 +3,8 @@
 Pins the contract:
 
   - Default is indefinite. Both retention_*_days and tiering_*_warm_days
-    zero, no per-namespace rows → no ALTERs.
+    zero, no per-namespace rows → no TTL; a TTL left by an earlier pass
+    is removed.
   - Global retention only → simple INTERVAL N DAY DELETE.
   - Global tiering only → INTERVAL W DAY TO VOLUME 'warm'.
   - Per-namespace overrides → multiIf with one case per override,
@@ -16,12 +17,15 @@ Pins the contract:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from server.storage import retention_overrides
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
 @dataclass
@@ -234,7 +238,7 @@ def test_compute_alters_per_namespace_applies_to_all_tables() -> None:
 async def test_apply_uses_provided_overrides_without_ch_query() -> None:
     """Passing namespace_overrides explicitly bypasses the CH read
     (test harness path; the boot hook fetches them itself)."""
-    ch = StubCH()
+    ch = _DiffCH({})
     n = await retention_overrides.apply(
         _FakeSettings(retention_audit_log_days=365),
         ch=ch,
@@ -248,7 +252,7 @@ async def test_apply_uses_provided_overrides_without_ch_query() -> None:
 @pytest.mark.asyncio
 async def test_apply_per_namespace_emits_alters_for_all_tables() -> None:
     """One namespace override → one ALTER per managed table (8)."""
-    ch = StubCH()
+    ch = _DiffCH({})
     n = await retention_overrides.apply(
         _FakeSettings(),
         ch=ch,
@@ -266,13 +270,13 @@ async def test_apply_continues_after_one_failure(
 ) -> None:
     """A bad ALTER on one table mustn't kill the rest."""
 
-    class FlakyCH(StubCH):
+    class FlakyCH(_DiffCH):
         async def execute(self, sql: str, params: Any = None) -> None:
             if "loom.documents" in sql:
                 raise RuntimeError("CH refused this one")
             await super().execute(sql, params)
 
-    ch = FlakyCH()
+    ch = FlakyCH({})
     with caplog.at_level(logging.ERROR, logger="server.storage.retention_overrides"):
         n = await retention_overrides.apply(
             _FakeSettings(retention_audit_log_days=365, retention_documents_days=180),
@@ -409,9 +413,6 @@ def test_no_managed_table_has_a_schema_ttl() -> None:
     """apply issues REMOVE TTL on a managed table with no window set, which
     would strip a TTL the schema defines; a schema TTL on one of these tables
     needs retention_overrides to restore it instead."""
-    import re
-    from pathlib import Path
-
     schema = Path("schemas/schema.sql").read_text()
     for target in retention_overrides.TARGETS:
         m = re.search(rf"CREATE TABLE IF NOT EXISTS {re.escape(target.table)}\b.*?;", schema, re.S)
@@ -420,6 +421,55 @@ def test_no_managed_table_has_a_schema_ttl() -> None:
             f"{target.table} has a schema TTL that server/storage/retention_overrides.py "
             "would remove when no window is set"
         )
+
+
+class _LocalCH:
+    """The two calls apply makes, run on clickhouse-local in a database kept under
+    `path`, so each statement sees what the one before it did."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.execute_calls: list[str] = []
+
+    async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
+        rows = run([], sql, params, path=self.path)
+        return rows[0] if rows else None
+
+    async def execute(self, sql: str, params: Any = None) -> None:
+        self.execute_calls.append(sql)
+        run([sql], "SELECT 1", path=self.path)
+
+    def engine_full(self, table: str) -> str:
+        (row,) = run(
+            [], f"SELECT engine_full FROM system.tables WHERE name = '{table}'", path=self.path
+        )
+        return str(row["engine_full"])
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
+@pytest.mark.asyncio
+async def test_a_cleared_window_removes_the_ttl_on_a_real_table(tmp_path: Path) -> None:
+    ch = _LocalCH(tmp_path)
+    run([ddl("audit_log")], "SELECT 1", path=tmp_path)
+    set_ttl = await retention_overrides.apply(
+        _FakeSettings(),
+        ch=ch,
+        namespace_overrides=[{"org": "o", "namespace": "ns1", "retention_days": 30}],
+        leader=True,
+    )
+    # the other managed tables do not exist here and read as having no TTL
+    assert set_ttl == 1 and " TTL " in ch.engine_full("audit_log")
+
+    removed = await retention_overrides.apply(
+        _FakeSettings(), ch=ch, namespace_overrides=[], leader=True
+    )
+    assert removed == 1
+    assert ch.execute_calls[-1] == "ALTER TABLE loom.audit_log REMOVE TTL"
+    assert " TTL " not in ch.engine_full("audit_log")
+
+    # an overlapping pass sends the same statement; the text apply matches is ClickHouse's
+    with pytest.raises(AssertionError, match=retention_overrides._NO_TTL_TO_REMOVE):
+        run(["ALTER TABLE loom.audit_log REMOVE TTL"], "SELECT 1", path=tmp_path)
 
 
 @pytest.mark.asyncio

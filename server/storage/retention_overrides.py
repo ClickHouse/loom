@@ -332,19 +332,6 @@ def alter_statement(alter_sql: str) -> str:
 _NO_TTL_TO_REMOVE = "doesn't have any table TTL expression"
 
 
-async def _stale_ttl_removal(ch: Any, table: str) -> str | None:
-    """`ALTER TABLE … REMOVE TTL` for a managed table that should carry no
-    TTL but still has one from an earlier pass, else None. A failed lookup
-    defers to the next pass: REMOVE TTL on a table without one is an error,
-    and leaving a TTL a pass longer is what the old pass already promised."""
-    try:
-        current = await _current_ttl(ch, table)
-    except Exception as e:  # noqa: BLE001 — an unreadable table is retried next pass
-        log.warning("retention/tiering: TTL lookup failed for %s (%s); not removed", table, e)
-        return None
-    return f"ALTER TABLE {table} REMOVE TTL" if current else None
-
-
 async def unfinished_mutations(ch: Any, table: str) -> int | None:
     """Unfinished mutations on `table` (`system.mutations.is_done = 0`), or
     None when the read fails (fail-open: the ALTER is issued).
@@ -419,10 +406,19 @@ async def apply(
                 f"per-namespace overrides={params['overrides']}"
             )
         else:
-            removal = await _stale_ttl_removal(ch, target.table)
-            if removal is None:
+            # A failed read defers the removal to the next pass: REMOVE TTL on
+            # a table without one is an error.
+            try:
+                if not await _current_ttl(ch, target.table):
+                    continue
+            except Exception as e:  # noqa: BLE001 — an unreadable table is retried next pass
+                log.warning(
+                    "retention/tiering: TTL lookup failed for %s (%s); not removed",
+                    target.table,
+                    e,
+                )
                 continue
-            statement = removal
+            statement = f"ALTER TABLE {target.table} REMOVE TTL"
             change = "no window set; removing its TTL"
         pending = await unfinished_mutations(ch, target.table)
         if pending:
