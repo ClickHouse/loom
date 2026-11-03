@@ -156,12 +156,12 @@ rules below is refused as `invalid_artifact`.
 | `blocks[].attrs`                       | object                   | format facts                                                                                                                                                              |
 | `blocks[].locator`                     | object                   | `line_start`/`line_end` (1-based, both `0` or `1 <= start <= end`), `char_start`/`char_end` (offsets into the decoded text, both `-1` or `0 <= start <= end`), `key_path` |
 
-Every string is valid Unicode, and every number is JSON (no `NaN` or `Infinity`): an integer within 64 bits, any other
-number within a double (not `1e999`). The server refuses an artifact that breaks any rule, and drops a field the
-contract does not name, so a service can send one without a version change. A change an older server cannot read raises
-`schema_version`. A block's keys and section path travel with every chunk cut from it, so they are bounded by count and
-length as well as by the artifact's size; the reference extractor leaves out a longer key, keeps the first 10,000 and
-the first 64 section entries cut to 500 characters, and marks the block `attrs.keys_truncated` or
-`attrs.section_truncated` and the artifact's `coverage.lost` (`exact_keys`, `section_path`), so it does not report
-itself complete. A character, here and in `char_start`/`char_end`, is a Unicode code point of the decoded text (not a
-UTF-16 unit or a byte).
+Every string is valid Unicode, and every number is JSON (no `NaN` or `Infinity`): an integer is signed 64-bit (-2^63 to
+2^63-1, so not a `UInt64` past it), any other number within a double (not `1e999`). The server refuses an artifact that
+breaks any rule, and drops a field the contract does not name, so a service can send one without a version change. A
+change an older server cannot read raises `schema_version`. A block's keys and section path travel with every chunk cut
+from it, so they are bounded by count and length as well as by the artifact's size; the reference extractor leaves out a
+longer key, keeps the first 10,000 and the first 64 section entries cut to 500 characters, and marks the block
+`attrs.keys_truncated` or `attrs.section_truncated` and the artifact's `coverage.lost` (`exact_keys`, `section_path`),
+so it does not report itself complete. A character, here and in `char_start`/`char_end`, is a Unicode code point of the
+decoded text (not a UTF-16 unit or a byte).

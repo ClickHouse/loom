@@ -46,11 +46,11 @@ longer one as `resource_limit`. Then `parse_artifact` checks it before anything 
 schema version, the format asked for, each block's type, a unique id and a parent that is an earlier block, at most
 10,000 keys of 1,024 characters and 64 section-path entries of 500 characters per block (so the chunks cut from a long
 block share its keys and per-chunk work stays linear), locator spans that are ranges, coverage counts within their
-total, strings that are valid Unicode, numbers that are JSON (no `NaN` or `Infinity`; integers within 64 bits, other
-numbers within a double) and nesting depth in `attrs` and `options` (16; the reference TOML parser leaves out the
-`attrs.value` of a value nested deeper than 8, whose text the block keeps). `complete` is recomputed from the counts,
-failures and losses, and an artifact whose flag disagrees is refused. A field the contract does not name is dropped. The
-server addresses the artifact by the SHA-256 of its own serialization, not the service's bytes.
+total, strings that are valid Unicode, numbers that are JSON (no `NaN` or `Infinity`; signed 64-bit integers (-2^63 to
+2^63-1), other numbers within a double) and nesting depth in `attrs` and `options` (16; the reference TOML parser leaves
+out the `attrs.value` of a value nested deeper than 8, whose text the block keeps). `complete` is recomputed from the
+counts, failures and losses, and an artifact whose flag disagrees is refused. A field the contract does not name is
+dropped. The server addresses the artifact by the SHA-256 of its own serialization, not the service's bytes.
 
 **Isolation in the reference extractor.** Every `/v1` call carries `Authorization: Bearer <token>`; the service
 refuses to start without a token of at least 16 characters. Each extraction runs in a child process, and before the
@@ -184,8 +184,10 @@ syntax tree stays a searchable block of kind `UNKNOWN`, is listed in `coverage.f
 value text, including values that span lines (multi-line strings, arrays, inline tables). A key block's text is `<full
 path> = <value text>` with its comments, written so it reads on its own; its line span points into the source. The
 comments above a table or key go into its text and its line span; a run of comments no table or key follows is a
-paragraph of its own, and a comment inside a multi-line array stays in that key's text. An invalid file is kept as
-paragraph blocks with `coverage.lost = ["toml_types"]` and the decoder's message.
+paragraph of its own, and a comment inside a multi-line array stays in that key's text. An invalid file, one with an
+integer outside signed 64 bits among them, is kept as paragraph blocks with `coverage.lost = ["toml_types"]` and the
+decoder's message. A key's `attrs.value` is the JSON value, except that a date or time is its ISO text and an infinite
+or NaN float its text (`inf`, `nan`), whatever its `value_type`.
 
 **Contract bounds.** Before it answers, the reference extractor fits every block to the contract's bounds: a key over
 1,024 characters is left out and the first 10,000 kept, and the section path keeps its first 64 entries, each cut to 500

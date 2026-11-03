@@ -8,8 +8,8 @@ each block's type, a unique id and a parent that is an earlier block, at most
 MAX_KEYS keys of MAX_KEY_CHARS and MAX_SECTION_DEPTH section entries of
 MAX_SECTION_CHARS per block, locator spans that are ranges, coverage counts
 within their total, a `complete` flag that matches the counts, strings that are
-valid Unicode, numbers that are JSON (no `NaN` or `Infinity`), integers within
-64 bits and other numbers within a double, and nesting depth in `attrs` and
+valid Unicode, numbers that are JSON (no `NaN` or `Infinity`), signed 64-bit
+integers and other numbers within a double, and nesting depth in `attrs` and
 `options`. A field the contract does not name is dropped, so an
 extractor may add one without a version bump.
 
@@ -205,7 +205,7 @@ def _no_constant(name: str) -> Any:
 
 
 def _int64(text: str) -> int:
-    """An integer within 64 bits, as a column that stores one holds it; a longer
+    """A signed 64-bit integer, as a column that stores one holds it; a longer
     run of digits is not converted at all."""
     if len(text.lstrip("-")) > 19:
         raise ValueError(f"{text[:40]} is out of range")

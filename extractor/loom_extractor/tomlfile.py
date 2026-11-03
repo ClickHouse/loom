@@ -183,9 +183,6 @@ def _jsonable(v: Any) -> Any:
         return v.isoformat()
     if isinstance(v, float) and not math.isfinite(v):
         return str(v)
-    # The contract's integers are 64-bit; TOML's are too, though `tomllib` reads wider.
-    if isinstance(v, int) and not isinstance(v, bool) and not -(2**63) <= v < 2**63:
-        return str(v)
     if isinstance(v, list):
         return [_jsonable(x) for x in v]
     if isinstance(v, dict):
@@ -393,10 +390,29 @@ class _Scanner:
         return last + 1
 
 
+def _wide_integer(doc: dict[str, Any]) -> bool:
+    """Whether the document holds an integer outside signed 64 bits, which TOML
+    makes an error and `tomllib` reads anyway. Walked without recursion."""
+    stack: list[Any] = [doc]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, dict):
+            stack.extend(v.values())
+        elif isinstance(v, list):
+            stack.extend(v)
+        elif isinstance(v, int) and not isinstance(v, bool) and not -(2**63) <= v < 2**63:
+            return True
+    return False
+
+
 def extract_toml(text: str) -> Artifact:
     try:
         doc = tomllib.loads(text)
-    except (tomllib.TOMLDecodeError, RecursionError) as e:  # tomllib recurses per nesting level
+        if _wide_integer(doc):
+            raise ValueError("an integer outside signed 64 bits")
+    # RecursionError: tomllib recurses per nesting level. ValueError: TOMLDecodeError
+    # is one, and so is `int()` refusing a decimal of over 4,300 digits.
+    except (ValueError, RecursionError) as e:
         fallback, _ = paragraph_blocks(text)
         return Artifact(
             format="toml",

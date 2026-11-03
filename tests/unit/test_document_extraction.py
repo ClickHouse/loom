@@ -1391,6 +1391,15 @@ def test_a_codec_that_raises_a_plain_unicode_error_is_an_encoding_error() -> Non
         assert e.value.code == "encoding", codec
 
 
-def test_a_toml_integer_past_64_bits_is_kept_as_its_digits() -> None:
-    a = extract(b"a = 99999999999999999999\nb = -9223372036854775808\n", "c.toml")
-    assert [b.attrs["value"] for b in a.blocks] == ["99999999999999999999", -(2**63)]
+def test_a_toml_integer_outside_signed_64_bits_makes_the_file_invalid_toml() -> None:
+    a = extract(b"a = 9223372036854775807\nb = -9223372036854775808\n", "c.toml")
+    assert [b.attrs["value"] for b in a.blocks] == [2**63 - 1, -(2**63)]
+    for wide in (
+        b"9223372036854775808",
+        b"[[1, 99999999999999999999]]",
+        b"1" * 4301,
+        b"0x" + b"f" * 4000,
+    ):
+        a = extract(b"a = " + wide + b"\n", "c.toml")
+        assert a.coverage.lost == ("toml_types",) and not a.coverage.complete, wide[:20]
+        assert a.blocks[0].type == "paragraph"
