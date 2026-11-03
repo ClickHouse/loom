@@ -51,6 +51,9 @@ async def search_repo_docs(
                     query=query,
                     top_k=max(1, min(int(top_k), 20)),
                     namespace_scope="this",
+                    # An additive leg under a short timeout: a reranker's model call
+                    # would outlast it, and the merge orders by score anyway.
+                    rerank="none",
                 )
             ),
             timeout=timeout_s,
@@ -102,8 +105,12 @@ async def knowledge_with_repo_docs(
     )
     if not extra:
         return base
+    # The merge orders by score, which a reranker's order is not: no reranker ordered it.
     return base.model_copy(
-        update={"results": merge_hits(list(base.results), extra, int(know_input.top_k))}
+        update={
+            "results": merge_hits(list(base.results), extra, int(know_input.top_k)),
+            "reranked_by": "",
+        }
     )
 
 

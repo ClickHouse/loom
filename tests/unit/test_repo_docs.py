@@ -258,3 +258,28 @@ async def test_the_orientation_pack_appends_the_docs_and_caches_the_listing(monk
     # a caller the gate refuses reads no listing, cached or not
     monkeypatch.setattr("server.code.app.repo_scope.row_in_scope", _gate(set()))
     assert await cc._with_repo_docs(ORG, "code-kj", "# map", 2500) == "# map"
+
+
+@pytest.mark.asyncio
+async def test_the_repository_leg_never_reranks_and_a_merge_names_no_reranker(monkeypatch) -> None:
+    """The repository leg runs under a short timeout a reranker's model call would
+    outlast; and the merged list is ordered by score, so no reranker ordered it."""
+    seen: list[str] = []
+
+    async def handle_knowledge_search(inp: KnowledgeSearchInput) -> KnowledgeSearchOutput:
+        seen.append(f"{inp.namespace}:{inp.rerank}")
+        hits = [_hit("doc://repo", 0.9)] if inp.namespace == "code-kj" else [_hit("n://a", 0.5)]
+        return KnowledgeSearchOutput(
+            results=hits, embedding_model="fake", reranked_by="" if inp.rerank else "builtin:x"
+        )
+
+    monkeypatch.setattr(
+        "server.knowledge.app.knowledge_search.handle_knowledge_search", handle_knowledge_search
+    )
+    out = await rd.knowledge_with_repo_docs(BASE, repo_namespace="code-kj")
+    assert sorted(seen) == ["code-kj:none", "me:"]
+    assert [h.source_uri for h in out.results] == ["doc://repo", "n://a"]
+    assert out.reranked_by == ""
+    # with no repository hit the base answer, and its reranker, stand
+    out = await rd.knowledge_with_repo_docs(BASE, repo_namespace="")
+    assert out.reranked_by == "builtin:x"

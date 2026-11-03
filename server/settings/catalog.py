@@ -4462,7 +4462,8 @@ class ProviderSettings(ModelSettings):
     # every tier eligible.
     llm_policy_by_traffic_class: Annotated[str, JsonObject] = '{"bench": {"llm_cache": true}}'
     # JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's
-    # `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are
+    # `rerank_endpoint`, LOOM_CODE_SEARCH_RERANK_DEFAULT and
+    # LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT may name. Names are
     # short identifiers, URLs http(s). Loom posts candidate text only to these. A
     # secret: its URLs can carry a credential.
     rerank_endpoints_json: Annotated[str, JsonObject] = "{}"

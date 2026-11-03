@@ -38,6 +38,24 @@ def test_the_request_names_the_reranker_else_the_deployment_default(monkeypatch)
     assert ks._rerank_endpoint(_input()) == ""
 
 
+def test_an_llm_free_read_reranks_only_as_named_and_never_with_the_llm(monkeypatch) -> None:
+    from server.core import llm_free
+
+    monkeypatch.setattr(settings, "knowledge_search_rerank_default", "builtin:cohere")
+    token = llm_free._read.set(True)
+    try:
+        assert ks._rerank_endpoint(_input()) == ""  # the default is a model call
+        assert ks._rerank_endpoint(_input(rerank="builtin:openai")) == ""
+        assert ks._rerank_endpoint(_input(rerank="builtin:cohere")) == "builtin:cohere"
+    finally:
+        llm_free._read.reset(token)
+
+
+def test_a_default_no_request_may_name_reranks_nothing(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "knowledge_search_rerank_default", "https://example.com/r")
+    assert ks._rerank_endpoint(_input()) == ""
+
+
 def test_a_url_is_no_reranker_a_request_may_name() -> None:
     with pytest.raises(ValueError):
         _input(rerank="https://example.com/rerank")
@@ -63,7 +81,8 @@ async def test_the_head_takes_the_rerankers_order_and_shows_each_chunks_context(
     # the head of two is reversed; the third stays after it
     assert [h.source_uri for h in out] == ["b.md", "a.md", "c.md"]
     excerpts = [c.content_excerpt for c in seen["candidates"]]
-    assert excerpts == ["Lantern handbook > Refunds\n\nte", "text of b.md"]
+    # the context takes at most half the excerpt, then the chunk's own text follows
+    assert excerpts == ["Lantern handboo\n\ntext of a.md", "text of b.md"]
     assert seen["endpoint"] == "builtin:openai" and seen["query"] == "refunds"
 
 
@@ -131,3 +150,46 @@ async def test_the_search_reads_a_rerank_pool_and_reports_the_reranker(monkeypat
     )
     assert pools[-1] == 2 and plain.reranked_by == ""
     assert [h.source_uri for h in plain.results] == ["a.md", "b.md"]
+
+
+@pytest.mark.asyncio
+async def test_sections_collapse_after_the_rerank_so_its_pick_represents_the_section(
+    monkeypatch,
+) -> None:
+    from server.knowledge.app.search import ChunkHit
+
+    monkeypatch.setattr(settings, "knowledge_search_rerank_top", 4)
+
+    class _Embedder:
+        model_name = "m"
+
+        async def embed(self, text: str) -> list[float]:
+            return [1.0]
+
+    def _search(input: Any, embedder: Any, vec: Any, pool: int):
+        async def _run(namespaces: list[str]) -> list[tuple[str, list[ChunkHit]]]:
+            hits = [
+                ChunkHit("n", "a.md", i, f"part {i}", [], distance=0.1 * i, section_path=("S",))
+                for i in range(4)
+            ]
+            return [("n", hits)]
+
+        return _run
+
+    async def _first(input: Any, namespaces: list[str], search: Any) -> Any:
+        return await search(namespaces)
+
+    async def _named(input: Any) -> list[str]:
+        return ["n"]
+
+    async def _reversed(**kw: Any) -> list[Any]:
+        return list(reversed(kw["candidates"]))
+
+    monkeypatch.setattr(ks, "get_embedder", _Embedder)
+    monkeypatch.setattr(ks, "_namespaces_search", _search)
+    monkeypatch.setattr(ks, "_search_private_first", _first)
+    monkeypatch.setattr(ks, "_named_namespaces", _named)
+    monkeypatch.setattr(rerank_mod, "rerank", _reversed)
+    out = await ks.handle_knowledge_search(_input(rerank="builtin:openai", namespaces=["n"]))
+    # the reranker's first chunk of the section survives and folds the other three
+    assert [(h.chunk_idx, h.siblings_folded) for h in out.results] == [(3, 3)]

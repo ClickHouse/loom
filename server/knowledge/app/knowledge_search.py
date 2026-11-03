@@ -19,6 +19,8 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeSearchOutput,
     _SearchHit,
 )
+from server.knowledge.domain.chunking import embedding_text
+from server.memory.app.log_once import LogOnce
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -33,6 +35,9 @@ if TYPE_CHECKING:
 # A first-pass hit this close (cosine similarity) ends a private-first search
 # before its public pass.
 PRIVATE_HIT_THRESHOLD = 0.30
+
+# A rejected deployment default is logged once per value, not once per search.
+_BAD_DEFAULT_LOGGED = LogOnce()
 
 
 async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearchOutput:
@@ -87,10 +92,25 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
 
 def _rerank_endpoint(input: KnowledgeSearchInput) -> str:
     """The reranker this call uses: the request's, else the deployment default; '' for
-    none ("none" turns the default off)."""
+    none ("none" turns the default off). An LLM-free read reranks only as its request
+    names, and never with the builtin LLM reranker; a default that is not a reranker a
+    request may name (a URL, an unconfigured name, Cohere behind a gateway) is none."""
+    from server.core.llm_free import reads_llm_free
+    from server.memory.domain.rerank_names import BUILTIN_OPENAI, check_rerank_name
+
     if input.rerank == "none":
         return ""
-    return input.rerank or settings.knowledge_search_rerank_default.strip()
+    endpoint = input.rerank
+    if not endpoint and not reads_llm_free():
+        try:
+            endpoint = check_rerank_name(settings.knowledge_search_rerank_default)
+        except ValueError as e:
+            if _BAD_DEFAULT_LOGGED.first(settings.knowledge_search_rerank_default):
+                log.warning("knowledge_search_rerank_default is not used: %s", e)
+            endpoint = ""
+    if endpoint.startswith(BUILTIN_OPENAI) and reads_llm_free():
+        return ""
+    return endpoint
 
 
 async def _rerank(
@@ -110,8 +130,10 @@ async def _rerank(
     head, tail = hits[:top], hits[top:]
     candidates = []
     for i, h in enumerate(head):
-        context = contexts.get((h.namespace, h.source_uri, h.chunk_idx), "")
-        text = f"{context}\n\n{h.content}" if context else h.content
+        # At most half the excerpt is context: a long description must not crowd out
+        # the chunk's own text, or every chunk of a document reads the same.
+        context = contexts.get((h.namespace, h.source_uri, h.chunk_idx), "")[: chars // 2]
+        text = embedding_text(context, h.content)
         candidates.append(
             RerankCandidate(
                 memory_key=str(i),

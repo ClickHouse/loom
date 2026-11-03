@@ -194,9 +194,9 @@ class KnowledgeSearchInput(BaseModel):
     # agents wrote as their own, without what an agent derived or fetched.
     # Empty = every class.
     source_classes: list[str] = Field(default_factory=list, max_length=8)
-    # Reranker for this call. Empty = the deployment's `knowledge_search_rerank_default`;
-    # "none" = no rerank; "builtin:openai[:<model>]", "builtin:cohere[:<model>]" or the name
-    # of an endpoint in LOOM_RERANK_ENDPOINTS_JSON reranks the fused top hits. A URL is refused.
+    # Reranker for the fused head: "" = the deployment default
+    # (LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT), "none" = off, "builtin:openai[:<model>]",
+    # "builtin:cohere[:<model>]" or an endpoint name in LOOM_RERANK_ENDPOINTS_JSON (no URL).
     rerank: RerankName = ""
 
     @field_validator("source_classes")

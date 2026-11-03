@@ -249,7 +249,7 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 | `uri_prefix` | `list[str]` | *(computed)* | Directory scope: only chunks whose source_uri starts with one of these prefixes. |
 | `session_ids` | `list[str]` | *(computed)* | Only chunks of documents written in one of these sessions (a chat's own attachments, an agent run's output). |
 | `source_classes` | `list[str]` | *(computed)* | Only chunks of these classes, e.g. ["asserted"] for what people and their agents wrote as their own, without what an agent derived or fetched. |
-| `rerank` | `str` | `''` | Reranker for this call. |
+| `rerank` | `str` | `''` | Reranker for the fused head: "" = the deployment default (LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT), "none" = off, "builtin:openai[:<model>]", "builtin:cohere[:<model>]" or an endpoint name in LOOM_RERANK_ENDPOINTS_JSON (no URL). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
