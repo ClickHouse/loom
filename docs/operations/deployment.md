@@ -747,17 +747,9 @@ and what it leaves:
 - Boot still applies every migration. An empty table costs nothing to serve, and erasure
   covers every table whatever is in use.
 - Every `code.*` operation but `code.repo.remove` answers a precondition error. Retire
-  self-service indexes before turning `LOOM_CODE_SELF_SERVICE_ENABLED` off: while it stays
-  on, `code.repo.remove` retires one by namespace over HTTP, MCP or the SDK
-  ([retiring with the switch off](../features/code-index/repositories.md#self-service-repositories)).
-  For an operator-configured index, remove its entry from `LOOM_CODE_REPO` or
-  `LOOM_CODE_REPOS_JSON` and run `erasure.request` on its namespace to purge its rows.
-  `erasure.request` keeps a self-service index's registry entry, which turning
-  self-service back on indexes again.
-- Mirrors left on disk are deleted by hand. Loom never removes an operator-configured
-  mirror (the entry's `git_dir`, by default under `var/code_repos/`). A self-service
-  mirror under `LOOM_CODE_REPOS_ROOT` is removed only on the replica that served
-  `code.repo.remove`; with code intelligence off no other replica sweeps its copy.
+  any code index before turning the switch off:
+  [code-index operations](./code-index-operations.md#rollout-and-shutdown) covers retirement, erasure and what
+  stays on disk.
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
   leaves the code tools out, but the coding-agent plugins list them, so agents are offered
   tools that refuse. An entry written by `loom install --client claude-code|codex` asks
