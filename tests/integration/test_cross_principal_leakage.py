@@ -1036,6 +1036,8 @@ def test_a_dash_org_is_the_tokens_own_org(control_plane_url, seed, tokens) -> No
     r = _post(control_plane_url, tokens["a_writer"], "memory.set", {**dash, "value": nonce})
     assert r.status_code == 200, r.text[:200]
     dash_id = r.json()["memory_id"]
+    # memory.get answers no namespace or key: finding the row under the
+    # writer's org, namespace "-" and this key is what places it.
     r = _post(control_plane_url, tokens["a_writer"], "memory.get", {**dash, "org": seed.org})
     assert r.status_code == 200, r.text
     row = r.json()
@@ -1047,6 +1049,7 @@ def test_a_dash_org_is_the_tokens_own_org(control_plane_url, seed, tokens) -> No
         "process:alice",
         "asserted",
     )
+    assert (row["user_id"], row["session_id"], row["memory_type"]) == ("-", "-", "semantic")
     for body in ({"org": "-", "namespace": seed.ns_a, "agent": "a", "memory_key": key}, dash):
         r = _post(control_plane_url, tokens["other_org"], "memory.get", body)
         assert r.status_code in _OK_STATUSES, r.text[:200]
