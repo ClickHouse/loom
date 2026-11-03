@@ -143,13 +143,15 @@ export async function clientStatus({
 
 if (process.env.LOOM_HOOK_NO_MAIN !== "1") {
   const { token, kind } = tokenLookup();
+  // Under Codex the MCP entry's URL is unknown here: the check runs against
+  // the hooks' server and compares the config with nothing.
+  const fixed = entryIsFixed();
   const result = await clientStatus({
-    serverUrl: statusServerUrl(),
+    serverUrl: fixed ? resolveServerUrl() : statusServerUrl(),
     token,
     scope: resolveScope(process.cwd()),
     tokenKind: kind,
-    // Under Codex the entry's URL is unknown here, so no comparison is made.
-    configUrl: entryIsFixed() ? "" : loomConfig().url,
+    configUrl: fixed ? "" : loomConfig().url,
     exchangeUrl: resolveServerUrl(),
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

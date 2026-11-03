@@ -157,9 +157,12 @@ test("the Codex copy checks the hooks' server and makes no source comparison", a
   const codexScript = fileURLToPath(new URL("../../codex-plugin/bin/loom-client-status.mjs", import.meta.url));
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-status-codex-")));
   fs.mkdirSync(path.join(home, ".loom"));
+  // A token the spawned process's own clock reads as live: the server line
+  // and the source line are what this test is about, not expiry.
+  const live = token(Math.floor(Date.now() / 1000) + 3600);
   fs.writeFileSync(
     path.join(home, ".loom", "config.json"),
-    JSON.stringify({ url: "https://elsewhere.test", token: token() }),
+    JSON.stringify({ url: "https://elsewhere.test", token: live }),
   );
   try {
     const out = await new Promise((resolve) => {
@@ -175,7 +178,8 @@ test("the Codex copy checks the hooks' server and makes no source comparison", a
     const source = result.checks.find((c) => c.name === "source");
     assert.equal(source.grade, "PASS");
     assert.ok(source.detail.endsWith("config.json"), source.detail);
-    assert.equal(out.includes(token()), false);
+    assert.equal(result.checks.find((c) => c.name === "token").grade, "PASS");
+    assert.equal(out.includes(live), false);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

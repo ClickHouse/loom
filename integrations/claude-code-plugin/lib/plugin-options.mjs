@@ -20,7 +20,6 @@ import {
   normalizeUrl,
   pluginDefaults,
   readConfigFile,
-  resolveServerUrl,
   writeConfigMerged,
 } from "./loom-client.mjs";
 import { readJsonFile, removeFile, tmpStatePath, writeJsonFile } from "./tmp-state.mjs";
@@ -78,11 +77,11 @@ export function installServerUrl({ tmp } = {}) {
   return String(readJsonFile(installStatePath(tmp), {}).url || "");
 }
 
-/** The server the status script checks: under Claude Code the one the MCP
+/** The server the status script checks under Claude Code: the one the MCP
  *  entry calls, with the saved install URL standing in for the option the
- *  agent's shell lacks; under Codex the hooks' server. */
+ *  agent's shell lacks. (Under Codex the script checks the hooks' server,
+ *  `resolveServerUrl`, and decides that itself.) */
 export function statusServerUrl({ tmp } = {}) {
-  if (entryIsFixed()) return resolveServerUrl();
   return installServerUrl({ tmp }) || mcpServerUrl();
 }
 
