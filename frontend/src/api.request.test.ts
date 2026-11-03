@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getMySharingSummary, listServiceAccounts, onSignInRejected, post, setToken, subscribeInflight } from "./api";
+import {
+  clearToken,
+  getMySharingSummary,
+  listServiceAccounts,
+  onSignInRejected,
+  post,
+  setToken,
+  subscribeInflight,
+} from "./api";
 import { ApiError } from "./lib/errors";
 
 // The GET reads ride the same request path as post(): a failure is an ApiError with the
@@ -87,13 +95,22 @@ describe("a refused sign-in token", () => {
     onSignInRejected(() => undefined);
   });
 
-  it("ends the session once on a 401 for the stored token, and still rejects the call", async () => {
-    const ended = vi.fn();
+  it("ends the session on a 401 for the stored token, and still rejects the call", async () => {
+    const ended = vi.fn(() => clearToken());
     onSignInRejected(ended);
     setToken("tok-a");
     stubFetch(401, '{"detail":{"code":"AUTH_INVALID","message":"token expired: Signature has expired"}}');
     const err = await rejection(post("/v1/collection.list", { org: "o" }));
     expect(err.status).toBe(401);
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+
+  it("ends it once for 401s that were in flight together", async () => {
+    const ended = vi.fn(() => clearToken());
+    onSignInRejected(ended);
+    setToken("tok-a");
+    stubFetch(401, "{}");
+    await Promise.all([1, 2, 3].map(() => rejection(post("/v1/memory.list", { org: "o" }))));
     expect(ended).toHaveBeenCalledTimes(1);
   });
 
@@ -114,11 +131,11 @@ describe("a refused sign-in token", () => {
     expect(ended).not.toHaveBeenCalled();
   });
 
-  it("does nothing without a stored token", async () => {
+  it("does nothing for a request sent without a token (proxy mode, auth off)", async () => {
     const ended = vi.fn();
     onSignInRejected(ended);
     stubFetch(401, "{}");
-    await rejection(post("/v1/auth/login", {}));
+    await rejection(post("/v1/memory.list", { org: "o" }));
     expect(ended).not.toHaveBeenCalled();
   });
 });

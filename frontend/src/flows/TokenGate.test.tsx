@@ -178,13 +178,6 @@ describe("TokenGate", () => {
       expect(goToSso).not.toHaveBeenCalled();
     });
 
-    it("waits for a click over a page mid-session, where leaving would lose what was typed", () => {
-      window.__LOOM_SSO = true;
-      render(<TokenGate onLogin={() => undefined} reason="expired" resume={false} />);
-      expect(goToSso).not.toHaveBeenCalled();
-      expect(screen.getByRole("status")).toHaveTextContent("Your session expired — sign in again.");
-    });
-
     it("sends the person to the identity provider, with no password field", () => {
       window.__LOOM_SSO = true;
       render(<TokenGate onLogin={() => undefined} reason={null} />);

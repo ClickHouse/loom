@@ -78,6 +78,16 @@ export function clearToken(): void {
   localStorage.removeItem(KEY_TOKEN);
 }
 
+/** Call `fn` with each token another tab of this origin stores (a sign-in there); the
+ *  returned function stops listening. */
+export function onTokenStored(fn: (token: string) => void): () => void {
+  const listener = (e: StorageEvent) => {
+    if (e.key === KEY_TOKEN && e.newValue) fn(e.newValue);
+  };
+  window.addEventListener("storage", listener);
+  return () => window.removeEventListener("storage", listener);
+}
+
 // The app's answer to a stored token the server refuses (expired or revoked): it sends the
 // person back to sign in. Registered by App, so this module stays free of the store.
 let signInRejected: (() => void) | null = null;

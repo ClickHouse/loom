@@ -19,9 +19,6 @@ interface TokenGateProps {
   /** Why the gate is showing: "expired" when the server refused the stored token;
    *  null/undefined on a first visit. */
   reason?: GateReason;
-  /** With SSO on and an expired session, start the sign-in without a click. Only at page
-   *  load: over a page mid-session it would throw away what the person typed there. */
-  resume?: boolean;
 }
 
 // No hosted docs site — the repo's Markdown is the documentation (README).
@@ -42,8 +39,8 @@ export const DOCS_MCP_URL = `${REPO_DOCS}/features/integrations/mcp-clients.md`;
  * With SSO on (the `__LOOM_SSO` boot flag) the gate is one button instead:
  * the server refuses password sign-in and sign-up there.
  */
-export function TokenGate({ onLogin, reason = null, resume = true }: TokenGateProps) {
-  if (window.__LOOM_SSO === true) return <SsoGate reason={reason} resume={resume} />;
+export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
+  if (window.__LOOM_SSO === true) return <SsoGate reason={reason} />;
   return <PasswordGate onLogin={onLogin} reason={reason} />;
 }
 
@@ -79,14 +76,14 @@ export function resumeSsoOnce(now: number = Date.now()): boolean {
 }
 
 /** Sends the browser to the identity provider; it comes back to `/me#token=…`. After an
- *  expired session at page load it goes there by itself, so a person still signed in at
- *  the provider returns to the page they were on. */
-function SsoGate({ reason, resume }: { reason?: GateReason; resume: boolean }) {
+ *  expired session (the gate shows only while the app boots) it goes there by itself, so a
+ *  person still signed in at the provider returns to the page they were on. */
+function SsoGate({ reason }: { reason?: GateReason }) {
   useEffect(() => {
-    if (!resume || reason !== "expired" || !resumeSsoOnce()) return;
+    if (reason !== "expired" || !resumeSsoOnce()) return;
     rememberSignInStart();
     goToSso();
-  }, [reason, resume]);
+  }, [reason]);
   return (
     <GateShell>
       <Panel className="space-y-4">

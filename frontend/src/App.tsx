@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef } from "react";
 import { flushView, installVitals, startView } from "./lib/vitals";
 import { ReloadBar } from "./components/ReloadBar";
-import { sharedMine, sharedHealth } from "./lib/sharedReads";
+import { invalidateShared, sharedMine, sharedHealth } from "./lib/sharedReads";
 import { SkeletonCard } from "./components/Skeleton";
 import { Loading, LoadingSkeleton } from "./components/ui";
 import {
@@ -15,8 +15,11 @@ import {
   hasToken,
   clearToken,
   onSignInRejected,
+  onTokenStored,
   storedToken,
+  ApiError,
   type MyNamespaceEntry,
+  type WhoAmI,
 } from "./api";
 import {
   canReadNamespace,
@@ -40,28 +43,57 @@ import { ToastViewport, toast, toastError } from "./components/Toast";
 import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
 import { ProblemsBanner } from "./components/ProblemsBanner";
+import { SessionExpiredBar } from "./components/SessionExpiredBar";
 import { shortcutOff } from "./lib/shortcuts";
 
-// A token the server refuses mid-session (it expired or was revoked) puts sign-in over the
-// page, instead of each view showing the refusal as its error. The page stays mounted.
+// A token the server refuses (it expired or was revoked). While the app boots there is no
+// page to keep: the sign-in gate shows, saying why. Mid-session a bar says so over the page,
+// which stays as it is, instead of each view showing the refusal as its error.
 onSignInRejected(() => {
   clearToken();
   // A single-user install has no sign-in: its next call goes without the stale token.
   if (isAuthDisabled()) return;
-  useStore.getState().setSessionExpired(true);
+  const s = useStore.getState();
+  if (!s.whoami) {
+    s.setGateReason("expired");
+    s.setAuthed(false);
+    return;
+  }
+  s.setSessionExpired(true);
 });
 
-/** After signing in again over the page: the same person carries on where they were; anyone
- *  else gets a fresh page, so nothing the last person read stays on screen. */
-function afterSignInAgain(): void {
+/** whoami, asked again while the replica answers 503 (its signing keys still loading, the
+ *  token may be fine): a few tries a second apart before boot gives up. */
+async function whoamiWhenReady(): Promise<WhoAmI> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await whoami();
+    } catch (e) {
+      if (attempt >= 4 || !(e instanceof ApiError) || e.status !== 503) throw e;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+}
+
+/** A token another tab stored while this one's session was away: the same person carries
+ *  on here, with their identity and roles read again; anyone else gets a fresh page, so
+ *  nothing the last person read stays on screen. */
+async function takeTokenFromAnotherTab(token: string): Promise<void> {
   const before = useStore.getState().whoami;
-  const now = claimsFromToken(storedToken());
+  const now = claimsFromToken(token);
   if (!before?.subject || now?.subject !== before.subject || now?.org !== before.org) {
     location.reload();
     return;
   }
   useStore.getState().setSessionExpired(false);
   toast("Signed in again. Retry what failed while the session was away.", "ok");
+  try {
+    useStore.getState().setWhoami(await whoami());
+    invalidateShared();
+    useStore.getState().setMyNamespaces(await sharedMine(before.org ?? ""));
+  } catch {
+    /* the boot-time identity stays; a reload reads it again */
+  }
 }
 
 // One view per chunk, so a person opening Memories does not pay for the code index
@@ -169,6 +201,11 @@ export default function App() {
   const setAuthed = useStore((s) => s.setAuthed);
   const gateReason = useStore((s) => s.gateReason);
   const sessionExpired = useStore((s) => s.sessionExpired);
+  // While the session is away, a sign-in in another tab hands this one its token.
+  useEffect(() => {
+    if (!sessionExpired) return;
+    return onTokenStored((token) => void takeTokenFromAnotherTab(token));
+  }, [sessionExpired]);
   const setWhoami = useStore((s) => s.setWhoami);
   // Boot settles the identity (a provisional namespace, then the answer): not a switch, so
   // the deep link's memory or thread stays open.
@@ -330,7 +367,7 @@ export default function App() {
           ? sharedMine(early.org).catch(() => null)
           : null;
 
-        const w = await whoami();
+        const w = await whoamiWhenReady();
         if (!w.authenticated) {
           // A stored token the server no longer accepts is dead — drop it so the next
           // load doesn't retry it, and tell the gate why it is showing instead of a
@@ -506,8 +543,7 @@ export default function App() {
       >
         Skip to main content
       </a>
-      {/* Out of reach while sign-in shows over it; still mounted, so nothing typed is lost. */}
-      <div className="flex flex-1 min-h-0" {...(sessionExpired ? { inert: "" } : {})}>
+      <div className="flex flex-1 min-h-0">
         <Sidebar />
         <div className="flex-1 flex flex-col min-w-0">
           <ReloadBar />
@@ -565,13 +601,7 @@ export default function App() {
           <HelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
         </Suspense>
       )}
-      {sessionExpired && !isProxyMode() && (
-        <div className="fixed inset-0 z-[70] overflow-y-auto bg-bg">
-          <Suspense fallback={null}>
-            <TokenGate onLogin={afterSignInAgain} reason="expired" resume={false} />
-          </Suspense>
-        </div>
-      )}
+      {sessionExpired && <SessionExpiredBar />}
       <NetworkProgress />
       <ToastViewport />
       <ConfirmViewport />
