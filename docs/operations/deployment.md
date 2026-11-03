@@ -964,25 +964,27 @@ Images include build provenance and an SBOM. The one-line installer pins `X.Y.Z`
 generated `.env`; pin an immutable version (or digest) in production rather than tracking
 `latest` ([release process](../development/release-process.md)).
 
-The document extractor service (the parsers, apart from the server:
-[document extraction](../architecture/document-extraction.md)) is an image of its own,
-built by [`extractor/Dockerfile`](../../extractor/Dockerfile) from `extractor/uv.lock`
-and published as `ghcr.io/clickhouse/loom-extractor` with the same tags. It runs as uid
-10001, which owns nothing in the image, listens on 8790 and has a `/healthz` healthcheck.
-`compose.yaml` runs it as the `extractor` service, at `LOOM_VERSION` like the server:
-on a network of its own that is internal (no route out) and that only the `loom`
-service shares, with no published port, a read-only root filesystem, every capability
-dropped, `no-new-privileges` and a memory, CPU and process bound. That network lets the
-service's process reach `loom`; each extraction's process can make no socket at all, so
-the one a hostile file could take over reaches neither `loom` nor anything else. It gets one variable,
-the token; the server reads `LOOM_DOCUMENT_EXTRACTOR_URL` (`http://extractor:8790`) and
-`LOOM_DOCUMENT_EXTRACTOR_TOKEN` from `.env`, which the installer writes, a new token
-per install, and adds to an install from before the service. `LOOM_EXTRACTOR_IMAGE_REPOSITORY`
-names another image, as `LOOM_IMAGE_REPOSITORY` does the server's. The development stack
-(`make dev`) builds it from the checkout. The stacks that bring their own ClickHouse
-(`dev/docker-compose.cloud.yml`, `dev/docker-compose.replicas.yml`, the blue/green
-colours) run none: point `LOOM_DOCUMENT_EXTRACTOR_URL` and `LOOM_DOCUMENT_EXTRACTOR_TOKEN`
-at an extractor you run, or the server reports every format unavailable.
+The document extractor service (the parsers, apart from the server: [document
+extraction](../architecture/document-extraction.md)) is an image of its own, built by
+[`extractor/Dockerfile`](../../extractor/Dockerfile) from `extractor/uv.lock` and
+published as `ghcr.io/clickhouse/loom-extractor` with the same tags. It runs as uid
+10001, which owns nothing in the image, listens on 8790 and has a `/healthz`
+healthcheck. `compose.yaml` runs it as the `extractor` service, at `LOOM_VERSION` like
+the server: on a network of its own that is internal (no route out) and that only the
+`loom` service shares, with no published port, a read-only root filesystem, every
+capability dropped, `no-new-privileges` and a memory, CPU and process bound. That
+network lets the service's process reach `loom`; each extraction's process can make no
+socket at all, so the one a hostile file could take over reaches neither `loom` nor
+anything else. The service gets one variable, the token; the server reads
+`LOOM_DOCUMENT_EXTRACTOR_URL` (`http://extractor:8790`) and
+`LOOM_DOCUMENT_EXTRACTOR_TOKEN` from `.env`, which the installer writes, a new token per
+install, and adds to an install from before the service.
+`LOOM_EXTRACTOR_IMAGE_REPOSITORY` names another image, as `LOOM_IMAGE_REPOSITORY` does
+the server's. The development stack (`make dev`) builds it from the checkout. The stacks
+that bring their own ClickHouse (`dev/docker-compose.cloud.yml`,
+`dev/docker-compose.replicas.yml`, the blue/green colours) run none: point
+`LOOM_DOCUMENT_EXTRACTOR_URL` and `LOOM_DOCUMENT_EXTRACTOR_TOKEN` at an extractor you
+run, or the server reports every format unavailable.
 
 The matching GitHub Release carries `loom-stack.tar.gz`, its SHA-256 file, and
 `install.sh`. The bundle is the supported source-free laptop deployment: it contains
