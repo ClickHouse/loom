@@ -2,10 +2,10 @@
 creates it.
 
 The rows whose identity names the subject (`own`) are reported apart from every other
-live row of the namespace (`shared`): an agent's name or a session id says who wrote a
+live row of the namespace (`others`): an agent's name or a session id says who wrote a
 row, not what that agent or session can read, so a view filtered on it never stands for
-everything the subject knows. The subject's own ledger calls say what it attempted and
-what succeeded in the window, nothing more. The settings section reads the namespace
+everything the subject knows. The ledger calls filed under the subject say what was
+attempted and what succeeded in the window, nothing more. The settings section reads the namespace
 guide and categories, and the operator extraction policy only for a caller who may read
 it (an org admin).
 
@@ -45,24 +45,27 @@ TOP_TAGS = 20
 # them under that identity; they are someone looking at the subject, not its calls.
 ABOUT_SUBJECT_OPS = ("memory.inspect", "mentor.brief")
 
-# subject: (own, shared) definitions.
+# subject: (own, others) definitions. Neither view counts the namespace's promoted rows
+# (`memory.promote`, `loom.shared`), which a search serves to every agent as well.
+_PROMOTED = " Promoted rows (memory.promote) are not counted."
 _DEFINITIONS: dict[str, tuple[str, str]] = {
     "user": (
         "Live rows filed under this user_id, whoever wrote them: what a token pinned to "
-        "this user (read_scope own_user) reads.",
+        "this user (read_scope own_user) reads." + _PROMOTED,
         "Every other live row of the namespace. A member reads these too; a token pinned "
-        "to this user does not.",
+        "to this user does not." + _PROMOTED,
     ),
     "agent": (
         "Live rows written under this agent name. The name records the writer; it is not a "
-        "read boundary.",
+        "read boundary." + _PROMOTED,
         "Every live row other agents wrote. This agent reads them as well, under the same "
-        "namespace grant.",
+        "namespace grant." + _PROMOTED,
     ),
     "session": (
-        "Live rows written in this session_id.",
+        "Live rows written in this session_id, by any user. A token pinned to one user and "
+        "this session (read_scope own_session) reads that user's part." + _PROMOTED,
         "Every other live row of the namespace. A member's session reads these too; a "
-        "token pinned to this session (read_scope own_session) does not.",
+        "token pinned to a user and this session does not." + _PROMOTED,
     ),
 }
 
@@ -93,7 +96,10 @@ class _Inspect:
         i = self.inp
         args = (i.org, i.namespace, i.subject, i.id, which)
         out = InspectView(definition=definition)
+        failed = len(self.skipped)
         counts = await self.guarded(f"{which}.counts", lambda: store.view_counts(*args), Rows())
+        # Without the counts, the listing cannot be shown to hold the whole view.
+        counted = len(self.skipped) == failed
         out.live_rows = sum(int(r["rows"]) for r in counts)
         out.by_type = _counts(counts, "memory_type")
         out.by_status = _counts(counts, "status")
@@ -133,7 +139,7 @@ class _Inspect:
                 )
                 for r in newest
             ]
-        out.complete = len(out.newest) >= out.live_rows
+        out.complete = counted and len(out.newest) >= out.live_rows
         return out
 
     async def activity(self) -> InspectActivity:
@@ -209,11 +215,11 @@ class _Inspect:
 
 async def handle_memory_inspect(input: MemoryInspectInput) -> MemoryInspectOutput:
     run = _Inspect(input)
-    own_def, shared_def = _DEFINITIONS[input.subject]
+    own_def, others_def = _DEFINITIONS[input.subject]
     # Settings first: the views name categories from it.
     settings_out = await run.settings_section()
     own = await run.view("own", own_def)
-    shared = await run.view("shared", shared_def)
+    others = await run.view("others", others_def)
     activity = await run.activity()
     return MemoryInspectOutput(
         org=input.org,
@@ -222,7 +228,7 @@ async def handle_memory_inspect(input: MemoryInspectInput) -> MemoryInspectOutpu
         id=input.id,
         computed_at=datetime.now(UTC).replace(tzinfo=None),
         own=own,
-        shared=shared,
+        others=others,
         activity=activity,
         settings=settings_out,
         skipped=run.skipped,

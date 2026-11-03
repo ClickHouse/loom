@@ -1085,7 +1085,7 @@ Inspect one user, agent or session of a namespace, read-only.
 | `id` | `str` |  |
 | `computed_at` | `datetime` |  |
 | `own` | `InspectView` | Rows whose identity names the subject. |
-| `shared` | `InspectView` | Every other live row of the namespace: what the subject reads as a member but did not write or is not filed under. |
+| `others` | `InspectView` | Every other live row of the namespace: what the subject reads as a member but did not write or is not filed under. |
 | `activity` | `InspectActivity` |  |
 | `settings` | `InspectSettings` |  |
 | `skipped` | `list[str]` | Sections that could not be read, as "section: reason". |

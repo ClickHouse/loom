@@ -1,10 +1,11 @@
 """memory.inspect — one user, agent or session's rows, kept apart from the rest.
 
-The `own` and `shared` views split the namespace on the subject's identity column; the
+The `own` and `others` views split the namespace on the subject's identity column; the
 column is one of three fixed names and the id is bound; the unset sentinel names no one;
 the activity counts leave out inspector calls and say when the ledger keeps less than
 the window; the extraction policy is read only for an org admin; a failed section is
-reported in `skipped`; nothing is written.
+reported in `skipped`, and a view whose counts failed is not complete; the excerpt
+comes from the listed rows' previews; nothing is written.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from pydantic import ValidationError
 
 from server.memory.api.models_inspect import MemoryInspectInput
 from server.memory.app import inspect as mi
+from server.memory.store.inspect import excerpt
 from server.operations.registry import OPERATIONS_BY_NAME
 from tests.unit.ch_fake import RecordingCH
 
@@ -61,18 +63,19 @@ def _newest(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
             "session_id": "-",
             "actor": "process:bot",
             "updated_at": T1,
-            "excerpt": "Tuesdays",
+            "high": False,
         }
     ]
 
 
-def _ch() -> RecordingCH:
+def _ch(tags: Any = None, counts: Any = _counts) -> RecordingCH:
     return (
         RecordingCH()
-        .on("GROUP BY memory_type, status, source_class", _counts)
-        .on("arrayJoin(tags)", [{"tag": "deploy", "rows": 2}])
+        .on("GROUP BY memory_type, status, source_class", counts)
+        .on("arrayJoin(tags)", tags or [{"tag": "deploy", "rows": 2}])
         .on("FROM loom.memory_categories FINAL", [{"category_id": "c1", "rows": 1}])
         .on("ORDER BY updated_at DESC", _newest)
+        .on("value_preview", [{"id": MID, "version": 7, "value_preview": '"Deploys on Tuesdays."'}])
         .on("FROM loom.memory_versions", [{"id": MID, "versions": 3}])
         .on(
             "FROM loom.agent_events",
@@ -119,13 +122,13 @@ def test_registered_read_only_for_viewers() -> None:
 @pytest.mark.parametrize(
     ("subject", "column"), [("user", "user_id"), ("agent", "agent"), ("session", "session_id")]
 )
-async def test_own_and_shared_split_on_the_subjects_column(
+async def test_own_and_others_split_on_the_subjects_column(
     ch: RecordingCH, subject: str, column: str
 ) -> None:
     out = await mi.handle_memory_inspect(_inp(subject=subject, id="x1"))
-    assert out.own.live_rows == 3 and out.shared.live_rows == 6
-    assert "not a read boundary" in mi._DEFINITIONS["agent"][0]
-    assert out.own.definition != out.shared.definition
+    assert out.own.live_rows == 3 and out.others.live_rows == 6
+    assert out.own.definition == mi._DEFINITIONS[subject][0]
+    assert out.others.definition == mi._DEFINITIONS[subject][1]
     reads = [s for s in ch.statements("FROM loom.memory FINAL") if "memory_categories" not in s.sql]
     assert reads
     for s in reads:
@@ -145,6 +148,10 @@ async def test_a_view_counts_lists_and_cites(ch: RecordingCH) -> None:
     assert (own.first_updated_at, own.last_updated_at) == (T0, T1)
     row = own.newest[0]
     assert (row.memory_id, row.version, row.versions, row.actor) == (MID, 7, 3, "process:bot")
+    # The excerpt is the decoded preview of the listed version, read for that row only.
+    assert row.excerpt == "Deploys on Tuesdays."
+    (preview,) = ch.statements("value_preview")[:1]
+    assert preview.params["pairs"] == [(MID, 7)] and "FINAL" not in preview.sql
     # One row listed of three: not a complete listing.
     assert own.complete is False
     assert not ch.inserted("memory") and not ch.statements(kind="execute")
@@ -205,14 +212,37 @@ async def test_the_extraction_policy_is_read_only_for_an_org_admin(
 
 @pytest.mark.asyncio
 async def test_a_failed_section_is_skipped_not_raised(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = _ch()
+    fake = _ch(tags=_boom)
     fake.strict = False
-    fake._routes.insert(0, type(fake._routes[0])("arrayJoin(tags)", _boom, None))
     fake.install(monkeypatch)
     out = await mi.handle_memory_inspect(_inp())
-    assert "own.tags: RuntimeError" in out.skipped and "shared.tags: RuntimeError" in out.skipped
+    assert "own.tags: RuntimeError" in out.skipped and "others.tags: RuntimeError" in out.skipped
     assert out.own.top_tags == [] and out.own.live_rows == 3
 
 
+@pytest.mark.asyncio
+async def test_a_view_whose_counts_failed_is_not_complete(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _ch(counts=_boom)
+    fake.strict = False
+    fake.install(monkeypatch)
+    out = await mi.handle_memory_inspect(_inp())
+    assert "own.counts: RuntimeError" in out.skipped
+    assert out.own.live_rows == 0 and len(out.own.newest) == 1 and out.own.complete is False
+
+
+@pytest.mark.parametrize(
+    ("preview", "text"),
+    [
+        ('"Prefers email."', "Prefers email."),
+        ('{"a": 1}', '{"a": 1}'),
+        # A preview cut inside a long string, and one cut inside an escape.
+        ('"line one\\nline two', "line one\nline two"),
+        ('"caf\\u00e', "caf"),
+    ],
+)
+def test_the_excerpt_decodes_a_cut_preview(preview: str, text: str) -> None:
+    assert excerpt(preview) == text
+
+
 def _boom(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-    raise RuntimeError("tags read failed")
+    raise RuntimeError("read failed")

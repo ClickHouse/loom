@@ -7,6 +7,7 @@ subject's column is one of three fixed names, never a caller's value; the id is 
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from typing import Any, Literal
 
@@ -15,7 +16,7 @@ from server.core.repo_base import _CHClient, _default_client
 # The identity column each subject is matched on.
 SUBJECT_COLUMN: dict[str, str] = {"user": "user_id", "agent": "agent", "session": "session_id"}
 
-View = Literal["own", "shared"]
+View = Literal["own", "others"]
 
 _LIVE = (
     "FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} "
@@ -108,35 +109,71 @@ async def view_newest(
     limit: int,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """The view's newest rows, identifiers and a 200-character excerpt (none for a
-    high-sensitivity row). The id is selected as `id`: an alias named memory_id would
-    shadow the column."""
-    return await (ch or _default_client()).query_all(
+    """The view's newest rows: identifiers, then `value_preview` for those rows only. The
+    order is not the sort key, so under FINAL one statement would read every row's value
+    before the limit; the rows are located without it, and their previews read by
+    (memory_id, version), as `memory.list` does. The id is selected as `id`: an alias
+    named memory_id would shadow the column."""
+    client = ch or _default_client()
+    located = await client.query_all(
         f"""
         SELECT memory_key, toString(memory_id) AS id, version,
                toString(content_sha256) AS content_sha256, memory_type,
                toString(status) AS status, source_class, agent, user_id, session_id, actor,
-               updated_at,
-               if(sensitivity = 'high', '',
-                  substring(if(JSONType(value) = 'String', JSONExtractString(value), value),
-                            1, 200)) AS excerpt
+               updated_at, sensitivity = 'high' AS high
         {_LIVE} AND {_view(subject, view)}
         ORDER BY updated_at DESC, memory_key
         LIMIT {{lim:UInt32}}
         """,
         params=_params(org, namespace, subject_id, lim=int(limit)),
     )
+    pairs = [(r["id"], int(r["version"])) for r in located if not r["high"]]
+    previews: dict[tuple[str, int], str] = {}
+    if pairs:
+        rows = await client.query_all(
+            """
+            SELECT toString(memory_id) AS id, version, value_preview
+            FROM loom.memory
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND (memory_id, version) IN {pairs:Array(Tuple(UUID, UInt64))}
+            LIMIT 1 BY memory_id, version
+            """,
+            params={"org": org, "ns": namespace, "pairs": pairs},
+        )
+        previews = {(r["id"], int(r["version"])): str(r["value_preview"]) for r in rows}
+    return [
+        {
+            **{k: v for k, v in r.items() if k != "high"},
+            "excerpt": excerpt(previews.get((r["id"], int(r["version"])), "")),
+        }
+        for r in located
+    ]
+
+
+def excerpt(preview: str) -> str:
+    """The first 200 characters of a value's preview, a JSON string decoded. A preview
+    cut inside a long string is closed and decoded, dropping a cut escape."""
+    if preview.startswith('"'):
+        for cut in range(7):
+            try:
+                text = json.loads(preview if cut == 0 else preview[: len(preview) - cut + 1] + '"')
+            except ValueError:
+                continue
+            if isinstance(text, str):
+                return text[:200]
+    return preview[:200]
 
 
 async def version_counts(
     org: str, namespace: str, memory_ids: Sequence[str], *, ch: _CHClient | None = None
 ) -> dict[str, int]:
-    """memory_id -> the version rows the history holds for it."""
+    """memory_id -> the versions the history holds for it (a row not yet merged away
+    is counted once)."""
     if not memory_ids:
         return {}
     rows = await (ch or _default_client()).query_all(
         """
-        SELECT toString(memory_id) AS id, count() AS versions
+        SELECT toString(memory_id) AS id, uniqExact(version) AS versions
         FROM loom.memory_versions
         WHERE org = {org:String} AND namespace = {ns:String}
           AND memory_id IN {ids:Array(UUID)}

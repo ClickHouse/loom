@@ -93,7 +93,8 @@ class InspectView(BaseModel):
 
 
 class InspectActivity(BaseModel):
-    """The subject's own calls in the ledger window: what was attempted and what
+    """The calls the ledger files under the subject in the window, whoever made them (a
+    call is filed under the identity its arguments name): what was attempted and what
     succeeded, never whether a result reached a model or changed an answer."""
 
     window_seconds: int
@@ -136,8 +137,8 @@ class MemoryInspectOutput(BaseModel):
     # Rows whose identity names the subject.
     own: InspectView
     # Every other live row of the namespace: what the subject reads as a member but did
-    # not write or is not filed under.
-    shared: InspectView
+    # not write or is not filed under. Neither view counts promoted rows (loom.shared).
+    others: InspectView
     activity: InspectActivity
     settings: InspectSettings
     # Sections that could not be read, as "section: reason". A skipped section is not

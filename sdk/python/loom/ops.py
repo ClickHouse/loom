@@ -12169,7 +12169,7 @@ class MemoryInspectOutput(TypedDict, total=False):
     id: Required[str]
     computed_at: Required[str]  # date-time as ISO-8601 text
     own: Required["InspectView"]
-    shared: Required["InspectView"]
+    others: Required["InspectView"]
     activity: Required["InspectActivity"]
     settings: Required["InspectSettings"]
     skipped: NotRequired[list[str]]
@@ -12216,7 +12216,7 @@ class InspectRow(TypedDict, total=False):
 
 
 class InspectActivity(TypedDict, total=False):
-    "The subject's own calls in the ledger window: what was attempted and what"
+    "The calls the ledger files under the subject in the window, whoever made them (a"
 
     window_seconds: Required[int]
     calls: NotRequired[list["InspectCount"]]

@@ -4949,7 +4949,7 @@ export interface MemoryInspectOutput {
   id: string;
   computed_at: string; // date-time
   own: InspectView;
-  shared: InspectView;
+  others: InspectView;
   activity: InspectActivity;
   settings: InspectSettings;
   skipped?: string[];

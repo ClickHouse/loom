@@ -27,7 +27,7 @@ ORG = unique_org("inspect")
 
 
 @pytest.mark.asyncio
-async def test_inspect_splits_own_from_shared_and_writes_nothing(
+async def test_inspect_splits_own_from_others_and_writes_nothing(
     control_plane_url: str, mint_test_token: Any, ch_client: Any
 ) -> None:
     ns = f"in-{uuid.uuid4().hex[:6]}"
@@ -81,13 +81,13 @@ async def test_inspect_splits_own_from_shared_and_writes_nothing(
 
         before = rows()
         agent = await post("memory.inspect", {"subject": "agent", "id": "bot"})
-        assert agent["own"]["live_rows"] == 2 and agent["shared"]["live_rows"] == 1
+        assert agent["own"]["live_rows"] == 2 and agent["others"]["live_rows"] == 1
         assert {r["memory_key"] for r in agent["own"]["newest"]} == {"u1/pref", "u2/pref"}
-        assert [r["memory_key"] for r in agent["shared"]["newest"]] == ["team/deploy"]
+        assert [r["memory_key"] for r in agent["others"]["newest"]] == ["team/deploy"]
         assert "not a read boundary" in agent["own"]["definition"]
 
         user = await post("memory.inspect", {"subject": "user", "id": "u1"})
-        assert user["own"]["live_rows"] == 1 and user["shared"]["live_rows"] == 2
+        assert user["own"]["live_rows"] == 1 and user["others"]["live_rows"] == 2
         row = user["own"]["newest"][0]
         assert (row["memory_id"], row["content_sha256"]) == (
             held["memory_id"],
@@ -97,7 +97,7 @@ async def test_inspect_splits_own_from_shared_and_writes_nothing(
         assert [(t["name"], t["rows"]) for t in user["own"]["top_tags"]] == [("contact", 1)]
         assert user["own"]["complete"] is True
         assert [(c["name"], c["rows"]) for c in user["own"]["categories"]] == [("contacts", 1)]
-        assert user["shared"]["categories"] == []
+        assert user["others"]["categories"] == []
 
         settings = user["settings"]
         assert settings["guide_revision"] == 1 and settings["guide_summary"] == "key layout"
@@ -116,7 +116,7 @@ async def test_inspect_splits_own_from_shared_and_writes_nothing(
 
         nobody = await post("memory.inspect", {"subject": "session", "id": "never-used"})
         assert nobody["own"]["live_rows"] == 0 and nobody["own"]["newest"] == []
-        assert nobody["shared"]["live_rows"] == 3
+        assert nobody["others"]["live_rows"] == 3
 
         # The ledger is flushed in batches: wait for the agent's writes to land. The
         # inspections above name the agent too, and are not its calls.
@@ -150,7 +150,7 @@ async def test_a_narrowed_or_foreign_token_cannot_inspect(
         if anonymous.status_code == 200:
             pytest.skip("the server does not enforce auth")
         # A user pinned to their own rows would read the rest of the namespace through
-        # `shared`, so a narrowed token is refused outright.
+        # `others`, so a narrowed token is refused outright.
         pinned = mint_token(
             subject="sa:inspect-pinned",
             org=ORG,

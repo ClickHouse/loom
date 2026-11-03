@@ -173,25 +173,28 @@ Snapshots and point-in-time rollback (`namespace.snapshot`, `namespace.restore`,
 
 `memory.inspect` (viewer) takes `subject` (`user`, `agent` or `session`) and `id`, the
 `user_id`, agent name or `session_id` to look at; the unset `-` and `*` name no one and
-are refused. It reads and writes nothing else: no recall credit, no usage event.
+are refused. It writes nothing: no recall credit, no usage event.
 
 - **`own`**: the live rows whose identity names the subject. For an agent that is what it
   wrote; the agent name records the writer and is not a read boundary. For a user, the
   rows filed under that `user_id`, whoever wrote them: what a token pinned to the user
   (`read_scope: own_user`) reads.
-- **`shared`**: every other live row of the namespace. A member reads these as well, so
-  `own` alone never stands for everything a user, agent or session can read.
+- **`others`**: every other live row of the namespace. A member reads these as well, so
+  `own` alone never stands for everything a user, agent or session can read. Neither
+  view counts the promoted rows (`memory.promote`), which a search serves to every
+  agent as well.
 - Each view counts its rows by type, status and source class, lists its top tags and the
   registered categories its rows are filed under, and its newest rows (`sample_limit`,
   default 10) with `memory_id`, `version`, `content_sha256`, `actor`, the number of
   version rows and a 200-character excerpt (none for a high-sensitivity row). `complete`
-  is false when the listing holds fewer rows than the view.
+  is false when the listing holds fewer rows than the view, or the view's counts could
+  not be read.
 - **`activity`**: the calls the ledger files under the subject per operation in
   `window_seconds` (default 7 days), attempted and succeeded, without the dashboard's
   and the assistant's, and without the reads about the subject (`memory.inspect`,
   `mentor.brief`), which name it in their arguments. A call shows that a tool ran, not
-  that its result reached a model. `gap` says when the
-  ledger keeps fewer days than the window.
+  that its result reached a model, and a call made by anyone that names the subject is
+  filed under it. `gap` says when the ledger keeps fewer days than the window.
 - **`settings`**: the guide's revision and summary, the number of registered categories,
   and the operator extraction policy only for an org admin
   (`extraction_policy_unavailable` says why it is missing). Extraction instructions are
