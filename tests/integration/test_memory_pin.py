@@ -3,7 +3,9 @@
 memory.set is the autonomous-mode path (Claude-judged; default `pinned=False`).
 memory.pin is the explicit-mode path (user-driven; forces `pinned=True`).
 Both write to `loom.memory`; only the `pinned` column differs. The
-dashboard renders a PINNED badge on the explicit ones.
+dashboard renders a PINNED badge on the explicit ones. A pin of a row read with
+memory.get, sending back what the read served and its hash, keeps the row's fields,
+and is refused when the value changed since the read.
 """
 
 from __future__ import annotations
@@ -21,9 +23,9 @@ from tests.integration._resources import unique_org
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-# No flaky-rerun marker: every read-after-write below goes through `_list_until`,
-# which polls memory.list until the freshly-written key is visible (RMT FINAL view
-# of a new insert can lag a beat).
+# No flaky-rerun marker: every read-after-write below goes through `_list_until` or
+# `_get_until`, which poll memory.list / memory.get until the freshly-written row is
+# visible (RMT FINAL view of a new insert can lag a beat).
 
 
 def _mint(namespace: str) -> str:
@@ -177,13 +179,18 @@ _PIN_ECHOED = (
 )
 
 
-async def _get_until(base_url: str, token: str, body: dict, *, pinned: bool) -> dict:
-    """memory.get with retry until the row is found with the given pin state."""
+async def _get_until(base_url: str, token: str, body: dict, *, pinned: bool, sha: str = "") -> dict:
+    """memory.get with retry until the row is found with the given pin state (and,
+    when `sha` is given, that value): a lagging replica can serve the previous version."""
     deadline = asyncio.get_event_loop().time() + 15.0
     got: dict = {}
     while asyncio.get_event_loop().time() < deadline:
         got = _post(base_url, "/v1/memory.get", token, body)
-        if got.get("found") and got.get("pinned") is pinned:
+        if (
+            got.get("found")
+            and got.get("pinned") is pinned
+            and (not sha or got.get("content_sha256") == sha)
+        ):
             return got
         await asyncio.sleep(0.2)
     return got
@@ -261,7 +268,7 @@ async def test_pin_of_a_stale_read_is_refused(mint_test_token) -> None:
     _post(base, "/v1/memory.set", tok, {**key, "value": "deploys freeze on Fridays"})
     before = await _get_until(base, tok, key, pinned=False)
     assert before.get("found"), before
-    _post(base, "/v1/memory.set", tok, {**key, "value": "deploys freeze on Thursdays"})
+    changed = _post(base, "/v1/memory.set", tok, {**key, "value": "deploys freeze on Thursdays"})
 
     r = _send(
         base,
@@ -271,5 +278,5 @@ async def test_pin_of_a_stale_read_is_refused(mint_test_token) -> None:
     )
     assert r.status_code == 409, r.text
     assert "PRECONDITION_FAILED" in r.text, r.text
-    now = await _get_until(base, tok, key, pinned=False)
+    now = await _get_until(base, tok, key, pinned=False, sha=changed["content_sha256"])
     assert now["value"] == "deploys freeze on Thursdays" and now["pinned"] is False, now
