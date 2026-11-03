@@ -430,25 +430,27 @@ def _call_arguments(clause: str, open_at: int) -> list[tuple[int, int]] | None:
 
 def redact_table_function(clause: str) -> str:
     """`clause` as operators and callers may read it: a table name as is,
-    and any other clause with its credentials masked. In a closed `remote` /
-    `remoteSecure` call that is every quoted literal after the table, which
-    is one argument (`db.table`, a call such as `view(...)`) or two (`db`,
-    `table`), and every literal of a `key = value` argument. Any other clause
-    (another table function, a subquery, a malformed call) has every quoted
-    literal masked."""
+    and any other clause with its credentials masked. A `remote` /
+    `remoteSecure` call that is the whole clause keeps its address and
+    table: the table is one argument (`db.table`, or a call such as
+    `view(...)`, whose literals are masked since it may name another
+    remote) or two (`db`, `table`), and every quoted literal after it and in
+    a `key = value` argument is masked. Any other clause (another table
+    function, a subquery, a call followed by more text, a malformed call)
+    has every quoted literal masked."""
     if not clause or _TABLE_NAME.match(clause):
         return clause
     m = _REMOTE_CALL.match(clause)
     spans = _call_arguments(clause, m.end() - 1) if m else None
-    if spans is None or len(spans) < 2:
+    if spans is None or len(spans) < 2 or clause[spans[-1][1] + 1 :].strip():
         return _QUOTED.sub("'***'", clause)
     second = clause[spans[1][0] : spans[1][1]]
-    one_arg_table = "." in second or _CALL_ARG.match(second) is not None
-    first_credential = 2 if one_arg_table else 3
+    nested = _CALL_ARG.match(second) is not None
+    first_credential = 2 if nested or "." in second else 3
     out, last = [], 0
     for i, (a, b) in enumerate(spans):
         arg = clause[a:b]
-        if i >= first_credential or (i > 0 and _SETTING_ARG.match(arg)):
+        if i >= first_credential or (i == 1 and nested) or (i > 0 and _SETTING_ARG.match(arg)):
             out.append(clause[last:a])
             out.append(_QUOTED.sub("'***'", arg))
             last = b

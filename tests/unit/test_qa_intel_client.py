@@ -389,11 +389,11 @@ def test_probe_output_masks_remote_credentials() -> None:
         ),
         (
             "remoteSecure('h:9440', view(SELECT 'a,b' FROM db.t), 'play', 'secret')",
-            "remoteSecure('h:9440', view(SELECT 'a,b' FROM db.t), '***', '***')",
+            "remoteSecure('h:9440', view(SELECT '***' FROM db.t), '***', '***')",
         ),
         (
             "remoteSecure('h:9440', merge('default', '^checks'), 'play', 'secret')",
-            "remoteSecure('h:9440', merge('default', '^checks'), '***', '***')",
+            "remoteSecure('h:9440', merge('***', '***'), '***', '***')",
         ),
         (
             "remoteSecure(my_collection, user = 'play', password = 'secret')",
@@ -404,7 +404,7 @@ def test_probe_output_masks_remote_credentials() -> None:
 def test_remote_credentials_are_masked_by_argument_position(clause: str, masked: str) -> None:
     """The user and password follow the table argument in every form of the
     call, whether the database and table are quoted, bare, one `db.table` or
-    a table function; the address, the table and a sharding key stay."""
+    a table function; the address, a named table and a sharding key stay."""
     assert qi.redact_table_function(clause) == masked
 
 
@@ -416,10 +416,13 @@ def test_remote_credentials_are_masked_by_argument_position(clause: str, masked:
         "(SELECT * FROM remoteSecure('h', 'db', 'checks', 'play', 'secret'))",
         "remoteSecure('h', 'db', 'checks', 'play', 'secret",
         "remoteSecure('h', view(SELECT 1 FROM t, 'play', 'secret')",
+        "remoteSecure('h', 'db', 'a', 'u', 'p') AS a JOIN remoteSecure('h', 'db', 'b', 'play', 'secret') AS b USING (x)",
+        "remoteSecure('h', view(SELECT * FROM remoteSecure('h2', 'db', 't', 'play', 'secret')), 'u', 'p')",
     ],
 )
 def test_any_other_clause_has_every_literal_masked(clause: str) -> None:
-    """Another table function, a subquery or a malformed call fails closed."""
+    """Another table function, a subquery, a call followed by more text, a
+    remote inside the table argument or a malformed call fails closed."""
     masked = qi.redact_table_function(clause)
     assert "secret" not in masked and "play" not in masked
 
