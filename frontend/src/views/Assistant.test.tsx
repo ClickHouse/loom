@@ -282,7 +282,14 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
-  useStore.setState({ identity: null, whoami: null, myNamespaces: null, inspectedMemoryKey: null, inspectedAgent: "" });
+  useStore.setState({
+    identity: null,
+    whoami: null,
+    myNamespaces: null,
+    inspectedMemoryKey: null,
+    inspectedAgent: "",
+    inspectedOwner: null,
+  });
 });
 
 const switchNamespace = () =>
@@ -517,10 +524,13 @@ describe("Assistant: inspection", () => {
     expect(within(result).getByText("ada")).toHaveClass("break-all");
     expect(within(result).getByText(OWN_USER)).toBeInTheDocument();
     expect(within(result).getByRole("heading", { name: /Every other live row of the namespace/ })).toBeInTheDocument();
-    // A listed row opens in the inspector under the agent that wrote it.
+    // A listed row opens in the inspector under its writer's agent, user and session.
     await userEvent.click(within(result).getByRole("button", { name: "Open memory billing/invoices" }));
-    expect(useStore.getState().inspectedMemoryKey).toBe("billing/invoices");
-    expect(useStore.getState().inspectedAgent).toBe("claude-code");
+    expect(useStore.getState()).toMatchObject({
+      inspectedMemoryKey: "billing/invoices",
+      inspectedAgent: "claude-code",
+      inspectedOwner: { user_id: "ada", session_id: "-" },
+    });
     expect(within(result).getByText("Statuses: active 1")).toBeInTheDocument();
     expect(within(result).getByText("3 versions")).toBeInTheDocument();
     expect(result).not.toHaveTextContent(String(NS_VERSION).slice(0, 10));
@@ -713,8 +723,11 @@ describe("Assistant: review changes", () => {
     expect(card.querySelector('[data-side="proposed"]')).toHaveTextContent("billing");
     expect(within(card).getByText(/12 supporting · 4 already filed under another category/)).toBeInTheDocument();
     await userEvent.click(within(card).getByRole("button", { name: "Open memory billing/invoices" }));
-    expect(useStore.getState().inspectedMemoryKey).toBe("billing/invoices");
-    expect(useStore.getState().inspectedAgent).toBe("claude-code");
+    expect(useStore.getState()).toMatchObject({
+      inspectedMemoryKey: "billing/invoices",
+      inspectedAgent: "claude-code",
+      inspectedOwner: { user_id: "ada", session_id: "-" },
+    });
     expect(within(card).getByTestId("affected-agents")).toHaveTextContent("claude-codeand 2 more");
     expect(within(card).getByText("namespace.register_category")).toBeInTheDocument();
     expect(within(card).getByTestId("proposal-args")).toHaveTextContent('"name": "billing"');
