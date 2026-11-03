@@ -254,8 +254,10 @@ async def _distill_session(
     extras = await _distill_extras(session, readable, context=context)
 
     # Mark sources DONE. RMT: mirror every column, only tags + version change.
-    # Built from the head re-read now: a key deleted or rewritten during the replay
-    # keeps what it has. The version is drawn first, so a write after the re-read wins.
+    # Built from the head re-read now: a key deleted or given new text during the
+    # replay keeps what it has, a relabel is carried. The version is drawn first, so a
+    # write that draws after it wins; one that drew before and lands after the re-read
+    # can still lose, as in apply_entities_batch.
     from server.core.ch import get_client
 
     ch = get_client()
@@ -266,7 +268,7 @@ async def _distill_session(
     version_rows = []
     for existing in observations:
         head = heads.get(_identity(existing))
-        if head is None or int(head.version) != int(existing.version):
+        if head is None or head.content_sha256 != existing.content_sha256:
             continue
         new_tags = [t for t in (head.tags or []) if t != CRYSTALLIZE_READY_TAG]
         if CRYSTALLIZE_DONE_TAG not in new_tags:
@@ -281,7 +283,7 @@ async def _distill_session(
         org=str(session["org"]),
         namespace=str(session["namespace"]),
         session_id=str(session["session_id"]),
-        observations=len(observations),
+        observations=len(version_rows),
         written=written,
         events=int(extras.events_written),
         notes=int(extras.procedure_written) + int(extras.hint_written),
