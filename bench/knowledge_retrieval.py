@@ -20,7 +20,7 @@ name, which is kept, and search it per arm:
         --param search_mode=hybrid --out /tmp/kr.json
 
 A named namespace is ingested into only when it is unregistered or a bench
-namespace holding no other documents, and stays until it is erased with the
+namespace that holds nothing but fixture ingests, and stays until it is erased with the
 `loom namespaces-gc` command the ingest prints.
 
 `--param KEY=VALUE` (JSON value, or a plain string) sets any `knowledge.search`
@@ -31,7 +31,8 @@ counts when any relevant passage is in the top k, so a query listing two
 accepted passages counts either), MRR, and all-gold recall@10 and nDCG@10 (both
 reward finding every listed passage), overall and per query kind, plus the mean
 cosine similarity of the top hit on answerable and on unanswerable queries
-(every hit carries one, in every mode).
+(every hit carries one, in every mode). A hybrid or lexical arm whose lexical leg
+never fired fails the run.
 The `freshness` and `multi` kinds hold three and four queries, so their per-kind
 figures are coarse; a superseded policy ranked above the current one shows in a
 freshness query's R@1, MRR and nDCG@10, not its R@5. Ingesting embeds 21
@@ -95,18 +96,25 @@ def relevant(hit: dict, gold: list[list[str]]) -> list[int]:
 def score_query(hits: list[dict], gold: list[list[str]]) -> dict[str, float]:
     """Binary-relevance metrics for one query. A gold passage counts once, at its best rank."""
     found: dict[int, int] = {}
+    gains: list[int] = []  # per relevant hit, the gold passages it finds first
+    dcg = 0.0
     for rank, hit in enumerate(hits, start=1):
-        for g in relevant(hit, gold):
-            found.setdefault(g, rank)
+        new = [g for g in relevant(hit, gold) if g not in found]
+        for g in new:
+            found[g] = rank
+        if new:
+            gains.append(len(new))
+            dcg += len(new) / math.log2(rank + 1)
     first = min(found.values(), default=None)
     out = {f"recall@{k}": float(first is not None and first <= k) for k in KS}
     # `hits` is the top TOP_K, so every found passage is within it.
     out[f"all_gold@{TOP_K}"] = float(len(found) == len(gold))
     out["mrr"] = 1.0 / first if first else 0.0
-    dcg = sum(1.0 / math.log2(r + 1) for r in found.values())
-    ideal = sum(1.0 / math.log2(r + 1) for r in range(1, min(len(gold), TOP_K) + 1))
-    # Capped: one chunk holding two gold passages credits both at its rank.
-    out[f"ndcg@{TOP_K}"] = min(1.0, dcg / ideal) if ideal else 0.0
+    # The ideal ranking puts the same relevant hits first, best gain first, then one
+    # hit per passage not found: a hit holding two passages gains 2, and nothing caps.
+    ideal_gains = sorted(gains + [1] * (len(gold) - len(found)), reverse=True)[:TOP_K]
+    ideal = sum(g / math.log2(r + 1) for r, g in enumerate(ideal_gains, start=1))
+    out[f"ndcg@{TOP_K}"] = dcg / ideal if ideal else 0.0
     return out
 
 
@@ -153,21 +161,29 @@ def run_namespace(named: str | None, keep_flag: bool) -> tuple[str, bool]:
     return f"knowledge-retrieval-{secrets.token_hex(4)}", keep_flag
 
 
-def may_ingest_into(info: dict) -> bool:
-    """Whether `namespace.get`'s answer leaves the namespace to the harness: never
-    registered, or registered as a bench namespace (registering rewrites its owner)."""
-    return not info.get("found") or info.get("owner_email") == BENCH_OWNER_EMAIL
+def may_ingest_into(info: dict, listed: list[dict]) -> bool:
+    """Whether a named namespace is the harness's to write: never registered, or a
+    bench namespace whose documents are all fixture ingests (registering rewrites
+    its owner, and the printed gc command erases every plane of it)."""
+    if not info.get("found"):
+        return True
+    return (
+        info.get("owner_email") == BENCH_OWNER_EMAIL
+        and bool(listed)
+        and all(any(t.startswith("fixture:") for t in r.get("tags") or []) for r in listed)
+    )
 
 
 def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: bool) -> None:
     info = post("/v1/namespace.get", {"org": org, "namespace": namespace})
-    if not may_ingest_into(info):
-        raise SystemExit(f"{org}/{namespace} belongs to {info.get('owner_email')}: name another")
-    fixture = {d["source_uri"] for d in docs}
     listed = listed_documents(post, org, namespace)
+    fixture = {d["source_uri"] for d in docs}
     foreign = [r["source_uri"] for r in listed if r["source_uri"] not in fixture]
-    if foreign:
-        raise SystemExit(f"{org}/{namespace} holds {len(foreign)} other documents: name another")
+    if foreign or not may_ingest_into(info, listed):
+        raise SystemExit(
+            f"{org}/{namespace} exists and is not a fixture ingest "
+            f"(owner {info.get('owner_email')}, {len(foreign)} other documents): name another"
+        )
     register_bench_namespace_sync(
         post, org=org, namespace=namespace, description="knowledge retrieval fixture", keep=keep
     )
@@ -214,7 +230,8 @@ def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> 
 
 def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params: dict) -> dict:
     rows, top_answerable, top_unanswerable = [], [], []
-    any_hits = False
+    any_hits = lexical_fired = False
+    empty = 0
     for q in queries:
         body = {
             **params,
@@ -228,22 +245,31 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
         if out.get("ignored_args"):
             raise SystemExit(f"knowledge.search ignored {out['ignored_args']}: the arm did not run")
         hits = out["results"]
-        top = hits[0]["similarity"] if hits else 0.0
+        lexical_fired = lexical_fired or any(h.get("lexical_score", 0) > 0 for h in hits)
+        if not hits:
+            empty += 1
+        elif q["gold"]:
+            top_answerable.append(hits[0]["similarity"])
+        else:
+            top_unanswerable.append(hits[0]["similarity"])
         if not q["gold"]:
-            top_unanswerable.append(top)
             continue
-        top_answerable.append(top)
         any_hits = any_hits or bool(hits)
         rows.append({"id": q["id"], "kind": q["kind"], "metrics": score_query(hits, q["gold"])})
     if not any_hits:
         raise SystemExit(f"no query found anything in {org}/{namespace}: was it ingested?")
+    # A hybrid search over a corpus with no lexical statistics runs its vector leg alone.
+    if params.get("search_mode", "hybrid") != "semantic" and not lexical_fired:
+        raise SystemExit("the lexical leg never fired: the arm ran as semantic")
     return {
         "params": params,
         "metrics": mean_by_kind(rows),
         # The gap between the two is the room a similarity floor has to abstain.
+        # Means over the queries that returned a hit; `no_hits` counts the others.
         "top_similarity": {
             "answerable": round(sum(top_answerable) / max(1, len(top_answerable)), 3),
             "unanswerable": round(sum(top_unanswerable) / max(1, len(top_unanswerable)), 3),
+            "no_hits": empty,
         },
         "misses@5": [r["id"] for r in rows if not r["metrics"]["recall@5"]],
         "queries": rows,

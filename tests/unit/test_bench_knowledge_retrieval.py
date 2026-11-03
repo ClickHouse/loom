@@ -53,6 +53,11 @@ def test_one_hit_holding_two_gold_passages_credits_both() -> None:
     m = score_query([_hit("a.md", "first then second")], gold)
     assert m["all_gold@10"] == 1.0
     assert m["ndcg@10"] == 1.0
+    # a third passage four ranks too low still costs nDCG: nothing caps it at 1
+    gold = [*gold, ["c.md", "third"]]
+    other = [_hit("x.md", "noise")] * 3
+    m = score_query([_hit("a.md", "first then second"), *other, _hit("c.md", "third")], gold)
+    assert m["ndcg@10"] == (2 + 1 / math.log2(6)) / (2 + 1 / math.log2(3))
 
 
 def test_a_miss_scores_zero() -> None:
@@ -102,9 +107,14 @@ def test_only_a_namespace_the_harness_made_up_is_erased() -> None:
 
 
 def test_a_named_namespace_is_ingested_into_only_when_unregistered_or_bench() -> None:
-    assert may_ingest_into({"found": False})
-    assert may_ingest_into({"found": True, "owner_email": BENCH_OWNER_EMAIL})
-    assert not may_ingest_into({"found": True, "owner_email": "someone@example.com"})
+    ingested = [{"source_uri": "a.md", "tags": ["fixture:0123"]}]
+    bench = {"found": True, "owner_email": BENCH_OWNER_EMAIL}
+    assert may_ingest_into({"found": False}, [])
+    assert may_ingest_into(bench, ingested)
+    # a bench namespace of another harness: no documents, or not fixture ingests
+    assert not may_ingest_into(bench, [])
+    assert not may_ingest_into(bench, [{"source_uri": "a.md", "tags": []}])
+    assert not may_ingest_into({"found": True, "owner_email": "someone@example.com"}, ingested)
 
 
 def test_a_namespace_holding_other_documents_than_the_fixture_is_refused() -> None:
@@ -128,9 +138,9 @@ def test_the_top_similarity_is_reported_per_answerability_and_kinds_average_apar
         {"id": "a", "query": "x", "gold": [["a.md", "y"]], "kind": "context"},
         {"id": "b", "query": "z", "gold": [], "kind": "unanswerable"},
     ]
-    hit = {"source_uri": "a.md", "content": "y", "similarity": 0.25}
+    hit = {"source_uri": "a.md", "content": "y", "similarity": 0.25, "lexical_score": 1.0}
     report = search(lambda path, body: {"results": [hit]}, "o", "n", queries, {})
-    assert report["top_similarity"] == {"answerable": 0.25, "unanswerable": 0.25}
+    assert report["top_similarity"] == {"answerable": 0.25, "unanswerable": 0.25, "no_hits": 0}
     assert report["metrics"]["all"]["n"] == 1 and report["metrics"]["context"]["mrr"] == 1.0
     rows = [
         {"kind": "context", "metrics": {"mrr": 1.0}},
@@ -158,7 +168,7 @@ def test_an_ingest_refuses_a_namespace_holding_other_documents_and_tags_each_ups
 
         return _post
 
-    with pytest.raises(SystemExit, match="holds 1 other documents"):
+    with pytest.raises(SystemExit, match="1 other documents"):
         ingest(post([{"source_uri": "theirs.md"}]), "o", "n", docs, keep=True)
     assert not any(path == "/v1/knowledge.upsert" for path, _ in sent)
     ingest(post([{"source_uri": "a.md"}]), "o", "n", docs, keep=True)
@@ -167,6 +177,16 @@ def test_an_ingest_refuses_a_namespace_holding_other_documents_and_tags_each_ups
     assert registered and registered[0]["kind"] == "memory"
     upserts = [body for path, body in sent if path == "/v1/knowledge.upsert"]
     assert [u["tags"] for u in upserts] == [["t", fixture_tag(docs)]]
+
+
+def test_a_lexical_arm_whose_lexical_leg_never_fired_fails() -> None:
+    queries = [{"id": "q", "query": "x", "gold": [["a.md", "y"]], "kind": "context"}]
+    vector_only = {"source_uri": "a.md", "content": "y", "similarity": 0.5}
+    with pytest.raises(SystemExit, match="lexical leg never fired"):
+        search(lambda path, body: {"results": [vector_only]}, "o", "n", queries, {})
+    semantic = {"search_mode": "semantic"}
+    report = search(lambda path, body: {"results": [vector_only]}, "o", "n", queries, semantic)
+    assert report["metrics"]["all"]["mrr"] == 1.0
 
 
 def test_a_search_that_finds_nothing_or_ignores_a_param_fails() -> None:
