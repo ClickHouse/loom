@@ -284,14 +284,14 @@ Each line:
 - A line lists its `constraint`, `gotcha` and `decision` kinds in one bracket
   (`[constraint, decision]`; a line headed `Decision` leaves out `decision`).
 - `(pinned)` marks a pinned row. A pin is the row's own flag: a member of a code namespace
-  can set it on a row they write there, so `(pinned)` on a team row is not on its own proof
-  that a maintainer confirmed it.
-- `(unconfirmed)` marks a decision not pinned or attested in its current form (a stale
-  attestation does not count), and `(outcome: failed)` one whose recorded outcome failed.
+  can set it on a row they write there, so `(pinned)` on a team row says someone froze it,
+  not that a maintainer did.
+- A decision nobody pinned, such as one `loom decisions extract` wrote, carries no
+  status note: it is served as it is. `(outcome: failed)` marks one whose recorded outcome
+  failed.
 - A decision tagged `source-changed` (its source document no longer says it; see
   [extracting decisions](../features/tasks-and-decisions.md#extract-decisions-from-a-document))
-  reads `(source changed since confirmation)` when pinned or attested, `(source changed)`
-  when not.
+  reads `(source changed)`, pinned or not.
 - A note says when its linked code changed or went.
 - A string value is printed as text, not as the JSON it is stored as, and ends in `…`
   when the read cut it; a cut object or list prints as stored.

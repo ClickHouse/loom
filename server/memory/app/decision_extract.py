@@ -10,24 +10,24 @@ identity, so a re-run revises the extractor's own rows instead of writing beside
 
 - the key's active record has the same verbatim fields (reasoning, rejected options'
   reasons; the rest is the model's wording) and its row carries the same files, source,
-  constraint and repository tags: nothing is written (a confirmed row may still gain the
-  repository's tag by a tags-only write);
-- it differs and its row is the extractor's, unconfirmed and from this document:
-  recorded again (Revise), unless its outcome is recorded: then it is tagged
+  constraint and repository tags: nothing is written (a pinned or attested row may still
+  gain the repository's tag by a tags-only write);
+- it differs and its row is the extractor's, not pinned or attested, and from this
+  document: recorded again (Revise), unless its outcome is recorded: then it is tagged
   `source-changed`;
-- it differs and its row is confirmed (pinned, or attested in its current form) and
-  from this document: nothing is written, the body is printed for the human who
-  confirmed it, and the row is tagged `source-changed`, a tag a later run drops once the
-  document says the same again;
+- it differs and its row is frozen (pinned, or attested in its current form) and from
+  this document: nothing is written, the new body is printed in the run's report, and
+  the row is tagged `source-changed`, a tag a later run drops once the document says the
+  same again;
 - it differs and its row is another writer's or another document's: nothing is written;
-- no record under the key, but a confirmed decision row (pinned or attested) reads the
-  same at or above the conflict threshold: skipped as already recorded.
+- no record under the key, but a pinned or attested decision row reads the same at or
+  above the conflict threshold: skipped as already recorded.
 
-After the writes, the extractor deletes its unconfirmed rows citing this document whose
-reasoning (a span of the document) is no longer in its text, read as in the verbatim
-check, or whose outcome and reasoning this run recorded under another key. A row it keeps
-(confirmed, or with a recorded outcome) whose reasoning left is tagged `source-changed`
-instead. A refused write is reported and the run goes on.
+After the writes, the extractor deletes its rows citing this document, unless pinned or
+attested, whose reasoning (a span of the document) is no longer in its text, read as in
+the verbatim check, or whose outcome and reasoning this run recorded under another key. A
+row it keeps (pinned, attested, or with a recorded outcome) whose reasoning left is
+tagged `source-changed` instead. A refused write is reported and the run goes on.
 
 A document outside a repository's code namespace names the repository: its code names
 resolve in the repository's trunk, and the rows go there or stay beside the document,
@@ -179,9 +179,8 @@ class ExtractReport:
 
 
 def _confirmed(row: MemoryRow) -> bool:
-    """A person or a service account stood behind the row: pinned, or attested in its
-    current form, read as memory.get reads it; the rule memory.for_file marks
-    `(unconfirmed)` by."""
+    """The row is frozen against re-extraction: pinned, or attested in its current form,
+    read as memory.get reads it."""
     current = row_content_sha256(row)
     state = verification_state(row.verified_by, row.verified_sha256, current)
     return confirmed(row.pinned, state)
@@ -981,7 +980,8 @@ async def _reconcile(
                 await _reconcile_tags(rec, row, dry_run, link)
             return rec
         if row is not None and _confirmed(row) and this_doc:
-            # The human who confirmed it decides; a pinned writer row refuses decision.record.
+            # A pinned or attested row is frozen: whoever froze it decides; a pinned writer
+            # row refuses decision.record.
             rec.body.update(agent=row.agent, user_id=row.user_id, session_id=row.session_id)
             rec.note = (
                 "pinned; the document now says otherwise; to accept this body, unpin the row "

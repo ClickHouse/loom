@@ -26,7 +26,6 @@ from server.memory.domain.decision_schema import (
     is_decision,
 )
 from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
-from server.memory.domain.trust import confirmed as is_confirmed
 from server.memory.domain.trust import row_verification
 
 log = logging.getLogger(__name__)
@@ -159,20 +158,14 @@ def _body(hit: dict[str, Any], *, decision: bool) -> str:
 
 
 def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
-    """`(pinned)` for a pinned row, `(unconfirmed)` for a decision not pinned or attested
-    (a stale attestation does not count), `(source changed since confirmation)` or
-    `(source changed)` for a decision tagged `source-changed` that is or is not confirmed,
-    `(outcome: failed)` for a decision whose recorded outcome failed, and a note when its
-    linked code changed or went."""
+    """`(pinned)` for a pinned row, `(source changed)` for a decision tagged
+    `source-changed`, `(outcome: failed)` for a decision whose recorded outcome failed,
+    and a note when its linked code changed or went. An extracted decision nobody pinned
+    is the normal case and carries no note."""
     tags = hit.get("tags") or []
-    confirmed = is_confirmed(bool(hit.get("pinned")), str(hit.get("verification") or ""))
-    out = ""
-    if hit.get("pinned"):
-        out = " (pinned)"
-    elif decision and not confirmed:
-        out = " (unconfirmed)"
+    out = " (pinned)" if hit.get("pinned") else ""
     if decision and SOURCE_CHANGED_TAG in tags:
-        out += " (source changed since confirmation)" if confirmed else " (source changed)"
+        out += " (source changed)"
     if decision and FAILURE_TAG in tags:
         out += " (outcome: failed)"
     return out + _CODE_NOTES.get(str(hit.get("code_state") or ""), "")

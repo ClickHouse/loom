@@ -63,9 +63,10 @@ def register_decisions_cli(sub: Any) -> None:
         "the document's own words, the reasoning says more than the outcome (a ban may give "
         "no reason) and the quote is not in a recap, summary or background section, written "
         "through decision.record as agent loom-decisions. A re-run revises or retires the "
-        "extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row "
-        "source-changed. Dry run by default (still calls the model); --apply writes. Exits 1 "
-        "when it could not run on the document (no document, no chunks, no usable model, an "
+        "extractor's own rows and tags a pinned or attested row source-changed instead: "
+        "pinning or attesting freezes a row against re-extraction; any other row is served as it "
+        "is. Dry run by default (still calls the model); --apply writes. Exits 1 when it "
+        "could not run on the document (no document, no chunks, no usable model, an "
         "unknown --repo or a namespace it may not use, --into without --repo or source on "
         "another repository's namespace, a --repo with no remote to tag rows with, the "
         "dashboard's repositories unread, its own rows unreadable, left in another namespace "
@@ -192,6 +193,6 @@ def print_report(report: ExtractReport) -> None:
     for key in report.flagged:
         if key not in in_records:
             print(
-                f"- {tag} {key} source-changed: confirmed or with a recorded outcome, "
+                f"- {tag} {key} source-changed: pinned, attested or with a recorded outcome, "
                 "its reasoning left the document"
             )
