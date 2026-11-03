@@ -383,7 +383,7 @@ def repo_add_audit_subject(input: CodeRepoAddInput, response: Any) -> dict[str, 
     subject["authenticated"] = bool(input.access_token)
     for registered in ("repo", "branch", "join_policy", "classification", "namespace"):
         subject[registered] = response[registered]
-    subject["also"] = [extra["namespace"] for extra in response.get("also", [])]
+    subject["also"] = [extra["namespace"] for extra in response["also"]]
     return subject
 
 
