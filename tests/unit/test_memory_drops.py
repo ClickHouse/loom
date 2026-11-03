@@ -524,16 +524,24 @@ async def test_reset_stops_an_armed_flush_from_writing(monkeypatch: pytest.Monke
 
 
 @pytest.mark.asyncio
-async def test_the_timer_flush_is_tagged(monkeypatch) -> None:
-    """The timer flush runs in a detached task no request tag reaches."""
-    from server.core.ch import current_query_tag
+async def test_the_timer_flush_is_tagged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The timer flush runs in a detached task no request tag reaches: its insert
+    carries its own tag, inside a request's tag or not."""
+    import server.core.ch as chmod
 
-    seen: list[str] = []
+    tags: list[str] = []
 
-    async def flush() -> int:
-        seen.append(current_query_tag())
-        return 0
+    class _CH:
+        async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+            tags.append(chmod.current_query_tag())
 
-    monkeypatch.setattr(drops, "flush_drops", flush)
-    await drops._flush_and_rearm()
-    assert seen == ["drops.flush"]
+    monkeypatch.setattr(chmod, "get_client", lambda: _CH())
+    monkeypatch.setattr(drops, "_flush_later", _real_flush_later)
+    monkeypatch.setattr(drops, "_FLUSH_DELAY_S", 0.01)
+    with chmod.query_tag("memory.set rid-1"):
+        drops.record_drop("o", "n", "parse", "empty", item="item")
+    for _ in range(100):
+        if tags:
+            break
+        await asyncio.sleep(0.01)
+    assert tags == ["drops.flush"]
