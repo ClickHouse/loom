@@ -276,9 +276,9 @@ async def run_saga(
     census_purge = False
     # The saga id names every mutation this run submits,
     # so a resumed step finds its own pending mutation instead of adding one.
-    # The steps' own audit rows (a grant revocation) name the saga's actor too,
-    # on a tokenless resume as well.
-    with erasure_mutations.saga_scope(erasure_id), pipeline_actor(audit_actor(row)):
+    # The steps' own audit rows (a grant revocation) name the ledger's actor, on a
+    # tokenless resume too; a row an older build wrote binds nothing.
+    with erasure_mutations.saga_scope(erasure_id), pipeline_actor(row["actor"]):
         try:
             if input.scope_type == "user_id":
                 # A user's erasure purges when asked (a GDPR deletion): the rows

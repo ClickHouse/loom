@@ -96,11 +96,13 @@ async def test_a_fresh_saga_with_no_actor_at_all_names_no_one_on_every_row(recor
     assert {r["actor"] for r in rows} == {"-"}
 
 
+@pytest.mark.parametrize(("stored", "named"), [("human:admin@o", "human:admin@o"), ("", "-")])
 async def test_a_tokenless_resume_names_the_ledgers_actor_on_its_grant_revocations(
-    recorded: Any, monkeypatch: pytest.MonkeyPatch
+    recorded: Any, monkeypatch: pytest.MonkeyPatch, stored: str, named: str
 ) -> None:
-    """A step's own audit rows (the user's grants revoked) name the saga's actor,
-    not `-`, when the worker resumes it without a token."""
+    """A step's own audit rows (the user's grants revoked) name the saga's actor
+    when the worker resumes it without a token; a row an older build wrote binds
+    nothing, so they name `-` as before."""
     from server.identity.app import grants
 
     actors: list[str] = []
@@ -115,7 +117,7 @@ async def test_a_tokenless_resume_names_the_ledgers_actor_on_its_grant_revocatio
     monkeypatch.setattr(grants, "revoke_subject", _revoke)
     monkeypatch.setattr(grants, "forget_granter", _none)
     set_current_auth(None)
-    row = _ledger_row(scope_type="user_id", scope_value="u-42")
+    row = _ledger_row(scope_type="user_id", scope_value="u-42", actor=stored)
     inp = saga.input_from_ledger_row(row)
     await saga.run_saga(
         input=inp,
@@ -130,7 +132,7 @@ async def test_a_tokenless_resume_names_the_ledgers_actor_on_its_grant_revocatio
         requested_at=row["requested_at"],
         previously_completed=set(),
     )
-    assert actors == ["human:admin@o"]
+    assert actors == [named]
 
 
 def _ledger_row(**over: Any) -> dict[str, Any]:

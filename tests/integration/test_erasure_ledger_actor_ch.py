@@ -78,7 +78,7 @@ async def test_every_resume_read_returns_the_actor(ch: Any) -> None:
     for name, rows in reads.items():
         written = wanted[name]
         (row,) = [r for r in rows if str(r["id"]) == written["id"]]
-        # Every column the read returns, compared with what the checkpoint wrote.
+        # Every column the checkpoint wrote, as the read returns it.
         got = {k: (str(v) if k == "id" else v) for k, v in row.items() if k in written}
         assert got == {k: written[k] for k in got}, name
         assert {"actor", "requester", "purge", "attempts", "steps_completed"} <= got.keys(), name
