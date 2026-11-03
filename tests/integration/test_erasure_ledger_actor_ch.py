@@ -24,28 +24,33 @@ async def ch() -> Any:
     await c.disconnect()
 
 
-async def _saga_row(org: str, status: str, attempts: int, erasure_id: str | None = None) -> str:
+async def _saga_row(
+    org: str, status: str, attempts: int, erasure_id: str | None = None
+) -> dict[str, Any]:
+    """Write one checkpoint and return the columns it wrote."""
     from server.erasure.api.erasure import ErasureRequestInput
     from server.erasure.app.saga import checkpoint, request_row_template
 
     request = ErasureRequestInput(
         org=org, scope_type="namespace", scope_value="ns-a", requester="dpo@y"
     )
-    erasure_id = erasure_id or str(uuid.uuid4())
-    await checkpoint(
-        row=request_row_template(
-            erasure_id=erasure_id,
-            input=request,
-            actor="human:admin@o",
-            requested_at=datetime.now(UTC).replace(tzinfo=None),
-            attempts=attempts,
-        ),
-        status=status,
-        steps_completed=[],
-        current_step=0,
-        failure_reason="step broke" if status == "failed" else "",
+    row = request_row_template(
+        erasure_id=erasure_id or str(uuid.uuid4()),
+        input=request,
+        actor="human:admin@o",
+        # The column is DateTime: whole seconds.
+        requested_at=datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+        attempts=attempts,
     )
-    return erasure_id
+    failure_reason = "step broke" if status == "failed" else ""
+    await checkpoint(
+        row=row,
+        status=status,
+        steps_completed=["memory.tombstone"],
+        current_step=1,
+        failure_reason=failure_reason,
+    )
+    return {**row, "steps_completed": ["memory.tombstone"], "failure_reason": failure_reason}
 
 
 @pytest.mark.asyncio
@@ -68,8 +73,12 @@ async def test_every_resume_read_returns_the_actor(ch: Any) -> None:
     }
     wanted = {"stuck": stuck, "exhausted": exhausted, "failed": exhausted}
     # Both sagas end completed, so no recovery worker resumes or abandons them.
-    for erasure_id in (stuck, exhausted):
-        await _saga_row(org, "completed", attempts=1, erasure_id=erasure_id)
+    for written in (stuck, exhausted):
+        await _saga_row(org, "completed", attempts=1, erasure_id=str(written["id"]))
     for name, rows in reads.items():
-        (row,) = [r for r in rows if str(r["id"]) == wanted[name]]
-        assert (row["actor"], row["requester"]) == ("human:admin@o", "dpo@y"), name
+        written = wanted[name]
+        (row,) = [r for r in rows if str(r["id"]) == written["id"]]
+        # Every column the read returns, compared with what the checkpoint wrote.
+        got = {k: (str(v) if k == "id" else v) for k, v in row.items() if k in written}
+        assert got == {k: written[k] for k in got}, name
+        assert {"actor", "requester", "purge", "attempts", "steps_completed"} <= got.keys(), name

@@ -96,6 +96,43 @@ async def test_a_fresh_saga_with_no_actor_at_all_names_no_one_on_every_row(recor
     assert {r["actor"] for r in rows} == {"-"}
 
 
+async def test_a_tokenless_resume_names_the_ledgers_actor_on_its_grant_revocations(
+    recorded: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A step's own audit rows (the user's grants revoked) name the saga's actor,
+    not `-`, when the worker resumes it without a token."""
+    from server.identity.app import grants
+
+    actors: list[str] = []
+
+    async def _revoke(org: str, principal: str, *, actor: str) -> int:
+        actors.append(actor)
+        return 0
+
+    async def _none(*a: Any, **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(grants, "revoke_subject", _revoke)
+    monkeypatch.setattr(grants, "forget_granter", _none)
+    set_current_auth(None)
+    row = _ledger_row(scope_type="user_id", scope_value="u-42")
+    inp = saga.input_from_ledger_row(row)
+    await saga.run_saga(
+        input=inp,
+        row=saga.request_row_template(
+            erasure_id="e1",
+            input=inp,
+            actor=row["actor"],
+            requested_at=row["requested_at"],
+            attempts=2,
+        ),
+        erasure_id="e1",
+        requested_at=row["requested_at"],
+        previously_completed=set(),
+    )
+    assert actors == ["human:admin@o"]
+
+
 def _ledger_row(**over: Any) -> dict[str, Any]:
     row: dict[str, Any] = {
         "id": "e1",
