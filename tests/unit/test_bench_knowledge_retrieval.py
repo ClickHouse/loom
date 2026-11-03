@@ -11,6 +11,7 @@ from bench.bench_namespaces import BENCH_OWNER_EMAIL
 from bench.knowledge_retrieval import (
     FIXTURE,
     check_corpus,
+    fixture_tag,
     load_fixture,
     may_ingest_into,
     mean_by_kind,
@@ -106,22 +107,29 @@ def test_a_named_namespace_is_ingested_into_only_when_unregistered_or_bench() ->
 
 
 def test_a_namespace_holding_other_documents_than_the_fixture_is_refused() -> None:
-    docs = [{"source_uri": "a.md"}, {"source_uri": "b.md"}]
-    pages = {None: {"rows": [{"source_uri": "a.md"}], "next_cursor": "c"}, "c": {"rows": []}}
-    with pytest.raises(SystemExit, match="1 documents missing, 0 extra"):
+    docs = [{"source_uri": "a.md", "content": "x"}, {"source_uri": "b.md", "content": "y"}]
+    tag = fixture_tag(docs)
+    pages = {None: {"rows": [{"source_uri": "a.md", "tags": [tag]}], "next_cursor": "c"}}
+    pages["c"] = {"rows": []}
+    with pytest.raises(SystemExit, match="1 documents missing, 0 extra, 0 from another"):
         check_corpus(lambda path, body: pages[body["cursor"]], "o", "n", docs)
-    pages["c"] = {"rows": [{"source_uri": "b.md"}]}
+    pages["c"] = {"rows": [{"source_uri": "b.md", "tags": [tag]}]}
     check_corpus(lambda path, body: pages[body["cursor"]], "o", "n", docs)
+    # the same documents from an edited corpus carry another tag
+    pages["c"] = {"rows": [{"source_uri": "b.md", "tags": ["fixture:000000000000"]}]}
+    with pytest.raises(SystemExit, match="1 from another version"):
+        check_corpus(lambda path, body: pages[body["cursor"]], "o", "n", docs)
+    assert fixture_tag([*docs[:1], {**docs[1], "content": "z"}]) != tag
 
 
-def test_unanswerable_queries_report_the_top_similarity_and_kinds_average_apart() -> None:
+def test_the_top_similarity_is_reported_per_answerability_and_kinds_average_apart() -> None:
     queries = [
         {"id": "a", "query": "x", "gold": [["a.md", "y"]], "kind": "context"},
         {"id": "b", "query": "z", "gold": [], "kind": "unanswerable"},
     ]
     hit = {"source_uri": "a.md", "content": "y", "similarity": 0.25}
     report = search(lambda path, body: {"results": [hit]}, "o", "n", queries, {})
-    assert report["unanswerable_top_similarity"] == 0.25
+    assert report["top_similarity"] == {"answerable": 0.25, "unanswerable": 0.25}
     assert report["metrics"]["all"]["n"] == 1 and report["metrics"]["context"]["mrr"] == 1.0
     rows = [
         {"kind": "context", "metrics": {"mrr": 1.0}},

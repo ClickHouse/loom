@@ -29,10 +29,10 @@ flag; any other key is refused, and a search over a namespace that does not hold
 exactly the fixture's documents fails the run. Reports recall@1/5/10 (a query
 counts when any relevant passage is in the top k), all-gold recall@10 (every
 relevant passage found, for the multi-document questions), MRR and nDCG@10,
-overall and per query kind, plus the mean top-hit cosine similarity on
-unanswerable queries. The `freshness` and `multi` kinds hold three and four
+overall and per query kind, plus the mean cosine similarity of the top hit on
+answerable and on unanswerable queries (every hit carries one, in every mode). The `freshness` and `multi` kinds hold three and four
 queries, so their per-kind figures are coarse; a superseded policy ranked above the
-current one shows in a freshness query's R@1 and MRR only. Ingesting embeds 21 documents
+current one shows in a freshness query's R@1, MRR and nDCG@10, not its R@5. Ingesting embeds 21 documents
 (97 chunks at the default chunk size): a few cents with a hosted embedder, free
 with a local one.
 """
@@ -40,6 +40,7 @@ with a local one.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -64,6 +65,13 @@ from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 FIXTURE = Path(__file__).parent / "fixtures" / "knowledge_retrieval"
 KS = (1, 5, 10)
 TOP_K = max(KS)
+
+
+def fixture_tag(docs: list[dict]) -> str:
+    """A tag naming this version of the corpus, put on every ingested document so a
+    search can tell an ingest of an older corpus from this one."""
+    digest = hashlib.sha256(json.dumps(docs, sort_keys=True).encode()).hexdigest()
+    return f"fixture:{digest[:12]}"
 
 
 def load_fixture(root: Path) -> tuple[list[dict], list[dict]]:
@@ -156,15 +164,19 @@ def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: boo
         post, org=org, namespace=namespace, description="knowledge retrieval fixture", keep=keep
     )
     remember_bench_namespace(org, namespace)
+    tag = fixture_tag(docs)
     for d in docs:
-        post("/v1/knowledge.upsert", {"org": org, "namespace": namespace, **d})
+        body = {"org": org, "namespace": namespace, **d, "tags": [*d["tags"], tag]}
+        post("/v1/knowledge.upsert", body)
     print(f"ingested {len(docs)} documents into {org}/{namespace}", file=sys.stderr)
 
 
 def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> None:
-    """Refuse a namespace whose documents are not exactly the fixture's: an older or
+    """Refuse a namespace whose documents are not exactly this fixture's: an older or
     partial ingest skews every number without failing a query."""
+    tag = fixture_tag(docs)
     have: set[str] = set()
+    stale = 0
     cursor = None
     while True:
         page = post(
@@ -172,19 +184,21 @@ def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> 
             {"org": org, "namespace": namespace, "limit": 500, "cursor": cursor},
         )
         have.update(row["source_uri"] for row in page["rows"])
+        stale += sum(tag not in (row.get("tags") or []) for row in page["rows"])
         cursor = page.get("next_cursor")
         if not cursor:
             break
     want = {d["source_uri"] for d in docs}
-    if have != want:
+    if have != want or stale:
         raise SystemExit(
             f"{org}/{namespace} is not this fixture: {len(want - have)} documents missing, "
-            f"{len(have - want)} extra; ingest into a fresh namespace"
+            f"{len(have - want)} extra, {stale} from another version; "
+            "ingest into a fresh namespace"
         )
 
 
 def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params: dict) -> dict:
-    rows, unanswerable = [], []
+    rows, top_answerable, top_unanswerable = [], [], []
     any_hits = False
     for q in queries:
         body = {
@@ -199,9 +213,11 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
         if out.get("ignored_args"):
             raise SystemExit(f"knowledge.search ignored {out['ignored_args']}: the arm did not run")
         hits = out["results"]
+        top = hits[0]["similarity"] if hits else 0.0
         if not q["gold"]:
-            unanswerable.append(hits[0]["similarity"] if hits else 0.0)
+            top_unanswerable.append(top)
             continue
+        top_answerable.append(top)
         any_hits = any_hits or bool(hits)
         rows.append({"id": q["id"], "kind": q["kind"], "metrics": score_query(hits, q["gold"])})
     if not any_hits:
@@ -209,7 +225,11 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
     return {
         "params": params,
         "metrics": mean_by_kind(rows),
-        "unanswerable_top_similarity": round(sum(unanswerable) / max(1, len(unanswerable)), 3),
+        # The gap between the two is the room a similarity floor has to abstain.
+        "top_similarity": {
+            "answerable": round(sum(top_answerable) / max(1, len(top_answerable)), 3),
+            "unanswerable": round(sum(top_unanswerable) / max(1, len(top_unanswerable)), 3),
+        },
         "misses@5": [r["id"] for r in rows if not r["metrics"]["recall@5"]],
         "queries": rows,
     }
