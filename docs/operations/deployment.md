@@ -461,7 +461,7 @@ A `<table>_pre_rebuild` copy left by an earlier run blocks that table's rebuild.
 from the current window is removed with that table's line and
 `mode="--drop-pre-rebuild --yes"`, as in step 3. Once writers have run since the copy
 was made, `--drop-pre-rebuild` refuses it: the live table holds changes the copy lacks
-(new rows, erasure tombstones, quarantine updates, a re-embed delete). Remove such a copy
+(new rows, erasure tombstones, a re-embed delete). Remove such a copy
 with the read in
 [what the checks after a swap find](./maintenance.md#what-the-checks-after-a-swap-find),
 then `DROP TABLE loom.<table>_pre_rebuild SYNC` by hand. A mutation on
@@ -736,6 +736,48 @@ Each is off until configured; `.env.example` has a commented block for each.
 | Tracker records          | `LOOM_TRACKER_ORG`, `LOOM_TRACKER_SOURCES_JSON`, `LOOM_TRACKER_CREDENTIALS_JSON`                                   | [Tracker](../features/tracker/overview.md)                                                                  |
 | Telemetry                | `LOOM_OTEL_EXPORTER`: `ch` (the `otel_*` tables), `otlp` (a collector); empty picks `otlp` when an endpoint is set | [Telemetry](../features/observability/telemetry.md)                                                         |
 | Erasure in other systems | `LOOM_LANGFUSE_URL`, `LOOM_CLICKSTACK_DATABASE` and their credentials                                              | [Retention and erasure](../features/memory/retention-and-erasure.md)                                        |
+
+### Memory and documents only
+
+The code plane's ops are served by default (`LOOM_CODE_INTEL_ENABLED=true`), even with no
+repository configured. A deployment that serves memory, documents and conversations, and
+no code index, turns them off with `LOOM_CODE_INTEL_ENABLED=false`. What that changes,
+and what it leaves:
+
+- Boot still applies every migration. An empty table costs nothing to serve, and erasure
+  covers every table whatever is in use.
+- Every `code.*` operation but `code.repo.remove` answers a precondition error. Retire any
+  code index before turning the switch off: [code-index
+  operations](./code-index-operations.md#rollout-and-shutdown) covers retirement, erasure
+  and what stays on disk. The dashboard's code pages show the precondition error.
+- The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
+  leaves the code tools out, but any client entry whose toolset includes `coding`, `tracker`
+  (`code.bisect_candidates`, `code.pr_check`, `code.impact`) or `assistant` (`code.search`,
+  `code.symbol`) lists code tools that refuse. The plugins, `loom install` for Claude Code
+  and Codex, the lines `loom up` and `loom init` print, and the dashboard's Claude Code,
+  Codex and Cursor snippets ask for `coding`. Point those entries at `core` (with `tasks`
+  added where agents use the task inbox): the Claude Code plugin's `toolset` option
+  ([options](../features/integrations/claude-code.md#install)),
+  `loom install --toolset core`, or for the Codex plugin a `[mcp_servers.loom]` override in
+  `~/.codex/config.toml` that keeps the plugin's `http_headers_helper` line, since the
+  override replaces the entry whole
+  ([the server](../features/integrations/codex.md#the-server)).
+- The plugin hooks find a session's repository through `code.repos`, which is refused, and
+  ask again about once a minute. The session-start primer then adds a code-index line that
+  points the agent at the `loom_code_*` tools; set `LOOM_CODE_MAP=false` in the environment
+  the agent runs its hooks with to leave it out.
+- The switch also stops the coverage workers (`code_coverage_notify`, which delivers
+  coverage watches, and `code_coverage_import`). Every other code and tracker worker has its
+  own `LOOM_*_ENABLED` setting, which this switch does not change; with no repository and no
+  tracker source configured, they find nothing to do: each pass reads a few rows and ends.
+  The git mirror warm-up and host loop do not run, and boot probes the repository-job
+  sandbox only when `LOOM_CODE_INGEST_ENABLED` or `LOOM_CODE_SANDBOX_REQUIRED` is on. Every
+  process still re-reads the repository registry while `LOOM_CODE_SELF_SERVICE_ENABLED` is
+  on and the tracker sources while `LOOM_TRACKER_SELF_SERVICE_ENABLED` is on: one small read
+  per interval (`LOOM_CODE_REPOS_REFRESH_SECONDS`, `LOOM_TRACKER_SOURCES_REFRESH_SECONDS`).
+- `memory.*`, `knowledge.*`, `conversation.*`, `context.pack` and `search.query`
+  (`loom_search` over MCP) serve as on any deployment; `search.query` has no code or tracker
+  results to add.
 
 ## Identity modes
 

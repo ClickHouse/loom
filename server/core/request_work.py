@@ -23,6 +23,7 @@ Never raises.
 from __future__ import annotations
 
 import contextvars
+import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -42,8 +43,10 @@ class RequestWork:
     ch_read_rows: int = 0
     ch_read_bytes: int = 0
     ch_elapsed_ms: float = 0.0
-    # Per-request statement sequence, for `query_id = <request_id>:<n>`.
+    # For `query_id = <request_id>:<n>:<nonce>`: the nonce keeps two requests
+    # with one caller id from sending a query_id ClickHouse is still running.
     ch_seq: int = 0
+    ch_nonce: str = field(default_factory=lambda: secrets.token_hex(4))
     # Identifier injection: rows the exact reads put in the
     # synthesis pool, facts and verbatim chunks.
     injected_facts: int = 0
@@ -139,14 +142,14 @@ def note_ch_summary(summary: Any) -> dict[str, Any]:
         return {}
 
 
-def next_query_seq() -> int | None:
-    """The next per-request statement number, or None when no bag is bound
-    (a worker pass keeps the driver's own query ids)."""
+def next_query_seq() -> tuple[int, str] | None:
+    """The request's next statement number and its nonce, or None when no bag is
+    bound (a worker pass keeps the driver's own query ids)."""
     bag = _current.get()
     if bag is None:
         return None
     bag.ch_seq += 1
-    return bag.ch_seq
+    return bag.ch_seq, bag.ch_nonce
 
 
 def note_injected(*, facts: int = 0, chunks: int = 0) -> None:

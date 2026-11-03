@@ -1086,7 +1086,9 @@ actor kind no token maps to, so a caller cannot forge one
 `emit` in `server/observability/audit.py` writes `loom.audit_log` rows. `row_hash` is
 SHA-256 over the canonical JSON of timestamp, event type, org, namespace, actor, subject
 and request id. Every memory write leaves a hash-only row; ops that declare `audit=True`
-leave one per successful call.
+leave one per successful call. An op whose input carries a credential (a tracker source's
+password, a repository's access token) declares an `audit_subject` that leaves it out, since
+the audit log outlives the source, the repository and every erasure.
 
 The `audit_verifier` worker recomputes row hashes and seals closed windows into
 `loom.audit_checkpoints`, chained by `prev_checkpoint_hash`, so a deleted row shows as a

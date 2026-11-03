@@ -4,9 +4,9 @@ Three agents write into one namespace, one of them for two end users and one a
 high-sensitivity row. Inspecting an agent lists its own rows apart from the other
 agents'; inspecting a user lists the rows filed under that user apart from the rest; each
 listed row carries the memory_id, version and content hash memory.get serves; the guide
-and categories are read; the extraction policy is not, for a writer on a server that
-enforces auth; and the inspection changes no memory row, writing only the
-exposure-ledger row for what it listed.
+and categories are read; the extraction policy is not, for a writer in any auth mode;
+and the inspection changes no memory row, writing only the exposure-ledger row for what
+it listed.
 """
 
 from __future__ import annotations
@@ -140,17 +140,21 @@ async def test_inspect_splits_own_from_others_and_changes_nothing(
         settings = user["settings"]
         assert settings["guide_revision"] == 1 and settings["guide_summary"] == "key layout"
         assert settings["categories_registered"] == 1
+        # The server checks a token it is sent even with auth off, so a writer never
+        # reads the policy.
+        assert settings["extraction_policy"] is None
+        assert "org admin" in settings["extraction_policy_unavailable"]
         async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as anon:
             # An inspection names no agent, so the probe adds no call to the agent's count.
             anonymous = await anon.post(
                 "/v1/memory.inspect", json={**base, "subject": "user", "id": "u1"}
             )
+        # 200 with auth off, 401 with it on.
+        assert anonymous.status_code in (200, 401), anonymous.text[:300]
         if anonymous.status_code == 200:
-            # Auth is off: every caller may read the policy, and none is set.
-            assert settings["extraction_policy"] == ""
-        else:
-            assert settings["extraction_policy"] is None
-            assert "org admin" in settings["extraction_policy_unavailable"]
+            # Auth is off: a caller with no token may read the policy, and none is set.
+            anonymous_settings = anonymous.json()["settings"]
+            assert anonymous_settings["extraction_policy"] == "", anonymous_settings
         assert user["skipped"] == []
 
         session = await post("memory.inspect", {"subject": "session", "id": "s1"})

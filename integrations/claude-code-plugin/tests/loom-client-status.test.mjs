@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 process.env.LOOM_HOOK_NO_MAIN = "1";
 const { clientStatus } = await import("../bin/loom-client-status.mjs");
@@ -105,5 +106,81 @@ test("an agent with no token is told its workload-token exchange failed", async 
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
+  }
+});
+
+test("the source line sits between token and auth, names the lookup, and warns when the config names another server", async () => {
+  const { loomConfigPath, loomTokenPath } = await import("../lib/loom-client.mjs");
+  const run = (tokenKind, configUrl, tok = token()) =>
+    clientStatus({ serverUrl, token: tok, scope, now, fetchImpl: responses().fetchImpl, tokenKind, configUrl });
+  const pass = await run("env", "https://elsewhere");
+  assert.deepEqual(
+    pass.checks.map((c) => c.name),
+    ["server", "token", "source", "auth", "namespace", "flush"],
+  );
+  assert.deepEqual(pass.checks[2], { name: "source", grade: "PASS", detail: "token from LOOM_API_KEY" });
+  const warn = await run("config", "https://elsewhere/");
+  const line = warn.checks.find((c) => c.name === "source");
+  assert.equal(line.grade, "WARN");
+  assert.match(line.detail, /names https:\/\/elsewhere; this check uses https:\/\/loom\.test/);
+  assert.ok(line.detail.includes(loomConfigPath()));
+  assert.equal(warn.ok, true); // a WARN never fails the check
+  assert.equal((await run("config", `${serverUrl}/`)).checks[2].grade, "PASS");
+  assert.equal((await run("file", "https://elsewhere")).checks[2].detail, `token from ${loomTokenPath()}`);
+  assert.equal((await run("agent", "https://elsewhere")).checks[2].detail, "token from the workload-token exchange");
+  const none = await run("", "", "");
+  assert.equal(
+    none.checks.some((c) => c.name === "source"),
+    false,
+  );
+});
+
+test("the agent-mode line names the server the exchange went to, not the one checked", async () => {
+  const { fetchImpl } = responses();
+  const saved = { ...process.env };
+  process.env.LOOM_CLIENT_ID = "ci";
+  process.env.LOOM_WORKLOAD_TOKEN = "proof";
+  try {
+    const r = await clientStatus({ serverUrl, token: "", scope, now, fetchImpl, exchangeUrl: "https://hooks.test" });
+    assert.match(r.checks.find((c) => c.name === "token").detail, /exchange at https:\/\/hooks\.test failed/);
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+});
+
+test("the Codex copy checks the hooks' server and makes no source comparison", async () => {
+  // Codex's MCP entry may be replaced whole in Codex's own config, which the
+  // script cannot read: it checks the hooks' server and the source line only
+  // names the lookup.
+  const { spawn } = await import("node:child_process");
+  const codexScript = fileURLToPath(new URL("../../codex-plugin/bin/loom-client-status.mjs", import.meta.url));
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-status-codex-")));
+  fs.mkdirSync(path.join(home, ".loom"));
+  // A token the spawned process's own clock reads as live: the server line
+  // and the source line are what this test is about, not expiry.
+  const live = token(Math.floor(Date.now() / 1000) + 3600);
+  fs.writeFileSync(
+    path.join(home, ".loom", "config.json"),
+    JSON.stringify({ url: "https://elsewhere.test", token: live }),
+  );
+  try {
+    const out = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [codexScript], {
+        env: { PATH: process.env.PATH, HOME: home, TMPDIR: home, LOOM_BASE_URL: "http://127.0.0.1:9" },
+      });
+      let stdout = "";
+      child.stdout.on("data", (c) => (stdout += c));
+      child.on("close", () => resolve(stdout));
+    });
+    const result = JSON.parse(out);
+    assert.match(result.checks.find((c) => c.name === "server").detail, /127\.0\.0\.1:9/);
+    const source = result.checks.find((c) => c.name === "source");
+    assert.equal(source.grade, "PASS");
+    assert.ok(source.detail.endsWith("config.json"), source.detail);
+    assert.equal(result.checks.find((c) => c.name === "token").grade, "PASS");
+    assert.equal(out.includes(live), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });

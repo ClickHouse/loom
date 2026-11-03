@@ -80,13 +80,15 @@ async def mirror_status_to_embeddings(
     batch: int = 500,
     strict: bool = False,
     judged: bool = False,
+    sequential: bool = False,
 ) -> int:
     """Re-emit each identity's live vector rows with its memory row's `status` (and
     `invalid_at`, and `tombstoned_at` for a tombstone), at the memory row's `version`, or
     at read + 1 without one; a vector at or above that version (a newer write's) and one
     already mirrored are left alone. Read by the full identity: a key repeats across
     identities, each with its own status. Returns the rows re-emitted (with `dry_run`,
-    the rows it would). Never raises, unless `strict`.
+    the rows it would). Never raises, unless `strict`. `sequential` reads the vector
+    rows sequentially consistent, so a vector row written just before is found.
 
     `judged` (a verdict reached after the write): only the vectors of the memory row's
     `content_sha256` are copied, at a version drawn before a sequential read, so a
@@ -126,7 +128,7 @@ async def mirror_status_to_embeddings(
     for start in range(0, len(keys), step):
         chunk = keys[start : start + step]
         try:
-            rows = await _live_rows_for_keys(ch, chunk, sequential=judged)
+            rows = await _live_rows_for_keys(ch, chunk, sequential=judged or sequential)
         except Exception as e:  # a mirror, never the write; strict re-raises
             if strict:
                 raise

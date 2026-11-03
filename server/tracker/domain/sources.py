@@ -114,11 +114,13 @@ class DbSource:
 def host_of(raw: str) -> str:
     """The bare hostname of a host setting: `https://x.example/` and
     `x.example` name the same service (the first value was
-    written as a URL, and the client wants a host)."""
+    written as a URL, and the client wants a host). Userinfo (`user:pass@`)
+    is dropped: the credential is its own field, never part of the host."""
     value = (raw or "").strip()
     if "://" in value:
         value = value.split("://", 1)[1]
-    return value.split("/", 1)[0].split("?", 1)[0].split(":", 1)[0].strip()
+    authority = value.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    return authority.rsplit("@", 1)[-1].split(":", 1)[0].strip()
 
 
 def _json_object(raw: str, setting: str) -> dict[str, Any]:

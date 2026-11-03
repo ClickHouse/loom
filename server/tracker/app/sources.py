@@ -934,6 +934,22 @@ async def handle_tracker_source_rotate(
     )
 
 
+def source_add_audit_subject(input: TrackerSourceAddInput, response: Any) -> dict[str, Any]:
+    """What an add's audit row records: the request without the password, with
+    the name and host as stored. `loom.audit_log` outlives the source and must
+    hold no secret."""
+    subject = input.model_dump(mode="json", exclude={"password"})
+    subject["name"] = response["name"]
+    subject["host"] = response["host"]
+    return subject
+
+
+def source_rotate_audit_subject(input: TrackerSourceRotateInput, response: Any) -> dict[str, Any]:
+    """What a rotation's audit row records: which source and the new user, never
+    the password."""
+    return {"org": input.org, "name": response["name"], "user": input.user}
+
+
 async def handle_tracker_source_remove(
     input: TrackerSourceRemoveInput,
 ) -> TrackerSourceRemoveOutput:
@@ -975,4 +991,6 @@ __all__ = [
     "handle_tracker_source_list",
     "handle_tracker_source_remove",
     "handle_tracker_source_rotate",
+    "source_add_audit_subject",
+    "source_rotate_audit_subject",
 ]
