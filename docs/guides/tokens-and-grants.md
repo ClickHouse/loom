@@ -249,7 +249,8 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
   (its memories are kept, and whoever claimed it next would own them); erasing the
   namespace removes the data but not the reservation.
 - **Restoring into a namespace needs its admin.** `namespace.restore` into an existing
-  namespace, active or soft-deleted, needs an admin of it.
+  namespace, active or soft-deleted, needs an admin of it. A collection name (`col-…`, or
+  `@me`) is refused, as `namespace.register` refuses one.
 - **Service accounts inherit.** An `sa:` subject with no grant of its own on a namespace
   uses its creator's grant there, so a token minted from the dashboard follows the person
   who made it, including into namespaces they join later. Restricted namespaces are the

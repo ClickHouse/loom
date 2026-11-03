@@ -21,7 +21,7 @@ person can attest that a row is true. How the version mirror works is in
 | `memory.redact`      | admin  | Scrub the value of one historical version, keeping the row and its audit entry.                           |
 | `namespace.rollback` | admin  | Return every memory head in a namespace to its version at a point in time.                                |
 | `namespace.snapshot` | admin  | Export a namespace's curated state as a JSON payload.                                                     |
-| `namespace.restore`  | viewer | Import a snapshot into a fresh namespace, or an existing one the caller administers.                      |
+| `namespace.restore`  | viewer | Import a snapshot into a fresh namespace, or an existing one the caller administers; never a collection.  |
 
 `namespace.snapshot` and `namespace.restore` are not MCP tools. Field lists are in the
 operations reference under [memory](../../reference/operations.md#memory) and

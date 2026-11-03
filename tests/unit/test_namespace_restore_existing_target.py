@@ -135,7 +135,7 @@ def _restore_input(target: str = NS) -> NamespaceRestoreInput:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("target", [personal_name(ORG, "user:alice"), "col-team-notes"])
+@pytest.mark.parametrize("target", [personal_name(ORG, "user:alice"), "col-team-notes", "@me"])
 async def test_a_restore_into_a_collection_name_is_refused(wire, target: str) -> None:
     """A collection, an end user's personal one included, is reached only through its
     grants: a restore that found no row for the name would write a directory row, an

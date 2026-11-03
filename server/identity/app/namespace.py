@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from server.auth.grant_claims import account_change
-from server.auth.sharing import is_collection
+from server.auth.sharing import PERSONAL_ALIAS, is_collection
 from server.core import grant_cache
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now_seconds
@@ -336,8 +336,9 @@ def refuse_sso_name(namespace: str) -> None:
 
 def refuse_collection_name(namespace: str) -> None:
     """A collection, an end user's personal one included, is reached only through its
-    grants; no namespace operation writes its rows."""
-    if is_collection(namespace):
+    grants; no namespace operation writes its rows. `@me` names one only once the gate
+    maps it, so the literal name is refused too."""
+    if is_collection(namespace) or namespace == PERSONAL_ALIAS:
         raise ValidationError("a collection is changed with the collection operations only")
 
 
@@ -608,7 +609,7 @@ async def handle_namespace_delete(
     is a no-op (returns deleted=False). A collection is refused: it goes with
     what it holds, through `collection.delete`.
     """
-    from server.auth.sharing import is_collection, is_personal
+    from server.auth.sharing import is_personal
 
     if is_personal(input.namespace):
         # It goes with its user's erasure, which also takes the user's id off its row.
@@ -629,7 +630,6 @@ async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
         if existing is None:
             # A collection whose create stopped before its directory row still
             # has a tree row the gate admits by: retire it.
-            from server.auth.sharing import is_collection
             from server.identity.app.collections import retire
 
             closed = is_collection(namespace) and await retire(org, namespace)
