@@ -23,10 +23,13 @@ belongs here ([writing memories](./memory/writing.md)).
    shorter one is text here), plus one-line `<h1>` to `<h6>`; a list item, a
    thematic break and any line inside a fenced code block or an HTML block are
    never headings.
-3. **Embeds each chunk with its context.** The vector is computed over the title, the
-   `description` and the chunk's heading breadcrumb ("Deploy > Rollback > Cloud")
-   prepended to the chunk text. The stored chunk stays unchanged, so snippets read
-   naturally, while the vector knows where the passage sits.
+3. **Indexes each chunk with its context.** A chunk's context is the title, the
+   `description` and its heading breadcrumb ("Deploy > Rollback > Cloud"), stored
+   with the chunk. The vector is computed over the context prepended to the chunk
+   text, and the lexical leg scores the context's words with the text's. The stored
+   chunk text stays unchanged, so snippets read naturally, while both legs know where
+   the passage sits: a "Refunds" section of the "Lantern handbook" matches a query
+   naming Lantern, though the section never does.
 4. **Serves it through search, outline and whole-document reads**, described below.
 
 A fixed window can cut a procedure in half and embed the second half without its heading. Chunking on headings keeps
@@ -47,7 +50,7 @@ the operations reference.
 | `knowledge.list`            | viewer | Documents of a namespace, paged by an opaque cursor, filterable by tag and URI prefix. |
 | `knowledge.outline`         | viewer | A document's table of contents, and optionally one section's assembled text.           |
 | `knowledge.synthesize`      | viewer | Complete a task over whole documents (summaries, spread-out evidence) with the LLM.    |
-| `knowledge.update_metadata` | writer | Edit `title`, `description` or `tags`; `reindex=true` re-embeds with the new header.   |
+| `knowledge.update_metadata` | writer | Edit `title`, `description` or `tags`; `reindex=true` rewrites the chunks' header.     |
 | `knowledge.delete`          | writer | Supersede a document and its chunks.                                                   |
 | `knowledge.bulk_delete`     | writer | The same for up to 500 `source_uris`.                                                  |
 | `knowledge.reads`           | viewer | How often agents opened each document over the last `days` (1–30).                     |
@@ -95,7 +98,14 @@ when no hit in that first pass reaches a similarity of 0.30.
 
 A lexical leg needs corpus statistics; a namespace with none yet (or a failed read)
 degrades to the vector leg alone. `loom lexical-stats-rebuild --org O --namespace N`
-rebuilds them.
+rebuilds them. A chunk with an empty context (one an older build wrote) is scored on
+its text alone until `loom rechunk` rewrites its document; run
+`loom lexical-stats-rebuild` after it, since the superseded chunks stay in the
+document frequencies until then. Rechunk such documents before changing the
+embedding model in Settings → Models & keys too: the provider rebuild embeds a
+chunk's stored context and text, and an older chunk's empty context would drop the
+header its vector was written with (and a titled document with no text, which has
+nothing else to embed, fails the rebuild until it is rechunked).
 
 ## Reading a document
 
@@ -123,13 +133,13 @@ knowledge search concentrates on a few documents. See
 
 ## Replacing, editing and deleting
 
-| You want to                            | Use                                                     | What happens                                                                                       |
-| -------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Replace a changed document             | `knowledge.upsert` (same `source_uri`)                  | New chunks are written; the previous version's chunks are marked superseded and kept for history.  |
-| Change the title, tags or blurb        | `knowledge.update_metadata`                             | The document row changes; chunk vectors are untouched unless `reindex=true` re-embeds them.        |
-| Rename a document                      | `knowledge.delete`, then `knowledge.add` at the new URI | `source_uri` is the identity agents cite, so it is not editable.                                   |
-| Remove a document                      | `knowledge.delete`                                      | Chunks and the document row are superseded; searches stop returning them at once.                  |
-| Erase a person's or a namespace's data | [`erasure.request`](./memory/retention-and-erasure.md)  | The erasure saga deletes documents, chunks and stored originals, and cascades to external systems. |
+| You want to                            | Use                                                     | What happens                                                                                           |
+| -------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Replace a changed document             | `knowledge.upsert` (same `source_uri`)                  | New chunks are written; the previous version's chunks are marked superseded and kept for history.      |
+| Change the title, tags or blurb        | `knowledge.update_metadata`                             | The document row changes; chunks keep the old header in both legs unless `reindex=true` rewrites them. |
+| Rename a document                      | `knowledge.delete`, then `knowledge.add` at the new URI | `source_uri` is the identity agents cite, so it is not editable.                                       |
+| Remove a document                      | `knowledge.delete`                                      | Chunks and the document row are superseded; searches stop returning them at once.                      |
+| Erase a person's or a namespace's data | [`erasure.request`](./memory/retention-and-erasure.md)  | The erasure saga deletes documents, chunks and stored originals, and cascades to external systems.     |
 
 `knowledge.add` does not retire an earlier version at the same `source_uri`; use
 `knowledge.upsert` to replace one. `knowledge.upsert` also reports duplicates without

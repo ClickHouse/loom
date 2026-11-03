@@ -262,8 +262,9 @@ def _add_integrity_and_stats_parsers(sub: Any) -> None:
         "rechunk",
         help="Re-chunk and re-embed a namespace's knowledge documents from stored "
         "content through the current chunker, so every document carries section "
-        "metadata and document frequency. Idempotent; one embedding per new chunk. "
-        "Dry run by default (counts the documents and chunks); --apply re-chunks.",
+        "metadata, chunk context and document frequency. Idempotent; one embedding "
+        "per new chunk. Dry run by default (counts the documents and chunks); "
+        "--apply re-chunks.",
     )
     p_rechunk.add_argument("--org", required=True)
     p_rechunk.add_argument("--namespace", required=True)

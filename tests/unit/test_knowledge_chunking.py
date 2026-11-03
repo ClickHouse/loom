@@ -119,13 +119,16 @@ def test_outline_lists_sections_in_document_order_with_chunk_indices() -> None:
     assert electoral["depth"] == 3 and len(electoral["chunk_idxs"]) >= 2  # type: ignore[arg-type]
 
 
-def test_augment_for_embedding_adds_the_breadcrumb_after_title_and_description() -> None:
-    from server.knowledge.app.writes import _augment_for_embedding
+def test_a_chunk_context_is_title_description_and_breadcrumb_and_heads_the_embedded_text() -> None:
+    from server.knowledge.domain.chunking import chunk_context, embedding_text
 
-    out = _augment_for_embedding("body", title="Book", description="desc", section="A > B")
-    assert out == "Book\ndesc\nA > B\n\nbody"
-    assert _augment_for_embedding("body", section="A > B") == "A > B\n\nbody"
-    assert _augment_for_embedding("body") == "body"
+    assert chunk_context("Book", "desc", "A > B") == "Book\ndesc\nA > B"
+    assert chunk_context(" ", "", "A > B") == "A > B"
+    assert chunk_context("", "", "") == ""
+    # a first heading repeating the title stays
+    assert chunk_context("Book", "", "Book > A") == "Book\nBook > A"
+    assert embedding_text("Book\nA > B", "body") == "Book\nA > B\n\nbody"
+    assert embedding_text("", "body") == "body"
 
 
 def test_chunk_text_uses_the_size_and_stride_settings(monkeypatch) -> None:
