@@ -226,6 +226,7 @@ async def _call_tool(
 
     client_idem_key = _pop_idempotency_key(op, arguments)
 
+    arguments.update(gates.with_resolved_org(op, arguments, auth))
     validated = _validated_input(req_id, op, arguments, request_id)
     if isinstance(validated, dict):
         return validated  # misspelled-argument refusal, or VALIDATION_FAILED

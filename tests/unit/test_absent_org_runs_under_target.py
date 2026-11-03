@@ -40,7 +40,7 @@ def seen(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str]]:
     return _SEEN
 
 
-def _post(op: str, body: dict[str, Any], role: str = "viewer") -> None:
+def _post(op: str, body: dict[str, Any], role: str = "viewer") -> Any:
     from server.transport.http import build_router
 
     app = FastAPI()
@@ -48,7 +48,7 @@ def _post(op: str, body: dict[str, Any], role: str = "viewer") -> None:
     tok = mint_token(
         subject="probe", org="globex", namespaces=["ns1"], roles=[role], ttl_seconds=300
     )
-    TestClient(app, raise_server_exceptions=False).post(
+    return TestClient(app, raise_server_exceptions=False).post(
         f"/v1/{op}", json=body, headers={"Authorization": f"Bearer {tok}"}
     )
 
@@ -125,19 +125,18 @@ def test_a_code_admin_write_with_a_dash_org_takes_the_code_org(
     the call against; the repository namespace it names is kept."""
     from server.code.api.models_repos import CodeRepoSetAccessInput
     from server.operations.registry import OPERATIONS_BY_NAME
-    from server.transport.gates import authz_target, with_target
+    from server.transport.gates import authz_target, with_resolved_org, with_target
 
     monkeypatch.setattr(settings, "code_org", "code-org")
+    op = OPERATIONS_BY_NAME["code.repo.set_access"]
     body = {
         "org": "-",
         "namespace": "repo@main",
         "classification": "restricted",
         "join_policy": "closed",
     }
-    inp = CodeRepoSetAccessInput.model_validate(body)
-    target = authz_target(
-        OPERATIONS_BY_NAME["code.repo.set_access"], org=inp.org, namespace=inp.namespace, auth=None
-    )
+    inp = CodeRepoSetAccessInput.model_validate(with_resolved_org(op, body, None))
+    target = authz_target(op, org=inp.org, namespace=inp.namespace, auth=None)
     out = with_target(inp, target)
     assert (out.org, out.namespace) == ("code-org", "repo@main")
 
@@ -148,10 +147,11 @@ def test_a_tracker_read_with_an_absent_org_takes_the_tracker_org(
     monkeypatch.setattr(settings, "tracker_org", "trackers")
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.tracker.api.models import TrackerItemInput
-    from server.transport.gates import authz_target, with_target
+    from server.transport.gates import authz_target, with_resolved_org, with_target
 
     op = OPERATIONS_BY_NAME["tracker.item"]
-    inp = TrackerItemInput.model_validate({"org": "-", "namespace": "-", "numbers": [1]})
+    body = {"org": "-", "namespace": "-", "numbers": [1]}
+    inp = TrackerItemInput.model_validate(with_resolved_org(op, body, None))
     target = authz_target(op, org=inp.org, namespace=inp.namespace, auth=None)
     out = with_target(inp, target)
     # The org takes the tracker plane's; a tracker namespace has no plane default.
@@ -374,3 +374,47 @@ def test_an_mcp_code_read_naming_no_tenant_reads_the_code_plane(
     args = {"org": "-", "namespace": "-", "query": "q"}
     asyncio.run(mcp_call._call_tool(1, {"name": tool, "arguments": args}, auth=auth))
     assert calls == [("code-org", "code-shared")]
+
+
+def _inbox(org: str, ref: str) -> dict[str, Any]:
+    return {
+        "org": org,
+        "namespace": "ns1",
+        "inbox": "jobs",
+        "owner_agent": "bot",
+        "webhook_secret_ref": ref,
+    }
+
+
+def test_a_validator_reads_the_filled_org(
+    seen: list[tuple[str, str, str]],
+) -> None:
+    """A validator that reads the org sees the one the call runs under: an
+    inbox's webhook secret names it."""
+    from server.core.webhook_secrets import webhook_secret_org_prefix
+
+    own = f"{webhook_secret_org_prefix('globex')}HOOK"
+    r = _post("inbox.register", _inbox("-", own), role="admin")
+    assert seen == [("InboxRegisterInput", "globex", "ns1")], r.text
+
+
+def test_a_filled_org_that_fails_validation_is_a_422(
+    seen: list[tuple[str, str, str]],
+) -> None:
+    from server.core.webhook_secrets import webhook_secret_org_prefix
+    from server.transport.http import build_router
+
+    app = FastAPI()
+    app.include_router(build_router())
+    tok = mint_token(
+        subject="probe", org="globex", namespaces=["ns1"], roles=["admin"], ttl_seconds=300
+    )
+    dash = f"{webhook_secret_org_prefix('-')}HOOK"
+    r = TestClient(app, raise_server_exceptions=False).post(
+        "/v1/inbox.register",
+        json=_inbox("-", dash),
+        headers={"Authorization": f"Bearer {tok}"},
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["code"] == "VALIDATION_FAILED"
+    assert seen == []
