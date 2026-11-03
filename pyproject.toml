@@ -74,8 +74,9 @@ lemma = [
   "lemmagen3>=3.3",
 ]
 dev = [
-  "lemmagen3>=3.3",              # the server's own lexical leg; tests exercise it
-  "clickhouse-loom-server[aws]", # the export-analytics tests exercise boto3
+  "lemmagen3>=3.3",                    # the server's own lexical leg; tests exercise it
+  "clickhouse-loom-server[aws]",       # the export-analytics tests exercise boto3
+  "clickhouse-loom-server[extractor]", # the extractor's parser tests parse every format
   "pytest>=8.0",
   "pytest-asyncio>=0.24",
   "pytest-httpx>=0.32",
@@ -99,6 +100,11 @@ ingest = [
   "pypdf>=4.0",
   "boto3>=1.36",      # the document bucket client's checksum options; see `aws`
   "trafilatura>=2.0",
+]
+# The reference extractor's parsers (extractor/loom_extractor/), for its tests in this
+# environment. The server never imports them; the service installs extractor/pyproject.toml.
+extractor = [
+  "sqlglot>=30.27,<31", # imports sqlglot.tokenizer_core, which a major may move
 ]
 # `loom export-analytics` uploads to S3 under an assumed role, and
 # LOOM_DOCUMENT_OBJECT_STORE=s3 keeps document originals in a bucket; ships in the image.
@@ -177,6 +183,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
+# The reference extractor is its own package, outside the server wheel.
+pythonpath = ["extractor"]
 # A mark that is not registered here or by a plugin is an error, not a
 # silent no-op: a typo in a tier marker would otherwise leave the test in the
 # default tier. tests/README.md says which CI job runs each tier.
@@ -193,7 +201,8 @@ markers = [
 [tool.mypy]
 strict = true
 python_version = "3.12"
-files = ["server", "sdk/python/loom"]
+files = ["server", "sdk/python/loom", "extractor/loom_extractor"]
+mypy_path = "extractor"
 exclude = ["tests/"]
 
 # Optional packages imported lazily with a fallback, present in some
@@ -242,6 +251,8 @@ precision = 0
 
 [tool.ruff]
 line-length = 100
+# First-party packages: the server from the root, the reference extractor from its directory.
+src = [".", "extractor"]
 target-version = "py312"
 # The SDK supports Python 3.11 (sdk/python/pyproject.toml requires-python), so
 # its lint rules must not rewrite it to newer syntax. The wheel smoke test runs

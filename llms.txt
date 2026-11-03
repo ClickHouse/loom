@@ -74,6 +74,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Configuration reference](docs/reference/configuration.md): Every setting is declared in one file, `server/settings/catalog.py`, and is an environment variable `LOOM_<FIELD>` read at startup into `server.settings.settings`.
 - [Environment variables reference](docs/reference/environment.md): Almost everything Loom is configured with is a settings field: the environment variable `LOOM_<FIELD>` of a field on `server.settings.Settings`, listed with its default and meaning in the generated [configuration…
 - [Errors reference](docs/reference/errors.md): Every refusal Loom makes carries a stable, upper-case `code`.
+- [Extractor contract](docs/reference/extractor-contract.md): An extractor is an HTTP service the Loom server sends an original file to and gets its extraction artifact back from.
 - [HTTP API reference](docs/reference/http-api.md): Every Loom operation is one HTTP endpoint, `POST /v1/<operation>`, generated from the operation registry in `server/operations/` (`server/transport/http.py`, `build_router`).
 - [Reference](docs/reference/index.md): Reference pages say what exists and what each option means.
 - [MCP reference](docs/reference/mcp.md): Loom serves its operations as MCP tools at `<loom>/mcp`.
@@ -107,6 +108,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 
 - [ClickHouse](docs/architecture/clickhouse.md): All durable Loom state lives in one ClickHouse database, `loom`.
 - [Code index architecture](docs/architecture/code-index-architecture.md): This page is the inside view of the code index: how files become chunks, symbols and edges, and how the two tiers stay current.
+- [Document extraction](docs/architecture/document-extraction.md): An uploaded original is parsed into one shape, the extraction artifact, by an extractor service: a separate process with its own dependencies, never the Loom server.
 - [Failure and recovery](docs/architecture/failure-and-recovery.md): The primary write and every access decision fail closed.
 - [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into vectors, and an LLM client (`server/llm/`) that completes prompts.
 - [Memory architecture](docs/architecture/memory-architecture.md): The memory plane stores facts in `loom.memory`, makes them searchable through `loom.memory_embeddings`, and derives evidence, chunks, graph rows and statistics from them.

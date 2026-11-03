@@ -1,0 +1,31 @@
+# Service configuration.
+title = "loom" # the product
+started = 2026-01-02T03:04:05Z
+
+[server]
+port = 7777
+hosts = [
+  "a.internal", # primary
+  "b.internal",
+]
+
+# Hard limits.
+[server.limits]
+max_rows = 1_000
+"query.timeout" = 30.5
+enabled = true
+
+[[retention.rules]]
+table = "events"
+days = 30
+
+[[retention.rules]]
+table = "logs"
+days = 7
+notes = """
+Short-lived:
+debug only."""
+
+[[retention.rules.exceptions]]
+tenant = "acme"
+inline = { days = 90, reason = 'contract' }

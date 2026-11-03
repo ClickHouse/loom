@@ -64,7 +64,7 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
 [TypeScript SDK](reference/typescript-sdk.md) · [Environment](reference/environment.md) ·
 [Operations](reference/operations.md) · [Configuration](reference/configuration.md) ·
 [Workers](reference/workers.md) · [CLI](reference/cli.md) · [Errors](reference/errors.md) ·
-[Schema](reference/schema.md). Operations and fields change between releases;
+[Schema](reference/schema.md) · [Extractor contract](reference/extractor-contract.md). Operations and fields change between releases;
 [unknown and removed fields](reference/http-api.md#unknown-and-removed-fields) says how a
 client sees one the server no longer reads.
 
@@ -126,6 +126,7 @@ client sees one the server no longer reads.
 [ClickHouse](architecture/clickhouse.md) ·
 [Memory architecture](architecture/memory-architecture.md) ·
 [Code-index architecture](architecture/code-index-architecture.md) ·
+[Document extraction](architecture/document-extraction.md) ·
 [LLM and embeddings](architecture/llm-architecture.md) ·
 [Security](architecture/security.md) ·
 [Failure and recovery](architecture/failure-and-recovery.md) ·

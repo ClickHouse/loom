@@ -5,7 +5,7 @@ Loom is a memory, knowledge, and observability data plane for AI agents, built o
 ## Layout
 
 - `server/` — FastAPI control plane. One package per plane (`memory/`, `code/`, `tracker/`, `knowledge/`, `erasure/`, `tasks/`, `identity/`, `insights/`), each split into `api/` (wire models, `Operation` declarations), `app/` (handlers), `domain/` (pure logic, no I/O), `store/` (every ClickHouse statement and row builder) and `workers/`; `tests/unit/test_package_contracts.py` enforces the import direction. `server/operations/registry.py` collects every op; `server/transport/` serves them over HTTP (`POST /v1/{op}`) and MCP; `server/core/ch.py` is the one ClickHouse client.
-- `sdk/python/`, `sdk/typescript/`, `frontend/` (the dashboard, served at `/`), `schemas/migrations/` (numbered SQL; `schemas/schema.sql` is generated), `integrations/` (the Claude Code and Codex plugins), `bench/`, `dev/`, `deploy/` (ClickHouse config, the proxy, the Helm chart), `docs/`.
+- `sdk/python/`, `sdk/typescript/`, `frontend/` (the dashboard, served at `/`), `extractor/` (the document extractor service, run apart from the server), `schemas/migrations/` (numbered SQL; `schemas/schema.sql` is generated), `integrations/` (the Claude Code and Codex plugins), `bench/`, `dev/`, `deploy/` (ClickHouse config, the proxy, the Helm chart), `docs/`.
 - The full map: [repository guide](docs/development/repository-guide.md), `docs/architecture/server-layout.md`.
 
 ## Rules by area

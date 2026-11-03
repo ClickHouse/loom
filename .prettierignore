@@ -17,6 +17,7 @@ var/
 deploy/helm/*/templates/
 # Test fixtures are inputs whose exact bytes tests assert on.
 tests/fixtures/
+tests/unit/fixtures/knowledge/
 tests/analyzer/
 # Generated.
 sdk/typescript/src/generated/

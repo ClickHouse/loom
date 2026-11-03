@@ -61,7 +61,7 @@ jobs:
           uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: ruff
-        run: ruff check server sdk/python tests scripts .claude
+        run: ruff check server extractor sdk/python tests scripts .claude
       - name: ruff format
         run: ruff format --check .
       # The Python SDK's op table, TypedDicts and per-op client are generated

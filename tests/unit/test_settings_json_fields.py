@@ -16,6 +16,8 @@ _OBJECTS = [
     "llm_max_tokens_overrides",
     "ratelimit_class_fractions",
     "rerank_endpoints_json",
+    "document_extractors_json",
+    "document_extractor_tokens_json",
     "inference_feature_map_json",
     "inference_identity_headers_json",
     "inference_identity_refusals_json",
@@ -32,12 +34,17 @@ _OBJECT_SAMPLES = {
     "llm_max_tokens_overrides": ' {"hyde": 64} ',
     "latency_budget_overrides": ' {"memory.search": "2x"} ',
     "rerank_endpoints_json": ' {"gw": "https://rerank.example/v1"} ',
+    "document_extractors_json": ' {"pdf": "http://pdf-extractor:8790"} ',
+    "document_extractor_tokens_json": ' {"http://extractor:8790": "token"} ',
     "inference_feature_map_json": ' {"hyde": "query-expansion"} ',
     "inference_identity_headers_json": ' {"X-Agent": "{agent}"} ',
     "inference_identity_refusals_json": ' {"wait": [{"status": 503, "type": "api_error"}]} ',
 }
 # What a sample needs beside it to load.
-_COMPANIONS = {"inference_identity_headers_json": {"inference_gateway_hosts": "gateway.example"}}
+_COMPANIONS = {
+    "inference_identity_headers_json": {"inference_gateway_hosts": "gateway.example"},
+    "document_extractor_tokens_json": {"document_extractor_url": "http://extractor:8790"},
+}
 _ARRAYS = ["code_repos_json", "code_test_gate_run_templates"]
 _CANARY = "s3cr3t-canary"
 

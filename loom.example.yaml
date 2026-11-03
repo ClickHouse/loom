@@ -2434,6 +2434,16 @@ settings:
   # [live]
   # knowledge_repo_docs_list_ttl_s: 60.0
 
+  # --- document extraction ---
+
+  # Seconds one call to an extractor may take as a whole: reading its capabilities, or
+  # sending the original and reading its artifact. [restart]
+  # document_extractor_timeout_s: 180.0
+
+  # Bytes of an extractor's response the server reads; a larger artifact is refused.
+  # [restart]
+  # document_extractor_max_artifact_bytes: 67108864
+
   # ===== The MCP transport: tool listing, lean results, session runs =====
 
   # loom_search drops knowledge hits below this cosine similarity (the conversation

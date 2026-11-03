@@ -49,6 +49,10 @@ _CROSS_CHECKED = {
     "llm_provider",
     # Names and URLs checked by a model validator (test_rerank_names.py).
     "rerank_endpoints_json",
+    # URLs checked by a model validator (test_knowledge_extractors.py).
+    "document_extractor_url",
+    "document_extractors_json",
+    "document_extractor_tokens_json",
     # URLs checked by a model validator (test_llm_gateway.py).
     "openai_base_url",
     "anthropic_base_url",
