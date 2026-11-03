@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now as _now
 from server.identity.app.request_scope import request_scope
-from server.identity.domain.read_scope import row_in_read_scope, scope_and
+from server.identity.domain.read_scope import row_in_read_scope
 from server.memory.api.models_working_memory import (
     DEFAULT_CHAR_LIMIT,
     WorkingMemoryAppendInput,
@@ -31,6 +31,7 @@ from server.memory.api.models_working_memory import (
     WorkingMemoryReplaceInput,
     WorkingMemorySetInput,
 )
+from server.memory.app.scratchpad import run_rows
 from server.memory.store.rows import next_version
 
 log = logging.getLogger(__name__)
@@ -327,25 +328,12 @@ async def render_run_blocks(
     the run_id but not the writer's full identity: memory.ask is asked with agent="*",
     while the run scope wrote its notes as the agent it runs as. The run_id is unique to
     one execution, so (org, namespace, run_id) is the scope, narrowed by the request's
-    read scope so a token bounded to one user never reads another user's run. '' when
-    the run has no blocks; a read failure never raises, a refused read scope does."""
+    read scope (`scratchpad.run_rows`). '' when the run has no blocks; never raises."""
     if not run_id or run_id == "-":
         return ""
-    params: dict[str, Any] = {"org": org, "ns": namespace, "run": run_id, "lim": int(limit)}
-    in_scope = scope_and(request_scope(), params)
     ch = ch or get_client()
     try:
-        rows = await ch.query_all(
-            f"""
-            SELECT block_key, content
-            FROM loom.working_memory FINAL
-            WHERE org = {{org:String}} AND namespace = {{ns:String}} AND run_id = {{run:String}}
-              AND tombstoned_at IS NULL{in_scope}
-            ORDER BY updated_at DESC
-            LIMIT {{lim:UInt32}}
-            """,
-            params=params,
-        )
+        rows = await run_rows(ch, org, namespace, run_id, limit=limit)
     except Exception as e:  # noqa: BLE001 — a scratchpad read never blocks an answer
         log.warning("working_memory: run block read failed (open): %s", e)
         return ""

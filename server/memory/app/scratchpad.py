@@ -13,7 +13,9 @@ with `agent="*"`) does not know the writer's agent. Then the blocks written
 without a run (`run_id = '-'`) for the same session axis follow; the plugin
 writes its "where was I" note there and its per-turn conclusions at run
 scope, so a pack for the run sees both. Identity axes the caller left open
-(`agent="*"`, no `user_id`) are not filtered on.
+(`agent="*"`, no `user_id`) are not filtered on. Every read also carries the
+request's read scope, so a token bounded to one user never reads another
+user's run by naming its run id.
 
 Inert by construction when no block exists for the scope: indexed point
 reads on the `working_memory` primary key, no LLM call.
@@ -25,6 +27,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.naming import SENTINEL, named
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import scope_and
 
 TRUNCATED_MARK = "\n(truncated)"
 
@@ -115,6 +119,7 @@ async def _rows(
         "lim": int(limit),
         **extra,
     }
+    where += scope_and(request_scope(), params)
     rows = await ch.query_all(
         f"""
         SELECT block_key, content, version, updated_at
@@ -126,6 +131,23 @@ async def _rows(
         params=params,
     )
     return [dict(r) for r in (rows or [])]
+
+
+async def run_rows(
+    ch: Any, org: str, namespace: str, run_id: str, *, limit: int
+) -> list[dict[str, Any]]:
+    """The run's blocks, newest first, inside the request's read scope."""
+    return await _rows(
+        ch,
+        org=org,
+        namespace=namespace,
+        agent="",
+        user_id="",
+        session_id=SENTINEL,
+        run_id=run_id,
+        run_scope=True,
+        limit=limit,
+    )
 
 
 async def load(
