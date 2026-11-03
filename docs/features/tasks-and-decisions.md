@@ -390,8 +390,12 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   rows go to, so the run exits 1 before any model call when this document's rows from an earlier run are in the other
   namespace a run may write them to (the trunk, or the document's namespace; for a document in a release branch's code
   namespace, run without `--repo`, its trunk), or when a run without `--repo` finds them tagged `repo:<id>`: going on
-  would leave the document's decisions in two places, or unlinked. An unknown repository, a repository with no remote
-  to tag rows with under `--into source`, or `--into` without `--repo`, exits 1 as well.
+  would leave the document's decisions in two places, or unlinked. A caller who cannot read that other namespace is
+  refused. Two places the run does not look: rows an `--into repo` run wrote, when a later run on a document outside
+  any code namespace drops `--repo` or names another repository, so pass the same `--repo` again; and two runs on one
+  document at once with different `--into`, which can both find the other namespace empty. A row the retire step keeps
+  (its reasoning still in the document) gains the `repo:<id>` tag too. An unknown repository, a repository with no
+  remote to tag rows with under `--into source`, or `--into` without `--repo`, exits 1 as well.
 
 - **Windows**: the document's live chunks for the current embedding model, grouped by section, at most
   `--window-chars` (default 6000) per call. A document chunked under another embedding model has none: the command

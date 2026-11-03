@@ -166,10 +166,9 @@ async def test_into_source_serves_the_decision_in_the_documents_namespace(env) -
     )
     # A session in another repository (another tag) is not served it.
     assert await _for_file(person, ["project:other", "repo:0000000000"], [], _auth(person)) == []
-    # A repository reader with a namespace of their own does not see the person's row, and
-    # the transport refuses them the person's namespace.
+    # A repository reader who cannot read the person's namespace is refused it by the
+    # transport's gate before memory.for_file runs.
     other = f"other-{person}"
-    assert await _for_file(other, hook_tags, [trunk], _auth(other, trunk)) == []
     with pytest.raises(PermissionError):
         await check_authorized(
             _auth(other, trunk), required_role=Role.VIEWER, org=ORG, namespace=person

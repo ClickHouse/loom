@@ -133,8 +133,8 @@ def exit_code(report: ExtractReport) -> int:
     unknown --repo or a namespace it may not use, the extractor's rows unreadable or left in
     another namespace, no window read), 2 when a write, or a read it needed (a window the
     model could not answer readably included), was refused or failed (in a dry run too),
-    else 0. A row deleted or rewritten
-    since the run read it is reported, not counted: the next run settles it."""
+    else 0. A row deleted or rewritten since the run read it is reported, not counted: the
+    next run settles it."""
     if report.error:
         return 1
     return 2 if report.refused or any(d.refused for d in report.dropped) else 0
@@ -179,6 +179,9 @@ def print_report(report: ExtractReport) -> None:
         print(f"- {retire} {key}: its reasoning is no longer in the document")
     for pair in report.replaced:
         print(f"- {retire} {pair}: its reasoning is recorded under the new key")
+    tag = "would tag" if report.dry_run else "tagged"
+    for key in report.linked:
+        print(f"- {tag} {key} with the repository: its reasoning is still in the document")
     for line in report.refused + report.races:
         print(f"- not changed {line}")
     in_records = {r.memory_key for r in report.records}

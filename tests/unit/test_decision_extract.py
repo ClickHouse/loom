@@ -4193,3 +4193,79 @@ async def test_a_run_without_repo_refuses_over_rows_linked_to_a_repository(monke
         f"this document's decisions are linked to a repository ({REPO_TAG})"
     )
     assert world.prompts == [] and world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_a_row_the_model_did_not_emit_again_gains_the_repo_tag(monkeypatch, capsys) -> None:
+    """Its reasoning is still in the document, so the retire step keeps it, linked."""
+    world = _World(monkeypatch, [])
+    world.record(
+        "decision:kept",
+        {"reasoning": "A plain set on disk costs random reads.", "outcome": "no plain set"},
+        files=[HEADER],
+    )
+    _link_repo(monkeypatch, world)
+    dry = await _run(dry_run=True, repo="acme/widgets")
+    assert dry.linked == ["decision:kept"] and world.updates == []
+    cli.print_report(dry)
+    assert "- would tag decision:kept with the repository" in capsys.readouterr().out
+    report = await _run(repo="acme/widgets")
+    (upd,) = world.updates
+    assert upd.tags == ["decision", REPO_TAG]
+    assert report.linked == ["decision:kept"] and world.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_a_kept_row_whose_reasoning_left_is_flagged_and_tagged(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone from the deck"}, pinned=True)
+    _link_repo(monkeypatch, world)
+    report = await _run(repo="acme/widgets")
+    (upd,) = world.updates
+    assert set(upd.tags) == {"decision", SOURCE_CHANGED, REPO_TAG}
+    assert report.flagged == ["decision:gone"] and report.linked == []
+
+
+@pytest.mark.asyncio
+async def test_a_flagged_and_tagged_row_says_so(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        _same_fields(c) | {"reasoning": "We spill like ORDER BY does."},
+        files=[HEADER],
+        pinned=True,
+    )
+    _link_repo(monkeypatch, world)
+    (rec,) = (await _run(repo="acme/widgets")).records
+    assert rec.action == "flagged" and rec.note.endswith(f"tagged {REPO_TAG}")
+
+
+@pytest.mark.parametrize(
+    ("refused", "error"),
+    [
+        (
+            frozenset(),
+            f"this document's decisions are in o/{TRUNK}; run with --repo and --into repo, or "
+            "delete them there first",
+        ),
+        # Whether rows are there is not told to a caller who cannot read the trunk.
+        (frozenset({(TRUNK, "viewer")}), f"not allowed to read o/{TRUNK}"),
+    ],
+    ids=["rows in the trunk", "trunk unreadable"],
+)
+@pytest.mark.asyncio
+async def test_a_run_without_repo_in_a_branch_namespace_checks_its_trunk(
+    monkeypatch, refused: frozenset[tuple[str, str]], error: str
+) -> None:
+    from server.code.app import repo_scope
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), namespace=TRUNK, files=[HEADER])
+    _link_repo(monkeypatch, world, refused=refused)
+    # The document is in a release branch's code namespace whose trunk is TRUNK.
+    monkeypatch.setattr(repo_scope, "trunk_namespace_of", lambda org, ns: TRUNK)
+    report = await _run()
+    assert report.error == error
+    assert world.prompts == [] and world.recorded == []

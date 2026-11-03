@@ -161,6 +161,8 @@ class ExtractReport:
     # Keys tagged (or to tag) `source-changed`: confirmed rows (pinned or attested), and
     # rows with a recorded outcome, whose document now says otherwise.
     flagged: list[str] = field(default_factory=list)
+    # Keys of rows the retire step keeps that gained (or would gain) the repository's tag.
+    linked: list[str] = field(default_factory=list)
     # The retire step's "<key>: refused: <code>" for a read or write the server refused,
     # "<key>: failed: <error>" for one a provider error stopped. A candidate's is its
     # `dropped` line, marked `refused`.
@@ -436,7 +438,7 @@ async def extract_document(
             report.flagged.append(rec.memory_key)
         if rec.holds:
             held.setdefault(_held_key(rec.held_outcome, cand.reasoning), rec.memory_key)
-    await _retire(report, own, live_texts, written, held)
+    await _retire(report, own, live_texts, written, held, t.repo_tag)
     return report
 
 
@@ -478,7 +480,10 @@ async def _read_own(
         other = t.code_namespace
     else:
         other = t.doc_namespace
-    if other and other != t.rows_namespace and await _may(org, other, Role.VIEWER):
+    if other and other != t.rows_namespace:
+        if not await _may(org, other, Role.VIEWER):
+            # Whether rows are there is not the caller's to learn.
+            return [], f"not allowed to read {org}/{other}"
         if await _extractor_rows(org, replace(t, rows_namespace=other), source_uri):
             into = "source" if other == t.doc_namespace else "repo"
             return [], (
@@ -1139,12 +1144,10 @@ async def _flag(rec: RecordReport, row: MemoryRow, dry_run: bool, repo_tag: str)
     if not dry_run and (moved := await _set_tags(row, tags)):
         rec.race = moved
         return "row_changed"
-    if SOURCE_CHANGED_TAG in row.tags:
-        # Only the repository's tag was missing.
-        note = _tag_note(row, tags, dry_run)
+    if note := _tag_note(row, tags, dry_run):
         rec.note = f"{rec.note}; {note}" if rec.note else note
-        return "already_flagged"
-    return "flagged"
+    # The tag was there already when only the repository's tag was missing.
+    return "already_flagged" if SOURCE_CHANGED_TAG in row.tags else "flagged"
 
 
 async def _set_tags(row: MemoryRow, tags: list[str]) -> str:
@@ -1231,6 +1234,7 @@ async def _retire(
     live_texts: list[str],
     written: set[str],
     held: dict[tuple[str, str], str],
+    repo_tag: str,
 ) -> None:
     """Contract the extractor's own rows on this document whose reasoning left its text:
     delete an unconfirmed one; tag a confirmed one (pinned or attested), or one with a
@@ -1241,12 +1245,12 @@ async def _retire(
     stays, even when this run's model did not emit it again. The step never drops a
     `source-changed` tag: it sees the reasoning alone, and the tag may stand for another
     field the document still contradicts; reconcile drops it when the verbatim fields
-    match again."""
+    match again. A row it keeps gains `repo_tag`, as a row reconcile keeps does."""
     for row, record in own:
         if row.memory_key in written:
             continue
         try:
-            await _retire_one(report, row, record, live_texts, held)
+            await _retire_one(report, row, record, live_texts, held, repo_tag)
         except _REPORTED_ERRORS as e:
             report.refused.append(f"{row.memory_key}: {_refusal(e)}")
 
@@ -1264,6 +1268,7 @@ async def _retire_one(
     record: dict[str, Any],
     live_texts: list[str],
     held: dict[tuple[str, str], str],
+    repo_tag: str,
 ) -> None:
     """The retire step for one of the extractor's rows and its own record; its writes
     raise to the caller, which reports them."""
@@ -1283,22 +1288,39 @@ async def _retire_one(
     if not dx.find_span(reasoning, live_texts):
         # A row with a recorded outcome is tagged, never deleted, like a pinned one.
         keep = _confirmed(row) or _has_outcome(record)
-        await _retire_row(report, row, keep=keep)
+        await _retire_row(report, row, keep=keep, repo_tag=repo_tag)
+    elif repo_tag and repo_tag not in row.tags:
+        # Its reasoning is still there though the model did not emit it: it stays, linked.
+        await _tag_kept(report, row, [*row.tags, repo_tag])
 
 
-async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool) -> None:
-    """Delete the extractor's row by its writer, or tag it `source-changed` when it is to
-    be kept. Reported only once written: a refused write is reported as refused instead."""
-    if keep:
-        if SOURCE_CHANGED_TAG in row.tags:
-            return
-        tags = _tags_for(row, source_changed=True, repo_tag="")
-        if not report.dry_run and (moved := await _set_tags(row, tags)):
-            report.races.append(f"{row.memory_key}: {moved} since the run read it")
-            return
-        report.flagged.append(row.memory_key)
-    elif await _delete_row(report, row):
-        report.retired.append(row.memory_key)
+async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool, repo_tag: str) -> None:
+    """Delete the extractor's row by its writer, or tag it `source-changed` (and
+    `repo_tag`) when it is to be kept. Reported only once written: a refused write is
+    reported as refused instead."""
+    if not keep:
+        if await _delete_row(report, row):
+            report.retired.append(row.memory_key)
+        return
+    tags = _tags_for(row, source_changed=True, repo_tag=repo_tag)
+    if set(tags) == set(row.tags):
+        return
+    if SOURCE_CHANGED_TAG in row.tags:
+        # Only the repository's tag was missing.
+        await _tag_kept(report, row, tags)
+        return
+    if not report.dry_run and (moved := await _set_tags(row, tags)):
+        report.races.append(f"{row.memory_key}: {moved} since the run read it")
+        return
+    report.flagged.append(row.memory_key)
+
+
+async def _tag_kept(report: ExtractReport, row: MemoryRow, tags: list[str]) -> None:
+    """Add the repository's tag to a row the retire step keeps, reported in `linked`."""
+    if not report.dry_run and (moved := await _set_tags(row, tags)):
+        report.races.append(f"{row.memory_key}: {moved} since the run read it")
+        return
+    report.linked.append(row.memory_key)
 
 
 async def _delete_row(report: ExtractReport, row: MemoryRow) -> bool:
