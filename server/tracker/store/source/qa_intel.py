@@ -392,129 +392,33 @@ def is_budget_timeout(e: BaseException) -> bool:
     return "TIMEOUT_EXCEEDED" in text or re.search(r"\b[Cc]ode: 159\b", text) is not None
 
 
-_REMOTE_CALL = re.compile(r"^\s*remote(Secure)?\s*\(", re.IGNORECASE)
 _TABLE_NAME = re.compile(r"^\s*[\w`\".]+\s*$")
-_HEREDOC_TAG = re.compile(r"\$(\w*)\$")
-_SETTING_ARG = re.compile(r"^\s*\w+\s*=")
-_CALL_ARG = re.compile(r"^\s*\w+\s*\(")
-
-
-def _quoted_end(text: str, i: int, quote: str) -> int:
-    """The index after the `quote`-delimited span opened at `i`; a span with
-    no closing quote runs to the end of `text`."""
-    j = i + 1
-    while j < len(text):
-        if text[j] == "\\":
-            j += 2
-        elif text[j] == quote and text[j + 1 : j + 2] == quote:
-            j += 2
-        elif text[j] == quote:
-            return j + 1
-        else:
-            j += 1
-    return len(text)
-
-
-def _lexemes(text: str) -> list[tuple[int, int, bool]]:
-    """(start, end, is_string) of every span in `text` whose commas, brackets
-    and quotes are not syntax: a string literal (`'...'`, `$tag$...$tag$`),
-    a quoted identifier (`"..."`, `` `...` ``) and a comment."""
-    spans: list[tuple[int, int, bool]] = []
-    i = 0
-    while i < len(text):
-        c = text[i]
-        heredoc = _HEREDOC_TAG.match(text, i) if c == "$" else None
-        if c in "'\"`":
-            end = _quoted_end(text, i, c)
-            spans.append((i, end, c == "'"))
-        elif heredoc:
-            close = text.find(heredoc.group(0), heredoc.end())
-            end = len(text) if close < 0 else close + len(heredoc.group(0))
-            spans.append((i, end, True))
-        elif text.startswith("--", i):
-            close = text.find("\n", i)
-            end = len(text) if close < 0 else close
-            spans.append((i, end, False))
-        elif text.startswith("/*", i):
-            close = text.find("*/", i + 2)
-            end = len(text) if close < 0 else close + 2
-            spans.append((i, end, False))
-        else:
-            i += 1
-            continue
-        i = end
-    return spans
-
-
-def _mask_strings(text: str, spans: list[tuple[int, int, bool]], a: int, b: int) -> str:
-    """`text[a:b]` with each string literal in it replaced by `'***'`."""
-    out, last = [], a
-    for s, e, is_string in spans:
-        if is_string and a <= s and e <= b:
-            out.append(text[last:s])
-            out.append("'***'")
-            last = e
-    out.append(text[last:b])
-    return "".join(out)
-
-
-def _call_arguments(
-    clause: str, open_at: int, spans: list[tuple[int, int, bool]]
-) -> list[tuple[int, int]] | None:
-    """The (start, end) span of each top-level argument of the call whose `(`
-    is at `open_at`, outside literals, quoted names and comments. None when
-    the call is not closed."""
-    skip = {s: e for s, e, _ in spans}
-    args: list[tuple[int, int]] = []
-    depth, start, i = 0, open_at + 1, open_at + 1
-    while i < len(clause):
-        if i in skip:
-            i = skip[i]
-            continue
-        c = clause[i]
-        if c == "(":
-            depth += 1
-        elif c == ")" and depth > 0:
-            depth -= 1
-        elif c in ",)" and depth == 0:
-            args.append((start, i))
-            if c == ")":
-                return args
-            start = i + 1
-        i += 1
-    return None
+# The address and the table of a `remote` / `remoteSecure` call: the table is
+# one argument (`db.table`) or two (`db`, `table`), each quoted or bare.
+_REMOTE_HEAD = re.compile(
+    r"^\s*(remote(?:Secure)?)\s*\(\s*('[^'\\]*')\s*,\s*('?[\w.]+'?)\s*(?:,\s*('?\w+'?)\s*)?[,)]",
+    re.IGNORECASE,
+)
+_CALL_NAME = re.compile(r"^\s*(\w+)\s*\(")
 
 
 def redact_table_function(clause: str) -> str:
-    """`clause` as operators and callers may read it: a table name as is,
-    and any other clause with its credentials masked. A `remote` /
-    `remoteSecure` call that is the whole clause keeps its address and
-    table: the table is one argument (`db.table`, or a call such as
-    `view(...)`, whose literals are masked since it may name another
-    remote) or two (`db`, `table`), and every string literal after it and in
-    a `key = value` argument is masked. Any other clause (another table
-    function, a subquery, a call followed by more text, a malformed call)
-    has every string literal masked. Literals are told from quoted names and
-    comments, and an unterminated one is masked to the end."""
+    """`clause` as operators and callers may read it, built only from parts
+    that cannot hold a credential: a table name as is; a `remote` /
+    `remoteSecure` call as its address and table, with every argument after
+    the table (the user, the password, a sharding key) shown as `...`; any
+    other clause as its function name alone."""
     if not clause or _TABLE_NAME.match(clause):
         return clause
-    spans = _lexemes(clause)
-    m = _REMOTE_CALL.match(clause)
-    args = _call_arguments(clause, m.end() - 1, spans) if m else None
-    if args is None or len(args) < 2 or clause[args[-1][1] + 1 :].strip():
-        return _mask_strings(clause, spans, 0, len(clause))
-    second = clause[args[1][0] : args[1][1]]
-    nested = _CALL_ARG.match(second) is not None
-    first_credential = 2 if nested or "." in second else 3
-    out, last = [], 0
-    for i, (a, b) in enumerate(args):
-        arg = clause[a:b]
-        if i >= first_credential or (i == 1 and nested) or (i > 0 and _SETTING_ARG.match(arg)):
-            out.append(clause[last:a])
-            out.append(_mask_strings(clause, spans, a, b))
-            last = b
-    out.append(clause[last:])
-    return "".join(out)
+    m = _REMOTE_HEAD.match(clause)
+    if m:
+        fn, address, first, second = m.groups()
+        if "." in first:
+            return f"{fn}({address}, {first}, ...)"
+        if second:
+            return f"{fn}({address}, {first}, {second}, ...)"
+    call = _CALL_NAME.match(clause)
+    return f"{call.group(1)}(...)" if call else "(...)"
 
 
 def _printable_endpoint(ep: Any) -> dict[str, Any]:

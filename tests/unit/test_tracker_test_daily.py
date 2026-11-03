@@ -766,7 +766,7 @@ async def test_the_ledger_stores_the_checks_source_without_its_password(
     )
     await w.run_pass()
     assert {r["source"] for r in repo.ledger} == {
-        "remoteSecure('play.clickhouse.com', 'default', 'checks', '***', '***')"
+        "remoteSecure('play.clickhouse.com', 'default', 'checks', ...)"
     }
 
 

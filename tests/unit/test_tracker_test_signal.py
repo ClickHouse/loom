@@ -505,7 +505,7 @@ async def test_the_served_source_carries_no_checks_password(monkeypatch, wired) 
     out = await tsig.handle_tracker_test_signal(
         TrackerTestSignalInput(org=ORG, namespace=NS, test_name="02345_keeper_session")
     )
-    assert out.source == "remoteSecure('play.clickhouse.com', 'default', 'checks', '***', '***')"
+    assert out.source == "remoteSecure('play.clickhouse.com', 'default', 'checks', ...)"
 
 
 @pytest.mark.asyncio

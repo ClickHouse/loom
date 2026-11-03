@@ -44,7 +44,7 @@ def checks_config(org: str, namespace: str) -> tuple[str, str]:
 
 def checks_source_label(org: str, namespace: str) -> str:
     """The checks FROM clause as callers read it and the rollup ledger stores
-    it: its credentials masked (`redact_table_function`)."""
+    it: no credential in it (`redact_table_function`)."""
     return redact_table_function(checks_config(org, namespace)[0])
 
 

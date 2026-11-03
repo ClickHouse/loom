@@ -359,82 +359,55 @@ def test_budget_timeout_matches_the_server_code_in_the_body() -> None:
     assert not qi.is_budget_timeout(RuntimeError("Code: 1590. DB::Exception: other"))
 
 
-def test_probe_output_masks_remote_credentials() -> None:
-    clause = "remoteSecure('play.example.com', 'default', 'checks', 'play', 's3cr\\'t')"
-    masked = qi.redact_table_function(clause)
-    assert "s3cr" not in masked
-    assert masked.startswith("remoteSecure('play.example.com', 'default', 'checks', ")
-    assert masked.count("'***'") == 2
-    # the `db.table` form puts the password fourth
-    assert "pw" not in qi.redact_table_function("remote('h:9000', 'db.t', 'u', 'pw')")
-    # a table or a view has no credential to hide
-    assert qi.redact_table_function("qa.checks") == "qa.checks"
-    assert qi.redact_table_function("") == ""
-
-
 @pytest.mark.parametrize(
-    ("clause", "masked"),
+    ("clause", "label"),
     [
+        # a table name has no credential to hide
+        ("qa.checks", "qa.checks"),
+        ("", ""),
+        (
+            "remoteSecure('play.example.com', 'default', 'checks', 'play', 's3cr\\'t')",
+            "remoteSecure('play.example.com', 'default', 'checks', ...)",
+        ),
+        ("remote('h:9000', 'db.t', 'u', 'secret')", "remote('h:9000', 'db.t', ...)"),
         (
             "remoteSecure('h:9440', default.checks, 'play', 'secret')",
-            "remoteSecure('h:9440', default.checks, '***', '***')",
+            "remoteSecure('h:9440', default.checks, ...)",
         ),
         (
             "remoteSecure('h:9440', default, checks, 'play', 'secret')",
-            "remoteSecure('h:9440', default, checks, '***', '***')",
+            "remoteSecure('h:9440', default, checks, ...)",
         ),
         (
             "remote('h:9000', 'db', 'checks', 'play', 'secret', rand())",
-            "remote('h:9000', 'db', 'checks', '***', '***', rand())",
+            "remote('h:9000', 'db', 'checks', ...)",
         ),
         (
-            "remoteSecure('h:9440', view(SELECT 'a,b' FROM db.t), 'play', 'secret')",
-            "remoteSecure('h:9440', view(SELECT '***' FROM db.t), '***', '***')",
+            "remoteSecure('h:9440', 'default', 'checks', $$play$$, $tag$secret$tag$)",
+            "remoteSecure('h:9440', 'default', 'checks', ...)",
         ),
         (
-            "remoteSecure('h:9440', merge('default', '^checks'), 'play', 'secret')",
-            "remoteSecure('h:9440', merge('***', '***'), '***', '***')",
+            "remoteSecure('h', 'db', 't', 'play', # it's\n 'secret')",
+            "remoteSecure('h', 'db', 't', ...)",
         ),
         (
-            "remoteSecure('h:9440', 'default', 'checks', $$play$$, $tag$sec,r)et$tag$)",
-            "remoteSecure('h:9440', 'default', 'checks', '***', '***')",
+            "remoteSecure('h', 'db', 'a', 'u', 'p') AS a JOIN remoteSecure('h', 'db', 'b', 'play', 'secret') AS b USING (x)",
+            "remoteSecure('h', 'db', 'a', ...)",
         ),
-        (
-            "remoteSecure(my_collection, user = 'play', password = 'secret')",
-            "remoteSecure(my_collection, user = '***', password = '***')",
-        ),
+        # any other shape is named by its function alone
+        ("remoteSecure('h:9440', view(SELECT 1 FROM db.t), 'play', 'secret')", "remoteSecure(...)"),
+        ("remoteSecure(my_collection, user = play, password = secret)", "remoteSecure(...)"),
+        ("mysql('h:3306', 'db', 'checks', 'play', 'secret')", "mysql(...)"),
+        ("s3('https://b.example.com/k', 'play', $$secret", "s3(...)"),
+        ("(SELECT * FROM remoteSecure('h', 'db', 'checks', 'play', 'secret'))", "(...)"),
     ],
 )
-def test_remote_credentials_are_masked_by_argument_position(clause: str, masked: str) -> None:
-    """The user and password follow the table argument in every form of the
-    call, whether the database and table are quoted, bare, one `db.table` or
-    a table function; the address, a named table and a sharding key stay."""
-    assert qi.redact_table_function(clause) == masked
-
-
-@pytest.mark.parametrize(
-    "clause",
-    [
-        "mysql('h:3306', 'db', 'checks', 'play', 'secret')",
-        "s3('https://b.example.com/k', 'play', 'secret')",
-        "(SELECT * FROM remoteSecure('h', 'db', 'checks', 'play', 'secret'))",
-        "remoteSecure('h', 'db', 'checks', 'play', 'secret",
-        "remoteSecure('h', view(SELECT 1 FROM t, 'play', 'secret')",
-        "remoteSecure('h', 'db', 'a', 'u', 'p') AS a JOIN remoteSecure('h', 'db', 'b', 'play', 'secret') AS b USING (x)",
-        "remoteSecure('h', view(SELECT * FROM remoteSecure('h2', 'db', 't', 'play', 'secret')), 'u', 'p')",
-        "(SELECT \"it's\" FROM remoteSecure('h', 'db', 't', 'play', 'secret'))",
-        "(SELECT `it's` FROM remoteSecure('h', 'db', 't', 'play', 'secret'))",
-        "remoteSecure('h', view(SELECT \"it's\" FROM remote('h2', 'db', 't', 'play', 'secret')), 'u', 'p')",
-        "remoteSecure('h', 'db', 't', 'play', /* it's */ 'secret')",
-        "remoteSecure('h', 'db', 't', 'play', -- it's\n 'secret')",
-        "s3('https://b.example.com/k', 'play', $$secret",
-    ],
-)
-def test_any_other_clause_has_every_literal_masked(clause: str) -> None:
-    """Another table function, a subquery, a call followed by more text, a
-    remote inside the table argument or a malformed call fails closed."""
-    masked = qi.redact_table_function(clause)
-    assert "secret" not in masked and "play" not in masked
+def test_the_checks_clause_label_is_built_from_parts_without_a_credential(
+    clause: str, label: str
+) -> None:
+    """Only a table name, or a remote call's address and table, is shown; the
+    user, the password and anything not recognised never are."""
+    assert qi.redact_table_function(clause) == label
 
 
 def test_printable_endpoint_masks_checks_from() -> None:
