@@ -121,7 +121,7 @@ def invalidate_org(org: str) -> None:
         del _CACHE[key]
 
 
-async def spellings(org: str, subject: str) -> list[str]:
+async def spellings(org: str, subject: str, *, ch: object | None = None) -> list[str]:
     """Every spelling of `subject` a change keyed by exact spelling must reach
     (a revocation): itself, an email's lower case, and each spelling the
     directory ties to it, as stored, an unverified email too: a revocation
@@ -137,7 +137,7 @@ async def spellings(org: str, subject: str) -> list[str]:
     if not has_aliases(subject):
         return out
     with own_write_reads():
-        rows = await _rows(org, subject, None, verified=False)
+        rows = await _rows(org, subject, ch, verified=False)
     for r in rows:
         for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
             if spelling and spelling not in out:

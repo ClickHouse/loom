@@ -101,9 +101,10 @@ async def handle_admin_users(input: AdminUsersInput) -> AdminUsersOutput:
         contact_rows = await ch.query_all(
             """
             SELECT owner_email AS subject,
-                   any(contact_email) AS contact,
+                   -- An owner's other rows (a personal namespace) name no email.
+                   anyIf(contact_email, contact_email != '') AS contact,
                    max(password_hash != '') AS has_pw,
-                   anyIf(contact_email, {verified}) AS verified_email
+                   anyIf(contact_email, contact_email != '' AND {verified}) AS verified_email
             FROM loom.namespaces FINAL
             WHERE org = {org:String} AND owner_email IN {subjects:Array(String)}
             GROUP BY owner_email

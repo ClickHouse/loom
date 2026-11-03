@@ -147,14 +147,16 @@ async def cascade_revoke_to_created_tokens(
     org: str, namespace: str, subject: str, *, ch: Any = None
 ) -> int:
     """A person's grant on ``namespace`` was revoked: revoke the grants
-    every live token they created holds there. Returns tokens touched."""
+    every live token they created holds there, under any spelling the
+    directory pairs with the person, a verified email or not: a revocation
+    reaching further fails closed. Returns tokens touched."""
     if ch is None:
         from server.core.ch import get_client
 
         ch = get_client()
-    from server.auth.aliases import subject_aliases
+    from server.auth.aliases import spellings
 
-    creators = await subject_aliases(org, subject, ch=ch)
+    creators = await spellings(org, subject, ch=ch)
     sa_rows = await ch.query_all(
         """
         SELECT DISTINCT sa_subject FROM loom.service_accounts FINAL

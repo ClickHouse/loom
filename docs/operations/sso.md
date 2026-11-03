@@ -109,8 +109,8 @@ link --email <their provider address> --org <org> --namespace <ns>` shows
   denied when that account is in `LOOM_OIDC_JIT_ORG`, and
   `auth.sso_link_declined` is audited: beside that account, a password sign-in
   with the address would still find it, and a revocation of the address would
-  reach both. To free an address someone else registered, release that account (`loom claim-release`), which clears
-  its email and links; with `LOOM_OIDC_JIT_PROVISION=true` the person's next
+  reach both. To free an address someone else registered, release that account
+  (`loom claim-release`), which clears its email and links; with `LOOM_OIDC_JIT_PROVISION=true` the person's next
   sign-in then makes their own account. An account in another org does not
   stop them. A revoked account naming the address blocks new accounts, since
   it may be the same person.

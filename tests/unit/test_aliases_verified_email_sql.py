@@ -7,6 +7,7 @@ none of the grants written under it: not at the gate, not in the alias reads, no
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,10 @@ SETUP = (
     _account("mallory", "bob@corp.example", "argon2-hash"),
     # An SSO account: the identity provider verified its email.
     _account("u-carol", "carol@corp.example", ""),
+    # Their personal namespaces: an owner's second row, naming no email.
+    "INSERT INTO loom.namespaces (org, namespace, owner_email, contact_email, password_hash,"
+    f" active, created_at, updated_at) VALUES ('{ORG}', 'personal-u-carol', 'u-carol', '', '',"
+    f" 1, now(), now()), ('{ORG}', 'personal-dave', 'dave', '', '', 1, now(), now())",
     # A password account linked to its email.
     _account("dave", "dave@corp.example", "argon2-hash"),
     "INSERT INTO loom.sso_links (email, org, namespace, linked, linked_by, linked_at, version)"
@@ -77,6 +82,13 @@ class _CH(LocalCH):
     async def query_one(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> Any:
         rows = await self.query_all(sql, params)
         return rows[0] if rows else None
+
+
+@pytest.fixture(autouse=True)
+def _no_cached_aliases() -> Iterator[None]:
+    aliases._CACHE.clear()
+    yield
+    aliases._CACHE.clear()
 
 
 @pytest.fixture
@@ -145,7 +157,6 @@ async def test_a_link_or_an_unlink_drops_the_cached_ties(
     kept = KeptCH(tmp_path, *SETUP, ddl("acl_versions"))
     monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
     monkeypatch.setattr(sso_links, "get_client", lambda: kept)
-    aliases._CACHE.clear()
     assert await aliases.subject_aliases(ORG, "dave", ch=kept) == ["dave", "dave@corp.example"]
     assert await aliases.subject_aliases(ORG, "erin", ch=kept) == ["erin"]
 
@@ -161,7 +172,36 @@ async def test_a_link_or_an_unlink_drops_the_cached_ties(
         {"org": ORG},
     )
     assert marks[0]["n"] == 2
-    aliases._CACHE.clear()
+
+
+@pytest.mark.asyncio
+async def test_revoking_the_address_reaches_the_tokens_its_squatter_made(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A token mallory made while the address's grant still admitted her holds a
+    # grant of its own there; revoking the address's grant takes it too.
+    from server.identity.app import token_grants
+    from server.identity.store import grants as grants_repo
+
+    kept = KeptCH(
+        tmp_path,
+        *SETUP,
+        ddl("service_accounts"),
+        "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
+        f" ('{ORG}', 'bot', 'sa:bot', 'mallory')",
+        _grant("team-y", "sa:bot"),
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
+    monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
+    touched = await token_grants.cascade_revoke_to_created_tokens(
+        ORG, "team-y", "bob@corp.example", ch=kept
+    )
+    assert touched == 1
+    live = await kept.query_all(
+        "SELECT subject FROM loom.namespace_grants FINAL WHERE subject = 'sa:bot'"
+        " AND revoked_at IS NULL"
+    )
+    assert live == []
 
 
 @pytest.mark.asyncio

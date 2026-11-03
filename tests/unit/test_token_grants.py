@@ -153,10 +153,11 @@ async def test_revoking_the_person_cascades_to_the_tokens_they_minted_on_that_na
     fake = _FakeCH(live, [{"sa_subject": "sa:t1"}, {"sa_subject": "sa:t2"}])
     import server.auth.aliases as aliases
 
-    async def _aliases(org: str, subject: str, *, ch: Any = None) -> list[str]:
+    async def _spellings(org: str, subject: str, *, ch: Any = None) -> list[str]:
         return [subject, "alice"]
 
-    monkeypatch.setattr(aliases, "subject_aliases", _aliases)
+    # Every spelling a revocation reaches, an unverified email too.
+    monkeypatch.setattr(aliases, "spellings", _spellings)
     touched = await tg.cascade_revoke_to_created_tokens(ORG, "code-private", "alice@x", ch=fake)
     assert touched == 2
     # only the revoked namespace's grants go; the token keeps secret-notes
