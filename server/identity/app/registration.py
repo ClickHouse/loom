@@ -69,4 +69,4 @@ async def grant_self_admin(org: str, namespace: str, subject: str) -> None:
     )
 
 
-__all__ = ["grant_self_admin", "namespace_claimable", "namespace_row"]
+__all__ = ["grant_self_admin", "namespace_claimable", "namespace_retention_days", "namespace_row"]

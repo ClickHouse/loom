@@ -215,7 +215,9 @@ class _Inspect:
         # no gap is claimed.
         keep = 0 if own is None else own or int(settings.retention_agent_events_days)
         if keep and keep * 86400 < i.window_seconds:
-            out.gap = f"The ledger keeps {keep} days, so calls older than that are not counted."
+            out.gap = (
+                f"The ledger keeps calls for a {keep}-day window, so older ones are not counted."
+            )
         return out
 
     async def settings_section(self) -> InspectSettings:

@@ -216,7 +216,7 @@ async def test_activity_leaves_out_inspectors_and_names_the_retention_gap(
     assert [(c.operation, c.calls, c.succeeded) for c in out.activity.calls] == [
         ("memory.search", 4, 3)
     ]
-    assert "keeps 3 days" in out.activity.gap
+    assert "a 3-day window" in out.activity.gap
     s = ch.statements("FROM loom.agent_events")[0]
     assert s.params["skip"] == ["loom-ui", "loom-assistant"]
 
@@ -227,7 +227,7 @@ async def test_activity_leaves_out_inspectors_and_names_the_retention_gap(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("own", "deployment", "gap"),
-    [(3, 0, "keeps 3 days"), (30, 3, ""), (0, 3, "keeps 3 days")],
+    [(3, 0, "a 3-day window"), (30, 3, ""), (0, 3, "a 3-day window")],
 )
 async def test_the_namespaces_own_retention_wins_for_the_gap(
     monkeypatch: pytest.MonkeyPatch, own: int, deployment: int, gap: str
