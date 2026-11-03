@@ -1,0 +1,191 @@
+[
+ {
+  "source_uri": "handbook/harbor.md",
+  "title": "Harbor handbook",
+  "description": "",
+  "content": "# Harbor handbook\n\nHarbor is the company's object storage service. This handbook is the reference for sales, support and\noperations staff.\n\n## Pricing\n\nThere are three plans. Basic costs $0.021 per GB-month, Team costs $0.018 per GB-month and\nScale costs $0.014 per GB-month. Annual contracts are invoiced up front. Prices exclude tax.\n\n## Limits\n\nThe hard limit is 5 TiB. Throughput is capped at 3,500 PUT requests per second per prefix; requests above the cap\nreceive a throttling error and should be retried with backoff.\n\n## Data retention\n\nDeleted objects stay recoverable for 14 days. After that period the data cannot be restored by support.\n\n## Backups and recovery\n\nObject versions are replicated to a second zone within 15 minutes. Restores are requested through a support ticket.\n\n## Support\n\nSupport is staffed weekdays 08:00-18:00 UTC. A severity 1 incident gets a first response within 1 hour.\n\n## Refunds\n\nRefunds are available within 30 days of the first invoice. Requests go to the billing team with the invoice number.\n\n## Regions\n\nHarbor runs in eu-north and us-west. Data does not leave the region the customer picked.\n\n## Security\n\nSingle sign-on supports SAML 2.0 and OIDC. Data is encrypted with AES-256 with keys rotated every 90 days.\n\n## Service level\n\nThe monthly availability target is 99.95%. When it is missed the customer receives 10% of the monthly fee for each 0.1% below target.\n",
+  "tags": [
+   "handbook"
+  ]
+ },
+ {
+  "source_uri": "handbook/lantern.md",
+  "title": "Lantern handbook",
+  "description": "",
+  "content": "# Lantern handbook\n\nLantern is the company's log analytics service. This handbook is the reference for sales, support and\noperations staff.\n\n## Pricing\n\nThere are three plans. Starter costs $0.50 per ingested GB, Pro costs $0.38 per ingested GB and\nEnterprise costs $0.25 per ingested GB. Annual contracts are invoiced up front. Prices exclude tax.\n\n## Limits\n\nThe hard limit is 1 MiB per log line. Throughput is capped at 200,000 events per second per workspace; requests above the cap\nreceive a throttling error and should be retried with backoff.\n\n## Data retention\n\nRaw logs are kept for 45 days and aggregates for 13 months. After that period the data cannot be restored by support.\n\n## Backups and recovery\n\nIndexes are snapshotted every 6 hours. Restores are requested through a support ticket.\n\n## Support\n\nSupport is staffed every day, around the clock. A severity 1 incident gets a first response within 30 minutes.\n\n## Refunds\n\nRefunds are available within 14 days of the purchase. Requests go to the billing team with the invoice number.\n\n## Regions\n\nLantern runs in eu-central, us-east and ap-south. Data does not leave the region the customer picked.\n\n## Security\n\nSingle sign-on supports SAML 2.0 only. Data is encrypted with AES-256 with customer-managed keys on Enterprise.\n\n## Service level\n\nThe monthly availability target is 99.9%. When it is missed the customer receives 5% of the monthly fee for each hour of downtime.\n",
+  "tags": [
+   "handbook"
+  ]
+ },
+ {
+  "source_uri": "handbook/quill.md",
+  "title": "Quill handbook",
+  "description": "",
+  "content": "# Quill handbook\n\nQuill is the company's collaborative document editor. This handbook is the reference for sales, support and\noperations staff.\n\n## Pricing\n\nThere are three plans. Free costs free for up to 3 editors, Plus costs $8 per editor per month and\nBusiness costs $15 per editor per month. Annual contracts are invoiced up front. Prices exclude tax.\n\n## Limits\n\nThe hard limit is 250 MB per attachment. Throughput is capped at 50 concurrent editors per document; requests above the cap\nreceive a throttling error and should be retried with backoff.\n\n## Data retention\n\nDocument history is kept for 90 days on Plus and forever on Business. After that period the data cannot be restored by support.\n\n## Backups and recovery\n\nWorkspaces are backed up nightly at 02:00 UTC. Restores are requested through a support ticket.\n\n## Support\n\nSupport is staffed weekdays 07:00-19:00 in the customer's region. A severity 1 incident gets a first response within 4 hours.\n\n## Refunds\n\nRefunds are available pro rata for the unused months of an annual plan. Requests go to the billing team with the invoice number.\n\n## Regions\n\nQuill runs in eu-west and us-central. Data does not leave the region the customer picked.\n\n## Security\n\nSingle sign-on supports OIDC on Business. Data is encrypted with AES-128 at rest and TLS 1.3 in transit.\n\n## Service level\n\nThe monthly availability target is 99.5%. When it is missed the customer receives a free month when monthly uptime is below target.\n",
+  "tags": [
+   "handbook"
+  ]
+ },
+ {
+  "source_uri": "handbook/meridian.md",
+  "title": "Meridian handbook",
+  "description": "",
+  "content": "# Meridian handbook\n\nMeridian is the company's meeting scheduling service. This handbook is the reference for sales, support and\noperations staff.\n\n## Pricing\n\nThere are three plans. Solo costs $6 per user per month, Team costs $12 per user per month and\nOrg costs $20 per user per month. Annual contracts are invoiced up front. Prices exclude tax.\n\n## Limits\n\nThe hard limit is 500 bookings per calendar per day. Throughput is capped at 20 API calls per second per token; requests above the cap\nreceive a throttling error and should be retried with backoff.\n\n## Data retention\n\nBooking records are deleted 180 days after the meeting. After that period the data cannot be restored by support.\n\n## Backups and recovery\n\nThe booking database is backed up every hour and kept for 35 days. Restores are requested through a support ticket.\n\n## Support\n\nSupport is staffed weekdays 09:00-17:00 US Eastern. A severity 1 incident gets a first response within 2 hours.\n\n## Refunds\n\nRefunds are available not offered after the first 7 days. Requests go to the billing team with the invoice number.\n\n## Regions\n\nMeridian runs in us-east only. Data does not leave the region the customer picked.\n\n## Security\n\nSingle sign-on supports SAML 2.0 and SCIM provisioning on Org. Data is encrypted with AES-256 at rest.\n\n## Service level\n\nThe monthly availability target is 99.9%. When it is missed the customer receives 15% of the monthly fee when uptime is below target.\n",
+  "tags": [
+   "handbook"
+  ]
+ },
+ {
+  "source_uri": "runbooks/e4031.md",
+  "title": "Runbook E4031: Upload rejected: checksum mismatch",
+  "description": "",
+  "content": "# E4031 — Upload rejected: checksum mismatch\n\nService: Harbor.\n\n## Symptom\n\nThe client sees error code E4031.\n\n## Resolution\n\nThe client computed a different MD5 than the server received. Usually a proxy rewrote the body. Retry the upload without the proxy; if it repeats, collect the request id and escalate to storage on-call.\n",
+  "tags": [
+   "runbook"
+  ]
+ },
+ {
+  "source_uri": "runbooks/e4032.md",
+  "title": "Runbook E4032: Upload rejected: object too large",
+  "description": "",
+  "content": "# E4032 — Upload rejected: object too large\n\nService: Harbor.\n\n## Symptom\n\nThe client sees error code E4032.\n\n## Resolution\n\nThe object exceeds the single-object size limit. Use a multipart upload with parts of 64 MiB.\n",
+  "tags": [
+   "runbook"
+  ]
+ },
+ {
+  "source_uri": "runbooks/e5007.md",
+  "title": "Runbook E5007: Bucket temporarily read-only",
+  "description": "",
+  "content": "# E5007 — Bucket temporarily read-only\n\nService: Harbor.\n\n## Symptom\n\nThe client sees error code E5007.\n\n## Resolution\n\nA zone failover is in progress. Writes resume automatically within 10 minutes; do not open a ticket unless it lasts longer.\n",
+  "tags": [
+   "runbook"
+  ]
+ },
+ {
+  "source_uri": "runbooks/lt-2207.md",
+  "title": "Runbook LT-2207: Ingest throttled",
+  "description": "",
+  "content": "# LT-2207 — Ingest throttled\n\nService: Lantern.\n\n## Symptom\n\nThe client sees error code LT-2207.\n\n## Resolution\n\nThe workspace exceeded its events-per-second cap. Ask the customer to enable client-side batching or move to a larger plan.\n",
+  "tags": [
+   "runbook"
+  ]
+ },
+ {
+  "source_uri": "runbooks/lt-2208.md",
+  "title": "Runbook LT-2208: Query timed out",
+  "description": "",
+  "content": "# LT-2208 — Query timed out\n\nService: Lantern.\n\n## Symptom\n\nThe client sees error code LT-2208.\n\n## Resolution\n\nThe query scanned more than 2 billion rows. Narrow the time range or add a filter on an indexed field.\n",
+  "tags": [
+   "runbook"
+  ]
+ },
+ {
+  "source_uri": "runbooks/lt-3100.md",
+  "title": "Runbook LT-3100: Parser rejected the log format",
+  "description": "",
+  "content": "# LT-3100 — Parser rejected the log format\n\nService: Lantern.\n\n## Symptom\n\nThe client sees error code LT-3100.\n\n## Resolution\n\nThe configured grok pattern did not match. Open the pipeline editor and test the pattern against a sample line.\n",
+  "tags": [
+   "runbook"
+  ]
+ },
+ {
+  "source_uri": "runbooks/q-118.md",
+  "title": "Runbook Q-118: Document locked for editing",
+  "description": "",
+  "content": "# Q-118 — Document locked for editing\n\nService: Quill.\n\n## Symptom\n\nThe client sees error code Q-118.\n\n## Resolution\n\nAnother editor holds the section lock. Locks expire after 5 minutes of inactivity; an admin can break a lock from the history panel.\n",
+  "tags": [
+   "runbook"
+  ]
+ },
+ {
+  "source_uri": "runbooks/q-204.md",
+  "title": "Runbook Q-204: Attachment upload failed",
+  "description": "",
+  "content": "# Q-204 — Attachment upload failed\n\nService: Quill.\n\n## Symptom\n\nThe client sees error code Q-204.\n\n## Resolution\n\nThe attachment is over 250 MB or the workspace storage quota is full. Remove old attachments or ask the owner to raise the quota.\n",
+  "tags": [
+   "runbook"
+  ]
+ },
+ {
+  "source_uri": "runbooks/m-41.md",
+  "title": "Runbook M-41: Calendar sync paused",
+  "description": "",
+  "content": "# M-41 — Calendar sync paused\n\nService: Meridian.\n\n## Symptom\n\nThe client sees error code M-41.\n\n## Resolution\n\nThe calendar provider revoked the OAuth grant. The user reconnects the calendar from Settings > Integrations.\n",
+  "tags": [
+   "runbook"
+  ]
+ },
+ {
+  "source_uri": "runbooks/m-42.md",
+  "title": "Runbook M-42: Double booking detected",
+  "description": "",
+  "content": "# M-42 — Double booking detected\n\nService: Meridian.\n\n## Symptom\n\nThe client sees error code M-42.\n\n## Resolution\n\nTwo bookings landed on one slot because the provider reported stale availability. Cancel the later booking and notify both guests.\n",
+  "tags": [
+   "runbook"
+  ]
+ },
+ {
+  "source_uri": "policies/travel-2024.md",
+  "title": "Travel policy (2024, superseded)",
+  "description": "",
+  "content": "# Travel policy\n\nThis version applied in 2024 and has been replaced.\n\n## Per diem\n\nThe daily meal allowance is 45 EUR within the EU and 60 USD elsewhere.\n\n## Booking\n\nFlights under 6 hours are booked in economy. Book through the travel desk at least 14 days ahead.\n",
+  "tags": [
+   "policy"
+  ]
+ },
+ {
+  "source_uri": "policies/travel-2025.md",
+  "title": "Travel policy (current)",
+  "description": "",
+  "content": "# Travel policy\n\nThis is the current version.\n\n## Per diem\n\nThe daily meal allowance is 55 EUR within the EU and 70 USD elsewhere.\n\n## Booking\n\nFlights under 8 hours are booked in economy. Book through the travel desk at least 10 days ahead.\n\n## Rail\n\nTrains are preferred over flights for trips under 4 hours door to door.\n",
+  "tags": [
+   "policy"
+  ]
+ },
+ {
+  "source_uri": "policies/expenses.md",
+  "title": "Expense policy",
+  "description": "",
+  "content": "# Expense policy\n\n## Receipts\n\nEvery expense above 25 EUR needs an itemised receipt uploaded within 30 days.\n\n## Approvals\n\nExpenses up to 500 EUR are approved by the line manager; above that the department head approves.\n\n## Equipment\n\nHome-office equipment is reimbursed up to 300 EUR per year, monitors and chairs included.\n\n## Client entertainment\n\nClient dinners are capped at 90 EUR per person including drinks.\n",
+  "tags": [
+   "policy"
+  ]
+ },
+ {
+  "source_uri": "policies/security.md",
+  "title": "Information security policy",
+  "description": "",
+  "content": "# Information security policy\n\n## Passwords\n\nPasswords are at least 14 characters. A password manager is mandatory; reuse across systems is forbidden.\n\n## Laptops\n\nDisks are fully encrypted. A lost laptop is reported to the security team within 1 hour.\n\n## Access reviews\n\nManagers review their team's system access every quarter and remove what is no longer needed.\n\n## Customer data\n\nCustomer data never leaves production systems. Support staff use masked exports for debugging.\n",
+  "tags": [
+   "policy"
+  ]
+ },
+ {
+  "source_uri": "design/harbor-multipart.md",
+  "title": "Design note: multipart uploads in Harbor",
+  "description": "",
+  "content": "# Multipart uploads\n\n## Context\n\nLarge uploads over unreliable links failed and restarted from zero. Customers with objects above a few gigabytes complained the most, especially from regions far from the storage zone.\n\n## Decision\n\nUploads above 100 MiB are split into parts. Each part is checksummed with CRC32C and can be retried on its own. Parts are assembled only after the client sends the completion call, so a half-finished upload never becomes visible.\n\n## Alternatives considered\n\nResumable single-stream uploads were rejected because a proxy in the path can still cut the stream and the server cannot tell how much of it was valid. Client-side compression was rejected because most large objects are already compressed media.\n\n## Consequences\n\nIncomplete multipart uploads are garbage collected after 7 days. Their parts count toward the storage bill until then.\n",
+  "tags": [
+   "design"
+  ]
+ },
+ {
+  "source_uri": "design/lantern-tiering.md",
+  "title": "Design note: hot and cold storage tiers in Lantern",
+  "description": "",
+  "content": "# Storage tiers\n\n## Context\n\nMost queries read the last 24 hours, but retention keeps 45 days of raw logs on fast disks, which dominated cost.\n\n## Decision\n\nData older than 3 days moves to object storage. Queries over cold data run with a 4x higher latency target. The move happens in hourly batches and never splits a partition.\n\n## Rollout\n\nThe change was enabled for Starter workspaces first, then Pro, then Enterprise, two weeks apart.\n\n## Consequences\n\nThe storage cost per ingested GB fell by about 40 percent. Dashboards that scan a full month became slower.\n",
+  "tags": [
+   "design"
+  ]
+ },
+ {
+  "source_uri": "notes/ops-review-2025-03.md",
+  "title": "Operations review, March",
+  "description": "",
+  "content": "# Operations review\n\n## Attendance\n\nStorage, analytics and billing leads attended.\n\n## Incidents\n\nTwo severity 2 incidents in Lantern ingestion, both caused by a misconfigured load balancer health check.\n\n## Decisions\n\nThe on-call rotation moves from weekly to twice weekly handovers starting next month. Postmortems are due within five working days of an incident.\n\n## Follow-ups\n\nBilling will publish the new credit calculation for missed availability targets.\n",
+  "tags": [
+   "notes"
+  ]
+ }
+]

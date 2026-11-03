@@ -1,0 +1,78 @@
+{"id": "harbor-retention", "query": "How long does Harbor keep deleted or old data?", "gold": [["handbook/harbor.md", "Deleted objects stay recoverable for 14 days"]], "kind": "context"}
+{"id": "harbor-sev1", "query": "What is the first response time for a severity 1 incident on Harbor?", "gold": [["handbook/harbor.md", "1 hour"]], "kind": "context"}
+{"id": "harbor-refund", "query": "Can a Harbor customer get their money back?", "gold": [["handbook/harbor.md", "within 30 days of the first invoice"]], "kind": "paraphrase"}
+{"id": "harbor-region", "query": "Where is Harbor hosted?", "gold": [["handbook/harbor.md", "eu-north and us-west"]], "kind": "paraphrase"}
+{"id": "harbor-sso", "query": "Which single sign-on protocols does Harbor support?", "gold": [["handbook/harbor.md", "SAML 2.0 and OIDC"]], "kind": "context"}
+{"id": "harbor-sla", "query": "What compensation does a Harbor customer get when the uptime target is missed?", "gold": [["handbook/harbor.md", "10% of the monthly fee for each 0.1% below target"]], "kind": "paraphrase"}
+{"id": "harbor-backup", "query": "How often is Harbor data backed up?", "gold": [["handbook/harbor.md", "Object versions are replicated to a second zone within 15 minutes"]], "kind": "context"}
+{"id": "harbor-price", "query": "How much does the Team plan of Harbor cost?", "gold": [["handbook/harbor.md", "$0.018 per GB-month"]], "kind": "context"}
+{"id": "harbor-limit", "query": "What happens when a Harbor client sends too many requests?", "gold": [["handbook/harbor.md", "3,500 PUT requests per second per prefix"]], "kind": "paraphrase"}
+{"id": "lantern-retention", "query": "How long does Lantern keep deleted or old data?", "gold": [["handbook/lantern.md", "Raw logs are kept for 45 days and aggregates for 13 months"]], "kind": "context"}
+{"id": "lantern-sev1", "query": "What is the first response time for a severity 1 incident on Lantern?", "gold": [["handbook/lantern.md", "30 minutes"]], "kind": "context"}
+{"id": "lantern-refund", "query": "Can a Lantern customer get their money back?", "gold": [["handbook/lantern.md", "within 14 days of the purchase"]], "kind": "paraphrase"}
+{"id": "lantern-region", "query": "Where is Lantern hosted?", "gold": [["handbook/lantern.md", "eu-central, us-east and ap-south"]], "kind": "paraphrase"}
+{"id": "lantern-sso", "query": "Which single sign-on protocols does Lantern support?", "gold": [["handbook/lantern.md", "SAML 2.0 only"]], "kind": "context"}
+{"id": "lantern-sla", "query": "What compensation does a Lantern customer get when the uptime target is missed?", "gold": [["handbook/lantern.md", "5% of the monthly fee for each hour of downtime"]], "kind": "paraphrase"}
+{"id": "lantern-backup", "query": "How often is Lantern data backed up?", "gold": [["handbook/lantern.md", "Indexes are snapshotted every 6 hours"]], "kind": "context"}
+{"id": "lantern-price", "query": "How much does the Pro plan of Lantern cost?", "gold": [["handbook/lantern.md", "$0.38 per ingested GB"]], "kind": "context"}
+{"id": "lantern-limit", "query": "What happens when a Lantern client sends too many requests?", "gold": [["handbook/lantern.md", "200,000 events per second per workspace"]], "kind": "paraphrase"}
+{"id": "quill-retention", "query": "How long does Quill keep deleted or old data?", "gold": [["handbook/quill.md", "Document history is kept for 90 days on Plus and forever on Business"]], "kind": "context"}
+{"id": "quill-sev1", "query": "What is the first response time for a severity 1 incident on Quill?", "gold": [["handbook/quill.md", "4 hours"]], "kind": "context"}
+{"id": "quill-refund", "query": "Can a Quill customer get their money back?", "gold": [["handbook/quill.md", "pro rata for the unused months of an annual plan"]], "kind": "paraphrase"}
+{"id": "quill-region", "query": "Where is Quill hosted?", "gold": [["handbook/quill.md", "eu-west and us-central"]], "kind": "paraphrase"}
+{"id": "quill-sso", "query": "Which single sign-on protocols does Quill support?", "gold": [["handbook/quill.md", "OIDC on Business"]], "kind": "context"}
+{"id": "quill-sla", "query": "What compensation does a Quill customer get when the uptime target is missed?", "gold": [["handbook/quill.md", "a free month when monthly uptime is below target"]], "kind": "paraphrase"}
+{"id": "quill-backup", "query": "How often is Quill data backed up?", "gold": [["handbook/quill.md", "Workspaces are backed up nightly at 02:00 UTC"]], "kind": "context"}
+{"id": "quill-price", "query": "How much does the Plus plan of Quill cost?", "gold": [["handbook/quill.md", "$8 per editor per month"]], "kind": "context"}
+{"id": "quill-limit", "query": "What happens when a Quill client sends too many requests?", "gold": [["handbook/quill.md", "50 concurrent editors per document"]], "kind": "paraphrase"}
+{"id": "meridian-retention", "query": "How long does Meridian keep deleted or old data?", "gold": [["handbook/meridian.md", "Booking records are deleted 180 days after the meeting"]], "kind": "context"}
+{"id": "meridian-sev1", "query": "What is the first response time for a severity 1 incident on Meridian?", "gold": [["handbook/meridian.md", "2 hours"]], "kind": "context"}
+{"id": "meridian-refund", "query": "Can a Meridian customer get their money back?", "gold": [["handbook/meridian.md", "not offered after the first 7 days"]], "kind": "paraphrase"}
+{"id": "meridian-region", "query": "Where is Meridian hosted?", "gold": [["handbook/meridian.md", "us-east only"]], "kind": "paraphrase"}
+{"id": "meridian-sso", "query": "Which single sign-on protocols does Meridian support?", "gold": [["handbook/meridian.md", "SAML 2.0 and SCIM provisioning on Org"]], "kind": "context"}
+{"id": "meridian-sla", "query": "What compensation does a Meridian customer get when the uptime target is missed?", "gold": [["handbook/meridian.md", "15% of the monthly fee when uptime is below target"]], "kind": "paraphrase"}
+{"id": "meridian-backup", "query": "How often is Meridian data backed up?", "gold": [["handbook/meridian.md", "The booking database is backed up every hour and kept for 35 days"]], "kind": "context"}
+{"id": "meridian-price", "query": "How much does the Team plan of Meridian cost?", "gold": [["handbook/meridian.md", "$12 per user per month"]], "kind": "context"}
+{"id": "meridian-limit", "query": "What happens when a Meridian client sends too many requests?", "gold": [["handbook/meridian.md", "20 API calls per second per token"]], "kind": "paraphrase"}
+{"id": "all-sla", "query": "Which products have a 99.9% availability target?", "gold": [["handbook/lantern.md", "99.9%"], ["handbook/meridian.md", "99.9%"]], "kind": "multi"}
+{"id": "all-247", "query": "Which of our services offer support around the clock?", "gold": [["handbook/lantern.md", "around the clock"]], "kind": "paraphrase"}
+{"id": "all-us-east", "query": "Which services can be hosted in us-east?", "gold": [["handbook/lantern.md", "us-east"], ["handbook/meridian.md", "us-east"]], "kind": "multi"}
+{"id": "rb-E4031", "query": "error E4031", "gold": [["runbooks/e4031.md", "The client computed a different MD5 than the server received"]], "kind": "identifier"}
+{"id": "rb-E4032", "query": "error E4032", "gold": [["runbooks/e4032.md", "The object exceeds the single-object size limit"]], "kind": "identifier"}
+{"id": "rb-E5007", "query": "error E5007", "gold": [["runbooks/e5007.md", "A zone failover is in progress"]], "kind": "identifier"}
+{"id": "rb-LT-2207", "query": "error LT-2207", "gold": [["runbooks/lt-2207.md", "The workspace exceeded its events-per-second cap"]], "kind": "identifier"}
+{"id": "rb-LT-2208", "query": "error LT-2208", "gold": [["runbooks/lt-2208.md", "The query scanned more than 2 billion rows"]], "kind": "identifier"}
+{"id": "rb-LT-3100", "query": "error LT-3100", "gold": [["runbooks/lt-3100.md", "The configured grok pattern did not match"]], "kind": "identifier"}
+{"id": "rb-Q-118", "query": "error Q-118", "gold": [["runbooks/q-118.md", "Another editor holds the section lock"]], "kind": "identifier"}
+{"id": "rb-Q-204", "query": "error Q-204", "gold": [["runbooks/q-204.md", "The attachment is over 250 MB or the workspace storage quota is full"]], "kind": "identifier"}
+{"id": "rb-M-41", "query": "error M-41", "gold": [["runbooks/m-41.md", "The calendar provider revoked the OAuth grant"]], "kind": "identifier"}
+{"id": "rb-M-42", "query": "error M-42", "gold": [["runbooks/m-42.md", "Two bookings landed on one slot because the provider reported stale availability"]], "kind": "identifier"}
+{"id": "rb-E4031-how", "query": "How do I fix E4031?", "gold": [["runbooks/e4031.md", "proxy rewrote the body"]], "kind": "identifier"}
+{"id": "rb-LT-2208-how", "query": "How do I fix LT-2208?", "gold": [["runbooks/lt-2208.md", "Narrow the time range"]], "kind": "identifier"}
+{"id": "rb-Q-118-how", "query": "How do I fix Q-118?", "gold": [["runbooks/q-118.md", "Locks expire after 5 minutes"]], "kind": "identifier"}
+{"id": "rb-M-41-how", "query": "How do I fix M-41?", "gold": [["runbooks/m-41.md", "revoked the OAuth grant"]], "kind": "identifier"}
+{"id": "pol-perdiem", "query": "What is the current daily meal allowance in the EU?", "gold": [["policies/travel-2025.md", "55 EUR"]], "kind": "freshness"}
+{"id": "pol-economy", "query": "Up to how many hours of flight do we book economy now?", "gold": [["policies/travel-2025.md", "under 8 hours"]], "kind": "freshness"}
+{"id": "pol-rail", "query": "When should I take the train instead of flying?", "gold": [["policies/travel-2025.md", "under 4 hours"]], "kind": "paraphrase"}
+{"id": "exp-receipt", "query": "Do I need a receipt for a 20 euro taxi?", "gold": [["policies/expenses.md", "above 25 EUR"]], "kind": "paraphrase"}
+{"id": "exp-approve", "query": "Who signs off on a 1,200 EUR expense?", "gold": [["policies/expenses.md", "department head approves"]], "kind": "paraphrase"}
+{"id": "exp-chair", "query": "Can I expense an office chair for working from home?", "gold": [["policies/expenses.md", "300 EUR per year"]], "kind": "paraphrase"}
+{"id": "exp-dinner", "query": "What is the per-person limit for taking a customer out to eat?", "gold": [["policies/expenses.md", "90 EUR per person"]], "kind": "paraphrase"}
+{"id": "sec-pw", "query": "What is the minimum password length?", "gold": [["policies/security.md", "at least 14 characters"]], "kind": "paraphrase"}
+{"id": "sec-laptop", "query": "I left my work computer on the train, what now?", "gold": [["policies/security.md", "within 1 hour"]], "kind": "paraphrase"}
+{"id": "sec-review", "query": "How often do managers check who has access to what?", "gold": [["policies/security.md", "every quarter"]], "kind": "paraphrase"}
+{"id": "sec-data", "query": "May I copy customer records to my laptop to debug an issue?", "gold": [["policies/security.md", "masked exports"]], "kind": "paraphrase"}
+{"id": "dn-crc", "query": "Which checksum do Harbor upload parts use?", "gold": [["design/harbor-multipart.md", "CRC32C"]], "kind": "context"}
+{"id": "dn-gc", "query": "When are abandoned partial uploads cleaned up?", "gold": [["design/harbor-multipart.md", "after 7 days"]], "kind": "paraphrase"}
+{"id": "dn-why-not-resume", "query": "Why did we not choose resumable single-stream uploads?", "gold": [["design/harbor-multipart.md", "proxy in the path"]], "kind": "paraphrase"}
+{"id": "dn-cold", "query": "After how many days does log data move to cheaper storage?", "gold": [["design/lantern-tiering.md", "older than 3 days"]], "kind": "paraphrase"}
+{"id": "dn-saving", "query": "How much did the tiering change save on storage?", "gold": [["design/lantern-tiering.md", "about 40 percent"]], "kind": "paraphrase"}
+{"id": "dn-rollout", "query": "In which order was storage tiering rolled out?", "gold": [["design/lantern-tiering.md", "Starter workspaces first"]], "kind": "context"}
+{"id": "mt-handover", "query": "How often does the on-call handover happen after the change?", "gold": [["notes/ops-review-2025-03.md", "twice weekly"]], "kind": "paraphrase"}
+{"id": "mt-postmortem", "query": "What is the deadline for writing a postmortem?", "gold": [["notes/ops-review-2025-03.md", "five working days"]], "kind": "paraphrase"}
+{"id": "mt-cause", "query": "What caused the Lantern ingestion incidents?", "gold": [["notes/ops-review-2025-03.md", "load balancer health check"]], "kind": "context"}
+{"id": "none-0", "query": "What is the parental leave policy?", "gold": [], "kind": "unanswerable"}
+{"id": "none-1", "query": "Which database does Meridian use internally?", "gold": [], "kind": "unanswerable"}
+{"id": "none-2", "query": "How many employees work in the Lisbon office?", "gold": [], "kind": "unanswerable"}
+{"id": "none-3", "query": "What is the price of the Harbor Ultra plan?", "gold": [], "kind": "unanswerable"}
+{"id": "none-4", "query": "Who is the head of the security team?", "gold": [], "kind": "unanswerable"}
