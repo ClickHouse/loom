@@ -4,8 +4,8 @@ A child gets requested ∩ the parent token's ceiling ∩ the creator's live
 grants, never more; for a per-namespace child of a primary flat parent the
 ceiling on a standard namespace is the grant itself (`_primary`). The rules
 and the recheck on every request are in docs/guides/tokens-and-grants.md
-(Delegated tokens).
-`loom mint-token` holds the signing secret and is not a delegation.
+(Delegated tokens). `loom mint-token` holds the signing secret and is not a
+delegation.
 """
 
 from __future__ import annotations
