@@ -521,3 +521,19 @@ async def test_reset_stops_an_armed_flush_from_writing(monkeypatch: pytest.Monke
     await asyncio.sleep(0.05)
     assert inserts == []
     assert drops.pending_count() == 1
+
+
+@pytest.mark.asyncio
+async def test_the_timer_flush_is_tagged(monkeypatch) -> None:
+    """The timer flush runs in a detached task no request tag reaches."""
+    from server.core.ch import current_query_tag
+
+    seen: list[str] = []
+
+    async def flush() -> int:
+        seen.append(current_query_tag())
+        return 0
+
+    monkeypatch.setattr(drops, "flush_drops", flush)
+    await drops._flush_and_rearm()
+    assert seen == ["drops.flush"]

@@ -43,7 +43,7 @@ async def _start_services(ch: Any) -> list[asyncio.Task[None]]:
             await registry_sources.refresh_db_sources()
 
     # `with`, not set_query_tag: the supervisor and the shutdown run in this context after.
-    with query_tag("workers_child.boot"):
+    with query_tag("boot.workers_child"):
         register_buffer_drainer("boot-writes", boot.drain_writes)
         await register_process()
         await load_active_configuration()
