@@ -746,17 +746,23 @@ and what it leaves:
 
 - Boot still applies every migration. An empty table costs nothing to serve, and erasure
   covers every table whatever is in use.
-- Every `code.*` operation but `code.repo.remove` answers a precondition error. While
-  `LOOM_CODE_SELF_SERVICE_ENABLED` stays on, a self-service index added earlier can still
-  be retired by namespace over HTTP, MCP or the SDK
-  ([retiring with the switch off](../features/code-index/repositories.md#self-service-repositories));
-  otherwise, and for an operator-configured one (removed from `LOOM_CODE_REPO` or
-  `LOOM_CODE_REPOS_JSON`), `erasure.request` on its namespace purges its rows. A removed
-  repository's bare mirror (`LOOM_CODE_GIT_DIR`, by default `var/code_repos/<name>.git`)
-  stays on disk while the mirror host loop is off, so delete it by hand.
+- Every `code.*` operation but `code.repo.remove` answers a precondition error. Retire
+  self-service indexes before turning `LOOM_CODE_SELF_SERVICE_ENABLED` off: while it stays
+  on, `code.repo.remove` retires one by namespace over HTTP, MCP or the SDK
+  ([retiring with the switch off](../features/code-index/repositories.md#self-service-repositories)).
+  For an operator-configured index, remove its entry from `LOOM_CODE_REPO` or
+  `LOOM_CODE_REPOS_JSON` and run `erasure.request` on its namespace to purge its rows.
+  `erasure.request` keeps a self-service index's registry entry, which turning
+  self-service back on indexes again.
+- Mirrors left on disk are deleted by hand. Loom never removes an operator-configured
+  mirror (the entry's `git_dir`, by default under `var/code_repos/`). A self-service
+  mirror under `LOOM_CODE_REPOS_ROOT` is removed only on the replica that served
+  `code.repo.remove`; with code intelligence off no other replica sweeps its copy.
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
   leaves the code tools out, but the coding-agent plugins list them, so agents are offered
-  tools that refuse. Set the Claude Code plugin's `toolset` option
+  tools that refuse. An entry written by `loom install --client claude-code|codex` asks
+  for `?toolset=coding` too: install with `--toolset core`, or edit it to `core`. Set the
+  Claude Code plugin's `toolset` option
   ([options](../features/integrations/claude-code.md#install)) from `coding` to `core`.
   The Codex plugin's entry asks for `toolset=core,coding,tracker,tasks`; replace it with
   a `[mcp_servers.loom]` override in `~/.codex/config.toml` that asks for `core,tasks` and
@@ -772,8 +778,9 @@ and what it leaves:
   coverage watches, and `code_coverage_import`). Every other code and tracker worker has
   its own `LOOM_*_ENABLED` setting, which this switch does not change; with no repository
   and no tracker source configured, they find nothing to do: each pass reads a few rows
-  and ends. The git mirror warm-up and host loop do not run, and boot probes the repository-job
-  sandbox only when `LOOM_CODE_INGEST_ENABLED` or `LOOM_CODE_SANDBOX_REQUIRED` is on.
+  and ends. The git mirror warm-up and host loop do not run, and boot probes the
+  repository-job sandbox only when `LOOM_CODE_INGEST_ENABLED` or
+  `LOOM_CODE_SANDBOX_REQUIRED` is on.
 - `memory.*`, `knowledge.*`, `conversation.*`, `context.pack` and `search.query`
   (`loom_search` over MCP) serve as on any deployment; `search.query` has no code or
   tracker results to add.
