@@ -160,7 +160,12 @@ def excerpt(preview: str) -> str:
             except ValueError:
                 continue
             if isinstance(text, str):
-                return text[:200]
+                text = text[:200]
+                # A cut between the two escapes of a pair leaves half a character, which
+                # no UTF-8 response can carry.
+                if text and "\ud800" <= text[-1] <= "\udbff":
+                    text = text[:-1]
+                return text
     return preview[:200]
 
 

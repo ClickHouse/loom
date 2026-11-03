@@ -238,6 +238,8 @@ async def test_a_view_whose_counts_failed_is_not_complete(monkeypatch: pytest.Mo
         # A preview cut inside a long string, and one cut inside an escape.
         ('"line one\\nline two', "line one\nline two"),
         ('"caf\\u00e', "caf"),
+        # Cut between the two escapes of an emoji: the half is dropped.
+        ('"ok \\ud83d\\ude00 \\ud83d\\ude', "ok \U0001f600 "),
     ],
 )
 def test_the_excerpt_decodes_a_cut_preview(preview: str, text: str) -> None:

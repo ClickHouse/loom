@@ -96,10 +96,10 @@ class _Inspect:
         i = self.inp
         args = (i.org, i.namespace, i.subject, i.id, which)
         out = InspectView(definition=definition)
-        failed = len(self.skipped)
-        counts = await self.guarded(f"{which}.counts", lambda: store.view_counts(*args), Rows())
+        read = await self.guarded(f"{which}.counts", lambda: store.view_counts(*args), None)
         # Without the counts, the listing cannot be shown to hold the whole view.
-        counted = len(self.skipped) == failed
+        counted = read is not None
+        counts = read or []
         out.live_rows = sum(int(r["rows"]) for r in counts)
         out.by_type = _counts(counts, "memory_type")
         out.by_status = _counts(counts, "status")

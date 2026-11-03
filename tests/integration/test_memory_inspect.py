@@ -46,6 +46,7 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
             {
                 "agent": "bot",
                 "user_id": "u1",
+                "session_id": "s1",
                 "memory_key": "u1/pref",
                 "value": "Prefers email.",
                 "tags": ["contact"],
@@ -69,7 +70,10 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
         )
         await post("namespace.register_category", {"name": "contacts"})
         await post("memory.assign_category", {"memory_key": "u1/pref", "category_name": "contacts"})
-        held = await post("memory.get", {"agent": "bot", "user_id": "u1", "memory_key": "u1/pref"})
+        held = await post(
+            "memory.get",
+            {"agent": "bot", "user_id": "u1", "session_id": "s1", "memory_key": "u1/pref"},
+        )
 
         def rows() -> int:
             return int(
@@ -93,7 +97,13 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
             held["memory_id"],
             held["content_sha256"],
         )
-        assert row["versions"] >= 1 and row["excerpt"] == "Prefers email."
+        # Every version the history table holds, an entity tagger's re-emit included.
+        held_versions = ch_client.query(
+            "SELECT uniqExact(version) FROM loom.memory_versions "
+            "WHERE org = {org:String} AND memory_id = {id:UUID}",
+            parameters={"org": ORG, "id": held["memory_id"]},
+        ).result_rows[0][0]
+        assert row["versions"] == held_versions >= 1 and row["excerpt"] == "Prefers email."
         assert [(t["name"], t["rows"]) for t in user["own"]["top_tags"]] == [("contact", 1)]
         assert user["own"]["complete"] is True
         assert [(c["name"], c["rows"]) for c in user["own"]["categories"]] == [("contacts", 1)]
@@ -113,6 +123,10 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
             assert settings["extraction_policy"] is None
             assert "org admin" in settings["extraction_policy_unavailable"]
         assert user["skipped"] == []
+
+        session = await post("memory.inspect", {"subject": "session", "id": "s1"})
+        assert session["own"]["live_rows"] == 1 and session["others"]["live_rows"] == 2
+        assert [r["memory_key"] for r in session["own"]["newest"]] == ["u1/pref"]
 
         nobody = await post("memory.inspect", {"subject": "session", "id": "never-used"})
         assert nobody["own"]["live_rows"] == 0 and nobody["own"]["newest"] == []

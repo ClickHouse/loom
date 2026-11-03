@@ -64,7 +64,8 @@ class InspectRow(BaseModel):
     # `process:<subject>`); empty on rows written before it was recorded.
     actor: str
     updated_at: datetime
-    # Version rows the history holds for this row.
+    # Versions the history table holds for this row, the entity tagger's re-emits
+    # included (memory.history leaves those out).
     versions: int = 0
     # The value's first 200 characters; empty for a high-sensitivity row, readable by
     # key only.
