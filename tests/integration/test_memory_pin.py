@@ -220,8 +220,18 @@ async def test_pin_of_a_read_row_keeps_its_fields(mint_test_token) -> None:
     )
     before = await _get_until(base, tok, key, pinned=False)
     assert before.get("found"), before
+    # The write stored every field, so the comparison after the pin is not of defaults.
+    assert before["value"] == "deploys freeze on Fridays", before
+    assert before["memory_type"] == "procedural", before
+    assert {"infra", "prod"} <= set(before["tags"]), before
+    assert before["entities"] == ["deploy"], before
+    assert before["confidence"] == pytest.approx(0.8, abs=1e-6), before
+    assert before["sensitivity"] == "medium", before
     assert before["source_trace"] == "conversation:t1", before
     assert before["source_resource_id"] == "doc-1", before
+    assert str(before["valid_at"]).startswith("2026-01-01T00:00:00"), before
+    assert str(before["valid_to"]).startswith("2099-01-01T00:00:00"), before
+    assert before["char_limit"] == 200, before
 
     pin = {
         **key,
@@ -261,3 +271,5 @@ async def test_pin_of_a_stale_read_is_refused(mint_test_token) -> None:
     )
     assert r.status_code == 409, r.text
     assert "PRECONDITION_FAILED" in r.text, r.text
+    now = await _get_until(base, tok, key, pinned=False)
+    assert now["value"] == "deploys freeze on Thursdays" and now["pinned"] is False, now
