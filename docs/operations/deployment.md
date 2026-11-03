@@ -753,14 +753,15 @@ and what it leaves:
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
   leaves the code tools out, but any client entry whose toolset includes `coding`, `tracker`
   (`code.bisect_candidates`, `code.pr_check`, `code.impact`) or `assistant` (`code.search`,
-  `code.symbol`) lists code tools that refuse. Every connect path Loom offers coding agents
-  asks for `coding`: the plugins, `loom install`, the lines `loom up` and `loom init` print,
-  and the dashboard's connect page. Point those entries at `core` (with `tasks` added where
-  agents use the task inbox): the Claude Code plugin's `toolset` option
+  `code.symbol`) lists code tools that refuse. The plugins, `loom install` for Claude Code
+  and Codex, the lines `loom up` and `loom init` print, and the dashboard's Claude Code,
+  Codex and Cursor snippets ask for `coding`. Point those entries at `core` (with `tasks`
+  added where agents use the task inbox): the Claude Code plugin's `toolset` option
   ([options](../features/integrations/claude-code.md#install)),
   `loom install --toolset core`, or for the Codex plugin a `[mcp_servers.loom]` override in
   `~/.codex/config.toml` that keeps the plugin's `http_headers_helper` line, since the
-  override replaces the entry whole ([the server](../features/integrations/codex.md#the-server)).
+  override replaces the entry whole
+  ([the server](../features/integrations/codex.md#the-server)).
 - The plugin hooks find a session's repository through `code.repos`, which is refused, and
   ask again about once a minute. The session-start primer then adds a code-index line that
   points the agent at the `loom_code_*` tools; set `LOOM_CODE_MAP=false` in the environment
