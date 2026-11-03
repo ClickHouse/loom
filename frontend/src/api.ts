@@ -94,9 +94,10 @@ export function clearToken(): void {
  *  stops listening. */
 export function onTokenStored(fn: (token: string | null, before: string | null) => void): () => void {
   const listener = (e: StorageEvent) => {
-    // A sign-out elsewhere counts even when this tab's token was already gone (its own
-    // removal, when there was one, follows as a token event).
-    if (e.key === KEY_TOKEN ? e.newValue !== e.oldValue : e.key === KEY_SIGNED_OUT && !!e.newValue && !token())
+    // A browser fires it only on a change. A sign-out elsewhere counts even when this tab's
+    // token was already gone (its own removal, when there was one, follows as a token
+    // event), and so does a clear of the whole storage (no key), which drops the token.
+    if (e.key === KEY_TOKEN || e.key === null || (e.key === KEY_SIGNED_OUT && !!e.newValue && !token()))
       fn(token(), e.oldValue);
   };
   window.addEventListener("storage", listener);
