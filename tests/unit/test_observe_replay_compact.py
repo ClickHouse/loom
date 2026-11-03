@@ -136,8 +136,8 @@ async def test_done_is_built_from_the_head_as_it_is_after_the_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # During the replay one observation is deleted, one given new text, one relabelled
-    # and one tagged READY. The DONE rows must not bring the deleted row or the old text
-    # back, and carry what the others hold now.
+    # and one tagged READY after the stamp. The DONE rows must not bring the deleted row
+    # or the old text back, and carry what the others hold now.
     import server.memory.store as memory_repo
 
     kept = _obs("kept", {"narrative": "ran the tests"})
@@ -147,7 +147,7 @@ async def test_done_is_built_from_the_head_as_it_is_after_the_replay(
     readied = _obs("readied", {"narrative": "opened the file"})
     observations = [kept, deleted, rewritten, relabelled, readied]
     now_high = _obs("relabelled", relabelled.value, sensitivity="high", version=20)
-    now_ready = _obs("readied", readied.value, version=20, tags=["crystallize:ready"])
+    now_ready = _obs("readied", readied.value, version=150, tags=["crystallize:ready"])
     order: list[str] = []
     _heads(
         monkeypatch,
@@ -187,7 +187,10 @@ async def test_done_is_built_from_the_head_as_it_is_after_the_replay(
     monkeypatch.setattr(memory_repo, "insert_memory_versions", _insert)
     distilled = await ox._distill_session(_SESSION, observations)
     assert done == [kept, now_high, now_ready]
-    assert [k for _, k in built] == [{"version": 99, "tags": ["crystallize:done"]}] * 3
+    # the READY head landed after the stamp (150 > 99): its DONE copy outranks it
+    done_tags = ["crystallize:done"]
+    assert [k["version"] for _, k in built] == [99, 99, 151]
+    assert all(k["tags"] == done_tags for _, k in built)
     # the stamp is drawn before the re-read, so a write drawn after the re-read wins
     assert order == ["stamp", "re-read"]
     assert distilled.observations == 3

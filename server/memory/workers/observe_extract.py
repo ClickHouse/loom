@@ -175,7 +175,7 @@ async def _load_session_observations(
 ) -> list[Any]:
     """Full-projection rows for one session's READY observations, oldest
     first (chronological replay order). The DONE rewrite re-reads each head
-    before it writes; the version read here is what it compares against."""
+    before it writes; the `content_sha256` read here is what it compares against."""
     import server.memory.store as memory_repo
 
     rows = await ch.query_all(
@@ -253,11 +253,8 @@ async def _distill_session(
     context = await _load_session_context(session, ch=get_client_for_context())
     extras = await _distill_extras(session, readable, context=context)
 
-    # Mark sources DONE. RMT: mirror every column, only tags + version change.
-    # Built from the head re-read now: a key deleted or given new text during the
-    # replay keeps what it has, a relabel is carried. The version is drawn first, so a
-    # write that draws after it wins; one that drew before and lands after the re-read
-    # can still lose, as in apply_entities_batch.
+    # Mark sources DONE from the head as it is now: a key deleted or rewritten during the
+    # replay is skipped. The stamp is drawn first so a later write wins.
     from server.core.ch import get_client
 
     ch = get_client()
@@ -274,7 +271,10 @@ async def _distill_session(
         if CRYSTALLIZE_DONE_TAG not in new_tags:
             new_tags.append(CRYSTALLIZE_DONE_TAG)
         version_rows.append(
-            memory_repo.build_memory_version_row(head, version=version, tags=new_tags)
+            # a head written after the stamp is the one this row copies, so outrank it
+            memory_repo.build_memory_version_row(
+                head, version=max(version, int(head.version) + 1), tags=new_tags
+            )
         )
     # One committed insert for the session's observations.
     await memory_repo.insert_memory_versions(version_rows, ch=ch)
