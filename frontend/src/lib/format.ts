@@ -247,7 +247,7 @@ function humanizeApiError(err: ApiError): string {
     err.status === 401 &&
     !window.__LOOM_PROXY_AUTH &&
     !window.__LOOM_AUTH_DISABLED &&
-    SESSION_GONE.test(err.serverMessage)
+    (err.sessionEnded || SESSION_GONE.test(err.serverMessage))
   )
     return "Your session ended — sign in again.";
   const friendly = ERROR_CODE_PREFIXES[err.code];

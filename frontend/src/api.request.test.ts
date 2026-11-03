@@ -7,7 +7,7 @@ import {
   post,
   setToken,
   signOut,
-  signedOutJustNow,
+  signedOut,
   subscribeInflight,
 } from "./api";
 import { ApiError } from "./lib/errors";
@@ -104,6 +104,7 @@ describe("a refused sign-in token", () => {
     stubFetch(401, '{"detail":{"code":"AUTH_INVALID","message":"token expired: Signature has expired"}}');
     const err = await rejection(post("/v1/collection.list", { org: "o" }));
     expect(err.status).toBe(401);
+    expect(err.sessionEnded).toBe(true);
     expect(ended).toHaveBeenCalledTimes(1);
   });
 
@@ -145,13 +146,12 @@ describe("a refused sign-in token", () => {
 describe("signing out", () => {
   afterEach(() => localStorage.clear());
 
-  it("marks the browser signed out for a short while, and a sign-in clears the mark", () => {
+  it("marks the browser signed out until the next sign-in", () => {
     setToken("tok-a");
     signOut();
     expect(localStorage.getItem("loom_token_v1")).toBeNull();
-    expect(signedOutJustNow()).toBe(true);
-    expect(signedOutJustNow(Date.now() + 60_000)).toBe(false);
+    expect(signedOut()).toBe(true);
     setToken("tok-b");
-    expect(signedOutJustNow()).toBe(false);
+    expect(signedOut()).toBe(false);
   });
 });

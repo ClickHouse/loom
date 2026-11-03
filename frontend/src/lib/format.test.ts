@@ -83,6 +83,14 @@ describe("humanizeError", () => {
       expect(
         humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "token jti 'j1' is revoked" })),
       ).toBe("Your session ended — sign in again.");
+      // Any refusal that ended the session reads the same, whatever its words.
+      const ended = new ApiError({
+        status: 401,
+        code: "AUTH_INVALID",
+        message: "invalid token: Signature verification failed",
+      });
+      ended.sessionEnded = true;
+      expect(humanizeError(ended)).toBe("Your session ended — sign in again.");
       // With auth off, or behind a proxy, there is no session to sign in to.
       for (const flag of ["__LOOM_AUTH_DISABLED", "__LOOM_PROXY_AUTH"] as const) {
         window[flag] = true;

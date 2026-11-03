@@ -16,7 +16,7 @@ import {
   clearToken,
   onSignInRejected,
   onTokenStored,
-  signedOutJustNow,
+  signedOut,
   storedToken,
   ApiError,
   type MyNamespaceEntry,
@@ -111,8 +111,15 @@ async function tokenChangedElsewhere(token: string | null): Promise<void> {
   const before = s.whoami;
   if (!before) return;
   if (token === null) {
-    if (signedOutJustNow()) reloadPage();
+    if (signedOut()) reloadPage();
     else if (!s.sessionExpired) endSession();
+    return;
+  }
+  // A token naming someone else is a fresh page at once: until a reload, every call here
+  // would carry it under the last person's page.
+  const claims = claimsFromToken(token);
+  if (!before.subject || claims?.subject !== before.subject || claims?.org !== before.org) {
+    reloadPage();
     return;
   }
   let now: WhoAmI;
@@ -124,7 +131,12 @@ async function tokenChangedElsewhere(token: string | null): Promise<void> {
   }
   // Another change landed while whoami answered: that one decides.
   if (storedToken() !== token) return;
-  if (!now.authenticated || !before.subject || now.subject !== before.subject || now.org !== before.org) {
+  // A token the server refuses is nobody's: this session ended, and the page stays.
+  if (!now.authenticated) {
+    if (!useStore.getState().sessionExpired) endSession();
+    return;
+  }
+  if (now.subject !== before.subject || now.org !== before.org) {
     reloadPage();
     return;
   }
@@ -132,7 +144,7 @@ async function tokenChangedElsewhere(token: string | null): Promise<void> {
   useStore.getState().setWhoami(now);
   useStore.getState().setSessionExpired(false);
   takeSessionEnded();
-  if (wasExpired) toast("Signed in again. Retry what failed while the session was away.", "ok");
+  if (wasExpired) toast("Signed in again.", "ok");
   try {
     invalidateShared();
     useStore.getState().setMyNamespaces(await sharedMine(now.org ?? ""));
@@ -357,11 +369,13 @@ export default function App() {
   // Auth bootstrap on mount
   useEffect(() => {
     (async () => {
+      // A sign-in link's token, taken first thing; the catch below reads it too.
+      let link: ReturnType<typeof takeLinkToken> = null;
       try {
         // A login link (federation redirect) carries the token in the #token= fragment: taken
         // and scrubbed before anything can fail. The return to the page its sign-in started on
         // is a chunk of its own, and boot goes on without it.
-        const link = takeLinkToken();
+        link = takeLinkToken();
         if (link) {
           if (link.token) setToken(link.token);
           try {
@@ -416,7 +430,7 @@ export default function App() {
         const w = await whoamiWhenReady();
         // Another tab stored someone's token while whoami answered for this one: that
         // token decides, on a fresh boot.
-        if (sent && storedToken() && storedToken() !== sent) {
+        if (storedToken() && storedToken() !== sent) {
           reloadPage();
           return;
         }
@@ -428,9 +442,9 @@ export default function App() {
           // silent first-visit card. A sign-out (here or in another tab) is a plain
           // sign-in. A refused sign-in link says so, and starts no sign-in by itself: it
           // may be the way in while the identity provider is down.
-          const signedOut = signedOutJustNow();
-          const ended = takeSessionEnded() && !signedOut;
-          if (ended || hasToken() || (dropped && !signedOut)) {
+          const out = signedOut();
+          const ended = takeSessionEnded() && !out;
+          if (ended || hasToken() || (dropped && !out)) {
             clearToken();
             useStore.getState().setGateReason(link?.token && link.token === sent ? "refused" : "expired");
           }
@@ -558,7 +572,9 @@ export default function App() {
         }
       } catch (e) {
         // Still unavailable after whoami's retries: the toast says so, and the token stays
-        // for the next load.
+        // for the next load. A sign-in link refused on the way leaves no note, so the next
+        // load does not start a sign-in by itself (the link may be the way in).
+        if (link?.token) takeSessionEnded();
         toastError("Auth bootstrap failed", e);
         setAuthed(false);
       }

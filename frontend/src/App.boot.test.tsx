@@ -605,6 +605,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
     cleanup();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    delete window.__LOOM_SSO;
     useStore.setState({ sessionExpired: false, gateReason: null, whoami: null, myNamespaces: null, identity: null });
     window.history.replaceState(null, "", "/");
   });
@@ -685,11 +686,40 @@ describe("a refused token", { timeout: 30_000 }, () => {
   it("reloads to a plain sign-in when the person signed out in another tab", async () => {
     render(<App />);
     await until(() => useStore.getState().whoami !== null);
-    localStorage.setItem("loom_signed_out_v1", String(Date.now()));
+    localStorage.setItem("loom_signed_out_v1", "1");
     await act(async () => storeElsewhere(null));
     await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
     expect(useStore.getState().sessionExpired).toBe(false);
     expect(sessionStorage.getItem("loom_session_ended_v1")).toBeNull();
+  });
+
+  it("ends this tab's session, keeping the page, when another tab stores a token the server refuses", async () => {
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    const stale = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 1 });
+    refuse = true; // whoami refuses alice's tokens from here
+    await act(async () => storeElsewhere(stale));
+    await until(() => useStore.getState().sessionExpired);
+    expect(reloadPage).not.toHaveBeenCalled();
+  });
+
+  it("reloads at once for another person's token, without waiting on whoami", async () => {
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    whoamiAnswers = [503, 503, 503, 503];
+    await act(async () => storeElsewhere(bob));
+    await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
+    expect(whoamiAnswers).toHaveLength(4);
+  });
+
+  it("a reload long after a sign-out elsewhere is still a plain sign-in", async () => {
+    await expireMidSession();
+    localStorage.setItem("loom_signed_out_v1", "1"); // another tab signed out; this one had no token to drop
+    cleanup();
+    useStore.setState({ authed: true, sessionExpired: false, gateReason: null, whoami: null, identity: null });
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    expect(useStore.getState().gateReason).toBeNull();
   });
 
   it("ends this tab's session too when another tab drops the token", async () => {
@@ -734,7 +764,6 @@ describe("a refused token", { timeout: 30_000 }, () => {
     expect(useStore.getState().gateReason).toBeNull();
     await settle(4); // the gate's chunk and its effect
     expect(goToSso).not.toHaveBeenCalled();
-    delete window.__LOOM_SSO;
   });
 
   it("a refused sign-in link says so and starts no SSO: it may be the way in while the provider is down", async () => {

@@ -26,6 +26,9 @@ export class ApiError extends Error {
   /** The parsed `detail` object, for callers that need an extra field
    *  (`current_sha256`, `retry_after_s`, …). */
   readonly detail: Record<string, unknown>;
+  /** The server refused the stored token on this call, which ended the session (`api.ts`
+   *  request): whatever the refusal's words, it reads as an ended session. */
+  sessionEnded = false;
 
   constructor(opts: {
     status: number;

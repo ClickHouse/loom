@@ -75,14 +75,14 @@ export function setToken(jwt: string): void {
   localStorage.setItem(KEY_TOKEN, cleaned);
 }
 
-// When a person last signed out in this browser: another tab that then loses the token
-// goes to a plain sign-in, not "your session ended", whose SSO gate would sign them back in.
+// Set by a sign-out in this browser and cleared by the next sign-in: until then, a tab that
+// loses the token or reloads goes to a plain sign-in, not "your session ended", whose SSO
+// gate would sign the person back in.
 const KEY_SIGNED_OUT = "loom_signed_out_v1";
-const SIGNED_OUT_RECENT_MS = 30_000;
 
-/** Whether the token just went because the person signed out (in any tab). */
-export function signedOutJustNow(now: number = Date.now()): boolean {
-  return now - Number(localStorage.getItem(KEY_SIGNED_OUT) ?? 0) < SIGNED_OUT_RECENT_MS;
+/** Whether the person signed out in this browser (in any tab) and has not signed in since. */
+export function signedOut(): boolean {
+  return localStorage.getItem(KEY_SIGNED_OUT) !== null;
 }
 
 export function clearToken(): void {
@@ -113,7 +113,7 @@ export function onSignInRejected(fn: () => void): void {
  *  sign-in session (a minted one, maybe a CI job's too) is only forgotten here. */
 export function signOut(): void {
   const t = token();
-  localStorage.setItem(KEY_SIGNED_OUT, String(Date.now()));
+  localStorage.setItem(KEY_SIGNED_OUT, "1");
   clearToken();
   if (!t || !claimsFromToken(t)?.session) return;
   fetch("/oauth/revoke", {
@@ -298,7 +298,12 @@ async function request(method: "GET" | "POST", path: string, body?: unknown, sig
     );
     // A 401 on the token this request carried ends the session for every view at once.
     // A newer token stored while the request was in flight is left alone.
-    if (r.status === 401 && sent && sent === token()) signInRejected?.();
+    if (r.status === 401 && sent && sent === token()) {
+      signInRejected?.(); // before any await, so concurrent 401s end it once
+      const err = await apiErrorFromResponse(r);
+      err.sessionEnded = true;
+      throw err;
+    }
     if (!r.ok) throw await apiErrorFromResponse(r);
     return r;
   } finally {
