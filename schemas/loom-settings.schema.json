@@ -2786,7 +2786,7 @@
           "maximum": 4000,
           "minimum": 100,
           "type": "integer",
-          "description": "Characters of each hit a reranker reads: its context (title, breadcrumb), then the chunk text."
+          "description": "Characters of each hit a reranker reads: its context (title, description, breadcrumb; at most half), then the chunk text."
         },
         "knowledge_search_rerank_top": {
           "default": 30,

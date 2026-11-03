@@ -2420,8 +2420,8 @@ settings:
   # How many fused hits a rerank reads (the legs fetch at least this many). [live]
   # knowledge_search_rerank_top: 30
 
-  # Characters of each hit a reranker reads: its context (title, breadcrumb), then the
-  # chunk text. [live]
+  # Characters of each hit a reranker reads: its context (title, description,
+  # breadcrumb; at most half), then the chunk text. [live]
   # knowledge_search_rerank_excerpt_chars: 800
 
   # --- chunking ---

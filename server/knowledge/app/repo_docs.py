@@ -105,13 +105,14 @@ async def knowledge_with_repo_docs(
     )
     if not extra:
         return base
-    # The merge orders by score, which a reranker's order is not: no reranker ordered it.
-    return base.model_copy(
-        update={
-            "results": merge_hits(list(base.results), extra, int(know_input.top_k)),
-            "reranked_by": "",
-        }
-    )
+    top_k = int(know_input.top_k)
+    if base.reranked_by:
+        # A reranked answer keeps its order; the repository's hits follow it, by score.
+        listed = {(h.namespace, h.source_uri, h.chunk_idx) for h in base.results}
+        more = [h for h in extra if (h.namespace, h.source_uri, h.chunk_idx) not in listed]
+        results = [*base.results, *merge_hits([], more, len(more))][: max(1, top_k)]
+        return base.model_copy(update={"results": results})
+    return base.model_copy(update={"results": merge_hits(list(base.results), extra, top_k)})
 
 
 class RepoDoc(TypedDict):

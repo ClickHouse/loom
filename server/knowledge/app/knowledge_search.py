@@ -108,7 +108,7 @@ def _rerank_endpoint(input: KnowledgeSearchInput) -> str:
             if _BAD_DEFAULT_LOGGED.first(settings.knowledge_search_rerank_default):
                 log.warning("knowledge_search_rerank_default is not used: %s", e)
             endpoint = ""
-    if endpoint.startswith(BUILTIN_OPENAI) and reads_llm_free():
+    if endpoint == "none" or (endpoint.startswith(BUILTIN_OPENAI) and reads_llm_free()):
         return ""
     return endpoint
 
@@ -150,7 +150,9 @@ async def _rerank(
         candidates=candidates,
         excerpt_chars=chars,
     )
-    if ordered is candidates:
+    # The service hands back its input on a failure, or an order it could not read in
+    # input order: either way no reranker ordered the page.
+    if [c.memory_key for c in ordered] == [c.memory_key for c in candidates]:
         return hits, False
     return [head[int(c.memory_key)] for c in ordered] + tail, True
 

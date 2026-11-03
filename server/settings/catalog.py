@@ -1989,8 +1989,8 @@ class KnowledgeSettings(BaseModel):
     knowledge_search_rerank_default: Annotated[str, LIVE] = ""
     # How many fused hits a rerank reads (the legs fetch at least this many).
     knowledge_search_rerank_top: Annotated[int, LIVE] = Field(default=30, ge=2, le=100)
-    # Characters of each hit a reranker reads: its context (title, breadcrumb), then
-    # the chunk text.
+    # Characters of each hit a reranker reads: its context (title, description,
+    # breadcrumb; at most half), then the chunk text.
     knowledge_search_rerank_excerpt_chars: Annotated[int, LIVE] = Field(
         default=800, ge=100, le=4000
     )

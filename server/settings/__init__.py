@@ -205,14 +205,16 @@ class Settings(
 
     @model_validator(mode="after")
     def _check_code_rerank_behind_the_gateway(self) -> Settings:
-        """`builtin:cohere` calls Cohere's own API, and the code reranker fails
-        open: while the gateway is required, the default may not name it."""
+        """`builtin:cohere` calls Cohere's own API, and the code and knowledge rerankers
+        fail open: while the gateway is required, neither default may name it."""
         why = self.gateway_required_by()
-        if why and is_builtin_cohere(self.code_search_rerank_default.strip()):
-            raise ValueError(
-                f"{why} refuses LOOM_CODE_SEARCH_RERANK_DEFAULT=builtin:cohere: "
-                "rerank through the gateway"
-            )
+        defaults = {
+            "LOOM_CODE_SEARCH_RERANK_DEFAULT": self.code_search_rerank_default,
+            "LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT": self.knowledge_search_rerank_default,
+        }
+        for env, value in defaults.items():
+            if why and is_builtin_cohere(value.strip()):
+                raise ValueError(f"{why} refuses {env}=builtin:cohere: rerank through the gateway")
         return self
 
     @model_validator(mode="after")

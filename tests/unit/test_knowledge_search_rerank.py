@@ -36,6 +36,9 @@ def test_the_request_names_the_reranker_else_the_deployment_default(monkeypatch)
     assert ks._rerank_endpoint(_input(rerank="builtin:cohere")) == "builtin:cohere"
     monkeypatch.setattr(settings, "knowledge_search_rerank_default", "")
     assert ks._rerank_endpoint(_input()) == ""
+    # "none" as the default is no reranker, and widens no pool
+    monkeypatch.setattr(settings, "knowledge_search_rerank_default", "none")
+    assert ks._rerank_endpoint(_input()) == ""
 
 
 def test_an_llm_free_read_reranks_only_as_named_and_never_with_the_llm(monkeypatch) -> None:
@@ -87,9 +90,13 @@ async def test_the_head_takes_the_rerankers_order_and_shows_each_chunks_context(
 
 
 @pytest.mark.asyncio
-async def test_a_failed_rerank_keeps_the_fused_order_and_says_none_ran(monkeypatch) -> None:
+@pytest.mark.parametrize("copy", [False, True], ids=["input-back", "same-order-copy"])
+async def test_a_rerank_that_keeps_the_fused_order_says_none_ran(monkeypatch, copy) -> None:
+    """The service hands its input back on a failure, and a reply it could not read
+    comes back as a copy in input order: neither is a reranker's order."""
+
     async def _kept(**kw: Any) -> list[Any]:
-        return kw["candidates"]  # the service hands its input back on any failure
+        return list(kw["candidates"]) if copy else kw["candidates"]
 
     monkeypatch.setattr(rerank_mod, "rerank", _kept)
     hits = [_hit("a.md"), _hit("b.md")]
@@ -97,14 +104,9 @@ async def test_a_failed_rerank_keeps_the_fused_order_and_says_none_ran(monkeypat
     assert reranked is False and out is hits
 
 
-@pytest.mark.asyncio
-async def test_the_search_reads_a_rerank_pool_and_reports_the_reranker(monkeypatch) -> None:
-    """The legs fetch the rerank head even when the page is smaller, the reranked order
-    is the page, and `reranked_by` names the reranker."""
-    from server.knowledge.app.search import ChunkHit
-
-    monkeypatch.setattr(settings, "knowledge_search_rerank_top", 4)
-    pools: list[int] = []
+def _stub_handler(monkeypatch, hits: list[Any], pools: list[int] | None = None) -> None:
+    """The handler over fixed fused `hits` in namespace "n", a reranker that reverses
+    its candidates, and the legs' pool size recorded in `pools`."""
 
     class _Embedder:
         model_name = "m"
@@ -113,14 +115,11 @@ async def test_the_search_reads_a_rerank_pool_and_reports_the_reranker(monkeypat
             return [1.0]
 
     def _search(input: Any, embedder: Any, vec: Any, pool: int):
-        pools.append(pool)
+        if pools is not None:
+            pools.append(pool)
 
-        async def _run(namespaces: list[str]) -> list[tuple[str, list[ChunkHit]]]:
-            hits = [
-                ChunkHit("n", f"{c}.md", 0, c, [], distance=0.1 * i, context=f"ctx {c}")
-                for i, c in enumerate("abcd")
-            ]
-            return [("n", hits)]
+        async def _run(namespaces: list[str]) -> list[tuple[str, list[Any]]]:
+            return [("n", list(hits))]
 
         return _run
 
@@ -131,7 +130,6 @@ async def test_the_search_reads_a_rerank_pool_and_reports_the_reranker(monkeypat
         return ["n"]
 
     async def _reversed(**kw: Any) -> list[Any]:
-        assert kw["candidates"][0].content_excerpt.startswith("ctx a\n\n")
         return list(reversed(kw["candidates"]))
 
     monkeypatch.setattr(ks, "get_embedder", _Embedder)
@@ -139,6 +137,21 @@ async def test_the_search_reads_a_rerank_pool_and_reports_the_reranker(monkeypat
     monkeypatch.setattr(ks, "_search_private_first", _first)
     monkeypatch.setattr(ks, "_named_namespaces", _named)
     monkeypatch.setattr(rerank_mod, "rerank", _reversed)
+
+
+@pytest.mark.asyncio
+async def test_the_search_reads_a_rerank_pool_and_reports_the_reranker(monkeypatch) -> None:
+    """The legs fetch the rerank head even when the page is smaller, the reranked order
+    is the page, and `reranked_by` names the reranker."""
+    from server.knowledge.app.search import ChunkHit
+
+    monkeypatch.setattr(settings, "knowledge_search_rerank_top", 4)
+    pools: list[int] = []
+    hits = [
+        ChunkHit("n", f"{c}.md", 0, c, [], distance=0.1 * i, context=f"ctx {c}")
+        for i, c in enumerate("abcd")
+    ]
+    _stub_handler(monkeypatch, hits, pools)
     out = await ks.handle_knowledge_search(
         _input(rerank="builtin:openai", top_k=2, namespaces=["n"], collapse_sections=False)
     )
@@ -159,37 +172,11 @@ async def test_sections_collapse_after_the_rerank_so_its_pick_represents_the_sec
     from server.knowledge.app.search import ChunkHit
 
     monkeypatch.setattr(settings, "knowledge_search_rerank_top", 4)
-
-    class _Embedder:
-        model_name = "m"
-
-        async def embed(self, text: str) -> list[float]:
-            return [1.0]
-
-    def _search(input: Any, embedder: Any, vec: Any, pool: int):
-        async def _run(namespaces: list[str]) -> list[tuple[str, list[ChunkHit]]]:
-            hits = [
-                ChunkHit("n", "a.md", i, f"part {i}", [], distance=0.1 * i, section_path=("S",))
-                for i in range(4)
-            ]
-            return [("n", hits)]
-
-        return _run
-
-    async def _first(input: Any, namespaces: list[str], search: Any) -> Any:
-        return await search(namespaces)
-
-    async def _named(input: Any) -> list[str]:
-        return ["n"]
-
-    async def _reversed(**kw: Any) -> list[Any]:
-        return list(reversed(kw["candidates"]))
-
-    monkeypatch.setattr(ks, "get_embedder", _Embedder)
-    monkeypatch.setattr(ks, "_namespaces_search", _search)
-    monkeypatch.setattr(ks, "_search_private_first", _first)
-    monkeypatch.setattr(ks, "_named_namespaces", _named)
-    monkeypatch.setattr(rerank_mod, "rerank", _reversed)
+    hits = [
+        ChunkHit("n", "a.md", i, f"part {i}", [], distance=0.1 * i, section_path=("S",))
+        for i in range(4)
+    ]
+    _stub_handler(monkeypatch, hits)
     out = await ks.handle_knowledge_search(_input(rerank="builtin:openai", namespaces=["n"]))
     # the reranker's first chunk of the section survives and folds the other three
     assert [(h.chunk_idx, h.siblings_folded) for h in out.results] == [(3, 3)]
