@@ -16,6 +16,7 @@ import {
   clearToken,
   onSignInRejected,
   onTokenStored,
+  signedOutJustNow,
   storedToken,
   ApiError,
   type MyNamespaceEntry,
@@ -102,25 +103,30 @@ async function whoamiWhenReady(): Promise<WhoAmI> {
   }
 }
 
-/** Another tab of this origin stored a token (a sign-in there) or dropped it. Dropped: this
- *  tab's session ended too. Stored: once the server confirms it is the same person, this
- *  page carries on with their identity and roles read again; anyone else gets a fresh page,
- *  so nothing the last person read stays on screen. */
+/** Another tab of this origin stored a token (a sign-in there) or dropped it. Dropped by a
+ *  sign-out: this tab reloads to a plain sign-in. Dropped by a refusal: this tab's session
+ *  ended too. Stored: once the server confirms it is the same person, this page carries on
+ *  with their identity and roles read again; anyone else gets a fresh page, so nothing the
+ *  last person read stays on screen. */
 async function tokenChangedElsewhere(token: string | null): Promise<void> {
   const s = useStore.getState();
   const before = s.whoami;
   if (!before) return;
   if (token === null) {
-    if (!s.sessionExpired) endSession();
+    if (signedOutJustNow()) reloadPage();
+    else if (!s.sessionExpired) endSession();
     return;
   }
-  let now: WhoAmI | null = null;
+  let now: WhoAmI;
   try {
-    now = await whoami();
+    now = await whoamiWhenReady();
   } catch {
-    /* unconfirmed: reload below */
+    // Unconfirmed: a healthy page stays as it is, an ended one keeps its card.
+    return;
   }
-  if (!now?.authenticated || !before.subject || now.subject !== before.subject || now.org !== before.org) {
+  // Another change landed while whoami answered: that one decides.
+  if (storedToken() !== token) return;
+  if (!now.authenticated || !before.subject || now.subject !== before.subject || now.org !== before.org) {
     reloadPage();
     return;
   }
@@ -409,8 +415,10 @@ export default function App() {
           ? sharedMine(early.org).catch(() => null)
           : null;
 
+        const hadToken = hasToken();
         const w = await whoamiWhenReady();
-        if (!w.authenticated) {
+        // A read refused while whoami was answering has already dropped the token.
+        if (!w.authenticated || (hadToken && !hasToken())) {
           // A stored token the server no longer accepts is dead — drop it so the next
           // load doesn't retry it, and tell the gate why it is showing instead of a
           // silent first-visit card.
@@ -542,6 +550,12 @@ export default function App() {
         }
       } catch (e) {
         toastError("Auth bootstrap failed", e);
+        // Still unavailable after the retries, with the token kept: try the page again
+        // shortly rather than ask for a sign-in the token does not need.
+        if (e instanceof ApiError && e.status === 503 && hasToken()) {
+          setTimeout(reloadPage, 5000);
+          return;
+        }
         setAuthed(false);
       }
     })();

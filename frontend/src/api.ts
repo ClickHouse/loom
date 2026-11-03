@@ -71,7 +71,18 @@ export function setToken(jwt: string): void {
   // Strip all whitespace before persisting — a pasted JWT can carry
   // internal newlines/spaces that make the Authorization header invalid.
   const cleaned = jwt.replace(/\s+/g, "");
+  localStorage.removeItem(KEY_SIGNED_OUT);
   localStorage.setItem(KEY_TOKEN, cleaned);
+}
+
+// When a person last signed out in this browser: another tab that then loses the token
+// goes to a plain sign-in, not "your session ended", whose SSO gate would sign them back in.
+const KEY_SIGNED_OUT = "loom_signed_out_v1";
+const SIGNED_OUT_RECENT_MS = 30_000;
+
+/** Whether the token just went because the person signed out (in any tab). */
+export function signedOutJustNow(now: number = Date.now()): boolean {
+  return now - Number(localStorage.getItem(KEY_SIGNED_OUT) ?? 0) < SIGNED_OUT_RECENT_MS;
 }
 
 export function clearToken(): void {
@@ -102,6 +113,7 @@ export function onSignInRejected(fn: () => void): void {
  *  sign-in session (a minted one, maybe a CI job's too) is only forgotten here. */
 export function signOut(): void {
   const t = token();
+  localStorage.setItem(KEY_SIGNED_OUT, String(Date.now()));
   clearToken();
   if (!t || !claimsFromToken(t)?.session) return;
   fetch("/oauth/revoke", {
@@ -148,6 +160,8 @@ export async function whoami(): Promise<WhoAmI> {
   const r = await fetch("/v1/whoami", { headers: authHeader(), signal: boundedSignal() });
   // A refused token answers 200 with authenticated=false. Anything else not ok (a replica
   // whose keys are still loading answers 503) says nothing about the token: it is kept.
+  // Behind a proxy a refusal is the proxy's own 401 or 403: signed out, as before.
+  if (PROXY_MODE && (r.status === 401 || r.status === 403)) return { authenticated: false };
   if (!r.ok) throw await apiErrorFromResponse(r);
   return r.json();
 }

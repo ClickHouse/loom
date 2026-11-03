@@ -6,6 +6,8 @@ import {
   onSignInRejected,
   post,
   setToken,
+  signOut,
+  signedOutJustNow,
   subscribeInflight,
 } from "./api";
 import { ApiError } from "./lib/errors";
@@ -137,5 +139,19 @@ describe("a refused sign-in token", () => {
     stubFetch(401, "{}");
     await rejection(post("/v1/memory.list", { org: "o" }));
     expect(ended).not.toHaveBeenCalled();
+  });
+});
+
+describe("signing out", () => {
+  afterEach(() => localStorage.clear());
+
+  it("marks the browser signed out for a short while, and a sign-in clears the mark", () => {
+    setToken("tok-a");
+    signOut();
+    expect(localStorage.getItem("loom_token_v1")).toBeNull();
+    expect(signedOutJustNow()).toBe(true);
+    expect(signedOutJustNow(Date.now() + 60_000)).toBe(false);
+    setToken("tok-b");
+    expect(signedOutJustNow()).toBe(false);
   });
 });

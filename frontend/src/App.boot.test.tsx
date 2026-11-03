@@ -576,7 +576,8 @@ describe("a refused token", { timeout: 30_000 }, () => {
           const bearer = new Headers(init?.headers).get("Authorization")?.replace("Bearer ", "") ?? "";
           if (refuseListMine) {
             await listMineDone; // its 401 lands first and clears the token
-            return json({ authenticated: false });
+            // Another replica, or a revocation a moment later: whoami still says yes.
+            return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
           }
           const status = whoamiAnswers.shift() ?? 200;
           if (status !== 200) return new Response("{}", { status });
@@ -624,7 +625,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
   it("mid-session says so in a card over the page, which stays as it was", async () => {
     await expireMidSession();
     const card = screen.getByTestId("session-expired-bar");
-    expect(card).toHaveTextContent("Your session expired");
+    expect(card).toHaveTextContent("Your session ended");
     // In the toasts' viewport: over every dialog, and a press on it dismisses none.
     expect(card.closest("[data-toast-viewport]")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Sign in in a new tab" })).toBeInTheDocument();
@@ -652,6 +653,39 @@ describe("a refused token", { timeout: 30_000 }, () => {
     expect(useStore.getState().whoami?.subject).toBe("alice");
   });
 
+  it("keeps the card when a newer drop lands while whoami answers for a stored token", async () => {
+    await expireMidSession();
+    refuse = false;
+    await act(async () => {
+      storeElsewhere(fresh);
+      storeElsewhere(null);
+    });
+    await settle(4);
+    expect(useStore.getState().sessionExpired).toBe(true);
+    expect(reloadPage).not.toHaveBeenCalled();
+  });
+
+  it("leaves a healthy page alone when another tab's token cannot be confirmed", async () => {
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    whoamiAnswers = [503, 503, 503, 503];
+    await act(async () => storeElsewhere(fresh));
+    await until(() => whoamiAnswers.length === 0, 10_000);
+    await settle(2);
+    expect(reloadPage).not.toHaveBeenCalled();
+    expect(useStore.getState().sessionExpired).toBe(false);
+  });
+
+  it("reloads to a plain sign-in when the person signed out in another tab", async () => {
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    localStorage.setItem("loom_signed_out_v1", String(Date.now()));
+    await act(async () => storeElsewhere(null));
+    await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
+    expect(useStore.getState().sessionExpired).toBe(false);
+    expect(sessionStorage.getItem("loom_session_ended_v1")).toBeNull();
+  });
+
   it("ends this tab's session too when another tab drops the token", async () => {
     render(<App />);
     await until(() => useStore.getState().whoami !== null);
@@ -669,7 +703,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
     expect(useStore.getState().gateReason).toBe("expired");
   });
 
-  it("at boot shows the gate saying the session expired when list_mine is refused before whoami answers", async () => {
+  it("at boot shows the gate saying the session expired when list_mine is refused while whoami answers yes", async () => {
     refuseListMine = true;
     render(<App />);
     await until(() => useStore.getState().authed === false);

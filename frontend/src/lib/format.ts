@@ -235,14 +235,16 @@ export function humanizeError(err: unknown): string {
   return m[2] ? `${friendly} ${m[2]}` : friendly;
 }
 
-/** The server's words for a session's token that ran out, or that a request lost when the
- *  session ended in another tab. */
-const SESSION_GONE = /\btoken expired\b|\bmissing bearer token\b/i;
+/** The server's words (server/auth/jwt.py, bearer.py) for a session's token that ran out or
+ *  was revoked, or that a request lost when the session ended in another tab. */
+const SESSION_GONE = /\btoken expired\b|\bis revoked\b|\bsession of this token has ended\b|\bmissing bearer token\b/i;
 
 function humanizeApiError(err: ApiError): string {
-  // A page that read while its session was away says so plainly (the dashboard's bar
-  // offers the sign-in), not as a rejected credential.
-  if (err.status === 401 && SESSION_GONE.test(err.serverMessage)) return "Your session expired — sign in again.";
+  // A page that read while its session was away says so plainly (the dashboard's card
+  // offers the sign-in), not as a rejected credential. Behind a proxy there is no session
+  // here: a missing header is the proxy's fault, said as the server put it.
+  if (err.status === 401 && !window.__LOOM_PROXY_AUTH && SESSION_GONE.test(err.serverMessage))
+    return "Your session ended — sign in again.";
   const friendly = ERROR_CODE_PREFIXES[err.code];
   if (friendly) return joinSentence(friendly, err.serverMessage);
   if (err.code && !err.serverMessage) return joinSentence(sentenceForStatus(err.status), err.code);

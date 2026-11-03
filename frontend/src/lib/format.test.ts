@@ -71,10 +71,18 @@ describe("humanizeError", () => {
         humanizeError(
           new ApiError({ status: 401, code: "AUTH_INVALID", message: "token expired: Signature has expired" }),
         ),
-      ).toBe("Your session expired — sign in again.");
+      ).toBe("Your session ended — sign in again.");
       expect(humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "missing bearer token" }))).toBe(
-        "Your session expired — sign in again.",
+        "Your session ended — sign in again.",
       );
+      expect(
+        humanizeError(
+          new ApiError({ status: 401, code: "AUTH_INVALID", message: "the sign-in session of this token has ended" }),
+        ),
+      ).toBe("Your session ended — sign in again.");
+      expect(
+        humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "token jti 'j1' is revoked" })),
+      ).toBe("Your session ended — sign in again.");
       expect(
         humanizeError(
           new ApiError({ status: 429, code: "RATE_LIMITED", message: "namespace 'x' exceeded memory.set rate limit" }),

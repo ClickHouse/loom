@@ -3,7 +3,7 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { reloadPage } from "../lib/navigation";
 
 /**
- * "Your session expired": the server refused the stored token mid-session. The page stays
+ * "Your session ended": the server refused the stored token mid-session. The page stays
  * as it is, so nothing typed into it is lost; signing in happens in a new tab, whose token
  * this tab then picks up (App listens for it). Reload signs in here instead.
  *
@@ -15,7 +15,7 @@ export function SessionExpiredBar() {
     <div role="alert" className="toast pointer-events-auto flex items-start" data-testid="session-expired-bar">
       <Icon name="lock" size="sm" aria-hidden="true" className="shrink-0 mt-0.5" />
       <span className="flex flex-col flex-1 min-w-0 gap-2">
-        <span className="toast-title">Your session expired.</span>
+        <span className="toast-title">Your session ended.</span>
         <span className="text-xs text-text-muted">
           Sign in again in a new tab and this page carries on as it is, or reload it.
         </span>
