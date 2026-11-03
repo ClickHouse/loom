@@ -348,9 +348,9 @@ async def extract_document(
         )
         return report
     written: set[str] = set()
-    # (outcome, reasoning) -> key of each decision this document now holds, for the retire
-    # step: the same outcome on the same verbatim reasoning is the same decision, however
-    # the model worded its scenario and category.
+    # The key of each decision this document now holds, keyed by _held_key(outcome,
+    # reasoning), for the retire step: the same outcome on the same verbatim reasoning is
+    # the same decision, however the model worded its scenario and category.
     held: dict[tuple[str, str], str] = {}
     for cand, section, texts in kept:
         try:

@@ -703,9 +703,9 @@ def test_a_label_starting_like_the_next_word_is_read_across(text) -> None:
 @pytest.mark.parametrize(
     "label",
     [
-        "not\n",
-        "don't\n",
-        "never twice\n",
+        "Not\n",
+        "Don't\n",
+        "Never twice\n",
         # One word list each: a ban word, then a contrast word.
         "Only\n",
         "Always\n",
@@ -722,22 +722,23 @@ def test_a_label_starting_like_the_next_word_is_read_across(text) -> None:
         "1. first\n",
         "1) first\n",
         "3)\n",
-        "```\n",
-        "~~~\n",
+        "`Proxy`\n",
+        "~Proxy\n",
         "| A |\n",
         "## Heading\n",
-        "> quoted\n",
-        ": a definition\n",
+        "> Quoted\n",
+        ": Definition\n",
+        "= Total\n",
         "===\n",
         "___\n",
         "---\n",
         "-\n",
         "--\n",
-        "<h2>Shards</h2>\n",
+        "<Proxy>\n",
         "Shards differ.\n",
         "Why shard?\n",
         "One copy;\n",
-        "分片。\n",
+        "Shards differ。\n",
     ],
 )
 def test_a_line_that_is_structure_a_sentence_end_or_a_negation_is_no_label(label) -> None:
@@ -786,6 +787,12 @@ def test_a_number_or_emphasis_that_is_no_list_marker_is_a_label(label) -> None:
     assert dx.find_span(REPLICA_SPAN, [text]) == text
 
 
+def test_a_rejected_label_reading_of_the_last_gap_blocks_its_partial_end() -> None:
+    # The documented limit: "plan" ending inside "plans" is tried after the label reading
+    # across "plans" and "not", which is rejected.
+    assert dx.find_span("cache plan", ["cache\nplans\nnot\nplan"]) == ""
+
+
 def test_a_line_of_a_script_without_case_is_not_read_across() -> None:
     text = "分片按租户\n代理\n划分以保持本地。"
     assert dx.find_span("分片按租户 划分以保持本地。", [text]) == ""
@@ -793,7 +800,7 @@ def test_a_line_of_a_script_without_case_is_not_read_across() -> None:
 
 
 def test_a_negation_line_is_not_skipped() -> None:
-    assert dx.find_span("Retries are safe", ["Retries are\nnot\nsafe"]) == ""
+    assert dx.find_span("Retries are safe", ["Retries are\nNot\nsafe"]) == ""
 
 
 def test_a_wrapped_paragraph_end_is_not_read_across() -> None:

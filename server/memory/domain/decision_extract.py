@@ -278,10 +278,11 @@ _BLANK_LINES = rf"(?:{_H}*\n)*"
 # word: a later line reading as it is not taken for a label. The lines read across are
 # a group, which `_only_labels` checks.
 _LABEL_GAP = rf"{_H}*\n({_BLANK_LINES}(?:{_LABEL_LINE}{_BLANK_LINES}){{1,{LABEL_LINES_MAX}}}?){_H}*"
-# A short line that is no label: structure (a list item, fence, table row, heading, its
-# underline or a rule, HTML tag, quote, definition), a sentence end, or a negation.
+# A title-like line that is still no label: structure (a list item, fence, table row,
+# heading, HTML tag, quote, definition), a sentence end, or a negation. A line with no
+# letter or digit (an underline, a rule, a bare fence) is never a label (`_is_label`).
 _NOT_A_LABEL = re.compile(
-    rf"^(?:[-*+]\s|-+$|(?:[-*_]{_H}*){{3,}}$|[`~|#>:=<]|\d+[.)](?:\s|$))|{_SENTENCE_TAIL}"
+    rf"^(?:[-*+]\s|[`~|#>:=<]|\d+[.)](?:\s|$))|{_SENTENCE_TAIL}"
     rf"|\b(?:{_BAN_WORDS}|{_NEGATION_WORDS})\b|n['’]t\b",
     re.I,
 )

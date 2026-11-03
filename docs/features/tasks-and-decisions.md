@@ -415,20 +415,22 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   / index"), and a line of a script without case (Chinese, Japanese) is never read across, the check failing closed
   where case says nothing; that does not start as a list item (`-`, `*`, `+` followed by a space, or `1.`, `1)`
   followed by a space or alone), so `**Proxy**`, `_Proxy_`, `+3 nodes` and `2.5 GB` are labels), a fence or code (a
-  backtick, `~`), a table row (`|`), a heading (`#`), a heading's underline (`===`, or a line of dashes such as `-` or
-  `--`) or a rule (`---`, `***`, `___`), an HTML tag (`<`), a quote (`>`) or a definition (`:`); that does not end in
-  `.`, `!`, `?` or `;` (or their full-width forms), closing brackets, quotes and emphasis after the mark aside, as the
-  last line of a wrapped paragraph does; and that holds none of the ban words of a reason-less ban below, nor the
-  contrast words of the inverted-alternatives check, nor a word ending in `n't`: skipping `not` would read "Retries
-  are / not / safe" as "Retries are safe". A fourth label line, a line of four words, a line that is no label, or a
-  label inside a line ends the match. A label sits inside a sentence, so none is read after a word that ends in `.`,
-  `!`, `?` or `;` (or their full-width forms), closing brackets, quotes and emphasis after the mark aside: "We cache
-  plans per tenant. / Costs / Each plan expires after an hour." is two sentences with a heading between, never one
-  span. Between two words, the fewest label lines that reach the next word are read, so a later line reading as that
-  word is not taken for a label. Each word of the span but the last ends where a word of the text ends, so `so` does
-  not take the start of a label `Something`. The word right after the whitespace is read before any label, so a label
-  line whose first word reads as the next word ("The proxy" over "the nearest replica") is taken as that word and the
-  span is not found. Chunk texts hold a section's body without its heading line. What is recorded is the document's
+  backtick, `~`), a table row (`|`), a heading (`#`), a heading's underline or a rule (`===`, `-`, `---`, `***`,
+  `___`: a line with no letter or digit is never title-like), an HTML tag (`<`), a quote (`>`) or a definition (`:`);
+  that does not end in `.`, `!`, `?` or `;` (or their full-width forms), closing brackets, quotes and emphasis after
+  the mark aside, as the last line of a wrapped paragraph does; and that holds none of the ban words of a reason-less
+  ban below, nor the contrast words of the inverted-alternatives check, nor a word ending in `n't`: skipping `not`
+  would read "Retries are / not / safe" as "Retries are safe". A fourth label line, a line of four words, a line that
+  is no label, or a label inside a line ends the match. A label sits inside a sentence, so none is read after a word
+  that ends in `.`, `!`, `?` or `;` (or their full-width forms), closing brackets, quotes and emphasis after the mark
+  aside: "We cache plans per tenant. / Costs / Each plan expires after an hour." is two sentences with a heading
+  between, never one span. Between two words, the fewest label lines that reach the next word are read, so a later
+  line reading as that word is not taken for a label. Each word of the span but the last ends where a word of the text
+  ends, so `so` does not take the start of a label `Something`. The word right after the whitespace is read before any
+  label, so a label line whose first word reads as the next word ("The proxy" over "the nearest replica") is taken as
+  that word and the span is not found. Likewise a last word that would end inside a document word ("cache plan" over
+  "cache / plans / not / plan") is tried after the label reading of its gap, so a rejected label reading there leaves
+  that start unmatched. Chunk texts hold a section's body without its heading line. What is recorded is the document's
   own span on one line, its words and case, with the label lines it read across left out: the same text on every run,
   and a recorded span reads as the document's span again, across the same labels, when the retire step looks for it.
   Each is at least 12 characters long, counted on the model's span: a shorter span ("We", "the") is in every document,
