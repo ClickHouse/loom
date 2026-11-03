@@ -1,12 +1,11 @@
 # Upgrades
 
 An upgrade replaces the image (and the document extractor's, which holds no state) and
-applies the migrations the new build carries. No other
-state moves: everything durable is in ClickHouse (and in the document bucket, for
-originals written with `LOOM_DOCUMENT_OBJECT_STORE=s3`), and the code mirrors are mounted
-unchanged. This page is the
-operator side. How a client sees unknown and removed fields is in the
-[HTTP API reference](../reference/http-api.md#unknown-and-removed-fields).
+applies the migrations the new build carries. No other state moves: everything durable
+is in ClickHouse (and in the document bucket, for originals written with
+`LOOM_DOCUMENT_OBJECT_STORE=s3`), and the code mirrors are mounted unchanged. This page
+is the operator side. How a client sees unknown and removed fields is in the [HTTP API
+reference](../reference/http-api.md#unknown-and-removed-fields).
 
 ## How migrations run
 

@@ -53,11 +53,14 @@ def no_dump() -> None:
     _prctl(_PR_SET_DUMPABLE, 0, "PR_SET_DUMPABLE")
 
 
-# The audit arch and the syscalls that make a socket (io_uring can too) on each
-# architecture the image is built for; seccomp filters see raw syscall numbers.
+# The audit arch and the syscalls a child is refused on each architecture the
+# image is built for (seccomp filters see raw numbers): those that make a socket
+# (io_uring can too), and those that reach into another process (a sibling not yet
+# filtered, with LOOM_EXTRACTOR_CONCURRENCY above 1), its memory or its sockets.
 _NO_SOCKETS = {
-    "x86_64": (0xC000003E, (41, 53, 425)),  # socket, socketpair, io_uring_setup
-    "aarch64": (0xC00000B7, (198, 199, 425)),
+    # socket, socketpair, io_uring_setup, ptrace, process_vm_readv/writev, pidfd_getfd
+    "x86_64": (0xC000003E, (41, 53, 425, 101, 310, 311, 438)),
+    "aarch64": (0xC00000B7, (198, 199, 425, 117, 270, 271, 438)),
 }
 _X32_BIT = 0x40000000  # an x86_64 process can still call the x32 ABI's numbers
 
@@ -75,10 +78,12 @@ def socket_filter(machine: str) -> tuple[int, tuple[int, ...]]:
 
 
 def no_sockets() -> None:
-    """A seccomp filter on this process and all it starts: making a socket fails
-    with EPERM, so an extraction a hostile source has taken over reaches no
-    address, the Loom server on its network included. Needs no-new-privileges
-    (set first) and no privilege. Another architecture refuses to extract."""
+    """A seccomp filter on this process and all it starts: making a socket, or
+    tracing or reading another process, fails with EPERM, so an extraction a
+    hostile source has taken over reaches no address, the Loom server on its
+    network included, and cannot take over a sibling before that one filters
+    itself. Needs no-new-privileges (set first) and no privilege. Another
+    architecture refuses to extract."""
     machine = platform.machine()
     arch, calls = socket_filter(machine)
     ld_w_abs, jeq, jge, ret = 0x20, 0x15, 0x35, 0x06

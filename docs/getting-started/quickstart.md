@@ -34,13 +34,13 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 
 This downloads `loom-stack.tar.gz` from the latest GitHub Release, verifies its SHA-256,
 installs the Compose and ClickHouse configuration under `~/.loom`, pulls the matching
-`ghcr.io/clickhouse/loom:X.Y.Z` and `ghcr.io/clickhouse/loom-extractor:X.Y.Z` (the document
-extractor service) images, and waits for
-`http://localhost:7777/v1/health`. The server image contains the API, workers, migrations and
-the built React dashboard at the server root; no Python or Node installation is needed. Python,
-TypeScript and Go compiler indexers are included and enabled. A repository indexed
-with the TypeScript indexer gets its dependencies installed automatically.
-Both images support Linux `amd64` and `arm64`, including Docker Desktop on Apple Silicon.
+`ghcr.io/clickhouse/loom:X.Y.Z` and `ghcr.io/clickhouse/loom-extractor:X.Y.Z` (the
+document extractor service) images, and waits for `http://localhost:7777/v1/health`. The
+server image contains the API, workers, migrations and the built React dashboard at the
+server root; no Python or Node installation is needed. Python, TypeScript and Go
+compiler indexers are included and enabled. A repository indexed with the TypeScript
+indexer gets its dependencies installed automatically. Both images support Linux `amd64`
+and `arm64`, including Docker Desktop on Apple Silicon.
 
 The stack runs its own ClickHouse container. To use a ClickHouse you already run, a
 self-managed server or a ClickHouse Cloud service (26.4 or later, with a Keeper), pass its
@@ -68,20 +68,20 @@ LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
   LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh install.sh
 ```
 
-`LOOM_PORT`, `LOOM_BIND_HOST`, `LOOM_IMAGE_REPOSITORY`, `LOOM_EXTRACTOR_IMAGE_REPOSITORY` and `LOOM_CLICKHOUSE_IMAGE` given
-to the installer are written to the install directory's `.env`, so later `docker compose`
-commands there and later installer runs use the same port and images. A
-`LOOM_BIND_HOST` other than loopback publishes Loom beyond this host, and the server
-refuses to start that way without `LOOM_PUBLIC_BASE_URL` and sign-in: install with
-`LOOM_SKIP_START=1`, set them in `.env` (below), then run the installer again.
+`LOOM_PORT`, `LOOM_BIND_HOST`, `LOOM_IMAGE_REPOSITORY`,
+`LOOM_EXTRACTOR_IMAGE_REPOSITORY` and `LOOM_CLICKHOUSE_IMAGE` given to the installer are
+written to the install directory's `.env`, so later `docker compose` commands there and
+later installer runs use the same port and images. A `LOOM_BIND_HOST` other than
+loopback publishes Loom beyond this host, and the server refuses to start that way
+without `LOOM_PUBLIC_BASE_URL` and sign-in: install with `LOOM_SKIP_START=1`, set them
+in `.env` (below), then run the installer again.
 
 Each release runs the ClickHouse release that was latest when it was built, so rerunning
 the same Loom version keeps its ClickHouse; installing a newer Loom version moves it,
-unless `.env` pins `LOOM_CLICKHOUSE_IMAGE` (delete that line to follow the releases again).
-Rerunning the installer updates the managed Compose/configuration files and reconciles
-the containers. It preserves `~/.loom/.env`, adding an extractor token to one without, and
-the named Docker volumes. To stop without
-deleting data:
+unless `.env` pins `LOOM_CLICKHOUSE_IMAGE` (delete that line to follow the releases
+again). Rerunning the installer updates the managed Compose/configuration files and
+reconciles the containers. It preserves `~/.loom/.env`, adding the extractor's URL and a
+token to one without, and the named Docker volumes. To stop without deleting data:
 
 ```bash
 docker compose --project-directory "$HOME/.loom" down
@@ -190,9 +190,10 @@ leaves it empty and infers the same mode from `LOOM_AUTH_REQUIRED=false`.
 | `LOOM_LLM_PROVIDER=fake`, `LOOM_LLM_MODEL=fake-echo-1`                      | fake LLM      | Extraction, entity tagging and `memory.ask` synthesis produce nothing.    |
 | `LOOM_EMBEDDING_MODEL=fake-ngram-3072`, `LOOM_EMBEDDING_DIM=3072`           | fake embedder | Search ranks by character n-grams. Enough to check wiring, not recall.    |
 
-Both installers generate a unique `COMPOSE_PROJECT_NAME`, a random JWT signing secret,
-a random extractor token, and `LOOM_BIND_HOST=127.0.0.1`. Separate clones therefore do not silently share
-ClickHouse volumes, and Loom plus ClickHouse are reachable only from this computer.
+Both installers generate a unique `COMPOSE_PROJECT_NAME`, a random JWT signing secret, a
+random extractor token, and `LOOM_BIND_HOST=127.0.0.1`. Separate clones therefore do not
+silently share ClickHouse volumes, and Loom plus ClickHouse are reachable only from this
+computer.
 
 For real providers, open **Settings → Models & keys**, choose your providers and models,
 enter their API keys, then click **Test & apply**. One OpenAI API key can serve both the

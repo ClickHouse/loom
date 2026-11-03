@@ -78,8 +78,9 @@ image as `LOOM_BUILD_COMMIT`, reported as `build_commit`). The remaining
 
 Other `${LOOM_*}` references in the compose files are settings fields given a
 compose-level default and the uvicorn variables above. The installer keeps the two
-images, the tag, the port, the bind host and `LOOM_CLICKHOUSE_IMAGE` in `.env` when given; the
-[quickstart](../getting-started/quickstart.md) describes what the stock `.env` sets.
+images, the tag, the port, the bind host and `LOOM_CLICKHOUSE_IMAGE` in `.env` when
+given; the [quickstart](../getting-started/quickstart.md) describes what the stock
+`.env` sets.
 
 ## `loom` CLI
 

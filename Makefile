@@ -20,8 +20,9 @@ bootstrap:
 
 # Local evaluation stack — Loom and its document extractor built from this
 # checkout + the bundled ClickHouse (compose.yaml with the
-# dev/docker-compose.dev.yml override). CH is Loom's only direct dependency; Langfuse and HyperDX are optional integrations
-# that each have their own deployment story (see docs/operations/deployment.md).
+# dev/docker-compose.dev.yml override). CH is Loom's only direct dependency;
+# Langfuse and HyperDX are optional integrations that each have their own
+# deployment story (see docs/operations/deployment.md).
 # --build so a code change is actually reflected: plain `up` reuses the cached
 # image and silently runs stale code. Docker layer caching keeps a no-change
 # `make dev` fast. (For a tight backend loop, `make server` runs from source

@@ -64,5 +64,5 @@ child's source in that moment. The service refuses to start as root or with
 a process to a child's limit on new processes, and on an architecture other than
 x86_64 and aarch64, which its socket filter does not cover. It sets
 no-new-privileges, so no setuid binary or file capability gives a child one, and
-each child sets a seccomp filter under which it can make no socket, so it reaches
-no address.
+each child sets a seccomp filter under which it can make no socket and trace or
+read no other process, so it reaches no address and cannot take over a sibling.
