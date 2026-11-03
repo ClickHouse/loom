@@ -1,12 +1,10 @@
 """One delegation policy for every token minted from another token.
 
 A child gets requested ∩ the parent token's ceiling ∩ the creator's live
-grants, never more. One ceiling is the grant itself: a per-namespace child
-of a primary flat token (a sign-in, or `loom mint-token` with `--roles`)
-takes the creator's grant on a named standard namespace, where the gate
-admits that token on its grant alone. The rules and the recheck on every request are in
-docs/guides/tokens-and-grants.md (Delegated tokens). `loom mint-token`
-holds the signing secret and is not a delegation.
+grants, never more; for a primary flat parent the ceiling on a standard
+namespace is the grant itself (`_primary`). The rules and the recheck on
+every request are in docs/guides/tokens-and-grants.md (Delegated tokens).
+`loom mint-token` holds the signing secret and is not a delegation.
 """
 
 from __future__ import annotations
@@ -248,11 +246,8 @@ async def _allowed_roles(
         if ns != "*":
             grant = await authz.grant_role_for(org, ns, creator)
             if scoped and _primary(parent) and not await authz.may_be_restricted(org, ns):
-                # The gate admits a primary token to a standard namespace on
-                # the subject's grant alone (`authz.check_authorized`), so the
-                # grant is the measure; a restricted one needs the role from
-                # both. A flat child keeps the parent's cap: its one role also
-                # answers ops that name no namespace.
+                # A flat child keeps the parent's cap instead: its one role
+                # also answers ops that name no namespace.
                 allowed = grant
             else:
                 allowed = _lower(allowed, grant)
@@ -303,8 +298,11 @@ def delegable_role(name: str | None) -> Role | None:
 
 def _primary(token: AuthInfo) -> bool:
     """A flat token minted from no other: Loom's own sign-in, or
-    `loom mint-token` with `--roles`. Its flat role is a platform role; its
-    role on a namespace is the subject's grant there."""
+    `loom mint-token` with `--roles`. Its flat role is a platform role, not
+    its role on a namespace: the gate admits it to a standard namespace on
+    the subject's grant alone (`authz.check_authorized`), so a scoped child
+    takes that grant there. A restricted namespace needs the role from the
+    token too (`_check_restricted`), so the token role stays a cap there."""
     return not token.has_ns_roles() and not token.creator
 
 
