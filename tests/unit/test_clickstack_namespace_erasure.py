@@ -226,11 +226,11 @@ async def test_clickstack_precount_that_fails_otherwise_fails_the_step(monkeypat
         assert ch.commands == []
 
 
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_clickstack_user_erasure_never_matches_another_org(monkeypatch):
     """A subject name is unique per org only: a row carrying another org's
     `loom.org` is never matched; a row with no org tag (a non-Loom emitter)
-    still is."""
-
+    still is. Evaluated on clickhouse-local over each table's predicate."""
     backend = ClickStackBackend(database="default", timeout_s=5.0)
     calls: list[tuple[str, str, dict]] = []
 
@@ -240,10 +240,23 @@ async def test_clickstack_user_erasure_never_matches_another_org(monkeypatch):
 
     monkeypatch.setattr(backend, "_delete_where", fake_delete)
     await backend.delete_user_id("acme", "bob")
+    assert len(calls) == len(ClickStackBackend.DEFAULT_TABLES)
+    rows = {
+        "own_org": {"user_id": "bob", "loom.org": "acme"},
+        "untagged": {"enduser.id": "bob"},
+        "other_org": {"user.id": "bob", "loom.org": "globex"},
+        "other_user": {"user_id": "carol", "loom.org": "acme"},
+    }
+    values = ", ".join(f"('{t}', map({_map(a)}))" for t, a in rows.items())
     for fq, where, params in calls:
-        col = dict(ClickStackBackend.DEFAULT_TABLES)[fq.split(".", 1)[1]]
-        assert f"AND {col}['loom.org'] IN ({{org:String}}, '')" in where, where
-        assert params["org"] == "acme"
+        table = fq.split(".", 1)[1]
+        col = dict(ClickStackBackend.DEFAULT_TABLES)[table]
+        setup = [
+            f"CREATE TABLE loom.{table} (tag String, {col} Map(String, String)) ENGINE = Memory",
+            f"INSERT INTO loom.{table} VALUES {values}",
+        ]
+        got = run(setup, f"SELECT tag FROM loom.{table} WHERE {where} ORDER BY tag", params)
+        assert [r["tag"] for r in got] == ["own_org", "untagged"], table
 
 
 _ROWS = {
