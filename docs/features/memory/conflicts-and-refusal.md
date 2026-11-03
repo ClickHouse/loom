@@ -265,8 +265,8 @@ duplicate's slot, `memory.list` skips duplicates, and `memory.get` names the can
 | `memory.resolve_orphan_duplicates` | writer | Re-activate duplicates whose canonical is gone; `dry_run` to preview.                                                                                                                                     |
 | `memory.consolidate`               | writer | LLM-merge clusters of near-duplicates into one canonical each; `dry_run` to preview.                                                                                                                      |
 
-`keep_both` puts the pair on the same allowlist conflicts use. `memory.consolidate` makes
-one LLM call per cluster, skips rows younger than `min_age_seconds` (default one hour),
+`keep_both` only clears the duplicate's tag, so a later write can flag the pair again.
+`memory.consolidate` makes one LLM call per cluster, skips rows younger than `min_age_seconds` (default one hour),
 and records lineage ([history and provenance](./history-and-provenance.md#lineage)).
 
 ## Refusal: the blacklist

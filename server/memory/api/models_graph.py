@@ -143,7 +143,7 @@ class MemoryDedupResolveInput(BaseModel):
       - keep_duplicate: tombstone the canonical; flip the duplicate
         back to status='active' and clear its duplicate_of pointer.
       - keep_both: both stay live; the duplicate flips to 'active' and
-        its duplicate_of clears. Future re-flags muted via the conflict allowlist.
+        its duplicate_of clears. A later write can flag the pair again.
     """
 
     org: str
