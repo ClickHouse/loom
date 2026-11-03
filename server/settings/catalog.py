@@ -717,7 +717,8 @@ class CodeSettings(BaseModel):
     """The code plane: ingest, indexes, search, ask, review."""
 
     # --- switch, test gate and code.ask ---
-    # Master kill switch, checked at the top of every code.* handler.
+    # Master kill switch, checked at the top of every code.* handler but the
+    # retirement (code.repo.remove), which only deletes.
     code_intel_enabled: bool = True
 
     # code.test_gate run recipes (LOOM_CODE_TEST_GATE_RUN_TEMPLATES): JSON list of
@@ -2659,8 +2660,8 @@ class MemorySettings(BaseModel):
     # Decisions already recorded from a document that the prompt lists, so a re-run
     # keeps their keys and wording; past this many, the rest may be read as new. 0 = none.
     memory_decision_extract_known_max: Annotated[int, LIVE] = Field(default=30, ge=0)
-    # Closest decision keys a candidate is checked against for a confirmed restatement under
-    # another key (cosine only); the fetch caps at 500 rows.
+    # Closest decision keys a candidate is checked against for a pinned or attested restatement
+    # under another key (cosine only); the fetch caps at 500 rows.
     memory_decision_extract_restatement_top_k: Annotated[int, LIVE] = Field(default=20, ge=1)
     # ---- fact-leg reads of memory_embeddings ----
     # Seconds a process caches its count of patch parts on
@@ -5625,6 +5626,11 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # rows for the hand-rolled index check. Namespace-sized; the ledger
     # reads are bounded by window_seconds.
     "namespace.audit": 3000,
+    # The audit, then three reads of the namespace's rows (agents, plain tags, key
+    # prefixes), the categories, guide and policy, two reads for the extraction draft
+    # (its writers, and which cited rows it wrote), one of the drafted tags' spellings,
+    # and three per category draft (`max_category_proposals`, default 5).
+    "namespace.tune": 5000,
     "namespace.browse": 120,
     "namespace.cancel_request": 80,
     "namespace.delete": 60,

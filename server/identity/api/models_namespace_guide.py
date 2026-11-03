@@ -33,11 +33,15 @@ class NamespaceGuideGetOutput(BaseModel):
     updated_at: datetime | None = None
 
 
+# The longest guide a write takes.
+GUIDE_MAX_CHARS = 32_000  # not a setting: the wire limit both the write and a draft follow
+
+
 class NamespaceGuideSetInput(BaseModel):
     org: str
     namespace: str
     # The whole new guide in Markdown, at most 32,000 characters; "" clears it.
-    content: str = Field(max_length=32_000)
+    content: str = Field(max_length=GUIDE_MAX_CHARS)
     # One line, at most 300 characters, that a directory shows for the namespace;
     # left out, the current summary is kept, and "" removes it.
     summary: str | None = Field(default=None, max_length=300)

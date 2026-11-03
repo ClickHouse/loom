@@ -61,6 +61,8 @@ from server.tracker.app.sources import (
     handle_tracker_source_remove,
     handle_tracker_source_rotate,
     handle_tracker_source_set_mapping,
+    source_add_audit_subject,
+    source_rotate_audit_subject,
 )
 from server.tracker.app.test_signal import handle_tracker_test_signal
 
@@ -199,6 +201,7 @@ tracker_source_add = Operation(
     required_role=Role.VIEWER,
     skip_namespace_authz=True,
     audit=True,
+    audit_subject=source_add_audit_subject,
     maturity="experimental",
 )
 # Connect and describe — the gates of add, nothing written.
@@ -263,6 +266,7 @@ tracker_source_rotate = Operation(
     required_role=Role.VIEWER,
     skip_namespace_authz=True,
     audit=True,
+    audit_subject=source_rotate_audit_subject,
     maturity="experimental",
 )
 tracker_source_remove = Operation(

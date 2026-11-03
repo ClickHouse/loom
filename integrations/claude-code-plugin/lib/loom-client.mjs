@@ -129,26 +129,35 @@ export function loomConfig() {
   return _loomConfigCache;
 }
 
-/** Resolve the Loom bearer token: env, an agent's exchanged token, then
- *  ~/.loom/config.json, then ~/.loom/token. */
-export function resolveToken() {
+/** The Loom bearer token and the lookup that supplied it (`kind`: "env",
+ *  "agent", "option", "config", "file", or "" for none), in this order: env,
+ *  an agent's exchanged token, the install option, ~/.loom/config.json,
+ *  ~/.loom/token. */
+export function tokenLookup() {
   const fromEnv = (process.env.LOOM_API_KEY || "").trim();
-  if (fromEnv) return fromEnv;
+  if (fromEnv) return { token: fromEnv, kind: "env" };
   // An agent signs in as itself or not at all: never as a credential a person left here.
-  if (agentMode()) return agentToken();
+  if (agentMode()) {
+    const exchanged = agentToken();
+    return { token: exchanged, kind: exchanged ? "agent" : "" };
+  }
   // The plugin's install-time option: Claude Code exports
   // `userConfig` values to hook processes as CLAUDE_PLUGIN_OPTION_<KEY>.
   const fromOption = (process.env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
-  if (fromOption) return fromOption;
+  if (fromOption) return { token: fromOption, kind: "option" };
   const fromCfg = String(loomConfig().token || "").trim();
-  if (fromCfg) return fromCfg;
+  if (fromCfg) return { token: fromCfg, kind: "config" };
   try {
     const fromFile = readFileSync(loomTokenPath(), "utf8").trim();
-    if (fromFile) return fromFile;
+    if (fromFile) return { token: fromFile, kind: "file" };
   } catch {
     // no token file; caller decides whether to no-op
   }
-  return "";
+  return { token: "", kind: "" };
+}
+
+export function resolveToken() {
+  return tokenLookup().token;
 }
 
 // --- an agent with no Loom token of its own ------------------------------------
@@ -259,17 +268,24 @@ export function resolveCodeRepo(env = process.env) {
   return String(env.LOOM_CODE_REPO || env.CLAUDE_PLUGIN_OPTION_CODE_REPO || loomConfig().code_repo || "").trim();
 }
 
+/** A base URL as the hooks compare and send it: trimmed, no trailing slash. */
+export function normalizeUrl(url) {
+  return String(url || "")
+    .trim()
+    .replace(/\/+$/, "");
+}
+
 /** Base URL of the Loom control plane: env, then the plugin's install-time
  *  option, then ~/.loom/config.json, then the plugin's shipped
  *  default, then localhost. */
 export function resolveServerUrl() {
-  const url =
+  return normalizeUrl(
     process.env.LOOM_BASE_URL ||
-    process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL ||
-    loomConfig().url ||
-    pluginDefaults().server_url ||
-    "http://localhost:7777";
-  return String(url).replace(/\/+$/, "");
+      process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL ||
+      loomConfig().url ||
+      pluginDefaults().server_url ||
+      "http://localhost:7777",
+  );
 }
 
 /**
