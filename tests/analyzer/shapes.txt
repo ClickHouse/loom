@@ -400,7 +400,6 @@
 353809880904	WITH (SELECT toFloat64(count()) FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL) AS n_keys, (SELECT mapFromArrays(groupArray(s), groupA
 3552d7151a86	SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, memory_type, value, ? AS value_truncated, confidence, version, pinned, char_limit, created_at, updated_at, expires_at, valid_a
 3556360a339b	SELECT m.org, m.namespace, m.agent, m.user_id, m.session_id, m.memory_key, m.memory_type, m.value AS content_excerpt, m.run_id, m.entities, m.tags, m.files, m.concepts, m.valid_at, m.valid_to, m.expir
-3590afdb142b	UPDATE loom.memory_embeddings SET status = ? WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND user_id = {uid:String} AND memory_key = {key:String} AND tombstoned_at
 35b95e4edd22	SELECT count() AS n FROM loom.conversations WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL
 35c8e97591f4	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 35d1bf602130	SELECT role FROM loom.namespace_grants FINAL WHERE org = {org:String} AND namespace = {ns:String} AND lower(subject) IN {subs:Array(String)} AND revoked_at IS NULL AND status = ? ORDER BY multiIf(role
@@ -597,7 +596,6 @@
 5085b2c9f74f	SELECT message_id, argMax(turn_at, version) AS recorded_at FROM loom.agent_turn_usage WHERE org = {org:String} AND namespace = {ns:String} AND session_id = {sid:String} AND message_id IN {ids:Array(St
 50baf1256eb9	SELECT count() AS n FROM loom.memory_code_links FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL
 51005813e7c3	SELECT unit_id, path, churn, amp, tested, callees, computed_at FROM loom.code_unit_risk FINAL WHERE org = {org:String} AND namespace = {ns:String} AND unit_id IN {ids:Array(String)}
-513947c6bd74	UPDATE loom.memory SET status = ?, rejection_reason = {reason:String} WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND user_id = {uid:String} AND memory_key = {key:S
 5163c1fd8d3c	SELECT count() AS n FROM loom.memory_record_versions WHERE org = {org:String} AND namespace = {ns:String}
 516db52eddcc	SELECT count() AS n FROM loom.session_brief_revisions WHERE org = {org:String} AND namespace = {ns:String} AND ?
 51af520b7286	SELECT DISTINCT tier, qualified_name, symbol_id FROM loom.code_symbol_names WHERE org = {org:String} AND namespace = {ns:String} AND name IN {names:Array(String)} AND (qualified_name = {full:String} O
@@ -666,6 +664,7 @@
 58f4b29e4e3a	SELECT org, namespace, policy_id, effect, description, actions, condition, enabled, mode, created_by, created_at, updated_at, tombstoned_at FROM loom.namespace_policies FINAL WHERE org = {org:String}
 58f4d68e658f	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
 5923bd3d36dc	SELECT thread_id, count() AS n, argMax((agent, toString(role), substringUTF8(content, ?, {listed:UInt32})), (ts, msg_id)) AS last_turn FROM loom.conversations WHERE org = {org:String} AND namespace =
+593e0e151193	SELECT toString(memory_id) AS memory_id FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND user_id = {uid:String} AND memory_key = {key:String}
 596490bd9ba5	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, ? - cosineDistance(e.embedding, {qv:Array(Float32)}) AS similarity, toString(coalesce(e.temporal_
 596ef23d53ca	SELECT path, count() AS chunks, min(start_line) AS first_line, count() OVER () AS total FROM ( SELECT path, start_line, tombstoned_at FROM loom.code_chunks WHERE org = {org:String} AND namespace = {ns
 599611be357f	SELECT count() AS n FROM loom.memory_chunk_sources FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND tombstoned_at IS NULL

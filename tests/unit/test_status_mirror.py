@@ -420,3 +420,46 @@ async def test_a_cancelled_caller_lets_its_reads_clean_up(monkeypatch: pytest.Mo
     with pytest.raises(asyncio.CancelledError):
         await call
     assert len(started) == lifecycle._READ_AT_ONCE and sorted(cleaned) == sorted(started)
+
+
+@pytest.mark.asyncio
+async def test_reject_writes_version_rows_and_updates_no_embeddings_part(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """memory.reject re-emits the memory row and its vector row as new versions. A
+    lightweight UPDATE of loom.memory_embeddings would leave a patch part, which turns
+    the fact leg's codes-first read off for the whole table."""
+    from server.memory.api.models_lifecycle import MemoryRejectInput
+    from server.memory.app.ops import handle_memory_reject
+
+    class _RejectCH(_CH):
+        def __init__(self) -> None:
+            super().__init__()
+            self.executed: list[str] = []
+
+        async def query_all(
+            self, sql: str, params: dict[str, Any] | None = None
+        ) -> list[dict[str, Any]]:
+            if "FROM loom.memory FINAL" in sql:
+                assert (params or {})["key"] == "home"
+                return [{"memory_id": "m1"}]
+            return await super().query_all(sql, params)
+
+        async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
+            self.executed.append(sql)
+
+    ch = _RejectCH()
+    _wire(monkeypatch, ch, _existing())
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    out = await handle_memory_reject(
+        MemoryRejectInput(
+            org="o", namespace="n", agent="a", user_id="u", memory_key="home", rejection_reason="r"
+        )
+    )
+    assert out.rejected is True
+    assert ch.executed == []
+    assert [t for t, _ in ch.inserts] == ["loom.memory", "loom.memory_embeddings"]
+    mem = ch.inserts[0][1][0]
+    assert mem["status"] == "rejected" and mem["rejection_reason"] == "r"
+    emb = ch.inserts[1][1][0]
+    assert emb["status"] == "rejected" and emb["memory_key"] == "home" and emb["version"] > 1

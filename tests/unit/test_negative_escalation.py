@@ -1,8 +1,9 @@
 """Unit: negative-outcome escalation in handle_memory_outcome.
 
 Below the threshold, a negative is counted but the memory is untouched. At the
-threshold, it's auto-quarantined (status -> 'rejected' on both tables). Uses a
-stub CH; the threshold is a settings knob (default 0 = off)."""
+threshold, it's auto-quarantined through `reject_by_identity` (version rows,
+covered in test_status_mirror.py). Uses a stub CH; the threshold is a settings
+knob (default 0 = off)."""
 
 from __future__ import annotations
 
@@ -53,6 +54,13 @@ async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
         ]
     )
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    rejected: list = []
+
+    async def reject_by_identity(*identity, ch):
+        rejected.append(identity)
+        return 1
+
+    monkeypatch.setattr(ops, "reject_by_identity", reject_by_identity)
 
     out = await ops.handle_memory_outcome(
         MemoryOutcomeInput(
@@ -64,10 +72,8 @@ async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
         )
     )
     assert out.quarantined is True
-    # Quarantine flips status on BOTH the memory and its embedding row.
-    joined = " ".join(sql for sql, _ in ch.executes)
-    assert "loom.memory" in joined and "rejected" in joined
-    assert "loom.memory_embeddings" in joined
+    assert rejected == [("o", "n", "a", "-", "k", "auto-quarantine: 3 negative outcomes")]
+    assert ch.executes == []  # no in-place UPDATE
 
 
 async def test_negative_below_threshold_does_not_quarantine(monkeypatch):
@@ -92,7 +98,7 @@ async def test_negative_below_threshold_does_not_quarantine(monkeypatch):
         )
     )
     assert out.quarantined is False
-    assert ch.executes == []  # no status UPDATE issued
+    assert ch.executes == []
 
 
 async def test_threshold_off_by_default_skips_counting(monkeypatch):

@@ -214,6 +214,42 @@ async def supersede_duplicates(
     )
 
 
+async def reject_by_identity(
+    org: str,
+    namespace: str,
+    agent: str,
+    user_id: str,
+    memory_key: str,
+    reason: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Mark the live rows of `memory_key` in every session of the identity
+    `rejected`, by version re-emit on loom.memory and its vector rows. Never a
+    lightweight UPDATE: on loom.memory_embeddings it leaves a patch part, and
+    the fact leg's codes-first read stays off while one exists
+    (`server.core.vectors.patch_parts`). Returns the rows written."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT toString(memory_id) AS memory_id
+        FROM loom.memory FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND agent = {agent:String} AND user_id = {uid:String}
+          AND memory_key = {key:String} AND tombstoned_at IS NULL
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": org, "ns": namespace, "agent": agent, "uid": user_id, "key": memory_key},
+    )
+    return await write_versions_by_ids(
+        org,
+        [str(r["memory_id"]) for r in rows],
+        lambda row: {"status": "rejected", "rejection_reason": reason},
+        ch=ch,
+        strong=True,
+    )
+
+
 async def consolidated_dependents_of(
     org: str, namespace: str, source_key: str, *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
