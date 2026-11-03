@@ -51,7 +51,11 @@ async def test_with_auth_off_the_report_reads_every_namespace(
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr("server.auth.context.current_auth", lambda: None)
     await H.handle_memory_owner_report(OPS.MemoryOwnerReportInput(org="acme", user_id="u1"))
-    assert len(ch.calls) == 3 and all("namespace IN" not in sql for sql, _ in ch.calls)
+    assert len(ch.calls) == 3
+    for sql, params in ch.calls:
+        # no scope parameter bound, and no predicate that would bind one
+        assert set(params) == {"org", "uid", "hours", "lim"}
+        assert not any(p in sql for p in ("{nss:", "{ns_hidden:", "{col_prefix:"))
 
 
 class _CH:
