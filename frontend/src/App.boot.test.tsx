@@ -708,8 +708,23 @@ describe("a refused token", { timeout: 30_000 }, () => {
     render(<App />);
     await until(() => useStore.getState().authed === false);
     await settle();
-    expect(useStore.getState()).toMatchObject({ gateReason: "expired", sessionExpired: false });
+    expect(useStore.getState()).toMatchObject({ authed: false, gateReason: "expired", sessionExpired: false });
+    // whoami's yes did not bring the app up without a token.
+    expect(useStore.getState().whoami).toBeNull();
+    expect(document.getElementById("main")).toBeNull();
     expect(localStorage.getItem("loom_token_v1")).toBeNull();
+  });
+
+  it("signing out after the session ended reloads to a plain sign-in, which starts no SSO", async () => {
+    await expireMidSession();
+    // Header's Sign out: the mark, then the reload, which boots with no token.
+    const api = await import("./api");
+    api.signOut();
+    cleanup();
+    useStore.setState({ authed: true, sessionExpired: false, gateReason: null, whoami: null, identity: null });
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    expect(useStore.getState().gateReason).toBeNull();
   });
 
   it("asks whoami again while the replica answers 503, and keeps the token", async () => {

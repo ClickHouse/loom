@@ -50,7 +50,7 @@ one to the sign-in screen instead). Mid-session a card among the toasts says so,
 dialog, and the page stays as it is: **Sign in in a new tab** signs in there,
 and this tab takes the new token and carries on once the server confirms it is the same person
 (anyone else gets a fresh page). **Reload** signs in in this tab instead. While the page loads,
-a refused token shows the sign-in screen saying the session expired, and with SSO on that
+a refused token shows the sign-in screen saying the session ended, and with SSO on that
 screen starts the sign-in again by itself (once in five minutes per tab), so a person still
 signed in at the identity provider returns to the page they were on. **Sign out**
 forgets the token here, and ends the server-side session of a sign-in session's token (the

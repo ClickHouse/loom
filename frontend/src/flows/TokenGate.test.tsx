@@ -27,7 +27,7 @@ describe("TokenGate", () => {
 
   it("tells a returning user their session expired, and says nothing on a first visit", () => {
     const { unmount } = render(<TokenGate onLogin={() => undefined} reason="expired" />);
-    expect(screen.getByRole("status")).toHaveTextContent("Your session expired — sign in again.");
+    expect(screen.getByRole("status")).toHaveTextContent("Your session ended — sign in again.");
     unmount();
     render(<TokenGate onLogin={() => undefined} reason={null} />);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -190,7 +190,7 @@ describe("TokenGate", () => {
       window.__LOOM_SSO = true;
       resumeSsoOnce(); // one sign-in already started on its own: the button waits for a click
       render(<TokenGate onLogin={() => undefined} reason="expired" />);
-      expect(screen.getByRole("status")).toHaveTextContent("Your session expired — sign in again.");
+      expect(screen.getByRole("status")).toHaveTextContent("Your session ended — sign in again.");
     });
 
     it("remembers the page the sign-in starts on, so the way back opens it", () => {

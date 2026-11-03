@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, type ComponentPropsWithoutRef, type FocusEvent
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Dialog } from "@clickhouse/click-ui/Dialog";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { keepOpenOnToasts } from "../Toast";
 import { lastPressed } from "../../lib/clickUiFixes";
 
 /**
@@ -84,14 +85,8 @@ export function Modal({
     // On the body (a loading button lost it, or Safari never focused it): the control pressed.
     opener.current = active instanceof HTMLElement && active !== document.body ? active : lastPressed();
   }, [open]);
-  // A press on a toast (or the expired session's card among them) is not a dismissal: they
-  // sit over every dialog, and a dialog closed by one would lose what was typed into it.
   const pointerDownOutside: ContentProps["onPointerDownOutside"] = (e) => {
-    if (e.target instanceof Element && e.target.closest("[data-toast-viewport]")) {
-      e.preventDefault();
-      return;
-    }
-    onPointerDownOutside?.(e);
+    if (!keepOpenOnToasts(e)) onPointerDownOutside?.(e);
   };
   const returnFocus = (e: Event) => {
     onCloseAutoFocus?.(e);

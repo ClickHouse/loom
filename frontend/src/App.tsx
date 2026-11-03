@@ -44,7 +44,6 @@ import { ToastViewport, toast, toastError } from "./components/Toast";
 import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
 import { ProblemsBanner } from "./components/ProblemsBanner";
-import { SessionExpiredBar } from "./components/SessionExpiredBar";
 import { shortcutOff } from "./lib/shortcuts";
 import { reloadPage } from "./lib/navigation";
 
@@ -89,6 +88,26 @@ function endSession(): void {
 }
 
 onSignInRejected(endSession);
+
+// The reloads boot has made in a row while whoami answered 503, so a server that stays
+// unavailable ends at the sign-in screen and its toast, not in a reload loop.
+const UNAVAILABLE_RELOADS = "loom_unavailable_reloads_v1";
+const MAX_UNAVAILABLE_RELOADS = 3;
+
+/** Whether boot may reload once more for an unavailable server; counts the reload. */
+function reloadsLeft(): boolean {
+  try {
+    const n = Number(sessionStorage.getItem(UNAVAILABLE_RELOADS) ?? 0);
+    if (n >= MAX_UNAVAILABLE_RELOADS) {
+      sessionStorage.removeItem(UNAVAILABLE_RELOADS);
+      return false;
+    }
+    sessionStorage.setItem(UNAVAILABLE_RELOADS, String(n + 1));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** whoami, asked again while the replica answers 503 (its signing keys still loading, the
  *  token may be fine): up to three more times, a second apart, before boot gives up. */
@@ -181,6 +200,10 @@ const ProfileSectionDialog = lazy(() =>
 );
 const HelpDialog = lazy(() => import("./components/HelpDialog").then((m) => ({ default: m.HelpDialog })));
 const TokenGate = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.TokenGate })));
+// Shown only once a session ends.
+const SessionExpiredBar = lazy(() =>
+  import("./components/SessionExpiredBar").then((m) => ({ default: m.SessionExpiredBar })),
+);
 const NamespaceNoAccess = lazy(() =>
   import("./components/NamespaceNoAccess").then((m) => ({ default: m.NamespaceNoAccess })),
 );
@@ -385,8 +408,6 @@ export default function App() {
         // case the bootstrap exists to prevent. Equivalently: the reachable set
         // here is exactly one name, so validating a pick can only ever return it.
         if (isAuthDisabled()) {
-          // A token left from an auth-on run, or a #token= link, would only be refused.
-          clearToken();
           const authOffNs = defaultNamespace();
           setAuthed(true);
           setWhoami({
@@ -417,12 +438,19 @@ export default function App() {
 
         const hadToken = hasToken();
         const w = await whoamiWhenReady();
+        try {
+          sessionStorage.removeItem(UNAVAILABLE_RELOADS);
+        } catch {
+          /* nothing was counted */
+        }
         // A read refused while whoami was answering has already dropped the token.
         if (!w.authenticated || (hadToken && !hasToken())) {
           // A stored token the server no longer accepts is dead — drop it so the next
           // load doesn't retry it, and tell the gate why it is showing instead of a
           // silent first-visit card.
-          if (takeSessionEnded() || hasToken()) {
+          // A sign-out (here or in another tab) after the session ended is a plain sign-in.
+          const ended = takeSessionEnded() && !signedOutJustNow();
+          if (ended || hasToken()) {
             clearToken();
             useStore.getState().setGateReason("expired");
           }
@@ -551,8 +579,8 @@ export default function App() {
       } catch (e) {
         toastError("Auth bootstrap failed", e);
         // Still unavailable after the retries, with the token kept: try the page again
-        // shortly rather than ask for a sign-in the token does not need.
-        if (e instanceof ApiError && e.status === 503 && hasToken()) {
+        // shortly, a few times, rather than ask for a sign-in the token does not need.
+        if (e instanceof ApiError && e.status === 503 && storedToken() && reloadsLeft()) {
           setTimeout(reloadPage, 5000);
           return;
         }
@@ -659,7 +687,15 @@ export default function App() {
         </Suspense>
       )}
       <NetworkProgress />
-      <ToastViewport pinned={sessionExpired ? <SessionExpiredBar /> : null} />
+      <ToastViewport
+        pinned={
+          sessionExpired ? (
+            <Suspense fallback={null}>
+              <SessionExpiredBar />
+            </Suspense>
+          ) : null
+        }
+      />
       <ConfirmViewport />
     </div>
   );

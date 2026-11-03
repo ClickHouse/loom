@@ -87,7 +87,7 @@ function SsoGate({ reason }: { reason?: GateReason }) {
   return (
     <GateShell>
       <Panel className="space-y-4">
-        {reason === "expired" && <Alert role="status" state="neutral" text="Your session expired — sign in again." />}
+        {reason === "expired" && <Alert role="status" state="neutral" text="Your session ended — sign in again." />}
         <a
           href="/oauth/sso"
           onClick={rememberSignInStart}
@@ -199,7 +199,7 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
   return (
     <GateShell>
       <Panel className="space-y-4">
-        {reason === "expired" && <Alert role="status" state="neutral" text="Your session expired — sign in again." />}
+        {reason === "expired" && <Alert role="status" state="neutral" text="Your session ended — sign in again." />}
         <Tabs
           value={mode}
           onValueChange={(v) => {
