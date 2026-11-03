@@ -751,8 +751,9 @@ and what it leaves:
   [code-index operations](./code-index-operations.md#rollout-and-shutdown) covers retirement, erasure and what
   stays on disk.
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
-  leaves the code tools out, but the coding-agent plugins list them, so agents are offered
-  tools that refuse. An entry written by `loom install --client claude-code|codex` asks
+  leaves the code tools out, but the coding-agent plugins list them, and so does the
+  `assistant` toolset (`code.search`, `code.symbol`), so agents are offered tools that
+  refuse. An entry written by `loom install --client claude-code|codex` asks
   for `?toolset=coding` too: install with `--toolset core`, or edit it to `core`. Set the
   Claude Code plugin's `toolset` option
   ([options](../features/integrations/claude-code.md#install)) from `coding` to `core`.
