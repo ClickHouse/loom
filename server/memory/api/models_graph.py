@@ -173,7 +173,7 @@ class MemoryDedupResolveOutput(BaseModel):
     canonical_tombstoned: bool = False
     # True when `keep_canonical` tombstoned the duplicate row.
     duplicate_tombstoned: bool = False
-    # Request fields the server did not apply: unknown keys, and the removed canonical_key / duplicate_key.
+    # Request fields the server did not apply: unknown keys and the removed key fields.
     ignored_args: list[str] = Field(default_factory=list)
 
 
