@@ -335,6 +335,8 @@ async def _target(
     # First, so nothing about the document's namespace reaches a caller who cannot read it.
     if not await _may(org, namespace, Role.VIEWER):
         return f"not allowed to read {org}/{namespace}"
+    if into not in (None, "repo", "source"):
+        return f"--into is repo or source, not {into!r}"
     if not repo:
         if into:
             return "--into needs --repo"
@@ -969,7 +971,8 @@ async def _reconcile(
             rec.held_outcome = str(record.get("outcome") or "").strip()
             if row is not None and this_doc:
                 # Another writer's unconfirmed row gains no repository tag.
-                link = t.row_tag if ours or _confirmed(row) else ""
+                # (Our own unconfirmed row reached here with its tags the same already.)
+                link = t.row_tag if _confirmed(row) else ""
                 await _keep_tags(rec, row, dry_run, link)
             return rec
         if row is not None and _confirmed(row) and this_doc:

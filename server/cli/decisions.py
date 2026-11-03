@@ -80,7 +80,7 @@ def register_decisions_cli(sub: Any) -> None:
         "--repo",
         default="",
         help="The repository (owner/name or a remote URL) whose trunk code index resolves "
-        "the document's code names",
+        "the document's code names; --into says where the rows go",
     )
     p_ext.add_argument(
         "--into",

@@ -4056,6 +4056,7 @@ async def test_a_row_extracted_before_the_repo_tag_is_revised_to_carry_it(monkey
             "no repository 'acme/other' you may read is configured in o",
         ),
         ({"into": "source"}, set(), "--into needs --repo"),
+        ({"into": "elsewhere"}, set(), "--into is repo or source, not 'elsewhere'"),
         (
             {"repo": "acme/bare"},
             set(),
@@ -4542,3 +4543,43 @@ async def test_a_caller_who_cannot_read_the_documents_namespace_learns_nothing_o
     for into in (None, "source", "repo"):
         report = await _run(repo="acme/widgets", into=into)
         assert report.error == "not allowed to read o/ns"
+
+
+@pytest.mark.asyncio
+async def test_into_source_on_a_branch_of_the_same_repository_stays_tagged_there(
+    monkeypatch,
+) -> None:
+    """Through the real registry: a document in a release branch's namespace of the named
+    repository keeps its rows there, tagged, with its names resolved in the trunk."""
+    from server.code.app import symbol as code_symbol
+    from server.code.domain.index.remote import repo_tag
+    from server.code.domain.index.repos import set_registry_repos
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    remote = "https://github.com/acme/widgets.git"
+    entries = [
+        repo_config(
+            namespace=ns, repo="acme/widgets", git_remote=remote, git_branch=b, source="registry"
+        )
+        for ns, b in ((TRUNK, "main"), ("ns", "release-26.1"))
+    ]
+    world = _World(monkeypatch, [_candidate()])
+    looked_up: list[str] = []
+    symbol = code_symbol.handle_code_symbol
+
+    async def code_symbol_handler(inp):
+        looked_up.append(inp.namespace)
+        return await symbol(inp)
+
+    monkeypatch.setattr(code_symbol, "handle_code_symbol", code_symbol_handler)
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    set_registry_repos(entries)
+    try:
+        report = await _run(repo="acme/widgets", into="source")
+    finally:
+        set_registry_repos([])
+    assert report.error == ""
+    (inp,) = world.recorded
+    assert inp.namespace == "ns" and repo_tag(remote) in inp.tags
+    assert looked_up == [TRUNK]
