@@ -169,6 +169,7 @@ from server.code.app.repo_admin import (
     handle_code_repo_remove,
     handle_code_repo_set_access,
     handle_code_repo_set_source,
+    repo_add_audit_subject,
 )
 from server.code.app.repos import handle_code_repos
 from server.code.app.review_brief import handle_code_review_brief
@@ -514,6 +515,7 @@ OPERATIONS: list[Operation] = [
         required_role=Role.VIEWER,
         skip_namespace_authz=True,
         audit=True,
+        audit_subject=repo_add_audit_subject,
     ),
     # A read of the remote before the add dialog offers branches.
     Operation(
