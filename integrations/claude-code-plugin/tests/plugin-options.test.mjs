@@ -69,6 +69,7 @@ test("applyPluginOptions writes token + url once, 0600, merging other keys", () 
   const r2 = applyPluginOptions(env, { configPath, tokenPath });
   assert.equal(r2.reason, "config has a token");
   assert.equal(r2.configUrl, "https://loom.test");
+  assert.equal(r2.configHasToken, true);
   // a config with other keys but no token is merged, its own url kept
   fs.writeFileSync(configPath, JSON.stringify({ namespace: "keep", url: "https://mine" }));
   const r3 = applyPluginOptions(env, { configPath, tokenPath });
@@ -85,13 +86,18 @@ test("applyPluginOptions writes token + url once, 0600, merging other keys", () 
   assert.equal(fs.existsSync(configPath), false);
 });
 
-test("installTokenNotice: only when the config token was saved for another server", () => {
-  const skipped = { write: false, reason: "config has a token", configUrl: "https://old" };
-  assert.match(installTokenNotice(skipped, "https://new/"), /saved for https:\/\/old.*send to https:\/\/new;/);
-  assert.equal(installTokenNotice({ ...skipped, configUrl: "https://new" }, "https://new"), "");
-  assert.equal(installTokenNotice({ ...skipped, configUrl: "" }, "https://new"), "");
-  assert.equal(installTokenNotice({ write: false, reason: "token file exists" }, "https://new"), "");
-  assert.equal(installTokenNotice({ write: true, url: "https://new", reason: "no config" }, "https://new"), "");
+test("installTokenNotice: when the helper will send a config token saved for another server", () => {
+  const stale = { write: false, reason: "no option", configUrl: "https://old", configHasToken: true };
+  const env = {};
+  assert.match(installTokenNotice(stale, "https://new/", env), /saved for https:\/\/old.*send to https:\/\/new\./);
+  // with a token option the skip reason differs; the same config still misleads the helper
+  assert.match(installTokenNotice({ ...stale, reason: "config has a token" }, "https://new", env), /https:\/\/old/);
+  assert.equal(installTokenNotice({ ...stale, configUrl: "https://new" }, "https://new", env), "");
+  assert.equal(installTokenNotice({ ...stale, configUrl: "" }, "https://new", env), "");
+  assert.equal(installTokenNotice({ ...stale, configHasToken: false }, "https://new", env), "");
+  assert.equal(installTokenNotice(stale, "https://new", { LOOM_API_KEY: "e" }), ""); // the helper sends the env token
+  // the hook has just written the install token into the config: that token is the right one
+  assert.equal(installTokenNotice({ ...stale, write: true, reason: "config lacks a token" }, "https://new", env), "");
 });
 
 test("mcpServerUrl follows the MCP entry: the option, then LOOM_BASE_URL, then localhost", () => {
@@ -105,18 +111,24 @@ test("mcpServerUrl follows the MCP entry: the option, then LOOM_BASE_URL, then l
 
 test("the hook saves the install URL for the status script, removes it when the option is gone", () => {
   // The state path is fixed at import (keyed by the plugin root), so the
-  // round trip runs in the real tmp and removes its own file.
+  // round trip runs in the real tmp and always restores the prior state.
   const before = installServerUrl();
+  const baseUrl = process.env.LOOM_BASE_URL;
+  delete process.env.LOOM_BASE_URL;
   try {
     saveInstallServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://b/" });
     assert.equal(installServerUrl(), "https://b");
-    assert.equal(statusServerUrl({}), "https://b");
-    assert.equal(statusServerUrl({ LOOM_BASE_URL: "https://env/" }), "https://env");
+    assert.equal(statusServerUrl(), "https://b");
+    process.env.LOOM_BASE_URL = "https://env/";
+    assert.equal(statusServerUrl(), "https://env");
+    delete process.env.LOOM_BASE_URL;
     saveInstallServerUrl({});
     assert.equal(installServerUrl(), "");
-    assert.equal(statusServerUrl({}), resolveServerUrl()); // the hooks' server, whatever this machine's is
+    assert.equal(statusServerUrl(), resolveServerUrl()); // the hooks' server, whatever this machine's is
   } finally {
-    if (before) saveInstallServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: before });
+    saveInstallServerUrl(before ? { CLAUDE_PLUGIN_OPTION_SERVER_URL: before } : {});
+    if (baseUrl === undefined) delete process.env.LOOM_BASE_URL;
+    else process.env.LOOM_BASE_URL = baseUrl;
   }
 });
 

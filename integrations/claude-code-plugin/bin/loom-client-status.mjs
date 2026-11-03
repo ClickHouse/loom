@@ -21,9 +21,7 @@ const WRITER_ROLES = new Set(["writer", "admin", "jwt", "org_admin", "platform_a
 function tokenSourceName(kind) {
   if (kind === "config") return loomConfigPath();
   if (kind === "file") return loomTokenPath();
-  return (
-    { env: "LOOM_API_KEY", agent: "the workload-token exchange", option: "the plugin's install option" }[kind] || kind
-  );
+  return { env: "LOOM_API_KEY", agent: "the workload-token exchange", option: "the plugin's install option" }[kind];
 }
 
 function staleFlushCount(directory, now) {
