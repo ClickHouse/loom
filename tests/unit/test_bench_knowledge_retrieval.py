@@ -89,6 +89,11 @@ def test_the_fields_that_define_the_measurement_are_refused(field: str) -> None:
         parse_params([f"{field}=x"])
 
 
+def test_a_param_without_a_value_is_refused() -> None:
+    with pytest.raises(SystemExit, match="needs KEY=VALUE"):
+        parse_params(["narrow_spans"])
+
+
 @pytest.mark.parametrize("field", ["session_id", "explain", "traffic_class"])
 def test_a_key_that_is_no_search_field_is_refused(field: str) -> None:
     with pytest.raises(SystemExit, match="not a knowledge.search field"):
@@ -274,7 +279,8 @@ def test_one_phase_alone_needs_a_named_namespace(monkeypatch, phase: str) -> Non
 
 def test_the_handbook_questions_cluster_by_template_and_the_rest_stand_alone() -> None:
     assert cluster_of("harbor-retention") == cluster_of("lantern-retention") == "retention"
-    assert cluster_of("rb-E4031") == "rb-E4031" and cluster_of("all-sla") == "all-sla"
+    assert cluster_of("rb-E4031") == cluster_of("rb-E4031-how") == "rb-E4031"
+    assert cluster_of("all-sla") == "all-sla"
 
 
 def test_the_corpus_check_returns_the_chunk_count_the_run_measured() -> None:

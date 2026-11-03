@@ -94,10 +94,13 @@ def fixture_tag(docs: list[dict]) -> str:
 
 
 def cluster_of(query_id: str) -> str:
-    """The question a query asks, without its product: `harbor-retention` and
-    `lantern-retention` are one question asked twice, not two independent items."""
+    """The items a query moves with: `harbor-retention` and `lantern-retention` are one
+    question asked of two products, and `rb-E4031-how` scores the runbook `rb-E4031`
+    does."""
     stem = query_id.split("-", 1)
-    return stem[1] if len(stem) == 2 and stem[0] in PRODUCTS else query_id
+    if len(stem) == 2 and stem[0] in PRODUCTS:
+        return stem[1]
+    return query_id.removesuffix("-how")
 
 
 def load_fixture(root: Path) -> tuple[list[dict], list[dict]]:
@@ -117,8 +120,8 @@ def score_query(hits: list[dict], gold: list[list[str]]) -> dict[str, float]:
     """Per-query metrics. A gold passage counts once, at the rank of the first hit that
     holds it. nDCG is passage-level: each passage discounted at that rank, over the
     ideal of one passage per rank, capped at 1 (a chunk holding two passages credits
-    both at its rank). At the default chunk size every fixture passage sits in a chunk
-    of its own, so the cap never applies there; compare nDCG across chunkings with that
+    both at its rank). At the default chunk size every passage of one query sits in a
+    chunk of its own, so the cap never applies there; compare nDCG across chunkings with that
     in mind."""
     found: dict[int, int] = {}
     for rank, hit in enumerate(hits, start=1):
@@ -170,6 +173,8 @@ def parse_params(pairs: list[str]) -> dict:
     """`KEY=VALUE` pairs as search fields; a key outside SEARCH_FIELDS is refused."""
     out = {}
     for pair in pairs:
+        if "=" not in pair:
+            raise SystemExit(f"--param {pair!r} needs KEY=VALUE")
         key, _, raw = pair.partition("=")
         if key in FIXED_FIELDS:
             raise SystemExit(
