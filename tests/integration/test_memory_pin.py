@@ -39,13 +39,17 @@ def _mint(namespace: str) -> str:
     )
 
 
-def _post(base_url: str, path: str, token: str, body: dict) -> dict:
-    r = httpx.post(
+def _send(base_url: str, path: str, token: str, body: dict) -> httpx.Response:
+    return httpx.post(
         f"{base_url}{path}",
         json=body,
         headers={"Authorization": f"Bearer {token}"},
         timeout=10.0,
     )
+
+
+def _post(base_url: str, path: str, token: str, body: dict) -> dict:
+    r = _send(base_url, path, token, body)
     assert r.status_code == 200, f"{path} {r.status_code}: {r.text}"
     return r.json()
 
@@ -219,10 +223,41 @@ async def test_pin_of_a_read_row_keeps_its_fields(mint_test_token) -> None:
     assert before["source_trace"] == "conversation:t1", before
     assert before["source_resource_id"] == "doc-1", before
 
-    out = _post(base, "/v1/memory.pin", tok, {**key, **{f: before[f] for f in _PIN_ECHOED}})
+    pin = {
+        **key,
+        **{f: before[f] for f in _PIN_ECHOED},
+        "if_match_sha256": before["content_sha256"],
+    }
+    out = _post(base, "/v1/memory.pin", tok, pin)
     assert out.get("pinned") is True, out
 
     after = await _get_until(base, tok, key, pinned=True)
     assert after.get("pinned") is True, after
     assert {f: after[f] for f in _PIN_ECHOED} == {f: before[f] for f in _PIN_ECHOED}
     assert after["source_class"] == before["source_class"] == "extracted", after
+
+
+@pytest.mark.asyncio
+async def test_pin_of_a_stale_read_is_refused(mint_test_token) -> None:
+    """A pin carrying the hash of a value that has since changed answers 409, so the
+    change is not reverted to what was read."""
+    base = os.environ.get("LOOM_BASE_URL")
+    if not base:
+        pytest.skip("LOOM_BASE_URL not set — start the control plane first")
+    org, ns = unique_org("memory-pin"), "pins"
+    tok = mint_test_token(org=org, namespaces=[ns])
+    key = {"org": org, "namespace": ns, "agent": "test-agent", "memory_key": "freeze"}
+
+    _post(base, "/v1/memory.set", tok, {**key, "value": "deploys freeze on Fridays"})
+    before = await _get_until(base, tok, key, pinned=False)
+    assert before.get("found"), before
+    _post(base, "/v1/memory.set", tok, {**key, "value": "deploys freeze on Thursdays"})
+
+    r = _send(
+        base,
+        "/v1/memory.pin",
+        tok,
+        {**key, "value": before["value"], "if_match_sha256": before["content_sha256"]},
+    )
+    assert r.status_code == 409, r.text
+    assert "PRECONDITION_FAILED" in r.text, r.text

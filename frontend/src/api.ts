@@ -581,7 +581,7 @@ export async function pinMemory(
   if (row.valid_at) body.valid_at = row.valid_at;
   if (row.valid_to) body.valid_to = row.valid_to;
   if (row.char_limit != null) body.char_limit = row.char_limit;
-  // A write since the read answers 409 instead of being reverted to what was read.
+  // A change to the value since the read answers 409 instead of being reverted.
   if (row.content_sha256) body.if_match_sha256 = row.content_sha256;
   return post<{ version: number; pinned: boolean }>("/v1/memory.pin", body);
 }
