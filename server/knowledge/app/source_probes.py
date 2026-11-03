@@ -23,11 +23,12 @@ SAMPLE_TITLES = 5
 
 @dataclass(frozen=True)
 class Probe:
-    # Documents the source lists now (the first 1000 at most).
+    # Documents the source lists now: the first 1000 at most (gdrive), the first
+    # page of each project (linear).
     documents: int
     # Up to five of their titles, most recently changed first.
     sample: list[str] = field(default_factory=list)
-    # True when more than 1000 match, so `documents` is a lower bound.
+    # True when more match than were listed, so `documents` is a lower bound.
     more: bool = False
 
 
@@ -71,8 +72,35 @@ async def _probe_gdrive(config: dict[str, Any], credential: str) -> Probe:
     return Probe(documents=len(found), sample=titles, more=more)
 
 
+async def _probe_linear(config: dict[str, Any], credential: str) -> Probe:
+    from server.clients import linear
+
+    try:
+        # One page of each project: every project must be one the key sees.
+        async with asyncio.TaskGroup() as group:
+            pages = [
+                group.create_task(linear.documents_page(credential, project_id))
+                for project_id in config["project_ids"]
+            ]
+    except ExceptionGroup as failed:
+        e = failed.exceptions[0]
+        if isinstance(e, linear.CredentialRefused):
+            raise CredentialRefused(str(e)) from None
+        if isinstance(e, linear.NotFound):
+            raise SourceUnreachable(f"{e}; the key's account must see the project") from None
+        if isinstance(e, linear.LinearError):
+            raise SourceUnreachable(str(e)) from None
+        raise e from None
+    found = [node for page in pages for node in page.result()[0]]
+    found.sort(key=lambda node: str(node.get("updatedAt") or ""), reverse=True)
+    titles = [str(node.get("title") or "") for node in found[:SAMPLE_TITLES]]
+    more = any(page.result()[1] for page in pages)
+    return Probe(documents=len(found), sample=titles, more=more)
+
+
 PROBES: dict[str, Callable[[dict[str, Any], str], Awaitable[Probe]]] = {
     "gdrive": _probe_gdrive,
+    "linear": _probe_linear,
 }
 
 

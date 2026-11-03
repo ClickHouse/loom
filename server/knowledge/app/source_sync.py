@@ -1,6 +1,8 @@
 """The sync of registered document sources into their repositories' documents:
 one pass over every active source, run by the `knowledge_source_sync` worker and
-by `loom knowledge sync`.
+by `loom knowledge sync`. A folder's turn is below; a tracker project's documents
+have their own turn in `source_sync_linear`, which shares the pass, the bounds,
+the waits and the state this module keeps.
 
 A pass reads the active sources and drops those whose namespace is inactive or no
 longer a repository's trunk. Sources a maintainer asked to sync (`sync_now`) go
@@ -53,7 +55,7 @@ import contextlib
 import dataclasses
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -288,7 +290,7 @@ async def _sync_one(
     try:
         async with _source_turn(src):
             try:
-                turn = await _turn(src, state, run)
+                turn = await _turn_of(src.kind)(src, state, run)
             except SourceGone:
                 log.info("knowledge_source_sync: %s was removed during its turn", _cursor_of(src))
                 return
@@ -316,6 +318,16 @@ async def _sync_one(
         result.failed += 1
         result.errors.append(f"{_cursor_of(src)}: {turn.status} {turn.error}".strip())
         pass_context.note_failure(RuntimeError(turn.error or turn.status), _cursor_of(src))
+
+
+def _turn_of(kind: str) -> Callable[..., Awaitable[TurnResult]]:
+    """The turn function of a source kind; this module's `_turn` reads a folder."""
+    if kind == "linear":
+        # Imported here: the kind's module builds on this one's helpers.
+        from server.knowledge.app import source_sync_linear
+
+        return source_sync_linear.turn
+    return _turn
 
 
 def _full_due(detail: dict[str, Any]) -> bool:

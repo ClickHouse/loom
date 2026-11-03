@@ -18,7 +18,7 @@ from server.tracker.domain.sources import SOURCE_NAME_RE
 
 # The kinds a source may be. Each has a config parser here and a probe in
 # `server.knowledge.app.source_probes`.
-KINDS = ("gdrive",)
+KINDS = ("gdrive", "linear")
 
 # A shared-folder store's file kinds, by the name a config's `include` uses.
 GDRIVE_MIME_TYPES = {
@@ -30,6 +30,9 @@ GDRIVE_MIME_TYPES = {
 # A folder id goes into the store's query string, so only its own alphabet passes.
 _FOLDER_ID_RE = re.compile(r"[A-Za-z0-9_-]{10,128}")
 MAX_FOLDERS = 20  # not a setting: the add op's wire contract (1 to 20 folders)
+# A tracker project id is a UUID; it travels as a GraphQL variable.
+_PROJECT_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+MAX_PROJECTS = 20  # not a setting: the add op's wire contract (1 to 20 projects)
 
 # The actor the sync worker writes a source's documents as. Its kind is neither
 # `human` nor `process`, the only kinds a token maps to, so no request writes as
@@ -94,6 +97,8 @@ def parse_config(kind: str, config: dict[str, Any]) -> dict[str, Any]:
     """The stored form of `config` for `kind`; SourceConfigError when unusable."""
     if kind == "gdrive":
         return _gdrive_config(config)
+    if kind == "linear":
+        return _linear_config(config)
     raise SourceConfigError(f"no config rule for kind {kind!r}")
 
 
@@ -125,6 +130,27 @@ def _gdrive_config(config: dict[str, Any]) -> dict[str, Any]:
         )
     # Stored in the table's own order, so two equal configs store the same text.
     return {"folder_ids": folders, "include": [k for k in GDRIVE_MIME_TYPES if k in include]}
+
+
+def _linear_config(config: dict[str, Any]) -> dict[str, Any]:
+    unknown = sorted(set(config) - {"project_ids"})
+    if unknown:
+        raise SourceConfigError(f"unknown config keys: {', '.join(unknown)}")
+    project_ids = config.get("project_ids")
+    if not isinstance(project_ids, list) or not project_ids:
+        raise SourceConfigError("config.project_ids: a list of 1 to 20 project ids")
+    projects: list[str] = []
+    for project in project_ids:
+        # Lower-cased: a document's project is compared with these ids as the API
+        # reports them.
+        value = project.strip().lower() if isinstance(project, str) else project
+        if not isinstance(value, str) or not _PROJECT_ID_RE.fullmatch(value):
+            raise SourceConfigError(f"config.project_ids: {project!r} is not a project id (a UUID)")
+        if value not in projects:
+            projects.append(value)
+    if len(projects) > MAX_PROJECTS:
+        raise SourceConfigError(f"config.project_ids: at most {MAX_PROJECTS} projects")
+    return {"project_ids": projects}
 
 
 def json_object(raw: str) -> dict[str, Any]:
@@ -165,6 +191,7 @@ __all__ = [
     "KINDS",
     "KnowledgeSource",
     "MAX_FOLDERS",
+    "MAX_PROJECTS",
     "STATE_KEY_PREFIX",
     "SYNC_FIELDS",
     "SYNC_WORKER_ACTOR",

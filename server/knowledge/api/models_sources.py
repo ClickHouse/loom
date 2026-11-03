@@ -11,9 +11,10 @@ from pydantic import BaseModel, Field
 class KnowledgeSourceProbe(BaseModel):
     """What a probe that succeeded found; a probe that fails refuses the call."""
 
-    # Documents the source lists now, the first 1000 at most.
+    # Documents the source lists now: the first 1000 at most (gdrive), the first
+    # page of each project (linear).
     documents: int = 0
-    # True when more than 1000 documents match, so `documents` is a lower bound.
+    # True when more documents match than were listed, so `documents` is a lower bound.
     more: bool = False
     # Up to five document titles, most recently changed first.
     sample: list[str] = Field(default_factory=list)
@@ -59,7 +60,8 @@ class KnowledgeSourceSync(BaseModel):
 class KnowledgeSourceEntry(BaseModel):
     # The source's name, unique in the namespace.
     name: str
-    # The source's kind (`gdrive`: a shared folder of docs, slides, decks and PDFs).
+    # The source's kind (`gdrive`: a shared folder of docs, slides, decks and PDFs;
+    # `linear`: a project tracker's project documents).
     kind: str
     # The ids and filters the source reads; never a credential.
     config: dict[str, Any] = Field(default_factory=dict)
@@ -91,8 +93,8 @@ class KnowledgeSourceListOutput(BaseModel):
 class KnowledgeSourceAddInput(BaseModel):
     """Register a document source on a repository's trunk code namespace: a kind,
     the ids it reads and a read-only credential. A namespace admin (the
-    repository's maintainer) may. The credential is probed (folder checks and a
-    listing) before anything is stored; a probe that fails stores nothing. A name
+    repository's maintainer) may. The credential is probed (a check and a listing
+    of each folder or project) before anything is stored; a probe that fails stores nothing. A name
     is refused while documents the sync worker wrote for an earlier source of that
     name are live. The credential is stored encrypted and never returned."""
 
@@ -103,16 +105,22 @@ class KnowledgeSourceAddInput(BaseModel):
         description="Source name: 2-32 lower-case letters, digits, - or _, starting with a "
         "letter; trimmed and lower-cased.",
     )
-    kind: str = Field(..., description="The source kind; `gdrive` is the one kind served.")
+    kind: str = Field(
+        ...,
+        description="The source kind: `gdrive` (a shared folder) or `linear` (a project "
+        "tracker's project documents).",
+    )
     config: dict[str, Any] = Field(
         ...,
         description="The ids and filters the source reads, per kind; gdrive: {folder_ids: "
-        "[1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}.",
+        "[1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}; linear: "
+        "{project_ids: [1-20 project ids, UUIDs]}.",
     )
     credential: str = Field(
         ...,
         description="The source's read-only credential (gdrive: a service account's JSON key, "
-        "with the folders shared to the account read-only); stored encrypted, never returned.",
+        "with the folders shared to the account read-only; linear: a read-only API key of an "
+        "account that sees the projects); stored encrypted, never returned.",
     )
     dry_run: bool = Field(False, description="Probe and write nothing.")
 
@@ -171,9 +179,9 @@ class KnowledgeSourceInspectOutput(BaseModel):
 
 
 class KnowledgeSourceCheckInput(BaseModel):
-    """Probe a registered document source with its stored credential now (folder
-    checks and a listing), nothing written. A namespace admin may, since the probe
-    spends the source's rate limit."""
+    """Probe a registered document source with its stored credential now (a check
+    and a listing of each folder or project), nothing written. A namespace admin
+    may, since the probe spends the source's rate limit."""
 
     org: str = Field(..., description="The org.")
     namespace: str = Field(..., description="The repository's trunk code namespace.")
@@ -185,9 +193,10 @@ class KnowledgeSourceCheckOutput(BaseModel):
     name: str
     # False when the probe failed; `summary` says why.
     reachable: bool = True
-    # Documents the source lists now, the first 1000 at most.
+    # Documents the source lists now: the first 1000 at most (gdrive), the first
+    # page of each project (linear).
     documents: int = 0
-    # True when more than 1000 documents match, so `documents` is a lower bound.
+    # True when more documents match than were listed, so `documents` is a lower bound.
     more: bool = False
     # Up to five document titles, most recently changed first.
     sample: list[str] = Field(default_factory=list)
@@ -206,7 +215,8 @@ class KnowledgeSourceRotateInput(BaseModel):
     name: str = Field(..., description="The source name.")
     credential: str = Field(
         ...,
-        description="The replacement credential (gdrive: a service account's JSON key); "
+        description="The replacement credential (gdrive: a service account's JSON key; "
+        "linear: an API key); "
         "stored encrypted, never returned.",
     )
 
