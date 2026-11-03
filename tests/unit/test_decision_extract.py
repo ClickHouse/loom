@@ -711,6 +711,9 @@ def test_a_label_starting_like_the_next_word_is_read_across(text) -> None:
         "Always\n",
         "Instead\n",
         "Rather\n",
+        # Hedges in neither list.
+        "Rarely\n",
+        "Unless\n",
         "Costs.)\n",
         "**Done.**\n",
         # A script without case has no title-like line.
@@ -718,6 +721,8 @@ def test_a_label_starting_like_the_next_word_is_read_across(text) -> None:
         "- Shard A\n",
         "+ Shard A\n",
         "* Shard A\n",
+        "• Shard A\n",
+        "▪Shard A\n",
         "***\n",
         "1. first\n",
         "1) first\n",
@@ -799,8 +804,9 @@ def test_a_line_of_a_script_without_case_is_not_read_across() -> None:
     assert dx.find_span("分片按租户 代理 划分以保持本地。", [text]) == text
 
 
-def test_a_negation_line_is_not_skipped() -> None:
-    assert dx.find_span("Retries are safe", ["Retries are\nNot\nsafe"]) == ""
+@pytest.mark.parametrize("word", ["Not", "Rarely"])
+def test_a_negation_or_hedge_line_is_not_skipped(word) -> None:
+    assert dx.find_span("Retries are safe", [f"Retries are\n{word}\nsafe"]) == ""
 
 
 def test_a_wrapped_paragraph_end_is_not_read_across() -> None:

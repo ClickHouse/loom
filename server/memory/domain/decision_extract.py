@@ -278,12 +278,18 @@ _BLANK_LINES = rf"(?:{_H}*\n)*"
 # word: a later line reading as it is not taken for a label. The lines read across are
 # a group, which `_only_labels` checks.
 _LABEL_GAP = rf"{_H}*\n({_BLANK_LINES}(?:{_LABEL_LINE}{_BLANK_LINES}){{1,{LABEL_LINES_MAX}}}?){_H}*"
-# A title-like line that is still no label: structure (a list item, fence, table row,
-# heading, HTML tag, quote, definition), a sentence end, or a negation. A line with no
-# letter or digit (an underline, a rule, a bare fence) is never a label (`_is_label`).
+# Words that change what a sentence says and are in neither list above.
+_HEDGE_WORDS = (
+    r"rarely|seldom|hardly|barely|scarcely|nor|neither|none|nothing|nobody|nowhere"
+    r"|unless|except|but|although|though|however|yet"
+)
+# A title-like line that is still no label: structure (a list item, a bullet, fence,
+# table row, heading, a line starting with `=` (an AsciiDoc heading), HTML tag, quote,
+# definition), a sentence end, or a negation or hedge. A line with no letter or digit
+# (an underline, a rule, a bare fence) is never a label (`_is_label`).
 _NOT_A_LABEL = re.compile(
-    rf"^(?:[-*+]\s|[`~|#>:=<]|\d+[.)](?:\s|$))|{_SENTENCE_TAIL}"
-    rf"|\b(?:{_BAN_WORDS}|{_NEGATION_WORDS})\b|n['’]t\b",
+    rf"^(?:[-*+]\s|[•◦▪‣·‧]|[`~|#>:=<]|\d+[.)](?:\s|$))|{_SENTENCE_TAIL}"
+    rf"|\b(?:{_BAN_WORDS}|{_NEGATION_WORDS}|{_HEDGE_WORDS})\b|n['’]t\b",
     re.I,
 )
 
@@ -309,14 +315,14 @@ def _span_match(span: str, texts: Sequence[str]) -> re.Match[str] | None:
         return None
     # Atomic gaps, the next word right after the whitespace tried first: linear time.
     parts = [re.escape(words[0])]
-    for n, word in enumerate(words[1:], start=2):
-        w = re.escape(word)
-        end = r"(?=\s)" if n < len(words) else r"(?!\w)"
+    for i in range(1, len(words)):
+        prev, w, last = words[i - 1], re.escape(words[i]), i == len(words) - 1
+        end = r"(?!\w)" if last else r"(?=\s)"
         # A label sits inside a sentence: no label gap after a sentence's end, which
         # would join two sentences across a heading between them.
-        label = "" if _SENTENCE_END_WORD.search(words[n - 2]) else rf"|{_LABEL_GAP}{w}{end}"
+        label = "" if _SENTENCE_END_WORD.search(prev) else rf"|{_LABEL_GAP}{w}{end}"
         # The last word may still end inside a document word (a CJK span has no spaces).
-        partial = rf"|\s+{w}" if n == len(words) else ""
+        partial = rf"|\s+{w}" if last else ""
         parts.append(rf"(?>\s+{w}{end}{label}{partial})")
     pattern = re.compile("".join(parts), re.IGNORECASE)
     for text in texts:
@@ -339,7 +345,9 @@ def find_span(span: str, texts: Sequence[str]) -> str:
     ("The proxy" over "the nearest replica"), and a last word that would end inside a
     document word where a rejected label reading of its gap comes first ("cache plan"
     over "cache / plans / not / plan"): the label reading is tried before the partial
-    end."""
+    end. A label is recognised by its shape and the word lists of `_NOT_A_LABEL`, so a
+    short line of another kind that the sentence needs can still be read across; the
+    stored span is the document's words, so a reader can check it against the source."""
     m = _span_match(span, texts)
     return m.group(0) if m else ""
 
