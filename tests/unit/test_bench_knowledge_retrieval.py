@@ -16,6 +16,7 @@ from bench.knowledge_retrieval import (
     fixture_tag,
     ingest,
     load_fixture,
+    main,
     mean_by_kind,
     parse_params,
     require_real_embedder,
@@ -23,8 +24,13 @@ from bench.knowledge_retrieval import (
     score_query,
     search,
 )
-from server.knowledge.domain.chunking import chunk_document
-from server.settings import settings
+from server.knowledge.app.writes import _chunk_text
+
+
+def _ingest_chunks(docs: list[dict]) -> dict[str, list]:
+    """Each document's chunks as ingest makes them, at the configured size and stride."""
+    return {d["source_uri"]: _chunk_text(d["content"]) for d in docs}
+
 
 # The handbook products: one question asked of each is one cluster.
 PRODUCTS = ("harbor", "lantern", "quill", "meridian")
@@ -263,8 +269,7 @@ def test_every_gold_passage_is_in_its_document() -> None:
 
 def test_every_gold_passage_lies_inside_one_chunk_at_the_default_size() -> None:
     docs, queries = load_fixture(FIXTURE)
-    size, stride = settings.knowledge_chunk_size, settings.knowledge_chunk_stride
-    chunks = {d["source_uri"]: chunk_document(d["content"], size=size, stride=stride) for d in docs}
+    chunks = _ingest_chunks(docs)
     for q in queries:
         holders = []
         for uri, text in q["gold"]:
@@ -278,11 +283,9 @@ def test_every_gold_passage_lies_inside_one_chunk_at_the_default_size() -> None:
 
 @pytest.mark.parametrize("phase", ["ingest", "search"])
 def test_one_phase_alone_needs_a_named_namespace(monkeypatch, phase: str) -> None:
-    from bench import knowledge_retrieval
-
     monkeypatch.setattr("sys.argv", ["knowledge_retrieval.py", "--phase", phase])
     with pytest.raises(SystemExit) as exit_info:
-        knowledge_retrieval.main()
+        main()
     assert exit_info.value.code == 2  # argparse's usage error, before any request
 
 
@@ -291,8 +294,7 @@ def test_the_clusters_are_exactly_the_groups_whose_results_move_together() -> No
     gold chunk is one group, and the groups merge transitively: the fixture's clusters
     are that partition, no coarser and no finer."""
     docs, queries = load_fixture(FIXTURE)
-    size, stride = settings.knowledge_chunk_size, settings.knowledge_chunk_stride
-    chunks = {d["source_uri"]: chunk_document(d["content"], size=size, stride=stride) for d in docs}
+    chunks = _ingest_chunks(docs)
     group = {q["id"]: {q["id"]} for q in queries}
 
     def join(a: str, b: str) -> None:
