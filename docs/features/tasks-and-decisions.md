@@ -435,14 +435,14 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   is tried after the label reading of its gap, so a rejected label reading there leaves that start unmatched. This is
   the trade-off the check makes: a label is recognised by its shape and these word lists, so a one-to-three-word line
   of another kind that the sentence needs can still be read across; what is recorded is the document's words, so a
-  reader can check it against the source. Chunk texts hold a section's body without its heading line. What is recorded
-  is the document's own span on one line, its words and case, with the label lines it read across left out: the same
-  text on every run, and a recorded span reads as the document's span again, across the same labels, when the retire
-  step looks for it. Each is at least 12 characters long, counted on the model's span: a shorter span ("We", "the") is
-  in every document, so a decision resting on it could never retire. At most `--max-per-section` (default 3) are kept
-  per section. A candidate whose category or scenario holds no letter or digit from a-z, 0-9 has no key and is
-  dropped. Of two candidates with one key, or with one outcome and reasoning (overlapping chunks give two windows the
-  same text), the first is kept.
+  reader can check it against the source. What is recorded is the document's own span on one line, its words and case,
+  with the label lines it read across left out: the same text on every run, and a recorded span reads as the
+  document's span again, across the same labels, when the retire step looks for it. Each is at least 12 characters
+  long, counted on the model's span: a shorter span ("We", "the") is in every document, so a decision resting on it
+  could never retire. At most `--max-per-section` (default 3) are kept per section. A candidate whose category or
+  scenario holds no letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with one key, or with
+  one outcome and reasoning (whitespace and letter case aside; overlapping chunks give two windows the same text), the
+  first is kept.
 - **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
   `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
   punctuation, as their English (Snowball) stems, so `stored` meets `store` and `running` meets `run`. Filler words
@@ -496,10 +496,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   options' reasons, each matched as a prefix where `decision.record` cut a long alternative at its 300-character cap.
   The category, scenario, outcome and option wording are the model's, and a change there alone is no change. Nor is a
   change in whitespace or letter case alone (a re-wrapped line, a capitalised first word): the row keeps its stored
-  span, which the retire step still finds, and `decision.record` stores rejected options' reasons on one line
-  already. A row counts as confirmed when it is
-  pinned or attested in its current form (`memory.verify`), the rule `memory.for_file` marks `(unconfirmed)` by. By
-  the row the key's active record belongs to:
+  span, which the retire step still finds, and `decision.record` stores rejected options' reasons on one line already.
+  A row counts as confirmed when it is pinned or attested in its current form (`memory.verify`), the rule
+  `memory.for_file` marks `(unconfirmed)` by. By the row the key's active record belongs to:
   - **The extractor's own, unconfirmed, from this document**: same verbatim fields and the same `files`,
     `source_resource_id` and `constraint` tag: no write. A verbatim field differs, or only those row fields do (a file
     that resolves once the code is indexed, a renamed heading): recorded again (the record is superseded, history

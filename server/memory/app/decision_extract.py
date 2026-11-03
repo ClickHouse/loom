@@ -549,14 +549,15 @@ def _repairs(
     """The second read's candidates that repair a failed one: a candidate with a failed
     outcome, or one whose reasoning none of the window's kept candidates has. A kept
     decision given again, its scenario reworded, would be written twice."""
-    outcomes = {collapse_ws(outcome) for outcome, _span, _section in failed}
+    # Case aside, as the held keys and pairs read an outcome.
+    outcomes = {collapse_ws(outcome).casefold() for outcome, _span, _section in failed}
     reasonings = {collapse_ws(c.reasoning) for c, _section, _texts in kept}
     texts = [c.text for c in w.chunks]
     out: list[dx.Candidate] = []
     for cand in again:
         # Stored as a kept candidate's reasoning is: the model's copy may differ in case.
         reasoning = dx.stored_span(cand.reasoning, texts)
-        if collapse_ws(cand.outcome) in outcomes or reasoning not in reasonings:
+        if collapse_ws(cand.outcome).casefold() in outcomes or reasoning not in reasonings:
             out.append(cand)
         else:
             section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
@@ -634,15 +635,11 @@ def _drop_inverted(
     cand: dx.Candidate, section: str, texts: list[str], report: ExtractReport
 ) -> dx.Candidate:
     """`cand` without the rejected options the text states as part of the choice, each
-    reported; the decision itself stays. Read on the document's own lines without the
-    labels (`unlabelled_span`): the stored quote is on one line, without the list items
-    and blank lines that end a sentence, and a label naming an option states nothing."""
-    raw = replace(
-        cand,
-        quote=dx.unlabelled_span(cand.quote, texts),
-        alternatives=[(o, dx.unlabelled_span(r, texts)) for o, r in cand.alternatives],
-    )
-    inverted = dx.inverted_options(raw)
+    reported; the decision itself stays. The quote is read on the document's own lines
+    without the labels (`unlabelled_span`): the stored quote is on one line, without the
+    list items and blank lines that end a sentence, and a label naming an option states
+    nothing. The stored reasons have the same words, which is all their match reads."""
+    inverted = dx.inverted_options(replace(cand, quote=dx.unlabelled_span(cand.quote, texts)))
     for option in inverted:
         reason = f"rejected option {option!r} left out: the quote states it as part of the choice"
         report.dropped.append(Dropped(section, reason, cand.quote))

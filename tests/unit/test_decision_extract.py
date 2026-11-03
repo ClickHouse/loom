@@ -3240,6 +3240,24 @@ async def test_a_second_read_repeating_a_kept_decision_writes_it_once(monkeypatc
     ]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["merge each run once", "Merge each run once"])
+async def test_a_repair_in_another_case_on_a_kept_reasoning_is_still_the_repair(
+    monkeypatch, outcome
+) -> None:
+    # The repair rests on the kept decision's reasoning; its outcome, the failed one's up
+    # to case, says it is the repair and not a repeat.
+    stitched = _candidate(
+        scenario="the merge", outcome="merge each run once", reasoning=_STITCHED_REASONING
+    )
+    repaired = {**stitched, "outcome": outcome, "reasoning": _candidate()["reasoning"]}
+    world = _World(monkeypatch, [])
+    world.replies = [[_candidate(), stitched], [repaired]]
+    report = await _run()
+    assert [inp.scenario for inp in world.recorded] == [_candidate()["scenario"], "the merge"]
+    assert de._REPEATED not in [d.reason for d in report.dropped]
+
+
 _ONE = "We spill into sorted runs like ORDER BY. A plain set on disk costs random reads."
 _TWO = "The merge reads each run once. One pass keeps reads sequential."
 _MERGE = _candidate(
