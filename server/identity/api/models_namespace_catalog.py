@@ -336,19 +336,32 @@ class NamespaceAuditSummary(BaseModel):
     live_bytes: int = 0
     # Bytes of content_excerpt the embedding rows carry (a copy of each value's head).
     excerpt_bytes: int = 0
+    # The versions that rewrite the row (a new value, or a restatement that bumps the
+    # reinforcement count: a set or pin of the same value), not a copy that keeps both (a
+    # status change, a tags edit by id, a lock, the server's own copies); and their bytes.
     version_rows: int = 0
     version_bytes: int = 0
-    # Searchable-type embedding rows with no vector and a recorded embed error.
+    # Searchable-type embedding rows the worker gave up on with an error of their own (a
+    # row still being retried, or whose model call was held or unbilled, is index_backlog).
     unembedded_rows: int = 0
     # Ledger counts over `window_seconds`.
     gets: int = 0
     searches: int = 0
     sets: int = 0
-    # gets / max(searches, 1): the object-store gauge.
+    # (gets - typed_gets) / max(searches, 1): the object-store gauge; reads of procedures
+    # are left out.
     get_search_ratio: float = 0.0
     # The gets and searches in the window from the dashboard and the assistant
     # toolset (consumers `loom-ui`, `loom-assistant`), left out of the counts above.
     inspector_calls: int = 0
+    # Exact-key reads of rows whose type is structured by design (procedures): counted in
+    # `gets`, left out of the object-store gauge.
+    typed_gets: int = 0
+    # Rows created in the window (not copied in, not in its last minute), and the ledger's
+    # calls for the namespace in it, leaving out reports on it, inspector calls that change
+    # nothing and a worker's own rows. Rows created with no calls were not recorded.
+    written_in_window: int = 0
+    ledger_calls: int = 0
 
 
 class NamespaceAuditFinding(FindingContract):

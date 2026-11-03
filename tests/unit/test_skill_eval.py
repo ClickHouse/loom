@@ -292,6 +292,10 @@ class FakeLoom:
             warning_any=True,
         )
         add("unembedded_rows", "info", 0, 0.0, [])
+        # The replay writes through the ledger, stores no procedure and embeds every row.
+        add("telemetry_unavailable", "info", 0, 0.0, [])
+        add("intentional_exact_key_reads", "info", 0, 0.0, [])
+        add("index_backlog", "info", 0, 0.0, [])
         value_check(
             "hash_keys",
             [k for k in stored if _HASH_KEY_RE.search(k)],

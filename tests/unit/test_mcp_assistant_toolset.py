@@ -183,8 +183,8 @@ def test_every_field_the_assistant_primer_names_is_served() -> None:
     # The default namespace is named too; it is the caller's, not a field.
     named = {n for n in re.findall(r"`([a-z_0-9]+)", primer) if not n.startswith("loom_")}
     named.discard("ns")
-    assert named == set(served) | {"usage_heuristic"}, named
-    assert "usage_heuristic" in get_args(FindingKind)
+    assert named == set(served) | {"usage_heuristic", "system_state"}, named
+    assert {"usage_heuristic", "system_state"} <= set(get_args(FindingKind))
     for field, model in served.items():
         assert field in model.model_fields, (field, model.__name__)
 

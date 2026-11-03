@@ -40,7 +40,7 @@ const SAMPLE_LIMIT = 5;
 
 const SEVERITY_RANK: Record<NamespaceAuditSeverity, number> = { critical: 0, warning: 1, info: 2 };
 
-/** The namespace audit's ten finding codes, as a person reads them. An unknown code (a
+/** The namespace audit's finding codes, as a person reads them. An unknown code (a
  *  check added later) falls back to its words. */
 const CODE_LABELS: Record<string, string> = {
   exact_key_store: "Exact-key store",
@@ -53,6 +53,9 @@ const CODE_LABELS: Record<string, string> = {
   coordination_as_memory: "Coordination as memory",
   episodic_blobs: "Episodic blobs",
   version_churn: "Version churn",
+  telemetry_unavailable: "Telemetry unavailable",
+  index_backlog: "Indexing backlog",
+  intentional_exact_key_reads: "Procedure reads by key",
 };
 
 function humanizeAuditCode(code: string): string {
@@ -231,6 +234,8 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
                 {s.get_search_ratio.toLocaleString(undefined, { maximumFractionDigits: 1 })})
                 {s.inspector_calls > 0 &&
                   ` · ${s.inspector_calls.toLocaleString()} dashboard and assistant calls not counted`}
+                {(s.typed_gets ?? 0) > 0 &&
+                  ` · ${(s.typed_gets ?? 0).toLocaleString()} procedure reads left out of the ratio`}
               </span>
             </p>
 
@@ -309,6 +314,7 @@ const SEVERITY_STATE: Record<NamespaceAuditSeverity, BadgeState> = {
 const KIND_LABEL: Record<NonNullable<NamespaceAuditFinding["kind"]>, string> = {
   contract_violation: "Contract violation",
   usage_heuristic: "Usage heuristic: a hit is not proof of misuse",
+  system_state: "The deployment's state, not the writer's doing",
 };
 
 function SeverityBadge({ severity }: { severity: NamespaceAuditSeverity }) {

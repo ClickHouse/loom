@@ -9,7 +9,7 @@ table consistent and recall useless. Each of those facts is derivable from `loom
 `loom.agent_events` with SQL; this op says it, so the namespace owner can run it and the
 optimize skill can act on it.
 
-Ten checks, each one read over existing tables scoped to (org, namespace).
+Thirteen checks, each one read over existing tables scoped to (org, namespace).
 No mutation, no new storage. A check that fails to run is reported in
 `skipped` and the rest still return. Samples carry keys and counts only,
 never a value.
@@ -41,6 +41,7 @@ from server.identity.api.models_namespace_catalog import (
     NamespaceAuditOutput,
     NamespaceAuditSummary,
 )
+from server.identity.app.namespace_summary import state_change_ops
 from server.identity.app.report_rules import RuleContract, RuleLog, attach_evidence
 from server.memory.domain.excerpt import EXCERPT_LIMIT
 from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
@@ -62,7 +63,7 @@ log = logging.getLogger(__name__)
 # hundreds of rows past the embedder cap), each warning threshold where the pattern starts
 # costing recall on a meaningful part of the namespace.
 # ---------------------------------------------------------------------------
-# exact_key_store: gets ≥ RATIO × searches AND gets ≥ MIN_GETS is critical
+# exact_key_store: gets of non-structured rows ≥ RATIO × searches AND ≥ MIN_GETS is critical
 # (a small namespace read by key a few times is not an object store).
 EXACT_KEY_STORE_RATIO = 20.0
 EXACT_KEY_STORE_MIN_GETS = 200
@@ -82,6 +83,12 @@ JSON_PREFIX_WARNING_SHARE = 0.10
 HASH_KEY_WARNING_SHARE = 0.25
 # coordination_as_memory / episodic_blobs bounds and STRUCTURED_TYPES are shared
 # with the mentor: server/memory/domain/namespace_shapes.py.
+# telemetry_unavailable: a write younger than this may not have reached the ledger yet (it
+# is flushed in batches), so only older writes are judged.
+TELEMETRY_LAG_SECONDS = 60  # not a setting: part of the rule; a change is a new rule_version
+# index_backlog: a searchable row with no vector that the worker has not given up on, younger
+# than this, is the embedding worker's normal lag (namespace.validate's default grace).
+INDEX_GRACE_SECONDS = 600  # not a setting: part of the rule; a change is a new rule_version
 # version_churn: version rows ≥ ROWS × live rows, or version bytes ≥ BYTES × live bytes.
 VERSION_CHURN_ROWS_RATIO = 3.0
 VERSION_CHURN_BYTES_RATIO = 2.0
@@ -111,11 +118,22 @@ _AGENT_CALL = "consumer NOT IN {inspectors:Array(String)}"
 _LEDGER = f"{_LEDGER_ALL} AND {_AGENT_CALL}"
 # A hot key: a named key read HOT_KEY_READS times or more in the window. One fragment for
 # the exact-key samples and the hot-key list the coordination check joins.
-_HOT_KEY = "memory_key != '' AND reads >= {hot:UInt32}"
+_HOT_KEY = "read_key != '' AND reads >= {hot:UInt32}"
+# The key a ledger read names: the column over HTTP, the argument over MCP (whose rows
+# leave the column empty). A `memory.bulk_get` names no single key.
+_READ_KEY = "if(memory_key != '', memory_key, args['memory_key'])"
+# The reports on a namespace: their own ledger rows say nothing about whether the window's
+# calls were recorded.
+_REPORT_OPS = (
+    "('namespace.audit', 'namespace.validate', 'namespace.summary', 'namespace.inventory', "
+    "'mentor.brief')"
+)
+# The live keys of a type that is structured by design: read back whole by key on purpose.
+_TYPED_KEYS = f"SELECT memory_key {_LIVE} AND memory_type IN {{structured:Array(String)}}"
 _HOT_KEYS = (
-    f"SELECT memory_key, count() AS reads {_LEDGER} "
+    f"SELECT {_READ_KEY} AS read_key, count() AS reads {_LEDGER} "
     f"AND operation IN {_LEDGER_GETS} "
-    f"GROUP BY memory_key HAVING {_HOT_KEY}"
+    f"GROUP BY read_key HAVING {_HOT_KEY}"
 )
 # JSON value shapes. JSONType returns '' / 'Null' for non-JSON text.
 _IS_JSON_STRING_OF_JSON = (
@@ -123,14 +141,37 @@ _IS_JSON_STRING_OF_JSON = (
 )
 _IS_JSON_CONTAINER = "JSONType(value) IN ('Object', 'Array')"
 
+# A model call the deployment held or could not bill: the row's error is not its own.
+# The embedding worker's markers (`HELD`, `customer.NO_CUSTOMER`); a unit test pins them.
+EMBED_HOLDS: tuple[str, ...] = (
+    "model call held",
+    "MODEL_CALL_UNATTRIBUTED: the row names no org to bill",
+)
 # Over loom.memory_embeddings: a searchable row the worker gave up on (summary and check).
-_UNEMBEDDED_ROW = f"embedding_dim = 0 AND embed_last_error != '' AND {_SEARCHABLE}"
+# Given up on (`embed_failed_at` set) with an error of the row's own: a row the worker is
+# still retrying, a provider outage among the reasons, is the deployment's backlog.
+_GIVEN_UP = (
+    "embed_failed_at IS NOT NULL AND embed_last_error != '' "
+    "AND embed_last_error NOT IN {holds:Array(String)}"
+)
+_UNEMBEDDED_ROW = f"embedding_dim = 0 AND {_GIVEN_UP} AND {_SEARCHABLE}"
 # Remedies point at the recipe: docs/guides/investigation-agent-memory.md.
 _RECIPE = "docs/guides/investigation-agent-memory.md"
 
 # code: (detail, remedy). One sentence each — what the check found means,
 # and what to do about it.
 _TEXT: dict[str, tuple[str, str]] = {
+    # Runs first: the ledger checks read whether it found the ledger empty.
+    "telemetry_unavailable": (
+        "Live rows created in the window while the ledger holds no call for the namespace "
+        "apart from reports on it, the dashboard's or the assistant's reads and page views, "
+        "and a worker's own rows: their reads and searches were not recorded, so while this "
+        "warns the checks built on them are skipped rather than reported clean.",
+        "Check that the server writes its event ledger (loom.agent_events) and keeps it "
+        "for the window (LOOM_RETENTION_AGENT_EVENTS_DAYS), or whether the rows were written "
+        "in-process (`loom import-recall` or `import-brain` without `--base-url`), then "
+        "rerun with a window the ledger covers; `memory.list` still shows the rows.",
+    ),
     "exact_key_store": (
         "Exact-key reads (memory.get, memory.bulk_get) counted against searches "
         "(memory.search, memory.ask) in the window; critical once reads reach "
@@ -139,6 +180,25 @@ _TEXT: dict[str, tuple[str, str]] = {
         "Write readable keys and recall with `memory.search` (tags carry the facets); "
         "keep leases and pointers in `working_memory`, not `memory.set`. "
         f"See {_RECIPE}.",
+    ),
+    "intentional_exact_key_reads": (
+        "Exact-key reads of rows whose type is structured by design (procedures are read "
+        "back whole by key): a workflow, left out of the object-store gauge.",
+        "Nothing to change: `memory.get` reads of these rows are not counted against "
+        "the namespace.",
+    ),
+    "index_backlog": (
+        "Searchable rows with no vector the worker has not given up on: not reached yet, "
+        "still being retried (a provider error, an outage), or whose model call the "
+        f"deployment held or could not bill. Within {INDEX_GRACE_SECONDS // 60} minutes of a "
+        "write that is normal lag; older, the worker is stopped or behind, the provider is "
+        "failing, or the calls are held. Either way the rows "
+        "are not found by meaning yet, through no fault of the writer.",
+        "Check that the embedding worker runs and that the org's model calls are allowed: "
+        "a held row is retried once its hold lapses. A row whose call named no org to "
+        "bill is given up on; once the deployment attributes its calls, a new revision of "
+        "the row (`memory.update_by_id`) queues it again. `memory.get` still reads them by "
+        "key meanwhile.",
     ),
     "hand_rolled_index_rows": (
         f"Live rows whose value names {INDEX_ROW_MIN_KEYS}+ other live keys of the "
@@ -169,10 +229,11 @@ _TEXT: dict[str, tuple[str, str]] = {
         f"row under the same key that points at it. See {_RECIPE}.",
     ),
     "unembedded_rows": (
-        "Searchable rows the embedding worker gave up on (no vector, a recorded error): "
+        "Searchable rows the embedding worker gave up on (no vector, an embed error of the "
+        "row's own): "
         "invisible to memory.search however well the key is chosen.",
         "Shorten or split the value (`knowledge.upsert` for documents), then memory.set "
-        "the row again; `namespace.validate` lists the same rows under `unembedded`.",
+        "the row again; `namespace.validate` lists them among its `unembedded` rows.",
     ),
     "hash_keys": (
         "Live keys whose last segment is 24+ hex chars, or any segment a 40+ hex sha: "
@@ -214,13 +275,67 @@ _STRUCTURED_EXCLUDED = (
     "are not checked."
 )
 _CONTRACT: dict[str, RuleContract] = {
+    "telemetry_unavailable": RuleContract(
+        "system_state",
+        1,
+        windowed=True,
+        exceptions=(
+            "Only rows created in the window are judged: a quiet namespace has nothing to "
+            "count, and a revision (a worker's relabel among them) is not judged. A row "
+            f"created in the last {TELEMETRY_LAG_SECONDS} seconds is not judged; its "
+            "ledger row may not have landed yet. Reports on the namespace (the audit's own "
+            "call among them) and the dashboard's or the assistant's reads and page views do "
+            "not close a gap, nor do a worker's own ledger rows; an inspector's calls that "
+            "change stored state (a memory write, a setting, a grant) do."
+        ),
+        uncertainty=(
+            "Rows written in-process, by an importer run without `--base-url` or a worker "
+            "that creates keys, leave no request row (a worker's own row is not counted) and "
+            "read as a gap in a quiet namespace, "
+            "and so do rows a recent snapshot restored (`namespace.restore` is ledgered "
+            "under no namespace). Copied rows are not judged. A ledger that keeps less than "
+            "the window (a retention shorter than it) holds some calls and is not a gap, so "
+            "the ledger checks then count only the part it kept."
+        ),
+    ),
     "exact_key_store": RuleContract(
+        "usage_heuristic",
+        # 2: reads of structured-by-design rows are left out of the gauge.
+        2,
+        windowed=True,
+        exceptions=(
+            "Reads of rows whose type is structured by design are not counted "
+            "(intentional_exact_key_reads)."
+        ),
+        uncertainty=(
+            "A workflow that reads known keys on purpose shows the same ratio, and the ledger "
+            "counts calls, not whether a result reached the model."
+        ),
+    ),
+    "intentional_exact_key_reads": RuleContract(
         "usage_heuristic",
         1,
         windowed=True,
         uncertainty=(
-            "A workflow that reads known keys on purpose shows the same ratio, and the ledger "
-            "counts calls, not whether a result reached the model."
+            "Only the structured-by-design types are recognised; other workflows that read by "
+            "key on purpose still count in exact_key_store. A read is matched by key, so a "
+            "read of another writer's row under a procedure's key counts as one. A "
+            "`memory.bulk_get` (which names no single key) is not matched, nor is an MCP read "
+            "of a key longer than the 200 characters its ledger row keeps."
+        ),
+    ),
+    "index_backlog": RuleContract(
+        "system_state",
+        1,
+        exceptions=(
+            "Non-searchable, high-sensitivity and empty rows are never embedded and are not "
+            "counted."
+        ),
+        uncertainty=(
+            "A row whose embedding row was written but not yet merged can read as pending for "
+            "a moment, and a row with a vector from another embedder counts as reached. Age "
+            "is from the row's last version, so a lock or status change on a stalled row "
+            "restarts it (namespace.validate ages from creation)."
         ),
     ),
     "hand_rolled_index_rows": RuleContract(
@@ -256,10 +371,12 @@ _CONTRACT: dict[str, RuleContract] = {
     ),
     "unembedded_rows": RuleContract(
         "contract_violation",
-        1,
+        # 2: a model call the deployment held or could not bill is not the row's error.
+        2,
         exceptions=(
-            "Non-searchable types are not checked, and a row with no recorded embed error is "
-            "not counted."
+            "Non-searchable types are not checked, and only a row the worker gave up on with "
+            "an error of its own is counted: one still being retried, or whose model call "
+            "was held or unbilled, is index_backlog."
         ),
     ),
     "hash_keys": RuleContract(
@@ -270,8 +387,13 @@ _CONTRACT: dict[str, RuleContract] = {
     ),
     "coordination_as_memory": RuleContract(
         "usage_heuristic",
-        1,
+        # 2: a structured-by-design row read often by key is not coordination state.
+        2,
         windowed=True,
+        exceptions=(
+            "A row whose type is structured by design is not counted on its reads; while "
+            "telemetry_unavailable warns, only the key-segment arm runs."
+        ),
         uncertainty="A short fact read often for a good reason matches the read-count arm.",
     ),
     "episodic_blobs": RuleContract(
@@ -282,8 +404,22 @@ _CONTRACT: dict[str, RuleContract] = {
     ),
     "version_churn": RuleContract(
         "usage_heuristic",
-        1,
-        uncertainty="A fact that really changes often leaves a long history that is not waste.",
+        # 2: a version that keeps the value and its reinforcement count is not counted.
+        2,
+        exceptions=(
+            "A version of the same row (agent, user, session, key) that keeps the value and "
+            "the reinforcement count of the one before it is not counted: a status change "
+            "(conflict marking, supersession), a tags or confidence edit through "
+            "`memory.update_by_id`, a lock or an unpin, and the server's own copies of a "
+            "write. A new value counts, as does a restatement of the same value (a "
+            "`memory.set` or `memory.pin` of it), a delete and a set of the same value after "
+            "it, a value that flips back and forth and a version with no recorded hash."
+        ),
+        uncertainty=(
+            "A fact that really changes often leaves a long history that is not waste, and a "
+            "row whose tags are edited over and over stores a copy each time that is not "
+            "counted."
+        ),
     ),
 }
 
@@ -291,7 +427,7 @@ _CONTRACT: dict[str, RuleContract] = {
 # Sample rows from a `count() OVER ()` query: the aggregate columns ride every row and are split
 # off. A value-bearing column is dropped even if a query ever selected one: samples carry keys
 # and counts, never content.
-_AGG_COLS = frozenset({"total", "total_bytes"})
+_AGG_COLS = frozenset({"total", "total_bytes", "stalled"})
 _NEVER_SAMPLED = frozenset({"value", "value_json", "value_preview", "content_excerpt", "query"})
 
 
@@ -382,6 +518,10 @@ class _Audit:
             "episodic_chars": int(EPISODIC_BLOB_CHARS),
             "hash_key_re": _HASH_KEY_SEGMENT_RE,
             "index_clip": int(INDEX_ROW_VALUE_CLIP),
+            "grace": int(INDEX_GRACE_SECONDS),
+            "lag": int(TELEMETRY_LAG_SECONDS),
+            "holds": list(EMBED_HOLDS),
+            "state_changes": list(state_change_ops()),
         }
         self.summary = NamespaceAuditSummary()
         self.searchable_rows = 0
@@ -390,6 +530,8 @@ class _Audit:
         # The summary reads and checks that ran or were skipped; the summary reads are rules
         # of the report too, since most findings are measured against one.
         self.rules = RuleLog()
+        # Set by `telemetry_unavailable`: the window's writes left no ledger row.
+        self.telemetry_gap = False
 
     def measured(self, step: str, population: int) -> int | None:
         """`population` when the summary read it comes from ran; None when it was never
@@ -464,10 +606,17 @@ class _Audit:
             f"""
             SELECT count() AS live_rows, sum(length(value)) AS live_bytes,
                    countIf({_SEARCHABLE}) AS searchable_rows,
-                   countIf(memory_type = 'episodic') AS episodic_rows
+                   countIf(memory_type = 'episodic') AS episodic_rows,
+                   -- created in the window: not revised (a worker's relabel keeps created_at)
+                   -- and not copied in (a copy's call is ledgered under no namespace)
+                   countIf(created_at >= now() - INTERVAL {{win:UInt32}} SECOND
+                           AND created_at < now() - INTERVAL {{lag:UInt32}} SECOND
+                           AND cross_promoted_from_namespace = '')
+                       AS written_in_window
             {_LIVE}
             """
         )
+        self.summary.written_in_window = int(r.get("written_in_window") or 0)
         self.summary.live_rows = int(r.get("live_rows") or 0)
         self.summary.live_bytes = int(r.get("live_bytes") or 0)
         self.searchable_rows = int(r.get("searchable_rows") or 0)
@@ -488,7 +637,14 @@ class _Audit:
     async def summary_ledger(self) -> None:
         r = await self.one(
             f"""
-            SELECT countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}) AS gets,
+            -- a request row: a worker's own row (an extractor's spend) says nothing about
+            -- the callers; an inspector's write counts, its reads and page views do not
+            SELECT countIf(operation NOT IN {_REPORT_OPS} AND kind != 'worker'
+                           AND ({_AGENT_CALL}
+                                OR operation IN {{state_changes:Array(String)}})) AS ledger_calls,
+                   countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}) AS gets,
+                   countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}
+                           AND {_READ_KEY} IN ({_TYPED_KEYS})) AS typed_gets,
                    countIf(operation IN {_LEDGER_SEARCHES} AND {_AGENT_CALL}) AS searches,
                    -- a write from the dashboard is a person using the namespace
                    countIf(operation IN {_LEDGER_SETS}) AS sets,
@@ -498,46 +654,132 @@ class _Audit:
             """
         )
         s = self.summary
+        s.ledger_calls = int(r.get("ledger_calls") or 0)
+        s.typed_gets = int(r.get("typed_gets") or 0)
         s.gets = int(r.get("gets") or 0)
         s.searches = int(r.get("searches") or 0)
         s.sets = int(r.get("sets") or 0)
         s.inspector_calls = int(r.get("inspector_calls") or 0)
-        s.get_search_ratio = round(s.gets / max(s.searches, 1), 2)
+        # The object-store gauge: reads of procedures are a workflow, not key-value use.
+        s.get_search_ratio = round((s.gets - s.typed_gets) / max(s.searches, 1), 2)
 
     # -- checks -------------------------------------------------------------
 
-    async def exact_key_store(self) -> None:
+    def ledger_missing(self, code: str) -> bool:
+        """Skip a ledger check, saying why, when the ledger holds no call for the window's
+        writes (`telemetry_unavailable`): its counts would read as a clean namespace."""
+        if not self.telemetry_gap:
+            return False
+        self.rules.skip(code, "telemetry_unavailable")
+        return True
+
+    async def telemetry_unavailable(self) -> None:
         s = self.summary
-        # Complete only when the hot keys account for every get, both counted in one scan.
+        # A window no longer than the ledger lag holds no row old enough to judge.
+        if int(self.inp.window_seconds) <= TELEMETRY_LAG_SECONDS:
+            self.rules.skip("telemetry_unavailable", "window within the ledger lag")
+            return
+        # Judged only on both summary reads: a failed one is not a missing ledger.
+        if not (self.rules.has_run("summary_live") and self.rules.has_run("summary_ledger")):
+            self.rules.skip("telemetry_unavailable", "summary read failed")
+            return
+        # Any call but a report on the namespace or an inspector's read: the audit's own row,
+        # or the dashboard looking, would otherwise hide that the window went unrecorded.
+        self.telemetry_gap = s.written_in_window > 0 and s.ledger_calls == 0
+        count = s.written_in_window if self.telemetry_gap else 0
+        self.add(
+            "telemetry_unavailable",
+            "warning" if self.telemetry_gap else "info",
+            count,
+            _share(count, s.live_rows),
+            [],
+            population=s.live_rows,
+        )
+
+    async def intentional_exact_key_reads(self) -> None:
+        s = self.summary
+        if self.ledger_missing("intentional_exact_key_reads"):
+            return
+        self.add(
+            "intentional_exact_key_reads",
+            "info",
+            s.typed_gets,
+            _share(s.typed_gets, s.gets),
+            [],
+            population=self.measured("summary_ledger", s.gets),
+        )
+
+    async def index_backlog(self) -> None:
         rows = await self.rows(
             f"""
-            SELECT memory_key, reads, window_gets, sum(reads) OVER () AS hot_reads
-            FROM (SELECT memory_key, count() AS reads, sum(count()) OVER () AS window_gets
+            SELECT count() OVER () AS total,
+                   countIf(age_seconds >= {{grace:UInt32}}) OVER () AS stalled,
+                   memory_key, memory_id, age_seconds
+            FROM (SELECT a.memory_key AS memory_key, toString(a.memory_id) AS memory_id,
+                         dateDiff('second', a.updated_at, now()) AS age_seconds
+                  FROM (SELECT agent, user_id, session_id, memory_key, memory_id, updated_at
+                        {_LIVE} AND {_SEARCHABLE} AND sensitivity != 'high'
+                          AND value_len > 0) AS a
+                  -- reached: a vector, or an error of its own the worker gave up on (a held,
+                  -- unbilled or still-retrying model call is the deployment's, and waiting)
+                  LEFT ANTI JOIN (SELECT agent, user_id, session_id, memory_key
+                                  FROM loom.memory_embeddings FINAL
+                                  WHERE {_SCOPE} AND tombstoned_at IS NULL
+                                    AND (embedding_dim > 0 OR ({_GIVEN_UP}))
+                                 ) AS b
+                    ON a.agent = b.agent AND a.user_id = b.user_id
+                   AND a.session_id = b.session_id AND a.memory_key = b.memory_key)
+            ORDER BY age_seconds DESC, memory_key
+            LIMIT {{lim:UInt32}}
+            """
+        )
+        total, _bytes, samples = _split(rows, self.inp.sample_limit)
+        stalled = int(rows[0].get("stalled") or 0) if rows else 0
+        self.add(
+            "index_backlog",
+            "warning" if stalled else "info",
+            total,
+            _share(total, self.searchable_rows),
+            samples,
+            population=self.measured("summary_live", self.searchable_rows),
+        )
+
+    async def exact_key_store(self) -> None:
+        s = self.summary
+        if self.ledger_missing("exact_key_store"):
+            return
+        # Complete only when the hot keys account for every get, both counted in one scan.
+        # Reads of structured-by-design rows are a workflow (intentional_exact_key_reads).
+        rows = await self.rows(
+            f"""
+            SELECT read_key AS memory_key, reads, window_gets, sum(reads) OVER () AS hot_reads
+            FROM (SELECT {_READ_KEY} AS read_key, count() AS reads,
+                         sum(count()) OVER () AS window_gets
                   {_LEDGER} AND operation IN {_LEDGER_GETS}
-                  GROUP BY memory_key)
+                    AND {_READ_KEY} NOT IN ({_TYPED_KEYS})
+                  GROUP BY read_key)
             WHERE {_HOT_KEY}
             ORDER BY reads DESC, memory_key LIMIT {{lim_past:UInt32}}
             """
         )
         samples = [{"memory_key": r["memory_key"], "reads": int(r["reads"])} for r in rows]
+        gets = s.gets - s.typed_gets
         # A failed ledger summary leaves `gets` at 0, which no listing can be complete for.
         if not self.rules.has_run("summary_ledger"):
             covered = False
         elif rows:
             covered = int(rows[0]["hot_reads"]) >= int(rows[0]["window_gets"])
         else:
-            covered = s.gets == 0
-        critical = (
-            s.gets >= EXACT_KEY_STORE_MIN_GETS and s.gets >= EXACT_KEY_STORE_RATIO * s.searches
-        )
-        severity = "critical" if critical else _grade(s.gets, 0.0)
+            covered = gets == 0
+        critical = gets >= EXACT_KEY_STORE_MIN_GETS and gets >= EXACT_KEY_STORE_RATIO * s.searches
+        severity = "critical" if critical else _grade(gets, 0.0)
         self.add(
             "exact_key_store",
             severity,
-            s.gets,
-            _share(s.gets, s.gets + s.searches),
+            gets,
+            _share(gets, gets + s.searches),
             samples,
-            population=self.measured("summary_ledger", s.gets + s.searches),
+            population=self.measured("summary_ledger", gets + s.searches),
             samples_complete=self.listed_all(rows) and covered,
         )
 
@@ -663,16 +905,27 @@ class _Audit:
         )
 
     async def coordination_as_memory(self) -> None:
+        # With no ledger for the window the read-count arm has nothing to count: the
+        # statement reads only loom.memory and runs the key-segment arm alone.
+        if self.telemetry_gap:
+            reads, hot_join, read_arm = "0", "", "0"
+        else:
+            reads = "l.reads"
+            hot_join = f"LEFT JOIN ({_HOT_KEYS}) AS l ON m.memory_key = l.read_key"
+            read_arm = """(length(m.value) < {coord_chars:UInt32}
+                    AND length(splitByWhitespace(m.value)) < {coord_words:UInt32}
+                    AND l.reads >= {hot:UInt32}
+                    -- a structured row is read back whole by key by design
+                    AND m.memory_type NOT IN {structured:Array(String)})"""
         rows = await self.rows(
             f"""
             SELECT count() OVER () AS total, sum(length(m.value)) OVER () AS total_bytes,
                    m.memory_key AS memory_key, m.memory_id AS memory_id,
-                   length(m.value) AS value_chars, l.reads AS reads
-            FROM (SELECT memory_key, toString(memory_id) AS memory_id, value {_LIVE}) AS m
-            LEFT JOIN ({_HOT_KEYS}) AS l ON m.memory_key = l.memory_key
-            WHERE (length(m.value) < {{coord_chars:UInt32}}
-                    AND length(splitByWhitespace(m.value)) < {{coord_words:UInt32}}
-                    AND l.reads >= {{hot:UInt32}})
+                   length(m.value) AS value_chars, {reads} AS reads
+            FROM (SELECT memory_key, toString(memory_id) AS memory_id, value, memory_type
+                  {_LIVE}) AS m
+            {hot_join}
+            WHERE {read_arm}
                OR hasAny(splitByChar('/', lower(m.memory_key)), {{coord_segs:Array(String)}})
             ORDER BY reads DESC, memory_key
             LIMIT {{lim:UInt32}}
@@ -688,6 +941,8 @@ class _Audit:
             samples,
             bytes_=total_bytes,
             population=self.measured("summary_live", self.summary.live_rows),
+            # With its read-count arm off, the samples cannot list every match.
+            samples_complete=False if self.telemetry_gap else None,
         )
 
     async def version_churn(self) -> None:
@@ -695,11 +950,32 @@ class _Audit:
             f"""
             SELECT sum(versions) OVER () AS total, sum(bytes) OVER () AS total_bytes,
                    memory_key, versions, bytes
-            FROM (SELECT memory_key, count() AS versions, sum(length(value)) AS bytes
-                  FROM loom.memory_versions FINAL WHERE {_SCOPE}
+            FROM (SELECT memory_key, count() AS versions, sum(chars) AS bytes
+                  -- a version that keeps the value and its reinforcement count of the one
+                  -- before it (a status change, a tags edit by id, a lock, the server's
+                  -- own copies of a write) rewrites nothing; a restatement (a set or pin
+                  -- of the same value) bumps the count
+                  FROM (SELECT memory_key, value_len AS chars,
+                               -- a version with no recorded hash (the column's '0'
+                               -- default) is not known to repeat, so it counts
+                               content_sha256 = toFixedString('0', 64)
+                               OR content_sha256 != lagInFrame(content_sha256) OVER w
+                               OR reinforcement_count != lagInFrame(reinforcement_count) OVER w
+                               -- a delete, and a set after one, are the writer's
+                               OR isNull(tombstoned_at)
+                                   != lagInFrame(isNull(tombstoned_at)) OVER w AS rewrote
+                        FROM loom.memory_versions FINAL WHERE {_SCOPE}
+                        -- the table's whole sort key, so the window reads in its order
+                        WINDOW w AS (PARTITION BY org, namespace, agent, user_id, session_id,
+                                                  memory_key
+                                     ORDER BY version
+                                     ROWS BETWEEN 1 PRECEDING AND CURRENT ROW))
+                  WHERE rewrote
                   GROUP BY memory_key)
             ORDER BY bytes DESC, memory_key
             LIMIT {{lim_past:UInt32}}
+            -- reading in window order halves the memory of the version scan
+            SETTINGS optimize_read_in_window_order = 1
             """
         )
         total, total_bytes, samples = _split(rows, self.inp.sample_limit)
@@ -779,7 +1055,11 @@ async def handle_namespace_audit(input: NamespaceAuditInput) -> NamespaceAuditOu
     )
 
 
-_KIND_LABEL = {"contract_violation": "contract", "usage_heuristic": "heuristic"}
+_KIND_LABEL = {
+    "contract_violation": "contract",
+    "usage_heuristic": "heuristic",
+    "system_state": "system",
+}
 
 
 def render_table(out: NamespaceAuditOutput) -> str:
@@ -793,13 +1073,14 @@ def render_table(out: NamespaceAuditOutput) -> str:
         f"  live {s.live_rows} rows / {s.live_bytes:,} B; versions {s.version_rows} rows / "
         f"{s.version_bytes:,} B; excerpts {s.excerpt_bytes:,} B; unembedded {s.unembedded_rows}; "
         f"gets {s.gets} / searches {s.searches} / sets {s.sets} (ratio {s.get_search_ratio})"
+        + (f"; {s.typed_gets} procedure reads left out of the ratio" if s.typed_gets else "")
         + (
             f"; {s.inspector_calls} dashboard and assistant calls not counted"
             if s.inspector_calls
             else ""
         ),
         "",
-        f"  {'code':<24} {'severity':<9} {'kind':<9} {'count':>8} {'share':>6}  first sample",
+        f"  {'code':<28} {'severity':<9} {'kind':<9} {'count':>8} {'share':>6}  first sample",
     ]
     for f in out.findings:
         first = "-"
@@ -808,7 +1089,7 @@ def render_table(out: NamespaceAuditOutput) -> str:
             first = ", ".join(f"{k}={v}" for k, v in f.samples[0].items() if k != "memory_id")
         kind = _KIND_LABEL[f.kind]
         lines.append(
-            f"  {f.code:<24} {f.severity:<9} {kind:<9} {f.count:>8} {f.share:>6.0%}  {first}"
+            f"  {f.code:<28} {f.severity:<9} {kind:<9} {f.count:>8} {f.share:>6.0%}  {first}"
         )
     for sk in out.skipped:
         lines.append(f"  skipped: {sk}")

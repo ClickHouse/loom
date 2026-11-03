@@ -16,16 +16,25 @@ export interface NamespaceAuditSummary {
   excerpt_bytes: number;
   version_rows: number;
   version_bytes: number;
-  // Searchable-type embedding rows with no vector and a recorded embed error.
+  // Searchable-type embedding rows the worker gave up on with an error of their own (a row
+  // still retrying, or a held or unbilled model call, is the deployment's: index_backlog).
   unembedded_rows: number;
   // Ledger counts over `window_seconds`.
   gets: number;
   searches: number;
   sets: number;
-  // gets / max(searches, 1): the object-store gauge.
+  // (gets - typed_gets) / max(searches, 1): the object-store gauge, procedure reads left out.
   get_search_ratio: number;
   // Dashboard and assistant calls in the window, left out of the counts above.
   inspector_calls: number;
+  // Exact-key reads of procedures, counted in `gets` and left out of the ratio.
+  // Absent from a server one release older, like the two below.
+  typed_gets?: number;
+  // Live rows created in the window (not copied in), and the ledger's calls for the
+  // namespace in it, leaving out reports on it, inspector calls that change nothing and
+  // a worker's own rows.
+  written_in_window?: number;
+  ledger_calls?: number;
 }
 
 /** Mirrors `NamespaceAuditFinding`. `samples` carry keys and counts only —
@@ -40,9 +49,10 @@ export interface NamespaceAuditFinding {
   samples: Array<Record<string, unknown>>;
   detail: string;
   remedy: string;
-  // A broken stored invariant, or a pattern that may still be a legitimate design.
+  // A broken stored invariant, a pattern that may still be a legitimate design, or the
+  // deployment's own state rather than anything the writer did.
   // Absent from a server one release older, like every field below it.
-  kind?: "contract_violation" | "usage_heuristic";
+  kind?: "contract_violation" | "usage_heuristic" | "system_state";
   rule_version?: number;
   source_op?: string;
   // Null for a rule that reads current state rather than the ledger window.

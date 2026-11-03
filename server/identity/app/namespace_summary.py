@@ -23,9 +23,11 @@ from server.observability.consumer import INSPECTOR_CONSUMERS
 
 
 @functools.cache
-def _memory_changes() -> tuple[str, ...]:
-    """The memory ops that change a row, not read_only and called by a writer or audited: an
-    inspector's call to one is a person using the namespace."""
+def state_change_ops() -> tuple[str, ...]:
+    """The ops that change stored state (a memory write, a setting, a grant): not read_only,
+    and called by a writer or audited. An inspector's call to anything else (a read, the
+    dashboard's page-view vitals) only looks at the namespace."""
+    # Imported here: the registry imports the op modules, which import this one.
     from server.operations.base import Role
     from server.operations.registry import ALL_OPERATIONS
 
@@ -33,11 +35,16 @@ def _memory_changes() -> tuple[str, ...]:
         sorted(
             op.name
             for op in ALL_OPERATIONS
-            if op.name.startswith("memory.")
-            and not op.read_only
-            and (op.audit or op.required_role == Role.WRITER)
+            if not op.read_only and (op.audit or op.required_role == Role.WRITER)
         )
     )
+
+
+@functools.cache
+def _memory_changes() -> tuple[str, ...]:
+    """The state changes to a memory row: an inspector's call to one is a person using the
+    namespace."""
+    return tuple(op for op in state_change_ops() if op.startswith("memory."))
 
 
 async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSummaryOutput:
