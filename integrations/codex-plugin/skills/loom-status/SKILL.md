@@ -37,8 +37,13 @@ Code; in Codex, the newest `~/.codex/plugins/cache/*/loom/*/` directory.
    restarts the session: SessionStart hooks cannot rerun in this one.
    An MCP-only client has no hooks and skips this step.
 2. **Server, token, auth, grant.** `node "<root>/bin/loom-client-status.mjs"`
-   prints JSON whose `checks` come in this order: `server`, `token`, `auth`,
-   `namespace`, `flush` (`ok` is false when one of the first four fails).
+   prints JSON whose `checks` come in this order: `server`, `token`, `source`,
+   `auth`, `namespace`, `flush` (`ok` is false when `server`, `token`, `auth`
+   or `namespace` fails). `source` names the lookup that supplied the token.
+   In Claude Code the server checked is the one the MCP entry calls: the
+   plugin's install URL when a session saved it, else `LOOM_BASE_URL`, else
+   localhost. In Codex, whose entry lives in its own config, it is the
+   hooks' server and `source` only names the lookup.
    It ships with the plugin: do not look for a Loom checkout or install the
    Python CLI. It sends no test write; a listed grant is evidence of
    permission, not proof a write landed. If `loom` is already

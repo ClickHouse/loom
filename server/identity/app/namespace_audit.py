@@ -126,7 +126,7 @@ _READ_KEY = "if(memory_key != '', memory_key, args['memory_key'])"
 # calls were recorded.
 _REPORT_OPS = (
     "('namespace.audit', 'namespace.validate', 'namespace.summary', 'namespace.inventory', "
-    "'mentor.brief')"
+    "'namespace.tune', 'memory.inspect', 'mentor.brief')"
 )
 # The live keys of a type that is structured by design: read back whole by key on purpose.
 _TYPED_KEYS = f"SELECT memory_key {_LIVE} AND memory_type IN {{structured:Array(String)}}"
@@ -277,7 +277,8 @@ _STRUCTURED_EXCLUDED = (
 _CONTRACT: dict[str, RuleContract] = {
     "telemetry_unavailable": RuleContract(
         "system_state",
-        1,
+        # 2: namespace.tune and memory.inspect calls do not close a gap.
+        2,
         windowed=True,
         exceptions=(
             "Only rows created in the window are judged: a quiet namespace has nothing to "

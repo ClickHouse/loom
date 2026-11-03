@@ -267,14 +267,14 @@ async def test_the_extraction_policy_is_read_only_for_an_org_admin(
         assert role.name == "ORG_ADMIN"
         return True
 
-    monkeypatch.setattr(mi, "row_in_scope", admin)
+    monkeypatch.setattr("server.memory.app.extraction_policy.row_in_scope", admin)
     out = await mi.handle_memory_inspect(_inp())
     assert out.settings.extraction_policy == "Never store card numbers."
 
     async def viewer(*a: Any, **k: Any) -> bool:
         return False
 
-    monkeypatch.setattr(mi, "row_in_scope", viewer)
+    monkeypatch.setattr("server.memory.app.extraction_policy.row_in_scope", viewer)
     out = await mi.handle_memory_inspect(_inp())
     assert out.settings.extraction_policy is None
     assert "org admin" in out.settings.extraction_policy_unavailable
@@ -291,14 +291,17 @@ async def test_an_admin_whose_policy_read_fails_is_told_so(
         return True
 
     async def unreadable_policy(org: str, namespace: str) -> str:
-        raise RuntimeError("policy read failed")
+        # What effective() raises when this process's copy is too old to trust.
+        from server.llm import customer
 
-    monkeypatch.setattr(mi, "row_in_scope", admin)
+        raise customer.SwitchUnread("policy read failed")
+
+    monkeypatch.setattr("server.memory.app.extraction_policy.row_in_scope", admin)
     monkeypatch.setattr("server.memory.app.extraction_policy.effective", unreadable_policy)
     out = await mi.handle_memory_inspect(_inp())
     assert out.settings.extraction_policy is None
     assert out.settings.extraction_policy_unavailable == "the policy could not be read"
-    assert "settings.extraction_policy: RuntimeError" in out.skipped
+    assert "settings.extraction_policy: SwitchUnread" in out.skipped
 
 
 @pytest.mark.asyncio

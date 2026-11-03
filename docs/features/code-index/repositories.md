@@ -79,6 +79,10 @@ Rules:
   namespace through a resumable erasure saga. The mirror is deleted when no other branch
   uses it. An operator-configured entry is refused with `REPO_FROM_CONFIG`.
 - `LOOM_CODE_SELF_SERVICE_ENABLED=false` removes the feature (`SELF_SERVICE_OFF`).
+- `LOOM_CODE_INTEL_ENABLED=false` refuses every `code.repo.*` op but `code.repo.remove`,
+  with `PRECONDITION_FAILED`, as it does every other `code.*` op. A retirement with the
+  switch off purges the index and this replica's mirror; the other replicas sweep their
+  copy of the mirror only once code intelligence is on again.
 
 Add a public repository and a release branch in one call:
 

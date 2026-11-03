@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 import sys
+import uuid
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from pathlib import Path
@@ -282,6 +283,26 @@ async def test_post_with_meta_returns_the_server_metadata() -> None:
     assert r.server_timing_ms == 12.5
     assert r.rate_limit is not None and (r.rate_limit.limit, r.rate_limit.remaining) == (100, 99)
     assert t.rate_limit("/v1/memory.search") is r.rate_limit
+    await t.close()
+
+
+async def test_a_request_id_the_server_would_replace_is_not_sent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sent: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        sent.append(req.headers["X-Request-Id"])
+        return httpx.Response(200, json={}, headers={"X-Request-Id": req.headers["X-Request-Id"]})
+
+    t = Transport("http://x", api_key="k")
+    _mock(t, handler)
+    kept = await t.post_with_meta("/v1/memory.search", {}, request_id="dbg-0001")
+    with caplog.at_level("WARNING", logger="loom"):
+        replaced = await t.post_with_meta("/v1/memory.search", {}, request_id="my id")
+    assert [r.levelname for r in caplog.records if "'my id'" in r.getMessage()] == ["WARNING"]
+    assert sent[0] == "dbg-0001" and kept.request_id == "dbg-0001"
+    assert str(uuid.UUID(sent[1])) == sent[1] and replaced.request_id == sent[1]
     await t.close()
 
 

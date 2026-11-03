@@ -64,6 +64,7 @@ from server.identity.api.models_namespace_guide import (
     NamespaceGuideSetInput,
     NamespaceGuideSetOutput,
 )
+from server.identity.api.models_namespace_tune import NamespaceTuneInput, NamespaceTuneOutput
 from server.identity.app.namespace import (
     handle_namespace_browse,
     handle_namespace_delete,
@@ -102,6 +103,7 @@ from server.identity.app.namespace_snapshot import (
     handle_namespace_snapshot,
 )
 from server.identity.app.namespace_summary import handle_namespace_summary
+from server.identity.app.namespace_tune import handle_namespace_tune
 from server.identity.app.namespace_validate import handle_namespace_validate
 from server.operations.base import Operation, Role
 
@@ -373,6 +375,18 @@ namespace_audit = Operation(
 )
 
 
+namespace_tune = Operation(
+    name="namespace.tune",
+    maturity="experimental",
+    input_model=NamespaceTuneInput,
+    output_model=NamespaceTuneOutput,
+    handler=handle_namespace_tune,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+
 namespace_register_ontology = Operation(
     name="namespace.register_ontology",
     input_model=NamespaceRegisterOntologyInput,
@@ -456,6 +470,7 @@ OPERATIONS: list[Operation] = [
     namespace_inventory,
     namespace_validate,
     namespace_audit,
+    namespace_tune,
     namespace_register_ontology,
     namespace_list_ontology,
     namespace_guide_get,

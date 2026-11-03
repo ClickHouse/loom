@@ -1241,6 +1241,8 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
         ("server/memory/app/code_link_reads.py", "readable_namespaces", never),
         ("server/memory/app/code_grounding.py", "_authorized_code_target", never),
         ("server/code/app/repo_scope.py", "readable_repo_namespace", never),
+        # The wording of a refusal another check decided.
+        ("server/memory/app/decision_extract.py", "_readable_names", never),
         ("server/tracker/app/dupcheck_fanout.py", "readable_tracker_namespaces", never),
         ("server/tracker/app/common.py", "linked_trackers", never),
         ("server/auth/context.py", "restricted_namespaces_hidden_from", never),

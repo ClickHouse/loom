@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 import time
-import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -53,6 +52,7 @@ from server.transport._common import (
     ANONYMOUS_ACTOR,
     bind_request,
     ledger_identity,
+    request_id_from,
     request_identity,
     sli_columns,
     validation_errors,
@@ -212,7 +212,7 @@ class _HttpCall:
 def _begin_request(op: Operation, request: Request, response: Response) -> str:
     """The request id, the schema header and the per-request context vars —
     before the body is read. Returns the request id."""
-    request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
+    request_id = request_id_from(request.headers.get("X-Request-Id"))
     response.headers["X-Request-Id"] = request_id
     response.headers["X-Schema-Version"] = SCHEMA_VERSION
     bind_request(op.name, request_id)
@@ -899,7 +899,7 @@ async def me_route_measured(request: Request, call_next: Any) -> Response:
     from server.transport._common import begin_request
 
     op_name = me_operation_name(request.url.path)
-    request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
+    request_id = request_id_from(request.headers.get("X-Request-Id"))
     bind_request(op_name, request_id)
     begin_request()
     set_current_consumer("")

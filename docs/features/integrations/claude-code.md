@@ -143,11 +143,16 @@ option, then `~/.loom/config.json`, then the token's claims, then the defaults
 | namespace | `LOOM_NAMESPACE` → `config.json` `namespace` → the token's first non-wildcard namespace → `coding`       |
 | agent     | `LOOM_AGENT` → `config.json` `agent` → `claude-code`                                                     |
 
-A remote server needs only one file (`LOOM_CONFIG_FILE` moves it):
+For a remote server the hooks and the header helper need only one file
+(`LOOM_CONFIG_FILE` moves it):
 
 ```json
 { "url": "https://loom.example.com", "token": "<writer JWT>", "namespace": "my-team" }
 ```
+
+The MCP entry does not read it: its URL is the `server_url` install option, whose
+default is `LOOM_BASE_URL`, else localhost. Set one of those too, or the entry sends the
+file's token to localhost and the primer says so.
 
 **Project scoping.** The project is the basename of the git toplevel
 (`LOOM_PROJECT_NAME` overrides it). With the default `LOOM_PROJECT_SCOPE=tag`, every
@@ -324,7 +329,8 @@ Bash tool respectively.
 - After a few tool calls, the dashboard shows the session's observations and,
   with logging on, its conversation. `run.get` on `cc-<session_id>` replays the run.
 - `/loom:loom-status` runs `bin/loom-client-status.mjs` from the plugin: the server it
-  would call, whether the token is accepted and can write the namespace, and capture
+  would call, which lookup supplied the token and whether `~/.loom/config.json` names
+  another server, whether the token is accepted and can write the namespace, and capture
   batches that never reached the server. It needs nothing but the plugin.
 - `loom doctor --client` (the operator CLI, from a source checkout or the server image)
   adds the Claude Code and Codex wiring checks.

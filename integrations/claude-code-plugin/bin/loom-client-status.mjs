@@ -6,14 +6,25 @@ import { join } from "node:path";
 import {
   agentMode,
   decodeTokenClaims,
+  loomConfig,
+  loomConfigPath,
+  loomTokenPath,
+  normalizeUrl,
   requestJson,
   resolveScope,
   resolveServerUrl,
-  resolveToken,
+  tokenLookup,
 } from "../lib/loom-client.mjs";
+import { entryIsFixed, sameServer, statusServerUrl } from "../lib/plugin-options.mjs";
 
 const FLUSH_RE = /^loom-flush-\d{13}-\d+\.json$/;
 const WRITER_ROLES = new Set(["writer", "admin", "jwt", "org_admin", "platform_admin"]);
+/** What the `source` line calls a `tokenLookup` kind. */
+function tokenSourceName(kind) {
+  if (kind === "config") return loomConfigPath();
+  if (kind === "file") return loomTokenPath();
+  return { env: "LOOM_API_KEY", agent: "the workload-token exchange", option: "the plugin's install option" }[kind];
+}
 
 function staleFlushCount(directory, now) {
   try {
@@ -34,6 +45,11 @@ export async function clientStatus({
   serverUrl,
   token,
   scope,
+  tokenKind = "",
+  configUrl = "",
+  // The server an agent's exchange went to: the hooks' server, which may
+  // differ from the MCP entry's checked here.
+  exchangeUrl = serverUrl,
   fetchImpl = fetch,
   now = Date.now(),
   tempDirectory = tmpdir(),
@@ -59,7 +75,7 @@ export async function clientStatus({
     add(
       "token",
       "FAIL",
-      `no Loom token: the workload-token exchange at ${serverUrl} failed (agent mode, LOOM_CLIENT_ID)`,
+      `no Loom token: the workload-token exchange at ${exchangeUrl} failed (agent mode, LOOM_CLIENT_ID)`,
     );
   } else if (!validJwt) {
     add("token", "FAIL", token ? "token is not a readable JWT" : "no Loom token resolved");
@@ -68,8 +84,20 @@ export async function clientStatus({
   } else {
     add("token", "PASS", `${claims.sub || "unknown subject"} @ ${claims.org || "unknown org"}`);
   }
+  if (tokenKind) {
+    // A config token saved for another server is what the MCP header helper
+    // sends to this one; the hooks may hold a different token.
+    const source = tokenSourceName(tokenKind);
+    const saved = normalizeUrl(configUrl);
+    const other = tokenKind === "config" && saved && !sameServer(saved, serverUrl);
+    add(
+      "source",
+      other ? "WARN" : "PASS",
+      other ? `token from ${source}, which names ${saved}; this check uses ${serverUrl}` : `token from ${source}`,
+    );
+  }
 
-  if (health.status === 200 && checks.at(-1)?.grade === "PASS") {
+  if (health.status === 200 && checks.find((c) => c.name === "token")?.grade === "PASS") {
     const auth = await requestJson(`${serverUrl}/v1/namespace.list_mine`, {
       body: { org: scope.org },
       token,
@@ -114,10 +142,17 @@ export async function clientStatus({
 }
 
 if (process.env.LOOM_HOOK_NO_MAIN !== "1") {
+  const { token, kind } = tokenLookup();
+  // Under Codex the MCP entry's URL is unknown here: the check runs against
+  // the hooks' server and compares the config with nothing.
+  const fixed = entryIsFixed();
   const result = await clientStatus({
-    serverUrl: resolveServerUrl(),
-    token: resolveToken(),
+    serverUrl: fixed ? resolveServerUrl() : statusServerUrl(),
+    token,
     scope: resolveScope(process.cwd()),
+    tokenKind: kind,
+    configUrl: fixed ? "" : loomConfig().url,
+    exchangeUrl: resolveServerUrl(),
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.ok) process.exitCode = 1;

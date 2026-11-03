@@ -105,8 +105,8 @@ ClickHouse.
 - **Traces.** Spans go to `default.otel_traces` (or the OTLP endpoint), tagged
   `loom.org`, `loom.namespace`, `loom.agent`, `loom.operation`, `loom.request_id` and
   `enduser.id`. Health polls open no span (`LOOM_OTEL_EXCLUDED_URLS`, default
-  `/v1/health`). Every HTTP response carries `X-Request-Id` (echoed when the client sends
-  one) and `X-Trace-Id`. Spans never carry query text.
+  `/v1/health`). Every HTTP response carries `X-Request-Id` (the client's, when it sends
+  one of 1 to 64 letters, digits, `.`, `_` or `-`) and `X-Trace-Id`. Spans never carry query text.
 - **Logs.** `docker logs loom-server` and `docker logs loom-workers`, and the OTel log
   export to `default.otel_logs`. `LOOM_LOG_FORMAT=json` for a log pipeline,
   `LOOM_LOG_LEVEL` for verbosity. The boot log names the resolved providers and each

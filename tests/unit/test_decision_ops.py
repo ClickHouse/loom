@@ -768,7 +768,7 @@ def test_a_pinned_decision_peer_is_marked_conflicted_and_stays_pinned(monkeypatc
     async def insert(versions, ch=None):
         written.extend(versions)
 
-    async def mirror(versions, ch=None, judged=False):
+    async def mirror(versions, ch=None, **_):
         return None
 
     monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)

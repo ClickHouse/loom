@@ -22,8 +22,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from server.auth import fail_closed
-from server.auth.authz import row_in_scope
 from server.core.datetimes import naive_utc_now
 from server.identity.api.models_namespace_catalog import NamespaceListCategoriesInput
 from server.identity.api.models_namespace_guide import NamespaceGuideGetInput
@@ -46,7 +44,6 @@ from server.memory.app.exposure_ledger import record_exposure
 from server.memory.app.finding_evidence import IDENTITY, revisions_for
 from server.memory.store import inspect as store
 from server.observability.consumer import INSPECTOR_CONSUMERS
-from server.operations.base import Role
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -242,25 +239,10 @@ class _Inspect:
         if cats is not None:
             out.categories_registered = len(cats.categories)
             self.category_names = {c.category_id: c.name for c in cats.categories}
-        # A grant read that fails refuses (fails closed) and is noted, not raised: the
-        # policy is withheld and the section is reported skipped, not as a non-admin's.
-        # The note is cleared first: a clean refusal restores one an earlier check left.
-        fail_closed.reset()
-        if await row_in_scope(i.org, i.namespace, Role.ORG_ADMIN):
-            out.extraction_policy = await self.guarded(
-                "settings.extraction_policy",
-                lambda: extraction_policy.effective(i.org, i.namespace),
-                None,
-            )
-            if out.extraction_policy is None:
-                out.extraction_policy_unavailable = "the policy could not be read"
-        elif fail_closed.unreadable():
-            self.skipped.append("settings.extraction_policy: the caller's access was unreadable")
-            out.extraction_policy_unavailable = "the caller's access could not be read"
-        else:
-            out.extraction_policy_unavailable = (
-                "only an org admin reads the operator extraction policy"
-            )
+        read = await extraction_policy.for_caller(i.org, i.namespace)
+        out.extraction_policy, out.extraction_policy_unavailable = read.policy, read.unavailable
+        if read.skipped:
+            self.skipped.append(f"settings.extraction_policy: {read.skipped}")
         return out
 
 
