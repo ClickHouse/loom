@@ -48,8 +48,7 @@ def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
     own org, unless the token is org-wide (`*`). Whatever stays absent is "-";
     a padded name is stripped."""
     from server.core import request_work
-    from server.core.naming import SENTINEL
-    from server.transport.gates import present
+    from server.core.naming import SENTINEL, present
 
     out = request_identity(args)
     bag = request_work.current()

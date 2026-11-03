@@ -31,6 +31,7 @@ from server.code.app.common import (
 )
 from server.core import idempotency, llm_free
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, LoomServerError
+from server.core.naming import present
 from server.observability.consumer import (
     bind_current_consumer,
     explicit_consumer,
@@ -351,7 +352,7 @@ def _refused_body(raw_body: dict[str, Any], auth: AuthInfo | None) -> dict[str, 
     namespace `-`, never the named one."""
     from server.auth.authz import may_act_in_org
 
-    named = gates.present(raw_body.get("org"))
+    named = present(raw_body.get("org"))
     if auth is not None and named is not None and not may_act_in_org(auth, named):
         return {**raw_body, "org": auth.org, "namespace": SENTINEL}
     return raw_body
@@ -798,8 +799,8 @@ def _mentor_headers(
             raw_body,
             result,
             session_key=_mentor.session_key_for("", {**raw_body, **tenant}),
-            org=gates.present(tenant["org"]) or "",
-            namespace=gates.present(tenant["namespace"]) or "",
+            org=present(tenant["org"]) or "",
+            namespace=present(tenant["namespace"]) or "",
             agent=str(raw_body.get("agent") or "-"),
         )
         set_hint_context(hint[0] if hint else "")
