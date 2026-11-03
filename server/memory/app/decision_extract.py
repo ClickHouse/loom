@@ -494,7 +494,7 @@ async def _read_own(
     rows = await _extractor_rows(org, t.rows_namespace, t.doc_namespace, source_uri)
     tagged = sorted({x for r in rows for x in r.tags if x.startswith("repo:")} - {t.repo_tag})
     if tagged:
-        names = await _readable_names(org)
+        names = await _readable_names(org, set(tagged))
         linked_to = ", ".join(names.get(x, x) for x in tagged)
         return [], (
             f"this document's decisions are linked to a repository ({linked_to}); run with "
@@ -517,13 +517,15 @@ async def _read_own(
     return await _own_records(org, t.rows_namespace, rows), ""
 
 
-async def _readable_names(org: str) -> dict[str, str]:
-    """`repo:<id>` tag -> owner/name of each repository the caller may read; another
-    stays a tag, as `_target` answers for a repository the caller may not read."""
+async def _readable_names(org: str, tags: set[str]) -> dict[str, str]:
+    """`repo:<id>` tag -> owner/name of each of `tags`' repositories the caller may read;
+    another stays a tag, as `_target` answers for a repository the caller may not read."""
     from server.code.app.repo_scope import repo_names
 
     out: dict[str, str] = {}
     for tag, (name, trunk) in repo_names(org).items():
+        if tag not in tags:
+            continue
         try:
             # Only the message's wording rides on it, not the refusal.
             readable = await row_in_scope(org, trunk, Role.VIEWER, hides_answer=False)
