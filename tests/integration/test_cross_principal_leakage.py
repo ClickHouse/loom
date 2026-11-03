@@ -995,6 +995,28 @@ def test_org_level_lookups_do_not_bypass_the_namespace(control_plane_url, seed, 
         assert r.status_code in _OK_STATUSES and not seed.leaked(r.text)
 
 
+def test_a_dash_org_is_the_tokens_own_org(control_plane_url, seed, tokens) -> None:
+    """An org of "-" is absent to the gate, which authorizes the call in the
+    token's org; the write lands there, and another org's token naming "-"
+    reaches none of it."""
+    nonce = _canary()
+    key = f"dash_org_{uuid.uuid4().hex[:6]}"
+    r = _post(
+        control_plane_url,
+        tokens["a_writer"],
+        "memory.set",
+        {"org": "-", "namespace": seed.ns_a, "agent": "a", "memory_key": key, "value": nonce},
+    )
+    assert r.status_code == 200, r.text
+    own = {"namespace": seed.ns_a, "agent": "a", "memory_key": key}
+    r = _post(control_plane_url, tokens["a_writer"], "memory.get", {"org": seed.org, **own})
+    assert r.status_code == 200 and nonce in r.text, r.text[:200]
+    for body in ({"org": "-", **own}, {"org": "-", **own, "namespace": "-"}):
+        r = _post(control_plane_url, tokens["other_org"], "memory.get", body)
+        assert r.status_code in _OK_STATUSES, r.text[:200]
+        assert nonce not in r.text, f"another org read a '-'-org write: {r.text[:200]}"
+
+
 def test_error_bodies_do_not_echo_canaries(control_plane_url, seed, tokens) -> None:
     """A 403 that quotes the forbidden row is still a leak."""
     r = _post(

@@ -505,13 +505,10 @@ async def _bind_caller_identity(
 
     # Fill in identity-tuple defaults the caller omitted (LLMs call with just
     # the action args). Existing args win — explicit namespace is honored.
-    # code.* ops are EXEMPT: their identity defaults to the deployment's code
-    # namespace inside the handler (resolve_code_identity), and injecting the
+    # code.* ops are EXEMPT: the gate authorizes them against the code plane's
+    # org and namespace and `gates.with_target` fills those in, whereas the
     # caller's MEMORY namespace here would point every chat-surface code.search
-    # at personal-<user> — an empty index, so the tool would always abstain. Leaving
-    # org/namespace absent also keeps authz on the flat-role path, which is
-    # what lets a human token with no code-namespace grant read the shared
-    # index at all.
+    # at personal-<user> — an empty index, so the tool would always abstain.
     try:
         defaults = await _caller_defaults(auth, client_name)
     except LoomServerError as e:
