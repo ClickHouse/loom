@@ -207,6 +207,8 @@ class _Inspect:
             self.category_names = {c.category_id: c.name for c in cats.categories}
         # A grant read that fails refuses (fails closed) and is noted, not raised: the
         # policy is withheld and the section is reported skipped, not as a non-admin's.
+        # The note is cleared first: a clean refusal restores one an earlier check left.
+        fail_closed.reset()
         if await row_in_scope(i.org, i.namespace, Role.ORG_ADMIN):
             out.extraction_policy = await self.guarded(
                 "settings.extraction_policy",

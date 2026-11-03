@@ -284,6 +284,34 @@ async def test_an_unreadable_grant_withholds_the_policy_and_says_so(
 
 
 @pytest.mark.asyncio
+async def test_a_failed_read_noted_earlier_is_not_blamed_on_the_admin_check(
+    ch: RecordingCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.auth import authz, fail_closed
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.core import request_work
+    from server.operations.base import Role
+
+    async def not_an_admin(*a: Any, **k: Any) -> None:
+        raise PermissionError("not an org admin")
+
+    monkeypatch.setattr(authz, "check_authorized", fail_closed.marks_unverified(not_an_admin))
+    set_current_auth(
+        AuthInfo(
+            subject="a", org="o", namespaces=("ns",), roles=(Role.VIEWER,), is_service_account=False
+        )
+    )
+    request_work.begin()
+    # An earlier check in the request noted a failed read and still let the caller in.
+    fail_closed.note_unreadable()
+    out = await mi.handle_memory_inspect(_inp())
+    assert "only an org admin" in out.settings.extraction_policy_unavailable
+    assert not any(s.startswith("settings.extraction_policy") for s in out.skipped)
+    assert not fail_closed.answered_unverified()
+
+
+@pytest.mark.asyncio
 async def test_a_failed_section_is_skipped_not_raised(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _ch(tags=_boom)
     fake.strict = False
