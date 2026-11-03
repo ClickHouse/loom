@@ -269,6 +269,8 @@ async def lexical_search(
         dl="length(words)",
         avgdl="{avgdl:Float32}",
     )
+    # Direct read is off (the SETTINGS line), as the memory, tracker and code-grep
+    # text-index legs set it: it can drop rows under ORDER BY ... LIMIT.
     sql = f"""
         WITH arrayConcat(splitByNonAlpha(context_lc), splitByNonAlpha(content_lc)) AS words
         SELECT
@@ -290,8 +292,6 @@ async def lexical_search(
         LIMIT {{top_k:UInt32}}
         SETTINGS query_plan_direct_read_from_text_index = 0
     """
-    # The SETTINGS turn direct read off, as on the other hasAnyTokens legs: answering
-    # them from the text index alone is recorded to lose rows under ORDER BY ... LIMIT.
     rows = await ch.query_all(sql, params=params)
     return [
         ChunkHit(
