@@ -819,6 +819,18 @@
               "body",
               "options"
             ],
+            "ingest": [
+              "body",
+              "options"
+            ],
+            "ingest_cancel": [
+              "body",
+              "options"
+            ],
+            "ingest_status": [
+              "body",
+              "options"
+            ],
             "list": [
               "body",
               "options"

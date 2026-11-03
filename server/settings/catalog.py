@@ -2007,6 +2007,30 @@ class KnowledgeSettings(BaseModel):
     # the step is chunk_size, so no text falls between chunks.
     knowledge_chunk_stride: Annotated[int, LIVE] = 1230
 
+    # ---- server-side ingestion (knowledge.upload, knowledge.ingest) ----
+    # Largest file POST /v1/knowledge.upload accepts, in bytes; a larger body is
+    # refused with 413 before any of it is stored.
+    knowledge_upload_max_bytes: Annotated[int, LIVE] = Field(default=64 * 1024 * 1024, ge=1)
+    # Seconds an upload stays ingestible; the originals sweep keeps its bytes
+    # until then, and knowledge.ingest refuses it after.
+    knowledge_upload_ttl_seconds: int = Field(default=86_400, ge=60)
+    # The worker that runs ingestion jobs: extract, chunk, embed, publish.
+    knowledge_ingest_enabled: bool = True
+    # Seconds between ingestion passes while jobs wait.
+    knowledge_ingest_interval_seconds: int = 2
+    # Seconds between passes when the last one found nothing to do.
+    knowledge_ingest_idle_interval_seconds: int = 15
+    # Seconds one pass, which runs one job, may take before it is cancelled:
+    # the extractor's timeout plus embedding the largest source. A job cut off
+    # runs again from its start and counts toward its attempts.
+    knowledge_ingest_max_pass_seconds: int = Field(default=900, ge=60)
+    # Attempts a job gets after a transient failure (a provider or store
+    # outage) before it fails for good.
+    knowledge_ingest_max_attempts: int = Field(default=5, ge=1)
+    # Most chunks one source may publish; a larger extraction fails with
+    # `too_large` rather than flood the embedder.
+    knowledge_ingest_max_chunks: Annotated[int, LIVE] = Field(default=20_000, ge=1)
+
     # ---- timeouts, budgets and caches ----
     # Seconds the repository-docs read for a brief may take.
     knowledge_repo_docs_timeout_s: Annotated[float, LIVE] = Field(default=1.5, gt=0)
@@ -5528,6 +5552,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.dedup_resolve": 400,
     "knowledge.delete": 100,
     "knowledge.get": 30,
+    "knowledge.ingest": 60,
+    "knowledge.ingest_cancel": 60,
+    "knowledge.ingest_status": 40,
     "knowledge.list": 150,
     "knowledge.outline": 80,
     "knowledge.reads": 500,

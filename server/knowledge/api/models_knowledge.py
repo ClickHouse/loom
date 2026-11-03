@@ -420,6 +420,14 @@ class KnowledgeGetOutput(BaseModel):
     superseded: bool | None = None
     # Id of the returned document version.
     doc_id: str | None = None
+    # The source's revision (1, 2, ... per source_uri); 0 for a document no write numbered.
+    revision: int | None = None
+    # For a file Loom extracted (knowledge.ingest): the format it was extracted as.
+    format: str | None = None
+    # For an extracted file: the extractor's parser and version that read it.
+    parser: str | None = None
+    # For an extracted file: what was extracted (unit, total, extracted, failed, lost).
+    coverage: dict[str, Any] | None = None
 
 
 class KnowledgeListInput(BaseModel):
@@ -513,7 +521,8 @@ class KnowledgeUpdateMetadataInput(BaseModel):
     tags: list[str] | None = None
     # When True, rewrite every chunk with the new title + description in its
     # context (re-embedded, re-scored by the lexical leg), routed through the upsert
-    # flow for identical supersession semantics (same content, fresh chunks).
+    # flow for identical supersession semantics (same content, fresh chunks). A
+    # document ingested from a file is refused (422): ingest it again instead.
     reindex: bool = False
 
 
@@ -638,3 +647,128 @@ class KnowledgeDedupResolveOutput(BaseModel):
     decision: str
     # The URI that was soft-superseded.
     superseded_uri: str = ""
+
+
+class KnowledgeIngestOptions(BaseModel):
+    # The file's format when its name does not say (`markdown`, `html`, `text`, `sql`,
+    # `toml`, ...); it never overrides what the bytes are.
+    format: str = ""
+    # The text encoding when it is not UTF-8 and the file has no byte-order mark.
+    encoding: str = ""
+    # The SQL dialect (`clickhouse`, `postgres`, `mysql`, ...); empty detects it.
+    sql_dialect: str = ""
+
+
+class KnowledgeIngestInput(BaseModel):
+    """Extract an uploaded file (the extractor service parses it, the server
+    checks what it returns) and publish it as a document revision,
+    asynchronously: the answer names the job, and `knowledge.ingest_status`
+    follows it."""
+
+    org: str
+    namespace: str
+    # The `upload_id` POST /v1/knowledge.upload returned for the file.
+    upload_id: str
+    # The document's stable identifier in the namespace; a later ingest of the same
+    # source_uri publishes its next revision.
+    source_uri: str
+    # Document title; empty takes the upload's file name.
+    title: str = ""
+    # Prepended with the title to each chunk before embedding.
+    description: str = ""
+    # Labels stored on the document and every chunk.
+    tags: list[str] = Field(default_factory=list)
+    # Free-form JSON stored with the document and every chunk.
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    # Publish only if the source's live revision is this one (0: no live document);
+    # unset publishes over whatever is live.
+    expected_revision: int | None = Field(default=None, ge=0)
+    # Publish an extraction that lost part of the source (coverage incomplete),
+    # marked `partial`; off fails it instead.
+    allow_partial: bool = False
+    # Overrides for what the file cannot say about itself.
+    options: KnowledgeIngestOptions = Field(default_factory=KnowledgeIngestOptions)
+    # The agent writing the document; an end-user token's signed agent takes its place.
+    agent: str = Field(default="", max_length=128)
+    # The session the document was written in. Empty = '-'.
+    session_id: str = Field(default="", max_length=256)
+    # `derived`, `external` or `imported` when the content is not the writer's own.
+    source_class: str | None = None
+
+
+class KnowledgeIngestOutput(BaseModel):
+    # The job's id; `knowledge.ingest_status` and `knowledge.ingest_cancel` take it.
+    ingestion_id: str
+    # `pending` until a worker takes it.
+    state: str
+    source_uri: str
+    namespace: str = ""
+
+
+class KnowledgeIngestStatusInput(BaseModel):
+    """A knowledge.ingest job's state, stage, coverage, failure and published
+    revision."""
+
+    org: str
+    namespace: str
+    # The `ingestion_id` knowledge.ingest returned.
+    ingestion_id: str
+
+
+class KnowledgeIngestStatusOutput(BaseModel):
+    # False when no job of this id is in the namespace; every other field is then empty.
+    found: bool
+    # The job asked about.
+    ingestion_id: str
+    source_uri: str = ""
+    # pending, processing, ready, partial, failed or cancelled.
+    state: str = ""
+    # The stage a processing job is in: parse, embed or publish.
+    stage: str = ""
+    # Runs of the job so far, a retry after a transient failure included.
+    attempts: int = 0
+    # Why it failed (`format_unavailable`, `encoding`, `incomplete_extraction`,
+    # `revision_conflict`, `too_large`, `no_text`, `retries_exhausted`, ...), or
+    # `retrying` while it waits for its next attempt; empty otherwise.
+    error_code: str = ""
+    # The failure in words, for a person; empty when it did not fail.
+    error_message: str = ""
+    # The format the file was extracted as, empty before extraction.
+    format: str = ""
+    # What the extraction covered (unit, total, extracted, failed, lost).
+    coverage: dict[str, Any] | None = None
+    # The extractor's warnings about the file.
+    warnings: list[str] = Field(default_factory=list)
+    # Chunks published, 0 until the job publishes.
+    chunks: int = 0
+    # The revision the job published, 0 until it does.
+    revision: int = 0
+    # The revision the job requires to be live when it publishes; None for any.
+    expected_revision: int | None = None
+    # The uploaded file's name.
+    filename: str = ""
+    # Whether the document is searchable from this job: ready (published), pending
+    # (not yet), failed (it will not be) or cancelled.
+    retrieval: str = ""
+    # Whether knowledge.ingest_cancel was called for the job.
+    cancel_requested: bool = False
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class KnowledgeIngestCancelInput(BaseModel):
+    org: str
+    namespace: str
+    # The `ingestion_id` knowledge.ingest returned.
+    ingestion_id: str
+
+
+class KnowledgeIngestCancelOutput(BaseModel):
+    # False when no job of this id is in the namespace.
+    found: bool
+    # The job's state after the call: `cancelled` for a job that had not started,
+    # its running state when the worker will stop it before publishing, or where it
+    # already ended (a published revision stays published).
+    state: str = ""
+    # True when this call stopped the job, or asked the worker to.
+    cancelled: bool = False

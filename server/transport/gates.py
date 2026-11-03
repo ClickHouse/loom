@@ -32,16 +32,15 @@ here, once:
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from server.code.app.common import plane_namespace_for, plane_org_for
-from server.core.errors import IdentityIncompleteError, RateLimitedError
+from server.core import fail_open
+from server.core.errors import IdentityIncompleteError
 from server.core.naming import present
-from server.settings import settings
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
@@ -66,14 +65,6 @@ END_USER_ORG_OPS = frozenset(
 # The code a role / namespace refusal carries on both transports: the one the
 # SDKs map (`AuthInsufficient`) and docs/reference/errors.md lists.
 ROLE_REFUSAL_CODE = "AUTH_INSUFFICIENT"
-
-# A fail-open gate logs at most once per this many seconds, with the count of
-# failures since its last line.
-FAIL_OPEN_LOG_INTERVAL_S = 60.0
-
-_FAIL_OPEN_TOTAL: dict[str, int] = {}
-_FAIL_OPEN_SINCE_LOG: dict[str, int] = {}
-_FAIL_OPEN_LAST_LOG: dict[str, float] = {}
 
 
 def _token_org(auth: AuthInfo | None) -> str | None:
@@ -316,29 +307,6 @@ def _would_act_as_nobody(op: Operation) -> bool:
     return carries_identity and (not op.read_only or op.name == "cost.summary")
 
 
-def _fail_open(gate: str, op_name: str, err: BaseException) -> None:
-    """Count one fail-open and log it at most once per interval per gate."""
-    _FAIL_OPEN_TOTAL[gate] = _FAIL_OPEN_TOTAL.get(gate, 0) + 1
-    _FAIL_OPEN_SINCE_LOG[gate] = _FAIL_OPEN_SINCE_LOG.get(gate, 0) + 1
-    now = time.monotonic()
-    last = _FAIL_OPEN_LAST_LOG.get(gate)
-    if last is None or now - last >= FAIL_OPEN_LOG_INTERVAL_S:
-        n = _FAIL_OPEN_SINCE_LOG.pop(gate, 1)
-        _FAIL_OPEN_LAST_LOG[gate] = now
-        log.warning(
-            "%s failed open (%d call(s) since the last line; latest %s): %s",
-            gate,
-            n,
-            op_name,
-            err,
-        )
-
-
-def fail_open_counts() -> dict[str, int]:
-    """Fail-opens per gate since the process started."""
-    return dict(_FAIL_OPEN_TOTAL)
-
-
 async def traffic_class(
     op: Operation, auth: AuthInfo | None, target: Target, args: Any
 ) -> tuple[str, str]:
@@ -354,7 +322,7 @@ async def traffic_class(
         else:
             cls, source = await classify(auth, target.org, target.namespace, args)
     except Exception as e:  # noqa: BLE001 — FAILS OPEN: classification never refuses a call
-        _fail_open("traffic_class", op.name, e)
+        fail_open.note("traffic_class", op.name, e)
         cls, source = "interactive", "default"
     set_current_traffic_class(cls, source)
     return cls, source
@@ -384,7 +352,7 @@ def rate_limit(
             traffic_class=traffic,
         )
     except Exception as e:  # noqa: BLE001 — FAILS OPEN: a limiter error admits the call
-        _fail_open("rate_limit", op.name, e)
+        fail_open.note("rate_limit", op.name, e)
         return None
 
 
@@ -403,49 +371,20 @@ def session_end_rate_limit(auth: AuthInfo | None, org: str) -> CheckResult | Non
             org=org or None,
         )
     except Exception as e:  # noqa: BLE001 — FAILS OPEN: a limiter error admits the DELETE
-        _fail_open("rate_limit", "run.complete", e)
+        fail_open.note("rate_limit", "run.complete", e)
         return None
-
-
-# Requests each org has running in this process (org -> count).
-_IN_FLIGHT: dict[str, int] = {}
-
-
-def tenant_inflight_cap() -> int:
-    """This process's share of LOOM_TENANT_MAX_CONCURRENT_REQUESTS, divided the way
-    the rate limits are (replicas × web workers, at least 1); 0 = no cap."""
-    configured = int(settings.tenant_max_concurrent_requests)
-    if configured <= 0:
-        return 0
-    from server.core.ratelimit import effective_divisor
-
-    return max(1, configured // effective_divisor(shared=False))
 
 
 @contextmanager
 def tenant_slot(auth: AuthInfo | None, target: Target | None) -> Iterator[None]:
-    """Hold one of the org's in-flight slots while the handler runs, released however
-    it ends. RateLimitedError (429 RATE_LIMITED) when the org's share is all in use. The
-    org is the verified token's, else the target's, as for the rate limiter."""
+    """Hold one of the org's in-flight slots while the handler runs
+    (`server.core.tenant_slots`). The org is the verified token's, else the
+    target's, as for the rate limiter."""
+    from server.core import tenant_slots
+
     org = _rate_limit_org(auth, target) if target is not None else _token_org(auth)
-    cap = tenant_inflight_cap()
-    if not org or cap <= 0:
+    with tenant_slots.hold(org):
         yield
-        return
-    if _IN_FLIGHT.get(org, 0) >= cap:
-        raise RateLimitedError(
-            f"org {org!r} already has {cap} requests running on this server; retry shortly",
-            retry_after_s=1,
-        )
-    _IN_FLIGHT[org] = _IN_FLIGHT.get(org, 0) + 1
-    try:
-        yield
-    finally:
-        left = _IN_FLIGHT[org] - 1
-        if left > 0:
-            _IN_FLIGHT[org] = left
-        else:
-            del _IN_FLIGHT[org]
 
 
 @dataclass(frozen=True, slots=True)

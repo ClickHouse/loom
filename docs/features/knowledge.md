@@ -56,6 +56,9 @@ the operations reference.
 | `knowledge.reads`           | viewer | How often agents opened each document over the last `days` (1–30).                     |
 | `knowledge.dedup_list`      | admin  | Documents (and, optionally, chunks) of the namespace with identical content hashes.    |
 | `knowledge.dedup_resolve`   | admin  | Supersede one side of a duplicate pair.                                                |
+| `knowledge.ingest`          | writer | Extract an uploaded file and publish it as a document revision (a job).                |
+| `knowledge.ingest_status`   | viewer | A job's state, stage, coverage, warnings, failure and published revision.              |
+| `knowledge.ingest_cancel`   | writer | Stop a job before it publishes.                                                        |
 
 `knowledge.search` and `knowledge.reads` are hidden from MCP: neither is listed, and
 `loom_op` refuses them too. An agent reaches the knowledge plane through
@@ -452,6 +455,86 @@ which Loom's do not use, so a replica behind a write could call its object unnam
 the min age well above the floor there (the 3600 default leaves about 45 minutes), or send
 every Loom process to one replica. `loom doctor` warns about this topology
 (`replica_consistency`).
+
+## Ingesting files
+
+`knowledge.add` takes text the caller extracted. A file Loom should extract goes in two
+steps, so the bytes never travel as base64 inside JSON and extraction never holds a
+request open:
+
+1. **`POST /v1/knowledge.upload?org=&namespace=&filename=`** with the file as the raw
+   body (writer role; `sha256=` and `content_type=` optional). The bytes are stored as an
+   original (where originals are stored, below) and the answer is a `201` with the
+   scoped `upload_id`, `sha256`, `size`, the `format` its name and `content_type` give
+   and `expires_at` (`LOOM_KNOWLEDGE_UPLOAD_TTL_SECONDS`, a day by default). A body over
+   `LOOM_KNOWLEDGE_UPLOAD_MAX_BYTES` (64 MiB) is `413`, bytes that do not hash to the
+   `sha256` sent are `422 CHECKSUM_MISMATCH`, and a legacy Office name (`.doc`, `.xls`,
+   `.ppt`) is `415 UNSUPPORTED_FILE`, before anything is stored. The server does not
+   read the bytes to type them: content that is another format than its name is refused
+   at ingest (`format_mismatch`).
+2. **`knowledge.ingest`** with that `upload_id` and the `source_uri` to publish under
+   (title, description, tags, metadata as for `knowledge.add`). Only the caller who
+   uploaded the file can ingest it. Options say what a file cannot: `format`,
+   `encoding`, `sql_dialect`. `expected_revision` publishes only over that revision
+   (0: no live document), and `allow_partial` publishes an extraction that lost part of
+   its source instead of failing it. The answer is the job's `ingestion_id`, `pending`.
+
+The `knowledge_ingest` worker then sends the original's bytes to the extractor service
+its format is routed to, which returns the extraction artifact the server checks as
+untrusted input ([document extraction](../architecture/document-extraction.md)); the
+server parses nothing itself. It stores the artifact,
+cuts structural chunks, embeds them (an input this namespace already embedded under the
+same model keeps its stored vector) and publishes the next **revision** of the source:
+chunks first, then the document row, then the earlier version's chunks retired. A
+document row carries its `revision`, `format`, `parser` and `coverage`, which
+`knowledge.get` returns; each chunk's `chunk_metadata` carries its `locator` (line span,
+char span, TOML key path) and block ids, and its `keys` the exact names it defines or
+reads. Text writes (`knowledge.add`, `upsert`) number revisions too. Ingests of one
+source publish one at a time, so `expected_revision` guards an ingest against another;
+a text write takes no such claim, so one that races a write of the same source can
+reuse its revision number, and the later version wins.
+
+`knowledge.ingest_status` follows a job: `pending`, `processing` (with its `stage`:
+`parse`, `embed`, `publish`), then `ready`, `partial`, `failed` or `cancelled`, with the
+coverage, the parser's warnings, the chunks and revision published, and `retrieval`
+(`ready` once the document is searchable). A job's record is kept for 30 days after its
+last change, an upload's for 7 days after it expires. A failed job names why in `error_code`:
+
+| `error_code`            | Means                                                                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `format_unavailable`    | no configured extractor takes the format (none routed, it does not declare it, or it answers `format_unavailable`)                      |
+| `unsupported_format`    | an `options.format` Loom does not know, or bytes of no format the extractor reads                                                       |
+| `format_mismatch`       | the declared or named format is not what the bytes are                                                                                  |
+| `corrupt`               | the file is damaged, or the extractor's parser fails on it                                                                              |
+| `timeout`               | the extraction took longer than the extractor allows                                                                                    |
+| `resource_limit`        | the extraction passed the extractor's memory or output limit, or the artifact the server's `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES` |
+| `encoding`              | the text is not valid in its encoding; declare it in `options.encoding`                                                                 |
+| `invalid_option`        | an unknown encoding or SQL dialect                                                                                                      |
+| `incomplete_extraction` | coverage is incomplete and `allow_partial` was off                                                                                      |
+| `no_text`               | the file holds no text to index                                                                                                         |
+| `too_large`             | the original is over the extractor's `max_bytes`, or it cut more chunks than `LOOM_KNOWLEDGE_INGEST_MAX_CHUNKS`                         |
+| `revision_conflict`     | the live revision is not `expected_revision`                                                                                            |
+| `original_gone`         | the upload's bytes are no longer stored                                                                                                 |
+| `retries_exhausted`     | the extractor, a provider or a store failed `LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS` times (`retrying` before)                              |
+| `invalid_artifact`      | the extractor answered with an artifact that breaks the contract                                                                        |
+| `refused`               | the extractor refused the source with a `4xx` that names no contract code                                                               |
+| `internal`              | a defect; the log line has it                                                                                                           |
+
+A transient failure (an extractor that cannot be reached, times out, or answers a `5xx`,
+`408`, `429` or another status that is neither a result nor a refusal; a provider or a
+store outage) puts the job back with a doubling delay; a source the extractor refuses, or
+an artifact that breaks the contract, fails at once with its code. A pass runs one due
+job, namespaces in turn, and is cancelled after `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS`
+(15 minutes); a job cut off there, or by a process that stopped, runs again from its start
+and counts the attempt. A job that fails, or is cancelled, publishes nothing, so the
+earlier revision keeps serving. `knowledge.ingest_cancel` stops a pending job at once and
+a running one before it publishes; a job past its publish check finishes. The reference
+extractor reads Markdown, HTML, plain text, SQL and TOML; another format fails
+`format_unavailable` until an extractor that declares it is configured.
+`knowledge.update_metadata` with `reindex=true` refuses an ingested document (its chunks
+come from the artifact): ingest it again to re-index it. A chunk's context (the title,
+description and section breadcrumb both search legs read) is filled as for
+`knowledge.add`.
 
 ## Where originals are stored
 

@@ -159,6 +159,92 @@ Fetch a single document by source_uri.
 | `ingested_at` | `datetime \| None` | When this version of the document was written. |
 | `superseded` | `bool \| None` | True when the returned version is soft-deleted or superseded. |
 | `doc_id` | `str \| None` | Id of the returned document version. |
+| `revision` | `int \| None` | The source's revision (1, 2, ... per source_uri); 0 for a document no write numbered. |
+| `format` | `str \| None` | For a file Loom extracted (knowledge.ingest): the format it was extracted as. |
+| `parser` | `str \| None` | For an extracted file: the extractor's parser and version that read it. |
+| `coverage` | `dict[str, Any] \| None` | For an extracted file: what was extracted (unit, total, extracted, failed, lost). |
+
+## `knowledge.ingest`
+
+Extract an uploaded file (the extractor service parses it, the server checks what it returns) and publish it as a document revision, asynchronously: the answer names the job, and…
+
+`POST /v1/knowledge.ingest` · MCP `loom_knowledge_ingest` · role `writer` · write · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `upload_id` | `str` | required | The `upload_id` POST /v1/knowledge.upload returned for the file. |
+| `source_uri` | `str` | required | The document's stable identifier in the namespace; a later ingest of the same source_uri publishes its next revision. |
+| `title` | `str` | `''` | Document title; empty takes the upload's file name. |
+| `description` | `str` | `''` | Prepended with the title to each chunk before embedding. |
+| `tags` | `list[str]` | *(computed)* | Labels stored on the document and every chunk. |
+| `metadata` | `dict[str, Any]` | *(computed)* | Free-form JSON stored with the document and every chunk. |
+| `expected_revision` | `int \| None` | `None` | Publish only if the source's live revision is this one (0: no live document); unset publishes over whatever is live. |
+| `allow_partial` | `bool` | `False` | Publish an extraction that lost part of the source (coverage incomplete), marked `partial`; off fails it instead. |
+| `options` | `KnowledgeIngestOptions` | *(computed)* | Overrides for what the file cannot say about itself. |
+| `agent` | `str` | `''` | The agent writing the document; an end-user token's signed agent takes its place. |
+| `session_id` | `str` | `''` | The session the document was written in. |
+| `source_class` | `str \| None` | `None` | `derived`, `external` or `imported` when the content is not the writer's own. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `ingestion_id` | `str` | The job's id; `knowledge.ingest_status` and `knowledge.ingest_cancel` take it. |
+| `state` | `str` | `pending` until a worker takes it. |
+| `source_uri` | `str` |  |
+| `namespace` | `str` | The namespace the op reads or writes. |
+
+## `knowledge.ingest_cancel`
+
+A pending job is cancelled at once; a running one stops before it publishes; a finished one stays as it ended.
+
+`POST /v1/knowledge.ingest_cancel` · MCP `loom_knowledge_ingest_cancel` · role `writer` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `ingestion_id` | `str` | required | The `ingestion_id` knowledge.ingest returned. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `found` | `bool` | False when no job of this id is in the namespace. |
+| `state` | `str` | The job's state after the call: `cancelled` for a job that had not started, its running state when the worker will stop it before publishing, or where it already ended (a published revision stays published). |
+| `cancelled` | `bool` | True when this call stopped the job, or asked the worker to. |
+
+## `knowledge.ingest_status`
+
+A knowledge.ingest job's state, stage, coverage, failure and published revision.
+
+`POST /v1/knowledge.ingest_status` · MCP `loom_knowledge_ingest_status` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `ingestion_id` | `str` | required | The `ingestion_id` knowledge.ingest returned. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `found` | `bool` | False when no job of this id is in the namespace; every other field is then empty. |
+| `ingestion_id` | `str` | The job asked about. |
+| `source_uri` | `str` |  |
+| `state` | `str` | pending, processing, ready, partial, failed or cancelled. |
+| `stage` | `str` | The stage a processing job is in: parse, embed or publish. |
+| `attempts` | `int` | Runs of the job so far, a retry after a transient failure included. |
+| `error_code` | `str` | Why it failed (`format_unavailable`, `encoding`, `incomplete_extraction`, `revision_conflict`, `too_large`, `no_text`, `retries_exhausted`, ...), or `retrying` while it waits for its next attempt; empty otherwise. |
+| `error_message` | `str` | The failure in words, for a person; empty when it did not fail. |
+| `format` | `str` | The format the file was extracted as, empty before extraction. |
+| `coverage` | `dict[str, Any] \| None` | What the extraction covered (unit, total, extracted, failed, lost). |
+| `warnings` | `list[str]` | The extractor's warnings about the file. |
+| `chunks` | `int` | Chunks published, 0 until the job publishes. |
+| `revision` | `int` | The revision the job published, 0 until it does. |
+| `expected_revision` | `int \| None` | The revision the job requires to be live when it publishes; None for any. |
+| `filename` | `str` | The uploaded file's name. |
+| `retrieval` | `str` | Whether the document is searchable from this job: ready (published), pending (not yet), failed (it will not be) or cancelled. |
+| `cancel_requested` | `bool` | Whether knowledge.ingest_cancel was called for the job. |
+| `created_at` | `datetime \| None` |  |
+| `updated_at` | `datetime \| None` |  |
 
 ## `knowledge.list`
 
