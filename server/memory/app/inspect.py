@@ -10,10 +10,10 @@ the namespace guide and categories, and the operator extraction policy only for 
 caller who may read it (an org admin).
 
 It changes nothing it reads: plain reads of the namespace's rows, ledger, directory row,
-guide, categories, grants and extraction policy, no recall credit, and one
-exposure-ledger row for the rows it lists, as memory.list writes (which, inside a run,
-can feed the usage fold's `acted` credit as memory.list's does). A
-section that cannot be read lands in `skipped`, never raises.
+guide, categories, grants and extraction policy, and no recall credit. Its one write is
+an exposure-ledger row for the rows it lists, as memory.list writes, which inside a run
+can feed the usage fold's `acted` credit. A section that cannot be read lands in
+`skipped`, never raises.
 """
 
 from __future__ import annotations
