@@ -15,14 +15,13 @@ confidence; a row the conflict check linked to an older one of its namespace is
 placed above it (two typed decisions keep their order). In `rendered` a decision
 or constraint prints whole, outside `token_budget`, up to the
 `memory_for_file_whole_tokens` ceiling between them (one that would pass it is
-named on a closing line); the other rows are cut at `token_budget` (its header and removal
-footer always print, and its "… more" line whenever a row is left out).
-`extra_namespaces` (a repository's primary
-code namespace, where its team file rules and design decisions live) runs the
-same query per readable namespace, merged in the same order, team rows marked
-with their author. Each hit carries its `source_resource_id` and its
-`verification` state; a decision's rendered line carries the source after its
-value.
+named on a closing line); the other rows are cut at `token_budget` (its header
+and removal footer always print, and its "… more" line whenever a row is left
+out). `extra_namespaces` (a repository's primary code namespace, where its team
+file rules and design decisions live) runs the same query per readable
+namespace, merged in the same order, team rows marked with their author. Each
+hit carries its `source_resource_id` and its `verification` state; a decision's
+rendered line carries the source after its value.
 """
 
 from __future__ import annotations
@@ -66,7 +65,7 @@ class MemoryForFileInput(BaseModel):
 class _MemoryForFileHit(BaseModel):
     memory_key: str
     memory_type: str
-    # The stored JSON text, cut at 600 bytes (a decision or constraint at 24 bytes a token
+    # The stored JSON text, cut at 600 bytes (a decision or constraint at 48 bytes a token
     # of the memory_for_file_whole_tokens ceiling); `rendered` prints it decoded. The full
     # row is a memory.get away.
     value: str

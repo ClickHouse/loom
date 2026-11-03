@@ -87,7 +87,7 @@ async def test_decisions_that_read_alike_each_keep_a_live_row(agent, ch_client) 
     # The write-time verdicts only: the conflict resolver is off by default
     # (memory_conflict_resolver_enabled) and the CI server runs no workers, so nothing
     # judges these rows after they are written.
-    head = "x" * 130
+    head = "how the nightly compaction schedules its merges " * 30
     # A reason long enough that the shared statement, not the key each embedded text
     # ends with, decides how close two of these decisions are.
     reasoning = "a rollback takes two minutes and the previous image is known to be good"
@@ -98,7 +98,7 @@ async def test_decisions_that_read_alike_each_keep_a_live_row(agent, ch_client) 
             # The same statement: the category is in the key, not the text.
             ("deploy", "a bad image"),
             ("storage", "a bad image"),
-            # These two differ only at the end of a long scenario.
+            # These two differ only past the 1,200 characters the embedding reads.
             ("deploy", f"{head} on monday"),
             ("deploy", f"{head} on friday"),
             ("ci", "a flaky runner"),
@@ -124,3 +124,22 @@ async def test_decisions_that_read_alike_each_keep_a_live_row(agent, ch_client) 
     linked = [(mid, peers) for _, st, mid, peers in rows if st == "conflicted"]
     assert linked, rows
     assert all(peers and set(peers) <= ids - {mid} for mid, peers in linked), rows
+
+
+@pytest.mark.asyncio
+async def test_precedents_find_a_decision_past_its_embedded_excerpt(agent) -> None:
+    # The scenario alone fills the first 1,200 stored characters, so the outcome and the
+    # reasoning are found through the statement's chunks, not its head.
+    scenario = "how the nightly compaction schedules its merges " * 30
+    assert len(scenario) > 1200
+    out = await agent.decision.record(
+        category="design:allocator",
+        scenario=scenario,
+        outcome="keep a per-thread arena for spilled blocks",
+        reasoning="a shared arena fragments under concurrent spills and stalls the merge",
+    )
+    found = await agent.decision.precedents(
+        "per-thread arena for spilled blocks fragments under concurrent spills", top_k=5
+    )
+    keys = [p["memory_key"] for p in found["precedents"]]
+    assert out["memory_key"] in keys, found

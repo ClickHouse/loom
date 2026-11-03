@@ -35,14 +35,15 @@ class DecisionRecordInput(BaseModel):
     # supersedes the earlier record (history keeps it).
     category: str = Field(min_length=1, max_length=120)
     # The situation that needed deciding; `decision.precedents` matches a query against
-    # the decision's statement, which includes the start of the scenario.
+    # the decision's statement, which opens with the scenario.
     scenario: str = Field(min_length=1, max_length=2000)
     # Why this outcome was chosen.
     reasoning: str = Field(min_length=1, max_length=4000)
     # What was decided.
     outcome: str = Field(min_length=1, max_length=1000)
     # What was considered and not chosen — the field every "why not X"
-    # question needs and most decision logs omit.
+    # question needs and most decision logs omit. The record keeps each one up to 300
+    # characters, a longer one cut at a space and ending in "…".
     alternatives: list[str] = Field(default_factory=list, max_length=10)
     # The decider's confidence, 0-1; 0 records none (the memory row and edges then
     # carry 1.0).

@@ -855,8 +855,8 @@ def record_body(inp: DecisionRecordInput) -> dict[str, Any]:
 
 def _same_reasons(stored: list[str], candidate: list[str]) -> bool:
     """Each stored reason is one of the candidate's, the two sets alike. A stored
-    alternative cut at ALTERNATIVE_CHARS keeps only the start of its reason, and where the
-    cut falls moves with the option's wording, so it matches as a prefix. One cut before
+    alternative the record cut (`svc.is_cut`) keeps only the start of its reason, and where
+    the cut falls moves with the option's wording, so it matches as a prefix. One cut before
     its reason (inside the option or the marker) holds none, and matches whichever
     candidate reason is left. Letter case aside, as the verbatim check reads a span."""
     # `candidate` is the input's list, already kept as decision.record keeps it, uncut.
@@ -868,13 +868,14 @@ def _same_reasons(stored: list[str], candidate: list[str]) -> bool:
         stored,
         key=lambda a: (
             dx.REJECTED not in a,
-            len(a) >= svc.ALTERNATIVE_CHARS,
+            svc.is_cut(a),
             -len(a.rpartition(dx.REJECTED)[2]),
         ),
     )
     for alt in order:
-        reason = alt.rpartition(dx.REJECTED)[2].casefold()
-        cut = len(alt) >= svc.ALTERNATIVE_CHARS
+        cut = svc.is_cut(alt)
+        kept = alt.removesuffix(svc.CUT_MARK) if cut else alt
+        reason = kept.rpartition(dx.REJECTED)[2].casefold()
         if dx.REJECTED not in alt:
             match = remaining[0] if cut and remaining else None
         else:

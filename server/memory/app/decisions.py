@@ -25,6 +25,8 @@ from server.memory.domain.files import detect_value_files
 CHAIN_RELATIONS: tuple[str, ...] = ("caused", "influenced", "derived_from")
 MAX_ALTERNATIVES = 10
 ALTERNATIVE_CHARS = 300
+# What a cut alternative ends in, so a reader and a re-extraction know it was cut.
+CUT_MARK = "…"
 MAX_CHAIN_NODES = 200
 
 
@@ -36,16 +38,31 @@ def decision_key(category: str, scenario: str) -> str:
     return canonical_record_key(SCHEMA_NAME, {"category": category, "scenario": scenario})
 
 
+def cut_alternative(text: str) -> str:
+    """`text` within ALTERNATIVE_CHARS: cut at a space and ending in CUT_MARK when too long,
+    so the record, the statement and file detection only see whole tokens (a cut path
+    would name another file). A first word longer than the limit leaves CUT_MARK alone."""
+    if len(text) <= ALTERNATIVE_CHARS:
+        return text
+    space = text.rfind(" ", 0, ALTERNATIVE_CHARS)
+    kept = text[:space].rstrip() if space > 0 else ""
+    return kept + CUT_MARK
+
+
+def is_cut(alternative: str) -> bool:
+    return alternative.endswith(CUT_MARK)
+
+
 def clean_alternatives(items: list[str], *, cut: bool = True) -> list[str]:
     """The alternatives a record keeps: whitespace collapsed, deduplicated in any case, at
-    most MAX_ALTERNATIVES, each cut to ALTERNATIVE_CHARS unless `cut` is False."""
+    most MAX_ALTERNATIVES, each cut by `cut_alternative` unless `cut` is False."""
     out: list[str] = []
     seen: set[str] = set()
     for a in items or []:
         t = collapse_ws(a)
         if t and t.lower() not in seen:
             seen.add(t.lower())
-            out.append(t[:ALTERNATIVE_CHARS] if cut else t)
+            out.append(cut_alternative(t) if cut else t)
         if len(out) >= MAX_ALTERNATIVES:
             break
     return out
@@ -85,19 +102,10 @@ def blacklist_fields(payload: dict[str, Any]) -> list[str]:
     return label_fields(payload) + [t for t in extra if t.strip()]
 
 
-def _without_cut_token(alternative: str) -> str:
-    """A stored alternative cut at ALTERNATIVE_CHARS without the token it may end inside.
-    One exactly ALTERNATIVE_CHARS long was perhaps not cut; it errs on attaching nothing."""
-    if len(alternative) < ALTERNATIVE_CHARS:
-        return alternative
-    return alternative.rsplit(" ", 1)[0] if " " in alternative else ""
-
-
 def decision_files(payload: dict[str, Any]) -> list[str] | None:
     """The files the decision's text names, as the record stores it (never the realized
     outcome's); None when it names none, so a re-record keeps the row's files."""
-    alts = [_without_cut_token(a) for a in alternatives(payload)]
-    texts = [str(payload.get(f) or "") for f in _TEXT_FIELDS] + alts
+    texts = [str(payload.get(f) or "") for f in _TEXT_FIELDS] + alternatives(payload)
     return detect_value_files("\n".join(texts)) or None
 
 

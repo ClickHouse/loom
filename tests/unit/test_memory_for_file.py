@@ -81,7 +81,7 @@ async def test_path_and_basename_are_bound_and_both_shapes_are_matched(
         assert column in ch.sql
     assert f"value_len > {mff._READ_BYTES} AS value_truncated" in ch.sql
     # a decision or constraint is read up to the ceiling, every other row up to 600 bytes
-    assert ch.params["whole_bytes"] == 1500 * mff._CHARS_PER_TOKEN * mff._ESCAPE_CHARS
+    assert ch.params["whole_bytes"] == 1500 * mff._CHARS_PER_TOKEN * 12
     assert "if((memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))" in ch.sql
 
 
@@ -327,7 +327,7 @@ async def test_the_ceiling_is_read_from_its_setting(monkeypatch: pytest.MonkeyPa
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
     )
     # the read limit and the render share the setting: one 200-character decision fits
-    assert ch.params["whole_bytes"] == 400 * mff._ESCAPE_CHARS
+    assert ch.params["whole_bytes"] == 400 * 12
     assert out.truncated is True and out.rendered.splitlines()[-1].endswith(": design/1.")
 
 
@@ -365,6 +365,45 @@ async def test_an_escaped_constraint_under_the_ceiling_prints_whole(
     )
     assert out.truncated is False
     assert out.rendered.splitlines()[1] == f"- rules/zh [constraint]: {text}"
+
+
+@pytest.mark.asyncio
+async def test_an_emoji_constraint_under_the_ceiling_prints_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    # 300 emoji, each an escaped surrogate pair of 12 stored bytes.
+    monkeypatch.setattr(settings, "memory_for_file_whole_tokens", 100)
+    text = "😀" * 300
+    rule = _row("rules/emoji", json.dumps(text), tags=["constraint"])
+    assert len(rule["value"]) > 300 * 6 * 1.9
+    monkeypatch.setattr(mff, "get_client", lambda: _CuttingCH([rule]))
+    out = await mff.handle_memory_for_file(
+        MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
+    )
+    assert out.truncated is False
+    assert out.rendered.splitlines()[1] == f"- rules/emoji [constraint]: {text}"
+
+
+def test_a_more_line_from_a_left_out_constraint_fits_the_budget() -> None:
+    # The notes alone fill the budget exactly; the constraint left out at the ceiling takes
+    # the older note with it, so the "… more" line it adds must fit too.
+    older = _row("notes/old", json.dumps("Keep 32."), namespace="me")
+    newer = _superseding("rules/new", older, "n" * 400, "me", tags=["constraint"])
+    header = "Loom: 3 memories anchored to src/a.cpp — read before editing:"
+    used = len(header) + len("- notes/old: Keep 32.") + 1
+    filler = _row(
+        "notes/f", json.dumps("f" * (240 - used - 1 - len("- notes/f: "))), namespace="me"
+    )
+    text, _, truncated = mff.render_block(
+        "src/a.cpp", [newer, older, filler], 60, home="me", now=_NOW, whole_tokens=50
+    )
+    lines = text.splitlines()
+    assert truncated is True and lines[0] == header
+    budgeted = "\n".join(ln for ln in lines if "decision or constraint" not in ln)
+    assert len(budgeted) <= 60 * mff._CHARS_PER_TOKEN
+    assert any(ln.startswith("- … ") and "lists them" in ln for ln in lines)
 
 
 def test_a_left_out_constraint_takes_the_older_row_it_supersedes() -> None:

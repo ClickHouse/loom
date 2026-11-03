@@ -264,10 +264,12 @@ The memory row's value is one statement,
 `decision.outcome` has recorded one. The category is not in it: it stays on the record and in the row's
 `decision:category:<category>` tag, which is what a filter by category reads. A reasoning that is the outcome word for
 word (case, whitespace and the closing punctuation aside) records a ban or an invariant stated with no reason: the
-statement reads `Decided <outcome>.` and `context.pack` gives no `because`. Every part is stored whole, bounded by the
-record's own limits (scenario 2,000 characters, outcome 1,000, reasoning 4,000, up to ten alternatives of 300 each,
-realized outcome 2,000). `memory.for_file` shows the statement whole, or names it when it would pass the block's
-ceiling, and search embeds its excerpt, the first 1,200 stored characters, so it opens with the scenario.
+statement reads `Decided <outcome>.` and `context.pack` gives no `because`. Every part is stored as the record keeps
+it, whole within the record's limits (scenario 2,000 characters, outcome 1,000, reasoning 4,000, realized outcome
+2,000, up to ten alternatives of 300 each). A longer alternative is cut at a space and ends in `…`, so no half name
+reads as a file. A statement can run to about 12,000 characters. `memory.for_file` shows it whole, or names it when it
+would pass the block's ceiling, and search embeds its excerpt, the first 1,200 stored characters, so it opens with the
+scenario; a longer statement is also stored as chunks, which search reads too.
 
 - **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the stored
   category, scenario, outcome, reasoning, alternatives and realized outcome (not `decision_maker` or `run_id`, which

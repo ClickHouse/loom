@@ -51,15 +51,23 @@ def test_record_fields_mark_absent_optionals_and_join_alternatives() -> None:
 def test_clean_alternatives_dedupes_and_caps() -> None:
     assert svc.clean_alternatives([" Hotfix ", "hotfix", "", "wait"]) == ["Hotfix", "wait"]
     assert len(svc.clean_alternatives([f"a{i}" for i in range(20)])) == svc.MAX_ALTERNATIVES
-    # The record keeps the first ALTERNATIVE_CHARS characters, as it always has.
-    assert svc.clean_alternatives(["wait", "z" * 400]) == ["wait", "z" * svc.ALTERNATIVE_CHARS]
-    # A path straddling the cut ends the stored alternative in half a name (`guide.md` of
-    # `guide.mdx`); files read from a stored record never take that last token.
-    mdx = "docs/guide.mdx"
-    long = "y" * (svc.ALTERNATIVE_CHARS - len(" docs/guide.md")) + " " + mdx + " is slow"
+    # A long alternative is cut at a space and marked; one first word longer than the
+    # limit leaves the mark alone.
+    words = "w " * 200
+    (cut,) = svc.clean_alternatives([words])
+    assert cut == "w " * 149 + "w…" and len(cut) <= svc.ALTERNATIVE_CHARS
+    assert svc.clean_alternatives(["wait", "z" * 400]) == ["wait", "…"]
+    # A path straddling the cut is never kept in half (`LruCache.c` of `LruCache.cpp`), so
+    # neither the record's files nor the statement's name a file the decision never names.
+    long = "y" * 286 + " src/cache/LruCache.cpp is slow"
     (cut,) = svc.clean_alternatives([long])
-    assert cut.endswith("docs/guide.md")
+    assert cut == "y" * 286 + "…"
     assert svc.decision_files({"alternatives": [cut]}) is None
+    assert detect_value_files(stmt.memory_value({"outcome": "o", "alternatives": [cut]})) == []
+    # An alternative that fits is kept as written.
+    fits = "y" * 270 + " src/cache/LruCache.cpp"
+    assert svc.clean_alternatives([fits]) == [fits]
+    assert svc.decision_files({"alternatives": [fits]}) == ["src/cache/LruCache.cpp"]
 
 
 def test_the_record_holds_long_alternatives_cut_at_their_cap(env) -> None:
@@ -67,7 +75,7 @@ def test_the_record_holds_long_alternatives_cut_at_their_cap(env) -> None:
     words = "w " * 200
     asyncio.run(h.handle_decision_record(record_input(alternatives=[words, "z" * 400])))
     stored = calls["record"][-1].fields["alternatives"].value.split("\n")
-    assert stored == [words.strip()[: svc.ALTERNATIVE_CHARS], "z" * svc.ALTERNATIVE_CHARS]
+    assert stored == ["w " * 149 + "w…", "…"]
 
 
 def test_influenced_is_a_canonical_verb_and_influenced_by_flips() -> None:
@@ -604,11 +612,14 @@ def _statement(category: str, scenario: str) -> str:
 
 
 def test_decisions_under_other_keys_only_ever_conflict() -> None:
+    # Two scenarios alike in every character the embedding's excerpt reads.
+    head = "how the nightly compaction schedules its merges " * 30
     pairs = [
         (("ci", "a bad image"), ("db", "a bad image")),
         (("deploy", "a bad image"), ("deploys", "a bad image")),
         (("deploy", "a bad image"), ("deploy", "the bad image")),
         (("deploy", "a bad image"), ("deploy", "a bad image in production")),
+        (("deploy", f"{head} on monday"), ("deploy", f"{head} on friday")),
         (("c" * 119 + "1", "a bad image"), ("c" * 119 + "2", "a bad image")),
     ]
     for first, second in pairs:

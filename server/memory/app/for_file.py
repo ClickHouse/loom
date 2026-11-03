@@ -35,6 +35,8 @@ _VALUE_BYTES = 600
 _LINE_CHARS = 220
 # The length of a `\uXXXX` escape in the stored JSON: a cut leaves at most five of one.
 _ESCAPE_CHARS = 6
+# A character outside the Basic Multilingual Plane (an emoji) is two escapes.
+_PAIR_ESCAPE_CHARS = 2 * _ESCAPE_CHARS
 _CODE_NOTES = {
     "changed": " (its code changed since it was written: check before relying on it)",
     "unresolved": " (its code was renamed or removed and could not be followed: check it)",
@@ -52,9 +54,9 @@ _FILE_MATCH = (
     "OR endsWith({p:String}, concat('/', f)))"
 )
 
-# A decision or constraint prints whole, so it is read up to the block's ceiling at six
-# stored bytes a character (`whole_bytes`, a `\uXXXX` escape each) and the rendered line
-# decides whether it fits; every other row up to the 600 bytes its capped line can show.
+# A decision or constraint prints whole, so it is read up to the block's ceiling at twelve
+# stored bytes a character (`whole_bytes`, an escaped surrogate pair each) and the rendered
+# line decides whether it fits; every other row up to the 600 bytes its capped line shows.
 _WHOLE_ROW = "(memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))"
 _READ_BYTES = f"if({_WHOLE_ROW}, {{whole_bytes:UInt32}}, {_VALUE_BYTES})"
 
@@ -86,8 +88,8 @@ _LINKED_SQL = f"{_SELECT}  AND memory_id IN {{linked:Array(UUID)}}{_ORDER}"
 
 def _whole_bytes() -> int:
     """The stored JSON a decision or constraint is read up to: the ceiling's characters,
-    each as long as its escape."""
-    return settings.memory_for_file_whole_tokens * _CHARS_PER_TOKEN * _ESCAPE_CHARS
+    each as long as the longest escape of one (a surrogate pair's)."""
+    return settings.memory_for_file_whole_tokens * _CHARS_PER_TOKEN * _PAIR_ESCAPE_CHARS
 
 
 def _readable(hit: dict[str, Any]) -> str:
@@ -307,8 +309,14 @@ def render_block(
     used = len(lines[0]) + (len(footer) + 1 if footer else 0)
     rows = [_row_line(h, now, home) for h in hits]
     budgeted = [not _is_whole(h) for h in hits]
-    # A block whose budgeted rows fit whole needs no "… more" line, so nothing is reserved.
-    fits = used + sum(len(r) + 1 for r, b in zip(rows, budgeted, strict=True) if b) <= budget_chars
+    # A block that leaves no row out needs no "… more" line, so nothing is reserved. Any row
+    # left out may take older rows with it onto that line, so then room is kept for it.
+    sized = [len(r) + 1 for r in rows]
+    fits = (
+        used + sum(k for k, b in zip(sized, budgeted, strict=True) if b) <= budget_chars
+        and sum(k for k, b in zip(sized, budgeted, strict=True) if not b) <= whole_chars
+        and not any(h.get("value_truncated") and _is_whole(h) for h in hits)
+    )
     left_out = 0
     whole_used = 0
     whole_left: list[dict[str, Any]] = []
