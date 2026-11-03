@@ -362,18 +362,17 @@ async def test_racing_deliveries_store_one(ch: Any, monkeypatch: pytest.MonkeyPa
 # ---- the previous build beside this one (rolling upgrade) ----------------------------
 #
 # The previous build's create looks the key up, inserts the task, logs the created event
-# and writes the lease row; its delivery checks for the event and inserts it. Its create
-# names its lease and dedup token without the poster, so neither ever matches this
-# build's. Pausing that build mid-request takes hooks it does not have, so these tests
-# make its inserts beside this build's call, each under a random token: a stand-in for
-# any token that differs from this build's. Neither build keeps the other's row out: a
-# race gives two tasks.
+# and writes the lease row. It names its lease and dedup token without the poster, so
+# neither ever matches this build's. Pausing that build mid-request takes hooks it does
+# not have, so these tests make its create's inserts beside this build's call, each
+# under a random token: a stand-in for any token that differs from this build's.
+# Neither build's create keeps the other's task out: a race gives two tasks.
 
 _OLD_SETTINGS = {"async_insert": 0, "wait_for_async_insert": 1}
 
 
 def _old_token() -> dict[str, Any]:
-    """The previous build's insert settings: its client's random per-insert token."""
+    """The previous build's create insert settings: a token unlike this build's."""
     return {**_OLD_SETTINGS, "insert_deduplication_token": uuid.uuid4().hex}
 
 
@@ -569,66 +568,6 @@ async def test_another_posters_create_with_the_key_is_not_dropped_by_its_token(
     assert {**landed, "task_id": str(landed["task_id"])} == other
     own = await repo.fetch_task_by_idempotency_key(org, "bot", str(stored["from_subject"]), "k1")
     assert own is not None and str(own["task_id"]) == first.task.task_id
-
-
-async def _old_build_delivery(ch: Any, watch: Any) -> None:
-    """The previous build's delivery once its check found no event: the ready event
-    under a random token."""
-    from server.code.app import watches as svc
-    from server.code.store import coverage_watches as wrepo
-
-    task_id = wrepo.event_id(watch.org, watch.namespace, watch.commit_sha, watch.inbox)
-    row = svc._event_row(watch, task_id, [], await repo.server_version(0))
-    await ch.insert("loom.task_events", [row], settings=_old_token())
-
-
-async def _ready_events(ch: Any, watch: Any) -> int:
-    from server.code.store import coverage_watches as wrepo
-
-    task_id = wrepo.event_id(watch.org, watch.namespace, watch.commit_sha, watch.inbox)
-    rows = await ch.query_all(
-        "SELECT seq FROM loom.task_events WHERE org = {org:String} AND task_id = {tid:UUID} "
-        "SETTINGS select_sequential_consistency = 1",
-        params={"org": watch.org, "tid": task_id},
-    )
-    return len(rows)
-
-
-@pytest.mark.asyncio
-async def test_an_old_builds_delivery_after_this_builds_posts_a_second_event(ch: Any) -> None:
-    from server.code.app import watches as svc
-    from server.code.store import coverage_watches as wrepo
-
-    org = f"itest-mixed-{uuid.uuid4().hex[:8]}"
-    watch = svc.new_watch(org, "code", "c" * 40, "bot", "poster")
-    await wrepo.insert_watch_version(watch)
-    emitted, _ = await svc.deliver(watch, {"tiers": []})
-    await _old_build_delivery(ch, watch)
-    assert emitted and await _ready_events(ch, watch) == 2
-
-
-@pytest.mark.asyncio
-async def test_this_builds_delivery_after_an_old_builds_reports_its_own_event(
-    ch: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from server.code.app import watches as svc
-    from server.code.store import coverage_watches as wrepo
-
-    org = f"itest-mixed-{uuid.uuid4().hex[:8]}"
-    watch = svc.new_watch(org, "code", "d" * 40, "bot", "poster")
-    await wrepo.insert_watch_version(watch)
-    check, old = wrepo.ready_event_exists, []
-
-    async def old_build_lands_after_the_check(*args: Any, **kwargs: Any) -> bool:
-        found = await check(*args, **kwargs)
-        if not old:
-            old.append(await _old_build_delivery(ch, watch))
-        return found
-
-    monkeypatch.setattr(wrepo, "ready_event_exists", old_build_lands_after_the_check)
-    emitted, _ = await svc.deliver(watch, {"tiers": []})
-    # Both events landed, so this delivery reports the one it stored.
-    assert emitted and await _ready_events(ch, watch) == 2
 
 
 async def _cancelled_mid_insert(

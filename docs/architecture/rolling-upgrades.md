@@ -116,8 +116,8 @@ schema. These rules keep that safe. The operator procedure is in
     poster and its key, or the event's task id) and storage drops the later row. An
     erased row's token can outlive it and drop a new row too: with nothing stored, the
     row goes in again under a fresh token. The build before names the create's lease and
-    token without the poster, so the two builds' creates of one key exclude neither the
-    other: racing, they can store two tasks. A build that looks a key up without the
+    token without the poster, so neither build's create of a key excludes the other's:
+    racing, they can store two tasks. A build that looks a key up without the
     poster answers another poster's task to a create with the same key until it stops
     serving.
     Each task is whole (its event and its lease row) and claimable: a create of N cut
