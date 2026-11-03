@@ -366,7 +366,26 @@ namespace's cost cap.
 ```bash
 loom decisions extract --org O --namespace NS --source-uri URI            # dry run: prints what it would write
 loom decisions extract --org O --namespace NS --source-uri URI --apply    # writes
+loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME --into source --apply
 ```
+
+- **Repository**: by default the document's namespace is where its code names are looked up and its decisions are
+  written, which fits a document added to a repository's code namespace. A document in a person's or a team's
+  namespace names the repository with `--repo OWNER/NAME` (or a remote URL), matched as `code.repos` matches a
+  checkout's remote; its names are then looked up in that repository's trunk code namespace, and `--into` chooses
+  where the rows go:
+  - `--into source` (the default for a document outside a code namespace): the document's namespace, each row tagged
+    `repo:<id>`, the tag the coding plugins send to `memory.for_file`, so whoever reads that namespace gets the row
+    before editing a file it names.
+  - `--into repo` (the default for a document in a code namespace): the repository's trunk code namespace, where every
+    reader of the repository gets the row before an edit. `source_resource_id` still cites the document in its own
+    namespace; there is no per-document access, so a repository reader who cannot read the document's namespace sees
+    the row's quote but is refused the document it cites.
+
+  The run reads the document's namespace and the repository's, and writes where the rows go; with an auth context bound
+  it checks each (viewer, viewer, writer) and refuses before any model call. The CLI runs with none, as the operator.
+  An unknown repository, or `--into` without `--repo`, exits 1. Every read the reconcile and retire steps make is in
+  the namespace the rows go to.
 
 - **Windows**: the document's live chunks for the current embedding model, grouped by section, at most
   `--window-chars` (default 6000) per call. A document chunked under another embedding model has none: the command
@@ -480,16 +499,16 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   "Defer sharding by tenant"; "so v1 cannot evict it" still rejects "evict the largest job".
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
-  `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.
-  Each `decision.record`, and each `memory.delete_version` that deletes a row, leaves the audit row the transport
-  writes for that op, with the actor `process:cli:decisions`; the tag write, `memory.update_by_id`, declares none, as
-  over HTTP.
+  `source-kind:design_doc`, `constraint` for a ban or an invariant and `repo:<id>` under `--into source`. The row's
+  `actor` is `process:cli:decisions`. Each `decision.record`, and each `memory.delete_version` that deletes a row,
+  leaves the audit row the transport writes for that op, with the actor `process:cli:decisions`; the tag write,
+  `memory.update_by_id`, declares none, as over HTTP.
 - **Files**: each backticked or qualified name and each bare class name the document text holds is looked up with
-  `code.symbol` in the same namespace; exactly one defining file (a class preferred over its constructor) goes into
-  `files`, several or none add nothing. A repository path the quote or the reasoning writes out
-  (`src/Storages/MergeTreeData.cpp`) is added as well, as `memory.set` detects one. When the code index cannot be read
-  for a name, a decision already recorded keeps the files its row has, and a new one is written with the files that
-  did resolve. Pull request numbers and setting names are printed as unresolved in a dry run, for a human to add; a
+  `code.symbol` in the document's namespace, or in the repository's trunk with `--repo`; exactly one defining file (a
+  class preferred over its constructor) goes into `files`, several or none add nothing. A repository path the quote or
+  the reasoning writes out (`src/Storages/MergeTreeData.cpp`) is added as well, as `memory.set` detects one. When the
+  code index cannot be read for a name, a decision already recorded keeps the files its row has, and a new one is
+  written with the files that did resolve. Pull request numbers and setting names are printed as unresolved in a dry run, for a human to add; a
   backticked snake_case name is looked up first and reported as a setting only when the index does not define it. A
   name defined in several files is printed as unresolved too, for a human to pick the file.
 - **Reconcile**: the document says otherwise only when a verbatim field differs: the reasoning, or the set of rejected
@@ -500,9 +519,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   A row counts as confirmed when it is pinned or attested in its current form (`memory.verify`), the rule
   `memory.for_file` marks `(unconfirmed)` by. By the row the key's active record belongs to:
   - **The extractor's own, unconfirmed, from this document**: same verbatim fields and the same `files`,
-    `source_resource_id` and `constraint` tag: no write. A verbatim field differs, or only those row fields do (a file
-    that resolves once the code is indexed, a renamed heading): recorded again (the record is superseded, history
-    keeps it).
+    `source_resource_id`, `constraint` tag and `repo:` tag: no write. A verbatim field differs, or only those row
+    fields do (a file that resolves once the code is indexed, a renamed heading, a first run with `--repo`): recorded
+    again (the record is superseded, history keeps it).
   - **Confirmed, citing this document** (whoever wrote it): a verbatim field differs: no write; the full
     `decision.record` body is printed with the row's agent, user and session, and the row is tagged `source-changed`
     unless it already carries the tag. To accept the body, a maintainer unpins a pinned row with `memory.unpin`
@@ -536,9 +555,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   worded the scenario differently) is deleted too, so the decision is not served twice, unless its realized outcome is
   recorded; another decision resting on the same reasoning has another outcome and stays. Otherwise a row whose
   reasoning is still there stays, whether or not the run emitted it again.
-- **Citing the document**: a row cites it when its `source_resource_id` starts `knowledge:<namespace>/<source_uri>#`,
-  so a heading holding `#` (`C# bindings`) is no obstacle, unless a document `<source_uri>#<part>` it also starts with
-  was ever ingested in the namespace: `doc#v2#Intro` cites `doc#v2` once that document exists.
+- **Citing the document**: a row cites it when its `source_resource_id` starts `knowledge:<namespace>/<source_uri>#`
+  with the document's own namespace, so a heading holding `#` (`C# bindings`) is no obstacle, unless a document
+  `<source_uri>#<part>` it also starts with was ever ingested in that namespace: `doc#v2#Intro` cites `doc#v2` once
+  that document exists.
 - **Clearing `source-changed`**: when a run's candidate for a tagged row's key has the row's verbatim fields again,
   the run drops the tag, pinned or not, as long as the row cites this document. The retire step never drops it: it
   reads the reasoning alone, and the tag may stand for a rejected option's reason the document still contradicts, or

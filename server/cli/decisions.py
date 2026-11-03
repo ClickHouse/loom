@@ -65,14 +65,30 @@ def register_decisions_cli(sub: Any) -> None:
         "through decision.record as agent loom-decisions. A re-run revises or retires the "
         "extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row "
         "source-changed. Dry run by default (still calls the model); --apply writes. Exits 1 "
-        "when it could not read the document (no document, no chunks, no usable model, its "
-        "own rows unreadable, no window read), 2 when a write, or a read it needed (a window "
-        "included), was refused or failed (a row changed since the run read it is reported, "
-        "not counted).",
+        "when it could not read the document (no document, no chunks, no usable model, an "
+        "unknown --repo or a namespace it may not use, its own rows unreadable, no window "
+        "read), 2 when a write, or a read it needed (a window included), was refused or "
+        "failed (a row changed since the run read it is reported, not counted).",
     )
     p_ext.add_argument("--org", required=True)
     p_ext.add_argument("--namespace", required=True, help="The namespace holding the document")
     p_ext.add_argument("--source-uri", required=True, help="The document's source_uri")
+    p_ext.add_argument(
+        "--repo",
+        default="",
+        help="The repository (owner/name) whose trunk code index resolves the document's code "
+        "names, when the document is not in that repository's code namespace",
+    )
+    p_ext.add_argument(
+        "--into",
+        choices=["repo", "source"],
+        default=None,
+        help="With --repo, where the rows go: the repository's trunk code namespace (repo; "
+        "the default for a document in a code namespace), or the document's namespace, "
+        "tagged with the repository (source; the default otherwise). A repository reader "
+        "who cannot read the document's namespace sees a repo row's quote but is refused "
+        "its source link.",
+    )
     p_ext.add_argument(
         "--max-per-section",
         type=_per_section,
@@ -99,6 +115,8 @@ def _cmd_extract(args: argparse.Namespace) -> int:
             args.namespace,
             args.source_uri,
             dry_run=bool(args.dry_run),
+            repo=args.repo,
+            into=args.into,
             max_per_section=args.max_per_section,
             window_chars=args.window_chars,
         )
@@ -109,11 +127,11 @@ def _cmd_extract(args: argparse.Namespace) -> int:
 
 
 def exit_code(report: ExtractReport) -> int:
-    """1 when the run could not read the document (no document, no chunks, no usable model, the
-    extractor's rows unreadable, no window read), 2 when a write, or a read it needed (a
-    window the model could not answer readably included), was refused or failed (in a dry
-    run too), else 0. A row deleted or rewritten since the run read it is reported, not
-    counted: the next run settles it."""
+    """1 when the run could not read the document (no document, no chunks, no usable model, an
+    unknown --repo or a namespace it may not use, the extractor's rows unreadable, no window
+    read), 2 when a write, or a read it needed (a window the model could not answer readably
+    included), was refused or failed (in a dry run too), else 0. A row deleted or rewritten
+    since the run read it is reported, not counted: the next run settles it."""
     if report.error:
         return 1
     return 2 if report.refused or any(d.refused for d in report.dropped) else 0

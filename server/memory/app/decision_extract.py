@@ -26,8 +26,12 @@ After the writes, the extractor deletes its unconfirmed rows citing this documen
 reasoning (a span of the document) is no longer in its text, read as in the verbatim
 check, or whose outcome and reasoning this run recorded under another key. A row it keeps
 (confirmed, or with a recorded outcome) whose reasoning left is tagged `source-changed`
-instead. A refused write is reported and the run goes on. Runs in-process, with no auth
-context: operator only.
+instead. A refused write is reported and the run goes on.
+
+A document outside a repository's code namespace names the repository: its code names
+resolve in the repository's trunk, and the rows go there or stay beside the document,
+tagged with the repository (`_target`). Every reconcile and retire read is in the
+namespace the rows go to. Runs in-process, with no auth context: operator only.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ import httpx
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from server.auth.authz import row_in_scope
 from server.core.errors import LoomServerError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_decision import DecisionRecordInput
@@ -61,6 +66,7 @@ from server.memory.store import (
     memory_rows_by_identity_keys,
 )
 from server.observability.genai import llm_stage
+from server.operations.base import Role
 from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
@@ -281,23 +287,89 @@ def _refusal(e: BaseException) -> str:
     return f"failed: {type(e).__name__}"
 
 
+@dataclass(frozen=True)
+class Target:
+    """Where a run reads and writes: the namespace holding the document, the one whose code
+    index resolves its names, and the one its rows go to, with the `repo:<id>` tag they
+    carry there (empty when they go to the repository's own namespace)."""
+
+    doc_namespace: str
+    code_namespace: str
+    namespace: str
+    repo_tag: str = ""
+
+
+Into = Literal["repo", "source"]
+
+
+async def _target(org: str, namespace: str, repo: str, into: Into | None) -> Target | str:
+    """The run's target, or why it may not run. With no `repo`, the document's namespace
+    is all three, as before. With one, its names resolve in the repository's trunk code
+    namespace, and the rows go there (`into="repo"`) or stay beside the document tagged
+    with the repository (`into="source"`, the default unless the document is in a code
+    namespace). The caller must read the document and the repository and write where the
+    rows go; with no auth context (the CLI) the operator may."""
+    from server.code.app.repo_scope import repo_trunk
+    from server.code.domain.index.repos import repo_for_namespace
+
+    if not repo:
+        if into:
+            return "--into needs --repo"
+        target = Target(namespace, namespace, namespace)
+    else:
+        trunk, tag = await repo_trunk(org, repo)
+        if not trunk:
+            return f"no repository {repo!r} is configured in {org}"
+        if into is None:
+            into = "repo" if repo_for_namespace(org, namespace) else "source"
+        if into == "repo":
+            target = Target(namespace, trunk, trunk)
+        elif not tag:
+            return f"repository {repo!r} has no remote to tag its rows with; use --into repo"
+        else:
+            target = Target(namespace, trunk, namespace, tag)
+    for ns, role in [
+        (target.doc_namespace, Role.VIEWER),
+        (target.code_namespace, Role.VIEWER),
+        (target.namespace, Role.WRITER),
+    ]:
+        if not await _may(org, ns, role):
+            return f"not allowed to {'write' if role == Role.WRITER else 'read'} {org}/{ns}"
+    return target
+
+
+async def _may(org: str, namespace: str, role: Role) -> bool:
+    try:
+        return await row_in_scope(org, namespace, role, hides_answer=False)
+    except Exception as e:  # noqa: BLE001 — a gate that cannot check refuses
+        log.warning("decisions extract: access check on %s failed (closed): %s", namespace, e)
+        return False
+
+
 async def extract_document(
     org: str,
     namespace: str,
     source_uri: str,
     *,
     dry_run: bool,
+    repo: str = "",
+    into: Into | None = None,
     max_per_section: int = 3,
     window_chars: int = 6000,
 ) -> ExtractReport:
-    """Mine `source_uri` into decision records in `namespace`; `dry_run` writes nothing
-    and reports what a run would write."""
+    """Mine `source_uri`, a document in `namespace`, into decision records; `repo` names
+    the repository its code names resolve in and `into` where the rows go (`_target`).
+    `dry_run` writes nothing and reports what a run would write."""
     from server.knowledge.api.models_knowledge import KnowledgeGetInput
     from server.knowledge.app.document_reads import document_chunks, handle_knowledge_get
 
     report = ExtractReport(source_uri, dry_run)
     if error := _no_model_error():
         report.error = error
+        return report
+    t = await _target(org, namespace, repo, into)
+    if isinstance(t, str):
+        report.error = t
         return report
     doc = await handle_knowledge_get(
         KnowledgeGetInput(org=org, namespace=namespace, source_uri=source_uri)
@@ -315,31 +387,18 @@ async def extract_document(
         return report
     live_texts = [doc.content or "", *(c.text for c in chunks)]
     report.image_only = dx.image_only_sections(doc.content or "")
-    # A section judged image-only is not sent. An empty-path chunk of an image-only
-    # preamble is skipped only when its own text is image-only too.
-    skipped = set(report.image_only)
-
-    def sent(c: CorpusChunk) -> bool:
-        if dx.no_words(c.text):
-            return False
-        if dx.breadcrumb(c.section_path) not in skipped:
-            return True
-        return not c.section_path and not dx.image_only(c.text)
-
-    wins = windows([c for c in chunks if sent(c)], window_chars=window_chars)
+    wins = _windows(chunks, set(report.image_only), window_chars)
     report.windows = len(wins)
     # One scan of the extractor's rows on this document and their records, for the prompt
     # and the retire step; rows this run writes are skipped by the retire step.
     try:
-        own = await _own_records(org, namespace, await _extractor_rows(org, namespace, source_uri))
+        own = await _own_records(org, t.namespace, await _extractor_rows(org, t, source_uri))
     except _REPORTED_ERRORS as e:
         # Before any model call: a run that cannot see its own rows reads nothing.
         report.error = f"could not read the extractor's rows: {_refusal(e)}"
         return report
     known = _known_decisions(own)
-    kept, answered = await _candidates(
-        org, namespace, source_uri, wins, max_per_section, report, known
-    )
+    kept, answered = await _candidates(org, t, source_uri, wins, max_per_section, report, known)
     if wins and not answered:
         # A run that read nothing must not retire anything.
         report.error = (
@@ -354,7 +413,7 @@ async def extract_document(
     held: dict[tuple[str, str], str] = {}
     for cand, section, texts in kept:
         try:
-            rec = await _reconcile(org, namespace, source_uri, cand, section, texts, dry_run)
+            rec = await _reconcile(org, t, source_uri, cand, section, texts, dry_run)
         except _REPORTED_ERRORS as e:
             # A blacklisted or newly pinned decision, a busy key, a store that timed out:
             # the other candidates and the retire step still run, and a re-run does not
@@ -377,6 +436,21 @@ async def extract_document(
             held.setdefault(_held_key(rec.held_outcome, cand.reasoning), rec.memory_key)
     await _retire(report, own, live_texts, written, held)
     return report
+
+
+def _windows(chunks: list[CorpusChunk], skipped: set[str], window_chars: int) -> list[Window]:
+    """The windows sent to the model. A section judged image-only (`skipped`) is not sent.
+    An empty-path chunk of an image-only preamble is skipped only when its own text is
+    image-only too."""
+
+    def sent(c: CorpusChunk) -> bool:
+        if dx.no_words(c.text):
+            return False
+        if dx.breadcrumb(c.section_path) not in skipped:
+            return True
+        return not c.section_path and not dx.image_only(c.text)
+
+    return windows([c for c in chunks if sent(c)], window_chars=window_chars)
 
 
 async def _own_records(
@@ -480,7 +554,7 @@ _STITCHED = "a reason is not one span of the text; the window was read once more
 
 async def _candidates(
     org: str,
-    namespace: str,
+    t: Target,
     source_uri: str,
     wins: list[Window],
     max_per_section: int,
@@ -515,7 +589,7 @@ async def _candidates(
             continue
         answered += 1
         before = len(state.kept)
-        failed = _check_window(org, namespace, source_uri, w, cands, state, report)
+        failed = _check_window(org, t, source_uri, w, cands, state, report)
         if failed and not retried:
             # Named by the first failed decision's section, not the window's first.
             section = failed[0][2]
@@ -532,7 +606,7 @@ async def _candidates(
                 answered_already=True,
             )
             repaired = _repairs(w, again or [], failed, state.kept[before:], report)
-            _check_window(org, namespace, source_uri, w, repaired, state, report)
+            _check_window(org, t, source_uri, w, repaired, state, report)
     return state.kept, answered
 
 
@@ -567,7 +641,7 @@ def _repairs(
 
 def _check_window(
     org: str,
-    namespace: str,
+    t: Target,
     source_uri: str,
     w: Window,
     cands: list[dx.Candidate],
@@ -597,7 +671,7 @@ def _check_window(
             failed.append((cand.outcome, span, section))
         key = ""
         if not reason:
-            reason, key = _duplicate_or_unfit(org, namespace, source_uri, cand, section, state)
+            reason, key = _duplicate_or_unfit(org, t, source_uri, cand, section, state)
         if reason:
             report.dropped.append(Dropped(section, reason, cand.quote))
             continue
@@ -610,7 +684,7 @@ def _check_window(
 
 
 def _duplicate_or_unfit(
-    org: str, namespace: str, source_uri: str, cand: dx.Candidate, section: str, state: _Kept
+    org: str, t: Target, source_uri: str, cand: dx.Candidate, section: str, state: _Kept
 ) -> tuple[str, str]:
     """(why a candidate that passed the text checks is still dropped, or ''; its key)."""
     try:
@@ -623,7 +697,7 @@ def _duplicate_or_unfit(
     if _held_key(cand.outcome, cand.reasoning) in state.pairs:
         # Overlapping chunks feed one span to two windows, worded apart.
         return "same decision as an earlier candidate", key
-    if not _fits(org, namespace, source_uri, cand, section):
+    if not _fits(org, t, source_uri, cand, section):
         # Checked before it takes a slot, a key or a code lookup.
         return "does not fit decision.record", key
     if state.per_section.get(section, 0) >= state.max_per_section:
@@ -650,14 +724,16 @@ def _drop_inverted(
 
 
 def _record_input(
-    org: str, namespace: str, source_uri: str, cand: dx.Candidate, section: str, files: list[str]
+    org: str, t: Target, source_uri: str, cand: dx.Candidate, section: str, files: list[str]
 ) -> DecisionRecordInput:
     """The decision.record input for a candidate; raises ValidationError when it does not
     fit the op's field limits (`_fits` checks first)."""
     tags = [DESIGN_DOC_TAG, *([CONSTRAINT_TAG] if cand.is_constraint else [])]
+    if t.repo_tag:
+        tags.append(t.repo_tag)
     return DecisionRecordInput(
         org=org,
-        namespace=namespace,
+        namespace=t.namespace,
         agent=EXTRACTOR_AGENT,
         category=cand.category,
         scenario=cand.scenario,
@@ -669,16 +745,16 @@ def _record_input(
         tags=tags,
         files=files,
         source_class="derived",
-        source_resource_id=source_resource_id(namespace, source_uri, section),
+        source_resource_id=source_resource_id(t.doc_namespace, source_uri, section),
     )
 
 
-def _fits(org: str, namespace: str, source_uri: str, cand: dx.Candidate, section: str) -> bool:
+def _fits(org: str, t: Target, source_uri: str, cand: dx.Candidate, section: str) -> bool:
     """The candidate fits decision.record's field limits. Checked with no files: the files
     a run adds pass through normalize_files, capped at the FileRefs limits, so they never
     make a fitting candidate unfit."""
     try:
-        _record_input(org, namespace, source_uri, cand, section, [])
+        _record_input(org, t, source_uri, cand, section, [])
     except ValidationError:
         return False
     return True
@@ -740,29 +816,38 @@ def _same_decision(record: dict[str, Any], inp: DecisionRecordInput) -> bool:
 
 
 def _same_row(row: MemoryRow, inp: DecisionRecordInput) -> bool:
-    """The row carries the files, source and constraint tag the candidate would write."""
+    """The row carries the files, source and tags the candidate would write."""
     return (
         sorted(row.files) == sorted(inp.files or [])
         and row.source_resource_id == inp.source_resource_id
-        and (CONSTRAINT_TAG in row.tags) == (CONSTRAINT_TAG in inp.tags)
+        and _own_tags(row.tags) == _own_tags(inp.tags)
     )
+
+
+def _own_tags(tags: list[str]) -> set[str]:
+    """The tags a run sets from the document and the repository, not the ones the record
+    derives: a row extracted before it was linked to a repository gains its tag."""
+    return {t for t in tags if t == CONSTRAINT_TAG or t.startswith("repo:")}
 
 
 async def _reconcile(
     org: str,
-    namespace: str,
+    t: Target,
     source_uri: str,
     cand: dx.Candidate,
     section: str,
     texts: list[str],
     dry_run: bool,
 ) -> RecordReport:
-    """Decide what the candidate does to the namespace, and do it unless `dry_run`."""
-    files, signals, unresolved, complete = await resolve_mentions(org, namespace, cand, texts)
+    """Decide what the candidate does to the target namespace, and do it unless `dry_run`."""
+    namespace = t.namespace
+    files, signals, unresolved, complete = await resolve_mentions(
+        org, t.code_namespace, cand, texts
+    )
     # A path the document writes out (`src/Storages/MergeTreeData.cpp`) is a file too; the
     # explicit list turns off decision.record's own detection, so it is merged in here.
     files = normalize_files([*files, *detect_value_files(f"{cand.quote}\n{cand.reasoning}")])
-    inp = _record_input(org, namespace, source_uri, cand, section, files)
+    inp = _record_input(org, t, source_uri, cand, section, files)
     key = svc.decision_key(inp.category, inp.scenario)
     rec = RecordReport(key, "written", record_body(inp), signals, unresolved)
     writer = await live_writer_record(org, namespace, key)
@@ -792,7 +877,7 @@ async def _reconcile(
             inp = inp.model_copy(update={"files": list(row.files)})
             rec.body["files"] = list(row.files)
         this_doc = row is not None and await cites_document(
-            org, row.source_resource_id, namespace, source_uri
+            org, row.source_resource_id, t.doc_namespace, source_uri
         )
         ours = this_doc and _is_extractor(writer.agent, writer.user_id, writer.session_id)
         record = svc.parse_record_json(writer.record_json)
@@ -1046,13 +1131,13 @@ async def _audit(op_name: str, inp: Any) -> None:
     )
 
 
-async def _extractor_rows(org: str, namespace: str, source_uri: str) -> list[MemoryRow]:
-    """The extractor's live decision rows citing this document, whole: listed a page at a
-    time (the listing carries no source), each page read back in one bulk read. The cost
-    grows with every decision the extractor holds in the namespace, not with this
-    document's: no store read filters on `source_resource_id`."""
+async def _extractor_rows(org: str, t: Target, source_uri: str) -> list[MemoryRow]:
+    """The extractor's live decision rows in the target namespace citing this document,
+    whole: listed a page at a time (the listing carries no source), each page read back in
+    one bulk read. The cost grows with every decision the extractor holds in the
+    namespace, not with this document's: no store read filters on `source_resource_id`."""
     ident = Identity(
-        org=org, namespace=namespace, agent=EXTRACTOR_AGENT, user_id="-", session_id="-"
+        org=org, namespace=t.namespace, agent=EXTRACTOR_AGENT, user_id="-", session_id="-"
     )
     out: list[MemoryRow] = []
     offset = 0
@@ -1071,7 +1156,7 @@ async def _extractor_rows(org: str, namespace: str, source_uri: str) -> list[Mem
             ident, [r.memory_key for r in page], scope=WHOLE_NAMESPACE, strong=True
         )
         for row in rows:
-            if await cites_document(org, row.source_resource_id, namespace, source_uri):
+            if await cites_document(org, row.source_resource_id, t.doc_namespace, source_uri):
                 out.append(row)
         if len(page) < _PAGE:
             return out

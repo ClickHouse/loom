@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 
 from server.auth.authz import row_in_scope
-from server.code.domain.index.repos import docs_namespaces, repo_for_namespace
+from server.code.domain.index.repos import configured_repos, docs_namespaces, repo_for_namespace
 from server.code.domain.scope import current_code_scope
 from server.operations.base import Role
 
@@ -40,6 +40,26 @@ async def readable_repo_namespace(org: str, code_namespace: str) -> str:
         # One line per scoped request while the grants read is down.
         log.warning("repository namespace gate failed (closed): %s", e)
         return ""
+
+
+async def repo_trunk(org: str, repo: str) -> tuple[str, str]:
+    """(trunk code namespace, `repo:<id>` tag) of the repository `repo` names (owner/name
+    or a remote URL), matched as code.repos matches its candidates; ("", "") when no
+    repository configured in `org` is that one. No access check: the caller gates."""
+    from server.code.app.index.repo_registry import refresh_db_repos
+    from server.code.app.memory_links import trunk_namespace
+    from server.code.app.repos import repo_slug
+    from server.code.domain.index.remote import repo_tag
+
+    slug = repo_slug(repo)
+    if not slug:
+        return "", ""
+    # A repository added from the dashboard is in the snapshot once it is refreshed.
+    await refresh_db_repos()
+    for cfg in configured_repos():
+        if cfg.org == org and repo_slug(cfg.repo) == slug:
+            return trunk_namespace(org, cfg.namespace), repo_tag(cfg.git_remote or cfg.repo)
+    return "", ""
 
 
 async def repo_namespace_in_scope(org: str) -> str:
