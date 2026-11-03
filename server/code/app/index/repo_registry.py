@@ -150,6 +150,12 @@ async def refresh_db_repos(*, force: bool = False, ch: Any | None = None) -> lis
     return registry_repos()
 
 
+def registry_read() -> bool:
+    """The snapshot holds what loom.code_repos held at some read, or there is no registry
+    (self-service off): False while every read since the process started failed."""
+    return not settings.code_self_service_enabled or _LOADED_AT > -1e12
+
+
 async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
     """Every process loads the registry before it serves and re-reads it every
     ``code_repos_refresh_seconds``, so an added repository or a new restriction

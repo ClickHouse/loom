@@ -250,6 +250,7 @@ class _World:
             return []
 
         mp.setattr(repo_registry, "refresh_db_repos", no_refresh)
+        mp.setattr(repo_registry, "registry_read", lambda: True)
         mp.setattr(llm_client, "get_llm_client", lambda: _LLM())
         mp.setattr(document_reads, "handle_knowledge_get", knowledge_get)
         mp.setattr(document_reads, "document_chunks", chunks)
@@ -4074,17 +4075,31 @@ async def test_a_run_the_caller_may_not_make_refuses_before_any_model_call(
     assert cli.exit_code(report) == 1
 
 
+@pytest.mark.parametrize(
+    ("kw", "broken", "error"),
+    [
+        ({"repo": "acme/widgets"}, TRUNK, "no repository 'acme/widgets' you may read"),
+        # The document's namespace is where the rows go: one check, for write.
+        ({"repo": "acme/widgets"}, "ns", "not allowed to write o/ns"),
+        ({"repo": "acme/widgets", "into": "repo"}, "ns", "not allowed to read o/ns"),
+    ],
+    ids=["trunk", "rows beside the document", "document's namespace"],
+)
 @pytest.mark.asyncio
-async def test_an_access_check_that_fails_refuses(monkeypatch) -> None:
+async def test_an_access_check_that_fails_refuses(
+    monkeypatch, kw: dict[str, Any], broken: str, error: str
+) -> None:
     world = _World(monkeypatch, [_candidate()])
     _link_repo(monkeypatch, world)
 
-    async def broken(org, ns, role, *, hides_answer=True):
-        raise RuntimeError("grants unreadable")
+    async def flaky(org, ns, role, *, hides_answer=True):
+        if ns == broken:
+            raise RuntimeError("grants unreadable")
+        return True
 
-    monkeypatch.setattr(de, "row_in_scope", broken)
-    report = await _run(repo="acme/widgets")
-    assert report.error.startswith("no repository") and world.recorded == []
+    monkeypatch.setattr(de, "row_in_scope", flaky)
+    report = await _run(**kw)
+    assert report.error.startswith(error) and world.recorded == [] and world.prompts == []
 
 
 @pytest.mark.asyncio
@@ -4399,3 +4414,48 @@ async def test_a_run_without_repo_reads_the_registry_for_a_branchs_trunk(monkeyp
         "delete them there first"
     )
     assert world.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_a_run_refuses_when_the_dashboards_repositories_could_not_be_read(
+    monkeypatch,
+) -> None:
+    from server.code.app.index import repo_registry
+
+    world = _World(monkeypatch, [_candidate()])
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
+    report = await _run()
+    assert report.error == "could not read the repositories added from the dashboard; try again"
+    assert world.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_a_linked_repository_the_caller_may_not_read_stays_a_tag(monkeypatch) -> None:
+    from server.code.app import repo_scope
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), files=[HEADER], tags=["decision", REPO_TAG])
+    _link_repo(monkeypatch, world, refused=frozenset({(TRUNK, "viewer")}))
+    monkeypatch.setattr(repo_scope, "repo_names", lambda org: {REPO_TAG: "acme/widgets"})
+    report = await _run()
+    assert report.error.startswith(
+        f"this document's decisions are linked to a repository ({REPO_TAG})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_another_writers_flagged_row_is_cleared_but_not_tagged(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        _same_fields(c),
+        agent="claude-code",
+        files=[HEADER],
+        tags=["decision", SOURCE_CHANGED],
+    )
+    _link_repo(monkeypatch, world)
+    await _run(repo="acme/widgets")
+    (upd,) = world.updates
+    assert upd.tags == ["decision"]

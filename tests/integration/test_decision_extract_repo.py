@@ -90,6 +90,7 @@ async def env(ch_client, monkeypatch):
         return []
 
     monkeypatch.setattr(repo_registry, "refresh_db_repos", no_refresh)
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: True)
     # The fake model, chosen on purpose: the run would refuse one it fell back to.
     monkeypatch.setattr(settings, "llm_provider", "fake")
     monkeypatch.setattr(Settings, "llm_provider_inferred", lambda self: False)
@@ -157,6 +158,13 @@ async def test_into_source_serves_the_decision_in_the_documents_namespace(env) -
     (hit,) = await _for_file(person, hook_tags, [trunk], _auth(person))
     assert hit.namespace == person and tag in hit.tags
     assert hit.matched_files == [PATH]
+    # The row as the extractor wrote it.
+    assert hit.memory_key.startswith("decision:") and hit.memory_type == "decision"
+    assert hit.agent == "loom-decisions" and hit.status == "active"
+    assert hit.confidence == 0.5 and not hit.pinned
+    assert "PageReader reads one page of rows at a time" in hit.value
+    assert "A whole-table read would hold every row of a large table in memory." in hit.value
+    assert "source-kind:design_doc" in hit.tags
     assert (
         hit.source_resource_id
         == f"knowledge:{person}/design/storage.md#Widgets storage > Page reads"

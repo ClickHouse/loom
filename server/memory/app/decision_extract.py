@@ -9,8 +9,8 @@ the namespace already holds, then written through `decision.record` under one fi
 identity, so a re-run revises the extractor's own rows instead of writing beside them:
 
 - the key's active record has the same verbatim fields (reasoning, rejected options'
-  reasons; the rest is the model's wording) and its row carries the same files, source
-  and constraint tag: nothing is written;
+  reasons; the rest is the model's wording) and its row carries the same files, source,
+  constraint and repository tags: nothing is written;
 - it differs and its row is the extractor's, unconfirmed and from this document:
   recorded again (Revise), unless its outcome is recorded: then it is tagged
   `source-changed`;
@@ -319,13 +319,16 @@ async def _target(
     with the repository (`into="source"`, the default unless the document is in a code
     namespace). The caller must read the document and the repository and write where the
     rows go (read, for a dry run); with no auth context (the CLI) the operator may."""
-    from server.code.app.index.repo_registry import refresh_db_repos
+    from server.code.app.index.repo_registry import refresh_db_repos, registry_read
     from server.code.app.repo_scope import repo_trunk
     from server.code.domain.index.repos import repo_for_namespace
 
     # A repository added from the dashboard is known once the snapshot is read; a run
     # without --repo needs it too, for the trunk of a branch namespace (`_read_own`).
     await refresh_db_repos()
+    if not registry_read():
+        # Without it a repository's trunk would read as none, and a check be skipped.
+        return "could not read the repositories added from the dashboard; try again"
     if not repo:
         if into:
             return "--into needs --repo"
@@ -475,12 +478,12 @@ async def _read_own(
     for a run without `--repo`), which the run would drop or add to. Reconcile and retire
     read one namespace, so going on would leave the document's decisions in two places, or
     linked to the wrong repository."""
-    from server.code.app.repo_scope import repo_names, trunk_namespace_of
+    from server.code.app.repo_scope import trunk_namespace_of
 
     rows = await _extractor_rows(org, t, source_uri)
     tagged = sorted({x for r in rows for x in r.tags if x.startswith("repo:")} - {t.repo_tag})
     if tagged:
-        names = repo_names(org)
+        names = await _readable_names(org)
         linked_to = ", ".join(names.get(x, x) for x in tagged)
         return [], (
             f"this document's decisions are linked to a repository ({linked_to}); run with "
@@ -504,6 +507,19 @@ async def _read_own(
                 f"--into {into}, or delete them there first"
             )
     return await _own_records(org, t.rows_namespace, rows), ""
+
+
+async def _readable_names(org: str) -> dict[str, str]:
+    """`repo:<id>` tag -> owner/name of each repository the caller may read; another
+    stays a tag, as `_target` answers for a repository the caller may not read."""
+    from server.code.app.repo_scope import repo_names, repo_trunk
+
+    out: dict[str, str] = {}
+    for tag, name in repo_names(org).items():
+        trunk, _tag = repo_trunk(org, name)
+        if trunk and await _may(org, trunk, Role.VIEWER):
+            out[tag] = name
+    return out
 
 
 async def _own_records(
@@ -943,7 +959,7 @@ async def _reconcile(
             rec.holds = ours
             rec.held_outcome = str(record.get("outcome") or "").strip()
             if row is not None and this_doc:
-                # Another writer's unconfirmed row is left as it is, untagged.
+                # Another writer's unconfirmed row gains no repository tag.
                 link = t.row_tag if ours or _confirmed(row) else ""
                 await _keep_tags(rec, row, dry_run, link)
             return rec
