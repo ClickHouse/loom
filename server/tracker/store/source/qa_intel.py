@@ -407,7 +407,7 @@ def redact_table_function(clause: str) -> str:
     that cannot hold a credential: a table name as is; a `remote` /
     `remoteSecure` call as its address and table, with every argument after
     the table (the user, the password, a sharding key) shown as `...`; any
-    other clause as its function name alone."""
+    other clause as its function name alone, or `(...)` when it is no call."""
     if not clause or _TABLE_NAME.match(clause):
         return clause
     m = _REMOTE_HEAD.match(clause)
