@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from server.auth.grant_claims import account_change
-from server.auth.sharing import PERSONAL_ALIAS, is_collection
+from server.auth.sharing import PERSONAL_ALIAS, is_collection, is_personal
 from server.core import grant_cache
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now_seconds
@@ -609,8 +609,6 @@ async def handle_namespace_delete(
     is a no-op (returns deleted=False). A collection is refused: it goes with
     what it holds, through `collection.delete`.
     """
-    from server.auth.sharing import is_personal
-
     if is_personal(input.namespace):
         # It goes with its user's erasure, which also takes the user's id off its row.
         raise ValidationError("a personal collection goes only with its user's erasure")

@@ -1,7 +1,7 @@
 """`namespace.restore` into a registered target — active or soft-deleted — applies
 the same admin + restricted check as `namespace.register`, and reactivating a
-soft-deleted target carries its row forward. `namespace.register` keeps the
-row's `created_at` and `duplicate_threshold`."""
+soft-deleted target carries its row forward. Both refuse a collection name.
+`namespace.register` keeps the row's `created_at` and `duplicate_threshold`."""
 
 from __future__ import annotations
 
