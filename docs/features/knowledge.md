@@ -524,10 +524,10 @@ last change, an upload's for 7 days after it expires. A failed job names why in
 
 A transient failure (an extractor that cannot be reached, times out, or answers a `5xx`,
 `408`, `429` or another status that is neither a result nor a refusal; a provider or a
-store outage) puts the job back with a doubling delay; a source the extractor refuses, or
-an artifact that breaks the contract, fails at once with its code. A pass runs one due
-job, one source's jobs in order and namespaces in turn, and is cancelled after
-`LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS` (15 minutes); a job cut off there, or by a
+store outage) puts the job back with a doubling delay (at most an hour); a source the
+extractor refuses, or an artifact that breaks the contract, fails at once with its code. A
+pass runs one due job, one source's jobs in order and namespaces in turn, and is cancelled
+after `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS` (15 minutes); a job cut off there, or by a
 process that stopped, runs again from its start and counts the attempt. A job that fails,
 or is cancelled, publishes nothing, so the earlier revision keeps serving.
 `knowledge.ingest_cancel` stops a pending job at once and a running one before it

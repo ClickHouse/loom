@@ -62,6 +62,8 @@ JOB_LEASE_S = 120.0  # not a setting: renewed while the job runs; it bounds a de
 _SOURCE_CLAIM_S = 60.0  # not a setting: bounds one publish's few statements
 # The first retry waits this long, doubling per attempt.
 _RETRY_BASE_S = 5  # not a setting: knowledge_ingest_max_attempts bounds the retries
+# The longest wait between attempts, far inside the job row's 30-day TTL.
+_RETRY_MAX_S = 3600  # not a setting: a longer outage is the attempts' to ride out
 
 _TRANSIENT = (
     BackendUnavailableError,
@@ -120,16 +122,15 @@ async def _cancelled(job: dict[str, Any]) -> bool:
     return await ingestions.cancel_requested(job["org"], job["namespace"], job["ingestion_id"])
 
 
-async def _own_publish(job: dict[str, Any]) -> Any:
-    """The source's document row when this job wrote it (an earlier run that
-    stopped before its last save), live or since deleted; else None. A metadata
-    edit or a delete keeps the row's `ingestion_id`."""
+async def _own_publish(job: dict[str, Any]) -> int | None:
+    """The revision this job published (an earlier run that stopped before its
+    last save, or failed after its document row), whatever has been written to
+    the source since; None when it published nothing."""
     from server.knowledge.store import documents as documents_repo
 
-    doc = await documents_repo.get_one(
-        job["org"], job["namespace"], job["source_uri"], include_superseded=True
+    return await documents_repo.revision_by_ingestion(
+        job["org"], job["namespace"], job["source_uri"], job["ingestion_id"]
     )
-    return doc if doc is not None and doc.ingestion_id == job["ingestion_id"] else None
 
 
 async def _retire_unpublished(job: dict[str, Any]) -> None:
@@ -151,14 +152,14 @@ async def _end(job: dict[str, Any], state: str, code: str, message: str) -> str:
     """End a job that publishes nothing: failed or cancelled. One whose
     document row landed before the failure (the retire after it failed) ends
     published instead."""
-    if (doc := await _own_publish(job)) is not None:
-        return await _finish_published(await _current(job), doc)
+    if (revision := await _own_publish(job)) is not None:
+        return await _finish_published(await _current(job), revision)
     await _retire_unpublished(job)
     await _save(job, state=state, error_code=code, error_message=message[:2000])
     return state
 
 
-async def _finish_published(job: dict[str, Any], doc: Any) -> str:
+async def _finish_published(job: dict[str, Any], revision: int) -> str:
     """End a job whose document row landed but whose run did not finish (it
     stopped before its last save, or failed after the row): retire the earlier
     versions' chunks it may not have reached, and record the revision. Nothing
@@ -174,7 +175,7 @@ async def _finish_published(job: dict[str, Any], doc: Any) -> str:
         job,
         state=state,
         stage="",
-        revision=doc.revision,
+        revision=revision,
         chunks=await chunks_repo.count_active_for_doc(org, ns, uri),
         error_code="",
         error_message="",
@@ -365,11 +366,11 @@ async def _retry_or_fail(job: dict[str, Any], e: Exception) -> str:
     attempts = int(job["attempts"])
     if attempts >= settings.knowledge_ingest_max_attempts:
         return await _end(job, "failed", "retries_exhausted", str(e))
-    if (doc := await _own_publish(job)) is not None:  # failed after its document row
-        return await _finish_published(await _current(job), doc)
+    if (revision := await _own_publish(job)) is not None:  # failed after its document row
+        return await _finish_published(await _current(job), revision)
     # A pending job holds no live chunks: search would serve them while it waits.
     await _retire_unpublished(job)
-    delay = _RETRY_BASE_S * 2 ** (attempts - 1)
+    delay = min(_RETRY_BASE_S * 2 ** (attempts - 1), _RETRY_MAX_S)
     await _save(
         job,
         state="pending",
@@ -458,8 +459,8 @@ async def take_and_run(job: dict[str, Any]) -> str | None:
                 return None
             # Its own publish first: a published revision stays published, even
             # if a cancel came after it.
-            if (doc := await _own_publish(current)) is not None:
-                return await _finish_published(current, doc)
+            if (revision := await _own_publish(current)) is not None:
+                return await _finish_published(current, revision)
             if await _cancelled(current):
                 return await _end(
                     current, "cancelled", "cancelled", "cancelled before it was published"

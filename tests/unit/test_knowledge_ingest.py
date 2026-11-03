@@ -199,6 +199,14 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
     monkeypatch.setattr(chunks_repo, "mark_doc_superseded", mark_doc_superseded)
     monkeypatch.setattr(documents_repo, "insert_one", insert_one)
     monkeypatch.setattr(documents_repo, "get_one", get_one)
+
+    async def revision_by_ingestion(org: str, ns: str, uri: str, job_id: str, **_: Any) -> Any:
+        rows = [
+            d for d in w.documents if d["source_uri"] == uri and d.get("ingestion_id") == job_id
+        ]
+        return max(rows, key=lambda r: r["version"])["revision"] if rows else None
+
+    monkeypatch.setattr(documents_repo, "revision_by_ingestion", revision_by_ingestion)
     monkeypatch.setattr(codes_state, "refuse_width", refuse_width)
     monkeypatch.setattr(leases, "take", take)
     monkeypatch.setattr(leases, "release_shielded", release_shielded)
@@ -1030,3 +1038,33 @@ def test_a_rerun_of_a_published_job_keeps_its_chunks_and_publishes_nothing_more(
     assert _run(world, job_id) == "ready"
     assert world.retired == [] and len(world.documents) == 2
     assert world.superseded[-1] == ("repo://retention.sql", job["doc_version"])
+
+
+def test_a_rerun_of_a_published_job_after_a_text_write_publishes_nothing_more(world: World) -> None:
+    """A text write names no job: the rerun finds its own publish in an
+    earlier version row of the source, not only in the latest one."""
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) == "ready"
+    job = world.job(job_id)
+    assert job is not None
+    doc = world.documents[-1]
+    world.documents.append(
+        {**doc, "version": doc["version"] + 1, "revision": 2, "ingestion_id": ""}
+    )
+    world.jobs.append({**job, "state": "processing", "version": job["version"] + 1})
+    chunks, world.embedded = len(world.chunks), []
+    assert _run(world, job_id) == "ready" and world.job(job_id)["revision"] == 1  # type: ignore[index]
+    assert len(world.chunks) == chunks and len(world.documents) == 2 and world.embedded == []
+
+
+def test_the_retry_delay_stops_doubling_at_an_hour(world: World, settings_override: Any) -> None:
+    """Many attempts never push a retry toward the job row's 30-day TTL."""
+    settings_override(knowledge_ingest_max_attempts=30)
+    world.fail_embed = BackendUnavailableError("provider down")
+    job_id = _ingest(world, _upload(world))
+    job = world.job(job_id)
+    assert job is not None
+    world.jobs.append({**job, "attempts": 20, "version": job["version"] + 1})
+    assert _run(world, job_id) == "pending"
+    wait = world.job(job_id)["next_attempt_at"] - _now()  # type: ignore[index]
+    assert timedelta(minutes=59) < wait <= timedelta(hours=1)

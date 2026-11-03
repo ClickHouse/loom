@@ -133,6 +133,24 @@ async def get_one(
     return _hydrate(row) if row else None
 
 
+async def revision_by_ingestion(
+    org: str, namespace: str, source_uri: str, ingestion_id: str, *, ch: _CHClient | None = None
+) -> int | None:
+    """The revision an ingestion job published for the source, from any version
+    row of it that names the job, the latest or not: a later write of the
+    source (a text write, which names no job) does not hide it. Read without
+    FINAL; None when no row names the job (it did not publish, or merges have
+    folded its row into a later write's)."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT revision FROM loom.documents"
+        " WHERE org = {org:String} AND namespace = {ns:String} AND source_uri = {uri:String}"
+        " AND ingestion_id = {id:String} ORDER BY version DESC LIMIT 1",
+        params={"org": org, "ns": namespace, "uri": source_uri, "id": ingestion_id},
+    )
+    return int(row["revision"]) if row else None
+
+
 # A document that still serves its original: a write without fresh bytes carries
 # such a row's original forward, and the sweep keeps every original one names.
 LIVE_ORIGINAL_SQL = "blob_path != '' AND superseded_at IS NULL AND blob_erased_at IS NULL"
