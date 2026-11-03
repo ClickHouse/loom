@@ -53,8 +53,8 @@ export function installServerUrl() {
 
 /** The server the status script checks: what the hooks use, with the saved
  *  install URL standing in for the option the agent's shell lacks. */
-export function statusServerUrl(env = process.env) {
-  return String(env.LOOM_BASE_URL || installServerUrl() || resolveServerUrl()).replace(/\/+$/, "");
+export function statusServerUrl() {
+  return String(process.env.LOOM_BASE_URL || installServerUrl() || resolveServerUrl()).replace(/\/+$/, "");
 }
 
 /** What a run would do, without doing it: {write, url, reason}. Pure. */
@@ -69,18 +69,20 @@ export function planMaterialize(env, { configExists, configToken, tokenFileExist
   return { write: true, url, reason: configExists ? "config lacks a token" : "no config" };
 }
 
-/** The primer line when the install token was skipped for a config token
- *  saved for another server than `mcpUrl`, the one the MCP entry calls: the
- *  header helper sends that token there, which refuses it. "" otherwise. Pure. */
-export function installTokenNotice(plan, mcpUrl) {
-  if (plan.reason !== "config has a token") return "";
+/** The primer line when the token the MCP header helper will send is the
+ *  config's, saved for another server than `mcpUrl`, the one the MCP entry
+ *  calls, which refuses it. The helper reads LOOM_API_KEY, then the config:
+ *  no notice when the env var is set, when this hook has just written the
+ *  config's token itself, or when the config names no server. Pure. */
+export function installTokenNotice(plan, mcpUrl, env = process.env) {
+  if (String(env.LOOM_API_KEY || "").trim() || plan.write || !plan.configHasToken) return "";
   const saved = String(plan.configUrl || "");
   const inUse = String(mcpUrl || "").replace(/\/+$/, "");
   if (!saved || !inUse || saved === inUse) return "";
   return (
     `Loom: ~/.loom/config.json holds a token saved for ${saved}, which the loom MCP tools send to ` +
-    `${inUse}; the hooks use the install token. If the loom tools fail to connect, put a ${inUse} ` +
-    `token in that file or in LOOM_API_KEY and restart.`
+    `${inUse}. If the loom tools fail to connect, put a ${inUse} token in that file or in ` +
+    `LOOM_API_KEY and restart.`
   );
 }
 
@@ -97,6 +99,7 @@ export function applyPluginOptions(env = process.env, paths = {}) {
   plan.configUrl = String(existing.url || "")
     .trim()
     .replace(/\/+$/, "");
+  plan.configHasToken = Boolean(String(existing.token || "").trim());
   if (!plan.write) return plan;
   try {
     const patch = { token: String(env.CLAUDE_PLUGIN_OPTION_TOKEN).trim() };
