@@ -425,8 +425,9 @@ async def _stop(tasks: list[asyncio.Task[None]]) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("tracker_refresh_tags")  # its stubs; this test reads no tag
 async def test_the_child_adopts_the_runtime_overrides_before_its_workers_start(
-    monkeypatch, tracker_refresh_tags
+    monkeypatch,
 ) -> None:
     """A worker pass reads LIVE settings: the child loads the stored overrides
     before the supervisor starts and keeps re-reading them."""
