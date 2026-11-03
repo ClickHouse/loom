@@ -104,7 +104,8 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    smoke-tests the wheel in a clean venv with `scripts/gates/sdk_wheel_smoke.py`;
 5. `docker` publishes `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor` (the
    document extractor service), one matrix entry each, for linux/amd64 and linux/arm64, each
-   with provenance and an SBOM, scanned before it is tagged. A package GitHub creates on its
+   with provenance and an SBOM, each pushed by digest and scanned; `docker-tag` then tags both
+   only once both have passed, so a version never names one image without the other. A package GitHub creates on its
    first push is private, and an install pulls without signing in: the first release run
    that pushes `loom-extractor` creates it and its `docker-smoke` jobs fail to pull it. Set
    the package's visibility to public in its settings, then re-run the failed jobs
@@ -123,7 +124,7 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    for one tag at a time, so two tags released together cannot both pass the check against
    the same older bundle. Only one more such job waits: a third tag's publish cancels the
    waiting one, which must then be re-run by hand (Re-run failed jobs). A refusal here
-   comes after `docker` pushed the tag's image tags (and `:latest` for a final release). A
+   comes after `docker-tag` pushed the tag's image tags (and `:latest` for a final release). A
    re-run keeps the run's inputs and fails again, so dispatch the tag instead, which also
    publishes the SDKs and the MCP Registry listing:
    `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=<the newer release the error names>`

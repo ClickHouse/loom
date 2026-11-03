@@ -11,7 +11,8 @@ name: release
 #
 # Jobs: version (derive and gate the version) -> clickhouse (the ClickHouse
 # release the installer bundle names, migrated and schema-checked) -> build ->
-# verify (inspect the exact files) -> docker (both images) -> docker-smoke -> github-release
+# verify (inspect the exact files) -> docker (build and scan both images) -> docker-tag ->
+# docker-smoke -> github-release
 # -> pypi, npm, mcp-registry (dispatch only). A re-run after a partial
 # publish is safe: the bundle keeps the ClickHouse release it was first
 # published with, the release is updated in place, PyPI skips files it
@@ -393,13 +394,11 @@ jobs:
           - image: ghcr.io/clickhouse/loom
             file: Dockerfile
             cache: buildkit
-            pin: image.digest
             # The repository's title and description, metadata-action's defaults.
             labels: ""
           - image: ghcr.io/clickhouse/loom-extractor
             file: extractor/Dockerfile
             cache: extractor
-            pin: extractor.image.digest
             labels: |
               org.opencontainers.image.title=loom-extractor
               org.opencontainers.image.description=Loom's document extractor service, which parses originals apart from the server
@@ -464,21 +463,55 @@ jobs:
           severity: CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      - name: Tag the scanned image
+      # Tagged by docker-tag once both images have scanned, so no version names
+      # one image without the other.
+      - name: Record the scanned digest and tags
         env:
-          IMAGE: ${{ matrix.image }}
-          PIN: ${{ matrix.pin }}
           DIGEST: ${{ steps.build.outputs.digest }}
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
-          args=()
-          while read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done <<<"$TAGS"
-          docker buildx imagetools create "${args[@]}" "$IMAGE@$DIGEST"
-          echo "Pin $IMAGE with \`$PIN: $DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p scanned
+          printf '%s\n' "$DIGEST" > scanned/digest
+          printf '%s\n' "$TAGS" > scanned/tags
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scanned-${{ matrix.cache }}
+          path: scanned/
+
+  docker-tag:
+    name: Tag both scanned images
+    needs: [docker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to ghcr.io
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: scanned-*
+      - name: Tag the scanned images
+        run: |
+          for entry in "server ghcr.io/clickhouse/loom scanned-buildkit image.digest" \
+            "extractor ghcr.io/clickhouse/loom-extractor scanned-extractor extractor.image.digest"; do
+            read -r _ image dir pin <<<"$entry"
+            digest=$(cat "$dir/digest")
+            args=()
+            while read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done <"$dir/tags"
+            docker buildx imagetools create "${args[@]}" "$image@$digest"
+            echo "Pin $image with \`$pin: $digest\`" >> "$GITHUB_STEP_SUMMARY"
+          done
 
   docker-smoke:
     name: Released quickstart (${{ matrix.arch }})
-    needs: [version, clickhouse, docker]
+    needs: [version, clickhouse, docker-tag]
     strategy:
       fail-fast: false
       matrix:
@@ -514,7 +547,7 @@ jobs:
 
   github-release:
     name: GitHub Release (artifacts attached)
-    needs: [version, verify, docker, docker-smoke]
+    needs: [version, verify, docker-tag, docker-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # One publish at a time across every tag, so the downgrade check below
