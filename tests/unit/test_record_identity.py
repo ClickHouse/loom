@@ -76,6 +76,8 @@ def test_text_without_latin_letters_keys_on_its_own_script() -> None:
     assert canonical_value("scenario", "किताब") == "किताब", "an Indic vowel sign stays"
     assert canonical_value("scenario", "보존") == "보존", "Hangul stays composed"
     assert canonical_value("scenario", "原始记录") != canonical_value("scenario", "原始纪录")
+    for a, b in [("かぎ", "かき"), ("ไม่", "ไม้"), ("क्या", "कया"), ("كَتَبَ", "كتب")]:
+        assert canonical_value("scenario", a) != canonical_value("scenario", b), "a mark counts"
 
 
 def test_punctuation_alone_has_no_key() -> None:
