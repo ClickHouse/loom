@@ -317,7 +317,7 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
         raise SystemExit("the lexical leg never fired: the arm ran as semantic")
     check_reranked(rerank, reranked)
     return {
-        "params": params,
+        "params": {**params, "rerank": rerank},
         "metrics": mean_by_kind(rows),
         # The gap between the two is the room a similarity floor has to abstain.
         # Means over the queries that returned a hit; `no_hits` counts the others of each

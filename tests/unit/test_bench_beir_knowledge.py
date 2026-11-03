@@ -132,8 +132,10 @@ def test_the_search_scores_each_query_and_counts_what_ran() -> None:
     baseline = bk.search(
         lambda p, b: sent.append(b) or plain, "o", "beir-x", {"q1": "r"}, {"q1": {"d1": 1}}, {}
     )
-    # an arm that names no reranker pins none, whatever the deployment default
+    # an arm that names no reranker pins none, whatever the deployment default, and
+    # its report says so
     assert sent[-1]["rerank"] == "none" and baseline["reranked"] == 0
+    assert baseline["params"] == {"rerank": "none"}
     assert report["metrics"] == {
         "ndcg@10": 1.0,
         "recall@10": 1.0,
@@ -172,11 +174,9 @@ def test_a_semantic_arm_needs_no_lexical_leg() -> None:
 
 
 def test_an_ignored_search_field_fails_the_run() -> None:
-    def post(path: str, body: dict) -> Any:
-        return {"results": [], "ignored_args": ["rerank"]}
-
-    with pytest.raises(SystemExit):
-        bk.search(post, "o", "beir-x", {"q1": "x"}, {"q1": {"d1": 1}}, {"rerank": "x"})
+    answer = {"results": [{"source_uri": "beir:d1"}], "ignored_args": ["rerank"]}
+    with pytest.raises(SystemExit, match="ignored"):
+        bk.search(lambda p, b: answer, "o", "beir-x", {"q1": "x"}, {"q1": {"d1": 1}}, {})
 
 
 def test_a_search_refuses_a_namespace_not_holding_exactly_this_corpus() -> None:
@@ -191,28 +191,28 @@ def test_a_search_refuses_a_namespace_not_holding_exactly_this_corpus() -> None:
             bk.check_corpus(lambda p, b: page, "o", "beir-x", docs, tag)
 
 
+_ONE_DOC = [{"source_uri": "beir:d0", "title": "", "content": "x"}]
+
+
 @pytest.mark.parametrize(
     "row",
     [
-        {"source_uri": "beir:d0", "tags": ["TAG-OTHER-MODEL"]},
+        {"source_uri": "beir:d0", "tags": [bk.corpus_tag(_ONE_DOC, "other-model")]},
         {"source_uri": "beir:d0", "tags": ["beir:other"]},
         {"source_uri": "beir:z", "tags": []},
     ],
     ids=["another-model", "another-version", "another-corpus"],
 )
 def test_an_ingest_into_a_namespace_of_another_corpus_writes_nothing(monkeypatch, row) -> None:
-    docs = [{"source_uri": "beir:d0", "title": "", "content": "x"}]
-    if row["tags"] == ["TAG-OTHER-MODEL"]:  # the same corpus, embedded with another model
-        row = {**row, "tags": [bk.corpus_tag(docs, "other-model")]}
     registered: list[str] = []
     sent: list[str] = []
     monkeypatch.setattr(
         bk, "register_bench_namespace_sync", lambda post, **kw: registered.append(kw["namespace"])
     )
     monkeypatch.setattr(bk, "listed_documents", lambda post, org, ns: [{**row, "chunk_count": 1}])
-    tag = bk.corpus_tag(docs, "m")
+    tag = bk.corpus_tag(_ONE_DOC, "m")
     with pytest.raises(SystemExit, match="another corpus"):
-        bk.ingest(lambda path, body: sent.append(path), "o", "beir-x", docs, tag, keep=False)
+        bk.ingest(lambda path, body: sent.append(path), "o", "beir-x", _ONE_DOC, tag, keep=False)
     assert sent == [] and registered == []  # refused before the namespace is registered
 
 

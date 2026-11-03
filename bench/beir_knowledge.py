@@ -121,8 +121,10 @@ def fetch(name: str, data_dir: Path) -> Path:
 
 
 def _jsonl(path: Path) -> list[dict]:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return [json.loads(line) for line in lines if line.strip()]
+    # Read line by line: `str.splitlines` also breaks on U+2028 and its kin, which
+    # JSON allows unescaped inside a string.
+    with path.open(encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
 
 
 def load(root: Path) -> tuple[list[dict], dict[str, str], dict[str, dict[str, int]]]:
@@ -254,7 +256,7 @@ def search(
     keys = rows[0]["metrics"]
     means = {k: round(sum(r["metrics"][k] for r in rows) / len(rows), 4) for k in keys}
     return {
-        "params": params,
+        "params": {**params, "rerank": rerank},  # as sent
         "metrics": means,
         "reranked": reranked,
         "lexical_fired": lexical_fired,
