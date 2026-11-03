@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import textwrap
 from pathlib import Path
 
@@ -425,11 +426,20 @@ async def test_a_child_can_open_no_socket(tmp_path: Path, monkeypatch: pytest.Mo
             socket.socketpair()
         except PermissionError:
             refused.append("pair")
+        import ctypes, errno, platform
+        libc = ctypes.CDLL(None, use_errno=True)
+        probes = {"io_uring": 425}  # io_uring_setup: an io_uring can open a socket
+        if platform.machine() == "x86_64":
+            probes["x32"] = 0x40000000 | 39  # the x32 ABI's getpid, numbered past the filter's checks
+        for name, nr in probes.items():
+            if libc.syscall(nr, 1, None) == -1 and ctypes.get_errno() == errno.EPERM:
+                refused.append(name)
         raise ExtractionError("corrupt", " ".join(refused))
         """,
     )
     r = await _extract()
-    assert r.json()["error"]["message"] == "AF_INET AF_INET6 AF_UNIX pair"
+    x32 = " x32" if platform.machine() == "x86_64" else ""
+    assert r.json()["error"]["message"] == f"AF_INET AF_INET6 AF_UNIX pair io_uring{x32}"
 
 
 def test_a_machine_with_no_socket_filter_refuses_to_extract(

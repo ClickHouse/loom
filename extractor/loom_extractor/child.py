@@ -1,10 +1,11 @@
 """One extraction in a process of its own: `python -P -m loom_extractor.child
 <limits JSON>`, with the request as the first line of stdin (`{"format",
 "name", "options"}`) and the source bytes after it. Before it reads stdin
-the process sets no-new-privileges, makes itself non-dumpable and limits
-itself (address space, CPU seconds, file size, no core dump, no new
-process); it writes the artifact JSON to stdout and exits 0, or writes
-`{"error": {"code", "message"}}` and exits 3.
+the process sets no-new-privileges, makes itself non-dumpable, sets a seccomp
+filter under which it makes no socket, and limits itself (address space, CPU
+seconds, file size, no core dump, no new process); it writes the artifact
+JSON to stdout and exits 0, or writes `{"error": {"code", "message"}}` and
+exits 3.
 
 The service starts it in `/` with only `PYTHONPATH`, `PATH` and `LC_ALL` in
 its environment, so a parser does not see the service's token, and with the
@@ -75,15 +76,19 @@ def no_sockets() -> None:
         raise OSError(f"no socket filter for {machine}: the extractor runs on x86_64 or aarch64")
     arch, calls = _NO_SOCKETS[machine]
     ld_w_abs, jeq, jge, ret = 0x20, 0x15, 0x35, 0x06
-    deny = 0x00050000 | errno.EPERM  # SECCOMP_RET_ERRNO
-    # [arch] [arch?] [nr] [x32?] [call?]... [allow] [deny] [kill]
-    prog = [_bpf(ld_w_abs, 4), _bpf(jeq, arch, 0, len(calls) + 4), _bpf(ld_w_abs, 0)]
-    prog.append(
-        _bpf(jge, _X32_BIT, len(calls) + 1, 0) if machine == "x86_64" else _bpf(jeq, 0, 0, 0)
-    )
-    for i, nr in enumerate(calls):
-        prog.append(_bpf(jeq, nr, len(calls) - i, 0))
-    prog += [_bpf(ret, 0x7FFF0000), _bpf(ret, deny), _bpf(ret, 0x80000000)]  # allow, deny, kill
+    # Each check jumps to deny when it matches, else on to the next one.
+    checks = [(jge, _X32_BIT)] if machine == "x86_64" else []
+    checks += [(jeq, nr) for nr in calls]
+    # [0 load arch] [1 arch?] [2 load nr] [3.. checks] [allow] [deny] [kill]
+    allow = 3 + len(checks)
+    deny, kill = allow + 1, allow + 2
+    prog = [_bpf(ld_w_abs, 4), _bpf(jeq, arch, 0, kill - 2), _bpf(ld_w_abs, 0)]
+    prog += [_bpf(op, k, deny - (3 + i) - 1, 0) for i, (op, k) in enumerate(checks)]
+    prog += [
+        _bpf(ret, 0x7FFF0000),  # SECCOMP_RET_ALLOW
+        _bpf(ret, 0x00050000 | errno.EPERM),  # SECCOMP_RET_ERRNO
+        _bpf(ret, 0x80000000),  # SECCOMP_RET_KILL_PROCESS
+    ]
     filters = ctypes.create_string_buffer(b"".join(prog))
     fprog = struct.pack("@HP", len(prog), ctypes.addressof(filters))  # struct sock_fprog
     libc = ctypes.CDLL(None, use_errno=True)

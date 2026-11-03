@@ -86,10 +86,11 @@ def main() -> None:
     for overlay in ("values-kind.yaml", "values-eks.yaml"):
         token = "secrets.extractorToken=" + "t" * 24
         on = ("networkPolicy.enabled=true", "workers.enabled=true", token)
-        check(render(overlay, *on))
-        rotated = render(overlay, *on[:2], "secrets.extractorToken=" + "u" * 24)
-        before, after = annotations(render(overlay, *on)), annotations(rotated)
+        docs = render(overlay, *on)
+        check(docs)
         if overlay == "values-kind.yaml":  # the EKS overlay's Secret is the operator's
+            rotated = render(overlay, *on[:2], "secrets.extractorToken=" + "u" * 24)
+            before, after = annotations(docs), annotations(rotated)
             changed = [name for name in before if before[name] != after[name]]
             assert sorted(changed) == sorted(before), f"a new token restarts only {changed}"
     print("extractor isolation: selectors, policy, token key and restarts checked")

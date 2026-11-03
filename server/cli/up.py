@@ -4,7 +4,8 @@ What it does, in place of `make dev` + a health poll + `loom mint-token`:
 
   1. bootstrap: copy `.env.example` → `.env` and the ClickHouse
      `named_collections.xml` template when they are missing (the same two
-     files `make bootstrap` creates; no `make` needed).
+     files `make bootstrap` creates; no `make` needed), and give an `.env`
+     without one an extractor token.
   2. `docker compose --env-file .env -f compose.yaml -f
      dev/docker-compose.dev.yml --profile bundled up -d --build` (`--file` /
      `--no-build` override).
