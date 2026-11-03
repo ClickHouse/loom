@@ -12,6 +12,7 @@ import {
   mcpServerUrl,
   planMaterialize,
   saveInstallServerUrl,
+  statusServerUrl,
 } from "../lib/plugin-options.mjs";
 
 function tmp() {
@@ -43,13 +44,13 @@ test("planMaterialize: only when the option is the sole token source", () => {
     { configExists: false, tokenFileExists: false },
   );
   assert.deepEqual(p, { write: true, url: "https://h", reason: "no config" });
-  // LOOM_BASE_URL outranks the option for the url, as in resolveServerUrl
+  // the url saved beside the token is the MCP entry's: the option outranks LOOM_BASE_URL
   assert.equal(
     planMaterialize(
       { CLAUDE_PLUGIN_OPTION_TOKEN: "t", LOOM_BASE_URL: "https://env", CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://opt" },
       { configExists: false, tokenFileExists: false },
     ).url,
-    "https://env",
+    "https://opt",
   );
 });
 
@@ -101,18 +102,20 @@ test("mcpServerUrl follows the MCP entry: the option, then LOOM_BASE_URL, then l
   assert.equal(mcpServerUrl({}), "http://localhost:7777");
 });
 
-test("the hook saves the install URL for the status script; none saved reads as empty", () => {
-  const saved = process.env.TMPDIR;
-  process.env.TMPDIR = tmp();
+test("the hook saves the install URL for the status script, removes it when the option is gone", () => {
+  // The state path is fixed at import (keyed by the plugin root), so the
+  // round trip runs in the real tmp and removes its own file.
+  const before = installServerUrl();
   try {
-    assert.equal(installServerUrl(), "");
-    saveInstallServerUrl({});
-    assert.equal(installServerUrl(), "");
     saveInstallServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://b/" });
     assert.equal(installServerUrl(), "https://b");
+    assert.equal(statusServerUrl({}), "https://b");
+    assert.equal(statusServerUrl({ LOOM_BASE_URL: "https://env/" }), "https://env");
+    saveInstallServerUrl({});
+    assert.equal(installServerUrl(), "");
+    assert.equal(statusServerUrl({}), "http://localhost:7777");
   } finally {
-    if (saved === undefined) delete process.env.TMPDIR;
-    else process.env.TMPDIR = saved;
+    if (before) saveInstallServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: before });
   }
 });
 

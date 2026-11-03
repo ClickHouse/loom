@@ -58,8 +58,9 @@ async function main() {
   // helper; write it once to ~/.loom/config.json, where the helper (and the
   // CLI, the SDK) read it. Before the token check below, so this very
   // session's hooks use it too.
+  const optionPlan = applyPluginOptions();
   // An agent signs in as itself, so the config token is not what its tools send.
-  const optionNotice = agentMode() ? "" : installTokenNotice(applyPluginOptions(), mcpServerUrl());
+  const optionNotice = agentMode() ? "" : installTokenNotice(optionPlan, mcpServerUrl());
   saveInstallServerUrl();
   sweepStaleStateFiles();
   // Default ON; opt out with LOOM_INJECT_CONTEXT=false (see header).

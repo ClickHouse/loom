@@ -11,21 +11,20 @@ import {
   loomTokenPath,
   requestJson,
   resolveScope,
-  resolveServerUrl,
   tokenLookup,
 } from "../lib/loom-client.mjs";
-import { installServerUrl } from "../lib/plugin-options.mjs";
+import { statusServerUrl } from "../lib/plugin-options.mjs";
 
 const FLUSH_RE = /^loom-flush-\d{13}-\d+\.json$/;
 const WRITER_ROLES = new Set(["writer", "admin", "jwt", "org_admin", "platform_admin"]);
-/** What the `source` line calls each `tokenLookup` kind. */
-const TOKEN_SOURCES = {
-  env: () => "LOOM_API_KEY",
-  agent: () => "the workload-token exchange",
-  option: () => "the plugin's install option",
-  config: () => loomConfigPath(),
-  file: () => loomTokenPath(),
-};
+/** What the `source` line calls a `tokenLookup` kind. */
+function tokenSourceName(kind) {
+  if (kind === "config") return loomConfigPath();
+  if (kind === "file") return loomTokenPath();
+  return (
+    { env: "LOOM_API_KEY", agent: "the workload-token exchange", option: "the plugin's install option" }[kind] || kind
+  );
+}
 
 function staleFlushCount(directory, now) {
   try {
@@ -85,7 +84,7 @@ export async function clientStatus({
   if (tokenKind) {
     // A config token saved for another server is what the MCP header helper
     // sends to this one; the hooks may hold a different token.
-    const source = TOKEN_SOURCES[tokenKind]?.() || tokenKind;
+    const source = tokenSourceName(tokenKind);
     const saved = String(configUrl || "")
       .trim()
       .replace(/\/+$/, "");
@@ -142,11 +141,9 @@ export async function clientStatus({
 }
 
 if (process.env.LOOM_HOOK_NO_MAIN !== "1") {
-  // The shell this runs from carries no install option: the URL the
-  // SessionStart hook saved stands in for it, in `resolveServerUrl`'s order.
   const { token, kind } = tokenLookup();
   const result = await clientStatus({
-    serverUrl: process.env.LOOM_BASE_URL || installServerUrl() || resolveServerUrl(),
+    serverUrl: statusServerUrl(),
     token,
     scope: resolveScope(process.cwd()),
     tokenKind: kind,

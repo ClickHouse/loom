@@ -137,7 +137,10 @@ export function tokenLookup() {
   const fromEnv = (process.env.LOOM_API_KEY || "").trim();
   if (fromEnv) return { token: fromEnv, kind: "env" };
   // An agent signs in as itself or not at all: never as a credential a person left here.
-  if (agentMode()) return { token: agentToken(), kind: "agent" };
+  if (agentMode()) {
+    const exchanged = agentToken();
+    return { token: exchanged, kind: exchanged ? "agent" : "" };
+  }
   // The plugin's install-time option: Claude Code exports
   // `userConfig` values to hook processes as CLAUDE_PLUGIN_OPTION_<KEY>.
   const fromOption = (process.env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
