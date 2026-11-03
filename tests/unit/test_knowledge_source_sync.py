@@ -565,3 +565,38 @@ def test_a_download_past_the_bound_is_refused(monkeypatch: pytest.MonkeyPatch) -
         asyncio.run(gdrive.download("tok", "abc", max_bytes=1000))
     with pytest.raises(ValueError):
         asyncio.run(gdrive.download("tok", "../x", max_bytes=1000))
+
+
+def test_the_worker_row_reads_its_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.workers import registry
+
+    monkeypatch.setattr(settings, "knowledge_source_sync_enabled", True)
+    monkeypatch.setattr(settings, "knowledge_source_sync_interval_seconds", 600)
+    monkeypatch.setattr(settings, "knowledge_source_sync_idle_interval_seconds", 1200)
+    monkeypatch.setattr(settings, "knowledge_source_sync_max_pass_seconds", 300)
+    [spec] = [s for s in registry.enabled_workers() if s.name == "knowledge_source_sync"]
+    assert (spec.interval_seconds, spec.idle_interval_seconds) == (600, 1200)
+    assert spec.deadline_seconds() == 300.0
+
+
+def test_a_turn_lists_everything_again_once_the_full_interval_passed(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    asyncio.run(source_sync.run_sync())
+    assert "modifiedTime >" in _listings(world)[-1]
+    monkeypatch.setattr(settings, "knowledge_source_sync_full_interval_seconds", 0)
+    asyncio.run(source_sync.run_sync())
+    assert "modifiedTime >" not in _listings(world)[-1]
+
+
+def test_a_file_over_the_size_bound_is_not_downloaded(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_sync_max_file_bytes", 10)
+    world.files = [_file("pdf1", PDF, "2026-01-03T00:00:00.000Z", size="11")]
+    asyncio.run(source_sync.run_sync())
+    assert world.docs == {}
+    assert _detail(world)["unconverted"] == 1
+    assert not [r for r in world.requests if r.url.params.get("alt") == "media"]
