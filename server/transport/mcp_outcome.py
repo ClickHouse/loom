@@ -10,6 +10,8 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from server.core import llm_free
+from server.transport._common import ledger_identity
+from server.transport.gates import present
 from server.transport.lean_results import mcp_op_result
 from server.transport.mcp_config import TOOL_EXEC_FAILED, _err, _ok
 from server.transport.mcp_identity import default_namespace_note
@@ -276,8 +278,6 @@ def _mentor_hint(
     try:
         from server.insights.app import mentor as _mentor
         from server.observability.ledger import set_hint_context
-        from server.transport._common import ledger_identity
-        from server.transport.gates import present
 
         # The tenant the call was admitted in, as its ledger row names it.
         tenant = ledger_identity(arguments)

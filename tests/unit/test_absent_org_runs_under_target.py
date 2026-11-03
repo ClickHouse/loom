@@ -113,6 +113,30 @@ def test_a_required_namespace_sent_as_dash_is_left_as_sent() -> None:
     assert with_target(inp, target).namespace == "-"
 
 
+def test_a_code_admin_write_with_a_dash_org_takes_the_code_org(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A code op's absent org is the code plane's, which the gate authorized
+    the call against; the repository namespace it names is kept."""
+    from server.code.api.models_repos import CodeRepoSetAccessInput
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport.gates import authz_target, with_target
+
+    monkeypatch.setattr(settings, "code_org", "code-org")
+    body = {
+        "org": "-",
+        "namespace": "repo@main",
+        "classification": "restricted",
+        "join_policy": "closed",
+    }
+    inp = CodeRepoSetAccessInput.model_validate(body)
+    target = authz_target(
+        OPERATIONS_BY_NAME["code.repo.set_access"], org=inp.org, namespace=inp.namespace, auth=None
+    )
+    out = with_target(inp, target)
+    assert (out.org, out.namespace) == ("code-org", "repo@main")
+
+
 def test_a_tracker_read_with_an_absent_org_takes_the_tracker_org(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
