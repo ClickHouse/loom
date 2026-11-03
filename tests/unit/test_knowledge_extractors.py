@@ -338,7 +338,10 @@ def test_an_artifact_is_refused_before_it_is_decoded_when_too_large_or_not_json(
     with pytest.raises(InvalidArtifact, match="bytes"):
         parse_artifact(b" " * 2000, fmt="pdf", max_bytes=1000)
     nan = json.dumps(_artifact(attrs={"x": float("nan")})).encode()
-    for data in (b"{", b"[" * 100_000, b"[]", nan):
+    good = json.dumps(_artifact(attrs={"x": 1.5})).encode()
+    huge = [good.replace(b"1.5", n) for n in (b"1e999", b"-1e999", b"1.0e400")]
+    assert parse_artifact(good, fmt="pdf", max_bytes=1 << 20).attrs == {"x": 1.5}
+    for data in (b"{", b"[" * 100_000, b"[]", nan, *huge):
         with pytest.raises(InvalidArtifact):
             parse_artifact(data, fmt="pdf", max_bytes=1 << 20)
 

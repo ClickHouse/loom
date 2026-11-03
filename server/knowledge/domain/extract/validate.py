@@ -18,6 +18,7 @@ Pure and I/O-free.
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, get_args
 
 from server.knowledge.domain.extract.artifact import (
@@ -202,13 +203,21 @@ def _no_constant(name: str) -> Any:
     raise ValueError(f"{name} is not a JSON number")
 
 
+def _finite(text: str) -> float:
+    """A JSON number Python cannot hold (`1e999`) would serialize as `Infinity`."""
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError(f"{text[:40]} is out of range")
+    return value
+
+
 def parse_artifact(data: bytes, *, fmt: str, max_bytes: int) -> Artifact:
     """The artifact in `data`, an extractor's response for a `fmt` source, or
     InvalidArtifact. `max_bytes` bounds the response before it is decoded."""
     if len(data) > max_bytes:
         raise _fail("artifact", f"is {len(data)} bytes, over the {max_bytes} allowed")
     try:
-        d = json.loads(data, parse_constant=_no_constant)
+        d = json.loads(data, parse_constant=_no_constant, parse_float=_finite)
     except (ValueError, RecursionError) as e:
         raise _fail("artifact", "is not JSON") from e
     d = _record(d, "artifact")
