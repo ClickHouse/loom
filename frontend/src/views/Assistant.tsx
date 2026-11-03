@@ -54,11 +54,14 @@ export function Assistant() {
   const identity = useStore((s) => s.identity);
   const whoami = useStore((s) => s.whoami);
   const role = useNamespaceRole(identity?.namespace ?? "");
-  const scope = `${identity?.org}/${identity?.namespace}`;
+  // The answers belong to the namespace and to the token's read scope: a token signed in
+  // again with another scope (the page stays mounted) drops what the old one read.
+  const claims = claimsFromToken(storedToken());
+  const scope = `${identity?.org}/${identity?.namespace}/${claims?.readScope ?? "-"}/${claims?.readUserId ?? "-"}`;
   const inventory = useScopedRead<NamespaceInventory>(scope);
   const inspection = useScopedRead<MemoryInspection>(scope);
   const tune = useScopedRead<NamespaceTune>(scope);
-  // The open starter, with the namespace it was opened on: another namespace shows none.
+  // The open starter, with the scope it was opened in: another namespace or token shows none.
   const [opened, setOpened] = useState<{ scope: string; id: Starter } | null>(null);
   const starter = opened?.scope === scope ? opened.id : null;
   const [subject, setSubject] = useState<InspectSubject>("user");
@@ -73,7 +76,6 @@ export function Assistant() {
   // token pinned to one user or session (neither is a scoped op). The token's claims say so
   // up front; for an end-user token, or behind a proxy (no token here), only the inventory's
   // answer does.
-  const claims = claimsFromToken(storedToken());
   const narrowed =
     claims?.readScope != null || (inventory.data !== null && inventory.data.scope.read_scope !== "namespace");
   // A scoped read under `own_session`, or under `own_user` with no `read_user_id`, needs the

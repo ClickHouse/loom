@@ -441,6 +441,29 @@ describe("Assistant: inventory", () => {
     }
   });
 
+  it("drops a pinned token's answer once the page is signed in again with a namespace token", async () => {
+    const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
+    const token = (claims: object) => `${b64({ alg: "HS256" })}.${b64({ sub: "ada", ...claims })}.sig`;
+    localStorage.setItem("loom_token_v1", token({ read_user_id: "ada" }));
+    namespaceInventory.mockResolvedValueOnce({
+      ...INVENTORY,
+      scope: { ...INVENTORY.scope, read_scope: "own_user", user_id: "ada", session_id: null },
+    });
+    try {
+      render(<Assistant />);
+      await userEvent.click(screen.getByRole("button", { name: "What is in this project?" }));
+      await screen.findByTestId("inventory-scope");
+      localStorage.setItem("loom_token_v1", token({}));
+      act(() => {
+        useStore.setState({ whoami: { ...viewer } });
+      });
+      await waitFor(() => expect(screen.queryByTestId("inventory-scope")).toBeNull());
+      expect(screen.getByRole("button", { name: "Configure this project" })).not.toHaveAttribute("aria-disabled");
+    } finally {
+      localStorage.removeItem("loom_token_v1");
+    }
+  });
+
   it("adds no scope note when the counts cover the namespace", async () => {
     render(<Assistant />);
     await userEvent.click(screen.getByRole("button", { name: "What is in this project?" }));
