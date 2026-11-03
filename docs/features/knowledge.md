@@ -192,8 +192,8 @@ legs then fetch at least `LOOM_KNOWLEDGE_SEARCH_RERANK_TOP` hits (30), and the r
 reads each one's context (title, description, breadcrumb; at most half the excerpt) and
 text, `LOOM_KNOWLEDGE_SEARCH_RERANK_EXCERPT_CHARS` characters (800), and orders them
 before sections collapse and the page is cut. `reranked_by` on the response names the
-reranker that produced the order; it is empty when none ran or the reranker failed and
-the fused order was kept (fail-open). An LLM-free read (`LOOM_READS_LLM_FREE`) reranks
+reranker that produced the order; it is empty when no reranker ran, it failed
+(fail-open) or it kept the fused order. An LLM-free read (`LOOM_READS_LLM_FREE`) reranks
 only as its request names, never with `builtin:openai`. A rerank is one more model call
 per search: `builtin:openai` adds about two seconds, so it is off unless asked for.
 

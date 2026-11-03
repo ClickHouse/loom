@@ -52,7 +52,7 @@ async def search_repo_docs(
                     top_k=max(1, min(int(top_k), 20)),
                     namespace_scope="this",
                     # An additive leg under a short timeout: a reranker's model call
-                    # would outlast it, and the merge orders by score anyway.
+                    # would outlast it.
                     rerank="none",
                 )
             ),
@@ -107,10 +107,15 @@ async def knowledge_with_repo_docs(
         return base
     top_k = int(know_input.top_k)
     if base.reranked_by:
-        # A reranked answer keeps its order; the repository's hits follow it, by score.
+        # A reranked answer keeps its order, and its fused scores no longer rank it against
+        # the repository's: the repository's best hits take up to half the page, after it.
         listed = {(h.namespace, h.source_uri, h.chunk_idx) for h in base.results}
-        more = [h for h in extra if (h.namespace, h.source_uri, h.chunk_idx) not in listed]
-        results = [*base.results, *merge_hits([], more, len(more))][: max(1, top_k)]
+        more = merge_hits(
+            [], [h for h in extra if (h.namespace, h.source_uri, h.chunk_idx) not in listed], top_k
+        )
+        page = max(1, top_k)
+        repo_slots = min(len(more), max(page - len(base.results), page // 2))
+        results = [*base.results[: page - repo_slots], *more[:repo_slots]]
         return base.model_copy(update={"results": results})
     return base.model_copy(update={"results": merge_hits(list(base.results), extra, top_k)})
 

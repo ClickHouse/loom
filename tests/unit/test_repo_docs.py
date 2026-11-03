@@ -284,3 +284,21 @@ async def test_the_repository_leg_never_reranks_and_a_reranked_answer_keeps_its_
     assert sorted(seen) == ["code-kj:none", "me:"]
     assert [h.source_uri for h in out.results] == ["n://b", "n://a", "doc://repo"]
     assert out.reranked_by == "builtin:x"
+
+
+@pytest.mark.asyncio
+async def test_a_full_reranked_page_still_gives_the_repository_half_of_it(monkeypatch) -> None:
+    async def handle_knowledge_search(inp: KnowledgeSearchInput) -> KnowledgeSearchOutput:
+        if inp.namespace == "code-kj":
+            hits = [_hit(f"doc://r{i}", 0.9 - i / 10) for i in range(3)]
+            return KnowledgeSearchOutput(results=hits, embedding_model="fake")
+        hits = [_hit(f"n://{c}", 0.2, "me") for c in "xyzw"]
+        return KnowledgeSearchOutput(results=hits, embedding_model="fake", reranked_by="builtin:x")
+
+    monkeypatch.setattr(
+        "server.knowledge.app.knowledge_search.handle_knowledge_search", handle_knowledge_search
+    )
+    page = BASE.model_copy(update={"top_k": 4})
+    out = await rd.knowledge_with_repo_docs(page, repo_namespace="code-kj")
+    # the reranked head keeps its order; the repository's two best take the other half
+    assert [h.source_uri for h in out.results] == ["n://x", "n://y", "doc://r0", "doc://r1"]
