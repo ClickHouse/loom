@@ -327,6 +327,32 @@ describe("Memories: usage audit panel", () => {
     expect(detail).not.toHaveTextContent("not every match is listed");
   });
 
+  it("labels the deployment's state, and says how many procedure reads the ratio leaves out", async () => {
+    const [churn] = AUDIT.findings;
+    vi.mocked(auditNamespace).mockResolvedValueOnce({
+      ...AUDIT,
+      summary: { ...AUDIT.summary, typed_gets: 250 },
+      findings: [
+        {
+          ...churn,
+          code: "index_backlog",
+          severity: "warning",
+          kind: "system_state" as const,
+          exceptions: "",
+          uncertainty: "",
+        },
+      ],
+    });
+    await openMemories();
+    await userEvent.click(screen.getByRole("button", { name: /Run audit/ }));
+    const [backlog] = await screen.findAllByTestId("audit-finding");
+    expect(screen.getByText(/250 procedure reads left out of the ratio/)).toBeInTheDocument();
+    await userEvent.click(within(backlog).getByRole("button", { name: "Show details for Indexing backlog" }));
+    expect(screen.getByTestId("audit-finding-kind")).toHaveTextContent(
+      "The deployment's state, not the writer's doing",
+    );
+  });
+
   it("an unknown role on the namespace shows no panel and sends nothing", async () => {
     useStore.setState({ myNamespaces: [] });
     window.history.replaceState(null, "", "/memories?section=insights");

@@ -157,10 +157,10 @@ _RECIPE = "docs/guides/investigation-agent-memory.md"
 _TEXT: dict[str, tuple[str, str]] = {
     # Runs first: the ledger checks read whether it found the ledger empty.
     "telemetry_unavailable": (
-        "Live rows were created in the window but the ledger holds no call for the "
-        "namespace apart from reports on it, the dashboard's or the assistant's reads and "
-        "page views, and a worker's own rows: the read and search counts were not recorded, "
-        "so the checks built on them are skipped rather than reported clean.",
+        "Live rows created in the window while the ledger holds no call for the namespace "
+        "apart from reports on it, the dashboard's or the assistant's reads and page views, "
+        "and a worker's own rows: their reads and searches were not recorded, so while this "
+        "warns the checks built on them are skipped rather than reported clean.",
         "Check that the server writes its event ledger (loom.agent_events) and keeps it "
         "for the window (LOOM_RETENTION_AGENT_EVENTS_DAYS), or whether the rows were written "
         "in-process (`loom import-recall` or `import-brain` without `--base-url`), then "
