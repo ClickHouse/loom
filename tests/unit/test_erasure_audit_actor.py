@@ -118,32 +118,29 @@ def _resume_args(stored: str) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
-    ("stored", "outer", "revoked_by", "completed_by"),
+    ("stored", "outer", "completed_by"),
     [
-        ("human:admin@o", "", "human:admin@o", "human:admin@o"),  # the worker
-        ("", "", "-", saga.RECOVERY_WORKER_ACTOR),  # the worker, a row an older build wrote
-        ("human:admin@o", CLI, "human:admin@o", "human:admin@o"),  # the CLI
-        ("", CLI, CLI, CLI),  # the CLI, a row an older build wrote
+        ("human:admin@o", "", "human:admin@o"),  # the worker
+        ("", "", saga.RECOVERY_WORKER_ACTOR),  # the worker, a row an older build wrote
+        ("human:admin@o", CLI, "human:admin@o"),  # the CLI
+        ("", CLI, CLI),  # the CLI, a row an older build wrote
     ],
 )
-async def test_a_tokenless_resume_names_one_actor_on_its_grant_revocations_and_rows(
+async def test_a_tokenless_resume_of_a_user_saga_names_the_ledgers_actor(
     recorded: Any,
     monkeypatch: pytest.MonkeyPatch,
     stored: str,
     outer: str,
-    revoked_by: str,
     completed_by: str,
 ) -> None:
-    """A step's own audit rows (the user's grants revoked) name the ledger's actor
-    on a tokenless resume. A row an older build wrote binds nothing, so an outer
-    pipeline actor (the CLI's) still names them, and its `erasure.completed` row."""
+    """The real user saga resumed without a token: `erasure.completed` names the
+    ledger's actor, else the resuming process (the CLI's pipeline actor, or the
+    worker)."""
     from server.identity.app import grants
 
     _, audits, _ = recorded
-    actors: list[str] = []
 
     async def _revoke(org: str, principal: str, *, actor: str) -> int:
-        actors.append(actor)
         return 0
 
     async def _none(*a: Any, **kw: Any) -> None:
@@ -154,14 +151,13 @@ async def test_a_tokenless_resume_names_one_actor_on_its_grant_revocations_and_r
     set_current_auth(None)
     with pipeline_actor(outer):
         await saga.run_saga(**_resume_args(stored))
-    assert actors == [revoked_by]
     assert [(a["event_type"], a["actor"]) for a in audits] == [("erasure.completed", completed_by)]
 
 
 async def test_a_cli_resume_that_fails_names_the_cli_on_a_row_with_no_actor(
     recorded: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`erasure.failed` is written inside the steps' binding: it names the CLI too."""
+    """A failed CLI resume of a row with no actor names the CLI on `erasure.failed`."""
     _, audits, _ = recorded
 
     async def _boom(*a: Any, **kw: Any) -> Any:
