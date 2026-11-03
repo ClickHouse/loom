@@ -271,6 +271,10 @@ _ROWS = {
     # Loom rows of any org with no tenant attribute (a worker span, a log line).
     "loom_deployment": ({"service.namespace": "loom"}, {}),
     "foreign_emitter": ({"service.namespace": "default"}, {"service.namespace": "default"}),
+    "foreign_own_org": (
+        {"service.namespace": "default"},
+        {"service.namespace": "default", "loom.org": "acme"},
+    ),
     "foreign_other_org": (
         {"service.namespace": "default"},
         {"service.namespace": "default", "loom.org": "globex"},
@@ -282,7 +286,11 @@ _ROWS = {
 @pytest.mark.parametrize("many", [False, True])
 @pytest.mark.parametrize(
     ("table", "attr_col"),
-    [("otel_metrics_sum", "Attributes"), ("otel_traces", "SpanAttributes")],
+    [
+        ("otel_metrics_sum", "Attributes"),
+        ("otel_traces", "SpanAttributes"),
+        ("hyperdx_sessions", "ResourceAttributes"),
+    ],
 )
 @pytest.mark.parametrize("namespace", ["default", "loom"])
 def test_namespace_erasure_matches_only_this_orgs_rows(table, attr_col, many, namespace):
@@ -293,12 +301,14 @@ def test_namespace_erasure_matches_only_this_orgs_rows(table, attr_col, many, na
     backend builds."""
     backend = ClickStackBackend(database="default", timeout_s=5.0)
     where = backend._namespace_where(table, attr_col, many=many)
-    rows = ", ".join(
-        f"('{tag}', map({_map(res)}), map({_map(attrs)}))" for tag, (res, attrs) in _ROWS.items()
-    )
+    if attr_col == "ResourceAttributes":  # one map holds both
+        cols = "ResourceAttributes Map(String, String)"
+        rows = ", ".join(f"('{t}', map({_map({**r, **a})}))" for t, (r, a) in _ROWS.items())
+    else:
+        cols = f"ResourceAttributes Map(String, String), {attr_col} Map(String, String)"
+        rows = ", ".join(f"('{t}', map({_map(r)}), map({_map(a)}))" for t, (r, a) in _ROWS.items())
     setup = [
-        f"CREATE TABLE loom.{table} (tag String, ResourceAttributes Map(String, String),"
-        f" {attr_col} Map(String, String)) ENGINE = Memory",
+        f"CREATE TABLE loom.{table} (tag String, {cols}) ENGINE = Memory",
         f"INSERT INTO loom.{table} VALUES {rows}",
     ]
     got = run(
@@ -307,7 +317,9 @@ def test_namespace_erasure_matches_only_this_orgs_rows(table, attr_col, many, na
         {"u": [namespace] if many else namespace, "org": "acme"},
     )
     expected = (
-        ["foreign_emitter", "loom_own_org"] if namespace == "default" else ["ns_loom_own_org"]
+        ["foreign_emitter", "foreign_own_org", "loom_own_org"]
+        if namespace == "default"
+        else ["ns_loom_own_org"]
     )
     assert [r["tag"] for r in got] == expected
 
