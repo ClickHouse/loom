@@ -40,7 +40,9 @@ _ROWS = rows_by_substring(
         ") AS h FROM ": [{"h": 1}],
         "AS id FROM (SELECT record_id": [{"id": _ID}],
         "AS id FROM loom.memory ": [{"id": _ID}],
-        "SELECT DISTINCT memory_key FROM loom.shared": [{"memory_key": "k"}],
+        "SELECT DISTINCT namespace, memory_key FROM loom.shared": [
+            {"namespace": "n", "memory_key": "k"}
+        ],
         "AS sha FROM loom.document_blobs": [{"namespace": "n", "sha": "a" * 64}],
         "SELECT DISTINCT candidate_id FROM loom.learnings_queue": [{"candidate_id": _ID}],
         "SELECT * FROM loom.learnings_queue FINAL": [
