@@ -98,8 +98,6 @@ def _rerank_endpoint(input: KnowledgeSearchInput) -> str:
     from server.core.llm_free import reads_llm_free
     from server.memory.domain.rerank_names import BUILTIN_OPENAI, check_rerank_name
 
-    if input.rerank == "none":
-        return ""
     endpoint = input.rerank
     if not endpoint and not reads_llm_free():
         try:

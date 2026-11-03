@@ -225,12 +225,12 @@ class KnowledgeSearchInput(BaseModel):
 
 
 class KnowledgeSearchOutput(BaseModel):
-    # Hits best first: when `reranked_by` is set, the reranked head in the reranker's
-    # order, then the rest by `score`; else by `score` (then similarity). Empty when
-    # nothing matched.
+    # Hits best first (empty when nothing matched): when `reranked_by` is set, the
+    # reranked head in the reranker's order, then the rest by `score`; else by `score`
+    # (then similarity).
     results: list[_SearchHit]
-    # The reranker that ordered `results`; empty when no reranker ran, it failed, or it
-    # kept the fused order.
+    # The reranker that ordered `results`; empty when no reranker ran, it failed, it ran
+    # past its time limit, or it kept the fused order.
     reranked_by: str = ""
     # Embedding model the query was embedded with; only chunks of this model are searched.
     embedding_model: str

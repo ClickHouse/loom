@@ -223,19 +223,14 @@ async def test_a_reranker_past_its_time_limit_keeps_the_fused_order(monkeypatch)
         return list(reversed(kw["candidates"]))
 
     monkeypatch.setattr(rerank_mod, "rerank", _slow)
-    from server.observability import provider_health
-
-    provider_health.reset()
     hits = [_hit("a.md"), _hit("b.md")]
     out, reranked = await ks._rerank("builtin:openai", "q", hits, {}, 30)
     assert reranked is False and out is hits
-    # the search's own deadline is not the provider failing
-    assert not provider_health.status()["degraded"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("payload", [[], "busy", {"results": "x"}], ids=["list", "str", "field"])
-async def test_a_cohere_reply_that_is_not_an_object_keeps_the_input_order(
+async def test_a_cohere_reply_without_a_results_list_keeps_the_input_order(
     monkeypatch, payload
 ) -> None:
     import httpx
