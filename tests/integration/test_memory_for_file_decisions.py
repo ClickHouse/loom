@@ -42,7 +42,6 @@ def test_decision_rows_name_their_source_and_whether_they_are_pinned(
     token = mint_test_token(org=ORG, namespaces=["*"], roles=["writer"])
     own, team = "dev", "team-rules"
     base = {"org": ORG, "agent": "claude-code", "memory_type": "decision", "files": ["src/a.cpp"]}
-    # pinned with memory.pin
     _post(
         control_plane_url,
         "memory.pin",
