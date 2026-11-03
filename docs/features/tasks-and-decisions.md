@@ -371,9 +371,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
 
 - **Repository**: by default the document's namespace is where its code names are looked up and its decisions are
   written, which fits a document added to a repository's code namespace. A document in a person's or a team's
-  namespace names the repository with `--repo OWNER/NAME` (or a remote URL), matched as `code.repos` matches a
-  checkout's remote; its names are then looked up in that repository's trunk code namespace, and `--into` chooses
-  where the rows go:
+  namespace names the repository with `--repo OWNER/NAME` (or a remote URL), matched by owner/name as `code.repos`
+  matches a checkout's remote (a fork's remote is not followed to its upstream: name the upstream); its names are
+  then looked up in that repository's trunk code namespace, and `--into` chooses where the rows go:
   - `--into source` (the default for a document outside a code namespace): the document's namespace, each row tagged
     `repo:<id>`, the tag the coding plugins send to `memory.for_file`, so a session whose own namespace (the plugin's
     `namespace`) is the document's gets the row before editing a file it names. The pre-edit hook reads only that
