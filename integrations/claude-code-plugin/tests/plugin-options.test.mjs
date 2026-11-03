@@ -5,7 +5,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { applyPluginOptions, installTokenNotice, planMaterialize } from "../lib/plugin-options.mjs";
+import {
+  applyPluginOptions,
+  installServerUrl,
+  installTokenNotice,
+  mcpServerUrl,
+  planMaterialize,
+  saveInstallServerUrl,
+} from "../lib/plugin-options.mjs";
 
 function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "loom-opts-"));
@@ -85,6 +92,30 @@ test("installTokenNotice: only when the config token was saved for another serve
   assert.equal(installTokenNotice({ write: true, url: "https://new", reason: "no config" }, "https://new"), "");
 });
 
+test("mcpServerUrl follows the MCP entry: the option, then LOOM_BASE_URL, then localhost", () => {
+  assert.equal(
+    mcpServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://opt/", LOOM_BASE_URL: "https://env" }),
+    "https://opt",
+  );
+  assert.equal(mcpServerUrl({ LOOM_BASE_URL: "https://env/" }), "https://env");
+  assert.equal(mcpServerUrl({}), "http://localhost:7777");
+});
+
+test("the hook saves the install URL for the status script; none saved reads as empty", () => {
+  const saved = process.env.TMPDIR;
+  process.env.TMPDIR = tmp();
+  try {
+    assert.equal(installServerUrl(), "");
+    saveInstallServerUrl({});
+    assert.equal(installServerUrl(), "");
+    saveInstallServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://b/" });
+    assert.equal(installServerUrl(), "https://b");
+  } finally {
+    if (saved === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = saved;
+  }
+});
+
 test("resolvers: the option ranks after the env var and before the files", async () => {
   const dir = tmp();
   fs.mkdirSync(path.join(dir, ".loom"));
@@ -98,15 +129,15 @@ test("resolvers: the option ranks after the env var and before the files", async
     process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL = "https://opt/";
     const m = await import(`../lib/loom-client.mjs?t=${Date.now()}`);
     assert.equal(m.resolveToken(), "opt.tok");
-    assert.equal(m.tokenSource(), "the plugin's install option");
+    assert.equal(m.tokenLookup().kind, "option");
     assert.equal(m.resolveServerUrl(), "https://opt");
     delete process.env.CLAUDE_PLUGIN_OPTION_TOKEN;
     assert.equal(m.resolveToken(), "cfg.tok");
-    assert.equal(m.tokenSource(), process.env.LOOM_CONFIG_FILE);
+    assert.equal(m.tokenLookup().kind, "config");
     process.env.LOOM_API_KEY = "env.tok";
     process.env.LOOM_BASE_URL = "https://env";
     assert.equal(m.resolveToken(), "env.tok");
-    assert.equal(m.tokenSource(), "LOOM_API_KEY");
+    assert.equal(m.tokenLookup().kind, "env");
     assert.equal(m.resolveServerUrl(), "https://env");
   } finally {
     for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];

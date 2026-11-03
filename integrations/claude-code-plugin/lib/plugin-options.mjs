@@ -14,6 +14,30 @@
 import { existsSync } from "node:fs";
 
 import { loomConfigPath, loomTokenPath, readConfigFile, writeConfigMerged } from "./loom-client.mjs";
+import { readJsonFile, tmpStatePath, writeJsonFile } from "./tmp-state.mjs";
+
+/** The URL the plugin's MCP entry calls: `${user_config.server_url}`, whose
+ *  default is `${LOOM_BASE_URL:-http://localhost:7777}` (`.mcp.json`). */
+export function mcpServerUrl(env = process.env) {
+  const url = env.CLAUDE_PLUGIN_OPTION_SERVER_URL || env.LOOM_BASE_URL || "http://localhost:7777";
+  return String(url).trim().replace(/\/+$/, "");
+}
+
+const INSTALL_URL_STATE = ["install", "server_url"];
+
+/** The SessionStart hook saves the install option's URL for the status
+ *  script, which the agent runs from a shell that carries no option. */
+export function saveInstallServerUrl(env = process.env) {
+  const url = String(env.CLAUDE_PLUGIN_OPTION_SERVER_URL || "")
+    .trim()
+    .replace(/\/+$/, "");
+  if (url) writeJsonFile(tmpStatePath(...INSTALL_URL_STATE), { url });
+}
+
+/** The saved install URL, "" when no session saved one. */
+export function installServerUrl() {
+  return String(readJsonFile(tmpStatePath(...INSTALL_URL_STATE), {}).url || "");
+}
 
 /** What a run would do, without doing it: {write, url, reason}. Pure. */
 export function planMaterialize(env, { configExists, configToken, tokenFileExists }) {
@@ -29,12 +53,12 @@ export function planMaterialize(env, { configExists, configToken, tokenFileExist
 }
 
 /** The primer line when the install token was skipped for a config token
- *  saved for another server: the MCP header helper sends that one to the
- *  server the plugin is installed for, which refuses it. "" otherwise. Pure. */
-export function installTokenNotice(plan, serverUrl) {
-  if (plan.write || plan.reason !== "config has a token") return "";
+ *  saved for another server than `mcpUrl`, the one the MCP entry calls: the
+ *  header helper sends that token there, which refuses it. "" otherwise. Pure. */
+export function installTokenNotice(plan, mcpUrl) {
+  if (plan.reason !== "config has a token") return "";
   const saved = String(plan.configUrl || "");
-  const inUse = String(serverUrl || "").replace(/\/+$/, "");
+  const inUse = String(mcpUrl || "").replace(/\/+$/, "");
   if (!saved || !inUse || saved === inUse) return "";
   return (
     `Loom: ~/.loom/config.json holds a token saved for ${saved}, which the loom MCP tools send to ` +

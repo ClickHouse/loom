@@ -129,35 +129,32 @@ export function loomConfig() {
   return _loomConfigCache;
 }
 
-/** The Loom bearer token and the lookup that supplied it: env, an agent's
- *  exchanged token, the install option, ~/.loom/config.json, ~/.loom/token. */
-function tokenLookup() {
+/** The Loom bearer token and the lookup that supplied it (`kind`: "env",
+ *  "agent", "option", "config", "file", or "" for none), in this order: env,
+ *  an agent's exchanged token, the install option, ~/.loom/config.json,
+ *  ~/.loom/token. */
+export function tokenLookup() {
   const fromEnv = (process.env.LOOM_API_KEY || "").trim();
-  if (fromEnv) return { token: fromEnv, source: "LOOM_API_KEY" };
+  if (fromEnv) return { token: fromEnv, kind: "env" };
   // An agent signs in as itself or not at all: never as a credential a person left here.
-  if (agentMode()) return { token: agentToken(), source: "the workload-token exchange" };
+  if (agentMode()) return { token: agentToken(), kind: "agent" };
   // The plugin's install-time option: Claude Code exports
   // `userConfig` values to hook processes as CLAUDE_PLUGIN_OPTION_<KEY>.
   const fromOption = (process.env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
-  if (fromOption) return { token: fromOption, source: "the plugin's install option" };
+  if (fromOption) return { token: fromOption, kind: "option" };
   const fromCfg = String(loomConfig().token || "").trim();
-  if (fromCfg) return { token: fromCfg, source: loomConfigPath() };
+  if (fromCfg) return { token: fromCfg, kind: "config" };
   try {
     const fromFile = readFileSync(loomTokenPath(), "utf8").trim();
-    if (fromFile) return { token: fromFile, source: loomTokenPath() };
+    if (fromFile) return { token: fromFile, kind: "file" };
   } catch {
     // no token file; caller decides whether to no-op
   }
-  return { token: "", source: "" };
+  return { token: "", kind: "" };
 }
 
 export function resolveToken() {
   return tokenLookup().token;
-}
-
-/** Which lookup `resolveToken` answers from, named for a status line; "" for none. */
-export function tokenSource() {
-  return tokenLookup().source;
 }
 
 // --- an agent with no Loom token of its own ------------------------------------

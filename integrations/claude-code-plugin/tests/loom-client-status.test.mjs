@@ -108,46 +108,24 @@ test("an agent with no token is told its workload-token exchange failed", async 
   }
 });
 
-test("the source line names the token's lookup and warns when the config names another server", async () => {
+test("the source line sits between token and auth, names the lookup, and warns when the config names another server", async () => {
   const { loomConfigPath } = await import("../lib/loom-client.mjs");
-  const pass = await clientStatus({
-    serverUrl,
-    token: token(),
-    scope,
-    now,
-    fetchImpl: responses().fetchImpl,
-    source: "LOOM_API_KEY",
-    configUrl: "https://elsewhere",
-  });
+  const run = (tokenKind, configUrl, tok = token()) =>
+    clientStatus({ serverUrl, token: tok, scope, now, fetchImpl: responses().fetchImpl, tokenKind, configUrl });
+  const pass = await run("env", "https://elsewhere");
   assert.deepEqual(
-    pass.checks.find((c) => c.name === "source"),
-    { name: "source", grade: "PASS", detail: "token from LOOM_API_KEY" },
+    pass.checks.map((c) => c.name),
+    ["server", "token", "source", "auth", "namespace", "flush"],
   );
-  const cfg = loomConfigPath();
-  const warn = await clientStatus({
-    serverUrl,
-    token: token(),
-    scope,
-    now,
-    fetchImpl: responses().fetchImpl,
-    source: cfg,
-    configUrl: "https://elsewhere/",
-  });
+  assert.deepEqual(pass.checks[2], { name: "source", grade: "PASS", detail: "token from LOOM_API_KEY" });
+  const warn = await run("config", "https://elsewhere/");
   const line = warn.checks.find((c) => c.name === "source");
   assert.equal(line.grade, "WARN");
   assert.match(line.detail, /names https:\/\/elsewhere; this check uses https:\/\/loom\.test/);
+  assert.ok(line.detail.includes(loomConfigPath()));
   assert.equal(warn.ok, true); // a WARN never fails the check
-  const same = await clientStatus({
-    serverUrl,
-    token: token(),
-    scope,
-    now,
-    fetchImpl: responses().fetchImpl,
-    source: cfg,
-    configUrl: `${serverUrl}/`,
-  });
-  assert.equal(same.checks.find((c) => c.name === "source").grade, "PASS");
-  const none = await clientStatus({ serverUrl, token: "", scope, now, fetchImpl: responses().fetchImpl, source: "" });
+  assert.equal((await run("config", `${serverUrl}/`)).checks[2].grade, "PASS");
+  const none = await run("", "", "");
   assert.equal(
     none.checks.some((c) => c.name === "source"),
     false,

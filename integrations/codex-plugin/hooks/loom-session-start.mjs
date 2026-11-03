@@ -13,6 +13,7 @@
 // rest. LOOM_INJECT_CONTEXT=false turns the primer off.
 
 import {
+  agentMode,
   envNumber,
   envSwitch,
   gitToplevel,
@@ -46,7 +47,7 @@ import {
 import { checkoutRemotes, lookupIndexedRepo } from "../lib/repo-scope.mjs";
 import { readRecording, recordingFromNamespace, recordingPrimerLine, writeRecording } from "../lib/recording.mjs";
 import { teamRulesLine } from "../lib/file-context.mjs";
-import { applyPluginOptions, installTokenNotice } from "../lib/plugin-options.mjs";
+import { applyPluginOptions, installTokenNotice, mcpServerUrl, saveInstallServerUrl } from "../lib/plugin-options.mjs";
 import { cacheIsFresh, countsBody, renderTaskLine, summarizeCounts } from "../lib/task-inbox.mjs";
 import { briefPrimerEnabled, primerLine } from "../lib/session-brief.mjs";
 import { readJsonFile, sweepStaleStateFiles, tmpStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
@@ -57,7 +58,9 @@ async function main() {
   // helper; write it once to ~/.loom/config.json, where the helper (and the
   // CLI, the SDK) read it. Before the token check below, so this very
   // session's hooks use it too.
-  const optionNotice = installTokenNotice(applyPluginOptions(), resolveServerUrl());
+  // An agent signs in as itself, so the config token is not what its tools send.
+  const optionNotice = agentMode() ? "" : installTokenNotice(applyPluginOptions(), mcpServerUrl());
+  saveInstallServerUrl();
   sweepStaleStateFiles();
   // Default ON; opt out with LOOM_INJECT_CONTEXT=false (see header).
   if (!envSwitch("LOOM_INJECT_CONTEXT", true)) {
