@@ -28,7 +28,7 @@ fail() {
 }
 
 # Settings this run is given that .env keeps, so a later `docker compose` in the
-# install directory, which reads only .env, uses the same port and image.
+# install directory, which reads only .env, uses the same address and images.
 KEPT_SETTINGS="LOOM_PORT LOOM_BIND_HOST LOOM_IMAGE_REPOSITORY LOOM_EXTRACTOR_IMAGE_REPOSITORY LOOM_CLICKHOUSE_IMAGE"
 # given KEY: the value this run was given for KEY, empty when none.
 given() {
@@ -283,7 +283,7 @@ else
   set_env LOOM_VERSION "$version"
   # An install from before the extractor service: give it the token and the
   # server its URL, as a new install's template does.
-  if ! grep -q '^LOOM_DOCUMENT_EXTRACTOR_TOKEN=' "$INSTALL_DIR/.env"; then
+  if ! grep -q '^LOOM_DOCUMENT_EXTRACTOR_TOKEN=.' "$INSTALL_DIR/.env"; then
     set_env LOOM_DOCUMENT_EXTRACTOR_URL http://extractor:8790
     set_env LOOM_DOCUMENT_EXTRACTOR_TOKEN "$(LC_ALL=C od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
   fi
