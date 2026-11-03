@@ -16,7 +16,7 @@ vi.mock("./views/registry", () => ({ preloadView, VIEW_LOADERS: {} }));
 vi.mock("./lib/navigation", () => ({ goToSso: vi.fn(), reloadPage: vi.fn() }));
 
 import App from "./App";
-import { reloadPage } from "./lib/navigation";
+import { goToSso, reloadPage } from "./lib/navigation";
 import { useStore } from "./lib/state";
 import { resetNamespaceRoleCache } from "./lib/namespaceRole";
 import { invalidateShared } from "./lib/sharedReads";
@@ -716,6 +716,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
   });
 
   it("signing out after the session ended reloads to a plain sign-in, which starts no SSO", async () => {
+    window.__LOOM_SSO = true;
     await expireMidSession();
     // Header's Sign out: the mark, then the reload, which boots with no token.
     const api = await import("./api");
@@ -725,6 +726,41 @@ describe("a refused token", { timeout: 30_000 }, () => {
     render(<App />);
     await until(() => useStore.getState().authed === false);
     expect(useStore.getState().gateReason).toBeNull();
+    await settle(4); // the gate's chunk and its effect
+    expect(goToSso).not.toHaveBeenCalled();
+    delete window.__LOOM_SSO;
+  });
+
+  it("a refused sign-in link says so and starts no SSO: it may be the way in while the provider is down", async () => {
+    window.__LOOM_SSO = true;
+    localStorage.clear();
+    refuse = true; // whoami refuses the link's token
+    window.history.replaceState(null, "", `/me#token=${alice}`);
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    await settle(4);
+    expect(useStore.getState().gateReason).toBe("refused");
+    expect(goToSso).not.toHaveBeenCalled();
+    delete window.__LOOM_SSO;
+  });
+
+  it("boots afresh when another tab stores a token while whoami answers for this one", async () => {
+    let answer: () => void = () => undefined;
+    const held = new Promise<void>((r) => {
+      answer = r;
+    });
+    const fetchMock = vi.mocked(fetch);
+    const serve = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/v1/whoami")) await held;
+      return serve ? serve(input, init) : json(GENERIC);
+    });
+    render(<App />);
+    await until(() => whoamiCalls === 0 && fetchMock.mock.calls.some(([u]) => String(u).includes("/v1/whoami")));
+    localStorage.setItem("loom_token_v1", bob);
+    answer();
+    await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
   });
 
   it("asks whoami again while the replica answers 503, and keeps the token", async () => {

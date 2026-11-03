@@ -66,7 +66,7 @@ const SSO_RESUME_GAP_MS = 5 * 60 * 1000;
  *  started in the last few minutes (the button is shown instead). */
 export function resumeSsoOnce(now: number = Date.now()): boolean {
   try {
-    const last = Number(sessionStorage.getItem(SSO_RESUMED_AT) ?? 0);
+    const last = Number(sessionStorage.getItem(SSO_RESUMED_AT)) || 0;
     if (now - last < SSO_RESUME_GAP_MS) return false;
     sessionStorage.setItem(SSO_RESUMED_AT, String(now));
   } catch {
@@ -87,7 +87,7 @@ function SsoGate({ reason }: { reason?: GateReason }) {
   return (
     <GateShell>
       <Panel className="space-y-4">
-        {reason === "expired" && <Alert role="status" state="neutral" text="Your session ended — sign in again." />}
+        <GateNotice reason={reason} />
         <a
           href="/oauth/sso"
           onClick={rememberSignInStart}
@@ -98,6 +98,14 @@ function SsoGate({ reason }: { reason?: GateReason }) {
       </Panel>
     </GateShell>
   );
+}
+
+/** Why the gate is showing, when it is not a first visit. */
+function GateNotice({ reason }: { reason?: GateReason }) {
+  if (reason === "expired") return <Alert role="status" state="neutral" text="Your session ended — sign in again." />;
+  if (reason === "refused")
+    return <Alert role="status" state="neutral" text="The sign-in link's token was refused — sign in again." />;
+  return null;
 }
 
 /** The sign-in page around either gate: the logo and its tagline. */
@@ -199,7 +207,7 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
   return (
     <GateShell>
       <Panel className="space-y-4">
-        {reason === "expired" && <Alert role="status" state="neutral" text="Your session ended — sign in again." />}
+        <GateNotice reason={reason} />
         <Tabs
           value={mode}
           onValueChange={(v) => {

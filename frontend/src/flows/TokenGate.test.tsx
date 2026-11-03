@@ -172,6 +172,13 @@ describe("TokenGate", () => {
       history.replaceState(null, "", "/");
     });
 
+    it("says a sign-in link's token was refused, and waits for a click", () => {
+      window.__LOOM_SSO = true;
+      render(<TokenGate onLogin={() => undefined} reason="refused" />);
+      expect(screen.getByRole("status")).toHaveTextContent("The sign-in link's token was refused — sign in again.");
+      expect(goToSso).not.toHaveBeenCalled();
+    });
+
     it("waits for a click on a first visit", () => {
       window.__LOOM_SSO = true;
       render(<TokenGate onLogin={() => undefined} reason={null} />);

@@ -52,7 +52,8 @@ and this tab takes the new token and carries on once the server confirms it is t
 (anyone else gets a fresh page). **Reload** signs in in this tab instead. While the page loads,
 a refused token shows the sign-in screen saying the session ended, and with SSO on that
 screen starts the sign-in again by itself (once in five minutes per tab), so a person still
-signed in at the identity provider returns to the page they were on. **Sign out**
+signed in at the identity provider returns to the page they were on. A refused `#token=` link
+says so and waits for a click, since it may be the way in while the identity provider is down. **Sign out**
 forgets the token here, and ends the server-side session of a sign-in session's token (the
 dashboard's SSO token, or a `loom login` access token opened with `#token=`). A minted
 token opened with `#token=` is only forgotten here: it may be the one a CLI or CI job uses.

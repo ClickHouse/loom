@@ -285,8 +285,9 @@ export function pathnameView(): View | null {
 }
 
 /** Why the sign-in gate is showing: a stored token the server no longer accepts is
- *  "expired"; a first visit carries null. */
-export type GateReason = "expired" | null;
+ *  "expired"; a token a sign-in link brought that it refused is "refused"; a first visit
+ *  carries null. */
+export type GateReason = "expired" | "refused" | null;
 
 interface AppState {
   authed: boolean;

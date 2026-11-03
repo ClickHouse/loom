@@ -241,9 +241,14 @@ const SESSION_GONE = /\btoken expired\b|\bis revoked\b|\bsession of this token h
 
 function humanizeApiError(err: ApiError): string {
   // A page that read while its session was away says so plainly (the dashboard's card
-  // offers the sign-in), not as a rejected credential. Behind a proxy there is no session
-  // here: a missing header is the proxy's fault, said as the server put it.
-  if (err.status === 401 && !window.__LOOM_PROXY_AUTH && SESSION_GONE.test(err.serverMessage))
+  // offers the sign-in), not as a rejected credential. Behind a proxy, or with auth off,
+  // there is no session here to sign in to: the server's words stand.
+  if (
+    err.status === 401 &&
+    !window.__LOOM_PROXY_AUTH &&
+    !window.__LOOM_AUTH_DISABLED &&
+    SESSION_GONE.test(err.serverMessage)
+  )
     return "Your session ended — sign in again.";
   const friendly = ERROR_CODE_PREFIXES[err.code];
   if (friendly) return joinSentence(friendly, err.serverMessage);
