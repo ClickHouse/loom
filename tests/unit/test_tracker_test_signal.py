@@ -493,6 +493,22 @@ async def test_handler_composes_history_cofail_and_churn(monkeypatch, wired) -> 
 
 
 @pytest.mark.asyncio
+async def test_the_served_source_carries_no_checks_password(monkeypatch, wired) -> None:
+    """Any viewer reads `source`; the clause's user and password stay in the
+    configuration."""
+    monkeypatch.setattr(
+        settings,
+        "tracker_checks_from",
+        "remoteSecure('play.clickhouse.com', 'default', 'checks', 'play', 'pw-secret')",
+    )
+    monkeypatch.setattr(tsrc, "tracker_source", lambda org, ns: _Source(_row()))
+    out = await tsig.handle_tracker_test_signal(
+        TrackerTestSignalInput(org=ORG, namespace=NS, test_name="02345_keeper_session")
+    )
+    assert out.source == "remoteSecure('play.clickhouse.com', 'default', 'checks', ...)"
+
+
+@pytest.mark.asyncio
 async def test_handler_window_and_churn_switches(monkeypatch, wired) -> None:
     s = _Source(_row())
     monkeypatch.setattr(tsrc, "tracker_source", lambda org, ns: s)

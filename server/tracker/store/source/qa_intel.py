@@ -392,25 +392,37 @@ def is_budget_timeout(e: BaseException) -> bool:
     return "TIMEOUT_EXCEEDED" in text or re.search(r"\b[Cc]ode: 159\b", text) is not None
 
 
-_REMOTE_CALL = re.compile(r"^\s*remote(Secure)?\s*\(", re.IGNORECASE)
-_QUOTED = re.compile(r"'(?:[^'\\]|\\.)*'")
+_TABLE_NAME = re.compile(r"^\s*[\w`\".]+\s*$")
+# The address and the table of a `remote` / `remoteSecure` call: the table is
+# one argument (`db.table`) or two (`db`, `table`), each quoted or bare.
+_REMOTE_HEAD = re.compile(
+    r"^\s*(remote(?:Secure)?)\s*\(\s*('[^'\\]*')\s*,\s*('?[\w.]+'?)\s*(?:,\s*('?\w+'?)\s*)?([,)])",
+    re.IGNORECASE,
+)
+_CALL_NAME = re.compile(r"^\s*(\w+)\s*\(")
 
 
 def redact_table_function(clause: str) -> str:
-    """`clause` with the user and password of a `remote` / `remoteSecure`
-    call masked: every quoted literal from the fourth on, where the
-    credentials sit in each of the call's forms. Any other clause (a table,
-    a view) carries no credential and is returned as is."""
-    if not _REMOTE_CALL.match(clause or ""):
+    """`clause` as operators and callers may read it, built only from parts
+    that cannot hold a credential: a table name as is; a `remote` /
+    `remoteSecure` call as its address and table, with every argument after
+    the table (the user, the password, a sharding key) shown as `...` when
+    there is one; any other clause as its function name alone, or `(...)`
+    when it is no call."""
+    if not clause or _TABLE_NAME.match(clause):
         return clause
-    seen = 0
-
-    def _mask(m: re.Match[str]) -> str:
-        nonlocal seen
-        seen += 1
-        return m.group(0) if seen <= 3 else "'***'"
-
-    return _QUOTED.sub(_mask, clause)
+    m = _REMOTE_HEAD.match(clause)
+    if m:
+        fn, address, first, second, end = m.groups()
+        if "." in first:
+            # a second word after `db.table` is the user, never shown
+            more = ", ..." if second or end == "," else ""
+            return f"{fn}({address}, {first}{more})"
+        if second:
+            more = ", ..." if end == "," else ""
+            return f"{fn}({address}, {first}, {second}{more})"
+    call = _CALL_NAME.match(clause)
+    return f"{call.group(1)}(...)" if call else "(...)"
 
 
 def _printable_endpoint(ep: Any) -> dict[str, Any]:

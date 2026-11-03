@@ -434,7 +434,7 @@ Flaky, regression or infrastructure?
 | `infra` | `dict[str, Any]` | {k, min_prs, storm_hours, hours, share, available} |
 | `churn` | `dict[str, Any]` | {available, days, home_paths, home_prs, home_recent, source_paths, source_prs, source_recent, code_namespace \| reason} |
 | `thresholds` | `dict[str, Any]` | The deployment thresholds the verdict used (min runs, flip rate, co-failure knobs). |
-| `source` | `str` | where the history came from (the checks source clause) and its cost |
+| `source` | `str` | where the history came from: the checks source clause without its credentials |
 | `timings_ms` | `dict[str, int]` | Milliseconds spent per leg (`history`, `co_failures`, `churn`, `smells`, …). |
 | `tracker_unavailable` | `bool` | True when the history could not be read, or an unread leg decides the verdict; `verdict` is then `tracker_unavailable`. |
 | `rollup` | `dict[str, Any]` | What the daily roll-up covered of the window {available, days, from, to, live_since, missing_days, partial_day \| reason} |
