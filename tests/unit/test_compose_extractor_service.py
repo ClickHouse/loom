@@ -24,6 +24,10 @@ def test_the_extractor_holds_only_its_token_and_reaches_only_loom() -> None:
     assert extractor["environment"] == {
         "LOOM_EXTRACTOR_TOKEN": "${LOOM_DOCUMENT_EXTRACTOR_TOKEN:-}"
     }
+    # The server reads the same interpolation, not env_file alone, which a shell
+    # export would leave behind.
+    loom = compose["services"]["loom"]["environment"]["LOOM_DOCUMENT_EXTRACTOR_TOKEN"]
+    assert loom == extractor["environment"]["LOOM_EXTRACTOR_TOKEN"]
     assert "ports" not in extractor and "volumes" not in extractor
     assert extractor["networks"] == ["extractor"]
     assert compose["networks"]["extractor"] == {"internal": True}
@@ -72,7 +76,9 @@ async def test_the_quickstart_extractor_probe_passes_against_the_reference_servi
     app = service.create_app(service.Config(token=token))
     monkeypatch.setattr(extractors, "transport", httpx.ASGITransport(app=app))
     extractors._declared.clear()
-    settings_override(document_extractor_url="http://extractor:8790", document_extractor_token=token)
+    settings_override(
+        document_extractor_url="http://extractor:8790", document_extractor_token=token
+    )
     try:
         await docker_extractor_smoke.main()
     finally:

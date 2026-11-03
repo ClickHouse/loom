@@ -630,10 +630,13 @@ def _cmd_up(args: argparse.Namespace) -> int:
     if missing := _missing_file(root, files):
         print(f"✗ compose file not found: {missing}", file=sys.stderr)
         return 2
+    texts = [(root / f).read_text(encoding="utf-8", errors="replace") for f in files]
     # The last file names the containers (the dev override does).
-    service, container = compose_names(
-        (root / files[-1]).read_text(encoding="utf-8", errors="replace")
-    )
+    service, container = compose_names(texts[-1])
+    # A stack started before the extractor service lacks its container: a rerun
+    # recreates it with loom.
+    extractor = any(re.search(r"^  extractor:\s*$", t, re.MULTILINE) for t in texts)
+    recreate = (service, "extractor") if extractor else (service,)
 
     status_code, body = _http_get_json(health_url, timeout=2.0)
     already_up = body is not None and body.get("status") == "ok"
@@ -642,14 +645,12 @@ def _cmd_up(args: argparse.Namespace) -> int:
     # A healthy container can still have stale environment or Compose settings.  Always
     # reconcile it, but avoid an image build on the ordinary idempotent rerun.
     build = args.rebuild or (not already_up and not args.no_build)
-    texts = [(root / f).read_text(encoding="utf-8", errors="replace") for f in files]
-    extractor = any(re.search(r"^  extractor:\s*$", t, re.MULTILINE) for t in texts)
     rc = compose_up(
         root,
         files,
         args.env_file,
         build=build,
-        recreate=((service, "extractor") if extractor else (service,)) if already_up else (),
+        recreate=recreate if already_up else (),
     )
     if rc != 0:
         print(f"✗ docker compose up exited {rc}", file=sys.stderr)

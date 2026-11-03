@@ -83,6 +83,9 @@ services:
       LOOM_CH_USER: "${LOOM_CH_USER:-loom}"
       # Only an unset password means the bundled one; an empty one stays empty.
       LOOM_CH_PASSWORD: "${LOOM_CH_PASSWORD-loomdev}"
+      # One source for both ends: the extractor's token is interpolated the same way,
+      # so a shell export cannot give the two services different tokens.
+      LOOM_DOCUMENT_EXTRACTOR_TOKEN: "${LOOM_DOCUMENT_EXTRACTOR_TOKEN:-}"
       LOOM_CH_READER_USER: "${LOOM_CH_READER_USER-loom_reader}"
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:standalone"
