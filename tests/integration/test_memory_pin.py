@@ -152,3 +152,75 @@ async def test_both_modes_coexist_in_one_list() -> None:
     by_key = {e["memory_key"]: e["pinned"] for e in listing["entries"]}
     assert by_key.get("coexist_auto") is False, by_key
     assert by_key.get("coexist_pin") is True, by_key
+
+
+# The fields the dashboard's pin sends back from the row it read (frontend/src/api.ts
+# pinMemory): memory.pin writes a whole new version, so a field left out is lost.
+_PIN_ECHOED = (
+    "value",
+    "memory_type",
+    "tags",
+    "entities",
+    "confidence",
+    "sensitivity",
+    "source_trace",
+    "source_resource_id",
+    "valid_at",
+    "valid_to",
+    "char_limit",
+)
+
+
+async def _get_until(base_url: str, token: str, body: dict, *, pinned: bool) -> dict:
+    """memory.get with retry until the row is found with the given pin state."""
+    deadline = asyncio.get_event_loop().time() + 15.0
+    got: dict = {}
+    while asyncio.get_event_loop().time() < deadline:
+        got = _post(base_url, "/v1/memory.get", token, body)
+        if got.get("found") and got.get("pinned") is pinned:
+            return got
+        await asyncio.sleep(0.2)
+    return got
+
+
+@pytest.mark.asyncio
+async def test_pin_of_a_read_row_keeps_its_fields() -> None:
+    """A pin that sends back what memory.get served keeps every carried field."""
+    base = os.environ.get("LOOM_BASE_URL")
+    if not base:
+        pytest.skip("LOOM_BASE_URL not set — start the control plane first")
+    ns = f"pintest-{os.urandom(4).hex()}"
+    tok = _mint(ns)
+    key = {"org": "test-org", "namespace": ns, "agent": "test-agent", "memory_key": "freeze"}
+
+    _post(
+        base,
+        "/v1/memory.set",
+        tok,
+        {
+            **key,
+            "memory_type": "procedural",
+            "value": "deploys freeze on Fridays",
+            "tags": ["infra", "prod"],
+            "entities": ["deploy"],
+            "confidence": 0.8,
+            "sensitivity": "medium",
+            "source_trace": "conversation:t1",
+            "source_resource_id": "doc-1",
+            "valid_at": "2026-01-01T00:00:00Z",
+            "valid_to": "2099-01-01T00:00:00Z",
+            "char_limit": 200,
+        },
+    )
+    before = await _get_until(base, tok, key, pinned=False)
+    assert before.get("found"), before
+    assert before["source_trace"] == "conversation:t1", before
+    assert before["source_resource_id"] == "doc-1", before
+
+    out = _post(base, "/v1/memory.pin", tok, {**key, **{f: before[f] for f in _PIN_ECHOED}})
+    assert out.get("pinned") is True, out
+
+    after = await _get_until(base, tok, key, pinned=True)
+    assert after.get("pinned") is True, after
+    assert {f: after[f] for f in _PIN_ECHOED} == {f: before[f] for f in _PIN_ECHOED}
+    assert after["source_class"] == before["source_class"] == "extracted", after

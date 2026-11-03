@@ -405,6 +405,10 @@ export interface MemoryDetail {
   /** How the content entered memory: asserted | extracted | observed | derived |
    *  imported | external. */
   source_class?: string;
+  /** The resource the fact was lifted from; "" when none. */
+  source_resource_id?: string;
+  /** '' | low | medium | high. */
+  sensitivity?: string;
   /** When the fact became true, and the closing bound of its validity; null when unset. */
   valid_at?: string | null;
   valid_to?: string | null;
@@ -556,12 +560,14 @@ export async function pinMemory(
     ...id,
     memory_key: key,
     value: row.value,
-    memory_type: row.memory_type || "semantic",
-    tags: row.tags ?? [],
-    entities: row.entities ?? [],
+    memory_type: row.memory_type,
+    tags: row.tags,
+    entities: row.entities,
   };
   if (row.confidence != null) body.confidence = row.confidence;
+  if (row.sensitivity) body.sensitivity = row.sensitivity;
   if (row.source_trace) body.source_trace = row.source_trace;
+  if (row.source_resource_id) body.source_resource_id = row.source_resource_id;
   if (row.source_class && DECLARABLE_SOURCE_CLASSES.has(row.source_class)) {
     body.source_class = row.source_class;
   }

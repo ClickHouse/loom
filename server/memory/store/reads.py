@@ -614,8 +614,8 @@ _BULK_FETCH_SQL = """
             memory_key, memory_type, value, confidence, version, pinned,
             created_at, updated_at, expires_at, on_expire, expire_reason,
             valid_at, valid_to, temporal_anchor, temporal_confidence,
-            status, run_id, source_trace, char_limit, tags, entities, content_sha256,
-            duplicate_of, superseded_by, recall_count, last_recalled_at,
+            status, run_id, source_trace, source_resource_id, char_limit, tags, entities,
+            content_sha256, duplicate_of, superseded_by, recall_count, last_recalled_at,
             verified_by, verified_at, verified_sha256, sensitivity, actor, source_class,
             lock_mode, lock_reason, lock_until, locked_by, locked_at
         FROM loom.memory

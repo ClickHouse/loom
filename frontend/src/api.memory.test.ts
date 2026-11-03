@@ -47,7 +47,9 @@ describe("pinMemory", () => {
     tags: ["infra", "prod"],
     entities: ["deploy"],
     source_trace: "conversation:t1",
+    source_resource_id: "doc-1",
     source_class: "extracted",
+    sensitivity: "high",
     valid_at: "2026-09-01T00:00:00Z",
     valid_to: null,
     char_limit: 200,
@@ -75,7 +77,7 @@ describe("pinMemory", () => {
 
   // memory.pin writes a whole new version as memory.set does, so a field the body leaves
   // out is lost on the pinned row.
-  it("writes the row back with its tags, entities, confidence, provenance and validity", async () => {
+  it("writes the row back with its tags, entities, confidence, sensitivity, provenance and validity", async () => {
     expect(await pinBody(row)).toEqual({
       consumer: "loom-ui",
       org: "dev",
@@ -87,7 +89,9 @@ describe("pinMemory", () => {
       tags: ["infra", "prod"],
       entities: ["deploy"],
       confidence: 0.8,
+      sensitivity: "high",
       source_trace: "conversation:t1",
+      source_resource_id: "doc-1",
       valid_at: "2026-09-01T00:00:00Z",
       char_limit: 200,
     });

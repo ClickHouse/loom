@@ -866,6 +866,8 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `pinned` | `bool` | True when the row was saved with `memory.pin`: a write that does not pin never replaces it (409 PINNED_CONFLICT). |
 | `actor` | `str` | Who wrote the live version (`human:<subject>` / `process:<subject>`) and how the content entered memory (asserted \| extracted \| observed \| derived \| imported \| external). |
 | `source_class` | `str` | How the content entered memory: asserted \| extracted \| observed \| derived \| imported \| external; '' when not found. |
+| `source_trace` | `str` | The writer's provenance pointer, e.g. "conversation:<thread_id>"; '' when none. |
+| `source_resource_id` | `str` | The resource the fact was lifted from (memory.provenance cites it); '' when none. |
 | `agent` | `str` | Writer agent of the resolved row. |
 | `user_id` | `str` | The resolved row's user and session: a write back to this row (restore, verify) names them, since a key repeats across users and sessions. |
 | `session_id` | `str` | The session or conversation the row belongs to; `'-'` for none. |
