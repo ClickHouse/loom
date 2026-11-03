@@ -191,7 +191,6 @@ def print_report(report: ExtractReport) -> None:
     in_records = {r.memory_key for r in report.records}
     for key in report.flagged:
         if key not in in_records:
-            tag = "would tag" if report.dry_run else "tagged"
             print(
                 f"- {tag} {key} source-changed: confirmed or with a recorded outcome, "
                 "its reasoning left the document"

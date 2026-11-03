@@ -31,8 +31,9 @@ instead. A refused write is reported and the run goes on.
 A document outside a repository's code namespace names the repository: its code names
 resolve in the repository's trunk, and the rows go there or stay beside the document,
 tagged with the repository (`_target`). Every memory row the reconcile and retire steps
-read is in the namespace the rows go to (`_read_own`). Runs in-process, with no auth
-context: operator only.
+read is in the namespace the rows go to (`_read_own`). Runs in-process: with no auth
+context (the CLI) the operator may do everything; with one bound, `_target` checks each
+namespace.
 """
 
 from __future__ import annotations
@@ -518,8 +519,6 @@ async def _readable_names(org: str) -> dict[str, str]:
 
     out: dict[str, str] = {}
     for tag, (name, trunk) in repo_names(org).items():
-        if not trunk:
-            continue
         try:
             # Only the message's wording rides on it, not the refusal.
             readable = await row_in_scope(org, trunk, Role.VIEWER, hides_answer=False)
