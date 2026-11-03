@@ -125,12 +125,18 @@ def authz_target(op: Operation, *, org: Any, namespace: Any, auth: AuthInfo | No
 def with_target(input_obj: Any, target: Target) -> Any:
     """The input with an absent `org` / `namespace` (blank or "-") set to the
     target the gate authorized, so the handler writes and reads where the call
-    was authorized: a literal "-" org is a tenant every token reaches."""
+    was authorized: a literal "-" org is a tenant every token reaches. A
+    namespace the op requires is left as sent: an admin write on "-" (a code
+    repository's access or source) must name its namespace, not land on the
+    plane's default."""
     fields = type(input_obj).model_fields
     update: dict[str, str] = {}
     for name, resolved in (("org", target.org), ("namespace", target.register_namespace)):
-        if name in fields and resolved and present(getattr(input_obj, name)) is None:
-            update[name] = resolved
+        if name not in fields or not resolved or present(getattr(input_obj, name)) is not None:
+            continue
+        if name == "namespace" and fields[name].is_required():
+            continue
+        update[name] = resolved
     return input_obj.model_copy(update=update) if update else input_obj
 
 

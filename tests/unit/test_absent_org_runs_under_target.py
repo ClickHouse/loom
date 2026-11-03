@@ -94,6 +94,25 @@ def test_an_absent_namespace_takes_the_authorized_namespace() -> None:
     assert with_target(inp, unresolved) is inp
 
 
+def test_a_required_namespace_sent_as_dash_is_left_as_sent() -> None:
+    """An admin write on a repository names its namespace: "-" must not
+    become the shared code index."""
+    from server.code.api.models_repos import CodeRepoSetAccessInput
+    from server.transport.gates import Target, with_target
+
+    assert CodeRepoSetAccessInput.model_fields["namespace"].is_required()
+    inp = CodeRepoSetAccessInput.model_validate(
+        {"org": "globex", "namespace": "-", "classification": "restricted", "join_policy": "closed"}
+    )
+    target = Target(
+        org="globex",
+        namespace="code-shared",
+        named_namespace=None,
+        register_namespace="code-shared",
+    )
+    assert with_target(inp, target).namespace == "-"
+
+
 def test_a_tracker_read_with_an_absent_org_takes_the_tracker_org(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -238,3 +257,36 @@ def test_a_call_naming_no_namespace_gives_the_mentor_none(
     monkeypatch.setattr(mentor, "call_hint", _hint)
     _post("namespace.list_mine", {"org": "globex"})
     assert keyed == [("globex", "")]
+
+
+def test_the_mcp_mentor_hint_is_keyed_on_the_admitted_org(monkeypatch: pytest.MonkeyPatch) -> None:
+    import server.transport.mcp_call as mcp_call
+    from server.insights.app import mentor
+    from server.memory.api.models_crud import MemoryGetOutput
+
+    async def _answer(inp: Any) -> MemoryGetOutput:
+        return MemoryGetOutput(found=False)
+
+    tool = "loom_memory_get"
+    monkeypatch.setitem(
+        mcp_call.TOOLS_BY_NAME,
+        tool,
+        dataclasses.replace(mcp_call.TOOLS_BY_NAME[tool], handler=_answer),
+    )
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
+    RecordingCH(strict=False).install(monkeypatch)
+    keyed: list[tuple[str, str]] = []
+
+    def _hint(*_a: Any, org: str, namespace: str, **_k: Any) -> None:
+        keyed.append((org, namespace))
+
+    monkeypatch.setattr(mentor, "call_hint", _hint)
+    auth = verify_token(
+        mint_token(
+            subject="probe", org="globex", namespaces=["ns1"], roles=["viewer"], ttl_seconds=300
+        )
+    )
+    args = {"org": "-", "namespace": "ns1", "agent": "a", "memory_key": "k"}
+    asyncio.run(mcp_call._call_tool(1, {"name": tool, "arguments": args}, auth=auth))
+    assert keyed == [("globex", "ns1")]
