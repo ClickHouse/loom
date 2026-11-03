@@ -72,21 +72,30 @@ class _LLM:
         return SimpleNamespace(text="merged notes [doc://a#0-1]")
 
 
-@pytest.mark.asyncio
-async def test_handler_maps_every_window_then_reduces(monkeypatch: pytest.MonkeyPatch) -> None:
-    import server.knowledge.app.synthesize as kh
-    import server.llm.client as llm_client
-    from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
+def _patch_reads(monkeypatch: pytest.MonkeyPatch, rows_for: Any) -> None:
+    """knowledge.synthesize under no cost cap, reading `rows_for(uri)` for each document."""
     from server.knowledge.store import chunks as knowledge_repo
 
     async def _over_cap(org: str, ns: str) -> bool:
         return False
+
+    async def _list(org: str, ns: str, uri: str, *, embedding_model: str, ch: Any = None):
+        return rows_for(uri)
 
     monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)
     monkeypatch.setattr(
         "server.knowledge.app.document_reads.get_embedder",
         lambda: SimpleNamespace(model_name="fake"),
     )
+    monkeypatch.setattr(knowledge_repo, "list_for_doc", _list)
+
+
+@pytest.mark.asyncio
+async def test_handler_maps_every_window_then_reduces(monkeypatch: pytest.MonkeyPatch) -> None:
+    import server.knowledge.app.synthesize as kh
+    import server.llm.client as llm_client
+    from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
+
     rows = [
         SimpleNamespace(
             chunk_idx=0, content="a" * 500, chunk_metadata=json.dumps({"section_path": ["s1"]})
@@ -99,10 +108,7 @@ async def test_handler_maps_every_window_then_reduces(monkeypatch: pytest.Monkey
         ),
     ]
 
-    async def _list(org: str, ns: str, uri: str, *, embedding_model: str, ch: Any = None):
-        return rows if uri == "doc://a" else []
-
-    monkeypatch.setattr(knowledge_repo, "list_for_doc", _list)
+    _patch_reads(monkeypatch, lambda uri: rows if uri == "doc://a" else [])
     llm = _LLM()
     monkeypatch.setattr(llm_client, "get_llm_client", lambda: llm)
     out = await kh.handle_knowledge_synthesize(
@@ -138,22 +144,9 @@ async def test_handler_folds_hierarchically_and_honours_max_windows(
     import server.knowledge.app.synthesize as kh
     import server.llm.client as llm_client
     from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
-    from server.knowledge.store import chunks as knowledge_repo
 
-    async def _over_cap(org: str, ns: str) -> bool:
-        return False
-
-    monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)
-    monkeypatch.setattr(
-        "server.knowledge.app.document_reads.get_embedder",
-        lambda: SimpleNamespace(model_name="fake"),
-    )
     rows = [SimpleNamespace(chunk_idx=i, content="x" * 1900, chunk_metadata="{}") for i in range(6)]
-
-    async def _list(org: str, ns: str, uri: str, *, embedding_model: str, ch: Any = None):
-        return rows
-
-    monkeypatch.setattr(knowledge_repo, "list_for_doc", _list)
+    _patch_reads(monkeypatch, lambda uri: rows)
 
     class _Long(_LLM):
         async def complete(self, system: str, user: str, max_tokens: int = 1024, **kw: Any):
@@ -217,6 +210,9 @@ def test_a_citation_counts_only_when_it_names_chunks_that_were_read() -> None:
     # a tag with no item names nothing read
     assert not cs.cites_what_was_read("", read)
     assert not cs.cites_what_was_read("bad tag", read)
+    # only a list of items is a tag: prose around one is not
+    assert not cs.cites_what_was_read("see doc://a#1", read)
+    assert not cs.cites_what_was_read("doc://a#1x", read)
 
 
 _LONG_INDEX = "[doc#" + "9" * 5000 + "]"
@@ -263,6 +259,11 @@ _GROUNDING_CASES = {
     "non-ascii-digit": ("[doc://a#²,doc://a#1]", ("[doc://a#²,doc://a#1]", [], [])),
     # a padded tag is named without its padding
     "padded": ("x [ doc://a#1]", ("x [ doc://a#1]", ["doc://a#1"], [])),
+    # blanks around a separator do not make a second citation
+    "spaced-list-once": (
+        "[doc://a#0,doc://a#1] [doc://a#0, doc://a#1]",
+        ("[doc://a#0,doc://a#1] [doc://a#0, doc://a#1]", ["doc://a#0,doc://a#1"], []),
+    ),
 }
 
 
@@ -276,16 +277,9 @@ def test_grounding_removes_the_tags_of_unread_chunks_from_the_answer(
 
 
 def _patch_corpus(monkeypatch: pytest.MonkeyPatch, rows: list[Any], answer: list[str]) -> None:
-    """knowledge.synthesize over `rows` (every named document has them), under no cost
-    cap, with an LLM that writes notes and then `answer[0]` as the final answer."""
+    """knowledge.synthesize over `rows` (every named document has them) with an LLM that
+    writes notes and then `answer[0]` as the final answer."""
     import server.llm.client as llm_client
-    from server.knowledge.store import chunks as knowledge_repo
-
-    async def _over_cap(org: str, ns: str) -> bool:
-        return False
-
-    async def _list(org: str, ns: str, uri: str, *, embedding_model: str, ch: Any = None):
-        return rows
 
     class _Final(_LLM):
         async def complete(self, system: str, user: str, max_tokens: int = 1024, **kw: Any):
@@ -294,12 +288,7 @@ def _patch_corpus(monkeypatch: pytest.MonkeyPatch, rows: list[Any], answer: list
                 return SimpleNamespace(text=answer[0])
             return SimpleNamespace(text="notes")
 
-    monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)
-    monkeypatch.setattr(
-        "server.knowledge.app.document_reads.get_embedder",
-        lambda: SimpleNamespace(model_name="fake"),
-    )
-    monkeypatch.setattr(knowledge_repo, "list_for_doc", _list)
+    _patch_reads(monkeypatch, lambda uri: rows)
     monkeypatch.setattr(llm_client, "get_llm_client", _Final)
 
 
@@ -323,7 +312,8 @@ async def test_the_handler_keeps_only_supported_citations_and_abstains_on_an_emp
     assert out.unsupported_citations == ["doc://a#2", "doc://a#5"]
     assert out.answer == "From [doc://a#0] and, not." and not out.abstain
 
-    for empty in ("   ", "[doc://a#5]"):  # nothing written, or only unread citations
+    # nothing written, only unread citations, or only what removing them left behind
+    for empty in ("   ", "[doc://a#5]", "[doc://a#5].", "- [doc://a#5]\n- [doc://a#9]"):
         answer[0] = empty
         out = await kh.handle_knowledge_synthesize(inp)
         assert out.abstain and out.abstain_reason == "empty_answer" and out.answer == ""

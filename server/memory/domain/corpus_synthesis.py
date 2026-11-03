@@ -129,7 +129,10 @@ def reduce_prompt(task: str, notes: Sequence[str], *, final: bool) -> str:
 # One item, as (source, first index, last index); a citation is a list of them.
 _ITEM_PARTS = re.compile(r"([^\s,;\[\]]+)#([0-9]{1,9})(?:-([0-9]{1,9}))?")
 _ITEM = _ITEM_PARTS.pattern
-_CITATION = rf"\[\s*({_ITEM}(?:\s*[,;]\s*{_ITEM})*)\s*\]"
+_ITEMS = re.compile(rf"{_ITEM}(?:\s*[,;]\s*{_ITEM})*")
+_CITATION = rf"\[\s*({_ITEMS.pattern})\s*\]"
+# The blanks around a list's separators, which do not make it another citation.
+_SEPARATOR = re.compile(r"\s*([,;])\s*")
 # A removed citation goes with the blanks before it; the lookbehind starts the blanks at
 # the start of their run, so a long run is scanned once.
 _SPACED_CITATION = re.compile(r"(?<![ \t])[ \t]*" + _CITATION)
@@ -141,13 +144,14 @@ _MAX_PASSES = 8
 def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
     """Whether `source#idx` (or `source#a-b`, a <= b, or a `,`/`;` list of them) names
     chunks in `read`, the (source, idx) pairs the passes were shown. A range needs both
-    of its ends read, a list every part; a tag with no item names nothing read."""
-    items = list(_ITEM_PARTS.finditer(tag))
-    for m in items:
+    of its ends read, a list every part; a tag that is not such a list names nothing read."""
+    if not _ITEMS.fullmatch(tag):
+        return False
+    for m in _ITEM_PARTS.finditer(tag):
         source, a, b = m.group(1), int(m.group(2)), int(m.group(3) or m.group(2))
         if not (a <= b and (source, a) in read and (source, b) in read):
             return False
-    return bool(items)
+    return True
 
 
 def ground_citations(answer: str, read: set[tuple[str, int]]) -> tuple[str, list[str], list[str]]:
@@ -162,8 +166,9 @@ def ground_citations(answer: str, read: set[tuple[str, int]]) -> tuple[str, list
     def check(m: re.Match[str]) -> str:
         tag = m.group(1)
         supported = cites_what_was_read(tag, read)
-        if tag not in seen:
-            seen.add(tag)
+        key = _SEPARATOR.sub(r"\1", tag)
+        if key not in seen:
+            seen.add(key)
             (kept if supported else removed).append(tag)
         return m.group(0) if supported else ""
 

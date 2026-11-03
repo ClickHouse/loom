@@ -107,6 +107,9 @@ async def handle_knowledge_synthesize(
     if len(answer) > input.max_answer_chars:
         answer = answer[: input.max_answer_chars].rstrip() + "…"
         cited = cs.ground_citations(answer, read)[1]
+    # Punctuation or list markers left by the removed citations are no answer either.
+    if not any(ch.isalnum() for ch in answer):
+        answer = ""
     return KnowledgeSynthesizeOutput(
         answer=answer,
         windows=len(wins),
