@@ -341,7 +341,7 @@ class ClickStackBackend:
     `user_id` is not a top-level column; it lives in a Map column whose name
     varies per table (see DEFAULT_TABLES), under one of several attribute keys
     by SDK convention — we OR across all configured keys. Per-namespace deletion
-    uses `service.namespace` in whichever Map column the table carries.
+    matches `loom.namespace` or `service.namespace` (see `_namespace_where`).
     """
 
     name = "clickstack"
@@ -367,10 +367,10 @@ class ClickStackBackend:
     # ORed: service.namespace covers non-Loom emitters an operator points at
     # the same ClickStack.
     TENANT_NAMESPACE_KEY = "loom.namespace"
-    # The org Loom stamps beside `loom.namespace`. A subject or namespace name is unique
-    # per org only, so a row tagged with ANOTHER org is never erased; for a
-    # user scope a row with no org tag (a non-Loom emitter) still is, since it
-    # may hold the subject.
+    # The org Loom stamps beside `loom.namespace`. A subject or namespace name
+    # is unique per org only, so a row tagged with ANOTHER org is never erased.
+    # A row with no org tag (a non-Loom emitter) is still erased by a user key
+    # or by `service.namespace`, since it may hold the subject.
     TENANT_ORG_KEY = "loom.org"
 
     def __init__(
@@ -462,7 +462,7 @@ class ClickStackBackend:
         )
         op = "IN {u:Array(String)}" if many else "= {u:String}"
         # A row keyed by Loom's own `loom.namespace` is this org's only when it
-        # also carries this org's `loom.org`: Loom's op and domain counters carry
+        # also carries this org's `loom.org`: Loom's op and domain metrics carry
         # the namespace and no org, so by name alone they may be another org's.
         # Another emitter's `service.namespace` keeps the untagged allowance,
         # but never Loom's deployment constant, which every Loom row carries.
