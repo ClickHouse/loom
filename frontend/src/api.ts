@@ -127,8 +127,8 @@ export function onSignInRejected(fn: () => void): void {
  *  when it belongs to one (the dashboard's SSO token, or a `loom login` token pasted in).
  *  The revocation is sent without waiting for it: `keepalive` lets it finish across the
  *  page reload that follows, and it gives up after a few seconds. A token with no
- *  sign-in session (a minted one, maybe a CI job's too) is only forgotten here. */
-/** False when another person's token is the stored one (another tab signed them in a
+ *  sign-in session (a minted one, maybe a CI job's too) is only forgotten here. Returns
+ *  false when another person's token is the stored one (another tab signed them in a
  *  moment ago): it is not this page's to end, and the reload that follows opens their page. */
 export function signOut(): boolean {
   const t = token();

@@ -86,8 +86,10 @@ describe("ErrorBoundary", () => {
         </ErrorBoundary>,
       );
       await userEvent.click(screen.getByRole("button", { name: "Copy diagnostics" }));
-      const init = vi.mocked(fetch).mock.calls.at(-1)?.[1];
-      expect(new Headers(init?.headers).get("Authorization")).toBeNull();
+      const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/v1/health"));
+      // The read was made, and made without the token.
+      expect(call).toBeDefined();
+      expect(new Headers(call?.[1]?.headers).get("Authorization")).toBeNull();
     } finally {
       setPageOwner(null);
       localStorage.clear();

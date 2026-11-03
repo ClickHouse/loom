@@ -540,7 +540,8 @@ describe("a refused token", { timeout: 30_000 }, () => {
   let whoamiAnswers: number[] = [];
   let whoamiCalls = 0;
   let listMineRefused: () => void = () => undefined;
-  const alice = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+  // A dashboard sign-in's token carries its session (`sid`).
+  const alice = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], sid: "s1" });
   const fresh = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 2 });
   const bob = jwt({ sub: "bob", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
   beforeEach(() => {
@@ -751,6 +752,20 @@ describe("a refused token", { timeout: 30_000 }, () => {
     await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
     await until(() => vi.mocked(goToSso).mock.calls.length > 0);
     expect(goToSso).toHaveBeenCalledTimes(1);
+  });
+
+  it("a reload after a minted token ended shows the gate and starts no sign-in by itself", async () => {
+    window.__LOOM_SSO = true;
+    localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] }));
+    await expireMidSession();
+    cleanup();
+    useStore.setState({ authed: true, sessionExpired: false, gateReason: null, whoami: null, identity: null });
+    render(<App />);
+    await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
+    expect(useStore.getState().gateReason).toBe("ended");
+    expect(screen.getByRole("status")).toHaveTextContent("Your session ended");
+    await settle();
+    expect(goToSso).not.toHaveBeenCalled();
   });
 
   it("an ended tab that cannot confirm another tab's token asks again later, and then carries on", async () => {

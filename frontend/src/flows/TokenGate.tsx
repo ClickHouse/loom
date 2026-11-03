@@ -16,8 +16,8 @@ import { Alert } from "../components/ui";
 
 interface TokenGateProps {
   onLogin: () => void;
-  /** Why the gate is showing: "expired" when the server refused the stored token, "refused"
-   *  when it refused one a sign-in link brought; null/undefined on a first visit. */
+  /** Why the gate is showing: "expired" when the server refused a sign-in session's stored
+   *  token, "ended" any other, "refused" one a sign-in link brought; null on a first visit. */
   reason?: GateReason;
 }
 
@@ -102,9 +102,10 @@ function SsoGate({ reason }: { reason?: GateReason }) {
 
 /** Why the gate is showing, when it is not a first visit. */
 function GateNotice({ reason }: { reason?: GateReason }) {
-  if (reason === "expired") return <Alert role="status" state="neutral" text="Your session ended — sign in again." />;
+  if (reason === "expired" || reason === "ended")
+    return <Alert role="status" state="neutral" text="Your session ended — sign in again." />;
   if (reason === "refused")
-    return <Alert role="status" state="neutral" text="The sign-in link's token was refused — sign in again." />;
+    return <Alert role="status" state="neutral" text="The token this sign-in brought was refused — sign in again." />;
   return null;
 }
 

@@ -284,10 +284,10 @@ export function pathnameView(): View | null {
   return urlParam("memory") ? "memories" : null;
 }
 
-/** Why the sign-in gate is showing: a stored token the server no longer accepts is
- *  "expired"; a token a sign-in link brought that it refused is "refused"; a first visit
- *  carries null. */
-export type GateReason = "expired" | "refused" | null;
+/** Why the sign-in gate is showing: a sign-in session's token the server no longer
+ *  accepts is "expired" (SSO resumes by itself), any other stored token "ended"; a token a
+ *  sign-in link brought that it refused is "refused"; a first visit carries null. */
+export type GateReason = "expired" | "ended" | "refused" | null;
 
 interface AppState {
   authed: boolean;

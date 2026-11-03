@@ -11,7 +11,7 @@ import { reloadPage } from "../lib/navigation";
  * while one is open, and a click on it does not dismiss the dialog. The viewport is the
  * live region that announces it, so it takes no role of its own.
  */
-export function SessionExpiredBar() {
+export default function SessionExpiredBar() {
   return (
     <div className="toast pointer-events-auto flex items-start" data-testid="session-expired-bar">
       <Icon name="lock" size="sm" aria-hidden="true" className="shrink-0 mt-0.5" />

@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, type ReactElement } from "react";
 import { flushView, installVitals, startView } from "./lib/vitals";
 import { ReloadBar } from "./components/ReloadBar";
 import { invalidateShared, sharedMine, sharedHealth } from "./lib/sharedReads";
@@ -20,7 +20,7 @@ import {
   setPageOwner,
   signedOut,
   storedToken,
-  ApiError,
+  type ApiError,
   type MyNamespaceEntry,
   type WhoAmI,
 } from "./api";
@@ -35,7 +35,7 @@ import { claimsFromToken, provisionalNamespace, rememberKinds, takeLinkToken } f
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
 import { MemoryScopeMissing } from "./components/MemoryScopeMissing";
-import { useStore, pathnameView, linkedNamespace, addressPageNamespace } from "./lib/state";
+import { useStore, pathnameView, linkedNamespace, addressPageNamespace, type GateReason } from "./lib/state";
 import { arriveAt, readPlace, restorePlace } from "./lib/place";
 import { useKeyboard } from "./lib/hooks";
 import { NetworkProgress } from "./components/NetworkProgress";
@@ -50,32 +50,34 @@ import { shortcutOff } from "./lib/shortcuts";
 
 import { reloadPage } from "./lib/navigation";
 
-// This tab's session ended on a refused token: a reload's sign-in gate says so, and with SSO
-// starts the sign-in by itself, though the token is already gone.
 const SESSION_ENDED = "loom_session_ended_v1";
 
-/** Note that this tab's session ended (`take` false), or read the note and forget it
- *  (`take` true): whether it was set. */
-function sessionEndedNote(take: boolean): boolean {
+/** Note why this tab's session ended (`reason` given), or read the note and forget it: the
+ *  gate's reason, or null. */
+function sessionEndedNote(reason?: GateReason): GateReason {
   try {
-    const was = sessionStorage.getItem(SESSION_ENDED) === "1";
-    if (take) sessionStorage.removeItem(SESSION_ENDED);
-    else sessionStorage.setItem(SESSION_ENDED, "1");
+    const was = sessionStorage.getItem(SESSION_ENDED) as GateReason;
+    if (reason) sessionStorage.setItem(SESSION_ENDED, reason);
+    else sessionStorage.removeItem(SESSION_ENDED);
     return was;
   } catch {
-    return false; // no session storage: a reload shows the first-visit gate
+    return null; // no session storage: a reload shows the first-visit gate
   }
 }
+
+/** The gate's reason for a lost token: only a sign-in session's resumes by itself. */
+const lostReason = (token: string | null): GateReason => (claimsFromToken(token)?.session ? "expired" : "ended");
 
 /** The session ended (the server refused the token, or another tab dropped it). While the
  *  app boots there is no page to keep, and boot, which knows whether the token came by a
  *  sign-in link, shows the gate and says why once whoami answers. Mid-session a card says
  *  so over the page, which stays as it is. */
 function endSession(): void {
+  const reason = lostReason(storedToken());
   clearToken();
   // A single-user install has no sign-in: its next call goes without the stale token.
   if (isAuthDisabled()) return;
-  sessionEndedNote(false);
+  sessionEndedNote(reason);
   const s = useStore.getState();
   if (s.whoami) s.setSessionExpired(true);
 }
@@ -99,17 +101,16 @@ async function whoamiWhenReady(): Promise<WhoAmI> {
     try {
       return await whoami();
     } catch (e) {
-      // A token stored meanwhile is not the one being asked about: no retry carries it, and
-      // the caller, which checks the stored token next, decides on the new one.
-      if (storedToken() !== asked) return { authenticated: false };
-      if (attempt >= 6 || !(e instanceof ApiError) || e.status !== 503) throw e;
-      await new Promise((r) => setTimeout(r, 1000));
-      // And again after the wait, before the next ask carries the stored token.
-      if (storedToken() !== asked) return { authenticated: false };
+      // Only a 503 (an ApiError's status; any other error has none) is asked again.
+      if (storedToken() === asked && (attempt >= 6 || (e as ApiError).status !== 503)) throw e;
     }
+    if (storedToken() === asked) await new Promise((r) => setTimeout(r, 1000));
+    // A token stored meanwhile (checked after the failure and after the wait) is not the one
+    // being asked about: no retry carries it, and the caller, which checks the stored token
+    // next, decides on the new one.
+    if (storedToken() !== asked) return { authenticated: false };
   }
 }
-
 let recheck: ReturnType<typeof setTimeout> | undefined;
 
 /** Another tab of this origin stored a token (a sign-in there) or dropped it. Dropped by a
@@ -152,9 +153,8 @@ async function tokenChangedElsewhere(token: string | null): Promise<void> {
     return;
   }
   // The card going away is the sign that the session is back.
-  s().setWhoami(now);
-  s().setSessionExpired(false);
-  sessionEndedNote(true);
+  useStore.setState({ whoami: now, sessionExpired: false });
+  sessionEndedNote();
   try {
     invalidateShared();
     s().setMyNamespaces(await sharedMine(now.org ?? ""));
@@ -206,8 +206,8 @@ const TokenGate = lazy(() => import("./flows/TokenGate").then((m) => ({ default:
 // first asked for then would be gone and its stale-chunk reload would lose the page.
 // Should that fetch fail, no card shows (each view's error still says the session ended),
 // rather than an error page in place of the page.
-const sessionCard = import("./components/SessionExpiredBar").catch(() => ({ SessionExpiredBar: () => null }));
-const SessionExpiredBar = lazy(() => sessionCard.then((m) => ({ default: m.SessionExpiredBar })));
+const sessionCard = import("./components/SessionExpiredBar").catch(() => ({ default: () => null }));
+const SessionExpiredBar = lazy<() => ReactElement | null>(() => sessionCard);
 
 const NamespaceNoAccess = lazy(() =>
   import("./components/NamespaceNoAccess").then((m) => ({ default: m.NamespaceNoAccess })),
@@ -456,15 +456,15 @@ export default function App() {
           // sign-in. A refused sign-in link says so, and starts no sign-in by itself: it
           // may be the way in while the identity provider is down.
           const out = signedOut();
-          const ended = sessionEndedNote(true) && !out;
-          if (ended || hasToken() || (dropped && !out)) {
+          const note = sessionEndedNote();
+          if (((note || dropped) && !out) || hasToken()) {
             clearToken();
-            useStore.getState().setGateReason(link?.token ? "refused" : "expired");
+            useStore.getState().setGateReason(link?.token ? "refused" : note || lostReason(sent));
           }
           setAuthed(false);
           return;
         }
-        sessionEndedNote(true);
+        sessionEndedNote();
 
         setAuthed(true);
         setWhoami(w);
@@ -590,9 +590,9 @@ export default function App() {
         // A token refused on the way (the early read) says so on the gate, as the try would.
         // Only a token this boot itself lost: an earlier load's note alone (a Reload while
         // the server is away) starts no sign-in by itself.
-        const ended = sessionEndedNote(true) && !signedOut() && !!sent;
-        if (!storedToken() && (link?.token || ended))
-          useStore.getState().setGateReason(link?.token ? "refused" : "expired");
+        const note = sessionEndedNote();
+        if (!storedToken() && (link?.token || (note && !signedOut() && sent)))
+          useStore.getState().setGateReason(link?.token ? "refused" : note);
         toastError("Auth bootstrap failed", e);
         setAuthed(false);
       }
