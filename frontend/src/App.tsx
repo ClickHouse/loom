@@ -23,6 +23,7 @@ import {
 import {
   canReadNamespace,
   deepLinkNamespace,
+  isCollectionName,
   isMemoryNamespace,
   landingTarget,
   needsMemoryNamespace,
@@ -82,7 +83,6 @@ const Policies = lazy(() => import("./views/admin/Policies").then((m) => ({ defa
 const Audit = lazy(() => import("./views/admin/Audit").then((m) => ({ default: m.Audit })));
 const Spending = lazy(() => import("./views/admin/Spending").then((m) => ({ default: m.Spending })));
 const Agents = lazy(() => import("./views/admin/Agents").then((m) => ({ default: m.Agents })));
-const Collections = lazy(() => import("./views/admin/Collections").then((m) => ({ default: m.Collections })));
 const AdminUsersView = lazy(() => import("./views/admin/Users").then((m) => ({ default: m.Users })));
 const DeploymentSettings = lazy(() =>
   import("./views/admin/DeploymentSettings").then((m) => ({ default: m.DeploymentSettings })),
@@ -429,7 +429,12 @@ export default function App() {
         // says its access could not be checked.
         const known = useStore.getState().myNamespaces;
         const readable = linked !== null && (canReadNamespace(linked, claims, known) || (!known && linked === saved));
-        const denied = linked !== null && !readable ? linked : null;
+        // A Library link to a collection is the collection's: one its namespace denies the
+        // reader still opens, on the reader's own namespace, and the Library reads the
+        // collection only if collection.list names it.
+        const collectionLink =
+          initial === "knowledge" && isCollectionName(new URLSearchParams(location.search).get("collection"));
+        const denied = linked !== null && !readable && !collectionLink ? linked : null;
         const pick = readable ? linked : saved;
         const reach = readable ? [linked] : claims;
         // URL routing: an explicit path (e.g. /memories) always wins — the landing rule decides a
@@ -644,7 +649,8 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
   // no namespace — it would fire memory.* reads the token cannot make against a namespace
   // that holds no memories. One empty state, one place, says what the namespace is and
   // where its data lives.
-  if (needsMemoryNamespace(view) && !isMemoryNamespace(namespace, mine)) {
+  // The Library still mounts: on such a namespace it reads only the collections it lists.
+  if (needsMemoryNamespace(view) && view !== "knowledge" && !isMemoryNamespace(namespace, mine)) {
     return <MemoryScopeMissing view={view} />;
   }
   switch (view) {
@@ -688,8 +694,6 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
       return <Agents />;
     case "assistant":
       return <Assistant />;
-    case "admin:collections":
-      return <Collections />;
     case "admin:users":
       return <AdminUsersView />;
     case "admin:settings":

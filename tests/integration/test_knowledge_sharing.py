@@ -600,6 +600,31 @@ def test_an_id_with_capitals_is_refused(gw: Gateway) -> None:
     )
 
 
+def test_collection_list_names_each_collection_with_its_description(gw: Gateway) -> None:
+    tag = uuid.uuid4().hex[:6]
+    described = f"col-handbook-{tag}"
+    bare = f"col-bare-{tag}"
+    gw.ok(
+        "alice",
+        "collection.create",
+        {"namespace": described, "description": "Team handbook and onboarding"},
+    )
+    _collection(gw, "alice", bare)
+    gw.ok(
+        "alice", "grants.create", {"namespace": described, "subject": "user:bob", "role": "viewer"}
+    )
+    mine = {c["namespace"]: c for c in gw.ok("alice", "collection.list", {})["collections"]}
+    assert mine[described]["description"] == "Team handbook and onboarding"
+    assert mine[bare]["description"] == ""
+    bobs = {c["namespace"]: c for c in gw.ok("bob", "collection.list", {})["collections"]}
+    assert bobs[described]["description"] == "Team handbook and onboarding"
+    # bob reads only what his grant opens, so only that description reaches him.
+    assert bare not in bobs
+    assert [c["description"] for c in bobs.values() if not c["personal"]] == [
+        "Team handbook and onboarding"
+    ]
+
+
 def test_a_deleted_collection_leaves_its_children_top_level(gw: Gateway) -> None:
     tag = uuid.uuid4().hex[:6]
     top = _collection(gw, "alice", f"col-top-{tag}")

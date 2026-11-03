@@ -932,12 +932,18 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
           agents: [],
           agent_namespaces: [],
         });
-      // Two collections, one inside the other, so the Collections page draws its rows.
+      // Two collections, one inside the other, so the Library's select draws a tree.
       case "/v1/collection.list":
         return json({
           collections: [
-            { namespace: "col-handbook", parent: "", personal: false, role: "admin" },
-            { namespace: "col-handbook-oncall", parent: "col-handbook", personal: false, role: "writer" },
+            { namespace: "col-handbook", parent: "", personal: false, role: "admin", description: "Team handbook" },
+            {
+              namespace: "col-handbook-oncall",
+              parent: "col-handbook",
+              personal: false,
+              role: "writer",
+              description: "",
+            },
           ],
           next_cursor: null,
         });
@@ -1588,7 +1594,6 @@ export const ROUTES = [
   "/admin/activity",
   "/admin/usage",
   "/admin/agents",
-  "/admin/collections",
   "/admin/users",
 ];
 

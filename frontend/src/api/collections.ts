@@ -15,6 +15,8 @@ export interface CollectionEntry {
   personal: boolean;
   /** The caller's role there. */
   role: GrantRole;
+  /** What it holds: its directory description; "" for none (and from a server a release behind). */
+  description?: string;
 }
 
 export interface CollectionListPage {

@@ -7701,6 +7701,7 @@ class CollectionEntry(TypedDict, total=False):
     parent: Required[str]
     personal: Required[bool]
     role: Required[str]
+    description: NotRequired[str]
 
 
 class CollectionMoveInput(TypedDict, total=False):

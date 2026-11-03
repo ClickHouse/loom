@@ -1579,3 +1579,13 @@ def test_a_tree_write_whose_reply_is_lost_still_moves_the_watermark(
         else:
             asyncio.run(collections.retire(ORG, "col-q3-docs"))
     assert moved == [grant_cache.COLLECTIONS]
+
+
+def test_a_collection_description_is_held_to_2000_characters() -> None:
+    from pydantic import ValidationError
+
+    from server.identity.api.models_collections import CollectionCreateInput
+
+    CollectionCreateInput(org="o", namespace="col-a", description="x" * 2000)
+    with pytest.raises(ValidationError):
+        CollectionCreateInput(org="o", namespace="col-a", description="x" * 2001)

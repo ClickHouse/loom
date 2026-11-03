@@ -1816,7 +1816,7 @@ export interface CollectionCreateInput {
   namespace: string;
   /** The collection it sits in and inherits grants from; '' for a top-level one. */
   parent?: string;
-  /** What the collection holds, shown beside its name; '' for none. */
+  /** What the collection holds, shown beside its name (at most 2000 characters); '' for none. */
   description?: string;
 }
 
@@ -1854,10 +1854,11 @@ export interface CollectionEntry {
   parent: string;
   personal: boolean;
   role: string;
+  description?: string;
 }
 
 export interface CollectionListOutput {
-  /** The collections the caller can read on this page, by name, with its role. */
+  /** The collections the caller can read on this page, by name, with the caller's role and the collection's description. */
   collections: CollectionEntry[];
   /** Pass as `cursor` for the next page; none on the last. */
   next_cursor?: string | null;
