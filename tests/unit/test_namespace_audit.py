@@ -1530,3 +1530,20 @@ async def test_a_window_within_the_ledger_lag_skips_the_telemetry_check(
     )
     assert "telemetry_unavailable: window within the ledger lag" in out.skipped
     assert "telemetry_unavailable" not in {f.code for f in out.findings}
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_copied_row_is_not_an_unrecorded_write() -> None:
+    # A copy's call is ledgered under no namespace, so the target's ledger is empty.
+    copied = (
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
+        "memory_type, value, version, created_at, updated_at, cross_promoted_from_namespace) "
+        "VALUES ('o', 'ns', 'bot', '-', '-', 'team/fact', 'semantic', 'v', 1, "
+        "now() - INTERVAL 10 MINUTE, now() - INTERVAL 10 MINUTE, 'source')"
+    )
+    audit = na.new_audit(
+        _inp(window_seconds=3600), ch=_LocalCH(["memory", "agent_events"], [copied])
+    )
+    await na.run_checks(audit, ["telemetry_unavailable"])
+    assert _finding(audit, "telemetry_unavailable").severity == "info"

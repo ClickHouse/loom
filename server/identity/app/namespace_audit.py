@@ -282,7 +282,9 @@ _CONTRACT: dict[str, RuleContract] = {
         ),
         uncertainty=(
             "Rows written in-process, by an importer run without `--base-url` or a worker "
-            "that creates keys, leave no ledger row and read as a gap in a quiet namespace."
+            "that creates keys, leave no ledger row and read as a gap in a quiet namespace, "
+            "and so do rows a recent snapshot restored (`namespace.restore` is ledgered "
+            "under no namespace). Copied rows are not judged."
         ),
     ),
     "exact_key_store": RuleContract(
@@ -584,8 +586,11 @@ class _Audit:
                    countIf(memory_type = 'episodic') AS episodic_rows,
                    -- created, not revised: a worker's revision (a sensitivity relabel) keeps
                    -- created_at and may leave no ledger row of its own
+                   -- nor copied in: a copy's call is ledgered under no namespace, as its
+                   -- input names a source and a target
                    countIf(created_at >= now() - INTERVAL {{win:UInt32}} SECOND
-                           AND created_at < now() - INTERVAL {{lag:UInt32}} SECOND)
+                           AND created_at < now() - INTERVAL {{lag:UInt32}} SECOND
+                           AND cross_promoted_from_namespace = '')
                        AS written_in_window
             {_LIVE}
             """

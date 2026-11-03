@@ -2,7 +2,7 @@
 precision and recall, against a live Loom + ClickHouse.
 
 Each case is a namespace built through the API (and, for the two states an agent cannot
-cause, a delete on the store the test owns) and labeled with the findings it must raise.
+cause, an insert or a delete on the store the test owns) and labeled with the findings it must raise.
 Every other rule must stay quiet on it. A finding is raised when its count is above zero
 at warning severity or worse, or, for the system-state and intentional-read rules, when
 its count is above zero. The run prints the per-rule table and asserts precision and
@@ -142,7 +142,7 @@ async def delayed_indexing(ns: _Ns) -> None:
     ns.ch.command(
         "INSERT INTO loom.memory_embeddings SELECT * REPLACE (0 AS embedding_dim, "
         "{held:String} AS embed_last_error, now64(3) + INTERVAL 1 DAY AS embed_retry_at, "
-        "version + 1 AS version) FROM loom.memory_embeddings FINAL "
+        "version + 2 AS version) FROM loom.memory_embeddings FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = 'team/fresh'",
         parameters={"org": ORG, "ns": ns.name, "held": EMBED_HOLDS[0]},
     )
