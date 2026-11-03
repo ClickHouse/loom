@@ -271,14 +271,21 @@ export function resolveCodeRepo(env = process.env) {
 /** Base URL of the Loom control plane: env, then the plugin's install-time
  *  option, then ~/.loom/config.json, then the plugin's shipped
  *  default, then localhost. */
+/** A base URL as the hooks compare and send it: trimmed, no trailing slash. */
+export function normalizeUrl(url) {
+  return String(url || "")
+    .trim()
+    .replace(/\/+$/, "");
+}
+
 export function resolveServerUrl() {
-  const url =
+  return normalizeUrl(
     process.env.LOOM_BASE_URL ||
-    process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL ||
-    loomConfig().url ||
-    pluginDefaults().server_url ||
-    "http://localhost:7777";
-  return String(url).replace(/\/+$/, "");
+      process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL ||
+      loomConfig().url ||
+      pluginDefaults().server_url ||
+      "http://localhost:7777",
+  );
 }
 
 /**

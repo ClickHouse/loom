@@ -14,16 +14,21 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { loomConfigPath, loomTokenPath, readConfigFile, resolveServerUrl, writeConfigMerged } from "./loom-client.mjs";
+import {
+  loomConfigPath,
+  loomTokenPath,
+  normalizeUrl,
+  readConfigFile,
+  resolveServerUrl,
+  writeConfigMerged,
+} from "./loom-client.mjs";
 import { readJsonFile, removeFile, tmpStatePath, writeJsonFile } from "./tmp-state.mjs";
 
 /** The install option's URL, else `LOOM_BASE_URL`: the order of the MCP
  *  entry's `${user_config.server_url}`, whose default is
  *  `${LOOM_BASE_URL:-http://localhost:7777}` (`.mcp.json`). "" when neither. */
 function optionServerUrl(env) {
-  return String(env.CLAUDE_PLUGIN_OPTION_SERVER_URL || env.LOOM_BASE_URL || "")
-    .trim()
-    .replace(/\/+$/, "");
+  return normalizeUrl(env.CLAUDE_PLUGIN_OPTION_SERVER_URL || env.LOOM_BASE_URL);
 }
 
 /** The URL the plugin's MCP entry calls. */
@@ -39,9 +44,7 @@ const INSTALL_URL_STATE = tmpStatePath("install", fileURLToPath(new URL("..", im
  *  script, which the agent runs from a shell that carries no option; an
  *  install without the option removes a stale one. */
 export function saveInstallServerUrl(env = process.env) {
-  const url = String(env.CLAUDE_PLUGIN_OPTION_SERVER_URL || "")
-    .trim()
-    .replace(/\/+$/, "");
+  const url = normalizeUrl(env.CLAUDE_PLUGIN_OPTION_SERVER_URL);
   if (url) writeJsonFile(INSTALL_URL_STATE, { url });
   else removeFile(INSTALL_URL_STATE);
 }
@@ -54,7 +57,7 @@ export function installServerUrl() {
 /** The server the status script checks: what the hooks use, with the saved
  *  install URL standing in for the option the agent's shell lacks. */
 export function statusServerUrl() {
-  return String(process.env.LOOM_BASE_URL || installServerUrl() || resolveServerUrl()).replace(/\/+$/, "");
+  return normalizeUrl(process.env.LOOM_BASE_URL || installServerUrl() || resolveServerUrl());
 }
 
 /** What a run would do, without doing it: {write, url, reason}. Pure. */
@@ -76,11 +79,11 @@ export function planMaterialize(env, { configExists, configToken, tokenFileExist
  *  config's token itself, or when the config names no server. Pure. */
 export function installTokenNotice(plan, mcpUrl, env = process.env) {
   if (String(env.LOOM_API_KEY || "").trim() || plan.write || !plan.configHasToken) return "";
-  const saved = String(plan.configUrl || "");
-  const inUse = String(mcpUrl || "").replace(/\/+$/, "");
+  const saved = normalizeUrl(plan.configUrl);
+  const inUse = normalizeUrl(mcpUrl);
   if (!saved || !inUse || saved === inUse) return "";
   return (
-    `Loom: ~/.loom/config.json holds a token saved for ${saved}, which the loom MCP tools send to ` +
+    `Loom: ${loomConfigPath(env)} holds a token saved for ${saved}, which the loom MCP tools send to ` +
     `${inUse}. If the loom tools fail to connect, put a ${inUse} token in that file or in ` +
     `LOOM_API_KEY and restart.`
   );
@@ -96,9 +99,7 @@ export function applyPluginOptions(env = process.env, paths = {}) {
     configToken: existing.token,
     tokenFileExists: existsSync(tokenPath),
   });
-  plan.configUrl = String(existing.url || "")
-    .trim()
-    .replace(/\/+$/, "");
+  plan.configUrl = normalizeUrl(existing.url);
   plan.configHasToken = Boolean(String(existing.token || "").trim());
   if (!plan.write) return plan;
   try {

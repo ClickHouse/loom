@@ -97,9 +97,9 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   it; a server without self-signup (404) or rate-limiting it (429) leaves the
   machine without a credential and the primer says how to get a token by
   hand. A token given as the `token` install option is first copied into
-  ~/.loom/config.json, where the headers helper can read it. When that
-  helper will send the config's token and the config names another server
-  than the MCP entry's, the primer says so. The `server_url` option
+  ~/.loom/config.json, where the headers helper can read it. In Claude Code,
+  when that helper will send the config's token and the config names another
+  server than the MCP entry's, the primer says so. The `server_url` option
   is saved to a tmp state file (`loom-install-<hash>.json`, one per plugin
   install) for the status script, whose shell carries no option.
 - **loom-session-start, primer.** One `context.pack` (mode startup, the

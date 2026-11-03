@@ -59,8 +59,11 @@ async function main() {
   // CLI, the SDK) read it. Before the token check below, so this very
   // session's hooks use it too.
   const optionPlan = applyPluginOptions();
-  // An agent signs in as itself, so the config token is not what its tools send.
-  const optionNotice = agentMode() ? "" : installTokenNotice(optionPlan, mcpServerUrl());
+  // The notice is about Claude Code's MCP entry (Codex's is fixed in its
+  // plugin). An agent signs in as itself, so the config token is not what
+  // its tools send.
+  const optionNotice =
+    hookClient() === "claude-code" && !agentMode() ? installTokenNotice(optionPlan, mcpServerUrl()) : "";
   saveInstallServerUrl();
   sweepStaleStateFiles();
   // Default ON; opt out with LOOM_INJECT_CONTEXT=false (see header).
