@@ -382,7 +382,7 @@ async def test_the_child_stops_its_loops_before_its_writes_drain(monkeypatch) ->
 
 
 @pytest.fixture
-def child_services(monkeypatch) -> list[str]:
+def tracker_refresh_tags(monkeypatch) -> list[str]:
     """The child's services stubbed to start without ClickHouse. Returns the query
     tag each tracker-registry refresh saw."""
     from server import boot
@@ -426,7 +426,7 @@ async def _stop(tasks: list[asyncio.Task[None]]) -> None:
 
 @pytest.mark.asyncio
 async def test_the_child_adopts_the_runtime_overrides_before_its_workers_start(
-    monkeypatch, child_services
+    monkeypatch, tracker_refresh_tags
 ) -> None:
     """A worker pass reads LIVE settings: the child loads the stored overrides
     before the supervisor starts and keeps re-reading them."""
@@ -450,7 +450,7 @@ async def test_the_child_adopts_the_runtime_overrides_before_its_workers_start(
 
 @pytest.mark.asyncio
 async def test_the_child_tags_its_boot_reads_and_its_tracker_loop(
-    monkeypatch, child_services
+    monkeypatch, tracker_refresh_tags
 ) -> None:
     """Its boot reads and its tracker-registry loop run where no request or pass
     tag reaches; each carries its own, and the caller's context keeps none."""
@@ -462,10 +462,10 @@ async def test_the_child_tags_its_boot_reads_and_its_tracker_loop(
     tasks = await worker_main._start_services(object())
     try:
         for _ in range(200):
-            if len(child_services) >= 2:
+            if len(tracker_refresh_tags) >= 2:
                 break
             await real_sleep(0.01)
     finally:
         await _stop(tasks)
-    assert child_services[:2] == ["boot.workers_child", "tracker.sources_refresh"]
+    assert tracker_refresh_tags[:2] == ["boot.workers_child", "tracker.sources_refresh"]
     assert current_query_tag() == ""
