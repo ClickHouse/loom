@@ -7,7 +7,7 @@ names it and does not run it.
 | check | FAIL means | next action |
 |---|---|---|
 | `ensure-node.sh --check` | `/bin/sh` finds no Node 18+, so no hook runs | with the user's yes, run `ensure-node.sh` without `--check`; then restart the session |
-| `server` | nothing answers at the URL checked: in Claude Code the one the MCP entry calls (the plugin's `server_url` option when a session saved it, else `LOOM_BASE_URL`, else the hooks' server), in Codex the hooks' server | point the client at the reachable server (the plugin's `server_url` option, `LOOM_BASE_URL`, or `url` in `~/.loom/config.json`) |
+| `server` | nothing answers at the URL the MCP entry calls (the plugin's `server_url` option when a session saved it, else `LOOM_BASE_URL`, else the plugin's default: Codex's fixed entry, or localhost) | point the client at the reachable server (the plugin's `server_url` option, or `LOOM_BASE_URL`) |
 | `token` | no readable JWT, or it expired | get a new writer token from Settings → Tokens in the dashboard and update the plugin config; for an agent (`LOOM_CLIENT_ID` with a workload token) never a person's token: check the trust (`loom bot list`), that the workload token is current, and that the server answers `/oauth/token` |
 | `source` (WARN) | `~/.loom/config.json` holds a token saved for another server than the one checked (see `server`); in Claude Code the MCP header helper sends it there, so the loom MCP server shows "needs authentication" | put the checked server's writer token in that file or in `LOOM_API_KEY`, then restart the session |
 | `auth` | the server rejects the bearer (401/403) | refresh the token; hooks fail open and otherwise lose captures |

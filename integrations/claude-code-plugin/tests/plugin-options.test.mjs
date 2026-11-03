@@ -14,7 +14,6 @@ import {
   saveInstallServerUrl,
   statusServerUrl,
 } from "../lib/plugin-options.mjs";
-import { resolveServerUrl } from "../lib/loom-client.mjs";
 
 function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "loom-opts-"));
@@ -123,7 +122,9 @@ test("the hook saves the install URL for the status script, removes it when the 
     assert.equal(installServerUrl(state), "");
     assert.equal(statusServerUrl(state), "https://env");
     delete process.env.LOOM_BASE_URL;
-    assert.equal(statusServerUrl(state), resolveServerUrl()); // the hooks' server, whatever this machine's is
+    // nothing saved or set: the MCP entry's default, never the config's url
+    assert.equal(statusServerUrl(state), mcpServerUrl(process.env));
+    assert.equal(statusServerUrl(state), "http://localhost:7777");
   } finally {
     if (baseUrl === undefined) delete process.env.LOOM_BASE_URL;
     else process.env.LOOM_BASE_URL = baseUrl;

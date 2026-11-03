@@ -109,7 +109,7 @@ test("an agent with no token is told its workload-token exchange failed", async 
 });
 
 test("the source line sits between token and auth, names the lookup, and warns when the config names another server", async () => {
-  const { loomConfigPath } = await import("../lib/loom-client.mjs");
+  const { loomConfigPath, loomTokenPath } = await import("../lib/loom-client.mjs");
   const run = (tokenKind, configUrl, tok = token()) =>
     clientStatus({ serverUrl, token: tok, scope, now, fetchImpl: responses().fetchImpl, tokenKind, configUrl });
   const pass = await run("env", "https://elsewhere");
@@ -125,7 +125,6 @@ test("the source line sits between token and auth, names the lookup, and warns w
   assert.ok(line.detail.includes(loomConfigPath()));
   assert.equal(warn.ok, true); // a WARN never fails the check
   assert.equal((await run("config", `${serverUrl}/`)).checks[2].grade, "PASS");
-  const { loomTokenPath } = await import("../lib/loom-client.mjs");
   assert.equal((await run("file", "https://elsewhere")).checks[2].detail, `token from ${loomTokenPath()}`);
   assert.equal((await run("agent", "https://elsewhere")).checks[2].detail, "token from the workload-token exchange");
   const none = await run("", "", "");

@@ -18,8 +18,8 @@ import {
   loomConfigPath,
   loomTokenPath,
   normalizeUrl,
+  pluginDefaults,
   readConfigFile,
-  resolveServerUrl,
   writeConfigMerged,
 } from "./loom-client.mjs";
 import { readJsonFile, removeFile, tmpStatePath, writeJsonFile } from "./tmp-state.mjs";
@@ -31,9 +31,11 @@ function optionServerUrl(env) {
   return normalizeUrl(env.CLAUDE_PLUGIN_OPTION_SERVER_URL || env.LOOM_BASE_URL);
 }
 
-/** The URL the plugin's MCP entry calls. */
+/** The URL the plugin's MCP entry calls: the option, then `LOOM_BASE_URL`,
+ *  then the plugin's shipped default (the Codex plugin's fixed entry), then
+ *  localhost. */
 export function mcpServerUrl(env = process.env) {
-  return optionServerUrl(env) || "http://localhost:7777";
+  return optionServerUrl(env) || normalizeUrl(pluginDefaults().server_url) || "http://localhost:7777";
 }
 
 /** One state file per installed plugin: the Codex copy of these scripts
@@ -55,11 +57,10 @@ export function installServerUrl({ tmp } = {}) {
   return String(readJsonFile(installStatePath(tmp), {}).url || "");
 }
 
-/** The server the status script checks: the one Claude Code's MCP entry
- *  calls, with the saved install URL standing in for the option the agent's
- *  shell lacks; the hooks' server when neither names one. */
+/** The server the status script checks: the one the MCP entry calls, with
+ *  the saved install URL standing in for the option the agent's shell lacks. */
 export function statusServerUrl({ tmp } = {}) {
-  return normalizeUrl(installServerUrl({ tmp }) || process.env.LOOM_BASE_URL || resolveServerUrl());
+  return installServerUrl({ tmp }) || mcpServerUrl();
 }
 
 /** What a run would do, without doing it: {write, url, reason}. Pure. */
@@ -70,7 +71,7 @@ export function planMaterialize(env, { configExists, configToken, tokenFileExist
   if (String(configToken || "").trim()) return { write: false, reason: "config has a token" };
   if (tokenFileExists) return { write: false, reason: "token file exists" };
   // The token is saved beside the server its MCP entry sends it to.
-  const url = optionServerUrl(env);
+  const url = mcpServerUrl(env);
   return { write: true, url, reason: configExists ? "config lacks a token" : "no config" };
 }
 
@@ -105,11 +106,9 @@ export function applyPluginOptions(env = process.env, paths = {}) {
   plan.configHasToken = Boolean(String(existing.token || "").trim());
   if (!plan.write) return plan;
   try {
-    // The token goes in beside the server it is for, over a url another
-    // install left: the notice and the status check read them as a pair.
-    const patch = { token: String(env.CLAUDE_PLUGIN_OPTION_TOKEN).trim() };
-    if (plan.url) patch.url = plan.url;
-    writeConfigMerged(configPath, patch);
+    // The token and the url it is for go in as a pair, over a url another
+    // install left: the notice and the status check read them together.
+    writeConfigMerged(configPath, { token: String(env.CLAUDE_PLUGIN_OPTION_TOKEN).trim(), url: plan.url });
     return { ...plan, path: configPath };
   } catch (e) {
     return { write: false, reason: `write failed: ${e && e.code ? e.code : "error"}` };
