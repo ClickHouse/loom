@@ -497,8 +497,8 @@ async def _read_own(
     checked = {t.doc_namespace, t.code_namespace}
     for other in dict.fromkeys(ns for ns in places if ns and ns != t.rows_namespace):
         if other not in checked and not await _may(org, other, Role.VIEWER):
-            # Whether rows are there is not the caller's to learn.
-            return [], f"not allowed to read {org}/{other}"
+            # Neither the trunk's name nor whether rows are there is the caller's to learn.
+            return [], "this document's namespace belongs to a repository you may not read"
         if await _extractor_rows(org, replace(t, rows_namespace=other), source_uri):
             return [], (
                 f"this document's decisions are in {org}/{other}; run with the --repo and "
@@ -514,7 +514,15 @@ async def _readable_names(org: str) -> dict[str, str]:
 
     out: dict[str, str] = {}
     for tag, (name, trunk) in repo_names(org).items():
-        if trunk and await _may(org, trunk, Role.VIEWER):
+        if not trunk:
+            continue
+        try:
+            # Only the message's wording rides on it, not the refusal.
+            readable = await row_in_scope(org, trunk, Role.VIEWER, hides_answer=False)
+        except Exception as e:  # noqa: BLE001 — a name that cannot be checked stays a tag
+            log.warning("decisions extract: access check on %s failed (closed): %s", trunk, e)
+            readable = False
+        if readable:
             out[tag] = name
     return out
 
@@ -1131,9 +1139,10 @@ async def symbol_definitions(org: str, namespace: str, name: str) -> list[tuple[
 
 
 def _tags_for(row: MemoryRow, *, source_changed: bool, repo_tag: str) -> list[str]:
-    """The row's tags with `source-changed` set or dropped and `repo_tag` added."""
+    """The row's tags with `source-changed` set or dropped and `repo_tag` added, unless the
+    row is linked to another repository already (another writer's row may be)."""
     tags = [t for t in row.tags if t != SOURCE_CHANGED_TAG]
-    if repo_tag and repo_tag not in tags:
+    if repo_tag and not any(t.startswith("repo:") for t in tags):
         tags.append(repo_tag)
     return [*tags, SOURCE_CHANGED_TAG] if source_changed else tags
 

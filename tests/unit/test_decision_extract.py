@@ -4290,7 +4290,10 @@ async def test_a_flagged_and_tagged_row_says_so(monkeypatch) -> None:
             "wrote them, or delete them there first",
         ),
         # Whether rows are there is not told to a caller who cannot read the trunk.
-        (frozenset({(TRUNK, "viewer")}), f"not allowed to read o/{TRUNK}"),
+        (
+            frozenset({(TRUNK, "viewer")}),
+            "this document's namespace belongs to a repository you may not read",
+        ),
     ],
     ids=["rows in the trunk", "trunk unreadable"],
 )
@@ -4480,3 +4483,25 @@ async def test_a_run_naming_another_repo_checks_the_branchs_own_trunk(monkeypatc
         "wrote them, or delete them there first"
     )
     assert world.prompts == [] and world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_row_linked_to_another_repository_keeps_only_its_link(
+    monkeypatch,
+) -> None:
+    """A pinned row another writer linked to another repository is flagged, never linked
+    to a second one."""
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        _same_fields(c) | {"reasoning": "We spill like ORDER BY does."},
+        agent="claude-code",
+        files=[HEADER],
+        pinned=True,
+        tags=["decision", "repo:9999999999"],
+    )
+    _link_repo(monkeypatch, world)
+    await _run(repo="acme/widgets")
+    (upd,) = world.updates
+    assert set(upd.tags) == {"decision", "repo:9999999999", SOURCE_CHANGED}
