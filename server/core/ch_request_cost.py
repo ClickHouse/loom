@@ -8,14 +8,10 @@ from typing import Any
 from server.core import request_work
 
 
-# Every statement of a request carries `query_id = "<request_id>:<n>:<nonce>"`.
-# The request id is the second token of the query tag, and n counts the
-# request's statements and attempts. The nonce is drawn once per request
-# (`RequestWork.ch_nonce`). A carried insert prefixes it with
-# `loom-carry/<process>/` (`rmt_carry.carry_query_id`); the request id stays in
-# `log_comment` either way. `query_id` is a URL parameter
-# the driver passes through, never a server setting. A worker pass (no request
-# id) keeps the driver's own uuid.
+# A request statement's `query_id` is `<request_id>:<n>:<nonce>`: the request id
+# from the query tag, n counting the request's statements and attempts, and the
+# request's nonce (`RequestWork.ch_nonce`). A carried insert prefixes it with
+# `loom-carry/<process>/`. A worker pass keeps the driver's own uuid.
 def request_query_id(query_tag: str) -> str | None:
     """`<request_id>:<n>:<nonce>` for the next statement under `query_tag`, or
     None outside a request."""

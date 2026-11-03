@@ -286,7 +286,9 @@ async def test_post_with_meta_returns_the_server_metadata() -> None:
     await t.close()
 
 
-async def test_a_request_id_the_server_would_replace_is_not_sent() -> None:
+async def test_a_request_id_the_server_would_replace_is_not_sent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     sent: list[str] = []
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -296,7 +298,9 @@ async def test_a_request_id_the_server_would_replace_is_not_sent() -> None:
     t = Transport("http://x", api_key="k")
     _mock(t, handler)
     kept = await t.post_with_meta("/v1/memory.search", {}, request_id="dbg-0001")
-    replaced = await t.post_with_meta("/v1/memory.search", {}, request_id="my id")
+    with caplog.at_level("WARNING", logger="loom"):
+        replaced = await t.post_with_meta("/v1/memory.search", {}, request_id="my id")
+    assert [r.levelname for r in caplog.records if "'my id'" in r.getMessage()] == ["WARNING"]
     assert sent[0] == "dbg-0001" and kept.request_id == "dbg-0001"
     assert str(uuid.UUID(sent[1])) == sent[1] and replaced.request_id == sent[1]
     await t.close()

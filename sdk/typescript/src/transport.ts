@@ -253,6 +253,11 @@ export class Transport {
     const headers: Record<string, string> = { ...this.headers };
     if (this.#apiKey) headers.Authorization = `Bearer ${this.#apiKey}`;
     const requestId = opts.requestId && REQUEST_ID.test(opts.requestId) ? opts.requestId : randomId();
+    if (opts.requestId && requestId !== opts.requestId) {
+      this.log.warn(
+        `${op} requestId ${JSON.stringify(opts.requestId)} is not 1-64 letters, digits, '.', '_' or '-'; sent ${requestId}`,
+      );
+    }
     headers["X-Request-Id"] = requestId;
     const isGet = method === "GET";
     if (isGet) delete headers["Content-Type"];

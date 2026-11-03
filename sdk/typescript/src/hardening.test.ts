@@ -213,9 +213,14 @@ describe("identifying headers and the response envelope", () => {
       { status: 200, body: {} },
       { status: 200, body: {} },
     ]);
-    const t = new Transport({ baseUrl: "http://x", fetch: f.fetch });
+    const warned: string[] = [];
+    const noop = () => {};
+    const logger = { debug: noop, info: noop, warn: (m: string) => warned.push(m), error: noop };
+    const t = new Transport({ baseUrl: "http://x", fetch: f.fetch, logger, logLevel: "debug" });
     await t.postWithMeta("memory.get", {}, { requestId: "dbg-0001" });
     await t.postWithMeta("memory.get", {}, { requestId: "my id" });
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain('"my id"');
     expect(f.calls[0].headers["X-Request-Id"]).toBe("dbg-0001");
     expect(f.calls[1].headers["X-Request-Id"]).not.toBe("my id");
     expect(f.calls[1].headers["X-Request-Id"]).toMatch(/^[A-Za-z0-9._-]{1,64}$/);
