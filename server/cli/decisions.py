@@ -63,16 +63,36 @@ def register_decisions_cli(sub: Any) -> None:
         "the document's own words, the reasoning says more than the outcome (a ban may give "
         "no reason) and the quote is not in a recap, summary or background section, written "
         "through decision.record as agent loom-decisions. A re-run revises or retires the "
-        "extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row "
-        "source-changed. Dry run by default (still calls the model); --apply writes. Exits 1 "
-        "when it could not read the document (no document, no chunks, no usable model, its "
-        "own rows unreadable, no window read), 2 when a write, or a read it needed (a window "
-        "included), was refused or failed (a row changed since the run read it is reported, "
-        "not counted).",
+        "extractor's own rows and tags a pinned or attested row source-changed instead: "
+        "pinning or attesting freezes a row against re-extraction. Dry run by default (still "
+        "calls the model); --apply writes. Exits 1 when it could not run on the document (no "
+        "document, no chunks, no usable model, an unknown --repo or a namespace it may not "
+        "use, --into without --repo or source on another repository's namespace, a --repo "
+        "with no remote to tag rows with, the dashboard's repositories unread, its own rows "
+        "unreadable, left in another namespace or linked to another repository, no window "
+        "read), 2 when a write, or a read it needed (a window included), was refused or "
+        "failed (a row changed since the run read it is reported, not counted).",
     )
     p_ext.add_argument("--org", required=True)
     p_ext.add_argument("--namespace", required=True, help="The namespace holding the document")
     p_ext.add_argument("--source-uri", required=True, help="The document's source_uri")
+    p_ext.add_argument(
+        "--repo",
+        default="",
+        help="The repository (owner/name or a remote URL) whose trunk code index resolves "
+        "the document's code names; --into says where the rows go",
+    )
+    p_ext.add_argument(
+        "--into",
+        choices=["repo", "source"],
+        default=None,
+        help="With --repo, where the rows go: the repository's trunk code namespace (repo; "
+        "the default for a document in a code namespace), or the document's namespace, "
+        "tagged with the repository (source; the default otherwise), served before an edit "
+        "to a session whose own namespace is the document's. A repository reader "
+        "who cannot read the document's namespace sees a repo row's quote but is refused "
+        "its source link.",
+    )
     p_ext.add_argument(
         "--max-per-section",
         type=_per_section,
@@ -99,6 +119,8 @@ def _cmd_extract(args: argparse.Namespace) -> int:
             args.namespace,
             args.source_uri,
             dry_run=bool(args.dry_run),
+            repo=args.repo,
+            into=args.into,
             max_per_section=args.max_per_section,
             window_chars=args.window_chars,
         )
@@ -109,11 +131,14 @@ def _cmd_extract(args: argparse.Namespace) -> int:
 
 
 def exit_code(report: ExtractReport) -> int:
-    """1 when the run could not read the document (no document, no chunks, no usable model, the
-    extractor's rows unreadable, no window read), 2 when a write, or a read it needed (a
-    window the model could not answer readably included), was refused or failed (in a dry
-    run too), else 0. A row deleted or rewritten since the run read it is reported, not
-    counted: the next run settles it."""
+    """1 when the run could not go ahead (no document, no chunks, no usable model, an
+    unknown --repo or a namespace it may not use, --into without --repo or source on another
+    repository's namespace, a --repo with no remote to tag rows with, the dashboard's
+    repositories unread, the extractor's rows unreadable, left in another namespace or linked
+    to another repository, no window read), 2 when a write, or a read it needed (a window
+    the model could not answer readably included), was refused or failed (in a dry run too),
+    else 0. A row deleted or rewritten since the run read it is reported, not counted: the
+    next run settles it."""
     if report.error:
         return 1
     return 2 if report.refused or any(d.refused for d in report.dropped) else 0
@@ -158,13 +183,15 @@ def print_report(report: ExtractReport) -> None:
         print(f"- {retire} {key}: its reasoning is no longer in the document")
     for pair in report.replaced:
         print(f"- {retire} {pair}: its reasoning is recorded under the new key")
+    tag = "would tag" if report.dry_run else "tagged"
+    for key in report.linked:
+        print(f"- {tag} {key} with the repository")
     for line in report.refused + report.races:
         print(f"- not changed {line}")
     in_records = {r.memory_key for r in report.records}
     for key in report.flagged:
         if key not in in_records:
-            tag = "would tag" if report.dry_run else "tagged"
             print(
-                f"- {tag} {key} source-changed: confirmed or with a recorded outcome, "
+                f"- {tag} {key} source-changed: pinned, attested or with a recorded outcome, "
                 "its reasoning left the document"
             )

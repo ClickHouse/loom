@@ -302,11 +302,12 @@ async def me_service_accounts_create(
       ttl_days: int|null  # default and null: 90 days; 0: never expires
 
     Each namespace's role is delegated from the caller's token
-    (`server.auth.delegation.delegate`): at most the caller's token allows and
-    the caller's live grant — the caller may DOWNGRADE (or keep) but never
-    escalate. The token carries an `ns_roles` claim (authoritative
-    per-namespace role) and an ordered `namespaces` claim (the read priority).
-    Returns the JWT exactly once.
+    (`server.auth.delegation.delegate`): at most the caller's live grant on
+    that namespace, and the caller's token role there when that token is
+    itself delegated or per-namespace, or the namespace is restricted. The
+    token carries an `ns_roles` claim (the authoritative per-namespace role)
+    and an ordered `namespaces` claim (the read priority). Returns the JWT
+    exactly once.
     """
     if settings.auth_actually_required():
         parent = me_callers.require_authed_info(request)

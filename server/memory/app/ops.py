@@ -37,40 +37,9 @@ from server.memory.api.models_temporal import (
     MemoryOutcomeRunOutput,
 )
 from server.memory.store import categories
+from server.memory.store.lifecycle import reject_by_identity
 
 log = logging.getLogger(__name__)
-
-
-async def _quarantine_by_identity(
-    ch: Any, org: str, ns: str, agent: str, uid: str, key: str, reason: str
-) -> None:
-    """Flip status -> 'rejected' on both the memory and its embedding row
-    (keyed by the identity tuple), excluding it from search. Shared by
-    memory.reject and negative-outcome escalation."""
-    params = {
-        "org": org,
-        "ns": ns,
-        "agent": agent,
-        "uid": uid,
-        "key": key,
-        "reason": reason or "",
-    }
-    where = (
-        "org = {org:String} AND namespace = {ns:String} "
-        "AND agent = {agent:String} AND user_id = {uid:String} "
-        "AND memory_key = {key:String} AND tombstoned_at IS NULL"
-    )
-    for table, columns in (
-        ("loom.memory", "status = 'rejected', rejection_reason = {reason:String}"),
-        ("loom.memory_embeddings", "status = 'rejected'"),
-    ):
-        try:
-            await ch.execute(f"UPDATE {table} SET {columns} WHERE {where}", params=params)
-        except Exception:  # noqa: BLE001 — lightweight UPDATE unsupported falls back to a mutation
-            await ch.execute(
-                f"ALTER TABLE {table} UPDATE {columns} WHERE {where} SETTINGS mutations_sync = 0",
-                params=params,
-            )
 
 
 async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutput:
@@ -180,15 +149,14 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
                     params={"org": input.org, "ns": input.namespace, "mid": memory_id},
                 )
                 if idr:
-                    await _quarantine_by_identity(
-                        ch,
+                    await reject_by_identity(
                         input.org,
                         input.namespace,
                         str(idr["agent"]),
                         str(idr["user_id"]),
                         str(idr["memory_key"]),
-                        reason=f"auto-quarantine: {int((cnt or {}).get('n') or 0)} "
-                        "negative outcomes",
+                        f"auto-quarantine: {int((cnt or {}).get('n') or 0)} negative outcomes",
+                        ch=ch,
                     )
                     quarantined = True
 
@@ -219,20 +187,18 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
 async def handle_memory_reject(
     input: MemoryRejectInput,
 ) -> MemoryRejectOutput:
-    """Flip a memory's status to 'rejected'. Lightweight UPDATE with a fallback
-    to ALTER UPDATE for older ClickHouse deployments."""
+    """Mark a memory's live rows 'rejected' (`reject_by_identity`)."""
 
     from server.core.ch import get_client
 
-    ch = get_client()
-    await _quarantine_by_identity(
-        ch,
+    await reject_by_identity(
         input.org,
         input.namespace,
         input.agent,
         input.user_id,
         input.memory_key,
         input.rejection_reason or "",
+        ch=get_client(),
     )
     return MemoryRejectOutput(
         rejected=True,

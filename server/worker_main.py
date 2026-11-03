@@ -29,33 +29,36 @@ log = logging.getLogger("loom.workers.child")
 async def _start_services(ch: Any) -> list[asyncio.Task[None]]:
     from server.code.app.index import repo_registry
     from server.core.background import register_buffer_drainer
+    from server.core.ch import query_tag, set_query_tag
     from server.core.model_work_gate import get_model_work_gate
     from server.insights.app.provider_barrier import register_process
     from server.insights.app.provider_runtime import load_active_configuration, refresh_loop
     from server.observability import get_emitter
     from server.tracker.app import registry_sources
 
-    register_buffer_drainer("boot-writes", boot.drain_writes)
-    await register_process()
-    await load_active_configuration()
-    await get_emitter().start()
-    await registry_sources.refresh_db_sources(force=True, ch=ch)
-    if not get_model_work_gate().closed:
-        await boot.calibrate_similarity_gates()
-
     async def _trackers() -> None:
+        set_query_tag("tracker.sources_refresh")  # its own task: the tag stays in it
         while True:
             await asyncio.sleep(max(5.0, float(settings.tracker_sources_refresh_seconds)))
             await registry_sources.refresh_db_sources()
 
-    tasks = [
-        asyncio.create_task(refresh_loop(), name="provider-configuration-refresh"),
-        asyncio.create_task(_trackers(), name="loom-tracker-sources-refresh"),
-        await repo_registry.start_refresher(ch),
-        # The workers read LIVE settings too: their passes see the deployment's overrides.
-        boot.start_runtime_overrides(),
-    ]
-    await boot.await_warm_up(settings.boot_warmup_timeout_s, ("runtime_overrides",))
+    # `with`, not set_query_tag: the supervisor and the shutdown run in this context after.
+    with query_tag("boot.workers_child"):
+        register_buffer_drainer("boot-writes", boot.drain_writes)
+        await register_process()
+        await load_active_configuration()
+        await get_emitter().start()
+        await registry_sources.refresh_db_sources(force=True, ch=ch)
+        if not get_model_work_gate().closed:
+            await boot.calibrate_similarity_gates()
+        tasks = [
+            asyncio.create_task(refresh_loop(), name="provider-configuration-refresh"),
+            asyncio.create_task(_trackers(), name="loom-tracker-sources-refresh"),
+            await repo_registry.start_refresher(ch),
+            # The workers read LIVE settings too: their passes see the deployment's overrides.
+            boot.start_runtime_overrides(),
+        ]
+        await boot.await_warm_up(settings.boot_warmup_timeout_s, ("runtime_overrides",))
     return tasks
 
 

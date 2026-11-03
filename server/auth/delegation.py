@@ -1,9 +1,11 @@
 """One delegation policy for every token minted from another token.
 
 A child gets requested ∩ the parent token's ceiling ∩ the creator's live
-grants, never more. The rules and the recheck on every request are in
-docs/guides/tokens-and-grants.md (Delegated tokens). `loom mint-token`
-holds the signing secret and is not a delegation.
+grants, never more; for a per-namespace child of a primary flat parent the
+ceiling on a standard namespace is the grant itself (`_primary`). The rules
+and the recheck on every request are in docs/guides/tokens-and-grants.md
+(Delegated tokens). `loom mint-token` holds the signing secret and is not a
+delegation.
 """
 
 from __future__ import annotations
@@ -243,7 +245,13 @@ async def _allowed_roles(
         writes = scoped and want is not None and want >= Role.WRITER
         allowed = ceiling_role(parent, org, ns, write=writes)
         if ns != "*":
-            allowed = _lower(allowed, await authz.grant_role_for(org, ns, creator))
+            grant = await authz.grant_role_for(org, ns, creator)
+            if scoped and _primary(parent) and not await authz.may_be_restricted(org, ns):
+                allowed = grant
+            else:
+                # A flat child keeps the parent's cap: its one role also
+                # answers ops that name no namespace.
+                allowed = _lower(allowed, grant)
         if allowed is None or (want is not None and want > allowed):
             if ns not in requested:
                 continue
@@ -287,6 +295,16 @@ def delegable_role(name: str | None) -> Role | None:
         status_code=422,
         detail={"code": "VALIDATION_FAILED", "message": f"unknown role {name!r}"},
     )
+
+
+def _primary(token: AuthInfo) -> bool:
+    """A flat token minted from no other: Loom's own sign-in, or
+    `loom mint-token` with `--roles`. Its flat role is a platform role, not
+    its role on a namespace: the gate admits it to a standard namespace on
+    the subject's grant alone (`authz.check_authorized`), so a scoped child
+    takes that grant there. A restricted namespace needs the role from the
+    token too (`_check_restricted`), so the token role stays a cap there."""
+    return not token.has_ns_roles() and not token.creator
 
 
 def _lower(a: Role | None, b: Role | None) -> Role | None:

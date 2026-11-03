@@ -791,7 +791,8 @@ settings:
 
   # --- switch, test gate and code.ask ---
 
-  # Master kill switch, checked at the top of every code.* handler. [restart]
+  # Master kill switch, checked at the top of every code.* handler but the retirement
+  # (code.repo.remove), which only deletes. [restart]
   # code_intel_enabled: true
 
   # code.test_gate run recipes (LOOM_CODE_TEST_GATE_RUN_TEMPLATES): JSON list of
@@ -3140,8 +3141,8 @@ settings:
   # [live]
   # memory_decision_extract_known_max: 30
 
-  # Closest decision keys a candidate is checked against for a confirmed restatement
-  # under another key (cosine only); the fetch caps at 500 rows. [live]
+  # Closest decision keys a candidate is checked against for a pinned or attested
+  # restatement under another key (cosine only); the fetch caps at 500 rows. [live]
   # memory_decision_extract_restatement_top_k: 20
 
   # --- fact-leg reads of memory_embeddings ---

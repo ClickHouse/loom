@@ -272,7 +272,9 @@ The SDK logs through the stdlib logger `loom` (a `NullHandler` by default): one
 line per completed call at INFO, retries and rate-limit waits at WARNING, the
 final failure at ERROR, request headers at DEBUG. `LOOM_LOG_LEVEL` (a stdlib
 level name, or `off`) sets the logger's level when your application has not.
-Every request carries `X-Request-Id` (the server echoes it; every error
+Every request carries `X-Request-Id` (the server echoes it; a `request_id` that is not
+1 to 64 letters, digits, `.`, `_` or `-` is replaced by a generated one before sending,
+with a WARNING; every error
 carries it as `.request_id`), `Idempotency-Key`, `User-Agent` and `X-Loom-SDK`
 (`loom-py/<version>`), `X-Loom-Runtime` and `X-Loom-Retry-Count`.
 
