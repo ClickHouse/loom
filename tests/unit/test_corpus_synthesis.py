@@ -234,6 +234,17 @@ def test_grounding_removes_the_tags_of_unread_chunks_from_the_answer() -> None:
         ["doc://a#0; doc://a#1"],
         [],
     )
+    # a range is kept; a removed citation takes the tab before it
+    assert cs.ground_citations("a [doc://a#0-1]\t[doc://z#3].", read) == (
+        "a [doc://a#0-1].",
+        ["doc://a#0-1"],
+        ["doc://z#3"],
+    )
+    # a non-ASCII blank is a blank: the bracket is prose
+    assert cs.ground_citations("[see\u00a0doc#1]", read) == ("[see\u00a0doc#1]", [], [])
+    # a long run of blanks before a removed citation is removed in one scan
+    many = " " * 40000 + "[doc://z#0]"
+    assert cs.ground_citations("x" + many, read) == ("x", [], ["doc://z#0"])
     # an index past nine digits is prose, not a number to parse
     long_index = "[doc#" + "9" * 5000 + "]"
     assert cs.ground_citations(long_index, read) == (long_index, [], [])

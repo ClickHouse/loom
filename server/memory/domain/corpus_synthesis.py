@@ -123,26 +123,25 @@ def reduce_prompt(task: str, notes: Sequence[str], *, final: bool) -> str:
 
 # A citation is a bracket holding one or more `source#idx` / `source#a-b` items, separated
 # by `,` or `;` (a window spanning documents is cited as a comma list, `Window.cite`). A
-# source holds no blank, comma or semicolon; a bracket with anything else in it is
-# prose (`[PR #42]`, `[see doc#1]`) and is left as written.
-# An index has at most nine digits: a longer run is prose, not a number to parse.
-_ITEM = r"[^\s,;\[\]]+#\d{1,9}(?:-\d{1,9})?"
-_CITATION = re.compile(rf"\[\s*({_ITEM}(?:\s*[,;]\s*{_ITEM})*)\s*\]", re.ASCII)
-_PART = re.compile(r"(.+)#(\d{1,9})(?:-(\d{1,9}))?", re.ASCII)
+# source holds no blank, comma, semicolon or bracket; a bracket with anything else in it
+# is prose (`[PR #42]`, `[see doc#1]`) and is left as written. An index is at most nine
+# digits 0-9: a longer run is prose, not a number to parse.
+_ITEM = r"[^\s,;\[\]]+#[0-9]{1,9}(?:-[0-9]{1,9})?"
+_CITATION = re.compile(rf"\[\s*({_ITEM}(?:\s*[,;]\s*{_ITEM})*)\s*\]")
+_PART = re.compile(r"(.+)#([0-9]{1,9})(?:-([0-9]{1,9}))?")
 _SEPARATOR = re.compile(r"\s*[,;]\s*")
-# A removed tag goes with the blanks before it.
-_SPACED_CITATION = re.compile(r"[ \t]*" + _CITATION.pattern, re.ASCII)
+# A removed citation goes with the blanks before it; the lookbehind starts the blanks at
+# the start of their run, so a long run is scanned once.
+_SPACED_CITATION = re.compile(r"(?<![ \t])[ \t]*" + _CITATION.pattern)
 
 
 def citations(text: str) -> list[str]:
-    """Distinct [source#idx] or [source#a-b] tags in reading order."""
+    """Distinct citations (`source#idx`, `source#a-b`, or a `,`/`;` list of them, without
+    the bracket's padding) in reading order."""
     out: list[str] = []
-    seen: set[str] = set()
     for m in _CITATION.finditer(text or ""):
-        tag = m.group(1)
-        if tag not in seen:
-            seen.add(tag)
-            out.append(tag)
+        if m.group(1) not in out:
+            out.append(m.group(1))
     return out
 
 
@@ -161,14 +160,18 @@ def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
 
 
 def ground_citations(answer: str, read: set[tuple[str, int]]) -> tuple[str, list[str], list[str]]:
-    """(the answer without the tags that name no chunk it read, the tags it keeps, the
-    tags it removed). A model can write a tag for a part it was never shown; a caller
-    that follows it would read something the answer did not come from."""
+    """(the answer without the citations that name no chunk it read, the citations it
+    keeps, the ones it removed), in one pass. A model can cite a part it was never shown;
+    a caller that follows it would read something the answer did not come from."""
     kept: list[str] = []
     removed: list[str] = []
-    for tag in citations(answer):
-        (kept if cites_what_was_read(tag, read) else removed).append(tag)
-    if removed:
-        drop = set(removed)
-        answer = _SPACED_CITATION.sub(lambda m: "" if m.group(1) in drop else m.group(0), answer)
-    return answer.strip(), kept, removed
+
+    def check(m: re.Match[str]) -> str:
+        tag = m.group(1)
+        supported = cites_what_was_read(tag, read)
+        bucket = kept if supported else removed
+        if tag not in bucket:
+            bucket.append(tag)
+        return m.group(0) if supported else ""
+
+    return _SPACED_CITATION.sub(check, answer).strip(), kept, removed

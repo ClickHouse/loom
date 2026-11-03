@@ -128,7 +128,7 @@ Search finds a passage; three other reads cover the rest of the work with a long
   citation of anything else (a chunk past `max_windows`, an index that does not exist,
   another document) is removed from `answer` and listed in `unsupported_citations`,
   since following it would read something the answer did not come from. A bracket
-  holding anything else, or naming a source with a blank, comma or semicolon, is prose
+  holding anything else, or naming a source with a blank, comma, semicolon or bracket, is prose
   and stays as written. An answer that is empty once those citations are removed
   abstains with `abstain_reason="empty_answer"`. It needs a real LLM provider.
 
