@@ -189,7 +189,7 @@ The code plane: ingest, indexes, search, ask, review.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_CODE_INTEL_ENABLED` | `bool` | `True` |  | Master kill switch, checked at the top of every code.* handler. |
+| `LOOM_CODE_INTEL_ENABLED` | `bool` | `True` |  | Master kill switch, checked at the top of every code.* handler but the retirement (code.repo.remove), which only deletes. |
 | `LOOM_CODE_TEST_GATE_RUN_TEMPLATES` | `str` | `''` |  | code.test_gate run recipes (LOOM_CODE_TEST_GATE_RUN_TEMPLATES): JSON list of {"pattern": <regex over the repo-relative test path>, "run": <template>}, tried before the built-ins. Templates may use {path} {dir} {stem} {name} {parent}. A path no recipe matches is reported run_unknown, never guessed. |
 | `LOOM_CODE_ASK_TOKEN_BUDGET` | `int` | `4000` |  | Retrieval context (tokens) code.ask hands to synthesis when the caller passes no token_budget. |
 | `LOOM_CODE_ASK_CACHE_THRESHOLD` | `float` | `0.0` |  | The code.ask answer cache's hit cosine. 0 = the per-embedding-model table in code/app/answers.py; a value in (0, 1] pins one threshold for every model. |

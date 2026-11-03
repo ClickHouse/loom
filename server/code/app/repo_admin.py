@@ -397,7 +397,8 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
     mis-clicked op cannot purge an index. The rows leave through an erasure saga: a detached
     `namespace_list` purge over the one namespace, loom-only, checkpointed, resumed by
     erasure_recovery if the process dies, and proven by the residue census."""
-    require_code_intel()
+    # Not behind the code switch: a retirement only deletes, so a maintainer can
+    # remove an index on a deployment that has code intelligence off.
     from server.code.app.index import retire
     from server.code.domain.index.repos import configured_repos, repo_for_namespace
     from server.core.ch import get_client

@@ -1140,7 +1140,7 @@
         "code_intel_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "Master kill switch, checked at the top of every code.* handler."
+          "description": "Master kill switch, checked at the top of every code.* handler but the retirement (code.repo.remove), which only deletes."
         },
         "code_jit_risk_max_age_days": {
           "default": 183,

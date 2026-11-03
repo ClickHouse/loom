@@ -665,16 +665,15 @@ has a gold question set; it is never run in CI, whose embedder is fake
 - `LOOM_MCP_CODE_TOOLS` (default off) lists the `code.*` tools on the default MCP
   toolset. The `coding` toolset lists them regardless, and HTTP and the SDKs can always
   call them, so you can evaluate an index before exposing it to chat clients.
-- `LOOM_CODE_INTEL_ENABLED=false` makes every `code.*` operation return a precondition
-  error. The workers are switched separately.
+- `LOOM_CODE_INTEL_ENABLED=false` makes every `code.*` operation but `code.repo.remove`
+  return a precondition error. The workers are switched separately.
 - **Retire a repository.** A maintainer uses **Retire…** on the repository's Access tab
   (`code.repo.remove` with `confirm` set to the namespace). The entry goes inactive, an
   erasure saga purges every `loom.code_*` table for the namespace, and the bare mirror is
   deleted when no other branch uses it. Search telemetry is kept. An operator-configured
   entry is refused with `REPO_FROM_CONFIG`: remove it from `LOOM_CODE_REPOS_JSON`
-  instead. With `LOOM_CODE_INTEL_ENABLED=false` the call is refused like every code op,
-  and no replica sweeps mirrors: retire first, and turn code intelligence off one
-  `LOOM_CODE_MIRROR_FETCH_INTERVAL_S` round later.
+  instead. It is served with `LOOM_CODE_INTEL_ENABLED=false` too; the other replicas then
+  sweep their copy of the mirror only once code intelligence is on again.
 - **Erase an index.** `erasure.request` with `scope_type = namespace` on a code namespace
   also purges the `loom.code_*` tables. An entry that is still configured is re-indexed
   from scratch on the next pass, so retire it first.
