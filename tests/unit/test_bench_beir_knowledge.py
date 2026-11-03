@@ -185,9 +185,12 @@ def test_a_search_refuses_a_namespace_not_holding_exactly_this_corpus() -> None:
     row = {"source_uri": "beir:d1", "tags": [tag], "chunk_count": 2}
     page = {"rows": [row]}
     assert bk.check_corpus(lambda p, b: page, "o", "beir-x", docs, tag) == 2
-    for bad in ({"tags": ["beir:other"]}, {"chunk_count": 0}):
+    for bad, why in (
+        ({"tags": ["beir:other"]}, "from another version 1"),
+        ({"chunk_count": 0}, "without chunks 1"),
+    ):
         page["rows"] = [{**row, **bad}]
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit, match=why):
             bk.check_corpus(lambda p, b: page, "o", "beir-x", docs, tag)
 
 
