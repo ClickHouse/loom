@@ -935,19 +935,19 @@ async def handle_tracker_source_rotate(
 
 
 def source_add_audit_subject(input: TrackerSourceAddInput, response: Any) -> dict[str, Any]:
-    """What an add's audit row records: the request without the password, and the
-    host as stored. `loom.audit_log` outlives the source and must hold no secret."""
-    from server.tracker.domain import sources
-
+    """What an add's audit row records: the request without the password, with
+    the name and host as stored. `loom.audit_log` outlives the source and must
+    hold no secret."""
     subject = input.model_dump(mode="json", exclude={"password"})
-    subject["host"] = sources.host_of(input.host)
+    subject["name"] = response["name"]
+    subject["host"] = response["host"]
     return subject
 
 
 def source_rotate_audit_subject(input: TrackerSourceRotateInput, response: Any) -> dict[str, Any]:
     """What a rotation's audit row records: which source and the new user, never
     the password."""
-    return {"org": input.org, "name": input.name, "user": input.user}
+    return {"org": input.org, "name": response["name"], "user": input.user}
 
 
 async def handle_tracker_source_remove(
