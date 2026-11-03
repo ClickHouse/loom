@@ -119,6 +119,18 @@ def authz_target(op: Operation, *, org: Any, namespace: Any, auth: AuthInfo | No
     )
 
 
+def with_target(input_obj: Any, target: Target) -> Any:
+    """The input with an absent `org` / `namespace` (blank or "-") set to the
+    target the gate authorized, so the handler writes and reads where the call
+    was authorized: a literal "-" org is a tenant every token reaches."""
+    fields = getattr(type(input_obj), "model_fields", {})
+    update: dict[str, str] = {}
+    for name, resolved in (("org", target.org), ("namespace", target.register_namespace)):
+        if name in fields and resolved and present(getattr(input_obj, name)) is None:
+            update[name] = resolved
+    return input_obj.model_copy(update=update) if update else input_obj
+
+
 async def authorize(
     op: Operation, auth: AuthInfo | None, target: Target, *, transport: str
 ) -> None:

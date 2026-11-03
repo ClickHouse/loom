@@ -234,6 +234,7 @@ async def _call_tool(
     target = await _authorize_call(req_id, op, input_obj, arguments, auth, request_id)
     if isinstance(target, dict):
         return target  # AUTH_INSUFFICIENT — nothing below (limiter, handler) runs
+    input_obj = gates.with_target(input_obj, target)
 
     # The resolved tenant the telemetry and post-handler rows name, as HTTP's
     # identity does after authorization.
