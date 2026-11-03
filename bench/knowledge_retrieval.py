@@ -82,14 +82,15 @@ KS = (1, 5, 10)
 TOP_K = max(KS)
 
 
-def _digest(value: object) -> str:
+def digest(value: object) -> str:
+    """A short digest of a JSON value, so two reports pair only over the same inputs."""
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()[:12]
 
 
 def fixture_tag(docs: list[dict]) -> str:
     """A tag naming this version of the corpus, put on every ingested document so a
     search can tell an ingest of an older corpus from this one."""
-    return f"fixture:{_digest(docs)}"
+    return f"fixture:{digest(docs)}"
 
 
 def load_fixture(root: Path) -> tuple[list[dict], list[dict]]:
@@ -183,7 +184,6 @@ def parse_params(pairs: list[str]) -> dict:
 # run's own fresh namespace has a sub-prefix a caller may not name, so no named run
 # writes into a concurrent run's namespace.
 PREFIX = "knowledge-retrieval-"
-FRESH_PREFIX = f"{PREFIX}run-"
 
 
 def require_real_embedder(instrument: dict) -> None:
@@ -194,16 +194,16 @@ def require_real_embedder(instrument: dict) -> None:
         raise SystemExit(f"embedding model {model!r} is unknown or fake: no numbers")
 
 
-def run_namespace(named: str | None) -> tuple[str, bool]:
+def run_namespace(named: str | None, prefix: str = PREFIX) -> tuple[str, bool]:
     """(the namespace a run uses, whether it outlives the run). A named namespace is
-    kept for later search arms; a made-up one is erased when the run ends."""
+    kept for later search arms; a made-up one (`<prefix>run-…`) is erased when the run
+    ends."""
+    fresh = f"{prefix}run-"
     if named:
-        if not named.startswith(PREFIX) or named.startswith(FRESH_PREFIX):
-            raise SystemExit(
-                f"--namespace must start with {PREFIX!r}, not {FRESH_PREFIX!r}: {named!r}"
-            )
+        if not named.startswith(prefix) or named.startswith(fresh):
+            raise SystemExit(f"--namespace must start with {prefix!r}, not {fresh!r}: {named!r}")
         return named, True
-    return f"{FRESH_PREFIX}{secrets.token_hex(4)}", False
+    return f"{fresh}{secrets.token_hex(4)}", False
 
 
 def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: bool) -> None:
@@ -241,20 +241,24 @@ def listed_documents(post: SyncPost, org: str, namespace: str) -> list[dict]:
             return rows
 
 
-def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> int:
-    """Refuse a namespace whose documents are not exactly this fixture's: an older or
-    partial ingest skews every number without failing a query. Returns its chunk
-    count, which names the chunking the run measured."""
-    tag = fixture_tag(docs)
+def check_corpus(
+    post: SyncPost, org: str, namespace: str, docs: list[dict], tag: str | None = None
+) -> int:
+    """Refuse a namespace whose documents are not exactly `docs`, each carrying `tag`
+    (default: this fixture's) and holding a chunk: an older or partial ingest skews
+    every number without failing a query. Returns its chunk count, which names the
+    chunking the run measured."""
+    tag = tag or fixture_tag(docs)
     rows = listed_documents(post, org, namespace)
     have = {row["source_uri"] for row in rows}
     stale = sum(tag not in (row.get("tags") or []) for row in rows)
+    empty = sum(not row.get("chunk_count") for row in rows)
     want = {d["source_uri"] for d in docs}
-    if have != want or stale:
+    if have != want or stale or empty:
         raise SystemExit(
-            f"{org}/{namespace} is not this fixture: missing {len(want - have)}, "
-            f"extra {len(have - want)}, from another version {stale}; "
-            "ingest into a fresh namespace"
+            f"{org}/{namespace} is not this corpus: missing {len(want - have)}, "
+            f"extra {len(have - want)}, from another version {stale}, without chunks "
+            f"{empty}; ingest into a fresh namespace"
         )
     return sum(int(row.get("chunk_count") or 0) for row in rows)
 
@@ -346,7 +350,7 @@ def main() -> int:
         require_real_embedder(instrument)
         # Two reports pair only when they scored one corpus, one query set and one chunking.
         instrument["fixture"] = fixture_tag(docs)
-        instrument["queries"] = _digest(queries)
+        instrument["queries"] = digest(queries)
         with erase_on_exit_sync(post, org=args.org, keep=keep):
             if args.phase in ("ingest", "both"):
                 ingest(post, args.org, namespace, docs, keep)

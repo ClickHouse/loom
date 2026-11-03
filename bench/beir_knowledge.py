@@ -10,7 +10,7 @@ downloads one of the small datasets (`SMALL`) from the BEIR release, checks the
 archive against its published MD5 and keeps only its corpus, queries and test
 qrels:
 
-    PYTHONPATH=$PWD .venv/bin/python bench/beir_knowledge.py --fetch scifact
+    PYTHONPATH=$PWD .venv/bin/python bench/beir_knowledge.py --fetch scifact  # bench/datasets/beir
 
 Then ingest once into a namespace you name, which is kept, and search it per arm:
 
@@ -25,8 +25,9 @@ A named namespace must start with `beir-` (and not `beir-run-`, a run's own), as
 `knowledge_retrieval.py` does with its prefix. An ingest adds only the passages
 the namespace does not hold yet, so a failed one is resumed by running it again.
 A search over a namespace that does not hold exactly this corpus fails the run.
-`--param KEY=VALUE` sets any `knowledge.search` field but the depth, scope and
-filters. A run records the server's embedding model and build and the corpus,
+`--param KEY=VALUE` sets any `knowledge.search` field but the depth, scope,
+filters and `collapse_sections`; an arm that names no reranker runs with
+`rerank="none"`, whatever the deployment default. A run records the server's embedding model and build and the corpus,
 queries and judgements it scored, and refuses a fake embedder; a hybrid or
 lexical arm whose lexical leg never fired, and a rerank arm no answer of which
 names a reranker, fail.
@@ -48,7 +49,6 @@ import io
 import json
 import math
 import os
-import secrets
 import sys
 import zipfile
 from pathlib import Path
@@ -64,7 +64,15 @@ from bench.bench_namespaces import (
     register_bench_namespace_sync,
     remember_bench_namespace,
 )
-from bench.knowledge_retrieval import listed_documents, parse_params, require_real_embedder
+from bench.knowledge_retrieval import (
+    check_corpus,
+    digest,
+    listed_documents,
+    parse_params,
+    require_real_embedder,
+    run_namespace,
+)
+from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 from bench.quality import run_metadata
 
 RELEASE = "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/{name}.zip"
@@ -78,9 +86,8 @@ SMALL = {
 }
 # What a fetch keeps from the release archive: nothing else is written.
 KEPT = ("corpus.jsonl", "queries.jsonl", "qrels/test.tsv")
-DATA_DIR = Path("bench/datasets/beir")
+DATA_DIR = Path(__file__).parent / "datasets" / "beir"  # git-ignored
 PREFIX = "beir-"
-FRESH_PREFIX = f"{PREFIX}run-"
 URI_PREFIX = "beir:"
 DEPTH = 100  # hits a search asks for: knowledge.search's wire bound
 BATCH = 200  # documents per knowledge.bulk_add; the op takes at most 500
@@ -95,9 +102,9 @@ def fetch(name: str, data_dir: Path) -> Path:
     with httpx.Client(timeout=600, follow_redirects=True) as client:
         r = client.get(RELEASE.format(name=name))
         r.raise_for_status()
-    digest = hashlib.md5(r.content, usedforsecurity=False).hexdigest()
-    if digest != SMALL[name]:
-        raise SystemExit(f"{name}.zip has MD5 {digest}, not the published {SMALL[name]}")
+    md5 = hashlib.md5(r.content, usedforsecurity=False).hexdigest()
+    if md5 != SMALL[name]:
+        raise SystemExit(f"{name}.zip has MD5 {md5}, not the published {SMALL[name]}")
     out = data_dir / name
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         for member in KEPT:
@@ -109,7 +116,8 @@ def fetch(name: str, data_dir: Path) -> Path:
 
 
 def _jsonl(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [json.loads(line) for line in lines if line.strip()]
 
 
 def load(root: Path) -> tuple[list[dict], dict[str, str], dict[str, dict[str, int]]]:
@@ -117,7 +125,7 @@ def load(root: Path) -> tuple[list[dict], dict[str, str], dict[str, dict[str, in
     id then document id). A query no judgement names is left out; a judgement of 0
     stays in the qrels and counts as not relevant."""
     qrels: dict[str, dict[str, int]] = {}
-    for line in (root / "qrels" / "test.tsv").read_text().splitlines()[1:]:
+    for line in (root / "qrels" / "test.tsv").read_text(encoding="utf-8").splitlines()[1:]:
         if line.strip():
             qid, doc_id, score = line.split("\t")
             qrels.setdefault(qid, {})[doc_id] = int(score)
@@ -128,12 +136,9 @@ def load(root: Path) -> tuple[list[dict], dict[str, str], dict[str, dict[str, in
         if text or title:  # a passage with neither has nothing to index
             uri = f"{URI_PREFIX}{row['_id']}"
             docs.append({"source_uri": uri, "title": title, "content": text or title})
+    if not queries:
+        raise SystemExit(f"{root}: no query in queries.jsonl has a test judgement")
     return docs, queries, {q: qrels[q] for q in queries}
-
-
-def digest(value: object) -> str:
-    """A short digest of a JSON value, so two reports pair only over the same inputs."""
-    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()[:12]
 
 
 def corpus_tag(docs: list[dict]) -> str:
@@ -141,49 +146,30 @@ def corpus_tag(docs: list[dict]) -> str:
     return f"beir:{digest(docs)}"
 
 
-def run_namespace(named: str | None) -> tuple[str, bool]:
-    """(the namespace a run uses, whether it outlives the run)."""
-    if named:
-        if not named.startswith(PREFIX) or named.startswith(FRESH_PREFIX):
-            raise SystemExit(
-                f"--namespace must start with {PREFIX!r}, not {FRESH_PREFIX!r}: {named!r}"
-            )
-        return named, True
-    return f"{FRESH_PREFIX}{secrets.token_hex(4)}", False
-
-
 def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: bool) -> None:
     """Add the passages the namespace does not hold yet. `knowledge.bulk_add` never
-    replaces a document, so a passage sent twice would be indexed twice: what is
-    there already is skipped, and the caller sends each batch once."""
+    replaces a document, so a passage sent twice would be indexed twice: one already
+    there with its chunks is skipped (one an interrupted write left without chunks is
+    sent again), and the caller sends each batch once. A namespace holding anything
+    but this corpus is refused before anything is written."""
     if keep:  # printed first, so a failed ingest leaves the command behind
         print(f"kept; erase it with: {gc_command(org, [namespace])}", file=sys.stderr)
     register_bench_namespace_sync(
         post, org=org, namespace=namespace, description="BEIR corpus", keep=keep
     )
     remember_bench_namespace(org, namespace)
-    held = {row["source_uri"] for row in listed_documents(post, org, namespace)}
-    todo = [d for d in docs if d["source_uri"] not in held]
     tag = corpus_tag(docs)
+    rows = listed_documents(post, org, namespace)
+    want = {d["source_uri"] for d in docs}
+    foreign = sum(r["source_uri"] not in want or tag not in (r.get("tags") or []) for r in rows)
+    if foreign:
+        raise SystemExit(f"{org}/{namespace} holds {foreign} documents of another corpus")
+    held = {r["source_uri"] for r in rows if r.get("chunk_count")}
+    todo = [d for d in docs if d["source_uri"] not in held]
     for i in range(0, len(todo), BATCH):
         entries = [{**d, "tags": [tag]} for d in todo[i : i + BATCH]]
         post("/v1/knowledge.bulk_add", {"org": org, "namespace": namespace, "entries": entries})
         print(f"ingested {min(i + BATCH, len(todo))}/{len(todo)}", file=sys.stderr)
-
-
-def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> int:
-    """Refuse a namespace that does not hold exactly this corpus; return its chunk count."""
-    tag = corpus_tag(docs)
-    rows = listed_documents(post, org, namespace)
-    have = {row["source_uri"] for row in rows}
-    want = {d["source_uri"] for d in docs}
-    stale = sum(tag not in (row.get("tags") or []) for row in rows)
-    if have != want or stale:
-        raise SystemExit(
-            f"{org}/{namespace} is not this corpus: missing {len(want - have)}, "
-            f"extra {len(have - want)}, from another version {stale}"
-        )
-    return sum(int(row.get("chunk_count") or 0) for row in rows)
 
 
 def ranked_docs(hits: list[dict], query_id: str) -> list[str]:
@@ -224,16 +210,18 @@ def search(
 ) -> dict:
     rows = []
     reranked = lexical_fired = 0
+    # An arm that names no reranker runs without one, whatever the deployment default.
+    rerank = params.get("rerank") or "none"
     for qid, text in queries.items():
         body = {
             **params,
+            "rerank": rerank,
             "org": org,
             "namespace": namespace,
             "namespace_scope": "this",
             "query": text,
             "top_k": DEPTH,
-            # Headless passages are never folded; sent so a server default cannot change it.
-            "collapse_sections": False,
+            "collapse_sections": False,  # each document is scored once already
         }
         out = post("/v1/knowledge.search", body)
         if out.get("ignored_args"):
@@ -244,11 +232,14 @@ def search(
         ranked = ranked_docs(hits, qid)
         metrics = {**score(ranked, qrels[qid]), "depth": float(len(ranked))}
         rows.append({"id": qid, "cluster": qid, "metrics": metrics})
-    if params.get("search_mode", "hybrid") != "semantic" and rows and not lexical_fired:
+    mode = params.get("search_mode", KnowledgeSearchInput.model_fields["search_mode"].default)
+    if mode != "semantic" and not lexical_fired:
         raise SystemExit("the lexical leg never fired: the arm ran as semantic")
-    # A reranker that keeps the fused order names none, so only a rerank arm no
-    # answer of which names one did not run.
-    if params.get("rerank") not in (None, "", "none") and rows and not reranked:
+    # A reranker that keeps the fused order names none, so a rerank arm fails only when
+    # no answer names one, and an arm without one when any does.
+    if rerank == "none" and reranked:
+        raise SystemExit(f"{reranked} answers name a reranker, though the arm names none")
+    if rerank != "none" and not reranked:
         raise SystemExit("no answer names a reranker: the rerank arm did not run")
     keys = rows[0]["metrics"] if rows else {}
     means = {k: round(sum(r["metrics"][k] for r in rows) / len(rows), 4) for k in keys}
@@ -286,8 +277,10 @@ def main() -> int:
     if args.phase != "both" and not args.namespace:
         ap.error(f"--phase {args.phase} needs a --namespace (one ingest, many searches)")
 
+    if any(p.partition("=")[0] == "collapse_sections" for p in args.param):
+        raise SystemExit("--param collapse_sections is refused: the harness scores documents")
     params = parse_params(args.param)
-    namespace, keep = run_namespace(args.namespace)
+    namespace, keep = run_namespace(args.namespace, PREFIX)
     docs, queries, qrels = load(args.data)
     headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
     base = args.base_url.rstrip("/")
@@ -312,7 +305,7 @@ def main() -> int:
                 ingest(post, args.org, namespace, docs, keep)
             if args.phase == "ingest":
                 return 0
-            instrument["chunks"] = check_corpus(post, args.org, namespace, docs)
+            instrument["chunks"] = check_corpus(post, args.org, namespace, docs, corpus_tag(docs))
             report = search(post, args.org, namespace, queries, qrels, params)
     report = {"instrument": instrument, **report}
     if args.out:

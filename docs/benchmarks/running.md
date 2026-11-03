@@ -230,9 +230,9 @@ the file and each row's optional `namespace` routes it.
 ### Third-party datasets
 
 Third-party corpora go in `bench/datasets/` and are never committed. The licences are the
-ones each dataset states upstream. None is pinned to a revision, so record the one you
-ran beside any number. LoCoMo, PerLTQA and BEIR's SciFact are non-commercial: research runs
-only.
+ones each dataset states upstream. Only BEIR's archives are pinned (by MD5); for the rest,
+record the revision you ran beside any number. LoCoMo, PerLTQA and BEIR's SciFact are
+non-commercial: research runs only.
 
 | Dataset                    | Harness                                                                                                               | How to obtain                                                                                                                                                     | Licence (upstream)         |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
