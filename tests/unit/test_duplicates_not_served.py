@@ -433,6 +433,7 @@ def _row(status: str = "active", duplicate_of: str = "") -> SimpleNamespace:
         status=status,
         duplicate_of=duplicate_of,
         source_trace="",
+        source_resource_id="",
         run_id="-",
         verified_by="",
         verified_at=None,
