@@ -222,7 +222,8 @@ _TEXT: dict[str, tuple[str, str]] = {
         f"row under the same key that points at it. See {_RECIPE}.",
     ),
     "unembedded_rows": (
-        "Searchable rows the embedding worker gave up on (no vector, a recorded error): "
+        "Searchable rows the embedding worker gave up on (no vector, an embed error of the "
+        "row's own): "
         "invisible to memory.search however well the key is chosen.",
         "Shorten or split the value (`knowledge.upsert` for documents), then memory.set "
         "the row again; `namespace.validate` lists them among its `unembedded` rows.",
@@ -282,7 +283,8 @@ _CONTRACT: dict[str, RuleContract] = {
         ),
         uncertainty=(
             "Rows written in-process, by an importer run without `--base-url` or a worker "
-            "that creates keys, leave no ledger row and read as a gap in a quiet namespace, "
+            "that creates keys, leave no request row (a worker's own row is not counted) and "
+            "read as a gap in a quiet namespace, "
             "and so do rows a recent snapshot restored (`namespace.restore` is ledgered "
             "under no namespace). Copied rows are not judged. A ledger that keeps less than "
             "the window (a retention shorter than it) holds some calls and is not a gap, so "
