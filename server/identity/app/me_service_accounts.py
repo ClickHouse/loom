@@ -305,9 +305,9 @@ async def me_service_accounts_create(
     (`server.auth.delegation.delegate`): at most the caller's live grant on
     that namespace, and the caller's token role there when that token is
     itself delegated or per-namespace, or the namespace is restricted. The
-    token carries an `ns_roles` claim (authoritative
-    per-namespace role) and an ordered `namespaces` claim (the read priority).
-    Returns the JWT exactly once.
+    token carries an `ns_roles` claim (the authoritative per-namespace role)
+    and an ordered `namespaces` claim (the read priority). Returns the JWT
+    exactly once.
     """
     if settings.auth_actually_required():
         parent = me_callers.require_authed_info(request)

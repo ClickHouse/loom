@@ -200,8 +200,9 @@ async def test_a_sign_in_token_delegates_the_persons_grant_not_its_flat_role(wor
     assert await _reaches(child, "a", Role.ADMIN)
     bare = await _child(_login(), {"a": None}, scoped=True)
     assert bare.ns_roles == (("a", "admin"),)
-    assert "admin" in await _refused(_delegated_list(), {"a": "admin"})
-    assert "admin" in await _refused(_scoped(), {"a": "admin"})
+    for parent in (_delegated_list, _scoped):
+        assert "admin" in await _refused(parent(), {"a": "admin"})
+        assert "admin" in await _refused(parent(), {"a": "admin"}, scoped=True)
     world["grants"][(ORG, RESTRICTED, "alice")] = Role.ADMIN
     assert "admin" in await _refused(_login(), {RESTRICTED: "admin"}, scoped=True)
 

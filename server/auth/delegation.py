@@ -2,9 +2,9 @@
 
 A child gets requested ∩ the parent token's ceiling ∩ the creator's live
 grants, never more. One ceiling is the grant itself: a per-namespace child
-of a primary token (a sign-in, or `loom mint-token`) takes the creator's
-grant on a named standard namespace, where the gate admits that token on
-its grant alone. The rules and the recheck on every request are in
+of a primary flat token (a sign-in, or `loom mint-token` with `--roles`)
+takes the creator's grant on a named standard namespace, where the gate
+admits that token on its grant alone. The rules and the recheck on every request are in
 docs/guides/tokens-and-grants.md (Delegated tokens). `loom mint-token`
 holds the signing secret and is not a delegation.
 """
@@ -247,12 +247,7 @@ async def _allowed_roles(
         allowed = ceiling_role(parent, org, ns, write=writes)
         if ns != "*":
             grant = await authz.grant_role_for(org, ns, creator)
-            if (
-                scoped
-                and _primary(parent)
-                and allowed is not None
-                and not await authz.may_be_restricted(org, ns)
-            ):
+            if scoped and _primary(parent) and not await authz.may_be_restricted(org, ns):
                 # The gate admits a primary token to a standard namespace on
                 # the subject's grant alone (`authz.check_authorized`), so the
                 # grant is the measure; a restricted one needs the role from
@@ -307,9 +302,9 @@ def delegable_role(name: str | None) -> Role | None:
 
 
 def _primary(token: AuthInfo) -> bool:
-    """A token minted from no other: Loom's own sign-in or `loom mint-token`.
-    Its flat role is a platform role; its role on a namespace is the subject's
-    grant there."""
+    """A flat token minted from no other: Loom's own sign-in, or
+    `loom mint-token` with `--roles`. Its flat role is a platform role; its
+    role on a namespace is the subject's grant there."""
     return not token.has_ns_roles() and not token.creator
 
 
