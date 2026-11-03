@@ -5626,6 +5626,11 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # rows for the hand-rolled index check. Namespace-sized; the ledger
     # reads are bounded by window_seconds.
     "namespace.audit": 3000,
+    # The audit, then three reads of the namespace's rows (agents, plain tags, key
+    # prefixes), the categories, guide and policy, two reads for the extraction draft
+    # (its writers, and which cited rows it wrote), one of the drafted tags' spellings,
+    # and three per category draft (`max_category_proposals`, default 5).
+    "namespace.tune": 5000,
     "namespace.browse": 120,
     "namespace.cancel_request": 80,
     "namespace.delete": 60,
