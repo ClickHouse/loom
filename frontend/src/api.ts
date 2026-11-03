@@ -93,8 +93,10 @@ export function clearToken(): void {
  *  when one drops it or signs out; the returned function stops listening. */
 export function onTokenStored(fn: (token: string | null) => void): () => void {
   const listener = (e: StorageEvent) => {
-    // A sign-out elsewhere counts even when this tab's token was already gone.
-    if ((e.key === KEY_TOKEN && e.newValue !== e.oldValue) || (e.key === KEY_SIGNED_OUT && e.newValue)) fn(token());
+    // A sign-out elsewhere counts even when this tab's token was already gone (its own
+    // removal, when there was one, follows as a token event).
+    if (e.key === KEY_TOKEN ? e.newValue !== e.oldValue : e.key === KEY_SIGNED_OUT && !!e.newValue && !token())
+      fn(token());
   };
   window.addEventListener("storage", listener);
   return () => window.removeEventListener("storage", listener);
@@ -281,49 +283,59 @@ function asDashboardCall(path: string, body: unknown): unknown {
 /** The one request path every authenticated call rides: the inflight counter, the view's
  *  call count, the bounded signal, and a typed ApiError (status, server code, message,
  *  request id) for any non-2xx — never a "403: {json}" string. Answers the ok Response. */
-async function request(
-  method: "GET" | "POST",
-  path: string,
-  body?: unknown,
-  signal?: AbortSignal,
-  retried = false,
-): Promise<Response> {
+async function request(method: "GET" | "POST", path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
   _bump(+1);
   noteCallStart(); // the view's call count and span
-  const sent = token();
   try {
-    const r = await fetch(
-      path,
-      method === "POST"
-        ? {
-            method,
-            headers: { "Content-Type": "application/json", ...authHeader() },
-            body: JSON.stringify(asDashboardCall(path, body)),
-            signal: boundedSignal(signal),
-          }
-        : { method, headers: authHeader(), signal: boundedSignal(signal) },
-    );
-    // A 401 on the token this request carried ends the session for every view at once.
-    // A newer token stored while the request was in flight is left alone.
-    if (r.status === 401 && sent) {
-      // Ended once, before any await, by the first refusal; one that raced it reads the same.
-      const ending = sent === token();
-      if (ending) signInRejected?.();
-      if (ending || token() === null) {
-        const err = await apiErrorFromResponse(r);
-        err.sessionEnded = true;
-        throw err;
-      }
-      // Another tab stored a new token while this call was out: a 401 ran nothing, so it
-      // goes again, once, with that token.
-      if (!retried) return request(method, path, body, signal, true);
-    }
-    if (!r.ok) throw await apiErrorFromResponse(r);
-    return r;
+    return await send(method, path, body, signal, false);
   } finally {
     _bump(-1);
     noteCallEnd();
   }
+}
+
+/** Whether two tokens name the same person in the same org. */
+function samePerson(a: string, b: string): boolean {
+  const x = claimsFromToken(a);
+  const y = claimsFromToken(b);
+  return !!x?.subject && x.subject === y?.subject && x.org === y?.org;
+}
+
+async function send(
+  method: "GET" | "POST",
+  path: string,
+  body: unknown,
+  signal: AbortSignal | undefined,
+  retried: boolean,
+): Promise<Response> {
+  const sent = token();
+  const r = await fetch(
+    path,
+    method === "POST"
+      ? {
+          method,
+          headers: { "Content-Type": "application/json", ...authHeader() },
+          body: JSON.stringify(asDashboardCall(path, body)),
+          signal: boundedSignal(signal),
+        }
+      : { method, headers: authHeader(), signal: boundedSignal(signal) },
+  );
+  if (r.status === 401 && sent) {
+    // The first refusal of the stored token ends the session, before any await, so
+    // concurrent ones end it once.
+    const ending = sent === token();
+    if (ending) signInRejected?.();
+    // The same person signed in again in another tab while this call was out: a 401 ran
+    // nothing, so it goes again, once, with the new token. Anyone else's token never
+    // carries this page's call.
+    const now = token();
+    if (!ending && !retried && now && samePerson(sent, now)) return send(method, path, body, signal, true);
+    const err = await apiErrorFromResponse(r);
+    err.sessionEnded = true;
+    throw err;
+  }
+  if (!r.ok) throw await apiErrorFromResponse(r);
+  return r;
 }
 
 export async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {

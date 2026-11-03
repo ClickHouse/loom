@@ -106,7 +106,6 @@ async function whoamiWhenReady(): Promise<WhoAmI> {
  *  ended too. Stored: once the server confirms it is the same person, this page carries on
  *  with their identity and roles read again; anyone else gets a fresh page, so nothing the
  *  last person read stays on screen. */
-const RECHECK_MS = 30_000;
 let recheck: ReturnType<typeof setTimeout> | undefined;
 
 async function tokenChangedElsewhere(token: string | null): Promise<void> {
@@ -133,25 +132,21 @@ async function tokenChangedElsewhere(token: string | null): Promise<void> {
     // Unconfirmed: a healthy page stays as it is; an ended one keeps its card and asks
     // again shortly, while that token is still the stored one.
     if (useStore.getState().sessionExpired)
-      recheck = setTimeout(() => storedToken() === token && void tokenChangedElsewhere(token), RECHECK_MS);
+      recheck = setTimeout(() => storedToken() === token && void tokenChangedElsewhere(token), 30_000);
     return;
   }
   // Another change landed while whoami answered: that one decides.
   if (storedToken() !== token) return;
-  // A token the server refuses is nobody's: this session ended, and the page stays.
+  // A token the server refuses is nobody's: this session ended, and the page stays. One it
+  // accepts is the person its claims named, already checked above.
   if (!now.authenticated) {
     if (!useStore.getState().sessionExpired) endSession();
     return;
   }
-  if (now.subject !== before.subject || now.org !== before.org) {
-    reloadPage();
-    return;
-  }
-  const wasExpired = useStore.getState().sessionExpired;
+  // The card going away is the sign that the session is back.
   useStore.getState().setWhoami(now);
   useStore.getState().setSessionExpired(false);
   sessionEndedNote(true);
-  if (wasExpired) toast("Signed in again.", "ok");
   try {
     invalidateShared();
     useStore.getState().setMyNamespaces(await sharedMine(now.org ?? ""));

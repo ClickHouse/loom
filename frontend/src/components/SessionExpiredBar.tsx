@@ -8,11 +8,12 @@ import { reloadPage } from "../lib/navigation";
  * this tab then picks up (App listens for it). Reload signs in here instead.
  *
  * Pinned in the toast viewport (`ToastViewport`'s `pinned`): over every dialog, announced
- * while one is open, and a click on it does not dismiss the dialog.
+ * while one is open, and a click on it does not dismiss the dialog. The viewport is the
+ * live region that announces it, so it takes no role of its own.
  */
 export function SessionExpiredBar() {
   return (
-    <div role="alert" className="toast pointer-events-auto flex items-start" data-testid="session-expired-bar">
+    <div className="toast pointer-events-auto flex items-start" data-testid="session-expired-bar">
       <Icon name="lock" size="sm" aria-hidden="true" className="shrink-0 mt-0.5" />
       <span className="flex flex-col flex-1 min-w-0 gap-2">
         <span className="toast-title">Your session ended. This page stays as it is.</span>

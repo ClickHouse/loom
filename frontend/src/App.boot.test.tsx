@@ -731,6 +731,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
     render(<App />);
     await until(() => useStore.getState().authed === false);
     expect(useStore.getState().gateReason).toBeNull();
+    expect(localStorage.getItem("loom_signed_out_v1")).toBe("1");
   });
 
   it("ends this tab's session too when another tab drops the token", async () => {
