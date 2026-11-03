@@ -41,10 +41,10 @@ def seen(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str]]:
 
 
 def _resolved(op: Any, body: dict[str, Any]) -> dict[str, Any]:
-    from server.transport.gates import fill_resolved_org
+    from server.transport.gates import with_resolved_org
 
-    fill_resolved_org(op, body, None)
-    return body
+    resolved: dict[str, Any] = with_resolved_org(op, body, None)
+    return resolved
 
 
 def _post(op: str, body: dict[str, Any], role: str = "viewer") -> Any:

@@ -11,7 +11,7 @@ here, once:
   the request's, else the op's plane default (code.* / tracker.*), else the
   verified token's own org. A namespace is never authorized without an org:
   that is a refusal (IDENTITY_INCOMPLETE), not a flat-role pass.
-- `fill_resolved_org` / `with_target`: a blank or "-" org is set to the
+- `with_resolved_org` / `with_target`: a blank or "-" org is set to the
   org the call acts in before validation, and an absent code namespace to the
   authorized one after authorization, so the handler reads and writes where
   the call was authorized.
@@ -129,16 +129,18 @@ def resolve_org(op: Operation, org: Any, auth: AuthInfo | None) -> str | None:
     return present(org) or present(plane_org_for(op.name)) or _token_org(auth)
 
 
-def fill_resolved_org(op: Operation, args: Any, auth: AuthInfo | None) -> None:
-    """Set, in place, a request's `org` sent as a blank or "-" string to the
-    org the call acts in, before the input model validates it: the handler,
-    and a validator that reads the org (an inbox's webhook secret names it),
-    see the tenant the gate authorizes, never the literal "-" every token
-    reaches. A missing, null or non-string org is left for validation."""
+def with_resolved_org(op: Operation, args: Any, auth: AuthInfo | None) -> Any:
+    """The arguments to validate: an `org` sent as a blank or "-" string set to
+    the org the call acts in, so the handler, and a validator that reads the
+    org (an inbox's webhook secret names it), see the tenant the gate
+    authorizes, never the literal "-" every token reaches. A copy: the raw
+    arguments, which a refusal's ledger row reads, stay as sent. A missing,
+    null or non-string org is left for validation."""
     if not isinstance(args, dict) or not isinstance(args.get("org"), str):
-        return
+        return args
     if present(args["org"]) is None and (org := resolve_org(op, None, auth)):
-        args["org"] = org
+        return {**args, "org": org}
+    return args
 
 
 def with_target(input_obj: Any, target: Target) -> Any:
