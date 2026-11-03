@@ -22,6 +22,7 @@ name, which is kept, and search it per arm:
 A named namespace must start with `knowledge-retrieval-`, the prefix of every
 namespace the harness writes, so it never touches anyone else's; it stays until
 it is erased with the `loom namespaces-gc` command the ingest prints first. A
+run's own fresh namespace (`knowledge-retrieval-run-…`) cannot be named. A
 run records the server's embedding model and build (`instrument`) and refuses a
 fake embedder.
 
@@ -42,7 +43,7 @@ freshness query's R@1, MRR and nDCG@10, not its R@5. Ingesting embeds 21
 documents: a few cents with a hosted embedder, free with a local one.
 
 Two arms are compared per query, not by their means: pair the `queries` rows of
-two `--out` reports by `id` and pass the metric deltas to
+two `--out` reports by `id` (only reports with the same `instrument.fixture`) and pass the metric deltas to
 `bench.bootstrap.paired_bootstrap`, whose lower bound is what a change ships on.
 """
 
@@ -94,9 +95,7 @@ def load_fixture(root: Path) -> tuple[list[dict], list[dict]]:
 def relevant(hit: dict, gold: list[list[str]]) -> list[int]:
     """The indexes of the gold passages `hit` holds."""
     content = hit["content"]
-    return [
-        i for i, (uri, text) in enumerate(gold) if hit.get("source_uri") == uri and text in content
-    ]
+    return [i for i, (uri, text) in enumerate(gold) if hit["source_uri"] == uri and text in content]
 
 
 def score_query(hits: list[dict], gold: list[list[str]]) -> dict[str, float]:
@@ -171,18 +170,31 @@ def parse_params(pairs: list[str]) -> dict:
 
 
 # Every namespace the harness writes starts with this; a named one must too, so the
-# harness never registers, fills or prints an erase command for anyone else's.
+# harness never registers, fills or prints an erase command for anyone else's. A
+# run's own fresh namespace has a sub-prefix a caller may not name, so no named run
+# writes into a concurrent run's namespace.
 PREFIX = "knowledge-retrieval-"
+FRESH_PREFIX = f"{PREFIX}run-"
+
+
+def require_real_embedder(instrument: dict) -> None:
+    """Refuse a run whose server embeds with no model or a fake one: its numbers would
+    measure trigram overlap, not retrieval."""
+    model = instrument["embedding_model"]
+    if not model or model.startswith("fake"):
+        raise SystemExit(f"embedding model {model!r} is unknown or fake: no numbers")
 
 
 def run_namespace(named: str | None) -> tuple[str, bool]:
     """(the namespace a run uses, whether it outlives the run). A named namespace is
     kept for later search arms; a made-up one is erased when the run ends."""
     if named:
-        if not named.startswith(PREFIX):
-            raise SystemExit(f"--namespace must start with {PREFIX!r}: {named!r}")
+        if not named.startswith(PREFIX) or named.startswith(FRESH_PREFIX):
+            raise SystemExit(
+                f"--namespace must start with {PREFIX!r}, not {FRESH_PREFIX!r}: {named!r}"
+            )
         return named, True
-    return f"{PREFIX}{secrets.token_hex(4)}", False
+    return f"{FRESH_PREFIX}{secrets.token_hex(4)}", False
 
 
 def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: bool) -> None:
@@ -268,7 +280,8 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
     if not any_hits:
         raise SystemExit(f"no query found anything in {org}/{namespace}: was it ingested?")
     # A hybrid search over a corpus with no lexical statistics runs its vector leg alone.
-    if params.get("search_mode", "hybrid") != "semantic" and not lexical_fired:
+    mode = params.get("search_mode", KnowledgeSearchInput.model_fields["search_mode"].default)
+    if mode != "semantic" and not lexical_fired:
         raise SystemExit("the lexical leg never fired: the arm ran as semantic")
     return {
         "params": params,
@@ -316,9 +329,9 @@ def main() -> int:
             return post_json(client, f"{base}{path}", body, attempts=3, timeout_s=120.0)
 
         instrument = run_metadata(client.get(f"{base}/v1/health", timeout=30).json())
-        model = instrument["embedding_model"]
-        if not model or model.startswith("fake"):
-            raise SystemExit(f"embedding model {model!r} is unknown or fake: no numbers")
+        require_real_embedder(instrument)
+        # Two reports pair only when they scored one fixture version.
+        instrument["fixture"] = fixture_tag(docs)
         with erase_on_exit_sync(post, org=args.org, keep=keep):
             if args.phase in ("ingest", "both"):
                 ingest(post, args.org, namespace, docs, keep)

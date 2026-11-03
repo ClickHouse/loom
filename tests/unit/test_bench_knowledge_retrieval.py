@@ -18,6 +18,7 @@ from bench.knowledge_retrieval import (
     load_fixture,
     mean_by_kind,
     parse_params,
+    require_real_embedder,
     run_namespace,
     score_query,
     search,
@@ -96,7 +97,7 @@ def test_a_key_that_is_no_search_field_is_refused(field: str) -> None:
 def test_a_named_namespace_is_kept_and_a_made_up_one_is_not() -> None:
     assert run_namespace("knowledge-retrieval-eval") == ("knowledge-retrieval-eval", True)
     fresh, keep = run_namespace(None)
-    assert fresh.startswith("knowledge-retrieval-") and keep is False
+    assert fresh.startswith("knowledge-retrieval-run-") and keep is False
     assert run_namespace(None)[0] != fresh
 
 
@@ -115,9 +116,18 @@ def test_a_fresh_ingest_is_erased_when_the_run_ends() -> None:
     assert len(erasures) == 1 and fresh in json.dumps(erasures[0])
 
 
-def test_a_named_namespace_without_the_harness_prefix_is_refused() -> None:
+def test_a_named_namespace_needs_the_prefix_and_cannot_be_a_runs_own() -> None:
     with pytest.raises(SystemExit, match="must start with"):
         run_namespace("docs")
+    with pytest.raises(SystemExit, match="must start with"):
+        run_namespace("knowledge-retrieval-run-1a2b3c4d")
+
+
+@pytest.mark.parametrize("model", ["", "fake-ngram-1024"])
+def test_a_run_without_a_real_embedder_is_refused(model: str) -> None:
+    with pytest.raises(SystemExit, match="unknown or fake"):
+        require_real_embedder({"embedding_model": model})
+    require_real_embedder({"embedding_model": "text-embedding-3-large"})
 
 
 def test_a_namespace_holding_other_documents_than_the_fixture_is_refused() -> None:
@@ -136,7 +146,7 @@ def test_a_namespace_holding_other_documents_than_the_fixture_is_refused() -> No
     assert fixture_tag([*docs[:1], {**docs[1], "content": "z"}]) != tag
 
 
-def test_the_top_similarity_is_reported_per_answerability_and_kinds_average_apart() -> None:
+def test_the_top_similarity_is_reported_per_answerability() -> None:
     queries = [
         {"id": "a", "query": "x", "gold": [["a.md", "y"]], "kind": "context"},
         {"id": "b", "query": "z", "gold": [], "kind": "unanswerable"},
@@ -158,8 +168,24 @@ def test_the_top_similarity_is_reported_per_answerability_and_kinds_average_apar
         "unanswerable": 0.25,
         "no_hits": {"answerable": 0, "unanswerable": 1},
     }
-    assert report["lexical_fired"] == 2  # the two queries with a hit, out of three
     assert report["metrics"]["all"]["n"] == 1 and report["metrics"]["context"]["mrr"] == 1.0
+
+
+def test_lexical_fired_counts_the_queries_whose_hits_the_lexical_leg_scored() -> None:
+    queries = [{"id": i, "query": i, "gold": [["a.md", "y"]], "kind": "context"} for i in "pq"]
+    scored = {"source_uri": "a.md", "content": "y", "similarity": 0.5, "lexical_score": 1.0}
+    vector_only = {**scored, "lexical_score": 0.0}
+    report = search(
+        lambda path, body: {"results": [scored if body["query"] == "p" else vector_only]},
+        "o",
+        "n",
+        queries,
+        {},
+    )
+    assert report["lexical_fired"] == 1
+
+
+def test_kinds_average_apart_and_together() -> None:
     rows = [
         {"kind": "context", "metrics": {"mrr": 1.0}},
         {"kind": "paraphrase", "metrics": {"mrr": 0.0}},
@@ -233,3 +259,13 @@ def test_every_gold_passage_lies_inside_one_chunk_at_the_default_size() -> None:
         # each passage of a query in a chunk of its own: nDCG's cap never applies here
         assert len(set(holders)) == len(holders), q["id"]
     assert sum(len(c) for c in chunks.values()) == 97  # one chunk per non-empty section
+
+
+@pytest.mark.parametrize("phase", ["ingest", "search"])
+def test_one_phase_alone_needs_a_named_namespace(monkeypatch, phase: str) -> None:
+    from bench import knowledge_retrieval
+
+    monkeypatch.setattr("sys.argv", ["knowledge_retrieval.py", "--phase", phase])
+    with pytest.raises(SystemExit) as exit_info:
+        knowledge_retrieval.main()
+    assert exit_info.value.code == 2  # argparse's usage error, before any request

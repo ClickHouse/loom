@@ -1,6 +1,7 @@
 // Synthetic: fictional products, teams and policies; no third-party text.
 // Gold: (source_uri, answer text) pairs written with the documents; every answer text
-// occurs once in its document. Not an upper bound: each answer is in the corpus.
+// occurs once in its document. Every answerable query's answer is in the corpus, so
+// R@10 can reach 1; five queries have no answer in it.
 {"id": "harbor-retention", "query": "How long does Harbor keep deleted or old data?", "gold": [["handbook/harbor.md", "Deleted objects stay recoverable for 14 days"]], "kind": "context"}
 {"id": "harbor-sev1", "query": "What is the first response time for a severity 1 incident on Harbor?", "gold": [["handbook/harbor.md", "1 hour"]], "kind": "context"}
 {"id": "harbor-refund", "query": "Can a Harbor customer get their money back?", "gold": [["handbook/harbor.md", "within 30 days of the first invoice"]], "kind": "context"}
