@@ -131,7 +131,7 @@ def test_the_journal_files() -> None:
         "078_document_blob_location.sql",
         "079_chunk_context.sql",
         "080_knowledge_sources.sql",
-        "079_erasure_request_actor.sql",
+        "081_erasure_request_actor.sql",
     ]
 
 
