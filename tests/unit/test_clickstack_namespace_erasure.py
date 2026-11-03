@@ -230,7 +230,6 @@ async def test_clickstack_user_erasure_never_matches_another_org(monkeypatch):
     """A subject name is unique per org only: a row carrying another org's
     `loom.org` is never matched; a row with no org tag (a non-Loom emitter)
     still is."""
-    from server.erasure.app.backends import ClickStackBackend
 
     backend = ClickStackBackend(database="default", timeout_s=5.0)
     calls: list[tuple[str, str, dict]] = []
@@ -259,7 +258,8 @@ _ROWS = {
         {"service.namespace": "loom"},
         {"loom.namespace": "default", "loom.org": "acme"},
     ),
-    # A tenant namespace named `loom`, in this org and in another.
+    # A tenant namespace named `loom`: untagged, in this org and in another.
+    "ns_loom_untagged": ({"service.namespace": "loom"}, {"loom.namespace": "loom"}),
     "ns_loom_own_org": (
         {"service.namespace": "loom"},
         {"loom.namespace": "loom", "loom.org": "acme"},
