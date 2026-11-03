@@ -108,8 +108,9 @@ def _fake_store(
     tombstoned: list[str] = []
     cleared: list[str] = []
 
-    async def fake_get_by_id(memory_id: str, **_k: Any) -> MemoryRow | None:
-        return rows.get(memory_id)
+    async def fake_get_by_id(memory_id: str, *, org: str, **_k: Any) -> MemoryRow | None:
+        row = rows.get(memory_id)
+        return row if row is not None and row.org == org else None  # the read's org filter
 
     async def fake_tombstone(org: str, mid: str, *, ch: Any = None) -> list[Any]:
         tombstoned.append(mid)
@@ -198,28 +199,42 @@ async def test_resolve_confirm_mismatch_raises_400(monkeypatch: pytest.MonkeyPat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "rows",
+    ("rows", "duplicate_id"),
     [
-        pytest.param({}, id="missing"),
-        pytest.param({"not-a-uuid": _pair()[DUP]}, id="not-a-uuid"),
+        pytest.param({}, DUP, id="missing"),
+        pytest.param({"not-a-uuid": _pair()[DUP]}, "not-a-uuid", id="not-a-uuid"),
         pytest.param(
-            _pair(duplicate_of="33333333-3333-3333-3333-333333333333"), id="other-canonical"
+            _pair(duplicate_of="33333333-3333-3333-3333-333333333333"),
+            DUP,
+            id="other-canonical",
         ),
-        pytest.param(_pair(status="active"), id="not-a-duplicate"),
-        pytest.param(_pair(namespace="other"), id="other-namespace"),
-        pytest.param({DUP: _pair()[DUP]}, id="canonical-gone"),
+        pytest.param(_pair(status="active"), DUP, id="not-a-duplicate"),
+        pytest.param(_pair(namespace="other"), DUP, id="duplicate-in-other-namespace"),
+        pytest.param(
+            _pair() | {CANON: _row(CANON, "k", namespace="other")},
+            DUP,
+            id="canonical-in-other-namespace",
+        ),
+        pytest.param(_pair(org="other-org"), DUP, id="duplicate-in-other-org"),
+        pytest.param(
+            _pair() | {CANON: _row(CANON, "k", org="other-org")},
+            DUP,
+            id="canonical-in-other-org",
+        ),
+        pytest.param({DUP: _pair()[DUP]}, DUP, id="canonical-gone"),
     ],
 )
 async def test_resolve_a_row_that_is_not_the_pair_raises_404(
-    monkeypatch: pytest.MonkeyPatch, rows: dict[str, MemoryRow]
+    monkeypatch: pytest.MonkeyPatch, rows: dict[str, MemoryRow], duplicate_id: str
 ) -> None:
     """A live row that is not this pair's duplicate is never tombstoned."""
     from server.memory.app.dedup import handle_memory_dedup_resolve
 
     tombstoned, cleared = _fake_store(monkeypatch, rows)
-    dup_id = "not-a-uuid" if "not-a-uuid" in rows else DUP
     with pytest.raises(HTTPException) as exc:
-        await handle_memory_dedup_resolve(_resolve_input("keep_canonical", duplicate_id=dup_id))
+        await handle_memory_dedup_resolve(
+            _resolve_input("keep_canonical", duplicate_id=duplicate_id)
+        )
     assert exc.value.status_code == 404
     assert exc.value.detail["code"] == "DEDUP_PAIR_NOT_FOUND"
     assert (tombstoned, cleared) == ([], [])
