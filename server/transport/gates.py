@@ -133,10 +133,13 @@ def with_target(input_obj: Any, target: Target) -> Any:
     # An admin write on "-" (a code repository's access or source) must name
     # its repository, never land on the plane's default index.
     ns_field = fields.get("namespace")
-    resolved_ns = target.register_namespace
-    if resolved_ns and ns_field is not None and not ns_field.is_required():
-        if present(input_obj.namespace) is None:
-            update["namespace"] = resolved_ns
+    if (
+        target.register_namespace
+        and ns_field is not None
+        and not ns_field.is_required()
+        and present(input_obj.namespace) is None
+    ):
+        update["namespace"] = target.register_namespace
     return input_obj.model_copy(update=update) if update else input_obj
 
 
