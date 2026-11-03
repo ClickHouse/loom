@@ -18,8 +18,8 @@ a PDF or `.pptx` sent to the extractor service its format is routed to (the
 server parses no original itself); the bytes are kept as the document's
 original. A file that cannot be stored is counted `unconverted` with its reason
 and not written. One the store or the extractor refuses, one over the size bound
-and one whose write is refused are also given up on its revision at once, so later
-passes skip it without a fetch; one with no https link or a format no extractor
+and one whose write is refused are also given up on their revision at once, so
+later passes skip them without a fetch; one with no https link or a format no extractor
 declares costs no fetch and is counted again each pass. A file whose fetch,
 extraction or write fails in a way that may pass (a 5xx or a timeout on that
 file, its extractor call, the write) waits: the turn stays incomplete for

@@ -432,7 +432,8 @@ async def handle_knowledge_source_sync_now(
                 f"source {src.name!r} was removed and added again; call "
                 "knowledge.source.sync_now again for the current source"
             )
-        await _update_state(fresh, {"requested_at": _now_iso(), "full": bool(input.full)})
+        state = await _read_state(fresh)
+        await _update_state(fresh, state, {"requested_at": _now_iso(), "full": bool(input.full)})
     return KnowledgeSourceSyncNowOutput(
         name=src.name, enabled=bool(settings.knowledge_source_sync_enabled)
     )
@@ -443,26 +444,25 @@ async def request_full_sync(src: KnowledgeSource) -> None:
     one is already waiting: `loom knowledge sync --full` run again while a turn
     has not finished the request goes on with it rather than starting over."""
     async with sources_lease(src.org, src.namespace):
-        with sequential_reads():
-            states = await store.read_states(src.org, src.namespace, [src.name])
-        detail = domain.json_object((states.get(src.name) or {}).get("detail", ""))
+        state = await _read_state(src)
+        detail = domain.json_object(state.get("detail", ""))
         if detail.get("full") and detail.get("requested_at"):
             return
-        detail.update(requested_at=_now_iso(), full=True)
-        await store.write_state(
-            src.org,
-            src.namespace,
-            src.name,
-            state_value=(states.get(src.name) or {}).get("state_value", ""),
-            detail=detail,
-        )
+        await _update_state(src, state, {"requested_at": _now_iso(), "full": True})
 
 
-async def _update_state(src: KnowledgeSource, changes: dict[str, Any]) -> None:
-    """Merge `changes` into the source's sync state, keeping its stamp."""
+async def _read_state(src: KnowledgeSource) -> dict[str, str]:
+    """The source's stored sync state, {} when it has none."""
     with sequential_reads():
         states = await store.read_states(src.org, src.namespace, [src.name])
-    state = states.get(src.name) or {}
+    return states.get(src.name) or {}
+
+
+async def _update_state(
+    src: KnowledgeSource, state: dict[str, str], changes: dict[str, Any]
+) -> None:
+    """Merge `changes` into the sync state `state` read under the lease, keeping its
+    stamp."""
     detail = domain.json_object(state.get("detail", ""))
     detail.update(changes)
     await store.write_state(

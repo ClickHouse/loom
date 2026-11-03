@@ -1182,8 +1182,10 @@ def test_a_turn_that_raises_records_a_failed_state_and_keeps_the_waits(
     assert _waits(world)["bad1"][1] == 1
 
 
-def _fetches(world: _World, file_id: str) -> int:
-    return sum(1 for r in world.requests if f"/{file_id}/" in r.url.path)
+def _requests_for(world: _World, file_id: str) -> int:
+    """Requests the store got about one file: its export, deck read, download or
+    lookup (every path that names the file's id)."""
+    return sum(1 for r in world.requests if f"/{file_id}" in r.url.path)
 
 
 @pytest.mark.parametrize("held_by", ["waiting_file", "lost_folder", "cut"])
@@ -1205,12 +1207,12 @@ def test_a_full_turn_that_stays_incomplete_retries_a_given_up_file_once(
         world.files.append(_file("doc2", DOCS, "2026-01-02T00:00:00.000Z"))
         world.files.append(_file("doc3", DOCS, "2026-01-03T00:00:00.000Z"))
     world.states["decks"]["detail"] = json.dumps(_listed_long_ago(world))
-    before = _fetches(world, "bad1")
+    before = _requests_for(world, "bad1")
     asyncio.run(source_sync.run_sync())
-    assert _fetches(world, "bad1") == before + 1
+    assert _requests_for(world, "bad1") == before + 1
     # The full listing did not complete, so the next full turn grants no new retry.
     asyncio.run(source_sync.run_sync())
-    assert _fetches(world, "bad1") == before + 1
+    assert _requests_for(world, "bad1") == before + 1
 
 
 @pytest.mark.parametrize(
@@ -1317,7 +1319,7 @@ def test_more_refused_files_than_the_bound_do_not_hold_the_stamp(
         asyncio.run(source_sync.run_sync())
     assert world.states["decks"]["state_value"] == "2026-01-05T00:00:00.000Z"
     # Each file was fetched once: a given-up file costs nothing on later passes.
-    assert all(_fetches(world, f"bad{i}") == 1 for i in range(1, 6))
+    assert all(_requests_for(world, f"bad{i}") == 1 for i in range(1, 6))
     assert _detail(world)["unconverted_reasons"] == {"http_403": 5}
 
 
@@ -1361,7 +1363,7 @@ def test_repeated_full_runs_get_past_more_refused_files_than_the_bound(
         asyncio.run(source_sync.run_sync(full=True))
     assert world.states["decks"]["state_value"] == "2026-01-05T00:00:00.000Z"
     assert "requested_at" not in _detail(world)
-    assert all(_fetches(world, f"bad{i}") == 1 for i in range(1, 6))
+    assert all(_requests_for(world, f"bad{i}") == 1 for i in range(1, 6))
 
 
 @pytest.mark.parametrize("refusal", ["http_403", "extraction_failed", "write_refused"])
@@ -1385,7 +1387,7 @@ def test_a_file_refused_at_once_is_tried_again_when_it_changes_and_on_a_full_lis
     tried = _requests_for(world, "f1")
     assert tried >= 1
     asyncio.run(source_sync.run_sync())
-    # Given up on its revision: the next incremental turn does not fetch it.
+    # Given up on its revision (its entry exhausted), so the next turn does not fetch it.
     assert _waits(world)["f1"][1] == 3
     assert _requests_for(world, "f1") == tried
     # A periodic full listing tries it exactly once more...
@@ -1399,16 +1401,12 @@ def test_a_file_refused_at_once_is_tried_again_when_it_changes_and_on_a_full_lis
         {**detail, "full_listed_at": detail["retry_granted_for"]}
     )
     asyncio.run(source_sync.run_sync())
+    assert "modifiedTime >" not in _listings(world)[-1]
     assert _requests_for(world, "f1") == tried * 2
     # ...and a new revision is tried again.
     world.files[0] = {**world.files[0], "modifiedTime": "2026-02-01T00:00:00.000Z"}
     asyncio.run(source_sync.run_sync())
     assert _requests_for(world, "f1") == tried * 3
-
-
-def _requests_for(world: _World, file_id: str) -> int:
-    """Requests about one file: its export, deck read, download or lookup."""
-    return sum(1 for r in world.requests if f"/{file_id}" in r.url.path)
 
 
 def test_a_turn_cut_by_the_bound_marks_the_pass_cut(
@@ -1445,3 +1443,34 @@ def test_a_delete_request_cut_by_the_bound_marks_the_pass_cut(
     monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
     result = asyncio.run(source_sync.run_sync())
     assert (result.retired, result.cut) == (1, True)
+
+
+def test_a_delete_request_past_the_bound_waits_and_marks_the_pass_cut(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The bound is spent before the second removed source is reached.
+    world.sources = [
+        _source(n, active=False, pending_delete=True, credential_enc="") for n in ("aaa", "bbb")
+    ]
+    for n in ("aaa", "bbb"):
+        world.docs[_uri(n)] = {
+            "actor": SYNC_WORKER_ACTOR,
+            "tags": [f"source:{n}"],
+            "metadata": {"ingested_from": n, "source_revision": "r"},
+        }
+    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
+    result = asyncio.run(source_sync.run_sync())
+    assert (result.retired, result.cut) == (1, True)
+    assert list(world.docs) == [_uri("bbb")]
+
+
+def test_a_full_run_turns_a_waiting_plain_request_into_a_full_one(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    asked = "2026-11-01T00:00:00+00:00"
+    world.states["decks"]["detail"] = json.dumps({**_detail(world), "requested_at": asked})
+    asyncio.run(source_sync.source_ops.request_full_sync(world.sources[0]))
+    detail = _detail(world)
+    assert detail["full"] is True and detail["requested_at"] != asked
+    # The stamp is kept.
+    assert world.states["decks"]["state_value"] == "2026-01-01T00:00:00.000Z"
