@@ -212,58 +212,67 @@ def test_a_citation_counts_only_when_it_names_chunks_that_were_read() -> None:
     # a window spanning two documents is cited as a list: every part must be read
     assert cs.cites_what_was_read("doc://a#2,doc://b#0", read)
     assert not cs.cites_what_was_read("doc://a#2,doc://b#1", read)
-
-
-def test_grounding_removes_the_tags_of_unread_chunks_from_the_answer() -> None:
-    read = {("doc://a", 0), ("doc://a", 1)}
-    answer, kept, removed = cs.ground_citations(
-        "Refunds take 14 days [doc://a#1] [doc://a#9], or 30 [doc://z#0].", read
-    )
-    assert answer == "Refunds take 14 days [doc://a#1], or 30."
-    assert kept == ["doc://a#1"] and removed == ["doc://a#9", "doc://z#0"]
-    assert cs.ground_citations("No tags at all.", read) == ("No tags at all.", [], [])
-    # an answer of only unread citations is empty
-    assert cs.ground_citations("[doc://z#0]", read) == ("", [], ["doc://z#0"])
-    # a bracket with anything but citations in it is prose, left as written
-    for prose in ("fixed in [PR #42]", "see [#1]", "[items #2, #3]", "[see doc://a#9]"):
-        assert cs.ground_citations(prose, read) == (prose, [], [])
-    # a list separated by ';' is a citation, checked part by part
-    assert cs.ground_citations("x [doc://a#0; doc://a#1]", read) == (
-        "x [doc://a#0; doc://a#1]",
-        ["doc://a#0; doc://a#1"],
-        [],
-    )
-    # a range is kept; a removed citation takes the tab before it
-    assert cs.ground_citations("a [doc://a#0-1]\t[doc://z#3].", read) == (
-        "a [doc://a#0-1].",
-        ["doc://a#0-1"],
-        ["doc://z#3"],
-    )
-    # a non-ASCII blank is a blank: the bracket is prose
-    assert cs.ground_citations("[see\u00a0doc#1]", read) == ("[see\u00a0doc#1]", [], [])
-    # a long run of blanks before a removed citation is removed in one scan
-    many = " " * 40000 + "[doc://z#0]"
-    assert cs.ground_citations("x" + many, read) == ("x", [], ["doc://z#0"])
-    # a removal that closes an outer bracket into a citation checks that one too
-    assert cs.ground_citations("see [doc://q#7[doc://z#0]] now", read) == (
-        "see now",
-        [],
-        ["doc://z#0", "doc://q#7"],
-    )
-    # past the pass cap, a citation formed by the last removal is left as written
-    deep = "[q#9" * 9 + "]" * 9
-    grounded, kept, removed = cs.ground_citations(deep, read)
-    assert grounded == "[q#9]" and kept == [] and removed == ["q#9"]
-    # of nested brackets the innermost is read
-    assert cs.ground_citations("[[doc://a#1]]", read) == ("[[doc://a#1]]", ["doc://a#1"], [])
-    # an index past nine digits is prose, not a number to parse
-    long_index = "[doc#" + "9" * 5000 + "]"
-    assert cs.ground_citations(long_index, read) == (long_index, [], [])
-    # a non-ASCII digit is no index: the bracket is prose
-    assert cs.ground_citations("[doc://a#²,doc://a#1]", read) == ("[doc://a#²,doc://a#1]", [], [])
-    # a source holding '#' splits at its last one; a padded tag is named without padding
+    # a source holding '#' splits at its last one
     assert cs.cites_what_was_read("doc://a#frag#0", {("doc://a#frag", 0)})
-    assert cs.ground_citations("x [ doc://a#1]", read) == ("x [ doc://a#1]", ["doc://a#1"], [])
+    # a tag with no item names nothing read
+    assert not cs.cites_what_was_read("", read)
+    assert not cs.cites_what_was_read("bad tag", read)
+
+
+_LONG_INDEX = "[doc#" + "9" * 5000 + "]"
+
+# (answer as written, the answer grounded, kept, removed), over chunks 0 and 1 of doc://a
+_GROUNDING_CASES = {
+    "unread-removed": (
+        "Refunds take 14 days [doc://a#1] [doc://a#9], or 30 [doc://z#0].",
+        ("Refunds take 14 days [doc://a#1], or 30.", ["doc://a#1"], ["doc://a#9", "doc://z#0"]),
+    ),
+    "no-tags": ("No tags at all.", ("No tags at all.", [], [])),
+    "only-unread-is-empty": ("[doc://z#0]", ("", [], ["doc://z#0"])),
+    # a bracket with anything but citations in it is prose, left as written
+    "prose-pr": ("fixed in [PR #42]", ("fixed in [PR #42]", [], [])),
+    "prose-bare-index": ("see [#1]", ("see [#1]", [], [])),
+    "prose-items": ("[items #2, #3]", ("[items #2, #3]", [], [])),
+    "prose-words": ("[see doc://a#9]", ("[see doc://a#9]", [], [])),
+    # a list separated by ';' is a citation, checked part by part
+    "semicolon-list": (
+        "x [doc://a#0; doc://a#1]",
+        ("x [doc://a#0; doc://a#1]", ["doc://a#0; doc://a#1"], []),
+    ),
+    # a range is kept; a removed citation takes the tab before it
+    "range-and-tab": (
+        "a [doc://a#0-1]\t[doc://z#3].",
+        ("a [doc://a#0-1].", ["doc://a#0-1"], ["doc://z#3"]),
+    ),
+    # a non-ASCII blank is a blank: the bracket is prose
+    "nbsp-is-prose": ("[see\u00a0doc#1]", ("[see\u00a0doc#1]", [], [])),
+    # a long run of blanks before a removed citation is removed in one scan
+    "long-blank-run": ("x" + " " * 40000 + "[doc://z#0]", ("x", [], ["doc://z#0"])),
+    # a removal that closes an outer bracket into a citation checks that one too
+    "nested-closes-outer": (
+        "see [doc://q#7[doc://z#0]] now",
+        ("see now", [], ["doc://z#0", "doc://q#7"]),
+    ),
+    # past the pass cap, a citation formed by the last removal is left as written
+    "pass-cap": ("[q#9" * 9 + "]" * 9, ("[q#9]", [], ["q#9"])),
+    # of nested brackets the innermost is read
+    "innermost-read": ("[[doc://a#1]]", ("[[doc://a#1]]", ["doc://a#1"], [])),
+    # an index past nine digits is prose, not a number to parse
+    "long-index": (_LONG_INDEX, (_LONG_INDEX, [], [])),
+    # a non-ASCII digit is no index: the bracket is prose
+    "non-ascii-digit": ("[doc://a#²,doc://a#1]", ("[doc://a#²,doc://a#1]", [], [])),
+    # a padded tag is named without its padding
+    "padded": ("x [ doc://a#1]", ("x [ doc://a#1]", ["doc://a#1"], [])),
+}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"), list(_GROUNDING_CASES.values()), ids=list(_GROUNDING_CASES)
+)
+def test_grounding_removes_the_tags_of_unread_chunks_from_the_answer(
+    text: str, expected: tuple[str, list[str], list[str]]
+) -> None:
+    assert cs.ground_citations(text, {("doc://a", 0), ("doc://a", 1)}) == expected
 
 
 def _patch_corpus(monkeypatch: pytest.MonkeyPatch, rows: list[Any], answer: list[str]) -> None:

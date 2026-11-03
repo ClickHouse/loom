@@ -141,17 +141,18 @@ _MAX_PASSES = 8
 def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
     """Whether `source#idx` (or `source#a-b`, a <= b, or a `,`/`;` list of them) names
     chunks in `read`, the (source, idx) pairs the passes were shown. A range needs both
-    of its ends read, a list every part."""
-    for m in _ITEM_PARTS.finditer(tag):
+    of its ends read, a list every part; a tag with no item names nothing read."""
+    items = list(_ITEM_PARTS.finditer(tag))
+    for m in items:
         source, a, b = m.group(1), int(m.group(2)), int(m.group(3) or m.group(2))
         if not (a <= b and (source, a) in read and (source, b) in read):
             return False
-    return True
+    return bool(items)
 
 
 def ground_citations(answer: str, read: set[tuple[str, int]]) -> tuple[str, list[str], list[str]]:
-    """(the answer without the citations that name no chunk it read, the citations it
-    keeps, the ones it removed, each in the order found). A model can cite a part it was
+    """(the answer without the citations naming a chunk it did not read, the citations
+    it keeps, the ones it removed, each in the order found). A model can cite a part it was
     never shown; a caller that follows it would read something the answer did not come
     from."""
     kept: list[str] = []
