@@ -318,3 +318,58 @@ def test_the_mcp_mentor_hint_is_keyed_on_the_admitted_org(monkeypatch: pytest.Mo
     args = {"org": "-", "namespace": "ns1", "agent": "a", "memory_key": "k"}
     asyncio.run(mcp_call._call_tool(1, {"name": tool, "arguments": args}, auth=auth))
     assert keyed == [("globex", "ns1")]
+
+
+def _code_plane(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "code_org", "code-org")
+    monkeypatch.setattr(settings, "code_namespace", "code-shared")
+
+
+def test_an_http_code_read_naming_no_tenant_reads_the_code_plane(
+    seen: list[tuple[str, str, str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _code_plane(monkeypatch)
+    from server.transport.http import build_router
+
+    app = FastAPI()
+    app.include_router(build_router())
+    tok = mint_token(
+        subject="probe", org="code-org", namespaces=["*"], roles=["viewer"], ttl_seconds=300
+    )
+    TestClient(app, raise_server_exceptions=False).post(
+        "/v1/code.search",
+        json={"org": "-", "namespace": "-", "query": "q"},
+        headers={"Authorization": f"Bearer {tok}"},
+    )
+    assert [(org, ns) for _, org, ns in seen] == [("code-org", "code-shared")]
+
+
+def test_an_mcp_code_read_naming_no_tenant_reads_the_code_plane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.transport.mcp_call as mcp_call
+
+    _code_plane(monkeypatch)
+    calls: list[tuple[str, str]] = []
+
+    async def _handler(inp: Any) -> Any:
+        calls.append((inp.org, inp.namespace))
+        raise RuntimeError("recorded")
+
+    tool = "loom_code_search"
+    monkeypatch.setitem(
+        mcp_call.TOOLS_BY_NAME,
+        tool,
+        dataclasses.replace(mcp_call.TOOLS_BY_NAME[tool], handler=_handler),
+    )
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
+    RecordingCH(strict=False).install(monkeypatch)
+    auth = verify_token(
+        mint_token(
+            subject="probe", org="code-org", namespaces=["*"], roles=["viewer"], ttl_seconds=300
+        )
+    )
+    args = {"org": "-", "namespace": "-", "query": "q"}
+    asyncio.run(mcp_call._call_tool(1, {"name": tool, "arguments": args}, auth=auth))
+    assert calls == [("code-org", "code-shared")]

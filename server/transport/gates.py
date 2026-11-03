@@ -130,8 +130,8 @@ def with_target(input_obj: Any, target: Target) -> Any:
     # Every memory op requires `org`, so a required org is filled too.
     if target.org and "org" in fields and present(input_obj.org) is None:
         update["org"] = target.org
-    # An admin write on "-" (a code repository's access or source) must name
-    # its repository, never land on the plane's default index.
+    # A namespace the op requires (the code.repo.* writes) is never filled:
+    # "-" must not become the plane's default index.
     ns_field = fields.get("namespace")
     if (
         target.register_namespace
