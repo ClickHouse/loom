@@ -119,8 +119,9 @@ class Operation:
     # hold (`search.query` is the `loom_search` tool).
     mcp_tool: str = ""
     # What an `audit=True` row records, from the input and the response; None records
-    # the whole input. An op whose input carries text an erasure must reach records a
-    # hash instead, since `loom.audit_log` outlives erasures.
+    # the whole input. `loom.audit_log` outlives erasures, so an op whose input carries
+    # a credential leaves it out, and one whose input carries text an erasure must reach
+    # records a hash instead.
     audit_subject: Callable[[Any, Any], dict[str, Any]] | None = None
 
     @property
