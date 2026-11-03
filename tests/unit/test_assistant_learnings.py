@@ -1342,7 +1342,10 @@ async def test_other_bots_rules_ranked_first_leave_the_knowledge_section_full(
         )
     ]
 
+    reranks: list[str] = []
+
     async def search(input: Any) -> KnowledgeSearchOutput:
+        reranks.append(input.rerank)
         return KnowledgeSearchOutput(results=ranked[: input.top_k], embedding_model="fake")
 
     monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
@@ -1361,6 +1364,8 @@ async def test_other_bots_rules_ranked_first_leave_the_knowledge_section_full(
 
     assert "Refunds take five days." in st.sections["knowledge"]
     assert "rule 0" not in st.sections["knowledge"]
+    # a pack makes no rerank call, on its first read or a widened one
+    assert reranks and set(reranks) == {"none"}
 
 
 # Three sales-bot rules outrank support-bot's own rule and a plain document.
@@ -1502,7 +1507,9 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
 
     async def knowledge(input: Any, **_kw: Any) -> Any:
         asked.append(input.top_k)
-        return _knowledge_hits(ranked, input.top_k)
+        # each pass names its own reranker, so the section shows which pass it serves
+        reranker = f"builtin:pass{len(asked)}"
+        return _knowledge_hits(ranked, input.top_k).model_copy(update={"reranked_by": reranker})
 
     async def leg_down(*_a: Any, **_kw: Any) -> Any:
         raise RuntimeError("not under test")
@@ -1536,6 +1543,8 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
     uris = [h["source_uri"] for h in payload["knowledge"]["results"]]
     assert uris == ["support-rule", "refunds.md"]
     assert asked == asked_for
+    # the served hits are the last pass's, and so is the reranker the section names
+    assert payload["knowledge"]["reranked_by"] == f"builtin:pass{len(asked)}"
 
 
 @pytest.mark.asyncio

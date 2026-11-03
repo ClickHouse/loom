@@ -737,6 +737,8 @@ async def _pack_knowledge(st: _PackState) -> None:
                 query=input.query,
                 top_k=top_k,
                 namespace_scope="all_mine",
+                # A pack runs on every chat turn: its knowledge read makes no rerank call.
+                rerank="none",
             )
         )
         return list(out.results)

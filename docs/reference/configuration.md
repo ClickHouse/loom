@@ -817,6 +817,10 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | --- | --- | --- | --- | --- |
 | `LOOM_KNOWLEDGE_SEARCH_MAX_NAMESPACES` | `int` | `10000` | live | Namespaces an all_mine knowledge.search reads besides the addressed one, at most; the rest come back in `namespaces_skipped`. Each search leg is one statement over all of them (measured 110 ms at 10,000 collections). |
 | `LOOM_KNOWLEDGE_SEARCH_FANOUT_KINDS` | `str` | `'memory,collection,personal'` | live | Namespace kinds an all_mine knowledge.search spans (comma list over loom.namespaces.kind): the memory fan-out's, and the caller's collections. |
+| `LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT` | `str` | `''` | live | Reranker knowledge.search uses when the request names none (same values as the per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON; rerank="none" turns it off for a call). Empty = no default rerank. |
+| `LOOM_KNOWLEDGE_SEARCH_RERANK_TOP` | `int` | `30` | live | How many fused hits a rerank reads (the legs fetch at least this many). |
+| `LOOM_KNOWLEDGE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `800` | live | Characters of each hit a reranker reads: its context (title, description, breadcrumb; at most half), then the chunk text. builtin:cohere reads at most 1024. |
+| `LOOM_KNOWLEDGE_SEARCH_RERANK_TIMEOUT_S` | `float` | `8.0` | live | Seconds a knowledge.search waits on its reranker before it keeps the fused order. |
 
 ### Chunking
 
@@ -1557,7 +1561,7 @@ Embedding and LLM providers.
 | `LOOM_LLM_RETRY_MAX_WAIT_S` | `float` | `20.0` | live | Longest backoff, in seconds, between two attempts of an LLM call. |
 | `LOOM_LLM_MAX_TOKENS_OVERRIDES` | `str` | `''` | live | JSON {call: tokens} over LLM_MAX_TOKENS (in server/settings/catalog.py): the most tokens one kind of LLM call may write, keyed by its `llm_stage`. A count below 1 is refused; a call this build lacks is logged and ignored. '' = the table as declared. |
 | `LOOM_LLM_POLICY_BY_TRAFFIC_CLASS` | `str` | `'{"bench": {"llm_cache": true}}'` |  | JSON {class: {"llm_cache": bool, "strong": bool, "mid": bool}}: `llm_cache` overrides the class's cache default (a per-request pin wins); `strong`/`mid` false bars the cascade from that tier. Unlisted = every tier eligible. |
-| `LOOM_RERANK_ENDPOINTS_JSON` | `str` | *(unset)* |  | JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are short identifiers, URLs http(s). Loom posts candidate text only to these. A secret: its URLs can carry a credential. |
+| `LOOM_RERANK_ENDPOINTS_JSON` | `str` | *(unset)* |  | JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's `rerank_endpoint`, LOOM_CODE_SEARCH_RERANK_DEFAULT and LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT may name. Names are short identifiers, URLs http(s). Loom posts candidate text only to these. A secret: its URLs can carry a credential. |
 | `LOOM_LLM_RERANK_SKIP_ABOVE` | `float` | `0.62` |  | Skip the rerank when the vector top hit's cosine is ≥ this (strong matches rank reliably; the rerank costs ~500 ms). Fallback when the adaptive gate has no probe. |
 | `LOOM_EMBEDDING_WORKER_ENABLED` | `bool` | `True` |  | Recovery worker: retries failed embeds and reconciles orphan scope='shared' rows (the write path embeds inline). |
 | `LOOM_EMBEDDING_WORKER_INTERVAL_SECONDS` | `int` | `5` |  | Seconds between recovery worker passes while there is work. |

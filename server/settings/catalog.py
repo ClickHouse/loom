@@ -1983,6 +1983,19 @@ class KnowledgeSettings(BaseModel):
     # Namespace kinds an all_mine knowledge.search spans (comma list over
     # loom.namespaces.kind): the memory fan-out's, and the caller's collections.
     knowledge_search_fanout_kinds: Annotated[str, LIVE] = "memory,collection,personal"
+    # Reranker knowledge.search uses when the request names none (same values as the
+    # per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON;
+    # rerank="none" turns it off for a call). Empty = no default rerank.
+    knowledge_search_rerank_default: Annotated[str, LIVE] = ""
+    # How many fused hits a rerank reads (the legs fetch at least this many).
+    knowledge_search_rerank_top: Annotated[int, LIVE] = Field(default=30, ge=2, le=100)
+    # Characters of each hit a reranker reads: its context (title, description,
+    # breadcrumb; at most half), then the chunk text. builtin:cohere reads at most 1024.
+    knowledge_search_rerank_excerpt_chars: Annotated[int, LIVE] = Field(
+        default=800, ge=100, le=4000
+    )
+    # Seconds a knowledge.search waits on its reranker before it keeps the fused order.
+    knowledge_search_rerank_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
 
     # ---- chunking ----
     # Sliding-window chunking on knowledge.add/upsert, in characters.
@@ -4451,7 +4464,8 @@ class ProviderSettings(ModelSettings):
     # every tier eligible.
     llm_policy_by_traffic_class: Annotated[str, JsonObject] = '{"bench": {"llm_cache": true}}'
     # JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's
-    # `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are
+    # `rerank_endpoint`, LOOM_CODE_SEARCH_RERANK_DEFAULT and
+    # LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT may name. Names are
     # short identifiers, URLs http(s). Loom posts candidate text only to these. A
     # secret: its URLs can carry a credential.
     rerank_endpoints_json: Annotated[str, JsonObject] = "{}"

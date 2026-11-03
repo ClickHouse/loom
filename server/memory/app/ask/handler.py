@@ -414,6 +414,8 @@ async def _maybe_route_to_synthesize(input: MemoryAskInput) -> MemoryAskOutput |
                     collapse_sections=False,
                     # The ask's hard tag filter reaches every leg.
                     tags=_hard_tags(input),
+                    # It only counts documents for the route: no rerank call.
+                    rerank="none",
                 )
             )
             return list(found.results)

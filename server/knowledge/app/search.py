@@ -70,6 +70,8 @@ class ChunkHit:
     agent: str = "-"
     session_id: str = "-"
     source_class: str = ""
+    # The chunk's stored context (title, description, breadcrumb), for a reranker.
+    context: str = ""
 
     @property
     def section(self) -> str:
@@ -149,6 +151,7 @@ async def hybrid_search(
             source_uri,
             chunk_idx,
             content,
+            context,
             tags,
             chunk_metadata,
             ingested_at,
@@ -169,6 +172,7 @@ async def hybrid_search(
             source_uri=r["source_uri"],
             chunk_idx=int(r["chunk_idx"]),
             content=r["content"],
+            context=r["context"],
             tags=list(r["tags"] or []),
             distance=float(r["distance"]),
             section_path=_section_path_of(r.get("chunk_metadata")),
@@ -278,6 +282,7 @@ async def lexical_search(
             source_uri,
             chunk_idx,
             content,
+            context,
             tags,
             chunk_metadata,
             ingested_at,
@@ -299,6 +304,7 @@ async def lexical_search(
             source_uri=r["source_uri"],
             chunk_idx=int(r["chunk_idx"]),
             content=r["content"],
+            context=r["context"],
             tags=list(r["tags"] or []),
             distance=float(r["distance"]),
             section_path=_section_path_of(r.get("chunk_metadata")),

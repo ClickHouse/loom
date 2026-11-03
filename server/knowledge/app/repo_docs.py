@@ -51,6 +51,9 @@ async def search_repo_docs(
                     query=query,
                     top_k=max(1, min(int(top_k), 20)),
                     namespace_scope="this",
+                    # An additive leg under a short timeout: a reranker's model call
+                    # would outlast it.
+                    rerank="none",
                 )
             ),
             timeout=timeout_s,
@@ -67,7 +70,7 @@ async def search_repo_docs(
 
 def merge_hits(base: list[_SearchHit], extra: list[_SearchHit], top_k: int) -> list[_SearchHit]:
     """One knowledge list: both legs' hits, one per (namespace, document,
-    chunk), in the handler's own order (score, then similarity)."""
+    chunk), by fused score, then similarity."""
     seen: set[tuple[str, str, int]] = set()
     out: list[_SearchHit] = []
     for h in sorted(
@@ -102,9 +105,16 @@ async def knowledge_with_repo_docs(
     )
     if not extra:
         return base
-    return base.model_copy(
-        update={"results": merge_hits(list(base.results), extra, int(know_input.top_k))}
-    )
+    top_k = int(know_input.top_k)
+    picked = merge_hits(list(base.results), extra, top_k)
+    if base.reranked_by:
+        # The fused scores still decide which repository hits earn a place; a reranked
+        # answer keeps its own order, and those hits follow it.
+        listed = {(h.namespace, h.source_uri, h.chunk_idx) for h in base.results}
+        repo = [h for h in picked if (h.namespace, h.source_uri, h.chunk_idx) not in listed]
+        results = [*base.results[: top_k - len(repo)], *repo]
+        return base.model_copy(update={"results": results})
+    return base.model_copy(update={"results": picked})
 
 
 class RepoDoc(TypedDict):
