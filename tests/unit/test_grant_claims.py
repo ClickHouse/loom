@@ -19,6 +19,16 @@ from server.identity.store import grants as grants_repo
 from tests.unit.claims_fake import MemoryClaims
 
 
+@pytest.fixture(autouse=True)
+def _no_directory_ties(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A revoke reads the spellings the directory ties to its subject: none here."""
+
+    async def _alone(org: str, subject: str, ch: Any) -> list[str]:
+        return [subject]
+
+    monkeypatch.setattr("server.auth.aliases.read_aliases", _alone)
+
+
 class _Lease:
     def __init__(self, released: list[str], name: str) -> None:
         self.released = released

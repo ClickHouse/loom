@@ -14,6 +14,17 @@ import server.identity.app.token_grants as tg
 from server.identity.domain.grants import GrantState
 from server.identity.store import grants as grants_repo
 
+
+@pytest.fixture(autouse=True)
+def _no_directory_ties(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A revoke reads the spellings the directory ties to its subject: none here."""
+
+    async def _alone(org: str, subject: str, ch: Any) -> list[str]:
+        return [subject]
+
+    monkeypatch.setattr("server.auth.aliases.read_aliases", _alone)
+
+
 ORG = "clickhouse"
 
 

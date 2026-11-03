@@ -21,6 +21,16 @@ from server.identity.domain.grants import GrantState
 from server.identity.store import grants as grants_repo
 
 
+@pytest.fixture(autouse=True)
+def _no_directory_ties(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A revoke reads the spellings the directory ties to its subject: none here."""
+
+    async def _alone(org: str, subject: str, ch: Any) -> list[str]:
+        return [subject]
+
+    monkeypatch.setattr("server.auth.aliases.read_aliases", _alone)
+
+
 def _wire(
     monkeypatch: pytest.MonkeyPatch, existing: dict[str, Any] | None
 ) -> tuple[list[dict[str, Any]], list[tuple[str, str, str]]]:
@@ -314,6 +324,47 @@ async def test_revoke_by_handle_falls_back_to_its_verified_email_only(
     )
     assert out.revoked is revoked
     assert [r["subject"] for r in inserted] == ([email] if revoked else [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revoked_as", ["dave@x.io", "dave"])
+async def test_one_revoke_takes_the_persons_row_under_each_verified_spelling(
+    monkeypatch: pytest.MonkeyPatch, revoked_as: str
+) -> None:
+    # Granted under the address before it was verified, and under the handle after:
+    # the gate admits by both rows, so one revoke takes both.
+    from server.identity.api.models_grants import GrantsRevokeInput
+    from server.identity.app import token_grants
+
+    inserted: list[dict[str, Any]] = []
+
+    async def _canonical(org: str, subject: str, **_: Any) -> str:
+        return "dave"
+
+    async def _read_aliases(org: str, subject: str, ch: Any) -> list[str]:
+        return [subject, "dave" if "@" in subject else "dave@x.io"]
+
+    async def _find_any(org: str, ns: str, sub: str, **_: Any) -> GrantState | None:
+        if sub in {"dave", "dave@x.io"} and sub not in {r["subject"] for r in inserted}:
+            return GrantState.from_row(_row("writer"))
+        return None
+
+    async def _insert(row: dict[str, Any], **_: Any) -> None:
+        inserted.append(row)
+
+    async def _cascade(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.auth.aliases.canonical_subject", _canonical)
+    monkeypatch.setattr("server.auth.aliases.read_aliases", _read_aliases)
+    monkeypatch.setattr(grants_repo, "find_any_grant", _find_any)
+    monkeypatch.setattr(grants_repo, "insert_row", _insert)
+    monkeypatch.setattr(token_grants, "cascade_revoke_to_created_tokens", _cascade)
+    out = await grants_mod.handle_grants_revoke(
+        GrantsRevokeInput(org="o", namespace="ns", subject=revoked_as)
+    )
+    assert out.revoked is True
+    assert sorted(r["subject"] for r in inserted) == ["dave", "dave@x.io"]
 
 
 @pytest.mark.asyncio

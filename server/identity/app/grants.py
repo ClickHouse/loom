@@ -332,31 +332,36 @@ async def handle_grants_pending_for_me(
     )
 
 
-async def _live_grant_row(org: str, namespace: str, subject: str) -> tuple[str, GrantState | None]:
-    """(the subject the grant row is stored under, that row): the login handle a human
-    spelling canonicalises to, else the first other spelling holding a row. An
-    address falls back to every spelling a revocation reaches (`aliases.spellings`),
-    so a grant for it stored under an unverified account's handle is found. A
-    handle falls back to its verified email only (`read_aliases`): an unverified
-    one may name someone else's grant."""
+async def _live_grant_rows(org: str, namespace: str, subject: str) -> list[tuple[str, GrantState]]:
+    """The (stored subject, row) pairs a revoke of `subject` takes: the live row
+    under every spelling the gate admits the person by (the subject, its login
+    handle, its verified email), since one left live would keep admitting them.
+    When there is none and the subject is an address, the first row under a
+    spelling a revocation reaches (`aliases.spellings`): a grant for it stored
+    under an unverified account's handle. A handle never falls back to its
+    unverified email, which may name someone else's grant."""
     from server.auth.aliases import canonical_subject, read_aliases, spellings
     from server.core.ch import own_write_reads
+    from server.core.principals import has_aliases
 
     canonical = await canonical_subject(org, subject)
-    row = await grants_repo.find_any_grant(org, namespace, canonical)
-    if row is not None:
-        return canonical, row
-    if "@" in subject:
-        others = await spellings(org, subject)
-    else:
+    verified = [canonical, subject]
+    if has_aliases(subject):
         with own_write_reads():  # a link another process just made
-            others = await read_aliases(org, subject, None)
-    for spelling in others:
-        if spelling != canonical:
+            verified += await read_aliases(org, subject, None)
+    found: list[tuple[str, GrantState]] = []
+    for spelling in dict.fromkeys(verified):
+        row = await grants_repo.find_any_grant(org, namespace, spelling)
+        if row is not None:
+            found.append((spelling, row))
+    if found or "@" not in subject:
+        return found
+    for spelling in await spellings(org, subject):
+        if spelling not in verified:
             row = await grants_repo.find_any_grant(org, namespace, spelling)
             if row is not None:
-                return spelling, row
-    return canonical, None
+                return [(spelling, row)]
+    return []
 
 
 async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
@@ -373,12 +378,28 @@ async def revoke_grant(
 ) -> GrantsRevokeOutput:
     """`grants.revoke`; `may_take` raises for a row this caller must not
     revoke, checked before any change and again on the row read under the
-    grant's claim."""
-    subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
-    if row is None:
-        return GrantsRevokeOutput(revoked=False)
+    grant's claim. Every live row of the person's (`_live_grant_rows`) goes."""
+    rows = await _live_grant_rows(input.org, input.namespace, input.subject)
     if may_take is not None:
-        may_take(row)
+        for _, row in rows:
+            may_take(row)
+    revoked_at = None
+    for subject, row in rows:
+        now = await _revoke_row(input, subject, row, may_take)
+        revoked_at = now or revoked_at
+    if revoked_at is None:
+        return GrantsRevokeOutput(revoked=False)
+    return GrantsRevokeOutput(revoked=True, revoked_at=revoked_at)
+
+
+async def _revoke_row(
+    input: GrantsRevokeInput,
+    subject: str,
+    row: GrantState,
+    may_take: Callable[[GrantState], None] | None,
+) -> datetime | None:
+    """Revoke the row stored under `subject`, under its claim, and the grants of the
+    tokens it minted there; when it was revoked, or None when nothing was."""
 
     async def _write(row: GrantState | None) -> tuple[GrantState, datetime] | None:
         if row is None:
@@ -388,16 +409,17 @@ async def revoke_grant(
         return row, await _write_revoke(input, subject, row)
 
     done = None
+    latest: GrantState | None = row
     if not _active_admin(row):
         # A reader's grant, or a request: only its own claim, unless it became admin.
         async with grant_change(input.org, input.namespace, subject):
-            row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
-            if row is None or not _active_admin(row):
-                done = await _write(row)
-    if done is None and row is not None and _active_admin(row):
+            latest = await grants_repo.find_any_grant(input.org, input.namespace, subject)
+            if latest is None or not _active_admin(latest):
+                done = await _write(latest)
+    if done is None and latest is not None and _active_admin(latest):
         done = await _taking_admin(input, subject, _write)
     if done is None:
-        return GrantsRevokeOutput(revoked=False)
+        return None
     row, now = done
     # The tokens this person minted lose their own grants here. Best-effort: the
     # person's revoke has landed; a failed cascade is logged, never a 500.
@@ -413,7 +435,7 @@ async def revoke_grant(
             subject,
             e,
         )
-    return GrantsRevokeOutput(revoked=True, revoked_at=now)
+    return now
 
 
 async def _taking_admin[T](
