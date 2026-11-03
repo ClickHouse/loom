@@ -423,7 +423,7 @@ async def test_a_child_can_start_no_process(
 # Calls the child's filter refuses beyond the socket families, by architecture:
 # io_uring_setup (an io_uring can open a socket), ptrace (PEEKTEXT on pid 0 is
 # ESRCH unfiltered), process_vm_readv/writev and pidfd_getfd (EINVAL, EFAULT or
-# EBADF unfiltered).
+# EBADF unfiltered), and on x86_64 an x32-numbered call (ENOSYS unfiltered).
 _PROBES = {
     "x86_64": {
         "io_uring": 425,
@@ -431,6 +431,7 @@ _PROBES = {
         "vm_readv": 310,
         "vm_writev": 311,
         "pidfd_getfd": 438,
+        "x32": 0x40000000 | 39,  # the x32 ABI's getpid, numbered past the filter's checks
     },
     "aarch64": {
         "io_uring": 425,
@@ -458,9 +459,7 @@ async def test_a_child_can_open_no_socket(tmp_path: Path, monkeypatch: pytest.Mo
         except PermissionError:
             refused.append("pair")
         libc = ctypes.CDLL(None, use_errno=True)
-        probes = dict(PROBES[platform.machine()])
-        if platform.machine() == "x86_64":
-            probes["x32"] = 0x40000000 | 39  # the x32 ABI's getpid, numbered past the filter's checks
+        probes = PROBES[platform.machine()]
         for name, nr in probes.items():
             if libc.syscall(nr, 1, None) == -1 and ctypes.get_errno() == errno.EPERM:
                 refused.append(name)
@@ -475,8 +474,6 @@ async def test_a_child_can_open_no_socket(tmp_path: Path, monkeypatch: pytest.Mo
     # kernel) would pass the probe without the filter, so it is not counted.
     libc = ctypes.CDLL(None, use_errno=True)
     probes = _PROBES[platform.machine()]
-    if platform.machine() == "x86_64":
-        probes = {**probes, "x32": 0x40000000 | 39}
     host = {
         n
         for n, nr in probes.items()
@@ -485,7 +482,6 @@ async def test_a_child_can_open_no_socket(tmp_path: Path, monkeypatch: pytest.Mo
     refused = r.json()["error"]["message"].split()
     assert refused[:4] == ["AF_INET", "AF_INET6", "AF_UNIX", "pair"]
     assert set(probes) - host <= set(refused), refused
-    assert ("x32" in refused) == (platform.machine() == "x86_64") or "x32" in host
 
 
 def test_a_machine_with_no_socket_filter_refuses_to_extract(
