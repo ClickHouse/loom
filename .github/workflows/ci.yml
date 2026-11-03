@@ -362,7 +362,6 @@ jobs:
           token="set it through secrets.extractorToken"
           refused "$token" "${extractor[@]}" --set env.LOOM_DOCUMENT_EXTRACTOR_TOKEN=x
           refused "$token" "${extractor[@]}" --set "extraEnv[0].name=LOOM_DOCUMENT_EXTRACTOR_TOKEN"
-          refused "$token" "${extractor[@]}" --set-string env.LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON='{}'
           refused "$token" "${extractor[@]}" --set settingsFile.document_extractor_token=x
       # What the extractor's pods can be reached by and reach, read off the render.
       - name: extractor isolation

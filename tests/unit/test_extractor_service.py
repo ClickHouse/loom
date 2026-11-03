@@ -82,6 +82,18 @@ def test_the_service_refuses_root_and_the_capabilities_that_lift_its_process_lim
         entry.refuse_root()
 
 
+def test_the_service_refuses_a_machine_its_socket_filter_does_not_cover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loom_extractor import __main__ as entry
+
+    monkeypatch.setattr(entry.platform, "machine", lambda: "riscv64")
+    with pytest.raises(SystemExit, match="no socket filter for riscv64"):
+        entry.refuse_unfiltered_machine()
+    monkeypatch.setattr(entry.platform, "machine", lambda: "aarch64")
+    entry.refuse_unfiltered_machine()
+
+
 def test_the_permitted_set_is_read_from_the_status_and_its_absence_refused() -> None:
     from loom_extractor import __main__ as entry
 

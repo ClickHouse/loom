@@ -73,8 +73,9 @@ originals held in memory too. The slots are one by default: a child is readable 
 start until it makes itself non-dumpable, so a child a hostile source has taken over could open a concurrent child's
 source in that moment. Scale with service replicas, not slots. The kernel does not hold root, or a process with
 `CAP_SYS_RESOURCE` or `CAP_SYS_ADMIN`, to the process limit, so the service refuses to start as root or with either
-capability permitted. A child is not denied the network or reads of the file system in its process: the container it
-runs in is what denies those. The settings are in [`extractor/README.md`](../../extractor/README.md).
+capability permitted. A child is not denied reads of the file system in its process: the container it runs in is what
+denies those. The service refuses to start on an architecture its socket filter does not cover. The settings are in
+[`extractor/README.md`](../../extractor/README.md).
 
 ## The artifact
 
