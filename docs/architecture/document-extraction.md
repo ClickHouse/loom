@@ -216,25 +216,25 @@ their span (a field such as `key_path` survives only when every block agrees) an
 
 `knowledge.ingest` runs a job (`server/knowledge/app/ingest_run.py`, worker `knowledge_ingest`) over an original that
 `POST /v1/knowledge.upload` stored. The upload names the format from the file name and media type and never reads the
-bytes; the job reads the original and sends it to the extractor through the client above, checks the artifact, stores
-it as an original of its own (content-addressed), cuts structural chunks with each chunk's context (`chunk_context`: the
+bytes; the job reads the original and sends it to the extractor through the client above, checks the artifact, stores it
+as an original of its own (content-addressed), cuts structural chunks with each chunk's context (`chunk_context`: the
 title, description and section breadcrumb), embeds them, reusing the vector of an input this namespace already embedded
 under the same model, and publishes the next revision of the source: the chunks, then, under the source's claim, the
 revision check, the document row and the earlier version's chunks retired. The claim covers those few statements, not
-the chunk insert, so its time limits hold for a source of any size. A source the extractor refuses fails the job with its code; a format no configured
-extractor takes fails it with `format_unavailable`; an artifact that breaks the contract fails it with
-`invalid_artifact`; an extractor that cannot be reached, times out or answers a status that is neither a result nor a
-refusal puts the job back with a growing delay until `LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS`. Nothing is published before
-every slow step has run, so a failed or cancelled job leaves the earlier revision serving. The job row records the chunk
-version a publish inserts before it writes the document row; when a run stops between the two, its retry, its failure
-or its next run retires those chunks. The document row names the job that wrote it (`ingestion_id`, kept by a
-metadata edit and a delete), so a rerun of a job that published finishes without publishing again or retiring the
-chunks it published. A cancel is a row of its own (`loom.knowledge_ingest_cancels`), never a version of the job's,
-which only the worker holding the job's lease writes; the worker reads it before the publish and when it takes the
-job, and a job whose own publish is found ends published whatever cancel came after. A pass runs one job under `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS`, taking
-one source's jobs one at a time in the order they were asked (only the oldest open job of a source is offered, a stale
-one before any later one), and namespaces in turn (the one served longest ago first), and a run cut
-off at that deadline or by a stopped process counts toward the job's attempts.
+the chunk insert, so its time limits hold for a source of any size. A source the extractor refuses fails the job with
+its code; a format no configured extractor takes fails it with `format_unavailable`; an artifact that breaks the
+contract fails it with `invalid_artifact`; an extractor that cannot be reached, times out or answers a status that is
+neither a result nor a refusal puts the job back with a growing delay until `LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS`.
+Nothing is published before every slow step has run, so a failed or cancelled job leaves the earlier revision serving.
+The job row records the chunk version a publish inserts before it writes the document row; when a run stops between the
+two, its retry, its failure or its next run retires those chunks. The document row names the job that wrote it
+(`ingestion_id`, kept by a metadata edit and a delete), so a rerun of a job that published finishes without publishing
+again or retiring the chunks it published. A cancel is a row of its own (`loom.knowledge_ingest_cancels`), never a
+version of the job's, which only the worker holding the job's lease writes; the worker reads it before the publish and
+when it takes the job, and a job whose own publish is found ends published whatever cancel came after. A pass runs one
+job under `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS`, taking one source's jobs one at a time in the order they were asked
+(only the oldest open job of a source is offered, a stale one before any later one), and namespaces in turn (the one
+served longest ago first), and a run cut off at that deadline or by a stopped process counts toward the job's attempts.
 
 ## Dependencies
 

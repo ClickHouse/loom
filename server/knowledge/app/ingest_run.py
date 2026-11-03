@@ -25,10 +25,10 @@ job's retry, its failure or its next run; the document row names the job that
 wrote it (`ingestion_id`), which is how a run tells its own publish. A job is
 taken under a deployment-wide lease on its id, so two workers never run it at
 once, and re-read under it, so a cancel (`loom.knowledge_ingest_cancels`, a
-row of its own) or a finished run is seen. A transient failure (a store or provider outage)
-or an extractor that cannot take the source now, puts the job back with a growing
-delay until `knowledge_ingest_max_attempts`; anything else, a source the extractor
-refuses among it, fails the job with a typed code.
+row of its own) or a finished run is seen. A transient failure (an extractor,
+store or provider outage) puts the job back with a growing delay until
+`knowledge_ingest_max_attempts`; anything else, a source the extractor refuses
+included, fails the job with a typed code.
 """
 
 from __future__ import annotations

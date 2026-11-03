@@ -482,24 +482,25 @@ request open:
 The `knowledge_ingest` worker then sends the original's bytes to the extractor service
 its format is routed to, which returns the extraction artifact the server checks as
 untrusted input ([document extraction](../architecture/document-extraction.md)); the
-server parses nothing itself. It stores the artifact,
-cuts structural chunks, embeds them (an input this namespace already embedded under the
-same model keeps its stored vector) and publishes the next **revision** of the source:
-chunks first, then the document row, then the earlier version's chunks retired. A
-document row carries its `revision`, `format`, `parser` and `coverage`, which
-`knowledge.get` returns; each chunk's `chunk_metadata` carries its `locator` (line span,
-char span, TOML key path) and block ids, and its `keys` the exact names it defines or
-reads. Text writes (`knowledge.add`, `upsert`) number revisions too. Ingests of one
-source run one at a time, in the order they were asked, so `expected_revision` guards
-an ingest against another; a text write takes no such claim, so one that races a write
-of the same source can reuse its revision number, and the later version wins (an
-ingest a text write overtook fails `revision_conflict`).
+server parses nothing itself. It stores the artifact, cuts structural chunks, embeds
+them (an input this namespace already embedded under the same model keeps its stored
+vector) and publishes the next **revision** of the source: chunks first, then the
+document row, then the earlier version's chunks retired. A document row carries its
+`revision`, `format`, `parser` and `coverage`, which `knowledge.get` returns; each
+chunk's `chunk_metadata` carries its `locator` (line span, char span, TOML key path) and
+block ids, and its `keys` the exact names it defines or reads. Text writes
+(`knowledge.add`, `upsert`) number revisions too. Ingests of one source run one at a
+time, in the order they were asked, so `expected_revision` guards an ingest against
+another; a text write takes no such claim, so one that races a write of the same source
+can reuse its revision number, and the later version wins (an ingest a text write
+overtook fails `revision_conflict`).
 
 `knowledge.ingest_status` follows a job: `pending`, `processing` (with its `stage`:
 `parse`, `embed`, `publish`), then `ready`, `partial`, `failed` or `cancelled`, with the
 coverage, the parser's warnings, the chunks and revision published, and `retrieval`
 (`ready` once the document is searchable). A job's record is kept for 30 days after its
-last change, an upload's for 7 days after it expires. A failed job names why in `error_code`:
+last change, an upload's for 7 days after it expires. A failed job names why in
+`error_code`:
 
 | `error_code`            | Means                                                                                                                                   |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
@@ -525,17 +526,17 @@ A transient failure (an extractor that cannot be reached, times out, or answers 
 `408`, `429` or another status that is neither a result nor a refusal; a provider or a
 store outage) puts the job back with a doubling delay; a source the extractor refuses, or
 an artifact that breaks the contract, fails at once with its code. A pass runs one due
-job, one source's jobs in order and namespaces in turn, and is cancelled after `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS`
-(15 minutes); a job cut off there, or by a process that stopped, runs again from its start
-and counts the attempt. A job that fails, or is cancelled, publishes nothing, so the
-earlier revision keeps serving. `knowledge.ingest_cancel` stops a pending job at once and
-a running one before it publishes; a job past its publish check finishes. The reference
-extractor reads Markdown, HTML, plain text, SQL and TOML; another format fails
-`format_unavailable` until an extractor that declares it is configured.
-`knowledge.update_metadata` with `reindex=true` refuses an ingested document (its chunks
-come from the artifact): ingest it again to re-index it. A chunk's context (the title,
-description and section breadcrumb both search legs read) is filled as for
-`knowledge.add`.
+job, one source's jobs in order and namespaces in turn, and is cancelled after
+`LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS` (15 minutes); a job cut off there, or by a
+process that stopped, runs again from its start and counts the attempt. A job that fails,
+or is cancelled, publishes nothing, so the earlier revision keeps serving.
+`knowledge.ingest_cancel` stops a pending job at once and a running one before it
+publishes; a job past its publish check finishes. The reference extractor reads Markdown,
+HTML, plain text, SQL and TOML; another format fails `format_unavailable` until an
+extractor that declares it is configured. `knowledge.update_metadata` with `reindex=true`
+refuses an ingested document (its chunks come from the artifact): ingest it again to
+re-index it. A chunk's context (the title, description and section breadcrumb both search
+legs read) is filled as for `knowledge.add`.
 
 ## Where originals are stored
 
