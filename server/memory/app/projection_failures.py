@@ -235,13 +235,17 @@ async def list_projection_failures(
     projection: str = "",
     status: str = "active",
     limit: int = 100,
+    scope_where: str = "",
+    scope_params: dict[str, Any] | None = None,
     ch: Any | None = None,
 ) -> list[ProjectionFailureRow]:
-    """List durable projection failures newest-first."""
+    """List durable projection failures newest-first. `scope_where` (a fragment that
+    starts with ` AND `) and `scope_params` narrow it to the caller's namespaces
+    (`resolve_org_scope`)."""
 
     ch = ch or get_client()
-    where = ["org = {org:String}"]
-    params: dict[str, Any] = {"org": org, "lim": int(limit)}
+    where = ["org = {org:String}" + scope_where]
+    params: dict[str, Any] = {**(scope_params or {}), "org": org, "lim": int(limit)}
     if namespace:
         where.append("namespace = {ns:String}")
         params["ns"] = namespace
@@ -282,12 +286,15 @@ async def mark_projection_failures_resolved(
     *,
     org: str | Sequence[str],
     failure_ids: list[str],
+    scope_where: str = "",
+    scope_params: dict[str, Any] | None = None,
     ch: Any | None = None,
 ) -> int:
     """Mark failures resolved with one ALTER UPDATE, narrow by UUID, in `org` (one, or
-    several for a batch of them). Callers batch the ids (`MARK_CHUNK`): every point
-    write that retires rows leaves an intent here, so a mutation per id would be one per
-    write. Resolved rows leave by the table's TTL."""
+    several for a batch of them), within `scope_where` as `list_projection_failures`
+    takes it. Callers batch the ids (`MARK_CHUNK`): every point write that retires rows
+    leaves an intent here, so a mutation per id would be one per write. Resolved rows
+    leave by the table's TTL."""
 
     ids = [fid for fid in failure_ids if fid]
     if not ids:
@@ -300,10 +307,15 @@ async def mark_projection_failures_resolved(
         UPDATE status = 'resolved', resolved_at = {at:DateTime}
         WHERE org IN {orgs:Array(String)}
           AND toString(failure_id) IN {failure_ids:Array(String)}
-          AND status = 'active'
-        """,
+          AND status = 'active'{scope}
+        """.replace("{scope}", scope_where),
         # bound: a replicated table refuses now() in a mutation
-        params={"orgs": orgs, "failure_ids": ids, "at": naive_utc_now_seconds()},
+        params={
+            **(scope_params or {}),
+            "orgs": orgs,
+            "failure_ids": ids,
+            "at": naive_utc_now_seconds(),
+        },
     )
     return len(ids)
 
@@ -514,9 +526,12 @@ async def retry_projection_failures(
     namespace: str | None = None,
     projection: str = "",
     limit: int = 50,
+    scope_where: str = "",
+    scope_params: dict[str, Any] | None = None,
     ch: Any | None = None,
 ) -> list[ProjectionFailureRetryResult]:
-    """Retry active failures in newest-first order."""
+    """Retry active failures in newest-first order, within `scope_where` as
+    `list_projection_failures` takes it."""
 
     ch = ch or get_client()
     rows = await list_projection_failures(
@@ -525,6 +540,8 @@ async def retry_projection_failures(
         projection=projection,
         status="active",
         limit=limit,
+        scope_where=scope_where,
+        scope_params=scope_params,
         ch=ch,
     )
     return await retry_failures(rows, ch=ch)
