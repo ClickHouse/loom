@@ -74,7 +74,8 @@ NON_SETTINGS_ENV = frozenset(
         "LOOM_GRACEFUL_SHUTDOWN_S",
         "LOOM_HOOK_EXIT_MS",
         "LOOM_HOOK_TIMEOUT_MS",
-        # Compose-only, from an install's .env: the image and the published port.
+        # Compose-only, from an install's .env: the images and the published port.
+        "LOOM_EXTRACTOR_IMAGE_REPOSITORY",
         "LOOM_IMAGE_REPOSITORY",
         "LOOM_INSTANCE_LABEL",
         "LOOM_KEEP_ALIVE_S",

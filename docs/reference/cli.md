@@ -79,7 +79,7 @@ on stdout and keeps the human report on stderr.
 ### Run and check a deployment
 
 ```bash
-loom up                          # from a checkout: create .env, boot Loom + ClickHouse, print how to connect
+loom up                          # from a checkout: create .env, boot Loom, its extractor and ClickHouse, print how to connect
 docker exec loom-server loom doctor          # pre-boot checks + the /v1/health problem list, each with its fix
 docker exec loom-server loom doctor --json   # the same, machine-readable
 loom doctor --client             # also examine this machine as a coding-agent client
@@ -254,7 +254,7 @@ python scripts/codegen/docs_reference.py
 | `loom export-okf` | Render a namespace as an OKF v0.2 bundle (Markdown + frontmatter) — the git-reviewable projection of Loom memory. | `--server-url`, `--token`, `--org`, `--namespace`, `--out`, `--title`, `--include-tombstoned`, `--limit`, `--dry-run`, `--no-evidence`, `--no-links`, `--include-high` |
 | `loom import-okf` | Write the concepts of an OKF v0.2 bundle into a namespace via memory.set. | `<path>`, `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--user-id`, `--session-id`, `--keep-sessions`, `--verify`, `--dry-run`, `--no-evidence`, `--no-lint`, `--force-import`, `--no-links`, `--prune` |
 | `loom okf-lint` | Lint an OKF bundle directory offline — the compile gate a mirror repository's CI runs. | `<path>`, `--json`, `--strict` |
-| `loom up` | Boot the local stack (Loom + ClickHouse) and print how to connect: creates .env and the ClickHouse config from their templates, runs docker compose up --build, waits for /v1/health, then prints the… | `--root`, `--file`, `--env-file`, `--no-build`, `--rebuild`, `--port`, `--timeout`, `--subject`, `--org`, `--namespace`, `--open` |
+| `loom up` | Boot the local stack (Loom, its document extractor and ClickHouse) and print how to connect: creates .env and the ClickHouse config from their templates, runs docker compose up --build, waits for… | `--root`, `--file`, `--env-file`, `--no-build`, `--rebuild`, `--port`, `--timeout`, `--subject`, `--org`, `--namespace`, `--open` |
 | `loom down` | Stop the local stack while preserving data; --delete-data performs a confirmed reset. | `--root`, `--file`, `--env-file`, `--delete-data`, `-y` |
 | `loom ch-setup` | Prepare a self-managed ClickHouse or a ClickHouse Cloud service for Loom: create the loom database and the read-only reader user, or print the SQL for an admin. | `--print-sql` |
 | `loom participant` | The Loom processes a provider change waits for. |  |

@@ -133,13 +133,13 @@ knowledge search concentrates on a few documents. See
 
 ## Replacing, editing and deleting
 
-| You want to                            | Use                                                     | What happens                                                                                           |
-| -------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Replace a changed document             | `knowledge.upsert` (same `source_uri`)                  | New chunks are written; the previous version's chunks are marked superseded and kept for history.      |
-| Change the title, tags or blurb        | `knowledge.update_metadata`                             | The document row changes; chunks keep the old context in both legs unless `reindex=true` rewrites it.  |
-| Rename a document                      | `knowledge.delete`, then `knowledge.add` at the new URI | `source_uri` is the identity agents cite, so it is not editable.                                       |
-| Remove a document                      | `knowledge.delete`                                      | Chunks and the document row are superseded; searches stop returning them at once.                      |
-| Erase a person's or a namespace's data | [`erasure.request`](./memory/retention-and-erasure.md)  | The erasure saga deletes documents, chunks and stored originals, and cascades to external systems.     |
+| You want to                            | Use                                                     | What happens                                                                                          |
+| -------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Replace a changed document             | `knowledge.upsert` (same `source_uri`)                  | New chunks are written; the previous version's chunks are marked superseded and kept for history.     |
+| Change the title, tags or blurb        | `knowledge.update_metadata`                             | The document row changes; chunks keep the old context in both legs unless `reindex=true` rewrites it. |
+| Rename a document                      | `knowledge.delete`, then `knowledge.add` at the new URI | `source_uri` is the identity agents cite, so it is not editable.                                      |
+| Remove a document                      | `knowledge.delete`                                      | Chunks and the document row are superseded; searches stop returning them at once.                     |
+| Erase a person's or a namespace's data | [`erasure.request`](./memory/retention-and-erasure.md)  | The erasure saga deletes documents, chunks and stored originals, and cascades to external systems.    |
 
 `knowledge.add` does not retire an earlier version at the same `source_uri`; use
 `knowledge.upsert` to replace one. `knowledge.upsert` also reports duplicates without

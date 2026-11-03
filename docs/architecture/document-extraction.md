@@ -56,15 +56,16 @@ dropped. The server addresses the artifact by the SHA-256 of its own serializati
 refuses to start without a token of at least 16 characters. Each extraction runs in a child process, and before the
 child reads the source:
 
-| The child                                | How                                                                                                                                                                                                                                       |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| has no environment                       | started with only `PYTHONPATH`, `PATH` and `LC_ALL`, so the token is not in it                                                                                                                                                            |
-| cannot read the service or another child | the service and every child are non-dumpable (`PR_SET_DUMPABLE`), so a process of the same user cannot read their environment, memory or open files through `/proc` or ptrace                                                             |
-| has bounded resources                    | address space (`LOOM_EXTRACTOR_MEMORY_MB`), CPU seconds, a file size of 0 (it can create empty files, not write to one), no core dump                                                                                                     |
-| starts no process                        | `RLIMIT_NPROC` 0, so nothing a parser starts outlives the extraction; a child still running at a timeout, a disconnect or a cancel is killed with its process group before its slot is freed                                              |
-| gains no privilege on exec               | `PR_SET_NO_NEW_PRIVS` in the service and in each child, so no setuid binary or file capability raises one                                                                                                                                 |
-| loads only the package                   | runs in `/` with `-P`, so no current or script directory is on `sys.path`; the package and its dependencies are installed read-only to the service's user, as a file of its own on `sys.path` could change what every later child imports |
-| shows no request                         | its command line holds only its limits; the file's name and options come on stdin                                                                                                                                                         |
+| The child                                | How                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| has no environment                       | started with only `PYTHONPATH`, `PATH` and `LC_ALL`, so the token is not in it                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| cannot read the service or another child | the service and every child are non-dumpable (`PR_SET_DUMPABLE`), so a process of the same user cannot read their environment, memory or open files through `/proc` or ptrace                                                                                                                                                                                                                                                                                                                                                                     |
+| has bounded resources                    | address space (`LOOM_EXTRACTOR_MEMORY_MB`), CPU seconds, a file size of 0 (it can create empty files, not write to one), no core dump                                                                                                                                                                                                                                                                                                                                                                                                             |
+| starts no process                        | `RLIMIT_NPROC` 0, so nothing a parser starts outlives the extraction; a child still running at a timeout, a disconnect or a cancel is killed with its process group before its slot is freed                                                                                                                                                                                                                                                                                                                                                      |
+| opens no socket                          | a seccomp filter set after no-new-privileges makes `socket`, `socketpair` and `io_uring_setup` fail with EPERM, and `ptrace`, `process_vm_readv`, `process_vm_writev` and `pidfd_getfd` too (x86_64 and aarch64; the service refuses to start on another architecture), so it reaches no address, the Loom server on its network included. A concurrent sibling stays writable through `/proc/<pid>/mem` until it is non-dumpable, so with `LOOM_EXTRACTOR_CONCURRENCY` above 1 a taken-over child could still patch one before it filters itself |
+| gains no privilege on exec               | `PR_SET_NO_NEW_PRIVS` in the service and in each child, so no setuid binary or file capability raises one                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| loads only the package                   | runs in `/` with `-P`, so no current or script directory is on `sys.path`; the package and its dependencies are installed read-only to the service's user, as a file of its own on `sys.path` could change what every later child imports                                                                                                                                                                                                                                                                                                         |
+| shows no request                         | its command line holds only its limits; the file's name and options come on stdin                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 The service kills a child at the wall-clock timeout, when its caller disconnects or when its output passes the artifact
 bound, and reads a source only once one of its `LOOM_EXTRACTOR_CONCURRENCY` slots is free, so that bound covers the
@@ -72,8 +73,9 @@ originals held in memory too. The slots are one by default: a child is readable 
 start until it makes itself non-dumpable, so a child a hostile source has taken over could open a concurrent child's
 source in that moment. Scale with service replicas, not slots. The kernel does not hold root, or a process with
 `CAP_SYS_RESOURCE` or `CAP_SYS_ADMIN`, to the process limit, so the service refuses to start as root or with either
-capability permitted. A child is not denied the network or reads of the file system in its process: the container it
-runs in is what denies those. The settings are in [`extractor/README.md`](../../extractor/README.md).
+capability permitted. A child is not denied reads of the file system in its process: the container it runs in is what
+denies those. The service refuses to start on an architecture its socket filter does not cover. The settings are in
+[`extractor/README.md`](../../extractor/README.md).
 
 ## The artifact
 
@@ -211,9 +213,15 @@ their span (a field such as `key_path` survives only when every block agrees) an
 
 ## Dependencies
 
-The reference extractor's parsers need `sqlglot` for SQL and the standard library otherwise. They are installed with
-the service (`extractor/pyproject.toml`), and in a development environment by the `extractor` extra; the server's image
-carries none of them.
+The reference extractor's parsers need `sqlglot` for SQL and the standard library otherwise. They are installed with the
+service (`extractor/pyproject.toml`), and in a development environment by the `extractor` extra; the server's image
+carries none of them. Its image (`extractor/Dockerfile`, `ghcr.io/clickhouse/loom-extractor`) installs the package and
+its locked dependencies (`extractor/uv.lock`) into a venv root owns and runs the service as a user that owns nothing in
+it, so no file on a child's `sys.path` is writable to the child. The compose stack and the Helm chart run it apart from
+the server: Compose on an internal network shared with the server alone, the chart behind a NetworkPolicy that admits
+only Loom's pods and allows no egress, with no credential but its token; on either, an extraction makes no socket while
+it runs alone (`LOOM_EXTRACTOR_CONCURRENCY` 1, the default) ([deployment](../operations/deployment.md#container-images),
+[Kubernetes](../operations/kubernetes.md#document-extractor)).
 
 ## Invariants
 

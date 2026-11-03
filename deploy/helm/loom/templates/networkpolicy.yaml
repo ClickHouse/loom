@@ -40,6 +40,14 @@ spec:
               app.kubernetes.io/component: web
       ports:
         - port: http
+    {{- if .Values.extractor.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "loom.extractorSelectorLabels" . | nindent 14 }}
+      ports:
+        - port: 8790
+    {{- end }}
     {{- if .Values.devClickhouse.enabled }}
     - to:
         - podSelector:

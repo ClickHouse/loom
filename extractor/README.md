@@ -35,8 +35,28 @@ sudo sh -c 'export LOOM_EXTRACTOR_TOKEN="$(cat /etc/loom-extractor.token)" LOOM_
 | `LOOM_EXTRACTOR_MAX_BYTES`          | `67108864`  | the largest original accepted                                   |
 | `LOOM_EXTRACTOR_MAX_ARTIFACT_BYTES` | `67108864`  | the largest artifact an extraction may write                    |
 
-Point the server at it with `LOOM_DOCUMENT_EXTRACTOR_URL` and the token file's
-contents in `LOOM_DOCUMENT_EXTRACTOR_TOKEN`.
+The image (`extractor/Dockerfile`, built from the repository root; released as
+`ghcr.io/clickhouse/loom-extractor`) does this for you: the venv is root's, the
+service runs as uid 10001, and Loom's compose stack and Helm chart run it with no
+route out and the token alone
+([deployment](../docs/operations/deployment.md#container-images)):
+
+```bash
+sudo sh -c 'umask 077 && printf "LOOM_EXTRACTOR_TOKEN=%s\n" "$(openssl rand -hex 24)" > /etc/loom-extractor.env'
+sudo docker run --read-only --cap-drop ALL --security-opt no-new-privileges \
+  -p 127.0.0.1:8790:8790 --env-file /etc/loom-extractor.env ghcr.io/clickhouse/loom-extractor:X.Y.Z
+```
+
+with `X.Y.Z` the server's version, as the compose stack and the chart run it,
+and `/etc/loom-extractor.env` root's alone (the `docker` command reads it, hence
+`sudo`), for a server on the same host at `http://127.0.0.1:8790`. Unlike the
+compose stack and the chart, this leaves the service's own process a route out;
+an extraction can make no socket either way (with one at a time, the default:
+see below).
+
+Point the server at it with `LOOM_DOCUMENT_EXTRACTOR_URL` and the token
+(`/etc/loom-extractor.token`, or the value in `/etc/loom-extractor.env`) in
+`LOOM_DOCUMENT_EXTRACTOR_TOKEN`.
 
 Run one extraction at a time per service and scale with replicas. A child is
 readable by other processes of the same user for the moment between its start
@@ -44,5 +64,10 @@ and the point it makes itself non-dumpable; with `LOOM_EXTRACTOR_CONCURRENCY`
 above 1, a child that a hostile source has taken over could open a concurrent
 child's source in that moment. The service refuses to start as root or with
 `CAP_SYS_RESOURCE` or `CAP_SYS_ADMIN` permitted, as the kernel does not hold such
-a process to a child's limit on new processes. It sets no-new-privileges, so no
-setuid binary or file capability gives a child one.
+a process to a child's limit on new processes, and on an architecture other than
+x86_64 and aarch64, which its socket filter does not cover. It sets
+no-new-privileges, so no setuid binary or file capability gives a child one, and
+each child sets a seccomp filter under which it can make no socket, so it reaches
+no address, and cannot use `ptrace` or `process_vm_*` on another process. A
+concurrent sibling is still writable through `/proc/<pid>/mem` until it makes
+itself non-dumpable, which is one more reason to keep one extraction at a time.

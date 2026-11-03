@@ -55,6 +55,9 @@ def test_standalone_compose_uses_release_image_and_embeds_no_secret() -> None:
     assert "127.0.0.1" in env
     assert "LOOM_IDENTITY_PROVIDER=single-user" in env
     assert "__LOOM_JWT_SECRET__" in env
+    assert "LOOM_DOCUMENT_EXTRACTOR_TOKEN=__LOOM_DOCUMENT_EXTRACTOR_TOKEN__" in env
+    image = "${LOOM_EXTRACTOR_IMAGE_REPOSITORY:-ghcr.io/clickhouse/loom-extractor}:${LOOM_VERSION:-latest}"
+    assert image in compose
     # ClickHouse shares the host, so Loom does not size itself to all of it.
     assert 'LOOM_WEB_WORKERS: "${LOOM_WEB_WORKERS:-2}"' in compose
 

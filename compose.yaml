@@ -84,6 +84,9 @@ services:
       # Only an unset password means the bundled one; an empty one stays empty.
       LOOM_CH_PASSWORD: "${LOOM_CH_PASSWORD-loomdev}"
       LOOM_CH_READER_USER: "${LOOM_CH_READER_USER-loom_reader}"
+      # One source for both ends: the extractor's token is interpolated the same way,
+      # so a shell export cannot give the two services different tokens.
+      LOOM_DOCUMENT_EXTRACTOR_TOKEN: "${LOOM_DOCUMENT_EXTRACTOR_TOKEN:-}"
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:standalone"
       # The address the port is published on; see docs/operations/deployment.md.
@@ -94,6 +97,7 @@ services:
       LOOM_WEB_WORKERS: "${LOOM_WEB_WORKERS:-2}"
     volumes:
       - loom-code-repos:/app/var/code_repos
+    networks: [default, extractor]
     healthcheck:
       test:
         [
@@ -108,6 +112,32 @@ services:
       # Readiness, not liveness. A boot can wait up to 900 s on another
       # process's migration lease before it applies or finds nothing pending.
       start_period: 900s
+
+  # The document parsers, apart from the server: it holds no Loom or database
+  # credential, its network is internal (no route out) and shared with the loom
+  # service alone, which reaches it at LOOM_DOCUMENT_EXTRACTOR_URL with the token
+  # .env holds. Each extraction runs under a filter that makes no socket, so one
+  # a hostile file takes over reaches nothing, loom included, while extractions
+  # run one at a time, as here (docs/architecture/document-extraction.md).
+  extractor:
+    image: "${LOOM_EXTRACTOR_IMAGE_REPOSITORY:-ghcr.io/clickhouse/loom-extractor}:${LOOM_VERSION:-latest}"
+    restart: unless-stopped
+    environment:
+      # Unset, the service refuses to start and says so; the installer writes it.
+      LOOM_EXTRACTOR_TOKEN: "${LOOM_DOCUMENT_EXTRACTOR_TOKEN:-}"
+    networks: [extractor]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # One extraction at a time (LOOM_EXTRACTOR_CONCURRENCY), each held to
+    # LOOM_EXTRACTOR_MEMORY_MB (1 GiB) by its own limit; this bounds the whole.
+    mem_limit: 1536m
+    cpus: 1
+    pids_limit: 64
+
+networks:
+  extractor:
+    internal: true
 
 volumes:
   loom-ch-data:
