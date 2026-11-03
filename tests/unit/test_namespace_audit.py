@@ -1395,9 +1395,11 @@ def _memory_row(
 
 
 def _ledger_row(operation: str, *, key: str = "", consumer: str = "") -> str:
+    # A request id of its own: the table drops a repeat of an identical insert.
     return (
-        "INSERT INTO loom.agent_events (org, namespace, agent, operation, memory_key, consumer, ts) "
-        f"VALUES ('o', 'ns', 'bot', '{operation}', '{key}', '{consumer}', now())"
+        "INSERT INTO loom.agent_events (org, namespace, agent, operation, memory_key, consumer, "
+        f"request_id, ts) VALUES ('o', 'ns', 'bot', '{operation}', '{key}', '{consumer}', "
+        f"'{uuid.uuid4()}', now())"
     )
 
 
@@ -1485,17 +1487,28 @@ async def test_version_churn_counts_rewrites_and_drops_status_changes() -> None:
 @pytest.mark.asyncio
 async def test_a_hot_short_procedure_is_not_coordination_state() -> None:
     reads = [
-        _ledger_row("memory.get", key=k) for k in ("runbook/restart", "lease/x") for _ in range(25)
+        _ledger_row("memory.get", key=k) for k in ("runbook/restart", "state/x") for _ in range(25)
     ]
     rows = [
+        # Hot and short: a procedure is read back by key on purpose, a status row is not.
         _memory_row("runbook/restart", minutes_ago=10, memory_type="procedural", value="drain"),
-        _memory_row("lease/x", minutes_ago=10, value="held"),
+        _memory_row("state/x", minutes_ago=10, value="held"),
+        # A lease by its key alone, read or not.
+        _memory_row("lease/y", minutes_ago=10, value="taken"),
         *reads,
     ]
-    audit = na.new_audit(_inp(window_seconds=3600), ch=_LocalCH(["memory", "agent_events"], rows))
+    ch = _LocalCH(["memory", "agent_events"], rows)
+    audit = na.new_audit(_inp(window_seconds=3600), ch=ch)
     await audit.coordination_as_memory()
     f = _finding(audit, "coordination_as_memory")
-    assert [s["memory_key"] for s in f.samples] == ["lease/x"]
+    assert sorted(s["memory_key"] for s in f.samples) == ["lease/y", "state/x"]
+    # With no ledger for the window only the key-segment arm runs.
+    audit = na.new_audit(_inp(window_seconds=3600), ch=ch)
+    audit.telemetry_gap = True
+    await audit.coordination_as_memory()
+    assert [s["memory_key"] for s in _finding(audit, "coordination_as_memory").samples] == [
+        "lease/y"
+    ]
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")

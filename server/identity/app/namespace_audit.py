@@ -705,7 +705,7 @@ class _Audit:
                          dateDiff('second', a.updated_at, now()) AS age_seconds
                   FROM (SELECT agent, user_id, session_id, memory_key, memory_id, updated_at
                         {_LIVE} AND {_SEARCHABLE} AND sensitivity != 'high'
-                          AND length(value) > 0) AS a
+                          AND value_len > 0) AS a
                   -- reached: a vector, or an error of the row's own (a held or unbilled
                   -- model call is the deployment's, and still waiting)
                   LEFT ANTI JOIN (SELECT agent, user_id, session_id, memory_key
@@ -891,25 +891,26 @@ class _Audit:
         )
 
     async def coordination_as_memory(self) -> None:
-        # With no ledger for the window the read-count arm has nothing to count; the
-        # key-segment arm reads only loom.memory and still runs.
-        read_arm = (
-            "0"
-            if self.telemetry_gap
-            else """(length(m.value) < {coord_chars:UInt32}
+        # With no ledger for the window the read-count arm has nothing to count: the
+        # statement reads only loom.memory and runs the key-segment arm alone.
+        if self.telemetry_gap:
+            reads, hot_join, read_arm = "0", "", "0"
+        else:
+            reads = "l.reads"
+            hot_join = f"LEFT JOIN ({_HOT_KEYS}) AS l ON m.memory_key = l.memory_key"
+            read_arm = """(length(m.value) < {coord_chars:UInt32}
                     AND length(splitByWhitespace(m.value)) < {coord_words:UInt32}
                     AND l.reads >= {hot:UInt32}
                     -- a structured row is read back whole by key by design
                     AND m.memory_type NOT IN {structured:Array(String)})"""
-        )
         rows = await self.rows(
             f"""
             SELECT count() OVER () AS total, sum(length(m.value)) OVER () AS total_bytes,
                    m.memory_key AS memory_key, m.memory_id AS memory_id,
-                   length(m.value) AS value_chars, l.reads AS reads
+                   length(m.value) AS value_chars, {reads} AS reads
             FROM (SELECT memory_key, toString(memory_id) AS memory_id, value, memory_type
                   {_LIVE}) AS m
-            LEFT JOIN ({_HOT_KEYS}) AS l ON m.memory_key = l.memory_key
+            {hot_join}
             WHERE {read_arm}
                OR hasAny(splitByChar('/', lower(m.memory_key)), {{coord_segs:Array(String)}})
             ORDER BY reads DESC, memory_key
