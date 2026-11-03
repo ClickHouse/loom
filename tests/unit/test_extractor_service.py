@@ -290,6 +290,7 @@ async def test_a_child_is_non_dumpable_in_root_with_no_request_on_its_command_li
     }
 
 
+@pytest.mark.skipif(os.getuid() == 0, reason="root reads a non-dumpable process's environ")
 def test_the_service_process_is_non_dumpable(tmp_path: Path) -> None:
     """What `python -m loom_extractor` does first: a process of the same user
     then cannot read its environment, which holds the token."""

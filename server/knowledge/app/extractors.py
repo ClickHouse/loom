@@ -178,16 +178,20 @@ def _endpoints(fmt: str) -> list[str]:
 
 async def available_formats() -> dict[str, str]:
     """Each format some configured service declares, with the first such
-    service's URL. A service that cannot be read declares nothing."""
+    service's URL. A service that cannot be read declares nothing, and is read
+    once per listing, so it costs one timeout, not one per format."""
     out: dict[str, str] = {}
+    read: dict[str, Capabilities | None] = {}
     for fmt in KNOWN_FORMATS:
         for url in _endpoints(fmt):
-            try:
-                caps = await capabilities(url)
-            except ExtractorUnavailable as e:
-                logger.warning("document extractor for %s: %s", fmt, e)
-                continue
-            if fmt in caps.formats:
+            if url not in read:
+                try:
+                    read[url] = await capabilities(url)
+                except ExtractorUnavailable as e:
+                    logger.warning("document extractor %s: %s", url, e)
+                    read[url] = None
+            caps = read[url]
+            if caps is not None and fmt in caps.formats:
                 out[fmt] = url
                 break
     return out

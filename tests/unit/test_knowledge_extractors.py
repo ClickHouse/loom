@@ -589,3 +589,11 @@ def test_the_windows_of_a_long_block_share_its_keys_and_chunk_in_linear_time() -
     assert time.perf_counter() - start < 5 and len(chunks) > 500
     assert all(c.keys is chunks[0].keys for c in chunks) and len(chunks[0].keys) == 10_000
     assert _parse(_artifact(blocks=[_block(keys=["a", "b", "a"])])).blocks[0].keys == ("a", "b")
+
+
+async def test_a_listing_reads_an_unreachable_service_once(
+    hosts: _Hosts, settings_override: Any
+) -> None:
+    settings_override(document_extractor_url="http://gone")
+    assert await extractors.available_formats() == {}
+    assert hosts.calls == [("gone", "/v1/capabilities")]

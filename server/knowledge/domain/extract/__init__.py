@@ -1,8 +1,8 @@
 """The extraction contract as the server reads it: an extractor service parses
 a source into an `Artifact` (`artifact`), `validate.parse_artifact` reads its
-response as untrusted input, `formats` names the format a source is sent as,
-and `structural` cuts chunks from the blocks. The server parses no original
-itself (docs/architecture/document-extraction.md).
+response as untrusted input, `server.core.document_formats` names the format a
+source is sent as, and `structural` cuts chunks from the blocks. The server
+parses no original itself (docs/architecture/document-extraction.md).
 """
 
 from server.core.document_formats import KNOWN_FORMATS, format_of

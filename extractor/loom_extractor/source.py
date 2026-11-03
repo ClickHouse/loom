@@ -159,6 +159,14 @@ def decode(data: bytes, encoding: str = "") -> str:
     # The other UTF codecs have consumed theirs, so a U+FEFF left there is the text's.
     if codec in _BYTE_ORDER_CODECS and text.startswith("\ufeff"):
         text = text[1:]
+    try:
+        # An escape codec (`unicode_escape`) can decode to a lone surrogate, which
+        # no artifact may hold: the source is refused, not the artifact.
+        text.encode("utf-8")
+    except UnicodeEncodeError as e:
+        raise ExtractionError(
+            "encoding", f"{encoding.upper()} decodes to a lone surrogate at character {e.start}"
+        ) from e
     return text
 
 

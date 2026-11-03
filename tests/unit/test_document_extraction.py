@@ -1375,3 +1375,10 @@ def test_a_heading_longer_than_a_section_entry_is_cut_and_marked(source: str, na
     assert heading.text == "x" * 600, "the heading block keeps the whole title"
     assert body.section_path == ("x" * 500,) and body.attrs["section_truncated"]
     assert "section_path" in a.coverage.lost and not a.coverage.complete
+
+
+def test_an_escape_codec_that_decodes_to_a_lone_surrogate_is_an_encoding_error() -> None:
+    with pytest.raises(ExtractionError) as e:
+        decode(b"a\\ud800b", "unicode_escape")
+    assert e.value.code == "encoding"
+    assert decode(b"caf\\u00e9", "unicode_escape") == "café"

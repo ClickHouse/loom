@@ -18,7 +18,7 @@ caller extracted.
 Parsing a file means running a parser over input an uploader controls. Keeping that out of the server's process keeps
 a parser defect, a pathological input or a parser's dependencies away from the process that holds ClickHouse
 credentials, signing keys and tenant data, and lets an operator swap in their own utility for a format.
-`tests/unit/test_package_contracts.py` checks that no server module imports the extractor or a parser library.
+`tests/unit/test_package_contracts.py` checks that no server module imports the extractor or sqlglot, and that the knowledge plane imports no parser library.
 
 **Routing.** The server names the format from what the caller says (a declared format, else the file extension, else the
 media type, else `text`) without reading the bytes, and sends the original to the service

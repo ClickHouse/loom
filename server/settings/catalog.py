@@ -2029,7 +2029,7 @@ class KnowledgeSettings(BaseModel):
         if not raw:
             return {}
         items = json_map_items(raw, "document_extractors_json", strings_only=True)
-        return {route_key(key) or key: url for key, url in items}
+        return {route_key(key): url for key, url in items}
 
     def document_extractor_token_map(self) -> dict[str, str]:
         """Each extractor service's own token, base URL (no trailing `/`) → token."""
