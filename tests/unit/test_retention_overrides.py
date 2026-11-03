@@ -376,6 +376,53 @@ async def test_a_table_ttl_is_not_removed_when_its_lookup_fails() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_ttl_removal_waits_for_unfinished_mutations() -> None:
+    left = "created_at + toIntervalDay(30) DELETE"
+    ch = _DiffCH({"memory": left, "audit_log": left})
+    ch.pending = {"memory": 2}
+    n = await retention_overrides.apply(_FakeSettings(), ch=ch, namespace_overrides=[], leader=True)
+    assert n == 1
+    assert ch.execute_calls == ["ALTER TABLE loom.audit_log REMOVE TTL"]
+
+
+@pytest.mark.asyncio
+async def test_a_ttl_an_overlapping_pass_removed_first_is_not_an_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _AlreadyRemoved(_DiffCH):
+        async def execute(self, sql: str, params: Any = None) -> None:
+            raise RuntimeError(
+                "Code: 36. DB::Exception: Table doesn't have any table TTL expression, "
+                "cannot remove. (BAD_ARGUMENTS)"
+            )
+
+    ch = _AlreadyRemoved({"memory": "created_at + toIntervalDay(30) DELETE"})
+    with caplog.at_level(logging.INFO, logger="server.storage.retention_overrides"):
+        n = await retention_overrides.apply(
+            _FakeSettings(), ch=ch, namespace_overrides=[], leader=True
+        )
+    assert n == 0
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def test_no_managed_table_has_a_schema_ttl() -> None:
+    """apply issues REMOVE TTL on a managed table with no window set, which
+    would strip a TTL the schema defines; a schema TTL on one of these tables
+    needs retention_overrides to restore it instead."""
+    import re
+    from pathlib import Path
+
+    schema = Path("schemas/schema.sql").read_text()
+    for target in retention_overrides.TARGETS:
+        m = re.search(rf"CREATE TABLE IF NOT EXISTS {re.escape(target.table)}\b.*?;", schema, re.S)
+        assert m, target.table
+        assert not re.search(r"^\s*TTL\b", m.group(0), re.M), (
+            f"{target.table} has a schema TTL that server/storage/retention_overrides.py "
+            "would remove when no window is set"
+        )
+
+
+@pytest.mark.asyncio
 async def test_non_leader_issues_nothing() -> None:
     ch = _DiffCH({})
     n = await retention_overrides.apply(

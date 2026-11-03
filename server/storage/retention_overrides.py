@@ -273,7 +273,7 @@ async def _formatted(ch: Any, sql: str) -> str:
     return str((row or {}).get("f") or "").strip()
 
 
-async def current_ttl(ch: Any, table: str) -> str:
+async def _current_ttl(ch: Any, table: str) -> str:
     """The TTL clause `table` carries now (after `TTL `, before `SETTINGS`),
     or '' when it has none. Raises when system.tables cannot be read."""
     db, name = split_table(table)
@@ -302,7 +302,7 @@ async def current_ttl_matches(ch: Any, table: str, alter_sql: str) -> bool | Non
     boot piles up TTL mutations per table and draws code 517 ("previous
     mutations not finished") once a rewrite outlives the next restart."""
     try:
-        current = await current_ttl(ch, table)
+        current = await _current_ttl(ch, table)
         if not current:
             return False
         want = await _formatted(ch, alter_sql)
@@ -328,13 +328,17 @@ def alter_statement(alter_sql: str) -> str:
     return alter_sql + MATERIALIZE_OFF
 
 
+# ClickHouse's answer to REMOVE TTL on a table that has none (code 36).
+_NO_TTL_TO_REMOVE = "doesn't have any table TTL expression"
+
+
 async def _stale_ttl_removal(ch: Any, table: str) -> str | None:
     """`ALTER TABLE … REMOVE TTL` for a managed table that should carry no
     TTL but still has one from an earlier pass, else None. A failed lookup
     defers to the next pass: REMOVE TTL on a table without one is an error,
     and leaving a TTL a pass longer is what the old pass already promised."""
     try:
-        current = await current_ttl(ch, table)
+        current = await _current_ttl(ch, table)
     except Exception as e:  # noqa: BLE001 — an unreadable table is retried next pass
         log.warning("retention/tiering: TTL lookup failed for %s (%s); not removed", table, e)
         return None
@@ -409,12 +413,17 @@ async def apply(
                 log.info("retention/tiering: %s TTL unchanged; no ALTER", target.table)
                 continue
             statement = alter_statement(alter_sql)
+            change = (
+                f"global_retention={params['retention_global']}, "
+                f"global_warm={params['tiering_global']}, "
+                f"per-namespace overrides={params['overrides']}"
+            )
         else:
             removal = await _stale_ttl_removal(ch, target.table)
             if removal is None:
                 continue
             statement = removal
-            params = None
+            change = "no window set; removing its TTL"
         pending = await unfinished_mutations(ch, target.table)
         if pending:
             log.info(
@@ -424,21 +433,15 @@ async def apply(
                 pending,
             )
             continue
-        if params is None:
-            log.info("retention/tiering: %s has no window set; removing its TTL", target.table)
-        else:
-            log.info(
-                "retention/tiering: %s -> global_retention=%d, global_warm=%d, "
-                "per-namespace overrides=%d",
-                target.table,
-                params["retention_global"],
-                params["tiering_global"],
-                params["overrides"],
-            )
+        log.info("retention/tiering: %s -> %s", target.table, change)
         try:
             await ch.execute(statement)
             issued += 1
-        except Exception:  # one table's ALTER never stops the others or boot
+        except Exception as e:  # one table's ALTER never stops the others or boot
+            if target.table not in planned and _NO_TTL_TO_REMOVE in str(e):
+                # an overlapping pass removed it first
+                log.info("retention/tiering: %s TTL already removed", target.table)
+                continue
             log.exception(
                 "retention/tiering: ALTER failed for %s; continuing",
                 target.table,
@@ -453,7 +456,6 @@ __all__ = [
     "alter_statement",
     "apply",
     "compute_alters",
-    "current_ttl",
     "current_ttl_matches",
     "unfinished_mutations",
 ]
