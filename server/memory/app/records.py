@@ -297,14 +297,15 @@ def _record_key(
     key_source: Literal["caller", "identity", "anonymous"] = "caller" if memory_key else "anonymous"
     identity_names = [str(f["field_name"]) for f in field_defs if bool(f.get("identity"))]
     if not memory_key and identity_names:
-        from server.memory.domain.record_identity import canonical_record_key
+        from server.memory.domain.record_identity import canonical_record_key, canonical_value
 
+        # A value of punctuation alone canonicalises to "" and has nothing to key on either.
         missing_identity = [
             n
             for n in identity_names
             if n not in input.fields
             or input.fields[n].state != "value"
-            or input.fields[n].value in (None, "")
+            or not canonical_value(n, input.fields[n].value)
         ]
         if missing_identity:
             raise HTTPException(

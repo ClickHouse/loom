@@ -14,7 +14,11 @@ over- and under-merges:
     and "vendor name" agree.
   every other field — NFKD, casefold, keep [a-z0-9] only: "INV-2024/001",
     "inv 2024 001" and "inv_2024_001" agree, and digits survive so
-    "run-1" and "run-2" do not.
+    "run-1" and "run-2" do not. A value with none of a-z, 0-9 (a scenario in
+    Cyrillic, CJK or Arabic) keeps its letters, digits and marks in any
+    script instead, after NFKC and casefold. Only such values take that
+    form, so every key with an a-z, 0-9 form stays as it was; a value of
+    punctuation alone has neither and is empty.
 Lists sort. The key is blake2b over the schema name plus the sorted
 (field, canonical value) pairs, 16 hex characters, prefixed by the schema
 name so keys never collide across schemas and read as what they are.
@@ -72,7 +76,15 @@ def canonical_value(field_name: str, value: Any) -> str:
                 break
         text = _POSSESSIVE.sub("", text)
         return "_".join(p for p in _SPLIT.split(text) if p).upper()
-    return _NON_ALNUM.sub("", text.casefold())
+    ascii_form = _NON_ALNUM.sub("", text.casefold())
+    if ascii_form:
+        return ascii_form
+    # NFKC recomposes what NFKD split (Hangul syllables); marks stay because an Indic
+    # vowel sign is part of the word.
+    folded = unicodedata.normalize("NFKC", text).casefold()
+    if not any(ch.isalnum() for ch in folded):
+        return ""
+    return "".join(ch for ch in folded if ch.isalnum() or unicodedata.category(ch).startswith("M"))
 
 
 def canonical_record_key(schema_name: str, identity_values: dict[str, Any]) -> str:

@@ -355,7 +355,14 @@ They answer predicate questions without parsing text.
   an `identity` field, an enum (`enum_values`), or constrained (`pattern`, `min_length`,
   `max_length`, `min_value`, `max_value`).
 - Identity fields derive the key when none is given (`key_source="identity"`), so two
-  writes of one entity land on one record.
+  writes of one entity land on one record. A name-like field (`name`, `title`, `label`,
+  `*_name`, `*_title`, `*_label`) keys on its words without case, accents, a leading article
+  or a possessive. Any other field keys on its letters and digits a-z, 0-9 after case
+  folding and accent stripping, so `INV-2024/001` and `inv 2024 001` agree; a value with
+  none of those (Cyrillic, CJK or Arabic text) keys on its letters, digits and marks in its
+  own script. A value that mixes Latin and other scripts keys on its Latin letters and
+  digits alone, so two values that differ only in their non-Latin words share one key. A
+  value of punctuation alone is refused with 400 `MISSING_IDENTITY_FIELD`.
 - Each field value carries a `state` (`value`, `unknown`, `rejected`, `absent`).
 - `memory.set_from_messages` with `record_schema` and `memory_key` extracts one record.
 
