@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -906,8 +907,7 @@ def test_a_publish_that_stops_after_its_chunks_retires_them(
     world.fail_document = None
     assert _run(world, again) == "ready"
     published = world.job(again)["doc_version"]  # type: ignore[index]
-    # Retired again before the new insert: a no-op, unless an insert landed late.
-    assert set(world.retired) == {first} and published != first
+    assert world.retired == [first] and published != first
     assert world.documents[-1]["version"] == published
 
 
@@ -1067,8 +1067,6 @@ def test_a_rerun_of_a_published_job_after_a_text_write_publishes_nothing_more(
         world.documents.remove(doc)
     world.jobs.append({**job, "state": "processing", "chunks": 0, "version": job["version"] + 1})
     chunks, world.embedded = len(world.chunks), []
-    latest = world.job(job_id)
-    assert latest is not None
     if merged:
         assert _run(world, job_id) == "failed"
         assert world.job(job_id)["error_code"] == "revision_conflict"  # type: ignore[index]
@@ -1090,3 +1088,18 @@ def test_the_retry_delay_stops_doubling_at_an_hour(world: World, settings_overri
     assert _run(world, job_id) == "pending"
     wait = world.job(job_id)["next_attempt_at"] - _now()  # type: ignore[index]
     assert timedelta(minutes=59) < wait <= timedelta(hours=1)
+
+
+def test_a_retry_publishes_over_a_write_that_landed_while_it_waited(world: World) -> None:
+    """A retry retires its chunks and clears its chunk version, so a metadata
+    edit while it waits is not taken for a later write that overtook a publish."""
+    _run(world, _ingest(world, _upload(world)))
+    world.fail_document = BackendUnavailableError("store down")
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) == "pending"
+    assert world.job(job_id)["doc_version"] == 0  # type: ignore[index]
+    doc = world.documents[-1]
+    world.documents.append({**doc, "title": "Edited", "version": time.time_ns()})
+    world.fail_document = None
+    assert _run(world, job_id) == "ready"
+    assert world.job(job_id)["revision"] == 2  # type: ignore[index]

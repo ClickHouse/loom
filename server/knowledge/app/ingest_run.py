@@ -160,10 +160,13 @@ async def _end(job: dict[str, Any], state: str, code: str, message: str) -> str:
 
 
 async def _overtaken(job: dict[str, Any]) -> bool:
-    """A write of the source landed after this job recorded its chunk version
-    (`doc_version`, the version its document row takes). Whether or not its row
-    landed first, a merge may have folded it away, so a rerun cannot publish
-    without putting this job's older file over that later write."""
+    """A run of this job stopped (a cancelled pass, a crash) after it recorded
+    its chunk version (`doc_version`, the version its document row takes), and
+    a write of the source has landed since. Whether its row landed before that
+    write cannot be told once a merge has folded the row away, so a rerun
+    cannot publish without perhaps putting this job's older file over the later
+    write. A retry clears the version, so this judges only a run that stopped
+    without a save."""
     from server.knowledge.store import documents as documents_repo
 
     version = int(job["doc_version"])
@@ -385,6 +388,8 @@ async def _retry_or_fail(job: dict[str, Any], e: Exception) -> str:
     if (revision := await _own_publish(job)) is not None:  # failed after its document row
         return await _finish_published(await _current(job), revision)
     # A pending job holds no live chunks: search would serve them while it waits.
+    # Its chunk version is cleared once they are retired, so `_overtaken` judges
+    # only a run that stopped without a save, not a write that lands while it waits.
     await _retire_unpublished(job)
     delay = min(_RETRY_BASE_S * 2 ** (attempts - 1), _RETRY_MAX_S)
     await _save(
@@ -392,6 +397,7 @@ async def _retry_or_fail(job: dict[str, Any], e: Exception) -> str:
         state="pending",
         error_code="retrying",
         error_message=str(e)[:2000],
+        doc_version=0,
         next_attempt_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=delay),
     )
     return "pending"
