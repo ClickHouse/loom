@@ -98,6 +98,7 @@ class _World:
         # Per-file extraction failures, by file id.
         self.extract_errors: dict[str, Exception] = {}
         self.capability_calls = 0
+        self.incomplete_search = False
         # Folders the account no longer sees; per-file answers that override the store's.
         self.lost_folders: set[str] = set()
         # A response, or a callable that answers (or raises) for that file.
@@ -167,7 +168,9 @@ class _World:
             q = request.url.params["q"]
             after = q.split("modifiedTime > '")[1].rstrip("'") if "modifiedTime >" in q else ""
             files = [f for f in self.files if f["modifiedTime"] > after]
-            return httpx.Response(200, json={"files": files})
+            return httpx.Response(
+                200, json={"files": files, "incompleteSearch": self.incomplete_search}
+            )
         if path.endswith("/export"):
             return httpx.Response(200, text="# Design\n\nWe chose the planner.")
         if request.url.host == "slides.googleapis.com":
@@ -707,7 +710,8 @@ def test_a_write_cut_before_its_chunks_is_done_again(
 
     monkeypatch.setattr(writes, "handle_knowledge_upsert", _cut)
     asyncio.run(source_sync.run_sync())
-    # The turn that raised still records itself as failed, by error class only.
+    # The write failed in a way that may pass: the file waits and the turn ends
+    # failed, by the error's class only.
     detail = _detail(world)
     assert (detail["status"], detail["error"]) == ("failed", "RuntimeError")
     monkeypatch.setattr(writes, "handle_knowledge_upsert", real)
@@ -751,14 +755,12 @@ def test_one_file_s_extraction_outage_waits_for_that_file_alone(world: _World) -
     assert detail["status"] == "ok"
     assert detail["unconverted_reasons"] == {"extractor_unavailable": 1}
     assert world.states["decks"]["state_value"] == "2026-01-02T00:00:00.000Z"
-    # Given up on its revision: a full listing does not try it again.
+    # Given up on its revision: an incremental turn does not try it again...
     del world.extract_errors["pdf1"]
-    asyncio.run(source_sync.run_sync(full=False))
     world.upserts.clear()
-    world.states["decks"]["detail"] = json.dumps({**_detail(world), "full_listed_at": ""})
     asyncio.run(source_sync.run_sync())
     assert world.upserts == []
-    # A new revision is tried again.
+    # ...and a new revision is tried again.
     world.files[0] = _file("pdf1", PDF, "2026-01-05T00:00:00.000Z", size="14")
     asyncio.run(source_sync.run_sync())
     assert _uri("pdf1", "file") in world.docs
@@ -916,7 +918,7 @@ def test_an_artifact_fences_its_code_and_reports_its_coverage() -> None:
 
 
 def _waits(world: _World) -> dict[str, Any]:
-    return dict(_detail(world).get("extractor_waits") or {})
+    return dict(_detail(world).get("file_waits") or {})
 
 
 def test_two_files_that_start_waiting_on_different_passes_each_wait_their_own(
@@ -1064,3 +1066,112 @@ def test_a_write_the_store_refuses_is_unconverted_at_once(
         "ok",
         {"write_refused:TOO_LARGE": 1},
     )
+
+
+def test_a_full_sync_request_with_a_failing_file_completes_and_clears(world: _World) -> None:
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
+        _file("bad1", DOCS, "2026-01-02T00:00:00.000Z"),
+    ]
+    world.file_answers["bad1"] = httpx.Response(503)
+    asyncio.run(source_sync.run_sync())
+    world.states["decks"]["detail"] = json.dumps(
+        {**_detail(world), "requested_at": "2026-11-01T00:00:00+00:00", "full": True}
+    )
+    for _ in range(3):
+        asyncio.run(source_sync.run_sync())
+    detail = _detail(world)
+    # The request reset the waits once; the file then waited its passes and gave up.
+    assert "requested_at" not in detail and "full" not in detail
+    assert (detail["status"], detail["unconverted_reasons"]) == ("ok", {"http_503": 1})
+
+
+def test_a_periodic_full_listing_gives_a_given_up_file_one_more_try(world: _World) -> None:
+    world.files = [_file("bad1", DOCS, "2026-01-01T00:00:00.000Z")]
+    world.file_answers["bad1"] = httpx.Response(503)
+    for _ in range(3):
+        asyncio.run(source_sync.run_sync())
+    assert _waits(world)["bad1"][1] == 3
+    # One more failure on the next full listing gives it up again at once.
+    world.states["decks"]["detail"] = json.dumps({**_detail(world), "full_listed_at": ""})
+    asyncio.run(source_sync.run_sync())
+    assert _detail(world)["status"] == "ok" and _waits(world)["bad1"][1] == 3
+    # Once the store answers, the next full listing writes it.
+    del world.file_answers["bad1"]
+    world.states["decks"]["detail"] = json.dumps({**_detail(world), "full_listed_at": ""})
+    asyncio.run(source_sync.run_sync())
+    assert _uri("bad1") in world.docs and "bad1" not in _waits(world)
+
+
+def test_an_incomplete_listing_retires_nothing(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    world.files = []
+    world.incomplete_search = True
+    asyncio.run(source_sync.run_sync(full=True))
+    assert list(world.docs) == [_uri("doc1")]
+    assert _detail(world)["status"] == "failed"
+
+
+def test_a_file_missing_from_the_listing_but_still_in_the_folder_stays(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    world.files = []
+    world.file_answers["doc1"] = httpx.Response(200, json={"trashed": False, "parents": [FOLDER]})
+    asyncio.run(source_sync.run_sync(full=True))
+    assert list(world.docs) == [_uri("doc1")]
+    world.file_answers["doc1"] = httpx.Response(200, json={"trashed": True, "parents": [FOLDER]})
+    asyncio.run(source_sync.run_sync(full=True))
+    assert world.docs == {}
+
+
+def test_a_document_left_at_a_file_s_old_address_is_retired(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    moved = "https://docs.example.com/document/d/doc1/view"
+    # The new address is another writer's, so the file is not written there.
+    world.docs[moved] = {"actor": "human:ann", "tags": [], "metadata": {}}
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", webViewLink=moved)]
+    asyncio.run(source_sync.run_sync(full=True))
+    assert list(world.docs) == [moved]
+
+
+def test_a_401_on_the_folder_check_ends_the_turn(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    world.file_answers[FOLDER] = httpx.Response(401)
+    asyncio.run(source_sync.run_sync())
+    assert world.docs == {}
+    assert _detail(world)["status"] == "credential_invalid"
+
+
+def test_any_other_conversion_failure_waits_for_that_file(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _broken(deck: Any) -> str:
+        raise KeyError("pageElements")
+
+    monkeypatch.setattr(source_sync.convert, "presentation_markdown", _broken)
+    world.files = [
+        _file("deck1", SLIDES, "2026-01-01T00:00:00.000Z"),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
+    ]
+    asyncio.run(source_sync.run_sync())
+    assert list(world.docs) == [_uri("doc2")]
+    assert _waits(world)["deck1"][2] == "fetch_failed:KeyError"
+
+
+def test_a_turn_that_raises_records_a_failed_state_and_keeps_the_waits(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("bad1", DOCS, "2026-01-01T00:00:00.000Z")]
+    world.file_answers["bad1"] = httpx.Response(503)
+    asyncio.run(source_sync.run_sync())
+
+    async def _down(*a: Any, **kw: Any) -> Any:
+        raise ConnectionError("store down")
+
+    monkeypatch.setattr(source_sync.store, "source_revisions", _down)
+    asyncio.run(source_sync.run_sync())
+    detail = _detail(world)
+    assert (detail["status"], detail["error"]) == ("failed", "ConnectionError")
+    assert _waits(world)["bad1"][1] == 1

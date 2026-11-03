@@ -22,7 +22,8 @@ format, the extractor or the store refuses it, it is too large) is counted
 and on every full listing. A file whose fetch, extraction or write fails in a way
 that may pass (a 5xx or a timeout on that file, its extractor call, the write)
 waits: the turn stays incomplete for `_WAIT_PASSES` passes on the same revision,
-then the file counts as unconverted until it changes. What fails for every file
+then the file is given up on: tried again when it changes, once per periodic
+full listing, and on a full sync a person asks for. What fails for every file
 stays the turn's: the token exchange, the listing, a 401, a rate limit, an
 extractor whose capabilities cannot be read.
 
@@ -31,7 +32,8 @@ its turn stops the turn, which records nothing.
 
 A document is retired only on positive evidence that the source dropped it:
 absence from a complete full listing whose folders the account can still see,
-or a maintainer's `remove(delete_documents=true)`. A fetch error, a rate limit or
+confirmed by a lookup of that file; an address that is no longer its file's; or a
+maintainer's `remove(delete_documents=true)`. A fetch error, a rate limit or
 a folder the account lost retires nothing. A document another writer or another
 source holds is never written or retired.
 The stamp moves only when every listed file was handled, so a cut turn is
@@ -120,8 +122,11 @@ class TurnResult:
     # Why files were unconverted: reason -> count.
     reasons: dict[str, int] = field(default_factory=dict)
     # Files waiting on a failure that may pass: id -> [revision, passes, reason].
-    # None until the turn read the stored waits: a turn that never did keeps them.
-    waits: dict[str, list[Any]] | None = None
+    waits: dict[str, list[Any]] = field(default_factory=dict)
+    # The turn read the stored waits; one that never did leaves them as stored.
+    waits_read: bool = False
+    # The sync request whose full sync reset the waits, so it resets them once.
+    waits_reset_for: str = ""
     # Every listed file was handled, so the stamp may move.
     complete: bool = True
     # The newest revision the listing returned, capped at the listing's start.
@@ -304,11 +309,10 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass, full: b
     detail = json_object(state.get("detail", ""))
     stamp = state.get("state_value", "")
     turn = TurnResult()
-    asked_full = full or bool(detail.get("full"))
-    turn.full = asked_full or not gdrive.valid_stamp(stamp) or _full_due(detail)
-    stored_waits = detail.get("extractor_waits")
-    # A full sync a maintainer or an operator asked for retries every waiting file.
-    turn.waits = dict(stored_waits) if isinstance(stored_waits, dict) and not asked_full else {}
+    turn.full = (
+        full or bool(detail.get("full")) or not gdrive.valid_stamp(stamp) or _full_due(detail)
+    )
+    _start_waits(turn, detail, full)
     credential = unseal("knowledge_sources.credential", src.credential_enc)
     if not credential:
         # Fail closed: a credential that no longer opens is never read as "no auth".
@@ -331,8 +335,10 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass, full: b
     except gdrive.DriveError as e:
         turn.fail("failed", _error(e))
         return turn
+    # A folder it lost leaves the turn incomplete (status `failed`): the visible
+    # folders' files are still written, nothing is retired. Anything else ends it.
     if turn.full and not await _folders_visible(token, folders, turn):
-        if turn.status == "rate_limited":
+        if turn.status != "failed":
             return turn
     files = [f for f in files if gdrive.valid_file_id(str(f.get("id") or ""))]
     turn.documents_seen = len(files)
@@ -340,8 +346,8 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass, full: b
         max((str(f.get("modifiedTime") or "") for f in files), default=""), listed_at
     )
     if turn.full:
-        listed = {str(f["id"]) for f in files}
-        turn.waits = {k: v for k, v in turn.waits.items() if k in listed}
+        listed_ids = {str(f["id"]) for f in files}
+        turn.waits = {k: v for k, v in turn.waits.items() if k in listed_ids}
     stored = {
         d["file_id"]: d for d in await store.source_revisions(src.org, src.namespace, src.name)
     }
@@ -349,8 +355,27 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass, full: b
         if not await _sync_file(src, token, f, stored.get(str(f["id"])), run, turn):
             break
     if turn.full and turn.complete:
-        await _retire_absent(src, {str(f["id"]) for f in files}, run, turn)
+        await _retire_absent(src, token, {str(f["id"]): source_uri_of(f) for f in files}, run, turn)
     return turn
+
+
+def _start_waits(turn: TurnResult, detail: dict[str, Any], forced: bool) -> None:
+    """The turn's file waits, from the stored ones. A full sync a person asked for
+    (`sync_now(full=true)` once per request, `loom knowledge sync --full` every
+    run) retries every waiting file; a periodic full listing gives each given-up
+    file one more try, so a failure gives it up again at once."""
+    stored = detail.get("file_waits")
+    waits = dict(stored) if isinstance(stored, dict) else {}
+    requested = str(detail.get("requested_at") or "")
+    if forced or (detail.get("full") and requested != detail.get("waits_reset_for")):
+        waits = {}
+        turn.waits_reset_for = requested
+    elif turn.full:
+        for file_id, entry in waits.items():
+            if isinstance(entry, list) and len(entry) == 3 and int(entry[1]) >= _WAIT_PASSES:
+                waits[file_id] = [entry[0], _WAIT_PASSES - 1, entry[2]]
+    turn.waits = waits
+    turn.waits_read = True
 
 
 def _capped(newest: str, listed_at: datetime) -> str:
@@ -372,8 +397,8 @@ def _capped(newest: str, listed_at: datetime) -> str:
 async def _folders_visible(token: str, folders: list[str], turn: TurnResult) -> bool:
     """Whether the account still sees every folder. A folder it lost lists empty,
     not refused, so a full listing is trusted for removals only after this; one that
-    fails leaves the turn incomplete, so nothing is retired, while the files of the
-    folders it still sees are written."""
+    fails with `failed` leaves the turn incomplete, so nothing is retired, while the
+    files of the folders it still sees are written; a rate limit or a 401 ends it."""
     for folder in folders:
         try:
             await gdrive.require_folder(token, folder)
@@ -390,20 +415,39 @@ async def _folders_visible(token: str, folders: list[str], turn: TurnResult) -> 
 
 
 async def _retire_absent(
-    src: KnowledgeSource, listed: set[str], run: _Pass, turn: TurnResult
+    src: KnowledgeSource, token: str, listed: dict[str, str], run: _Pass, turn: TurnResult
 ) -> None:
-    """Retire the source's documents whose file a complete full listing lacks."""
+    """Retire the source's documents whose file a complete full listing lacks, or
+    that sit at an address that is no longer their file's. A file missing from the
+    listing is looked up first: a listing paged while files changed can miss one,
+    so only a file the store reports gone, trashed or out of every folder counts."""
     docs = await store.source_revisions(src.org, src.namespace, src.name, searchable_only=False)
+    folders = set(src.config.get("folder_ids") or [])
     for doc in docs:
-        if doc["file_id"] in listed:
+        address = listed.get(doc["file_id"])
+        if address == doc["source_uri"]:
             continue
         if run.spent():
             turn.complete = False
             return
         run.left -= 1
+        if address is None and not await _file_gone(token, doc["file_id"], folders):
+            continue
         await _require_current(src)
         if await retire(src, doc["source_uri"]):
             turn.removed += 1
+
+
+async def _file_gone(token: str, file_id: str, folders: set[str]) -> bool:
+    """Whether the store says the file is gone: not found, trashed, or in none of
+    the source's folders. A lookup that fails retires nothing."""
+    try:
+        state = await gdrive.file_state(token, file_id)
+    except gdrive.NotFound:
+        return True
+    except gdrive.DriveError:
+        return False
+    return bool(state.get("trashed")) or not folders & set(state.get("parents") or [])
 
 
 def _error(e: BaseException) -> str:
@@ -420,14 +464,13 @@ def source_uri_of(f: dict[str, Any]) -> str:
 
 def _waiting(turn: TurnResult, f: dict[str, Any]) -> list[Any] | None:
     """The file's wait entry, dropped when its revision changed since."""
-    waits = turn.waits if turn.waits is not None else {}
     file_id = str(f["id"])
-    entry = waits.get(file_id)
+    entry = turn.waits.get(file_id)
     if not isinstance(entry, list) or len(entry) != 3:
-        waits.pop(file_id, None)
+        turn.waits.pop(file_id, None)
         return None
     if entry[0] != str(f.get("modifiedTime") or ""):
-        waits.pop(file_id)
+        turn.waits.pop(file_id)
         return None
     return entry
 
@@ -441,7 +484,7 @@ async def _sync_file(
     turn: TurnResult,
 ) -> bool:
     """Handle one listed file; False when the turn must stop listing."""
-    waits = turn.waits if turn.waits is not None else {}
+    waits = turn.waits
     revision = str(f.get("modifiedTime") or "")
     uri = source_uri_of(f)
     if not uri.startswith("https://"):
@@ -519,6 +562,9 @@ async def _fetch_and_write(
     except extractors.ExtractorUnavailable as e:
         # This one file's extraction: the format's other files may still go through.
         return _wait(f, turn, "extractor_unavailable", f"extractor_unavailable: {e}")
+    except Exception as e:  # noqa: BLE001 — one file's conversion must not stop the others
+        log.warning("knowledge_source_sync: reading %s failed: %s", f["id"], e)
+        return _wait(f, turn, f"fetch_failed:{type(e).__name__}", type(e).__name__)
     await _require_current(src)
     try:
         await _write(src, f, uri, fetched)
@@ -537,12 +583,11 @@ def _wait(f: dict[str, Any], turn: TurnResult, reason: str, error: str) -> str:
     """One more pass this file waited on its revision; unconverted once it waited
     `_WAIT_PASSES`, else the turn stays incomplete. Always `waiting`: the entry
     stays, so a file given up on is not tried again until it changes."""
-    waits = turn.waits if turn.waits is not None else {}
     file_id, revision = str(f["id"]), str(f.get("modifiedTime") or "")
     entry = _waiting(turn, f)
     passes = int(entry[1]) + 1 if entry is not None else 1
     # Kept once exhausted too, so the file is not tried again until it changes.
-    waits[file_id] = [revision, passes, reason]
+    turn.waits[file_id] = [revision, passes, reason]
     if passes >= _WAIT_PASSES:
         turn.unconverted_for(reason)
     else:
@@ -705,8 +750,10 @@ async def _write_state(src: KnowledgeSource, read: dict[str, str], turn: TurnRes
             skipped=turn.skipped,
             error=turn.error,
         )
-        if turn.waits is not None:
-            detail["extractor_waits"] = turn.waits
+        if turn.waits_read:
+            detail["file_waits"] = turn.waits
+            if turn.waits_reset_for:
+                detail["waits_reset_for"] = turn.waits_reset_for
         stamp = current.get("state_value", "")
         if turn.complete:
             # A change made after this listing is stamped later than anything it saw.

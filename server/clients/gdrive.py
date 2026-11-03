@@ -285,7 +285,8 @@ async def list_all(
 ) -> list[dict[str, Any]]:
     """Every file of `mime_types` in any of `folder_ids`, oldest change first, or only
     those changed after `modified_after` (a `valid_stamp`). Pages are paced; a failure
-    on any page raises, so a list returned is the whole listing."""
+    on any page, or a page the store says is incomplete (`incompleteSearch`), raises,
+    so a list returned is every page the store had."""
     if modified_after and not valid_stamp(modified_after):
         raise ValueError("modified_after is not a modification stamp")
     parents = " or ".join(f"'{f}' in parents" for f in folder_ids)
@@ -295,7 +296,9 @@ async def list_all(
         query += f" and modifiedTime > '{modified_after}'"
     params = {
         "q": query,
-        "fields": "nextPageToken,files(id,name,mimeType,modifiedTime,webViewLink,size)",
+        "fields": (
+            "nextPageToken,incompleteSearch,files(id,name,mimeType,modifiedTime,webViewLink,size)"
+        ),
         "pageSize": "1000",
         "orderBy": "modifiedTime",
         "supportsAllDrives": "true",
@@ -304,12 +307,24 @@ async def list_all(
     files: list[dict[str, Any]] = []
     while True:
         data = await _get(_FILES_URL, token, params, "listing")
+        if data.get("incompleteSearch"):
+            raise DriveError("listing: incomplete search")
         files.extend(f for f in data.get("files") or [] if isinstance(f, dict))
         page_token = data.get("nextPageToken")
         if not isinstance(page_token, str) or not page_token:
             return files
         params = {**params, "pageToken": page_token}
         await asyncio.sleep(pace_s)
+
+
+async def file_state(token: str, file_id: str) -> dict[str, Any]:
+    """A file's `trashed` flag and `parents`; NotFound when the account cannot see it."""
+    return await _get(
+        _file_url(file_id),
+        token,
+        {"fields": "trashed,parents", "supportsAllDrives": "true"},
+        f"file {file_id}",
+    )
 
 
 async def export_markdown(token: str, file_id: str, *, max_bytes: int) -> str:
@@ -362,6 +377,7 @@ __all__ = [
     "access_token",
     "download",
     "export_markdown",
+    "file_state",
     "list_all",
     "list_files",
     "parse_service_account",

@@ -42,7 +42,8 @@ class KnowledgeSourceSync(BaseModel):
     unconverted: int = 0
     # Why, as reason -> files: no_extractor, too_large, http_<status> (the source
     # refused or failed that file), unreachable, extraction_failed:<code>,
-    # extractor_unavailable, write_refused:<code>, write_failed:<error>.
+    # extractor_unavailable, fetch_failed:<error>, write_refused:<code>,
+    # write_failed:<error>.
     unconverted_reasons: dict[str, int] = Field(default_factory=dict)
     # Files not written because a live document at their address is another writer's
     # or another source's.
