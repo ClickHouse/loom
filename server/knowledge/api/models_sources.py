@@ -37,9 +37,10 @@ class KnowledgeSourceSync(BaseModel):
     changed: int = 0
     # Documents the turn retired: files the source no longer has.
     removed: int = 0
-    # Files not ingested: no extractor serves their format, the extractor or the source
-    # refused them, they are over LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES, or they
-    # were given up after three passes on the same revision.
+    # Files not ingested: the store gave no https link, no extractor serves their
+    # format, the extractor or the source refused them, they are over
+    # LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES, or they were given up after three
+    # passes on the same revision.
     unconverted: int = 0
     # Why, as reason -> files: no_address (no https link), no_extractor, too_large,
     # http_<status> (the source refused or failed that file), unreachable,
@@ -49,8 +50,9 @@ class KnowledgeSourceSync(BaseModel):
     # Files not written because a live document at their address is another writer's
     # or another source's.
     skipped: int = 0
-    # Why the turn failed: an error class and HTTP status (`http_403`), never the
-    # source's response text; '' when it did not.
+    # Why the turn failed (an error class and HTTP status, `http_403`, never the
+    # source's response text), or why a turn that did not fail is incomplete (the
+    # pass bound, an incomplete listing); '' when neither.
     error: str = ""
 
 

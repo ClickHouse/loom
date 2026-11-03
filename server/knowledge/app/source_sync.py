@@ -18,8 +18,8 @@ a PDF or `.pptx` sent to the extractor service its format is routed to (the
 server parses no original itself); the bytes are kept as the document's
 original. A file that cannot be turned into text (no extractor declares its
 format, the extractor or the store refuses it, it is too large) is counted
-`unconverted` with its reason and not written; it is tried again when it changes
-and on every full listing. A file whose fetch, extraction or write fails in a way
+`unconverted` with its reason and not written, and given up on its revision at
+once. A file whose fetch, extraction or write fails in a way
 that may pass (a 5xx or a timeout on that file, its extractor call, the write)
 waits: the turn stays incomplete for `_WAIT_PASSES` passes on the same revision,
 then the file is given up on: tried again when it changes, once after each
@@ -120,6 +120,9 @@ class TurnResult:
     unconverted: int = 0
     skipped: int = 0
     error: str = ""
+    # Why a turn that did not fail is still incomplete (the pass bound, an
+    # incomplete listing); shown as the error when there is none.
+    note: str = ""
     # Why files were unconverted: reason -> count.
     reasons: dict[str, int] = field(default_factory=dict)
     # Files waiting on a failure that may pass: id -> [revision, passes, reason].
@@ -138,9 +141,15 @@ class TurnResult:
     full: bool = False
 
     def fail(self, status: str, error: str) -> None:
-        """The turn ends `status`; the first error stays, as the one that held it."""
-        self.status, self.complete = status, False
-        self.error = self.error or error
+        """The turn ends `status` with `error`, as a pair: the first plain failure
+        stays, and a turn-wide status (a rate limit, a refused credential) replaces it."""
+        self.complete = False
+        if not self.error or status != "failed":
+            self.status, self.error = status, error
+
+    def stop_at_bound(self) -> None:
+        self.complete = False
+        self.note = self.note or "pass bound reached; the next pass goes on"
 
     def unconverted_for(self, reason: str) -> None:
         self.unconverted += 1
@@ -347,7 +356,7 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass, full: b
         # The store could not search everything: write what it listed, but keep the
         # stamp and retire nothing, and list again next pass.
         turn.complete = False
-        turn.error = turn.error or "listing: incomplete search"
+        turn.note = "listing: incomplete search"
     # Only a whole listing of folders the account still sees says what is absent.
     trusted = turn.full and turn.complete
     files = [f for f in files if gdrive.valid_file_id(str(f.get("id") or ""))]
@@ -447,7 +456,7 @@ async def _retire_absent(
         if address == doc["source_uri"]:
             continue
         if run.spent():
-            turn.complete = False
+            turn.stop_at_bound()
             return
         run.left -= 1
         if address is None:
@@ -543,8 +552,11 @@ async def _sync_file(
         # the turn's, not this file's.
         turn.fail("failed", f"extractor_unavailable: {e}"[:200])
         return True
+    if _over_size(f):
+        _give_up(f, turn, "too_large")  # the listing says so: no fetch, none of the bound
+        return True
     if run.spent():
-        turn.complete = False
+        turn.stop_at_bound()
         return False
     run.left -= 1
     outcome = await _fetch_and_write(src, token, f, uri, turn)
@@ -561,9 +573,9 @@ async def _sync_file(
 async def _fetch_and_write(
     src: KnowledgeSource, token: str, f: dict[str, Any], uri: str, turn: TurnResult
 ) -> str:
-    """Fetch, convert and write one file: `written`, `unconverted`, `waiting` (a
-    failure that may pass, its wait entry kept: the turn held for `_WAIT_PASSES`
-    passes, then the file given up on, `_start_waits` says when it is tried again)
+    """Fetch, convert and write one file: `written`, `waiting` (its wait entry
+    kept: a failure that may pass holds the turn for `_WAIT_PASSES` passes, a
+    refusal gives the file up at once; `_start_waits` says when it is tried again)
     or `stop` (the turn's own failure: a rate limit, a refused credential)."""
     try:
         fetched = await _fetch(token, f)
@@ -571,8 +583,7 @@ async def _fetch_and_write(
         turn.fail("rate_limited", "rate_limited")
         return "stop"
     except gdrive.TooLarge:
-        turn.unconverted_for("too_large")
-        return "unconverted"
+        return _give_up(f, turn, "too_large")
     except gdrive.DriveError as e:
         if e.status == 401:
             turn.fail("credential_invalid", _error(e))
@@ -580,15 +591,13 @@ async def _fetch_and_write(
         if e.refused:
             # The store refuses this one file (an export over its limit, a download
             # turned off, an API not enabled): the others go on.
-            turn.unconverted_for(f"http_{e.status}")
-            return "unconverted"
+            return _give_up(f, turn, f"http_{e.status}")
         # A 5xx, a timeout, an answer that is not JSON: this file may fetch next time.
         reason = f"http_{e.status}" if e.status else "unreachable"
         return _wait(f, turn, reason, _error(e))
     except extractors.ExtractionFailed as e:
         log.info("knowledge_source_sync: %s not extracted: %s", f["id"], e.code)
-        turn.unconverted_for(f"extraction_failed:{e.code}")
-        return "unconverted"
+        return _give_up(f, turn, f"extraction_failed:{e.code}")
     except extractors.ExtractorUnavailable as e:
         # This one file's extraction: the format's other files may still go through.
         return _wait(f, turn, "extractor_unavailable", f"extractor_unavailable: {e}")
@@ -600,13 +609,28 @@ async def _fetch_and_write(
         await _write(src, f, uri, fetched)
     except ValidationError as e:
         # The write refuses this file whatever the pass: it will not go through.
-        turn.unconverted_for(f"write_refused:{e.to_detail().get('code') or 'invalid'}")
-        return "unconverted"
+        return _give_up(f, turn, f"write_refused:{e.to_detail().get('code') or 'invalid'}")
     except Exception as e:  # noqa: BLE001 — one file's write must not stop the others
         log.warning("knowledge_source_sync: writing %s failed: %s", f["id"], e)
         return _wait(f, turn, f"write_failed:{type(e).__name__}", type(e).__name__)
     turn.changed += 1
     return "written"
+
+
+def _give_up(f: dict[str, Any], turn: TurnResult, reason: str) -> str:
+    """A file refused for good: unconverted now, and recorded as given up on its
+    revision, so later passes skip it without a fetch or any of the bound until it
+    changes or `_start_waits` grants a retry."""
+    turn.waits[str(f["id"])] = [str(f.get("modifiedTime") or ""), _WAIT_PASSES, reason]
+    turn.unconverted_for(reason)
+    return "waiting"
+
+
+def _over_size(f: dict[str, Any]) -> bool:
+    """Whether the listing already says an uploaded file is over the size bound."""
+    mime = str(f.get("mimeType") or "")
+    limit = int(settings.knowledge_source_sync_max_file_bytes)
+    return mime in _FORMAT_OF_MIME and int(f.get("size") or 0) > limit
 
 
 def _wait(f: dict[str, Any], turn: TurnResult, reason: str, error: str) -> str:
@@ -778,7 +802,7 @@ async def _write_state(src: KnowledgeSource, read: dict[str, str], turn: TurnRes
             unconverted=turn.unconverted,
             unconverted_reasons=turn.reasons,
             skipped=turn.skipped,
-            error=turn.error,
+            error=turn.error or turn.note,
         )
         if turn.waits_read:
             detail["file_waits"] = turn.waits

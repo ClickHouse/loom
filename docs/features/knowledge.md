@@ -232,8 +232,8 @@ Trouble with one file is that file's:
   read: an export over the store's limit, downloads turned off), one over
   `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` (default 64 MiB), one the extractor
   refuses and one the write refuses are counted `unconverted` with their reason, and the
-  turn goes on. Such a file has no stored copy, so it is fetched again when it changes
-  and on every full listing.
+  turn goes on. Such a file is given up on at once, with the same retries as a file
+  given up below, so it costs no fetch and none of the pass bound until then.
 - Any other failure on one file (a `5xx` or a timeout on it, its extractor call, its
   conversion, its write) makes the file wait: the turn ends `failed` with the stamp
   kept, and the next pass tries the file again. After three passes on the same revision
@@ -251,9 +251,9 @@ A source's `sync` in `list` and `inspect` shows what its last turn did:
 | `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`.                                                                                                             |
 | `documents_seen`         | Files the turn listed.                                                                                                                                                                                                                                |
 | `changed`, `removed`     | Documents it wrote and retired.                                                                                                                                                                                                                       |
-| `unconverted`, `skipped` | Files it did not write: no extractor, refused or too large, or given up after three passes on the same revision; another writer's document at the address.                                                                                            |
+| `unconverted`, `skipped` | Files it did not write: the store gave no https link, no extractor, refused or too large, or given up after three passes on the same revision; another writer's document at the address.                                                              |
 | `unconverted_reasons`    | Why, by count: `no_address` (the store gave no https link), `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `extraction_failed:<code>`, `extractor_unavailable`, `fetch_failed:<error>`, `write_refused:<code>`, `write_failed:<error>`. |
-| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text.                                                                                                                                                               |
+| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text; for a turn that did not fail, why it is incomplete (`pass bound reached`, `listing: incomplete search`).                                                      |
 
 `loom knowledge sync --org O --namespace <trunk namespace> [--source NAME] [--full]` runs
 one such pass over one namespace's sources now, in-process, and leaves a manual

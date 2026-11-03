@@ -1297,3 +1297,51 @@ def test_the_first_error_of_a_turn_is_the_one_it_reports(world: _World) -> None:
     asyncio.run(source_sync.run_sync())
     detail = _detail(world)
     assert detail["status"] == "failed" and OTHER in detail["error"]
+
+
+def test_more_refused_files_than_the_bound_do_not_hold_the_stamp(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 2)
+    world.files = [_file(f"bad{i}", DOCS, f"2026-01-0{i}T00:00:00.000Z") for i in range(1, 6)]
+    for i in range(1, 6):
+        world.file_answers[f"bad{i}"] = httpx.Response(403)
+    asyncio.run(source_sync.run_sync())
+    # Cut by the bound: not a failure, but it says so.
+    detail = _detail(world)
+    assert (detail["status"], detail["error"]) == (
+        "ok",
+        "pass bound reached; the next pass goes on",
+    )
+    for _ in range(2):
+        asyncio.run(source_sync.run_sync())
+    assert world.states["decks"]["state_value"] == "2026-01-05T00:00:00.000Z"
+    # Each file was fetched once: a given-up file costs nothing on later passes.
+    assert all(_fetches(world, f"bad{i}") == 1 for i in range(1, 6))
+    assert _detail(world)["unconverted_reasons"] == {"http_403": 5}
+
+
+def test_a_file_over_the_listed_size_is_given_up_without_any_of_the_bound(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
+    monkeypatch.setattr(settings, "knowledge_source_sync_max_file_bytes", 100)
+    world.files = [
+        _file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="101"),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
+    ]
+    asyncio.run(source_sync.run_sync())
+    assert list(world.docs) == [_uri("doc2")]
+    assert _waits(world)["pdf1"][2] == "too_large"
+
+
+def test_a_credential_refusal_after_a_waiting_file_is_the_turn_s_status(world: _World) -> None:
+    world.files = [
+        _file("bad1", DOCS, "2026-01-01T00:00:00.000Z"),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
+    ]
+    world.file_answers["bad1"] = httpx.Response(503)
+    world.file_answers["doc2"] = httpx.Response(401)
+    asyncio.run(source_sync.run_sync())
+    detail = _detail(world)
+    assert detail["status"] == "credential_invalid" and "http_401" in detail["error"]
