@@ -74,6 +74,8 @@
  "knowledge_repo_docs_timeout_s",
  "knowledge_search_fanout_kinds",
  "knowledge_search_max_namespaces",
+ "knowledge_source_probe_timeout_s",
+ "knowledge_sources_max_per_namespace",
  "langfuse_timeout_s",
  "llm_max_tokens_overrides",
  "llm_retry_attempts",

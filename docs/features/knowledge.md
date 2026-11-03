@@ -66,6 +66,104 @@ op so a browser download works; a document with no stored original downloads as
 Markdown built from its text, and the `X-Loom-Download-Source` header says `blob` or
 `text`.
 
+## Document sources
+
+A repository's maintainers register the document sources Loom pulls the repository's
+documents from. A source lives on the repository's trunk code namespace, the one its
+documents live in, so whoever reads the repository sees where its documents come from,
+and only the namespace's admins change that. The one kind served is `gdrive`, a shared
+folder of docs, slides, decks and PDFs, read with a service account the folders are
+shared to read-only; its credential is the account's JSON key. This build stores
+sources, probes them and records sync and delete requests; no worker pulls documents
+from them yet. A source's `sync` shows the last sync request (`requested_at`).
+
+| Operation                                                                                   | Role   | Does                                                                                                       |
+| ------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------- |
+| [`knowledge.source.list`](../reference/operations/knowledge.md#knowledgesourcelist)         | viewer | The namespace's sources, each with its config and last sync request.                                       |
+| [`knowledge.source.inspect`](../reference/operations/knowledge.md#knowledgesourceinspect)   | viewer | One source, its last sync request and the 200 documents the sync worker most recently wrote for it.        |
+| [`knowledge.source.add`](../reference/operations/knowledge.md#knowledgesourceadd)           | admin  | Probe the credential, then store the source; `dry_run` only probes.                                        |
+| [`knowledge.source.check`](../reference/operations/knowledge.md#knowledgesourcecheck)       | admin  | Probe a stored source with its own credential now; nothing is written.                                     |
+| [`knowledge.source.rotate`](../reference/operations/knowledge.md#knowledgesourcerotate)     | admin  | Probe a new credential, then replace the stored one.                                                       |
+| [`knowledge.source.remove`](../reference/operations/knowledge.md#knowledgesourceremove)     | admin  | Retire a source (`confirm` equals the name); `delete_documents` records a request to retire its documents. |
+| [`knowledge.source.sync_now`](../reference/operations/knowledge.md#knowledgesourcesync_now) | admin  | Record a request for a sync pass over this source (`full`: list every document).                           |
+
+A source's `config` holds ids and filters, never a host or a URL: `gdrive` takes
+`folder_ids` (1 to 20) and `include` (any of `docs`, `slides`, `pdf`, `pptx`; all by
+default). The store's API hosts are fixed in the server, so a registered source cannot
+point the server at another host. The credential is sealed at rest under its own
+purpose (`loom secrets reseal` covers it), held in memory only for a probe, never
+returned by any op and never written to an audit row. `add` records the namespace,
+name, kind, config and `dry_run`; `rotate` the namespace and name; `remove` and
+`sync_now` their input (namespace, name, `confirm` and `delete_documents`, or `full`).
+`check` is admin-only because its probe spends the source's rate limit.
+
+A probe exchanges the key for a read-only token, checks every folder together (one
+call each) and lists the included files of all folders in one call, the first 1000 at
+most. It is bounded as a whole by `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` (default
+20 s); past it `add` and `rotate` answer `SOURCE_UNREACHABLE` and `check` answers
+`reachable: false`.
+
+Every write of a namespace's sources (`add`, `rotate`, `remove`, `sync_now`, and the
+retirement in `code.repo.remove`) is serialized by a lease, so a write's checks still
+hold when it writes; a probe runs outside it. A write that finds the lease held past
+a short wait answers `OVERLOADED` and can be retried; one whose lease store cannot
+answer is refused, never run unlocked. The one writer outside the lease is
+`loom secrets reseal`, which writes a row it read again at that row's version + 1, so
+any later write wins over it. Versions come from the ClickHouse servers' clocks, so
+writes stay ordered while those clocks differ by less than the time between them.
+
+A removed source's row stays, inactive and with its credential cleared. With
+`delete_documents` and documents to retire, the row also carries the request for the
+sync worker. Removing a repository (`code.repo.remove`) retires the sources registered
+on its namespace the same way and names them in `sources_deactivated`; the purge of
+the repository's code index that follows deletes their sync state (it lives in
+`loom.code_index_state`) and the namespace's documents, and leaves the inactive
+source rows. A source can
+still outlive its repository's trunk namespace (a repository retired by editing the
+deployment's configuration, a branch that now outranks the trunk, or a repository
+removed by a replica of the previous release, which does not retire sources): its row
+stays active, keeps its sealed credential and counts toward the namespace's quota
+until `knowledge.source.remove` retires it. `check`, `rotate` and `sync_now` refuse it
+with `NOT_A_CODE_NAMESPACE`; `list`, `inspect` and `remove` still serve it, and a sync
+worker must skip it.
+
+A source's documents are the live documents of its namespace that carry the tag
+`source:<name>` and that the sync worker wrote (actor `worker:knowledge-source-sync`).
+No token maps to that actor, so a document a caller tags `source:<name>` is never a
+source's: it is not counted, listed or retired, and it never holds a name. The
+`source:*` tags of a document the worker wrote belong to the worker: a tag edit
+(`knowledge.update_metadata`) or a re-save of the same text (`knowledge.add`, `upsert`,
+`bulk_add`) by anyone else, which keeps the worker as the document's author, may change
+its other tags but not add or drop a `source:*` one (`SOURCE_TAGS_LOCKED`). A caller
+tags its own documents freely.
+
+A name is free for `add` only while no document of an earlier source of that name is
+live, since a new source of the name would take them over. A removed source whose
+documents wait to be retired refuses its name with `SOURCE_DELETE_PENDING` until they
+are gone; one whose documents were kept refuses it with `SOURCE_DOCUMENTS_KEPT` until
+they are deleted (`knowledge.delete`). A removed source with no documents frees its
+name at once.
+
+| Code                    | When                                                                                                                                               |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NOT_A_CODE_NAMESPACE`  | `add`, `check`, `rotate` or `sync_now` names a namespace that is not a repository's trunk code namespace.                                          |
+| `BAD_NAME`              | The name is not 2-32 lower-case letters, digits, `-` or `_`, starting with a letter.                                                               |
+| `BAD_KIND`              | The kind is not one the server serves.                                                                                                             |
+| `BAD_CONFIG`            | The config has an unknown key, a malformed folder id or an unknown `include` value.                                                                |
+| `SOURCE_EXISTS`         | The namespace has an active source of that name.                                                                                                   |
+| `SOURCE_QUOTA`          | The namespace has `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` active sources (default 8).                                                           |
+| `NO_ROOT_SECRET`        | The deployment has no `LOOM_JWT_SECRET`, so a credential cannot be stored.                                                                         |
+| `CREDENTIAL_REFUSED`    | The credential is not a service account key, or the store refused it; nothing is stored.                                                           |
+| `SOURCE_UNREACHABLE`    | A folder is not shared with the account or is not a folder, the store failed or rate-limited the probe, or the probe timed out; nothing is stored. |
+| `SOURCE_DELETE_PENDING` | `add` names a removed source whose documents are still waiting to be retired.                                                                      |
+| `SOURCE_DOCUMENTS_KEPT` | `add` names a removed source whose kept documents are still live; delete them first.                                                               |
+| `SOURCE_REPLACED`       | `rotate` or `sync_now`'s source was removed and added again during the call (409); act on the current source.                                      |
+| `SOURCE_TAGS_LOCKED`    | A write that keeps the sync worker as a document's author changes its `source:*` tags.                                                             |
+| `SOURCE_NOT_FOUND`      | No active source of that name in the namespace (404).                                                                                              |
+| `CONFIRM_REQUIRED`      | `remove`'s `confirm` is not the source's name.                                                                                                     |
+
+A probe's error names the HTTP status (`http_403`), never the store's response text.
+
 ## Searching
 
 `knowledge.search` runs two legs per namespace and fuses them by reciprocal rank:
@@ -306,14 +404,15 @@ curl -s localhost:7777/v1/knowledge.search -H "Authorization: Bearer $LOOM_API_K
 
 ## Settings
 
-| Setting                                                                        | Effect                                                                                                                                                                              |
-| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_KNOWLEDGE_CHUNK_SIZE`, `…_CHUNK_STRIDE`                                  | How documents are split ([Knowledge → Chunking](../reference/configuration.md#chunking)). `loom rechunk --org O --namespace N --apply` re-chunks existing documents after a change. |
-| `LOOM_MEMORY_SEARCH_FANOUT_KINDS`                                              | Which namespace kinds an `all_mine` search spans ([MemorySearch](../reference/configuration.md#memorysearch)).                                                                      |
-| `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES`                                     | How many of the caller's namespaces an `all_mine` search reads besides the addressed one ([MemorySearch](../reference/configuration.md#memorysearch)).                              |
-| `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY`                                | The floor for knowledge hits in `loom_search` ([Mcp](../reference/configuration.md#mcp)).                                                                                           |
-| `LOOM_MEMORY_ASK_KNOWLEDGE_TOP_K`, `LOOM_MEMORY_ASK_SYNTHESIZE_ROUTE_MAX_DOCS` | Whether and how `memory.ask` reads knowledge ([MemoryAsk](../reference/configuration.md#memoryask)).                                                                                |
-| `LOOM_RETENTION_CHUNKS_DAYS`, `LOOM_RETENTION_DOCUMENTS_DAYS`                  | Opt-in table TTLs; 0 keeps rows forever ([Retention](../reference/configuration.md#retention)).                                                                                     |
+| Setting                                                                             | Effect                                                                                                                                                                              |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_KNOWLEDGE_CHUNK_SIZE`, `…_CHUNK_STRIDE`                                       | How documents are split ([Knowledge → Chunking](../reference/configuration.md#chunking)). `loom rechunk --org O --namespace N --apply` re-chunks existing documents after a change. |
+| `LOOM_MEMORY_SEARCH_FANOUT_KINDS`                                                   | Which namespace kinds an `all_mine` search spans ([MemorySearch](../reference/configuration.md#memorysearch)).                                                                      |
+| `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES`                                          | How many of the caller's namespaces an `all_mine` search reads besides the addressed one ([MemorySearch](../reference/configuration.md#memorysearch)).                              |
+| `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY`                                     | The floor for knowledge hits in `loom_search` ([Mcp](../reference/configuration.md#mcp)).                                                                                           |
+| `LOOM_MEMORY_ASK_KNOWLEDGE_TOP_K`, `LOOM_MEMORY_ASK_SYNTHESIZE_ROUTE_MAX_DOCS`      | Whether and how `memory.ask` reads knowledge ([MemoryAsk](../reference/configuration.md#memoryask)).                                                                                |
+| `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE`, `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` | How many document sources one repository namespace may register, and how long a source's probe may take ([Knowledge](../reference/configuration.md#knowledge)).                     |
+| `LOOM_RETENTION_CHUNKS_DAYS`, `LOOM_RETENTION_DOCUMENTS_DAYS`                       | Opt-in table TTLs; 0 keeps rows forever ([Retention](../reference/configuration.md#retention)).                                                                                     |
 
 ## Limits
 

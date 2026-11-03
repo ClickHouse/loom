@@ -23,6 +23,7 @@ SEALED: tuple[tuple[str, str, tuple[str, ...], str, str], ...] = (
     ("loom.signing_keys", "sealed_key", (), "signing_key", "kid != 'default'"),
     ("loom.code_repos", "github_token_enc", (), "code_repos.token", ""),
     ("loom.qa_sources", "password_enc", (), "qa_sources.password", ""),
+    ("loom.knowledge_sources", "credential_enc", (), "knowledge_sources.credential", ""),
     ("loom.provider_configuration", "envelope", (), "model-provider-configuration", ""),
     (
         "loom.provider_configuration",
@@ -47,6 +48,7 @@ _KEYS = {
     "loom.signing_keys": ("kid",),
     "loom.code_repos": ("org", "namespace"),
     "loom.qa_sources": ("org", "name"),
+    "loom.knowledge_sources": ("org", "namespace", "name"),
     "loom.provider_configuration": ("config_id",),
     "loom.oauth_state": ("record_type", "id"),
 }

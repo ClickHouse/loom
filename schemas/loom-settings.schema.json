@@ -2776,6 +2776,19 @@
           "type": "integer",
           "description": "Namespaces an all_mine knowledge.search reads besides the addressed one, at most; the rest come back in `namespaces_skipped`. Each search leg is one statement over all of them (measured 110 ms at 10,000 collections)."
         },
+        "knowledge_source_probe_timeout_s": {
+          "default": 20.0,
+          "exclusiveMinimum": 0,
+          "maximum": 25.0,
+          "type": "number",
+          "description": "Seconds a document source's probe (add, check, rotate) may take in all; past it add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false."
+        },
+        "knowledge_sources_max_per_namespace": {
+          "default": 8,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Active document sources (knowledge.source.add) one repository namespace may register; an add past it is refused with SOURCE_QUOTA."
+        },
         "langfuse_capture_io_level": {
           "default": "off",
           "enum": [

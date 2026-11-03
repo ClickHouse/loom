@@ -844,6 +844,13 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S` | `float` | `180.0` |  | Seconds one call to an extractor may take as a whole: reading its capabilities, or sending the original and reading its artifact. |
 | `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES` | `int` | `67108864` |  | Bytes of an extractor's response the server reads; a larger artifact is refused. |
 
+### Document sources
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` | `int` | `8` | live | Active document sources (knowledge.source.add) one repository namespace may register; an add past it is refused with SOURCE_QUOTA. |
+| `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` | `float` | `20.0` | live | Seconds a document source's probe (add, check, rotate) may take in all; past it add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false. |
+
 ## Mcp
 
 The MCP transport: tool listing, lean results, session runs.

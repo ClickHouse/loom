@@ -2021,6 +2021,14 @@ class KnowledgeSettings(BaseModel):
     # Bytes of an extractor's response the server reads; a larger artifact is refused.
     document_extractor_max_artifact_bytes: int = Field(default=64 * 1024 * 1024, ge=1024)
 
+    # ---- document sources ----
+    # Active document sources (knowledge.source.add) one repository namespace may
+    # register; an add past it is refused with SOURCE_QUOTA.
+    knowledge_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=8, ge=1)
+    # Seconds a document source's probe (add, check, rotate) may take in all; past it
+    # add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false.
+    knowledge_source_probe_timeout_s: Annotated[float, LIVE] = Field(default=20.0, gt=0, le=25.0)
+
     def document_extractor_routes(self) -> dict[str, str]:
         """The operator's per-format extractor URLs, format or media type → URL;
         a media type without its parameters and lowercased, as routing reads it."""
@@ -5483,6 +5491,16 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.outline": 80,
     "knowledge.reads": 500,
     "knowledge.search": 250,
+    # add and rotate: a probe bounded by knowledge_source_probe_timeout_s, up to 5 s
+    # waiting for the namespace's lease, a few reads and inserts; check: the probe
+    # alone, writing nothing.
+    "knowledge.source.add": 30000,
+    "knowledge.source.check": 30000,
+    "knowledge.source.inspect": 400,
+    "knowledge.source.list": 300,
+    "knowledge.source.remove": 400,
+    "knowledge.source.rotate": 30000,
+    "knowledge.source.sync_now": 300,
     # One LLM call per window plus the reduce; bounded by max_windows.
     "knowledge.synthesize": 60000,
     "knowledge.update_metadata": 60,

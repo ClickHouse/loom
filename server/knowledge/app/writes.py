@@ -16,6 +16,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from server.core.errors import ValidationError
 from server.core.hashing import sha256_document_text as _content_sha256
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
@@ -36,6 +37,7 @@ from server.knowledge.api.models_knowledge import (
     _KnowledgeBulkEntryResult,
 )
 from server.knowledge.domain.chunking import Chunk, chunk_context, chunk_document, embedding_text
+from server.knowledge.domain.sources import SYNC_WORKER_ACTOR, source_tags
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +98,21 @@ def _author_for(
     return author
 
 
+def _require_source_tags_kept(
+    prior: DocumentRow | None, writer: str, author_actor: str, tags: list[str]
+) -> None:
+    """Refuse a change to the `source:*` tags of a sync-written document by another
+    writer that keeps the worker as its author (see `SYNC_WORKER_ACTOR`)."""
+    if prior is None or author_actor != SYNC_WORKER_ACTOR or writer == SYNC_WORKER_ACTOR:
+        return
+    if source_tags(tags) != source_tags(prior.tags):
+        raise ValidationError(
+            f"{prior.source_uri!r} was written by a document source's sync; its source:* "
+            "tags belong to the sync and cannot be changed here",
+            code="SOURCE_TAGS_LOCKED",
+        )
+
+
 def _nano_version() -> int:
     return time.time_ns()
 
@@ -131,8 +148,6 @@ async def _resolve_blob(
         try:
             raw = base64.b64decode(input.original_bytes_b64, validate=True)
         except (binascii.Error, ValueError) as e:
-            from server.core.errors import ValidationError
-
             raise ValidationError(f"original_bytes_b64 is not valid base64: {e}") from e
         from server.knowledge.store import blobs
 
@@ -228,7 +243,9 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         else None
     )
     uploader = author["user_id"]  # the writer's, even when the document keeps its author
+    writer = author["actor"]
     author = _author_for(prior, input.content, author, _fresh_sha(input))
+    _require_source_tags_kept(prior, writer, author["actor"], input.tags)
     blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
         input, _original_of(prior, author), uploader=uploader
     )
@@ -329,7 +346,9 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
         include_superseded=True,
     )
     uploader = author["user_id"]  # the writer's, even when the document keeps its author
+    writer = author["actor"]
     author = _author_for(prior, input.content, author, _fresh_sha(input))
+    _require_source_tags_kept(prior, writer, author["actor"], input.tags)
     blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
         input, _original_of(prior, author), uploader=uploader
     )
@@ -499,6 +518,9 @@ async def handle_knowledge_update_metadata(
     next_title = existing.title if input.title is None else input.title
     next_description = existing.description if input.description is None else input.description
     next_tags = existing.tags if input.tags is None else input.tags
+    from server.memory.app.provenance import writer_actor
+
+    _require_source_tags_kept(existing, writer_actor(), existing.actor, next_tags)
 
     # No-op if nothing changed, so idempotent re-applies don't pile up versions.
     if (
@@ -585,11 +607,17 @@ async def handle_knowledge_bulk_add(
         )
     }
 
+    # Every entry is checked before any is chunked or embedded: a refusal writes nothing.
+    authors = []
     for entry in input.entries:
+        prior_doc = priors.get(entry.source_uri)
+        authors.append(_author_for(prior_doc, entry.content, author))
+        _require_source_tags_kept(prior_doc, author["actor"], authors[-1]["actor"], entry.tags)
+
+    for entry, entry_author in zip(input.entries, authors, strict=True):
         doc_id = str(uuid.uuid4())
         version = _nano_version()
         chunks = _chunk_text(entry.content)
-        entry_author = _author_for(priors.get(entry.source_uri), entry.content, author)
         prior = _original_of(priors.get(entry.source_uri), entry_author)
         prior = prior if documents_repo.serves_original(prior) else None
 

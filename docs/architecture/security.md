@@ -1160,10 +1160,11 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   to start with the checked-in dev secret; only `LOOM_INSTANCE_LABEL=deploy:dev` is exempt
   (`require_real_signing_secret`). `loom doctor` and `/v1/health` flag it elsewhere
   (`dev_jwt_secret`).
-- **Stored tokens.** Private-repository tokens, tracker-source passwords and provider
-  keys are encrypted at rest with a key derived from `LOOM_JWT_SECRET` and a per-purpose
-  salt (`seal` and `unseal` in `server/core/secrets_at_rest.py`), as are the signing
-  keys in `loom.signing_keys`. Changing the secret makes them undecryptable; re-enter
+- **Stored tokens.** Private-repository tokens, tracker-source passwords, document-source
+  credentials (`loom.knowledge_sources.credential_enc`) and provider keys are encrypted
+  at rest with a key derived from `LOOM_JWT_SECRET` and a per-purpose salt (`seal` and
+  `unseal` in `server/core/secrets_at_rest.py`), as are the signing keys in
+  `loom.signing_keys`. Changing the secret makes them undecryptable; re-enter
   the credentials and re-mint tokens.
 - **Ledger arguments.** `loom.agent_events` stores free-text arguments as
   `sha256:<digest>/<length>`, not text (`server/observability/event_args.py`).

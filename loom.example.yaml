@@ -2445,6 +2445,16 @@ settings:
   # [restart]
   # document_extractor_max_artifact_bytes: 67108864
 
+  # --- document sources ---
+
+  # Active document sources (knowledge.source.add) one repository namespace may
+  # register; an add past it is refused with SOURCE_QUOTA. [live]
+  # knowledge_sources_max_per_namespace: 8
+
+  # Seconds a document source's probe (add, check, rotate) may take in all; past it add
+  # and rotate answer SOURCE_UNREACHABLE and check answers reachable: false. [live]
+  # knowledge_source_probe_timeout_s: 20.0
+
   # ===== The MCP transport: tool listing, lean results, session runs =====
 
   # loom_search drops knowledge hits below this cosine similarity (the conversation

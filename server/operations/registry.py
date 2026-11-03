@@ -27,6 +27,7 @@ from server.insights.api import ops_ops as ops
 from server.insights.api import ops_ui as ui
 from server.knowledge.api import ops_conversations as conversations
 from server.knowledge.api import ops_knowledge as knowledge
+from server.knowledge.api import ops_sources as knowledge_sources
 from server.memory.api import ops_blacklist as blacklist
 from server.memory.api import ops_brief as memory_brief
 from server.memory.api import ops_calibration as calibration
@@ -58,6 +59,7 @@ _OPERATION_MODULES = (
     memory_brief,
     memory_records,
     knowledge,
+    knowledge_sources,
     conversations,
     context,
     context_offload,

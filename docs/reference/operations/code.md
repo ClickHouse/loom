@@ -1229,6 +1229,7 @@ Retire a repository index a person added.
 | `purged_tables` | `int` | How many code tables keyed by the namespace the erasure saga purges. |
 | `erasure_id` | `str` | The erasure saga that purges them — follow it with erasure.status; erasure_recovery resumes it. |
 | `mirror_removed` | `bool` | True when the bare mirror was deleted because no other branch of the repository uses it. |
+| `sources_deactivated` | `list[str]` | The document sources registered on the namespace (knowledge.source.add), now inactive with their credentials cleared. |
 
 ## `code.repo.set_access`
 

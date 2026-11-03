@@ -835,6 +835,34 @@
               "body",
               "options"
             ],
+            "source_add": [
+              "body",
+              "options"
+            ],
+            "source_check": [
+              "body",
+              "options"
+            ],
+            "source_inspect": [
+              "body",
+              "options"
+            ],
+            "source_list": [
+              "body",
+              "options"
+            ],
+            "source_remove": [
+              "body",
+              "options"
+            ],
+            "source_rotate": [
+              "body",
+              "options"
+            ],
+            "source_sync_now": [
+              "body",
+              "options"
+            ],
             "synthesize": [
               "body",
               "options"
