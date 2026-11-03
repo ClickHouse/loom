@@ -46,8 +46,8 @@ def repo_trunk(org: str, repo: str) -> tuple[str, str]:
     """(trunk code namespace, `repo:<id>` tag) of the repository `repo` names (owner/name
     or a remote URL), matched by owner/name (`repo_slug`) as code.repos matches a
     candidate, without its fork-to-upstream step; ("", "") when no repository configured
-    in `org` is that one. It reads the configured snapshot: the
-    caller refreshes it (`refresh_db_repos`) and gates."""
+    in `org` is that one. It reads the configured snapshot: the caller refreshes it
+    (`refresh_db_repos`) and gates."""
     from server.code.app.repos import repo_slug
     from server.code.domain.index.remote import repo_tag
 
