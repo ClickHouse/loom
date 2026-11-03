@@ -364,8 +364,9 @@ async def insert_task_version(
 
 def create_key_digest(org: str, inbox: str, subject: str, key: str) -> str:
     """One poster's idempotency key in one inbox, for the create's lease and dedup token.
-    Two keys that join to one digest only share a lease and a token: the lookup still
-    names the poster, so a row the token dropped is inserted again under a fresh one."""
+    Tuples that join to the same string share a lease and a token; the lookup filters
+    subject and key separately, so a row the token dropped goes in again under a fresh
+    token."""
     return hashlib.sha256("\x1f".join((org, inbox, subject, key)).encode()).hexdigest()
 
 
