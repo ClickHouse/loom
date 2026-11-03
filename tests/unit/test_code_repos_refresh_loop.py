@@ -55,3 +55,30 @@ def test_a_new_restriction_reaches_an_idle_replica(monkeypatch: pytest.MonkeyPat
         assert asyncio.run(_go()) == ["standard", "restricted"]
     finally:
         repo_registry.reset_for_tests()
+
+
+def test_the_registry_counts_as_read_only_after_a_read_succeeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.code.store.index as store
+
+    class _Down(_Repo):
+        async def active_code_repos(self) -> list[dict[str, Any]]:
+            raise ConnectionError("store unreachable")
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    repo_registry.reset_for_tests()
+    try:
+        monkeypatch.setattr(store, "CodeRepo", _Down)
+        asyncio.run(repo_registry.refresh_db_repos(force=True))
+        assert not repo_registry.registry_read()
+        monkeypatch.setattr(store, "CodeRepo", _Repo)
+        _Repo.rows = [_row("standard")]
+        asyncio.run(repo_registry.refresh_db_repos(force=True))
+        assert repo_registry.registry_read()
+        # Self-service off: there is no registry to read.
+        repo_registry.reset_for_tests()
+        monkeypatch.setattr(settings, "code_self_service_enabled", False)
+        assert repo_registry.registry_read()
+    finally:
+        repo_registry.reset_for_tests()

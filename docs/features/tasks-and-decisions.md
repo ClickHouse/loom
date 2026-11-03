@@ -394,8 +394,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   release branch's code namespace, that branch's trunk), or carry another repository's `repo:<id>` tag (any, for a run
   without `--repo`): going on would leave the document's decisions in two places, or linked to the wrong repository.
   A caller who cannot read that other namespace is refused. Two cases the run does not see: rows an `--into repo` run
-  wrote, when a later run on a document outside any code namespace drops `--repo` or names another repository, so pass
-  the same `--repo` again; and two runs on one document at once with different `--into`, which can both find the other
+  wrote to a repository other than the one whose code namespace holds the document (any repository, for a document
+  outside a code namespace), when a later run drops `--repo` or names another repository, so pass the same `--repo`
+  again; and two runs on one document at once with different `--into`, which can both find the other
   namespace empty. A repository that is not configured in the org, or that the caller may not read (one answer for
   both), a repository with no remote to tag rows with under `--into source` for a document outside the trunk, or
   `--into` without `--repo`, exits 1 as well, as does a run when the repositories added from the dashboard could not
