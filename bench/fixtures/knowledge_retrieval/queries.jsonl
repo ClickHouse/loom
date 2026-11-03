@@ -10,7 +10,7 @@
 {"id": "harbor-region", "query": "Where is Harbor hosted?", "gold": [["handbook/harbor.md", "eu-north and us-west"]], "kind": "context", "cluster": "region"}
 {"id": "harbor-sso", "query": "Which single sign-on protocols does Harbor support?", "gold": [["handbook/harbor.md", "SAML 2.0 and OIDC"]], "kind": "context", "cluster": "sso"}
 {"id": "harbor-sla", "query": "What compensation does a Harbor customer get when the uptime target is missed?", "gold": [["handbook/harbor.md", "10% of the monthly fee for each 0.1% below target"]], "kind": "context", "cluster": "sla"}
-{"id": "harbor-backup", "query": "How often is Harbor data backed up?", "gold": [["handbook/harbor.md", "Object versions are replicated to a second zone within 15 minutes"]], "kind": "context", "cluster": "backup"}
+{"id": "harbor-backup", "query": "How often is Harbor data backed up?", "gold": [["handbook/harbor.md", "Object versions are replicated to a second zone within 15 minutes"]], "kind": "context", "cluster": "retention"}
 {"id": "harbor-price", "query": "How much does the Team plan of Harbor cost?", "gold": [["handbook/harbor.md", "$0.018 per GB-month"]], "kind": "context", "cluster": "price"}
 {"id": "harbor-limit", "query": "What happens when a Harbor client sends too many requests?", "gold": [["handbook/harbor.md", "3,500 PUT requests per second per prefix"]], "kind": "context", "cluster": "limit"}
 {"id": "lantern-retention", "query": "How long does Lantern keep deleted or old data?", "gold": [["handbook/lantern.md", "Raw logs are kept for 45 days and aggregates for 13 months"], ["design/lantern-tiering.md", "retention keeps 45 days of raw logs"]], "kind": "context", "cluster": "retention"}
@@ -19,7 +19,7 @@
 {"id": "lantern-region", "query": "Where is Lantern hosted?", "gold": [["handbook/lantern.md", "eu-central, us-east and ap-south"]], "kind": "context", "cluster": "region"}
 {"id": "lantern-sso", "query": "Which single sign-on protocols does Lantern support?", "gold": [["handbook/lantern.md", "SAML 2.0 only"]], "kind": "context", "cluster": "sso"}
 {"id": "lantern-sla", "query": "What compensation does a Lantern customer get when the uptime target is missed?", "gold": [["handbook/lantern.md", "5% of the monthly fee for each hour of downtime"]], "kind": "context", "cluster": "sla"}
-{"id": "lantern-backup", "query": "How often is Lantern data backed up?", "gold": [["handbook/lantern.md", "Indexes are snapshotted every 6 hours"]], "kind": "context", "cluster": "backup"}
+{"id": "lantern-backup", "query": "How often is Lantern data backed up?", "gold": [["handbook/lantern.md", "Indexes are snapshotted every 6 hours"]], "kind": "context", "cluster": "retention"}
 {"id": "lantern-price", "query": "How much does the Pro plan of Lantern cost?", "gold": [["handbook/lantern.md", "$0.38 per ingested GB"]], "kind": "context", "cluster": "price"}
 {"id": "lantern-limit", "query": "What happens when a Lantern client sends too many requests?", "gold": [["handbook/lantern.md", "200,000 events per second per workspace"], ["runbooks/lt-2207.md", "exceeded its events-per-second cap"]], "kind": "context", "cluster": "limit"}
 {"id": "quill-retention", "query": "How long does Quill keep deleted or old data?", "gold": [["handbook/quill.md", "Document history is kept for 90 days on Plus and forever on Business"]], "kind": "context", "cluster": "retention"}
@@ -28,7 +28,7 @@
 {"id": "quill-region", "query": "Where is Quill hosted?", "gold": [["handbook/quill.md", "eu-west and us-central"]], "kind": "context", "cluster": "region"}
 {"id": "quill-sso", "query": "Which single sign-on protocols does Quill support?", "gold": [["handbook/quill.md", "OIDC on Business"]], "kind": "context", "cluster": "sso"}
 {"id": "quill-sla", "query": "What compensation does a Quill customer get when the uptime target is missed?", "gold": [["handbook/quill.md", "a free month"]], "kind": "context", "cluster": "sla"}
-{"id": "quill-backup", "query": "How often is Quill data backed up?", "gold": [["handbook/quill.md", "Workspaces are backed up nightly at 02:00 UTC"]], "kind": "context", "cluster": "backup"}
+{"id": "quill-backup", "query": "How often is Quill data backed up?", "gold": [["handbook/quill.md", "Workspaces are backed up nightly at 02:00 UTC"]], "kind": "context", "cluster": "retention"}
 {"id": "quill-price", "query": "How much does the Plus plan of Quill cost?", "gold": [["handbook/quill.md", "$8 per editor per month"]], "kind": "context", "cluster": "price"}
 {"id": "quill-limit", "query": "What happens when a Quill client sends too many requests?", "gold": [["handbook/quill.md", "50 concurrent editors per document"]], "kind": "context", "cluster": "limit"}
 {"id": "meridian-retention", "query": "How long does Meridian keep deleted or old data?", "gold": [["handbook/meridian.md", "Booking records are deleted 180 days after the meeting"], ["handbook/meridian.md", "kept for 35 days"]], "kind": "context", "cluster": "retention"}
@@ -60,8 +60,8 @@
 {"id": "rb-Q-118-how", "query": "How do I fix Q-118?", "gold": [["runbooks/q-118.md", "an admin can break a lock"]], "kind": "identifier", "cluster": "rb-Q-118"}
 {"id": "rb-M-41-how", "query": "How do I fix M-41?", "gold": [["runbooks/m-41.md", "reconnects the calendar from Settings > Integrations"]], "kind": "identifier", "cluster": "rb-M-41"}
 {"id": "pol-perdiem", "query": "What is the current daily meal allowance in the EU?", "gold": [["policies/travel-2025.md", "55 EUR"]], "kind": "freshness", "cluster": "pol-perdiem"}
-{"id": "pol-economy", "query": "Up to how many hours of flight do we book economy now?", "gold": [["policies/travel-2025.md", "under 8 hours"]], "kind": "freshness", "cluster": "pol-booking"}
-{"id": "pol-ahead", "query": "How many days in advance do I have to book a trip now?", "gold": [["policies/travel-2025.md", "at least 10 days ahead"]], "kind": "freshness", "cluster": "pol-booking"}
+{"id": "pol-economy", "query": "Up to how many hours of flight do we book economy now?", "gold": [["policies/travel-2025.md", "under 8 hours"]], "kind": "freshness", "cluster": "pol-economy"}
+{"id": "pol-ahead", "query": "How many days in advance do I have to book a trip now?", "gold": [["policies/travel-2025.md", "at least 10 days ahead"]], "kind": "freshness", "cluster": "pol-economy"}
 {"id": "pol-rail", "query": "When should I take the train instead of flying?", "gold": [["policies/travel-2025.md", "under 4 hours"]], "kind": "paraphrase", "cluster": "pol-rail"}
 {"id": "exp-receipt", "query": "Do I need a receipt for a 20 euro taxi?", "gold": [["policies/expenses.md", "above 25 EUR"]], "kind": "paraphrase", "cluster": "exp-receipt"}
 {"id": "exp-approve", "query": "Who signs off on a 1,200 EUR expense?", "gold": [["policies/expenses.md", "department head approves"]], "kind": "paraphrase", "cluster": "exp-approve"}
@@ -77,8 +77,8 @@
 {"id": "dn-cold", "query": "When is a log entry shipped off to the cheap tier?", "gold": [["design/lantern-tiering.md", "older than 3 days"]], "kind": "paraphrase", "cluster": "dn-cold"}
 {"id": "dn-saving", "query": "How much did the tiering change save on storage?", "gold": [["design/lantern-tiering.md", "about 40 percent"]], "kind": "paraphrase", "cluster": "dn-saving"}
 {"id": "dn-rollout", "query": "In which order was storage tiering rolled out?", "gold": [["design/lantern-tiering.md", "Starter workspaces first"]], "kind": "context", "cluster": "dn-rollout"}
-{"id": "mt-handover", "query": "How often does the on-call handover happen after the change?", "gold": [["notes/ops-review-2025-03.md", "twice weekly"]], "kind": "paraphrase", "cluster": "mt-decisions"}
-{"id": "mt-postmortem", "query": "What is the deadline for writing a postmortem?", "gold": [["notes/ops-review-2025-03.md", "five working days"]], "kind": "paraphrase", "cluster": "mt-decisions"}
+{"id": "mt-handover", "query": "How often does the on-call handover happen after the change?", "gold": [["notes/ops-review-2025-03.md", "twice weekly"]], "kind": "paraphrase", "cluster": "mt-handover"}
+{"id": "mt-postmortem", "query": "What is the deadline for writing a postmortem?", "gold": [["notes/ops-review-2025-03.md", "five working days"]], "kind": "paraphrase", "cluster": "mt-handover"}
 {"id": "mt-cause", "query": "Why did log intake break twice?", "gold": [["notes/ops-review-2025-03.md", "load balancer health check"]], "kind": "paraphrase", "cluster": "mt-cause"}
 {"id": "none-0", "query": "What is the parental leave policy?", "gold": [], "kind": "unanswerable", "cluster": "none-0"}
 {"id": "none-1", "query": "Which database does Meridian use internally?", "gold": [], "kind": "unanswerable", "cluster": "none-1"}

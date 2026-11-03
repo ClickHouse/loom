@@ -26,6 +26,9 @@ from bench.knowledge_retrieval import (
 from server.knowledge.domain.chunking import chunk_document
 from server.settings import settings
 
+# The handbook products: one question asked of each is one cluster.
+PRODUCTS = ("harbor", "lantern", "quill", "meridian")
+
 GOLD = [["a.md", "answer one"], ["b.md", "answer two"]]
 
 
@@ -283,19 +286,34 @@ def test_one_phase_alone_needs_a_named_namespace(monkeypatch, phase: str) -> Non
     assert exit_info.value.code == 2  # argparse's usage error, before any request
 
 
-def test_queries_whose_results_move_together_share_a_cluster() -> None:
+def test_the_clusters_are_exactly_the_groups_whose_results_move_together() -> None:
+    """One question asked of each product is one group, every set of queries sharing a
+    gold chunk is one group, and the groups merge transitively: the fixture's clusters
+    are that partition, no coarser and no finer."""
     docs, queries = load_fixture(FIXTURE)
     size, stride = settings.knowledge_chunk_size, settings.knowledge_chunk_stride
     chunks = {d["source_uri"]: chunk_document(d["content"], size=size, stride=stride) for d in docs}
-    cluster_of_chunk: dict[tuple[str, int], str] = {}
+    group = {q["id"]: {q["id"]} for q in queries}
+
+    def join(a: str, b: str) -> None:
+        merged = group[a] | group[b]
+        for member in merged:
+            group[member] = merged
+
+    first_of: dict[object, str] = {}
     for q in queries:
+        product, _, question = q["id"].partition("-")
+        keys: list[object] = [("question", question)] if product in PRODUCTS else []
         for uri, text in q["gold"]:
-            idx = next(c.idx for c in chunks[uri] if text in c.text)
-            # two queries answered by one chunk move together
-            assert cluster_of_chunk.setdefault((uri, idx), q["cluster"]) == q["cluster"], q["id"]
-    cluster = {q["id"]: q["cluster"] for q in queries}
-    # one question asked of each product
-    assert cluster["harbor-retention"] == cluster["lantern-retention"] == "retention"
+            keys.append((uri, next(c.idx for c in chunks[uri] if text in c.text)))
+        for key in keys:
+            join(q["id"], first_of.setdefault(key, q["id"]))
+    by_cluster: dict[str, set[str]] = {}
+    for q in queries:
+        by_cluster.setdefault(q["cluster"], set()).add(q["id"])
+    assert sorted(map(sorted, by_cluster.values())) == sorted(
+        {frozenset(g): sorted(g) for g in group.values()}.values()
+    )
 
 
 def test_the_corpus_check_returns_the_chunk_count_the_run_measured() -> None:
