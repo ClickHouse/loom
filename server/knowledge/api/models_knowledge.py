@@ -225,9 +225,9 @@ class KnowledgeSearchInput(BaseModel):
 
 
 class KnowledgeSearchOutput(BaseModel):
-    # Hits best first: when `reranked_by` is set, the first `knowledge_search_rerank_top`
-    # in the reranker's order and any after them (merged repository docs included) by
-    # `score`, else all by `score` (then similarity); empty when nothing matched.
+    # Hits best first: when `reranked_by` is set, the reranked head in the reranker's
+    # order, then the rest by `score`; else by `score` (then similarity). Empty when
+    # nothing matched.
     results: list[_SearchHit]
     # The reranker that ordered `results`; empty when no reranker ran, it failed, or it
     # kept the fused order.

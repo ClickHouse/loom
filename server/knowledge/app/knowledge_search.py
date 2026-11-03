@@ -21,6 +21,7 @@ from server.knowledge.api.models_knowledge import (
 )
 from server.knowledge.domain.chunking import embedding_text
 from server.memory.app.log_once import LogOnce
+from server.observability import degradations as _degradations
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -123,8 +124,8 @@ async def _rerank(
     """The fused head (`top` hits, the pool the legs fetched) in the reranker's order, the
     rest after it, and whether the reranker produced the order. Each candidate shows the
     chunk's context (title, description, breadcrumb) before its text. A held or refused
-    model call fails the search; on any other failure the rerank service hands back its
-    input and the fused order is kept."""
+    model call fails the search; on a timeout, or any other failure (the rerank service
+    hands back its input), the fused order is kept."""
     from server.memory.app.rerank import RerankCandidate, rerank
 
     chars = settings.knowledge_search_rerank_excerpt_chars
@@ -144,13 +145,19 @@ async def _rerank(
                 similarity=h.similarity,
             )
         )
-    ordered = await rerank(
-        endpoint=endpoint,
-        prompt_template="",
-        query=query,
-        candidates=candidates,
-        excerpt_chars=chars,
-    )
+    try:
+        # A slow provider costs the page its rerank, never the search its answer.
+        async with asyncio.timeout(settings.knowledge_search_rerank_timeout_s):
+            ordered = await rerank(
+                endpoint=endpoint,
+                prompt_template="",
+                query=query,
+                candidates=candidates,
+                excerpt_chars=chars,
+            )
+    except TimeoutError as e:
+        _degradations.note("rerank:knowledge", "fused_order_kept", e)
+        return hits, False
     # The service hands back its input on a failure, or an order it could not read in
     # input order: either way no reranker ordered the page.
     if [c.memory_key for c in ordered] == [c.memory_key for c in candidates]:

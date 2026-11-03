@@ -2425,6 +2425,10 @@ settings:
   # [live]
   # knowledge_search_rerank_excerpt_chars: 800
 
+  # Seconds a knowledge.search waits on its reranker before it keeps the fused order.
+  # [live]
+  # knowledge_search_rerank_timeout_s: 8.0
+
   # --- chunking ---
 
   # Sliding-window chunking on knowledge.add/upsert, in characters. chunk_size 0 = one

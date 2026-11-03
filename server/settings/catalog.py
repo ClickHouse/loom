@@ -1994,6 +1994,8 @@ class KnowledgeSettings(BaseModel):
     knowledge_search_rerank_excerpt_chars: Annotated[int, LIVE] = Field(
         default=800, ge=100, le=4000
     )
+    # Seconds a knowledge.search waits on its reranker before it keeps the fused order.
+    knowledge_search_rerank_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
 
     # ---- chunking ----
     # Sliding-window chunking on knowledge.add/upsert, in characters.

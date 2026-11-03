@@ -509,6 +509,7 @@
  "knowledge_search_max_namespaces": 10000,
  "knowledge_search_rerank_default": "",
  "knowledge_search_rerank_excerpt_chars": 800,
+ "knowledge_search_rerank_timeout_s": 8.0,
  "knowledge_search_rerank_top": 30,
  "knowledge_source_probe_timeout_s": 20.0,
  "knowledge_sources_max_per_namespace": 8,

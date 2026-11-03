@@ -194,7 +194,8 @@ reads each one's context (title, description, breadcrumb; at most half the excer
 text, `LOOM_KNOWLEDGE_SEARCH_RERANK_EXCERPT_CHARS` characters (800), and orders them
 before sections collapse and the page is cut. `reranked_by` on the response names the
 reranker that produced the order; it is empty when no reranker ran, it failed
-(fail-open) or it kept the fused order. A model call the gateway holds or refuses fails
+(fail-open), it took longer than `LOOM_KNOWLEDGE_SEARCH_RERANK_TIMEOUT_S` (8 s) or it kept
+the fused order. A model call the gateway holds or refuses fails
 the search instead. An LLM-free read (`LOOM_READS_LLM_FREE`) reranks
 only as its request names, never with `builtin:openai`. A rerank is one more model call
 per search: `builtin:openai` adds about two seconds, so it is off unless asked for.

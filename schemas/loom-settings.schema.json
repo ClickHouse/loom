@@ -2788,6 +2788,12 @@
           "type": "integer",
           "description": "Characters of each hit a reranker reads: its context (title, description, breadcrumb; at most half), then the chunk text. builtin:cohere reads at most 1024."
         },
+        "knowledge_search_rerank_timeout_s": {
+          "default": 8.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a knowledge.search waits on its reranker before it keeps the fused order."
+        },
         "knowledge_search_rerank_top": {
           "default": 30,
           "maximum": 100,

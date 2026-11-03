@@ -210,3 +210,38 @@ async def test_a_held_model_call_fails_the_search_instead_of_keeping_the_fused_o
     monkeypatch.setattr(rerank_mod, "rerank", _held)
     with pytest.raises(customer.HOLDS):
         await ks.handle_knowledge_search(_input(rerank="builtin:openai", namespaces=["n"]))
+
+
+@pytest.mark.asyncio
+async def test_a_reranker_past_its_time_limit_keeps_the_fused_order(monkeypatch) -> None:
+    import asyncio
+
+    monkeypatch.setattr(settings, "knowledge_search_rerank_timeout_s", 0.01)
+
+    async def _slow(**kw: Any) -> list[Any]:
+        await asyncio.sleep(1)
+        return list(reversed(kw["candidates"]))
+
+    monkeypatch.setattr(rerank_mod, "rerank", _slow)
+    hits = [_hit("a.md"), _hit("b.md")]
+    out, reranked = await ks._rerank("builtin:openai", "q", hits, {}, 30)
+    assert reranked is False and out is hits
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [[], "busy", {"results": "x"}], ids=["list", "str", "field"])
+async def test_a_cohere_reply_that_is_not_an_object_keeps_the_input_order(
+    monkeypatch, payload
+) -> None:
+    import httpx
+
+    from server.core import provider_keys
+
+    async def _post(url: str, body: Any, headers: Any) -> httpx.Response:
+        return httpx.Response(200, json=payload, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(provider_keys, "rerank_key", lambda name: "key")
+    monkeypatch.setattr(rerank_mod, "_post", _post)
+    candidates = [rerank_mod.RerankCandidate(str(i), "", "v", "document", 1.0) for i in range(2)]
+    out = await rerank_mod._rerank_with_builtin_cohere("builtin:cohere", "q", candidates)
+    assert out is candidates

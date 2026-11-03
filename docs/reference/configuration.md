@@ -820,6 +820,7 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT` | `str` | `''` | live | Reranker knowledge.search uses when the request names none (same values as the per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON; rerank="none" turns it off for a call). Empty = no default rerank. |
 | `LOOM_KNOWLEDGE_SEARCH_RERANK_TOP` | `int` | `30` | live | How many fused hits a rerank reads (the legs fetch at least this many). |
 | `LOOM_KNOWLEDGE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `800` | live | Characters of each hit a reranker reads: its context (title, description, breadcrumb; at most half), then the chunk text. builtin:cohere reads at most 1024. |
+| `LOOM_KNOWLEDGE_SEARCH_RERANK_TIMEOUT_S` | `float` | `8.0` | live | Seconds a knowledge.search waits on its reranker before it keeps the fused order. |
 
 ### Chunking
 
