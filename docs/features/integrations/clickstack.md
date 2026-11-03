@@ -86,7 +86,8 @@ so the backend (`ClickStackBackend` in `server/erasure/app/backends.py`) runs li
 - **Org guard.** A row tagged with _another_ org's `loom.org` is never erased. A row
   matched by `loom.namespace` must carry the erasing org's `loom.org`: Loom's metric
   points carry the namespace and no org, so they are not erased by namespace (they hold
-  counters, no content or subject) and leave with the table's TTL. A row with no
+  counters, no content or subject) and stay until the collector table's own TTL, if it
+  has one, removes them. A row with no
   `loom.org` tag matched by a user key or by `service.namespace` (another emitter) is
   erased, since it may hold the subject.
 

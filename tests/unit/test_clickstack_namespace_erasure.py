@@ -259,6 +259,15 @@ _ROWS = {
         {"service.namespace": "loom"},
         {"loom.namespace": "default", "loom.org": "acme"},
     ),
+    # A tenant namespace named `loom`, in this org and in another.
+    "ns_loom_own_org": (
+        {"service.namespace": "loom"},
+        {"loom.namespace": "loom", "loom.org": "acme"},
+    ),
+    "ns_loom_other_org": (
+        {"service.namespace": "loom"},
+        {"loom.namespace": "loom", "loom.org": "globex"},
+    ),
     # Loom rows of any org with no tenant attribute (a worker span, a log line).
     "loom_deployment": ({"service.namespace": "loom"}, {}),
     "foreign_emitter": ({"service.namespace": "default"}, {"service.namespace": "default"}),
@@ -297,7 +306,9 @@ def test_namespace_erasure_matches_only_this_orgs_rows(table, attr_col, many, na
         f"SELECT tag FROM loom.{table} WHERE {where} ORDER BY tag",
         {"u": [namespace] if many else namespace, "org": "acme"},
     )
-    expected = ["foreign_emitter", "loom_own_org"] if namespace == "default" else []
+    expected = (
+        ["foreign_emitter", "loom_own_org"] if namespace == "default" else ["ns_loom_own_org"]
+    )
     assert [r["tag"] for r in got] == expected
 
 

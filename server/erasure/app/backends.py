@@ -18,6 +18,7 @@ from typing import Any, ClassVar, Protocol
 import httpx
 
 from server.core.ch_errors import error_code
+from server.observability.otel import SERVICE_NAMESPACE
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -366,7 +367,6 @@ class ClickStackBackend:
     # ORed: service.namespace covers non-Loom emitters an operator points at
     # the same ClickStack.
     TENANT_NAMESPACE_KEY = "loom.namespace"
-    LOOM_SERVICE_NAMESPACE = "loom"
     # The org Loom stamps on its spans. A subject or namespace name is unique
     # per org only, so a row tagged with ANOTHER org is never erased; for a
     # user scope a row with no org tag (a non-Loom emitter) still is, since it
@@ -468,7 +468,7 @@ class ClickStackBackend:
         # but never Loom's deployment constant, which every Loom row carries.
         return (
             f"(({ns_col}[{self.NAMESPACE_KEY!r}] {op}"
-            f" AND {ns_col}[{self.NAMESPACE_KEY!r}] != {self.LOOM_SERVICE_NAMESPACE!r}"
+            f" AND {ns_col}[{self.NAMESPACE_KEY!r}] != {SERVICE_NAMESPACE!r}"
             f" AND {self._org_clause(attr_col)})"
             f" OR ({attr_col}[{self.TENANT_NAMESPACE_KEY!r}] {op}"
             f" AND {attr_col}[{self.TENANT_ORG_KEY!r}] = {{org:String}}))"
