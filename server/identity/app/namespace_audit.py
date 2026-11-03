@@ -391,10 +391,10 @@ _CONTRACT: dict[str, RuleContract] = {
         # 2: a version that repeats the one before it (a status change) is not counted.
         2,
         exceptions=(
-            "A version whose content repeats the one before it of the same row (agent, user, "
-            "session, key; a status change: conflict marking, supersession) is not counted; a "
-            "value that flips back and forth counts every time, and so does a version with no "
-            "recorded hash."
+            "A version that copies the one before it of the same row (agent, user, session, "
+            "key; a status change: conflict marking, supersession) is not counted. A writer "
+            "restating the same value counts, as does a value that flips back and forth and "
+            "a version with no recorded hash."
         ),
         uncertainty="A fact that really changes often leaves a long history that is not waste.",
     ),
@@ -498,7 +498,7 @@ class _Audit:
             "grace": int(INDEX_GRACE_SECONDS),
             "lag": int(TELEMETRY_LAG_SECONDS),
             "holds": list(EMBED_HOLDS),
-            "data_writes": list(state_change_ops()),
+            "state_changes": list(state_change_ops()),
         }
         self.summary = NamespaceAuditSummary()
         self.searchable_rows = 0
@@ -620,7 +620,7 @@ class _Audit:
             -- is a recorded call too; its reads and page views are left out
             SELECT countIf(operation NOT IN {_REPORT_OPS}
                            AND ({_AGENT_CALL}
-                                OR operation IN {{data_writes:Array(String)}})) AS ledger_calls,
+                                OR operation IN {{state_changes:Array(String)}})) AS ledger_calls,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}) AS gets,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}
                            AND memory_key IN ({_TYPED_KEYS})) AS typed_gets,
@@ -928,21 +928,28 @@ class _Audit:
             SELECT sum(versions) OVER () AS total, sum(bytes) OVER () AS total_bytes,
                    memory_key, versions, bytes
             FROM (SELECT memory_key, count() AS versions, sum(chars) AS bytes
-                  -- a version that repeats the one before it of the same row (a status
-                  -- change: conflict marking, supersession) rewrites nothing
-                  FROM (SELECT memory_key, length(value) AS chars,
+                  -- a version that copies the one before it of the same row (a status
+                  -- change: conflict marking, supersession) rewrites nothing; a writer's
+                  -- restatement bumps reinforcement_count and is a rewrite
+                  FROM (SELECT memory_key, value_len AS chars,
                                -- a version with no recorded hash (the column's '0'
                                -- default) is not known to repeat, so it counts
                                content_sha256 = toFixedString('0', 64)
-                               OR content_sha256 != lagInFrame(content_sha256) OVER (
-                                   PARTITION BY agent, user_id, session_id, memory_key
-                                   ORDER BY version
-                                   ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rewrote
-                        FROM loom.memory_versions FINAL WHERE {_SCOPE})
+                               OR content_sha256 != lagInFrame(content_sha256) OVER w
+                               OR reinforcement_count != lagInFrame(reinforcement_count) OVER w
+                                   AS rewrote
+                        FROM loom.memory_versions FINAL WHERE {_SCOPE}
+                        -- the table's whole sort key, so the window reads in its order
+                        WINDOW w AS (PARTITION BY org, namespace, agent, user_id, session_id,
+                                                  memory_key
+                                     ORDER BY version
+                                     ROWS BETWEEN 1 PRECEDING AND CURRENT ROW))
                   WHERE rewrote
                   GROUP BY memory_key)
             ORDER BY bytes DESC, memory_key
             LIMIT {{lim_past:UInt32}}
+            -- reading in window order halves the memory of the version scan
+            SETTINGS optimize_read_in_window_order = 1
             """
         )
         total, total_bytes, samples = _split(rows, self.inp.sample_limit)

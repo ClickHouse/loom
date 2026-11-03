@@ -336,8 +336,8 @@ class NamespaceAuditSummary(BaseModel):
     live_bytes: int = 0
     # Bytes of content_excerpt the embedding rows carry (a copy of each value's head).
     excerpt_bytes: int = 0
-    # The versions whose content differs from the previous version of the same row (a
-    # status-only version repeats it and is not counted), and their bytes.
+    # The versions that rewrite the row: a new content or a writer's restatement, not a
+    # status-only copy of the version before it; and their bytes.
     version_rows: int = 0
     version_bytes: int = 0
     # Searchable-type embedding rows with no vector and an embed error of their own (a
@@ -357,9 +357,10 @@ class NamespaceAuditSummary(BaseModel):
     # `gets`, left out of the object-store gauge.
     typed_gets: int = 0
     # Live rows created in the window (not in its last minute, which the ledger may not
-    # have caught up with), and the ledger's calls for the namespace in it, apart from
-    # reports on it and inspector reads: rows created with no calls mean the counts above
-    # were not recorded.
+    # have caught up with, and not copied in from another namespace), and the ledger's
+    # calls for the namespace in it, apart from reports on it and an inspector's calls that
+    # change no stored state (reads, page views): rows created with no calls mean the
+    # counts above were not recorded.
     written_in_window: int = 0
     ledger_calls: int = 0
 

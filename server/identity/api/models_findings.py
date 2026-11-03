@@ -15,7 +15,8 @@ from pydantic import BaseModel, Field
 
 # contract_violation: a stored value breaks a declared invariant, schema or attestation.
 # usage_heuristic: a pattern that usually costs recall or storage; a warning, not proof of
-#   misuse, since a legitimate design can match it.
+#   misuse, since a legitimate design can match it. At info it can be an all-clear note
+#   that a pattern is a workflow (intentional_exact_key_reads).
 # system_state: the deployment's own state (an indexing backlog, missing telemetry), not
 # anything a writer did.
 FindingKind = Literal["contract_violation", "usage_heuristic", "system_state"]

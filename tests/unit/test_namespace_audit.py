@@ -1435,11 +1435,12 @@ async def test_a_workers_revision_of_an_old_row_is_not_an_unrecorded_write() -> 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.asyncio
 async def test_version_churn_counts_each_writers_distinct_contents() -> None:
-    def version(user: str, key: str, version: int, sha: str) -> str:
+    def version(user: str, key: str, version: int, sha: str, reinforced: int = 1) -> str:
         return (
             "INSERT INTO loom.memory_versions (org, namespace, agent, user_id, session_id, "
-            f"memory_key, value, version, content_sha256) VALUES ('o', 'ns', 'bot', '{user}', "
-            f"'-', '{key}', 'UTC', {version}, '{sha * 64 if sha else '0'}')"
+            f"memory_key, value, version, content_sha256, reinforcement_count) VALUES ('o', "
+            f"'ns', 'bot', '{user}', '-', '{key}', 'UTC', {version}, "
+            f"'{sha * 64 if sha else '0'}', {reinforced})"
         )
 
     rows = [
@@ -1453,14 +1454,17 @@ async def test_version_churn_counts_each_writers_distinct_contents() -> None:
         *(version("u1", "job/state", v, "ab"[v % 2]) for v in range(1, 5)),
         # Versions with no recorded hash (the column's default) are not known to repeat.
         *(version("u1", "old/key", v, "") for v in range(1, 4)),
+        # A writer restating the same value rewrites the row each time.
+        *(version("u1", "same/value", v, "c", reinforced=v) for v in range(1, 4)),
     ]
     audit = na.new_audit(_inp(), ch=_LocalCH(["memory_versions"], rows))
     await audit.version_churn()
     f = _finding(audit, "version_churn")
-    assert f.count == 9
+    assert f.count == 12
     assert {s["memory_key"]: s["versions"] for s in f.samples} == {
         "job/state": 4,
         "old/key": 3,
+        "same/value": 3,
         "pref/tz": 2,
     }
 

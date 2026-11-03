@@ -30,7 +30,8 @@ export interface NamespaceAuditSummary {
   // Exact-key reads of procedures, counted in `gets` and left out of the ratio.
   // Absent from a server one release older, like the two below.
   typed_gets?: number;
-  // Live rows created in the window, and the ledger's calls for the namespace in it.
+  // Live rows created in the window (not copied in), and the ledger's calls for the
+  // namespace in it, leaving out reports on it and inspector calls that change nothing.
   written_in_window?: number;
   ledger_calls?: number;
 }
