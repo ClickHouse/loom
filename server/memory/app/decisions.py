@@ -63,10 +63,12 @@ def clean_alternatives(items: list[str], *, cut: bool = True) -> list[str]:
     seen: set[str] = set()
     for a in items or []:
         t = collapse_ws(a)
-        same = cut_alternative(t).lower()
-        if t and same not in seen:
-            seen.add(same)
-            out.append(cut_alternative(t) if cut else t)
+        if not t:
+            continue
+        cut_t = cut_alternative(t)
+        if cut_t.lower() not in seen:
+            seen.add(cut_t.lower())
+            out.append(cut_t if cut else t)
         if len(out) >= MAX_ALTERNATIVES:
             break
     return out

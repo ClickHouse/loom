@@ -2217,8 +2217,7 @@ class MemorySettings(BaseModel):
 
     # ---- pre-edit block ----
     # Tokens (4 characters each) memory.for_file gives its decision and constraint rows, which
-    # print whole and outside the request's token_budget; a row past it is left out and named.
-    # 1500 keeps the whole block under the 10,000 characters a coding-agent hook may inject.
+    # print whole outside token_budget; a row past it is left out and named.
     memory_for_file_whole_tokens: Annotated[int, LIVE] = Field(default=1500, ge=50, le=4000)
 
     # ---- deployment-specific names the fact filters recognise ----

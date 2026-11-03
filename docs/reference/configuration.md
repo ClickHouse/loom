@@ -899,7 +899,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_MEMORY_FOR_FILE_WHOLE_TOKENS` | `int` | `1500` | live | Tokens (4 characters each) memory.for_file gives its decision and constraint rows, which print whole and outside the request's token_budget; a row past it is left out and named. 1500 keeps the whole block under the 10,000 characters a coding-agent hook may inject. |
+| `LOOM_MEMORY_FOR_FILE_WHOLE_TOKENS` | `int` | `1500` | live | Tokens (4 characters each) memory.for_file gives its decision and constraint rows, which print whole outside token_budget; a row past it is left out and named. |
 
 ### Deployment-specific names the fact filters recognise
 
