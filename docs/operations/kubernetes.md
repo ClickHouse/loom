@@ -147,8 +147,8 @@ helm install loom deploy/helm/loom -n loom -f deploy/helm/loom/values-eks.yaml
   cluster needs its own rule, as engines differ on matching pod IPs by range:
   `networkPolicy.extraEgress: [{to: [{namespaceSelector: …, podSelector: …}], ports: [{port: 8123}]}]`.
 - **ClickHouse Cloud's IP access list** must allow the cluster's NAT gateway addresses.
-- **Image.** Pin `image.digest`; each release's run summary prints it, after the image
-  passed a CVE scan.
+- **Image.** Pin `image.digest`, and `extractor.image.digest` with `extractor.enabled`;
+  each release's run summary prints both, after each image passed a CVE scan.
 
 ## Upgrades and scaling
 

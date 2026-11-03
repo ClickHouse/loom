@@ -36,7 +36,7 @@ The make targets use `.venv/bin/python`. Run repository scripts as modules (`.ve
 
 ## 3. A private ClickHouse
 
-Pick free ports and a name that cannot be mistaken for a deployment's containers (`loom-blue`, `loom-green`, `loom-proxy`, `loom-server`, `loom-workers`, `loom-<colour>-workers`, `loom-ch` are taken by convention):
+Pick free ports and a name that cannot be mistaken for a deployment's containers (`loom-blue`, `loom-green`, `loom-proxy`, `loom-server`, `loom-workers`, `loom-<colour>-workers`, `loom-ch`, `loom-extractor` are taken by convention):
 
 ```bash
 cd <worktree> && LOOM_CH_CONTAINER="ch-$(basename "$PWD")" LOOM_CH_HOST_PORT=18123 LOOM_CH_NATIVE_HOST_PORT=19000 bash dev/ci_start_clickhouse.sh

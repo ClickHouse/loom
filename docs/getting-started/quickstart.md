@@ -34,7 +34,8 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 
 This downloads `loom-stack.tar.gz` from the latest GitHub Release, verifies its SHA-256,
 installs the Compose and ClickHouse configuration under `~/.loom`, pulls the matching
-`ghcr.io/clickhouse/loom:X.Y.Z` image, and waits for
+`ghcr.io/clickhouse/loom:X.Y.Z` and `ghcr.io/clickhouse/loom-extractor:X.Y.Z` (the document
+extractor service) images, and waits for
 `http://localhost:7777/v1/health`. The image contains the API, workers, migrations and
 the built React dashboard at the server root; no Python or Node installation is needed. Python,
 TypeScript and Go compiler indexers are included and enabled. A repository indexed
@@ -190,7 +191,7 @@ leaves it empty and infers the same mode from `LOOM_AUTH_REQUIRED=false`.
 | `LOOM_EMBEDDING_MODEL=fake-ngram-3072`, `LOOM_EMBEDDING_DIM=3072`           | fake embedder | Search ranks by character n-grams. Enough to check wiring, not recall.    |
 
 Both installers generate a unique `COMPOSE_PROJECT_NAME`, a random JWT signing secret,
-and `LOOM_BIND_HOST=127.0.0.1`. Separate clones therefore do not silently share
+a random extractor token, and `LOOM_BIND_HOST=127.0.0.1`. Separate clones therefore do not silently share
 ClickHouse volumes, and Loom plus ClickHouse are reachable only from this computer.
 
 For real providers, open **Settings → Models & keys**, choose your providers and models,

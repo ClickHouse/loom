@@ -110,8 +110,9 @@ refresh gauges leave its refresh out, and `loom.sli.rollup_lag_s` and
 
 ### Local stack from a clone
 
-`loom up` (or `make dev`) creates `.env` from `.env.example` and
-`deploy/clickhouse-config/named_collections.xml` from its template, then runs:
+`loom up` (or `make dev`) creates `.env` from `.env.example` (or gives an existing one
+without an extractor token one) and `deploy/clickhouse-config/named_collections.xml` from
+its template, then runs:
 
 ```bash
 docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --build
@@ -122,10 +123,11 @@ because a checkout's `.env` also serves `make server` on the host. Compose reads
 `.env` beside the first `-f` file, here the root one; `--env-file .env` only says so
 explicitly.
 
-| Service      | Container     | Ports                          | Role                                                                                             |
-| ------------ | ------------- | ------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `clickhouse` | `loom-ch`     | `8123` (HTTP), `9000` (native) | ClickHouse OSS (pinned image), database `loom`, user `loom`, password `loomdev`.                 |
-| `loom`       | `loom-server` | `7777`                         | HTTP, MCP, the dashboard and the background workers in one process, built from the `Dockerfile`. |
+| Service      | Container        | Ports                          | Role                                                                                                |
+| ------------ | ---------------- | ------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `clickhouse` | `loom-ch`        | `8123` (HTTP), `9000` (native) | ClickHouse OSS (pinned image), database `loom`, user `loom`, password `loomdev`.                    |
+| `loom`       | `loom-server`    | `7777`                         | HTTP, MCP, the dashboard and the background workers in one process, built from the `Dockerfile`.    |
+| `extractor`  | `loom-extractor` | none                           | The document extractor service, built from `extractor/Dockerfile`, on a network only `loom` shares. |
 
 The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
 

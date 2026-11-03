@@ -60,9 +60,14 @@ def check(docs: list[dict[str, Any]]) -> None:
     assert not selecting, f"select the extractor's pods: {selecting}"
     policy = named("NetworkPolicy", "-extractor")["spec"]
     assert policy["policyTypes"] == ["Ingress", "Egress"] and not policy.get("egress")
+    # Exactly the release's Loom pods on the extractor's port: an empty selector or
+    # a namespace selector would admit more.
     (rule,) = policy["ingress"]
-    web = named("Deployment", "loom")["spec"]["template"]["metadata"]["labels"]
-    assert all(_selects(p["podSelector"]["matchLabels"], web) for p in rule["from"])
+    loom = next(d for d in docs if d["kind"] == "NetworkPolicy" and d["metadata"]["name"] == "loom")
+    assert rule == {
+        "from": [{"podSelector": {"matchLabels": _selector(loom)}}],
+        "ports": [{"port": "extractor"}],
+    }, rule
     spec = pod["spec"]
     assert spec["automountServiceAccountToken"] is False
     (container,) = spec["containers"]
